@@ -2930,7 +2930,19 @@ def _vae_loader_receipt(
 ) -> list[Path]:
     with tempfile.TemporaryDirectory(prefix="dinkster-vae-receipt-") as directory:
         path = Path(directory) / "seedvr2-vae.safetensors"
-        path.write_bytes(b"source-parity-vae")
+        header = json.dumps(
+            {
+                "__metadata__": {"format": "seedvr2"},
+                "decoder.weight": {
+                    "data_offsets": [0, 0],
+                    "dtype": "F32",
+                    "shape": [0],
+                },
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+        path.write_bytes(len(header).to_bytes(8, "little") + header)
         asset = _asset_ref(path)
         state = {"decoder.weight": "sentinel"}
         metadata = {"format": "seedvr2"}
