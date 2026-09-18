@@ -1,0 +1,53 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 512,
+      "path": "artifacts/comfy-core/layers-imagecompositor.native.npy",
+      "sha256": "sha256:90cb9029748e32deb26176384df057484980fb6005e399ead0fc07b91bbfc9ae"
+    },
+    "reference": {
+      "bytes": 512,
+      "path": "artifacts/comfy-core/layers-imagecompositor.reference.npy",
+      "sha256": "sha256:27a89d83e611ec6d0d5f3c260e7efc43346279e5430f373f939ad21c4a83bb92"
+    }
+  },
+  "caseId": "comfy-core/layers-imagecompositor/source-parity",
+  "comparison": {
+    "comparator": "numeric-array/1",
+    "dataKind": "tensor",
+    "tolerances": [
+      {
+        "metric": "max_abs",
+        "operator": "<=",
+        "value": 0.00392156862745098
+      }
+    ]
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/ImageCompositor",
+    "source": {
+      "name": "ImageCompositor",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "f00bfd610cb001381603669e2cc01160ae37aaf3"
+    },
+    "target": {
+      "id": "dinkster.image.create_layered",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "max_abs": 0.001325368881225586,
+    "mean_abs": 0.0002199644222855568,
+    "mismatch_fraction": 0.375,
+    "shape_equal": true
+  },
+  "parameters": {
+    "goldenSha256": "7da1a9ebb804ed051781bdfc530cf69879b3f129b85a7221418c9d6d6a7e517c",
+    "mappingDigest": "sha256:59b51009ea9720195b76ecddf9705379eecac1076f5f380e07287cf18dfce711"
+  },
+  "pass": true
+}

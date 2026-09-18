@@ -1,0 +1,21 @@
+{
+  "calls": [
+    {
+      "operation": "load_torch_file",
+      "path": "seedvr2-vae.safetensors",
+      "returnMetadata": true
+    },
+    {
+      "metadata": {
+        "format": "seedvr2"
+      },
+      "operation": "construct_vae",
+      "stateKeys": [
+        "decoder.weight"
+      ]
+    },
+    {
+      "operation": "validate_vae"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "workloads": {
+    "W0-SDXL-GGUF-Q8-PARITY": {
+      "phases": {
+        "real": {
+          "metrics": {},
+          "output": {
+            "max_abs": "0",
+            "mean_abs": "0",
+            "ssim_minimum": "1"
+          }
+        },
+        "warmup": {
+          "metrics": {},
+          "output": {
+            "max_abs": "0",
+            "mean_abs": "0",
+            "ssim_minimum": "1"
+          }
+        }
+      },
+      "reference": {
+        "image": {
+          "max_abs": "0.0031",
+          "mean_abs": "0.00016",
+          "ssim_minimum": "0.999998"
+        },
+        "latent": {
+          "max_abs": "0.0080",
+          "mean_abs": "0.0026"
+        },
+        "tolerance_evidence": {
+          "image_observed": "max_abs=0.00302666425705, mean_abs=0.000153350170876, ssim=0.999998407681",
+          "latent_observed": "max_abs=0.00788566470146, mean_abs=0.00251040229341",
+          "mechanism": "Independent SDXL module operation ordering accumulates float32 drift after bit-exact mapping, Q8_0 dequantization, schedule, and noise seams"
+        }
+      },
+      "status": "active"
+    }
+  }
+}

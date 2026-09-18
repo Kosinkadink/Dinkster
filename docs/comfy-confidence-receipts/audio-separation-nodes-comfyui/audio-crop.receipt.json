@@ -1,0 +1,47 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 1408,
+      "path": "artifacts/audio-separation-nodes-comfyui/audio-crop.native.npy",
+      "sha256": "sha256:feab91bbb88cbfa5792b5db90bcfa0a443e820178fee9f1b00692c806ce6e30a"
+    },
+    "reference": {
+      "bytes": 1408,
+      "path": "artifacts/audio-separation-nodes-comfyui/audio-crop.reference.npy",
+      "sha256": "sha256:feab91bbb88cbfa5792b5db90bcfa0a443e820178fee9f1b00692c806ce6e30a"
+    }
+  },
+  "caseId": "audio-separation-nodes-comfyui/audio-crop/source-parity",
+  "comparison": {
+    "comparator": "exact-array/1",
+    "dataKind": "tensor"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:audio-separation-nodes-comfyui/AudioCrop",
+    "source": {
+      "name": "AudioCrop",
+      "pack": "audio-separation-nodes-comfyui",
+      "referenceKind": "ecosystem-pinned",
+      "revision": "ac339561973f0c1e56db2f9d40f11b0fddda6763"
+    },
+    "target": {
+      "id": "dinkster.audio.trim",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "dtype_equal": true,
+    "shape_equal": true,
+    "values_equal": true
+  },
+  "parameters": {
+    "end": "0:20",
+    "goldenSha256": "36273a4d4684f6eda36575b925a55b51a5bbf10baf04eb0a62f7b178f50f6226",
+    "mappingDigest": "sha256:bc351d69efe0d1230e302af6bc72326d782063995c28d2af873bd329ad78307b",
+    "start": "0:10"
+  },
+  "pass": true
+}

@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "sensitive",
+      "output": true
+    },
+    {
+      "id": "insensitive",
+      "output": true
+    }
+  ]
+}

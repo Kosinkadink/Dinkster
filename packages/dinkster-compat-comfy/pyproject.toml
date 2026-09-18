@@ -1,0 +1,47 @@
+[project]
+name = "dinkster-compat-comfy"
+version = "0.0.1"
+description = "Quarantined ComfyUI v1 node compatibility: translate NODE_CLASS_MAPPINGS into Dinkster nodes"
+requires-python = ">=3.12"
+dependencies = [
+    "dinkster-assets",
+    "dinkster-image-document",
+    "dinkster-graph",
+    "dinkster-inference",
+    "dinkster-inference-torch",
+    "dinkster-memory",
+    "dinkster-native",
+    "dinkster-nodes-generation",
+    "dinkster-protocol",
+    "dinkster-schema",
+    "dinkster-values",
+    "dinkster-video",
+    "dinkster-workers",
+    "numba>=0.67",
+    "numpy>=1.26",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_compat_comfy"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"dinkster-pack.toml" = "dinkster_compat_comfy_pack/dinkster-pack.toml"
+"comfy-aliases.json" = "dinkster_compat_comfy_pack/comfy-aliases.json"
+"src/dinkster_compat_comfy" = "dinkster_compat_comfy_pack/dinkster_compat_comfy"
+
+[tool.uv.sources]
+dinkster-assets = { workspace = true }
+dinkster-image-document = { workspace = true }
+dinkster-inference = { workspace = true }
+dinkster-inference-torch = { workspace = true }
+dinkster-native = { workspace = true }
+dinkster-nodes-generation = { workspace = true }
+dinkster-protocol = { workspace = true }
+dinkster-schema = { workspace = true }
+dinkster-values = { workspace = true }
+dinkster-video = { workspace = true }
+dinkster-workers = { workspace = true }

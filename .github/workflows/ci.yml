@@ -1,0 +1,426 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Superseded runs of the same ref are cancelled: with rapid pushes the
+# old runs only burn private-repo minutes without informing anyone.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.shard_name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # windows-latest keeps the tcp boundary transport and the shm
+        # handle-lifetime rules honest (DESIGN 3.11) - it is the dominant
+        # user OS, not a nice-to-have.
+        include:
+          - os: ubuntu-latest
+            python-version: "3.12"
+            shard_name: ""
+            pytest_args: ""
+            run_checks: true
+          - os: ubuntu-latest
+            python-version: "3.13"
+            shard_name: ""
+            pytest_args: ""
+            run_checks: true
+          - os: windows-latest
+            python-version: "3.12"
+            shard_name: ", shard 1"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/2"
+            run_checks: true
+          - os: windows-latest
+            python-version: "3.12"
+            shard_name: ", shard 2"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/2"
+            run_checks: false
+          - os: windows-latest
+            python-version: "3.13"
+            shard_name: ", shard 1"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/2"
+            run_checks: true
+          - os: windows-latest
+            python-version: "3.13"
+            shard_name: ", shard 2"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/2"
+            run_checks: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/configure-dinkster-identity
+        with:
+          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --all-packages
+      - run: uv run --locked ruff format --check .
+        if: matrix.run_checks
+      - run: uv run ruff check .
+        if: matrix.run_checks
+      - run: uv run pyright
+        if: matrix.run_checks
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+      - name: Verify bounded VIDEO save memory
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: uv run --locked python tools/video_conformance.py --rss
+      - name: Verify bounded AUDIO trim and save memory
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: |
+          mkdir -p "$RUNNER_TEMP/dinkster-audio-rss"
+          uv run --locked python tools/audio_conformance.py --rss --directory "$RUNNER_TEMP/dinkster-audio-rss"
+      - run: uv run python -m pytest -q ${{ matrix.pytest_args }}
+      - run: uv run dinkster demo
+        if: matrix.run_checks
+      - run: uv run dinkster-isolated
+        if: matrix.run_checks
+      - name: Export the published default catalog
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: uv run --locked pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
+        env:
+          DINKSTER_CATALOG_WIRE_OUTPUT: ${{ runner.temp }}/default-catalog.json
+      - uses: actions/checkout@v4
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        with:
+          repository: Kosinkadink/Dinkster-Frontend
+          ref: main
+          path: .frontend-validation
+          ssh-key: ${{ secrets.DINKSTER_FRONTEND_READ_KEY }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        with:
+          version: 10.31.0
+      - uses: actions/setup-node@v4
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        with:
+          node-version: 22
+      - name: Decode real registries with frontend main
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        working-directory: .frontend-validation
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec tsx ../tools/validate_default_catalog.mjs "$CATALOG" .
+        env:
+          CATALOG: ${{ runner.temp }}/default-catalog.json
+
+  p2p-descriptor-macos:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/configure-dinkster-identity
+        with:
+          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+      - run: uv sync --all-packages
+      - run: uv run --locked pytest -q tests/test_p2p_descriptor.py
+
+  p2p-artifact-smoke:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-15]
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --locked --package dinkster-p2p
+      - run: uv run --locked --package dinkster-p2p pytest -q tests/test_p2p_artifact_smoke.py
+
+  # Hosted runners span CPU microarchitectures and vendors, and torch's
+  # CPU kernels are selected per-machine by three independent dispatchers:
+  # ATen (ATEN_CPU_CAPABILITY), oneDNN (ONEDNN_MAX_CPU_ISA), and oneMKL.
+  # The AVX2 pins below remove the microarchitecture axis (#864), but
+  # oneMKL's GEMM layer still branches on CPU vendor: with the pins active
+  # and MKL_CBWR unset (CNR:OFF, the state the goldens are minted under),
+  # AMD hosts without AVX-512 reproduce the executed-reference goldens
+  # bit-exactly while Intel hosts diverge in oneMKL (#900) and AMD AVX-512
+  # hosts diverge in ONNX Runtime MLAS (#1045). Until those dispatch axes
+  # are closed at the kernel level, the suite legs below run only on an
+  # AuthenticAMD runner without AVX-512: each leg checks /proc/cpuinfo
+  # first, runs the suite via .github/actions/torch-cpu-suite if the CPU
+  # matches, and otherwise concludes in seconds so the next leg redraws.
+  # The torch-cpu gate job fails only on a real suite failure or when all
+  # five legs miss that fingerprint. Legs after the first matching draw
+  # conclude as skipped, which is their expected green state. Linux golden
+  # minting must match the pins and CNR:OFF state on an AMD host without
+  # AVX-512 (README "Hosted-CI dispatch pins").
+  torch-cpu-try1:
+    runs-on: ubuntu-latest
+    env:
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+    outputs:
+      eligible: ${{ steps.cpu.outputs.eligible }}
+    steps:
+      - name: Detect runner CPU dispatch
+        id: cpu
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
+          eligible=false
+          if [ "$vendor" = "AuthenticAMD" ] && grep -qw avx2 /proc/cpuinfo && ! grep -qw avx512f /proc/cpuinfo; then
+            eligible=true
+          else
+            echo "$vendor runner does not match the AMD no-AVX512 golden contract (#900, #1045); deferring to the next leg."
+          fi
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.cpu.outputs.eligible == 'true'
+      - uses: ./.github/actions/torch-cpu-suite
+        if: steps.cpu.outputs.eligible == 'true'
+        with:
+          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          aimdo-release-token: ${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}
+          run-model-tests: "false"
+
+  torch-cpu-try2:
+    runs-on: ubuntu-latest
+    needs: torch-cpu-try1
+    if: needs.torch-cpu-try1.outputs.eligible != 'true'
+    env:
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+    outputs:
+      eligible: ${{ steps.cpu.outputs.eligible }}
+    steps:
+      - name: Detect runner CPU dispatch
+        id: cpu
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
+          eligible=false
+          if [ "$vendor" = "AuthenticAMD" ] && grep -qw avx2 /proc/cpuinfo && ! grep -qw avx512f /proc/cpuinfo; then
+            eligible=true
+          else
+            echo "$vendor runner does not match the AMD no-AVX512 golden contract (#900, #1045); deferring to the next leg."
+          fi
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.cpu.outputs.eligible == 'true'
+      - uses: ./.github/actions/torch-cpu-suite
+        if: steps.cpu.outputs.eligible == 'true'
+        with:
+          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          aimdo-release-token: ${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}
+          run-model-tests: "false"
+
+  torch-cpu-try3:
+    runs-on: ubuntu-latest
+    needs: torch-cpu-try2
+    if: needs.torch-cpu-try2.outputs.eligible != 'true'
+    env:
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+    outputs:
+      eligible: ${{ steps.cpu.outputs.eligible }}
+    steps:
+      - name: Detect runner CPU dispatch
+        id: cpu
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
+          eligible=false
+          if [ "$vendor" = "AuthenticAMD" ] && grep -qw avx2 /proc/cpuinfo && ! grep -qw avx512f /proc/cpuinfo; then
+            eligible=true
+          else
+            echo "$vendor runner does not match the AMD no-AVX512 golden contract (#900, #1045); deferring to the next leg."
+          fi
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.cpu.outputs.eligible == 'true'
+      - uses: ./.github/actions/torch-cpu-suite
+        if: steps.cpu.outputs.eligible == 'true'
+        with:
+          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          aimdo-release-token: ${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}
+          run-model-tests: "false"
+
+  torch-cpu-try4:
+    runs-on: ubuntu-latest
+    needs: torch-cpu-try3
+    if: needs.torch-cpu-try3.outputs.eligible != 'true'
+    env:
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+    outputs:
+      eligible: ${{ steps.cpu.outputs.eligible }}
+    steps:
+      - name: Detect runner CPU dispatch
+        id: cpu
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
+          eligible=false
+          if [ "$vendor" = "AuthenticAMD" ] && grep -qw avx2 /proc/cpuinfo && ! grep -qw avx512f /proc/cpuinfo; then
+            eligible=true
+          else
+            echo "$vendor runner does not match the AMD no-AVX512 golden contract (#900, #1045); deferring to the next leg."
+          fi
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.cpu.outputs.eligible == 'true'
+      - uses: ./.github/actions/torch-cpu-suite
+        if: steps.cpu.outputs.eligible == 'true'
+        with:
+          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          aimdo-release-token: ${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}
+          run-model-tests: "false"
+
+  torch-cpu-try5:
+    runs-on: ubuntu-latest
+    needs: torch-cpu-try4
+    if: needs.torch-cpu-try4.outputs.eligible != 'true'
+    env:
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+    outputs:
+      eligible: ${{ steps.cpu.outputs.eligible }}
+    steps:
+      - name: Detect runner CPU dispatch
+        id: cpu
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
+          eligible=false
+          if [ "$vendor" = "AuthenticAMD" ] && grep -qw avx2 /proc/cpuinfo && ! grep -qw avx512f /proc/cpuinfo; then
+            eligible=true
+          else
+            echo "$vendor runner does not match the AMD no-AVX512 golden contract (#900, #1045); no legs remain."
+          fi
+          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.cpu.outputs.eligible == 'true'
+      - uses: ./.github/actions/torch-cpu-suite
+        if: steps.cpu.outputs.eligible == 'true'
+        with:
+          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          aimdo-release-token: ${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}
+          run-model-tests: "false"
+
+  torch-cpu:
+    runs-on: ubuntu-latest
+    needs:
+      - torch-cpu-try1
+      - torch-cpu-try2
+      - torch-cpu-try3
+      - torch-cpu-try4
+      - torch-cpu-try5
+    if: always()
+    steps:
+      - name: Require one compatible CPU leg to have run the suite
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq .
+          failed="$(echo "$NEEDS" | jq '[.[] | select(.result == "failure" or .result == "cancelled")] | length')"
+          if [ "$failed" != "0" ]; then
+            echo "A suite leg failed on a compatible CPU: real failure, inspect that leg."
+            exit 1
+          fi
+          ran="$(echo "$NEEDS" | jq '[.[] | select(.result == "success" and .outputs.eligible == "true")] | length')"
+          if [ "$ran" = "0" ]; then
+            echo "All five legs missed the AMD no-AVX512 golden contract (#900, #1045): re-run this workflow."
+            exit 1
+          fi
+
+  model-tests:
+    # The job-level condition skips allocation when no dedicated runner is configured.
+    if: >-
+      vars.DINKSTER_MODEL_TESTS_ENABLED == 'true' &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      github.repository == 'Kosinkadink/Dinkster'
+    runs-on: [self-hosted, linux, x64, dinkster-model-tests]
+    permissions:
+      contents: read
+    env:
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/torch-cpu-suite
+        with:
+          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          aimdo-release-token: ${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}
+          run-model-tests: "true"
+
+  coverage:
+    # Branch-coverage floor (docs/testing.md): a ratchet, not a target.
+    # Raise --cov-fail-under when real coverage rises; never lower it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/configure-dinkster-identity
+        with:
+          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages
+      - run: >
+          uv run pytest -q --cov=dinkster_api --cov=dinkster_assets
+          --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine
+          --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation
+          --cov=dinkster_nodes_image --cov=dinkster_nodes_media_io
+          --cov=dinkster_schema --cov=dinkster_server --cov=dinkster_values
+          --cov=dinkster_workers --cov-branch --cov-fail-under=80
+
+  translation-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/configure-dinkster-identity
+        with:
+          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages
+      - name: Checkout pinned workflow templates
+        shell: bash
+        run: |
+          git init --quiet workflow_templates
+          git -C workflow_templates remote add origin https://github.com/Comfy-Org/workflow_templates.git
+          git -C workflow_templates config core.sparseCheckout true
+          git -C workflow_templates config core.sparseCheckoutCone false
+          printf '/templates/*.json\n' > workflow_templates/.git/info/sparse-checkout
+          git -C workflow_templates fetch --quiet --depth=1 --filter=blob:none origin d3b4a9e89573162b005961865164c18c8ae2206b
+          git -C workflow_templates checkout --quiet --detach FETCH_HEAD
+      - name: Checkout pinned ComfyUI source
+        shell: bash
+        run: |
+          git init --quiet ComfyUI
+          git -C ComfyUI remote add origin https://github.com/Comfy-Org/ComfyUI.git
+          git -C ComfyUI config core.sparseCheckout true
+          git -C ComfyUI config core.sparseCheckoutCone false
+          printf '/nodes.py\n/comfy/supported_models.py\n/comfy_extras/**\n/comfy_api_nodes/**\n' > ComfyUI/.git/info/sparse-checkout
+          git -C ComfyUI fetch --quiet --depth=1 --filter=blob:none origin 15eb748b3ec5f8a0a2d470b7fb280e2d7579f916
+          git -C ComfyUI checkout --quiet --detach FETCH_HEAD
+      - name: Verify translation, capability, and source-parity evidence
+        run: >
+          uv run --locked python tools/comfy_coverage.py
+          --templates workflow_templates/templates --comfyui ComfyUI
+          --supported docs/supported --check
+      - name: Replay VIDEO template shapes
+        run: uv run --locked pytest -q tests/test_video_alias_templates.py
+        env:
+          WORKFLOW_TEMPLATES_ROOT: workflow_templates

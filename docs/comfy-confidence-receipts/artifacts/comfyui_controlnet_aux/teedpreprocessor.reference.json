@@ -1,0 +1,28 @@
+{
+  "results": [
+    {
+      "case": "teed",
+      "outputDtype": "float32",
+      "outputFloat32Sha256": "23d1f4399a42e85a2f316ce76e5a56d77012793892a94eb09ec2933397eed581",
+      "outputShape": [
+        1,
+        512,
+        615,
+        3
+      ],
+      "repeatMaxAbsDiff": 0.0
+    },
+    {
+      "case": "teed-unquantized",
+      "outputDtype": "float32",
+      "outputFloat32Sha256": "90a8d7d5b33f9fb14f740c46f24e9fbc78eb2f9804e4253a36083bbfd03eab6e",
+      "outputShape": [
+        1,
+        512,
+        615,
+        3
+      ],
+      "repeatMaxAbsDiff": 0.0
+    }
+  ]
+}

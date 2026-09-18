@@ -1,0 +1,31 @@
+{
+  "source_url": "https://huggingface.co/google/umt5-xxl/resolve/0edc2411711882262c90582e0f2b94dea5f482dc/spiece.model",
+  "byte_size": 4548313,
+  "sha256": "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458",
+  "cases": [
+    {
+      "text": "",
+      "tokens": []
+    },
+    {
+      "text": "A red fox runs through snow.",
+      "tokens": [320, 4062, 273, 56209, 48083, 3311, 45540, 274]
+    },
+    {
+      "text": "  repeated   spaces\nand a newline  ",
+      "tokens": [273, 273, 144644, 273, 273, 103613, 27, 2161, 289, 1586, 1749, 273, 273]
+    },
+    {
+      "text": "\u4f60\u597d\uff0c\u4e16\u754c\u3002 \u041f\u0440\u0438\u0432\u0435\u0442, \u043c\u0438\u0440. \u0645\u0631\u062d\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645",
+      "tokens": [273, 4635, 2199, 356, 4503, 310, 201698, 275, 13337, 274, 11124, 182944, 582, 215981]
+    },
+    {
+      "text": "emoji \ud83d\ude00 and caf\u00e9 e\u0301",
+      "tokens": [156081, 30618, 333, 12831, 273, 81628]
+    },
+    {
+      "text": "<extra_id_0> literal token",
+      "tokens": [1335, 65178, 359, 825, 359, 276, 926, 228287, 58393]
+    }
+  ]
+}

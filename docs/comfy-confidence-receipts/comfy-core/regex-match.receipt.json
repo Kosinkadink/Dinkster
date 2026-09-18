@@ -1,0 +1,74 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 198,
+      "path": "artifacts/comfy-core/regex-match.native.json",
+      "sha256": "sha256:2fd792119b2d49569a75dd6a14cc9fc3c668e83358776954d89dc877173b6001"
+    },
+    "reference": {
+      "bytes": 198,
+      "path": "artifacts/comfy-core/regex-match.reference.json",
+      "sha256": "sha256:2fd792119b2d49569a75dd6a14cc9fc3c668e83358776954d89dc877173b6001"
+    }
+  },
+  "caseId": "comfy-core/regex-match/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/RegexMatch",
+    "source": {
+      "name": "RegexMatch",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.string.regex",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "cases": [
+      {
+        "id": "insensitive",
+        "inputs": {
+          "case_insensitive": true,
+          "dotall": false,
+          "multiline": false,
+          "regex_pattern": "^alpha$",
+          "string": "Alpha"
+        }
+      },
+      {
+        "id": "multiline",
+        "inputs": {
+          "case_insensitive": false,
+          "dotall": false,
+          "multiline": true,
+          "regex_pattern": "^start$",
+          "string": "x\nstart"
+        }
+      },
+      {
+        "id": "invalid",
+        "inputs": {
+          "case_insensitive": false,
+          "dotall": false,
+          "multiline": false,
+          "regex_pattern": "[",
+          "string": "text"
+        }
+      }
+    ],
+    "mappingDigest": "sha256:a0f610e2f08bce1ff3722c892e54f8a876ff41be631cbe9c7f5f4cbc04052a70"
+  },
+  "pass": true
+}

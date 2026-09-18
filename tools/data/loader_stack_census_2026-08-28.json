@@ -1,0 +1,523 @@
+{
+  "format": "dinkster-loader-stack-census/1",
+  "selection": "Registered nodes whose primary interface is a checkpoint, diffusion-model, text-encoder, VAE, or LoRA loader; a loader tuple or pipe; or a LoRA stack builder or applier. Prompt and conditioning nodes that apply LoRAs incidentally are excluded with media, detector, adapter, upscaler, SAM, file, and text loaders.",
+  "registrySource": {
+    "repository": "Comfy-Org/ComfyUI-Manager",
+    "revision": "3f159c5f651f6f3cf14ee0d51267bc433ade9a85",
+    "file": "extension-node-map.json"
+  },
+  "sources": [
+    {
+      "repository": "kijai/ComfyUI-KJNodes",
+      "revision": "3f20054214fec9f9234fd3841ae6f1e4287948f6",
+      "qualifyingCount": 6
+    },
+    {
+      "repository": "rgthree/rgthree-comfy",
+      "revision": "35c9f1e186603ba312d3b15350e89aa50b860ee6",
+      "qualifyingCount": 2
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "revision": "58e077a7435631301cf7443412515cf958e7f3d1",
+      "qualifyingCount": 15
+    },
+    {
+      "repository": "ltdrdata/ComfyUI-Impact-Pack",
+      "revision": "429d0159ad429e64d2b3916e6e7be9c22d025c3c",
+      "qualifyingCount": 0
+    },
+    {
+      "repository": "WASasquatch/was-node-suite-comfyui",
+      "revision": "44de705818d4663fefefde57ffe0ea5a9ea39df4",
+      "qualifyingCount": 7
+    },
+    {
+      "repository": "cubiq/ComfyUI_essentials",
+      "revision": "9d9f4bedfc9f0321c19faf71855e228c93bd0dc9",
+      "qualifyingCount": 1
+    },
+    {
+      "repository": "melMass/comfy_mtb",
+      "revision": "b35b5d8a17c0d59e80a8b3627b679c2c1003d04f",
+      "qualifyingCount": 0
+    },
+    {
+      "repository": "pythongosssss/ComfyUI-Custom-Scripts",
+      "revision": "609f3afaa74b2f88ef9ce8d939626065e3247469",
+      "qualifyingCount": 2
+    },
+    {
+      "repository": "ltdrdata/ComfyUI-Inspire-Pack",
+      "revision": "d23db9aa544de9a6d4c609cb7005fa9e0d42031d",
+      "qualifyingCount": 9
+    },
+    {
+      "repository": "jags111/efficiency-nodes-comfyui",
+      "revision": "4579b7d6076b2870998a08f5d37883fbc8261ff2",
+      "qualifyingCount": 4
+    }
+  ],
+  "records": [
+    {
+      "repository": "kijai/ComfyUI-KJNodes",
+      "nodeType": "DiTBlockLoraLoader",
+      "symbol": "DiTBlockLoraLoader",
+      "sourceFile": "nodes/nodes.py",
+      "signature": "MODEL, CLIP, LoRA and block selection -> MODEL, CLIP",
+      "shape": "advanced-lora",
+      "disposition": "quarantine",
+      "reason": "Selective DiT block patches cannot be represented by canonical whole-model LoRA application."
+    },
+    {
+      "repository": "kijai/ComfyUI-KJNodes",
+      "nodeType": "CheckpointLoaderKJ",
+      "symbol": "CheckpointLoaderKJ",
+      "sourceFile": "nodes/model_optimization_nodes.py",
+      "signature": "checkpoint and config options -> MODEL, CLIP, VAE",
+      "shape": "single-loader",
+      "disposition": "canonical-chain",
+      "reason": "The ordinary checkpoint tuple maps to dinkster.load_checkpoint."
+    },
+    {
+      "repository": "kijai/ComfyUI-KJNodes",
+      "nodeType": "DiffusionModelLoaderKJ",
+      "symbol": "DiffusionModelLoaderKJ",
+      "sourceFile": "nodes/model_optimization_nodes.py",
+      "signature": "diffusion model and dtype options -> MODEL",
+      "shape": "single-loader",
+      "disposition": "canonical-chain",
+      "reason": "The standalone diffusion model maps to dinkster.load_diffusion_model."
+    },
+    {
+      "repository": "kijai/ComfyUI-KJNodes",
+      "nodeType": "VAELoaderKJ",
+      "symbol": "VAELoaderKJ",
+      "sourceFile": "nodes/nodes.py",
+      "signature": "VAE name -> VAE",
+      "shape": "single-loader",
+      "disposition": "quarantine",
+      "reason": "Dinkster has no native standalone VAE carrier, and forcing a checkpoint runtime would change execution identity."
+    },
+    {
+      "repository": "kijai/ComfyUI-KJNodes",
+      "nodeType": "GGUFLoaderKJ",
+      "symbol": "GGUFLoaderKJ",
+      "sourceFile": "nodes/model_optimization_nodes.py",
+      "signature": "GGUF model and options -> MODEL",
+      "shape": "specialized-loader",
+      "disposition": "quarantine",
+      "reason": "The GGUF backend and quantization options are not represented by the canonical diffusion asset loader."
+    },
+    {
+      "repository": "kijai/ComfyUI-KJNodes",
+      "nodeType": "LTX2LoraLoaderAdvanced",
+      "symbol": "LTX2LoraLoaderAdvanced",
+      "sourceFile": "nodes/ltxv_nodes.py",
+      "signature": "MODEL, LoRA and advanced strengths/options -> MODEL",
+      "shape": "advanced-lora",
+      "disposition": "quarantine",
+      "reason": "Architecture-specific patch options are not canonical whole-model LoRA semantics."
+    },
+    {
+      "repository": "rgthree/rgthree-comfy",
+      "nodeType": "Lora Loader Stack (rgthree)",
+      "symbol": "RgthreeLoraLoaderStack",
+      "sourceFile": "py/lora_stack.py",
+      "signature": "MODEL, CLIP and four LoRA slots -> MODEL, CLIP",
+      "shape": "lora-stack",
+      "disposition": "native-shortcut",
+      "reason": "The ordered fixed slots map directly to the native model-and-CLIP LoRA stack."
+    },
+    {
+      "repository": "rgthree/rgthree-comfy",
+      "nodeType": "Power Lora Loader (rgthree)",
+      "symbol": "RgthreePowerLoraLoader",
+      "sourceFile": "py/power_lora_loader.py",
+      "signature": "optional MODEL, optional CLIP and dynamic LoRA records -> MODEL, CLIP",
+      "shape": "lora-stack",
+      "disposition": "quarantine",
+      "reason": "The arbitrary dynamic record dictionary cannot be decoded into native input-family members by ReplacementRule."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy fullLoader",
+      "symbol": "fullLoader",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "checkpoint, VAE, LoRAs, prompts and latent settings -> loader pipe and components",
+      "shape": "checkpoint-stack",
+      "disposition": "native-shortcut",
+      "reason": "The loader portion maps to the checkpoint stack; prompt and latent behavior lowers separately."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy a1111Loader",
+      "symbol": "a1111Loader",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "checkpoint, VAE, LoRAs, prompts and settings -> loader pipe, MODEL, VAE",
+      "shape": "checkpoint-stack",
+      "disposition": "native-shortcut",
+      "reason": "The loader portion maps to the checkpoint stack; A1111 prompt encoding lowers separately."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy comfyLoader",
+      "symbol": "comfyLoader",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "checkpoint, VAE, LoRAs, prompts and settings -> loader pipe, MODEL, VAE",
+      "shape": "checkpoint-stack",
+      "disposition": "native-shortcut",
+      "reason": "The loader portion maps to the checkpoint stack; prompt encoding lowers separately."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy svdLoader",
+      "symbol": "svdLoader",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "SVD checkpoint, VAE, image and video settings -> loader pipe, MODEL, VAE",
+      "shape": "specialized-pipeline",
+      "disposition": "quarantine",
+      "reason": "Video conditioning and pipe state are outside loader-stack dataflow."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy sv3dLoader",
+      "symbol": "sv3dLoader",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "SV3D checkpoint, VAE, image and camera schedule -> loader pipe, MODEL, STRING",
+      "shape": "specialized-pipeline",
+      "disposition": "quarantine",
+      "reason": "Image and camera conditioning cannot be preserved by a loader shortcut."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy zero123Loader",
+      "symbol": "zero123Loader",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "Zero123 checkpoint, VAE, image and camera values -> loader pipe, MODEL, VAE",
+      "shape": "specialized-pipeline",
+      "disposition": "quarantine",
+      "reason": "Image-conditioned camera dataflow is not a loader stack."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy cascadeLoader",
+      "symbol": "cascadeLoader",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "Cascade stages B/C, stage A VAE, CLIP, LoRAs and prompts -> loader pipe and stage components",
+      "shape": "stable-cascade-stack",
+      "disposition": "quarantine",
+      "reason": "Native Stable Cascade execution is unavailable; do not expose a nonfunctional shortcut."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy kolorsLoader",
+      "symbol": "kolorsLoader",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "UNet, VAE, ChatGLM3, LoRAs, prompts and settings -> loader pipe and components",
+      "shape": "specialized-pipeline",
+      "disposition": "quarantine",
+      "reason": "The architecture-specific non-CLIP encoder and pipe contract have no canonical stack equivalent."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy fluxLoader",
+      "symbol": "fluxLoader",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "checkpoint, VAE, LoRAs, prompts and settings -> loader pipe, MODEL, VAE",
+      "shape": "checkpoint-stack",
+      "disposition": "native-shortcut",
+      "reason": "The ordinary loader portion maps to the checkpoint stack; prompt and latent behavior lowers separately."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy hunyuanDiTLoader",
+      "symbol": "hunyuanDiTLoader",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "checkpoint, VAE, LoRAs, prompts and settings -> loader pipe, MODEL, VAE",
+      "shape": "checkpoint-stack",
+      "disposition": "native-shortcut",
+      "reason": "The ordinary loader portion maps to the checkpoint stack; prompt and latent behavior lowers separately."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy pixArtLoader",
+      "symbol": "pixArtLoader",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "DiT checkpoint, VAE, CLIP, T5, LoRAs, prompts and settings -> loader pipe and components",
+      "shape": "specialized-pipeline",
+      "disposition": "quarantine",
+      "reason": "The custom multi-encoder recipe and pipe contract have no canonical stack equivalent."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy mochiLoader",
+      "symbol": "mochiLoader",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "checkpoint, VAE, prompts and video latent settings -> loader pipe, MODEL, VAE",
+      "shape": "specialized-pipeline",
+      "disposition": "quarantine",
+      "reason": "Video conditioning and latent construction are outside loader-stack dataflow."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy loraSwitcher",
+      "symbol": "loraSwitcher",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "selector, strength, up to 50 LoRAs and optional stack -> LORA_STACK, selected name",
+      "shape": "lora-stack",
+      "disposition": "quarantine",
+      "reason": "The opaque LORA_STACK result and selected-name output cannot be converted to native family members without losing connected dataflow."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy loraStack",
+      "symbol": "loraStack",
+      "sourceFile": "py/nodes/loaders.py",
+      "signature": "mode, up to 10 LoRAs and strengths, optional prior stack -> LORA_STACK",
+      "shape": "lora-stack",
+      "disposition": "quarantine",
+      "reason": "ReplacementRule cannot turn the opaque LORA_STACK output or prior stack input into native family members."
+    },
+    {
+      "repository": "yolain/ComfyUI-Easy-Use",
+      "nodeType": "easy loraStackApply",
+      "symbol": "applyLoraStack",
+      "sourceFile": "py/nodes/adapter.py",
+      "signature": "LORA_STACK, MODEL and optional CLIP -> MODEL, CLIP",
+      "shape": "lora-stack",
+      "disposition": "quarantine",
+      "reason": "ReplacementRule cannot decode the opaque LORA_STACK input into native family members."
+    },
+    {
+      "repository": "WASasquatch/was-node-suite-comfyui",
+      "nodeType": "Checkpoint Loader",
+      "symbol": "WAS_Checkpoint_Loader",
+      "sourceFile": "WAS_Node_Suite.py",
+      "signature": "config and checkpoint names -> MODEL, CLIP, VAE, name",
+      "shape": "single-loader",
+      "disposition": "quarantine",
+      "reason": "Its explicit config-file selection cannot be preserved by Dinkster's native guess-config checkpoint loader."
+    },
+    {
+      "repository": "WASasquatch/was-node-suite-comfyui",
+      "nodeType": "Checkpoint Loader (Simple)",
+      "symbol": "WAS_Checkpoint_Loader_Simple",
+      "sourceFile": "WAS_Node_Suite.py",
+      "signature": "checkpoint name -> MODEL, CLIP, VAE, name",
+      "shape": "single-loader",
+      "disposition": "canonical-chain",
+      "reason": "The checkpoint tuple maps to dinkster.load_checkpoint; compatibility lowering must preserve a connected name output."
+    },
+    {
+      "repository": "WASasquatch/was-node-suite-comfyui",
+      "nodeType": "Diffusers Model Loader",
+      "symbol": "WAS_Diffusers_Loader",
+      "sourceFile": "WAS_Node_Suite.py",
+      "signature": "local Diffusers repository path -> MODEL, CLIP, VAE, name",
+      "shape": "specialized-loader",
+      "disposition": "quarantine",
+      "reason": "A mutable local repository path cannot become a content-addressed checkpoint asset without a sourcing contract."
+    },
+    {
+      "repository": "WASasquatch/was-node-suite-comfyui",
+      "nodeType": "Diffusers Hub Model Down-Loader",
+      "symbol": "WAS_Diffusers_Hub_Model_Loader",
+      "sourceFile": "WAS_Node_Suite.py",
+      "signature": "repository id and revision -> MODEL, CLIP, VAE, name",
+      "shape": "specialized-loader",
+      "disposition": "quarantine",
+      "reason": "Network acquisition and mutable revision selection are outside execution-time loader nodes."
+    },
+    {
+      "repository": "WASasquatch/was-node-suite-comfyui",
+      "nodeType": "Load Lora",
+      "symbol": "WAS_Lora_Loader",
+      "sourceFile": "WAS_Node_Suite.py",
+      "signature": "MODEL, CLIP, LoRA and strengths -> MODEL, CLIP, name",
+      "shape": "single-loader",
+      "disposition": "canonical-chain",
+      "reason": "The LoRA application maps to dinkster.load_lora; compatibility lowering must preserve a connected name output."
+    },
+    {
+      "repository": "WASasquatch/was-node-suite-comfyui",
+      "nodeType": "Lora Loader",
+      "symbol": "WAS_Lora_Loader",
+      "sourceFile": "WAS_Node_Suite.py",
+      "signature": "MODEL, CLIP, LoRA and strengths -> MODEL, CLIP, name",
+      "shape": "single-loader",
+      "disposition": "canonical-chain",
+      "reason": "This second registered alias has the same canonical LoRA lowering and connected-name requirement as Load Lora."
+    },
+    {
+      "repository": "WASasquatch/was-node-suite-comfyui",
+      "nodeType": "unCLIP Checkpoint Loader",
+      "symbol": "WAS_unCLIP_Checkpoint_Loader",
+      "sourceFile": "WAS_Node_Suite.py",
+      "signature": "checkpoint name -> MODEL, CLIP, VAE, CLIP_VISION, name",
+      "shape": "specialized-loader",
+      "disposition": "quarantine",
+      "reason": "The additional CLIP vision resident is not produced by the canonical checkpoint stack."
+    },
+    {
+      "repository": "cubiq/ComfyUI_essentials",
+      "nodeType": "LorasForFluxParams+",
+      "symbol": "LorasForFluxParams",
+      "sourceFile": "sampling.py",
+      "signature": "LoRA names and model-strength sweep strings -> LORA_PARAMS",
+      "shape": "lora-stack",
+      "disposition": "quarantine",
+      "reason": "Strength ranges describe a sampling sweep rather than sequential application, and the current consumer intentionally uses only the first LoRA."
+    },
+    {
+      "repository": "pythongosssss/ComfyUI-Custom-Scripts",
+      "nodeType": "LoraLoader|pysssss",
+      "symbol": "LoraLoaderWithImages",
+      "sourceFile": "py/better_combos.py",
+      "signature": "MODEL, CLIP, LoRA, strengths and hidden prompt -> MODEL, CLIP, example text",
+      "shape": "single-loader",
+      "disposition": "canonical-chain",
+      "reason": "LoRA application delegates to the core loader; compatibility lowering must preserve connected example text."
+    },
+    {
+      "repository": "pythongosssss/ComfyUI-Custom-Scripts",
+      "nodeType": "CheckpointLoader|pysssss",
+      "symbol": "CheckpointLoaderSimpleWithImages",
+      "sourceFile": "py/better_combos.py",
+      "signature": "checkpoint and hidden prompt -> MODEL, CLIP, VAE, example text",
+      "shape": "single-loader",
+      "disposition": "canonical-chain",
+      "reason": "Checkpoint loading delegates to the core loader; compatibility lowering must preserve connected example text."
+    },
+    {
+      "repository": "ltdrdata/ComfyUI-Inspire-Pack",
+      "nodeType": "LoraLoaderBlockWeight //Inspire",
+      "symbol": "LoraLoaderBlockWeight",
+      "sourceFile": "inspire/lora_block_weight.py",
+      "signature": "MODEL, CLIP, LoRA, strengths and block vector -> MODEL, CLIP, populated vector",
+      "shape": "advanced-lora",
+      "disposition": "quarantine",
+      "reason": "Per-block patch weighting is not canonical whole-model LoRA semantics."
+    },
+    {
+      "repository": "ltdrdata/ComfyUI-Inspire-Pack",
+      "nodeType": "MakeLBW //Inspire",
+      "symbol": "MakeLBW",
+      "sourceFile": "inspire/lora_block_weight.py",
+      "signature": "MODEL, CLIP, LoRA and block vector -> LBW_MODEL, STRING",
+      "shape": "advanced-lora",
+      "disposition": "quarantine",
+      "reason": "The intermediate block-weight patch object has no canonical LoRA representation."
+    },
+    {
+      "repository": "ltdrdata/ComfyUI-Inspire-Pack",
+      "nodeType": "ApplyLBW //Inspire",
+      "symbol": "ApplyLBW",
+      "sourceFile": "inspire/lora_block_weight.py",
+      "signature": "MODEL, CLIP, strengths and LBW_MODEL -> MODEL, CLIP",
+      "shape": "advanced-lora",
+      "disposition": "quarantine",
+      "reason": "Applying a precomputed block-weight object is not canonical whole-model LoRA semantics."
+    },
+    {
+      "repository": "ltdrdata/ComfyUI-Inspire-Pack",
+      "nodeType": "LoadLBW //Inspire",
+      "symbol": "LoadLBW",
+      "sourceFile": "inspire/lora_block_weight.py",
+      "signature": "block-weight file -> LBW_MODEL",
+      "shape": "advanced-lora",
+      "disposition": "quarantine",
+      "reason": "The pack-specific block-weight object has no canonical LoRA representation."
+    },
+    {
+      "repository": "ltdrdata/ComfyUI-Inspire-Pack",
+      "nodeType": "CheckpointLoaderSimpleShared //Inspire",
+      "symbol": "CheckpointLoaderSimpleShared",
+      "sourceFile": "inspire/backend_support.py",
+      "signature": "checkpoint, key and cache mode -> MODEL, CLIP, VAE, cache key",
+      "shape": "cache-loader",
+      "disposition": "quarantine",
+      "reason": "Mutable shared-cache identity is not part of the content-addressed loader contract."
+    },
+    {
+      "repository": "ltdrdata/ComfyUI-Inspire-Pack",
+      "nodeType": "LoadDiffusionModelShared //Inspire",
+      "symbol": "LoadDiffusionModelShared",
+      "sourceFile": "inspire/backend_support.py",
+      "signature": "diffusion model, dtype, key and cache mode -> MODEL, cache key",
+      "shape": "cache-loader",
+      "disposition": "quarantine",
+      "reason": "Mutable shared-cache identity is not part of the content-addressed loader contract."
+    },
+    {
+      "repository": "ltdrdata/ComfyUI-Inspire-Pack",
+      "nodeType": "LoadTextEncoderShared //Inspire",
+      "symbol": "LoadTextEncoderShared",
+      "sourceFile": "inspire/backend_support.py",
+      "signature": "one to three encoders, type, device, key and cache mode -> CLIP, cache key",
+      "shape": "cache-loader",
+      "disposition": "quarantine",
+      "reason": "Mutable cache keys and a variable multi-encoder recipe have no canonical stack equivalent."
+    },
+    {
+      "repository": "ltdrdata/ComfyUI-Inspire-Pack",
+      "nodeType": "StableCascade_CheckpointLoader //Inspire",
+      "symbol": "StableCascade_CheckpointLoader",
+      "sourceFile": "inspire/backend_support.py",
+      "signature": "Cascade stages B/C, keys and cache mode -> stage models, VAEs, CLIP vision, CLIP and keys",
+      "shape": "stable-cascade-stack",
+      "disposition": "quarantine",
+      "reason": "Native Stable Cascade execution is unavailable; cache keys and CLIP vision also lack native equivalents."
+    },
+    {
+      "repository": "ltdrdata/ComfyUI-Inspire-Pack",
+      "nodeType": "MakeBasicPipe //Inspire",
+      "symbol": "MakeBasicPipe",
+      "sourceFile": "inspire/prompt_support.py",
+      "signature": "checkpoint, cache key, prompts, CLIP skip, seed and optional VAE -> BASIC_PIPE, cache key",
+      "shape": "specialized-pipeline",
+      "disposition": "quarantine",
+      "reason": "The only functional output is a cache-coupled pipe containing two wildcard/LoRA prompt passes and conditioning, so loader-only replacement cannot preserve it."
+    },
+    {
+      "repository": "jags111/efficiency-nodes-comfyui",
+      "nodeType": "Efficient Loader",
+      "symbol": "TSC_EfficientLoader",
+      "sourceFile": "efficiency_nodes.py",
+      "signature": "checkpoint, VAE, LoRAs, prompts, latent settings and optional stacks -> components and dependencies",
+      "shape": "checkpoint-stack",
+      "disposition": "native-shortcut",
+      "reason": "The loader portion maps to the checkpoint stack; prompt, latent, ControlNet and script behavior lowers separately."
+    },
+    {
+      "repository": "jags111/efficiency-nodes-comfyui",
+      "nodeType": "Eff. Loader SDXL",
+      "symbol": "TSC_EfficientLoaderSDXL",
+      "sourceFile": "efficiency_nodes.py",
+      "signature": "base and refiner checkpoints, VAE, prompts, settings and optional stacks -> SDXL tuple and dependencies",
+      "shape": "sdxl-base-refiner-stack",
+      "disposition": "quarantine",
+      "reason": "The connected SDXL tuple owns two checkpoint runtime identities that one native provider invocation cannot preserve."
+    },
+    {
+      "repository": "jags111/efficiency-nodes-comfyui",
+      "nodeType": "LoRA Stacker",
+      "symbol": "TSC_LoRA_Stacker",
+      "sourceFile": "efficiency_nodes.py",
+      "signature": "mode, up to 50 LoRAs and strengths, optional prior stack -> LORA_STACK",
+      "shape": "lora-stack",
+      "disposition": "quarantine",
+      "reason": "ReplacementRule cannot turn the opaque LORA_STACK output or prior stack input into native family members."
+    },
+    {
+      "repository": "jags111/efficiency-nodes-comfyui",
+      "nodeType": "HighRes-Fix Script",
+      "symbol": "TSC_HighRes_Fix",
+      "sourceFile": "efficiency_nodes.py",
+      "signature": "upscale mode, optional checkpoint and high-resolution settings -> SCRIPT",
+      "shape": "script-loader",
+      "disposition": "quarantine",
+      "reason": "Conditional loading is embedded in a sampler script rather than a loader dataflow."
+    }
+  ]
+}

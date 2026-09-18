@@ -1,0 +1,3026 @@
+{
+  "documented_deltas": [
+    "hidden inputs auth_token_comfy_org, api_key_comfy_org, and unique_id are host-owned and omitted",
+    "upstream CAMERA_CONTROL is pack-owned as partner.kling.camera-control"
+  ],
+  "nodes": {
+    "KlingCameraControls": {
+      "aliases": [
+        "KlingCameraControls"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Camera Controls",
+      "inputs": [
+        {
+          "id": "camera_control_type",
+          "type": "core.combo",
+          "required": true,
+          "default": "simple",
+          "options": [
+            "simple",
+            "down_back",
+            "forward_up",
+            "right_turn_forward",
+            "left_turn_forward"
+          ]
+        },
+        {
+          "id": "horizontal_movement",
+          "type": "core.float",
+          "required": true,
+          "default": 0.0
+        },
+        {
+          "id": "vertical_movement",
+          "type": "core.float",
+          "required": true,
+          "default": 0.0
+        },
+        {
+          "id": "pan",
+          "type": "core.float",
+          "required": true,
+          "default": 0.5
+        },
+        {
+          "id": "tilt",
+          "type": "core.float",
+          "required": true,
+          "default": 0.0
+        },
+        {
+          "id": "roll",
+          "type": "core.float",
+          "required": true,
+          "default": 0.0
+        },
+        {
+          "id": "zoom",
+          "type": "core.float",
+          "required": true,
+          "default": 0.0
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.camera-controls",
+      "outputs": [
+        {
+          "id": "camera_control",
+          "type": "partner.kling.camera-control"
+        }
+      ]
+    },
+    "KlingTextToVideoNode": {
+      "aliases": [
+        "KlingTextToVideoNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Text to Video",
+      "inputs": [
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "negative_prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "cfg_scale",
+          "type": "core.float",
+          "required": true,
+          "default": 1.0
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "core.combo",
+          "required": true,
+          "default": "16:9",
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ]
+        },
+        {
+          "id": "mode",
+          "type": "core.combo",
+          "required": true,
+          "default": "pro mode / 5s duration / kling-v2-5-turbo",
+          "options": [
+            "standard mode / 5s duration / kling-v1-6",
+            "standard mode / 10s duration / kling-v1-6",
+            "pro mode / 5s duration / kling-v2-master",
+            "pro mode / 10s duration / kling-v2-master",
+            "standard mode / 5s duration / kling-v2-master",
+            "standard mode / 10s duration / kling-v2-master",
+            "pro mode / 5s duration / kling-v2-1-master",
+            "pro mode / 10s duration / kling-v2-1-master",
+            "pro mode / 5s duration / kling-v2-5-turbo",
+            "pro mode / 10s duration / kling-v2-5-turbo"
+          ]
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.text-to-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        },
+        {
+          "id": "video_id",
+          "type": "core.string"
+        },
+        {
+          "id": "duration",
+          "type": "core.string"
+        }
+      ]
+    },
+    "KlingImage2VideoNode": {
+      "aliases": [
+        "KlingImage2VideoNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Image(First Frame) to Video",
+      "inputs": [
+        {
+          "id": "start_frame",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "negative_prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kling-v2-master",
+          "options": [
+            "kling-v1",
+            "kling-v1-5",
+            "kling-v1-6",
+            "kling-v2-master",
+            "kling-v2-1",
+            "kling-v2-1-master",
+            "kling-v2-5-turbo"
+          ]
+        },
+        {
+          "id": "cfg_scale",
+          "type": "core.float",
+          "required": true,
+          "default": 0.8
+        },
+        {
+          "id": "mode",
+          "type": "core.combo",
+          "required": true,
+          "default": "std",
+          "options": [
+            "std",
+            "pro"
+          ]
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "core.combo",
+          "required": true,
+          "default": "16:9",
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ]
+        },
+        {
+          "id": "duration",
+          "type": "core.combo",
+          "required": true,
+          "default": "5",
+          "options": [
+            "5",
+            "10"
+          ]
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.image2-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        },
+        {
+          "id": "video_id",
+          "type": "core.string"
+        },
+        {
+          "id": "duration",
+          "type": "core.string"
+        }
+      ]
+    },
+    "KlingCameraControlI2VNode": {
+      "aliases": [
+        "KlingCameraControlI2VNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Image to Video (Camera Control)",
+      "inputs": [
+        {
+          "id": "start_frame",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "negative_prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "cfg_scale",
+          "type": "core.float",
+          "required": true,
+          "default": 0.75
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "core.combo",
+          "required": true,
+          "default": "16:9",
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ]
+        },
+        {
+          "id": "camera_control",
+          "type": "partner.kling.camera-control",
+          "required": true,
+          "default": null
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.camera-control-i2-v",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        },
+        {
+          "id": "video_id",
+          "type": "core.string"
+        },
+        {
+          "id": "duration",
+          "type": "core.string"
+        }
+      ]
+    },
+    "KlingCameraControlT2VNode": {
+      "aliases": [
+        "KlingCameraControlT2VNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Text to Video (Camera Control)",
+      "inputs": [
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "negative_prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "cfg_scale",
+          "type": "core.float",
+          "required": true,
+          "default": 0.75
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "core.combo",
+          "required": true,
+          "default": "16:9",
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ]
+        },
+        {
+          "id": "camera_control",
+          "type": "partner.kling.camera-control",
+          "required": true,
+          "default": null
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.camera-control-t2-v",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        },
+        {
+          "id": "video_id",
+          "type": "core.string"
+        },
+        {
+          "id": "duration",
+          "type": "core.string"
+        }
+      ]
+    },
+    "KlingStartEndFrameNode": {
+      "aliases": [
+        "KlingStartEndFrameNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Start-End Frame to Video",
+      "inputs": [
+        {
+          "id": "start_frame",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "end_frame",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "negative_prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "cfg_scale",
+          "type": "core.float",
+          "required": true,
+          "default": 0.5
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "core.combo",
+          "required": true,
+          "default": "16:9",
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ]
+        },
+        {
+          "id": "mode",
+          "type": "core.combo",
+          "required": true,
+          "default": "pro mode / 5s duration / kling-v2-5-turbo",
+          "options": [
+            "pro mode / 5s duration / kling-v1-5",
+            "pro mode / 10s duration / kling-v1-5",
+            "pro mode / 5s duration / kling-v1-6",
+            "pro mode / 10s duration / kling-v1-6",
+            "pro mode / 5s duration / kling-v2-1",
+            "pro mode / 10s duration / kling-v2-1",
+            "pro mode / 5s duration / kling-v2-5-turbo",
+            "pro mode / 10s duration / kling-v2-5-turbo"
+          ]
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.start-end-frame",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        },
+        {
+          "id": "video_id",
+          "type": "core.string"
+        },
+        {
+          "id": "duration",
+          "type": "core.string"
+        }
+      ]
+    },
+    "KlingVideoExtendNode": {
+      "aliases": [
+        "KlingVideoExtendNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Video Extend",
+      "inputs": [
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "negative_prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "cfg_scale",
+          "type": "core.float",
+          "required": true,
+          "default": 0.5
+        },
+        {
+          "id": "video_id",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.video-extend",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        },
+        {
+          "id": "video_id",
+          "type": "core.string"
+        },
+        {
+          "id": "duration",
+          "type": "core.string"
+        }
+      ]
+    },
+    "KlingLipSyncAudioToVideoNode": {
+      "aliases": [
+        "KlingLipSyncAudioToVideoNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Lip Sync Video with Audio",
+      "inputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "audio",
+          "type": "comfy.AUDIO",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "voice_language",
+          "type": "core.combo",
+          "required": true,
+          "default": "en",
+          "options": [
+            "en",
+            "zh"
+          ]
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.lip-sync-audio-to-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        },
+        {
+          "id": "video_id",
+          "type": "core.string"
+        },
+        {
+          "id": "duration",
+          "type": "core.string"
+        }
+      ]
+    },
+    "KlingLipSyncTextToVideoNode": {
+      "aliases": [
+        "KlingLipSyncTextToVideoNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Lip Sync Video with Text",
+      "inputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "text",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "voice",
+          "type": "core.combo",
+          "required": true,
+          "default": "Melody",
+          "options": [
+            "Melody",
+            "Sunny",
+            "Sage",
+            "Ace",
+            "Blossom",
+            "Peppy",
+            "Dove",
+            "Shine",
+            "Anchor",
+            "Lyric",
+            "Tender",
+            "Siren",
+            "Zippy",
+            "Bud",
+            "Sprite",
+            "Candy",
+            "Beacon",
+            "Rock",
+            "Titan",
+            "Grace",
+            "Helen",
+            "Lore",
+            "Crag",
+            "Prattle",
+            "Hearth",
+            "The Reader",
+            "Commercial Lady",
+            "\u9633\u5149\u5c11\u5e74",
+            "\u61c2\u4e8b\u5c0f\u5f1f",
+            "\u8fd0\u52a8\u5c11\u5e74",
+            "\u9752\u6625\u5c11\u5973",
+            "\u6e29\u67d4\u5c0f\u59b9",
+            "\u5143\u6c14\u5c11\u5973",
+            "\u9633\u5149\u7537\u751f",
+            "\u5e7d\u9ed8\u5c0f\u54e5",
+            "\u6587\u827a\u5c0f\u54e5",
+            "\u751c\u7f8e\u90bb\u5bb6",
+            "\u6e29\u67d4\u59d0\u59d0",
+            "\u804c\u573a\u5973\u9752",
+            "\u6d3b\u6cfc\u7537\u7ae5",
+            "\u4fcf\u76ae\u5973\u7ae5",
+            "\u7a33\u91cd\u8001\u7238",
+            "\u6e29\u67d4\u5988\u5988",
+            "\u4e25\u8083\u4e0a\u53f8",
+            "\u4f18\u96c5\u8d35\u5987",
+            "\u6148\u7965\u7237\u7237",
+            "\u5520\u53e8\u7237\u7237",
+            "\u5520\u53e8\u5976\u5976",
+            "\u548c\u853c\u5976\u5976",
+            "\u4e1c\u5317\u8001\u94c1",
+            "\u91cd\u5e86\u5c0f\u4f19",
+            "\u56db\u5ddd\u59b9\u5b50",
+            "\u6f6e\u6c55\u5927\u53d4",
+            "\u53f0\u6e7e\u7537\u751f",
+            "\u897f\u5b89\u638c\u67dc",
+            "\u5929\u6d25\u59d0\u59d0",
+            "\u65b0\u95fb\u64ad\u62a5\u7537",
+            "\u8bd1\u5236\u7247\u7537",
+            "\u6492\u5a07\u5973\u53cb",
+            "\u5200\u7247\u70df\u55d3",
+            "\u4e56\u5de7\u6b63\u592a"
+          ]
+        },
+        {
+          "id": "voice_speed",
+          "type": "core.float",
+          "required": true,
+          "default": 1.0
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.lip-sync-text-to-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        },
+        {
+          "id": "video_id",
+          "type": "core.string"
+        },
+        {
+          "id": "duration",
+          "type": "core.string"
+        }
+      ]
+    },
+    "KlingVirtualTryOnNode": {
+      "aliases": [
+        "KlingVirtualTryOnNode"
+      ],
+      "category": "partner/image/Kling",
+      "display_name": "Kling Virtual Try On",
+      "inputs": [
+        {
+          "id": "human_image",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "cloth_image",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kolors-virtual-try-on-v1",
+          "options": [
+            "kolors-virtual-try-on-v1",
+            "kolors-virtual-try-on-v1-5"
+          ]
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.virtual-try-on",
+      "outputs": [
+        {
+          "id": "image",
+          "type": "comfy.IMAGE"
+        }
+      ]
+    },
+    "KlingImageGenerationNode": {
+      "aliases": [
+        "KlingImageGenerationNode"
+      ],
+      "category": "partner/image/Kling",
+      "display_name": "Kling 3.0 Image",
+      "inputs": [
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "negative_prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "image_type",
+          "type": "core.combo",
+          "required": true,
+          "default": "subject",
+          "options": [
+            "subject",
+            "face"
+          ]
+        },
+        {
+          "id": "image_fidelity",
+          "type": "core.float",
+          "required": true,
+          "default": 0.5
+        },
+        {
+          "id": "human_fidelity",
+          "type": "core.float",
+          "required": true,
+          "default": 0.45
+        },
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kling-v3",
+          "options": [
+            "kling-v3",
+            "kling-v2",
+            "kling-v1-5"
+          ]
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "core.combo",
+          "required": true,
+          "default": "16:9",
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3",
+            "21:9"
+          ]
+        },
+        {
+          "id": "n",
+          "type": "core.int",
+          "required": true,
+          "default": 1
+        },
+        {
+          "id": "image",
+          "type": "comfy.IMAGE",
+          "required": false,
+          "default": null
+        },
+        {
+          "id": "seed",
+          "type": "core.int",
+          "required": false,
+          "default": 0
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.image-generation",
+      "outputs": [
+        {
+          "id": "image",
+          "type": "comfy.IMAGE"
+        }
+      ]
+    },
+    "KlingSingleImageVideoEffectNode": {
+      "aliases": [
+        "KlingSingleImageVideoEffectNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Video Effects",
+      "inputs": [
+        {
+          "id": "image",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "effect_scene",
+          "type": "core.combo",
+          "required": true,
+          "default": "squish",
+          "options": [
+            "squish",
+            "expansion",
+            "fuzzyfuzzy",
+            "dizzydizzy",
+            "bloombloom"
+          ]
+        },
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kling-v1-6",
+          "options": [
+            "kling-v1-6"
+          ]
+        },
+        {
+          "id": "duration",
+          "type": "core.combo",
+          "required": true,
+          "default": "5",
+          "options": [
+            "5",
+            "10"
+          ]
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.single-image-video-effect",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        },
+        {
+          "id": "video_id",
+          "type": "core.string"
+        },
+        {
+          "id": "duration",
+          "type": "core.string"
+        }
+      ]
+    },
+    "KlingDualCharacterVideoEffectNode": {
+      "aliases": [
+        "KlingDualCharacterVideoEffectNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Dual Character Video Effects",
+      "inputs": [
+        {
+          "id": "image_left",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "image_right",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "effect_scene",
+          "type": "core.combo",
+          "required": true,
+          "default": "hug",
+          "options": [
+            "hug",
+            "kiss",
+            "heart_gesture"
+          ]
+        },
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kling-v1",
+          "options": [
+            "kling-v1",
+            "kling-v1-5",
+            "kling-v1-6"
+          ]
+        },
+        {
+          "id": "mode",
+          "type": "core.combo",
+          "required": true,
+          "default": "std",
+          "options": [
+            "std",
+            "pro"
+          ]
+        },
+        {
+          "id": "duration",
+          "type": "core.combo",
+          "required": true,
+          "default": "5",
+          "options": [
+            "5",
+            "10"
+          ]
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.dual-character-video-effect",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        },
+        {
+          "id": "duration",
+          "type": "core.string"
+        }
+      ]
+    },
+    "OmniProTextToVideoNode": {
+      "aliases": [
+        "KlingOmniProTextToVideoNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling 3.0 Omni Text to Video",
+      "inputs": [
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kling-v3-omni",
+          "options": [
+            "kling-v3-omni",
+            "kling-video-o1"
+          ]
+        },
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "core.combo",
+          "required": true,
+          "default": "16:9",
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ]
+        },
+        {
+          "id": "duration",
+          "type": "core.int",
+          "required": true,
+          "default": 5
+        },
+        {
+          "id": "resolution",
+          "type": "core.combo",
+          "required": true,
+          "default": "1080p",
+          "options": [
+            "4k",
+            "1080p",
+            "720p"
+          ]
+        },
+        {
+          "id": "generate_audio",
+          "type": "core.boolean",
+          "required": false,
+          "default": false
+        },
+        {
+          "id": "seed",
+          "type": "core.int",
+          "required": false,
+          "default": 0
+        }
+      ],
+      "dynamic_combos": [
+        {
+          "id": "storyboards",
+          "required": true,
+          "default": null,
+          "options": [
+            {
+              "key": "disabled",
+              "inputs": []
+            },
+            {
+              "key": "1 storyboard",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "2 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "3 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "4 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_4_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_4_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "5 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_4_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_4_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_5_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_5_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "6 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_4_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_4_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_5_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_5_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_6_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_6_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "node_type": "partner.kling.omni-pro-text-to-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ]
+    },
+    "OmniProFirstLastFrameNode": {
+      "aliases": [
+        "KlingOmniProFirstLastFrameNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling 3.0 Omni First-Last-Frame to Video",
+      "inputs": [
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kling-v3-omni",
+          "options": [
+            "kling-v3-omni",
+            "kling-video-o1"
+          ]
+        },
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "duration",
+          "type": "core.int",
+          "required": true,
+          "default": 5
+        },
+        {
+          "id": "first_frame",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "end_frame",
+          "type": "comfy.IMAGE",
+          "required": false,
+          "default": null
+        },
+        {
+          "id": "reference_images",
+          "type": "comfy.IMAGE",
+          "required": false,
+          "default": null
+        },
+        {
+          "id": "resolution",
+          "type": "core.combo",
+          "required": true,
+          "default": "1080p",
+          "options": [
+            "4k",
+            "1080p",
+            "720p"
+          ]
+        },
+        {
+          "id": "generate_audio",
+          "type": "core.boolean",
+          "required": false,
+          "default": false
+        },
+        {
+          "id": "seed",
+          "type": "core.int",
+          "required": false,
+          "default": 0
+        }
+      ],
+      "dynamic_combos": [
+        {
+          "id": "storyboards",
+          "required": true,
+          "default": null,
+          "options": [
+            {
+              "key": "disabled",
+              "inputs": []
+            },
+            {
+              "key": "1 storyboard",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "2 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "3 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "4 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_4_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_4_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "5 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_4_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_4_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_5_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_5_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "6 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_4_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_4_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_5_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_5_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_6_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_6_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "node_type": "partner.kling.omni-pro-first-last-frame",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ]
+    },
+    "OmniProImageToVideoNode": {
+      "aliases": [
+        "KlingOmniProImageToVideoNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling 3.0 Omni Image to Video",
+      "inputs": [
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kling-v3-omni",
+          "options": [
+            "kling-v3-omni",
+            "kling-video-o1"
+          ]
+        },
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "core.combo",
+          "required": true,
+          "default": "16:9",
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ]
+        },
+        {
+          "id": "duration",
+          "type": "core.int",
+          "required": true,
+          "default": 5
+        },
+        {
+          "id": "reference_images",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "resolution",
+          "type": "core.combo",
+          "required": true,
+          "default": "1080p",
+          "options": [
+            "4k",
+            "1080p",
+            "720p"
+          ]
+        },
+        {
+          "id": "generate_audio",
+          "type": "core.boolean",
+          "required": false,
+          "default": false
+        },
+        {
+          "id": "seed",
+          "type": "core.int",
+          "required": false,
+          "default": 0
+        }
+      ],
+      "dynamic_combos": [
+        {
+          "id": "storyboards",
+          "required": true,
+          "default": null,
+          "options": [
+            {
+              "key": "disabled",
+              "inputs": []
+            },
+            {
+              "key": "1 storyboard",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "2 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "3 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "4 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_4_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_4_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "5 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_4_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_4_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_5_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_5_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "6 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_4_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_4_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_5_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_5_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_6_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_6_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "node_type": "partner.kling.omni-pro-image-to-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ]
+    },
+    "OmniProVideoToVideoNode": {
+      "aliases": [
+        "KlingOmniProVideoToVideoNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling 3.0 Omni Video to Video",
+      "inputs": [
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kling-v3-omni",
+          "options": [
+            "kling-v3-omni",
+            "kling-video-o1"
+          ]
+        },
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "core.combo",
+          "required": true,
+          "default": "16:9",
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ]
+        },
+        {
+          "id": "duration",
+          "type": "core.int",
+          "required": true,
+          "default": 3
+        },
+        {
+          "id": "reference_video",
+          "type": "comfy.VIDEO",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "keep_original_sound",
+          "type": "core.boolean",
+          "required": true,
+          "default": true
+        },
+        {
+          "id": "reference_images",
+          "type": "comfy.IMAGE",
+          "required": false,
+          "default": null
+        },
+        {
+          "id": "resolution",
+          "type": "core.combo",
+          "required": true,
+          "default": "1080p",
+          "options": [
+            "1080p",
+            "720p"
+          ]
+        },
+        {
+          "id": "seed",
+          "type": "core.int",
+          "required": false,
+          "default": 0
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.omni-pro-video-to-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ]
+    },
+    "OmniProEditVideoNode": {
+      "aliases": [
+        "KlingOmniProEditVideoNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling 3.0 Omni Edit Video",
+      "inputs": [
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kling-v3-omni",
+          "options": [
+            "kling-v3-omni",
+            "kling-video-o1"
+          ]
+        },
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "video",
+          "type": "comfy.VIDEO",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "keep_original_sound",
+          "type": "core.boolean",
+          "required": true,
+          "default": true
+        },
+        {
+          "id": "reference_images",
+          "type": "comfy.IMAGE",
+          "required": false,
+          "default": null
+        },
+        {
+          "id": "resolution",
+          "type": "core.combo",
+          "required": true,
+          "default": "1080p",
+          "options": [
+            "1080p",
+            "720p"
+          ]
+        },
+        {
+          "id": "seed",
+          "type": "core.int",
+          "required": false,
+          "default": 0
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.omni-pro-edit-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ]
+    },
+    "OmniProImageNode": {
+      "aliases": [
+        "KlingOmniProImageNode"
+      ],
+      "category": "partner/image/Kling",
+      "display_name": "Kling 3.0 Omni Image",
+      "inputs": [
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kling-v3-omni",
+          "options": [
+            "kling-v3-omni",
+            "kling-image-o1"
+          ]
+        },
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "resolution",
+          "type": "core.combo",
+          "required": true,
+          "default": "1K",
+          "options": [
+            "1K",
+            "2K",
+            "4K"
+          ]
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "core.combo",
+          "required": true,
+          "default": "16:9",
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:4",
+            "3:2",
+            "2:3",
+            "21:9"
+          ]
+        },
+        {
+          "id": "series_amount",
+          "type": "core.combo",
+          "required": true,
+          "default": "disabled",
+          "options": [
+            "disabled",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9"
+          ]
+        },
+        {
+          "id": "reference_images",
+          "type": "comfy.IMAGE",
+          "required": false,
+          "default": null
+        },
+        {
+          "id": "seed",
+          "type": "core.int",
+          "required": false,
+          "default": 0
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.omni-pro-image",
+      "outputs": [
+        {
+          "id": "image",
+          "type": "comfy.IMAGE"
+        }
+      ]
+    },
+    "TextToVideoWithAudio": {
+      "aliases": [
+        "KlingTextToVideoWithAudio"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling 2.6 Text to Video with Audio",
+      "inputs": [
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kling-v2-6",
+          "options": [
+            "kling-v2-6"
+          ]
+        },
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "mode",
+          "type": "core.combo",
+          "required": true,
+          "default": "pro",
+          "options": [
+            "pro"
+          ]
+        },
+        {
+          "id": "aspect_ratio",
+          "type": "core.combo",
+          "required": true,
+          "default": "16:9",
+          "options": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ]
+        },
+        {
+          "id": "duration",
+          "type": "core.combo",
+          "required": true,
+          "default": "5",
+          "options": [
+            "5",
+            "10"
+          ]
+        },
+        {
+          "id": "generate_audio",
+          "type": "core.boolean",
+          "required": true,
+          "default": true
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.text-to-video-with-audio",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ]
+    },
+    "ImageToVideoWithAudio": {
+      "aliases": [
+        "KlingImageToVideoWithAudio"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling 2.6 Image(First Frame) to Video with Audio",
+      "inputs": [
+        {
+          "id": "model_name",
+          "type": "core.combo",
+          "required": true,
+          "default": "kling-v2-6",
+          "options": [
+            "kling-v2-6"
+          ]
+        },
+        {
+          "id": "start_frame",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "mode",
+          "type": "core.combo",
+          "required": true,
+          "default": "pro",
+          "options": [
+            "pro"
+          ]
+        },
+        {
+          "id": "duration",
+          "type": "core.combo",
+          "required": true,
+          "default": "5",
+          "options": [
+            "5",
+            "10"
+          ]
+        },
+        {
+          "id": "generate_audio",
+          "type": "core.boolean",
+          "required": true,
+          "default": true
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.image-to-video-with-audio",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ]
+    },
+    "MotionControl": {
+      "aliases": [
+        "KlingMotionControl"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Motion Control",
+      "inputs": [
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "reference_image",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "reference_video",
+          "type": "comfy.VIDEO",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "keep_original_sound",
+          "type": "core.boolean",
+          "required": true,
+          "default": true
+        },
+        {
+          "id": "character_orientation",
+          "type": "core.combo",
+          "required": true,
+          "default": "video",
+          "options": [
+            "video",
+            "image"
+          ]
+        },
+        {
+          "id": "mode",
+          "type": "core.combo",
+          "required": true,
+          "default": "pro",
+          "options": [
+            "pro",
+            "std"
+          ]
+        },
+        {
+          "id": "model",
+          "type": "core.combo",
+          "required": false,
+          "default": "kling-v2-6",
+          "options": [
+            "kling-v3",
+            "kling-v2-6"
+          ]
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.motion-control",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ]
+    },
+    "KlingFirstLastFrameNode": {
+      "aliases": [
+        "KlingFirstLastFrameNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling 3.0 First-Last-Frame to Video",
+      "inputs": [
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": true,
+          "default": ""
+        },
+        {
+          "id": "duration",
+          "type": "core.int",
+          "required": true,
+          "default": 5
+        },
+        {
+          "id": "first_frame",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "end_frame",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "generate_audio",
+          "type": "core.boolean",
+          "required": true,
+          "default": true
+        },
+        {
+          "id": "seed",
+          "type": "core.int",
+          "required": true,
+          "default": 0
+        }
+      ],
+      "dynamic_combos": [
+        {
+          "id": "model",
+          "required": true,
+          "default": null,
+          "options": [
+            {
+              "key": "kling-v3",
+              "inputs": [
+                {
+                  "id": "resolution",
+                  "type": "core.combo",
+                  "required": true,
+                  "default": "1080p",
+                  "options": [
+                    "4k",
+                    "1080p",
+                    "720p"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "node_type": "partner.kling.first-last-frame",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ]
+    },
+    "KlingAvatarNode": {
+      "aliases": [
+        "KlingAvatarNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling Avatar 2.0",
+      "inputs": [
+        {
+          "id": "image",
+          "type": "comfy.IMAGE",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "sound_file",
+          "type": "comfy.AUDIO",
+          "required": true,
+          "default": null
+        },
+        {
+          "id": "mode",
+          "type": "core.combo",
+          "required": true,
+          "default": "std",
+          "options": [
+            "std",
+            "pro"
+          ]
+        },
+        {
+          "id": "prompt",
+          "type": "core.string",
+          "required": false,
+          "default": ""
+        },
+        {
+          "id": "seed",
+          "type": "core.int",
+          "required": true,
+          "default": 0
+        }
+      ],
+      "dynamic_combos": [],
+      "node_type": "partner.kling.avatar",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ]
+    },
+    "KlingVideoNode": {
+      "aliases": [
+        "KlingVideoNode"
+      ],
+      "category": "partner/video/Kling",
+      "display_name": "Kling 3.0 Video",
+      "inputs": [
+        {
+          "id": "generate_audio",
+          "type": "core.boolean",
+          "required": true,
+          "default": true
+        },
+        {
+          "id": "seed",
+          "type": "core.int",
+          "required": true,
+          "default": 0
+        },
+        {
+          "id": "start_frame",
+          "type": "comfy.IMAGE",
+          "required": false,
+          "default": null
+        }
+      ],
+      "dynamic_combos": [
+        {
+          "id": "multi_shot",
+          "required": true,
+          "default": null,
+          "options": [
+            {
+              "key": "disabled",
+              "inputs": [
+                {
+                  "id": "prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "negative_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 5
+                }
+              ]
+            },
+            {
+              "key": "1 storyboard",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "2 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "3 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "4 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_4_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_4_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "5 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_4_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_4_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_5_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_5_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            },
+            {
+              "key": "6 storyboards",
+              "inputs": [
+                {
+                  "id": "storyboard_1_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_1_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_2_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_2_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_3_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_3_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_4_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_4_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_5_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_5_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                },
+                {
+                  "id": "storyboard_6_prompt",
+                  "type": "core.string",
+                  "required": true,
+                  "default": ""
+                },
+                {
+                  "id": "storyboard_6_duration",
+                  "type": "core.int",
+                  "required": true,
+                  "default": 4
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "model",
+          "required": true,
+          "default": null,
+          "options": [
+            {
+              "key": "kling-v3",
+              "inputs": [
+                {
+                  "id": "resolution",
+                  "type": "core.combo",
+                  "required": true,
+                  "default": "1080p",
+                  "options": [
+                    "4k",
+                    "1080p",
+                    "720p"
+                  ]
+                },
+                {
+                  "id": "aspect_ratio",
+                  "type": "core.combo",
+                  "required": true,
+                  "default": "16:9",
+                  "options": [
+                    "16:9",
+                    "9:16",
+                    "1:1"
+                  ]
+                }
+              ]
+            },
+            {
+              "key": "kling-3.0-turbo",
+              "inputs": [
+                {
+                  "id": "resolution",
+                  "type": "core.combo",
+                  "required": true,
+                  "default": "720p",
+                  "options": [
+                    "1080p",
+                    "720p"
+                  ]
+                },
+                {
+                  "id": "aspect_ratio",
+                  "type": "core.combo",
+                  "required": true,
+                  "default": "16:9",
+                  "options": [
+                    "16:9",
+                    "9:16",
+                    "1:1"
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "node_type": "partner.kling.video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "commit": "e651b7bef55a5376343dcb1c0edb79f0142c985e",
+    "source": "comfy_api_nodes/nodes_kling.py"
+  }
+}

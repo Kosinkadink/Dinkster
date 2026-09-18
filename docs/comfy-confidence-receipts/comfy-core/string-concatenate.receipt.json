@@ -1,0 +1,60 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 171,
+      "path": "artifacts/comfy-core/string-concatenate.native.json",
+      "sha256": "sha256:c783517a2af9e83051c9307acaa4011c83fd7ce63eae59cd942c89613b03b745"
+    },
+    "reference": {
+      "bytes": 171,
+      "path": "artifacts/comfy-core/string-concatenate.reference.json",
+      "sha256": "sha256:c783517a2af9e83051c9307acaa4011c83fd7ce63eae59cd942c89613b03b745"
+    }
+  },
+  "caseId": "comfy-core/string-concatenate/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/StringConcatenate",
+    "source": {
+      "name": "StringConcatenate",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "std.string.concat",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "cases": [
+      {
+        "id": "empty-delimiter",
+        "inputs": {
+          "delimiter": "",
+          "string_a": "alpha",
+          "string_b": "beta"
+        }
+      },
+      {
+        "id": "unicode",
+        "inputs": {
+          "delimiter": " | ",
+          "string_a": "caf\u00e9",
+          "string_b": "\u6771\u4eac"
+        }
+      }
+    ],
+    "mappingDigest": "sha256:0d981aef2840a2610b324629946b92da4a05a07495435ceae4bfccba46722ae1"
+  },
+  "pass": true
+}

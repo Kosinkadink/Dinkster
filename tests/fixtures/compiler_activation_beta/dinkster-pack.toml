@@ -1,0 +1,10 @@
+[pack]
+name = "compiler_activation_beta"
+namespaces = ["compiler_activation_beta"]
+
+[pack.entry]
+nodes = "compiler_activation_beta_pack:NODES"
+
+[pack.extension]
+inference = "compiler_activation_beta_pack:register"
+privileges = ["inference"]

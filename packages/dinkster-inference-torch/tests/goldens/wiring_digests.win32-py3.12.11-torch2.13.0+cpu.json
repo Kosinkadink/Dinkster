@@ -1,0 +1,14 @@
+{
+  "_meta": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "platform": "win32",
+    "python": "Python 3.12.11",
+    "torch": "2.13.0+cpu"
+  },
+  "digests": {
+    "flux_cfg_one": "a17ec78c3b1534d9fcdd8ba6054b4502fc87b274541998fcda0be0595ade4168",
+    "flux_multi_window": "99284ca4f590e1822b08184690f4301c5797bf71d834f293d9330aad2bc58de5",
+    "sd15_cfg_one": "55f9ebc1e40df1d9efaf5d86c7aeec9f8a92edeba1c1a3d88388405dca9dc939",
+    "sd15_inpaint": "777ffcd3a296a0e082a5173c159e7e0897c25a216c1e5ff301b0b93322e2fec0"
+  }
+}

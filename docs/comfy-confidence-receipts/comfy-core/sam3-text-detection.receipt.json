@@ -1,0 +1,54 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 445,
+      "path": "artifacts/comfy-core/sam3-text-detection.native.json",
+      "sha256": "sha256:575c8a153aefb854cfdab8a3e19acf7940a747279f1accf00a53e3023ee0ade9"
+    },
+    "reference": {
+      "bytes": 445,
+      "path": "artifacts/comfy-core/sam3-text-detection.reference.json",
+      "sha256": "sha256:575c8a153aefb854cfdab8a3e19acf7940a747279f1accf00a53e3023ee0ade9"
+    }
+  },
+  "caseId": "comfy-core/sam3-text-detection/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_group:comfy-core/sam3-text-detection",
+    "source": {
+      "name": "sam3-text-detection",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "c67885b1"
+    },
+    "target": {
+      "id": "dinkster.detection.detect",
+      "kind": "group"
+    },
+    "tier": "grouped"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "cases": [
+      {
+        "id": "literal-text",
+        "sourceInputs": {
+          "image": "fixture:image-batch",
+          "text": "person",
+          "threshold": 0.35
+        }
+      }
+    ],
+    "mappingDigest": "sha256:7b799470d47dc02244e262c8bbb87a493eaeb113ae9faaa16ac56190241bd144",
+    "scope": "group input, output, provider, and parameter translation",
+    "sourceCommit": "c67885b14556cf3e4e061862925282d403d09862"
+  },
+  "pass": true
+}

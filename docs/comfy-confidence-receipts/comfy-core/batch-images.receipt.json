@@ -1,0 +1,66 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 608,
+      "path": "artifacts/comfy-core/batch-images.native.npy",
+      "sha256": "sha256:0f5c789731a4e23e9a98c6e0b8da5ecd6aab52c90b462c75dbd08d82a57afcf1"
+    },
+    "reference": {
+      "bytes": 608,
+      "path": "artifacts/comfy-core/batch-images.reference.npy",
+      "sha256": "sha256:554e653a8ab294b4ef11cd9adc2e820e6bf859d73f2e87fe86438057bda1c92b"
+    }
+  },
+  "caseId": "comfy-core/batch-images/source-parity",
+  "comparison": {
+    "comparator": "numeric-array/1",
+    "dataKind": "image",
+    "tolerances": [
+      {
+        "metric": "max_abs",
+        "operator": "<=",
+        "value": 1e-07
+      }
+    ]
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/BatchImagesNode",
+    "source": {
+      "name": "BatchImagesNode",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.image.batch.combine",
+      "kind": "node"
+    },
+    "tier": "equivalent"
+  },
+  "observed": {
+    "max_abs": 5.960464477539063e-08,
+    "mean_abs": 3.6011139551798503e-09,
+    "mismatch_fraction": 0.125,
+    "shape_equal": true
+  },
+  "parameters": {
+    "inputShapes": [
+      [
+        1,
+        3,
+        5,
+        3
+      ],
+      [
+        1,
+        6,
+        10,
+        4
+      ]
+    ],
+    "mappingDigest": "sha256:42520eaa6fb6469442f5d91efd4f5092ac1afb9acd99befa20b9584f2aa2ed3c"
+  },
+  "pass": true
+}

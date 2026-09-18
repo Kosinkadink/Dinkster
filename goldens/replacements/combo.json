@@ -1,0 +1,180 @@
+{
+  "schemas": [
+    {
+      "schemaVersion": 40,
+      "nodeType": "fixture.combo-contract",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "choice",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": true,
+          "default": "alpha",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              {
+                "value": "alpha",
+                "label": "Alpha",
+                "info": "Primary choice",
+                "folder": "Featured"
+              },
+              "beta"
+            ],
+            "remote": {
+              "route": "/api/choices/fixture.combo",
+              "refreshButton": true,
+              "controlAfterRefresh": "last",
+              "timeoutMs": 4096,
+              "maxRetries": 2,
+              "refreshMs": 0
+            },
+            "controlAfterGenerate": "randomize"
+          }
+        },
+        {
+          "role": "input",
+          "id": "providers",
+          "type": {
+            "kind": "list",
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "core.combo"
+              ]
+            }
+          },
+          "required": false,
+          "default": [
+            "beta",
+            "alpha",
+            "beta"
+          ],
+          "widget": {
+            "type": "MULTI_COMBO",
+            "options": [
+              {
+                "value": "beta",
+                "label": "Beta provider",
+                "info": "Preferred provider",
+                "folder": "Providers/Featured"
+              },
+              "alpha",
+              "beta"
+            ],
+            "remote": {
+              "route": "/api/choices/fixture.providers",
+              "refreshButton": true,
+              "controlAfterRefresh": "last",
+              "timeoutMs": 4096,
+              "maxRetries": 2,
+              "refreshMs": 0
+            },
+            "placeholder": "Select providers",
+            "chip": false
+          }
+        },
+        {
+          "role": "input",
+          "id": "prompt",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": true,
+          "widget": {
+            "type": "REPRESENTATIONS",
+            "default": "multiline",
+            "userSwitchable": true,
+            "representations": [
+              {
+                "id": "single-line",
+                "widget": {
+                  "type": "STRING",
+                  "multiline": false,
+                  "placeholder": "Describe an image",
+                  "dynamicPrompts": false
+                },
+                "displayName": "Single line"
+              },
+              {
+                "id": "multiline",
+                "widget": {
+                  "type": "STRING",
+                  "multiline": true,
+                  "placeholder": "Describe an image",
+                  "dynamicPrompts": true
+                },
+                "displayName": "Multiline"
+              }
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "scale",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": true,
+          "widget": {
+            "type": "NUMBER",
+            "round": 0.001
+          }
+        },
+        {
+          "role": "input",
+          "id": "color",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": true,
+          "widget": {
+            "type": "COLOR"
+          }
+        },
+        {
+          "role": "output",
+          "id": "choice",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "providers",
+          "type": {
+            "kind": "list",
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "core.combo"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

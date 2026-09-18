@@ -1,0 +1,111 @@
+name: Private backend release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: dinkster-backend-release
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const repo = await github.rest.repos.get(context.repo);
+            if (repo.data.full_name !== 'Kosinkadink/Dinkster' || !repo.data.private) {
+              throw new Error('Release publication requires the private Kosinkadink/Dinkster repository');
+            }
+            const runs = await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'ci.yml', head_sha: context.sha, event: 'push',
+            });
+            if (runs.data.workflow_runs[0]?.conclusion !== 'success') {
+              throw new Error('The exact main commit must have successful hosted CI before release');
+            }
+  build:
+    needs: authorize
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/configure-dinkster-identity
+        with:
+          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+      - run: uv run --no-project --python 3.12 scripts/build_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-release
+          path: dist/
+          if-no-files-found: error
+  install:
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: backend-release
+          path: dist
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+      - name: Install from the archive without a checkout
+        shell: bash
+        run: |
+          uv run --no-project --python 3.12 python -m zipfile -e dist/dinkster-backend-${GITHUB_SHA}.zip clean-install
+          uv run --no-project --python 3.12 clean-install/dinkster-backend-${GITHUB_SHA}/scripts/install.py
+          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster demo
+          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-serve --help
+          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-pack --help
+          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-installs --help
+          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync python clean-install/dinkster-backend-${GITHUB_SHA}/scripts/verify_release_install.py clean-install/dinkster-backend-${GITHUB_SHA}
+  publish:
+    needs: install
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: backend-release
+          path: dist
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const repo = await github.rest.repos.get(context.repo);
+            if (repo.data.full_name !== 'Kosinkadink/Dinkster' || !repo.data.private) {
+              throw new Error('Refusing public or foreign release publication');
+            }
+            const manifest = JSON.parse(fs.readFileSync('dist/backend-release.json', 'utf8'));
+            if (manifest.repository !== repo.data.full_name || manifest.commit !== context.sha ||
+                manifest.releaseTag !== `backend-${context.sha}`) {
+              throw new Error('Release manifest does not match the selected main commit');
+            }
+            const release = await github.rest.repos.createRelease({
+              ...context.repo, tag_name: manifest.releaseTag,
+              target_commitish: context.sha, name: manifest.releaseTag, draft: true,
+              prerelease: true,
+              body: `Private backend installer from [source](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${context.sha}). Download the ZIP and SHA256SUMS, then follow docs/install.md inside the archive. Requires uv and Internet access. The pinned identity dependency is bundled; no Git credentials are needed after download. No models or GPU runtime are bundled.`,
+            });
+            for (const name of fs.readdirSync('dist')) {
+              await github.rest.repos.uploadReleaseAsset({
+                ...context.repo, release_id: release.data.id, name,
+                data: fs.readFileSync(`dist/${name}`),
+              });
+            }
+            await github.rest.repos.updateRelease({
+              ...context.repo, release_id: release.data.id, draft: false,
+            });

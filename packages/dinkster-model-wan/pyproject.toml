@@ -1,0 +1,28 @@
+[project]
+name = "dinkster-model-wan"
+version = "0.0.1"
+description = "Dinkster first-party Wan model node pack"
+requires-python = ">=3.12"
+dependencies = [
+    "dinkster-api",
+    "dinkster-inference",
+    "dinkster-inference-torch",
+    "numpy>=1.26",
+    "scipy>=1.11",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_model_wan"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"dinkster-pack.toml" = "dinkster_model_wan_pack/dinkster-pack.toml"
+"src/dinkster_model_wan" = "dinkster_model_wan_pack/dinkster_model_wan"
+
+[tool.uv.sources]
+dinkster-api = { workspace = true }
+dinkster-inference = { workspace = true }
+dinkster-inference-torch = { workspace = true }

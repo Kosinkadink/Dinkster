@@ -1,0 +1,530 @@
+{
+  "format": "dinkster-capability-evidence-source/1",
+  "modelFamilies": [
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_sd_pipeline.py::test_sampling_case_matches_the_executed_reference"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.sd15",
+      "sourceIdentifiers": [
+        "SD15"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_ideogram4_runtime.py::test_sample_custom_routes_negative_lane_to_the_secondary_model"
+        },
+        {
+          "kind": "official-checkpoint",
+          "selector": "tools/inference_parity/ideogram4_e2e.py"
+        },
+        {
+          "kind": "source-correctness",
+          "selector": "packages/dinkster-inference-torch/tests/test_ideogram4_dit.py::test_forward_and_intermediates_match_reference"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.ideogram4",
+      "sourceIdentifiers": [
+        "Ideogram4"
+      ],
+      "state": "proven",
+      "tier": "T3"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_minimax_music3.py::test_ksampler_is_bit_equal_sugar_over_custom_sampling"
+        },
+        {
+          "kind": "official-checkpoint",
+          "selector": "packages/dinkster-inference-torch/tests/test_minimax_music3_official_gpu.py::test_official_minimax_music3_artifacts_load_and_execute_on_cuda"
+        },
+        {
+          "kind": "source-correctness",
+          "selector": "packages/dinkster-inference-torch/tests/test_minimax_music3_official_gpu.py::test_official_minimax_music3_source_parity_on_cuda"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.minimax_music3",
+      "sourceIdentifiers": [
+        "MiniMaxMusic3"
+      ],
+      "state": "proven",
+      "tier": "T3"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_sd_pipeline.py::test_sampling_case_matches_the_executed_reference"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.sdxl",
+      "sourceIdentifiers": [
+        "SDXL"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_sd_pipeline.py::test_sampling_case_matches_the_executed_reference"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.sdxl_refiner",
+      "sourceIdentifiers": [
+        "SDXLRefiner"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_flux.py::test_forward_matches_executed_reference"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.flux_dev",
+      "sourceIdentifiers": [
+        "Flux"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_flux.py::test_forward_matches_executed_reference"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.flux_schnell",
+      "sourceIdentifiers": [
+        "FluxSchnell"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_chroma_runtime.py::test_runtime_satisfies_custom_sampling_and_executes_flow"
+        },
+        {
+          "kind": "official-checkpoint",
+          "selector": "packages/dinkster-inference-torch/tests/test_chroma_official_gpu.py::test_official_chroma_family_loads_text_codec_and_samples_on_cuda"
+        },
+        {
+          "kind": "source-correctness",
+          "selector": "packages/dinkster-inference-torch/tests/test_chroma.py::test_forward_matches_executed_reference"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.chroma",
+      "sourceIdentifiers": [
+        "Chroma"
+      ],
+      "state": "proven",
+      "tier": "T3"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_chroma_runtime.py::test_radiance_option_windows_are_inclusive_and_oldest_active_wins"
+        },
+        {
+          "kind": "official-checkpoint",
+          "selector": "packages/dinkster-inference-torch/tests/test_chroma_official_gpu.py::test_official_chroma_family_loads_text_codec_and_samples_on_cuda"
+        },
+        {
+          "kind": "source-correctness",
+          "selector": "packages/dinkster-inference-torch/tests/test_chroma.py::test_forward_matches_executed_reference"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.chroma_radiance",
+      "sourceIdentifiers": [
+        "ChromaRadiance"
+      ],
+      "state": "proven",
+      "tier": "T3"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_flux2_runtime.py::test_flux2_runtime_init_selects_encoder_by_architecture_and_binds_codec"
+        }
+      ],
+      "exposure": "implemented",
+      "id": "dinkster.flux2_dev",
+      "sourceIdentifiers": [
+        "Flux2"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_flux2_runtime.py::test_flux2_runtime_init_selects_encoder_by_architecture_and_binds_codec"
+        }
+      ],
+      "exposure": "implemented",
+      "id": "dinkster.flux2_klein_9b",
+      "sourceIdentifiers": [
+        "Flux2"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_flux2_runtime.py::test_flux2_runtime_init_selects_encoder_by_architecture_and_binds_codec"
+        }
+      ],
+      "exposure": "implemented",
+      "id": "dinkster.flux2_klein_4b",
+      "sourceIdentifiers": [
+        "Flux2"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_wan21_runtime.py::test_runtime_executes_cfg_on_shift8_flow_with_video_stream_state"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.wan21",
+      "sourceIdentifiers": [
+        "WAN21_T2V"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_wan21_runtime.py::test_wan22_14b_high_low_noise_models_compose_at_step_ten"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.wan22",
+      "sourceIdentifiers": [
+        "WAN22_T2V"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_ltxv_runtime.py::test_explicit_sampling_shift_runs_the_engine"
+        }
+      ],
+      "exposure": "implemented",
+      "id": "dinkster.ltxv",
+      "sourceIdentifiers": [
+        "LTXV"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_ltxav_runtime.py::test_explicit_sampling_shift_runs_the_engine"
+        }
+      ],
+      "exposure": "implemented",
+      "id": "dinkster.ltxav",
+      "sourceIdentifiers": [
+        "LTXAV"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_qwen_image_runtime.py::test_native_runtime_encodes_edit_plus_vision_and_reference_latents"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.qwen_image",
+      "sourceIdentifiers": [
+        "QwenImage"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_z_image_runtime.py::test_z_image_runtime_samples_in_shift_three_flow_space"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.z_image",
+      "sourceIdentifiers": [
+        "ZImage"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_z_image_runtime.py::test_z_image_runtime_samples_in_shift_three_flow_space"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.z_image_pixel_space",
+      "sourceIdentifiers": [
+        "ZImagePixelSpace"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_minimax_h3_runtime.py::test_ksampler_surface_is_bit_equal_sugar_over_sample_custom"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.minimax_h3",
+      "sourceIdentifiers": [
+        "MiniMaxH3"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_krea2_runtime.py::test_ksampler_surface_is_bit_equal_sugar_over_sample_custom"
+        }
+      ],
+      "exposure": "implemented",
+      "id": "dinkster.krea2",
+      "sourceIdentifiers": [
+        "Krea2"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_seedvr2_runtime.py::test_ksampler_is_sugar_over_seedvr2_custom_sampling"
+        },
+        {
+          "kind": "official-checkpoint",
+          "selector": "tools/validate_seedvr2_e2e.py"
+        },
+        {
+          "kind": "source-correctness",
+          "selector": "packages/dinkster-inference-torch/tests/test_seedvr2_models.py::test_dit_matches_executed_reference"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.seedvr2",
+      "sourceIdentifiers": [
+        "SeedVR2"
+      ],
+      "state": "proven",
+      "tier": "T3"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_anima_runtime.py::test_ksampler_surface_is_bit_equal_sugar_over_sample_custom"
+        }
+      ],
+      "exposure": "implemented",
+      "id": "dinkster.anima",
+      "sourceIdentifiers": [
+        "Anima"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_lumina2_runtime.py::test_ksampler_is_bit_equal_sugar_over_custom_sampling"
+        },
+        {
+          "kind": "official-checkpoint",
+          "selector": "tools/run_lumina2_official.py"
+        },
+        {
+          "kind": "source-correctness",
+          "selector": "packages/dinkster-inference-torch/tests/test_lumina2_model.py::test_forward_and_blocks_match_executed_reference"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.lumina2",
+      "sourceIdentifiers": [
+        "Lumina2"
+      ],
+      "state": "proven",
+      "tier": "T3"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-inference-torch/tests/test_triposplat_runtime.py::test_sampling_reproduces_the_reference_nested_noise_draw"
+        }
+      ],
+      "exposure": "implemented",
+      "id": "dinkster.triposplat",
+      "sourceIdentifiers": [
+        "TripoSplat"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
+          "selector": "tests/test_native_arm.py::test_trellis2_conditioning_connects_to_both_sampling_surfaces"
+        },
+        {
+          "kind": "official-checkpoint",
+          "selector": "packages/dinkster-inference-torch/tests/test_trellis2_official_gpu.py::test_official_trellis2_components_match_pinned_source_goldens"
+        },
+        {
+          "kind": "source-correctness",
+          "selector": "packages/dinkster-inference-torch/tests/test_trellis2_official_gpu.py::test_official_trellis2_components_match_pinned_source_goldens"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.trellis2",
+      "sourceIdentifiers": [
+        "Trellis2"
+      ],
+      "state": "proven",
+      "tier": "T3"
+    }
+  ],
+  "templateFeatures": {
+    "adapterNodeTypes": [
+      "ControlNetApplyAdvanced",
+      "ControlNetInpaintingAliMamaApply",
+      "ControlNetLoader",
+      "IPAdapterBatch",
+      "IPAdapterMS",
+      "IPAdapterModelLoader",
+      "IPAdapterUnifiedLoader",
+      "IPAdapterWeights",
+      "ModelPatchLoader",
+      "QwenImageDiffsynthControlnet"
+    ],
+    "loraNodeTypes": [
+      "ADE_AnimateDiffLoRALoader",
+      "GetICLoRAParameters",
+      "LTXAddVideoICLoRAGuide",
+      "LTXICLoRALoaderModelOnly",
+      "LoraLoader",
+      "LoraLoaderModelOnly",
+      "WanVideoLoraSelect",
+      "WanVideoLoraSelectMulti",
+      "WanVideoSetLoRAs"
+    ],
+    "lowStepLoraPaths": [
+      {
+        "loraNode": {
+          "id": 114,
+          "type": "LoraLoaderModelOnly"
+        },
+        "path": "image_qwen_image_2512_with_2steps_lora.json",
+        "samplerNode": {
+          "id": 106,
+          "stepWidgetIndex": 2,
+          "steps": 2,
+          "type": "KSampler"
+        }
+      },
+      {
+        "loraNode": {
+          "id": 15,
+          "type": "LoraLoaderModelOnly"
+        },
+        "path": "image_krea2_turbo_int8_image_style_reference.json",
+        "samplerNode": {
+          "id": 60,
+          "stepWidgetIndex": 1,
+          "steps": 8,
+          "type": "BasicScheduler"
+        }
+      },
+      {
+        "loraNode": {
+          "id": 15,
+          "type": "LoraLoaderModelOnly"
+        },
+        "path": "image_krea2_turbo_t2i.json",
+        "samplerNode": {
+          "id": 3,
+          "stepWidgetIndex": 2,
+          "steps": 8,
+          "type": "KSampler"
+        }
+      },
+      {
+        "loraNode": {
+          "id": 15,
+          "type": "LoraLoaderModelOnly"
+        },
+        "path": "image_krea2_turbo_t2i_int8.json",
+        "samplerNode": {
+          "id": 3,
+          "stepWidgetIndex": 2,
+          "steps": 8,
+          "type": "KSampler"
+        }
+      }
+    ]
+  }
+}

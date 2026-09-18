@@ -1,0 +1,55 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 1458,
+      "path": "artifacts/comfy-core/save-image.native.json",
+      "sha256": "sha256:92e89ba949a233dddb63d8a529d1e2adb88def0485a53c93cc4238403949c86f"
+    },
+    "reference": {
+      "bytes": 1458,
+      "path": "artifacts/comfy-core/save-image.reference.json",
+      "sha256": "sha256:92e89ba949a233dddb63d8a529d1e2adb88def0485a53c93cc4238403949c86f"
+    }
+  },
+  "caseId": "comfy-core/save-image/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/SaveImage",
+    "source": {
+      "name": "SaveImage",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.save_image",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "batchSize": 2,
+    "compression": 4,
+    "format": "png",
+    "mappingDigest": "sha256:f315c87aa53814aded776ae798d178fe4cbc8678aa634b40412426c8f7e985e0",
+    "metadataKeys": [
+      "prompt",
+      "workflow"
+    ],
+    "nativeOnlyInput": "metadata_json is supplied directly to exercise PNG metadata writes; translation does not infer ComfyUI hidden prompt metadata",
+    "scope": "PNG filesystem writes, batch order, uint8 truncation, metadata, and image passthrough",
+    "targetPrefix": "nested/receipt",
+    "uncompared": [
+      "ComfyUI and Dinkster use intentionally different collision-suffix filename spellings"
+    ]
+  },
+  "pass": true
+}

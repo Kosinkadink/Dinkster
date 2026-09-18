@@ -1,0 +1,424 @@
+{
+  "format": "dinkster-comfy-direct-operation-golden/1",
+  "operations": [
+    {
+      "cases": [
+        {
+          "inputs": {
+            "batch_size": 2,
+            "height": 480,
+            "layers": 3,
+            "width": 640
+          },
+          "output": {
+            "dtype": "float32",
+            "nonzero": 0,
+            "sha256": "54f980b5b3be8ce80cb6490c527e38d681deade50f239f2cb7d23cf9d0108c37",
+            "shape": [
+              2,
+              16,
+              4,
+              60,
+              80
+            ]
+          }
+        },
+        {
+          "inputs": {
+            "batch_size": 1,
+            "height": 16,
+            "layers": 0,
+            "width": 32
+          },
+          "output": {
+            "dtype": "float32",
+            "nonzero": 0,
+            "sha256": "076a27c79e5ace2a3d47f9dd2e83e4ff6ea8872b3c2218f66c92b89b55f36560",
+            "shape": [
+              1,
+              16,
+              1,
+              2,
+              4
+            ]
+          }
+        }
+      ],
+      "nativeNode": "dinkster.empty_qwen_image_layered_latent",
+      "scope": "operation-only-not-family-parity",
+      "sourceNode": "EmptyQwenImageLayeredLatentImage",
+      "sourcePath": "comfy_extras/nodes_qwen.py"
+    },
+    {
+      "cases": [
+        {
+          "inputs": {
+            "images": {
+              "data": [
+                0.0,
+                1.0,
+                2.0,
+                3.0,
+                4.0,
+                5.0,
+                6.0,
+                7.0,
+                8.0,
+                9.0,
+                10.0,
+                11.0,
+                12.0,
+                13.0,
+                14.0,
+                15.0
+              ],
+              "dtype": "float32",
+              "shape": [
+                4,
+                2,
+                2,
+                1
+              ]
+            },
+            "num_segments": 2,
+            "sample_rate": 30,
+            "segment_length": 4,
+            "waveform": {
+              "data": [
+                0.0,
+                1.0,
+                2.0,
+                3.0,
+                4.0,
+                5.0,
+                6.0,
+                7.0,
+                8.0,
+                9.0,
+                10.0,
+                11.0
+              ],
+              "dtype": "float32",
+              "shape": [
+                1,
+                1,
+                12
+              ]
+            }
+          },
+          "outputs": [
+            {
+              "keyframes": {
+                "dtype": "float32",
+                "nonzero": 7,
+                "sha256": "48d4af22a2eee615d75cde43f585cccb3758b51453cf60cfa2c2fd68bf7d9dc6",
+                "shape": [
+                  4,
+                  2,
+                  2,
+                  1
+                ]
+              },
+              "mask": {
+                "dtype": "float32",
+                "nonzero": 8,
+                "sha256": "f0bc7d9559abef398f1f63869acc001785758b47b71214ed58a18922effe7c7c",
+                "shape": [
+                  4,
+                  2,
+                  2
+                ]
+              },
+              "sampleRate": 30,
+              "waveform": {
+                "dtype": "float32",
+                "nonzero": 3,
+                "sha256": "4c9c4f354e74153db012329d71c8562ec23e498148174b2c49de58f45d47cdbe",
+                "shape": [
+                  1,
+                  1,
+                  4
+                ]
+              }
+            },
+            {
+              "keyframes": {
+                "dtype": "float32",
+                "nonzero": 8,
+                "sha256": "d3d264ad145e016d0a1b7ab3bd98f3c6ee5b61480bdf851032d44a1bf21f48e8",
+                "shape": [
+                  4,
+                  2,
+                  2,
+                  1
+                ]
+              },
+              "mask": {
+                "dtype": "float32",
+                "nonzero": 8,
+                "sha256": "f0bc7d9559abef398f1f63869acc001785758b47b71214ed58a18922effe7c7c",
+                "shape": [
+                  4,
+                  2,
+                  2
+                ]
+              },
+              "sampleRate": 30,
+              "waveform": {
+                "dtype": "float32",
+                "nonzero": 4,
+                "sha256": "d82f299e4191d2c0c0ebca42fa459837422c205e893df917a9e3c8d50eefc6b0",
+                "shape": [
+                  1,
+                  1,
+                  4
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "inputs": {
+            "images": {
+              "data": [
+                0.0,
+                1.0,
+                2.0,
+                3.0,
+                4.0,
+                5.0,
+                6.0,
+                7.0,
+                8.0,
+                9.0,
+                10.0,
+                11.0,
+                12.0,
+                13.0,
+                14.0,
+                15.0
+              ],
+              "dtype": "float32",
+              "shape": [
+                4,
+                2,
+                2,
+                1
+              ]
+            },
+            "num_segments": 3,
+            "sample_rate": 30,
+            "segment_length": 4,
+            "waveform": {
+              "data": [
+                0.0,
+                1.0,
+                2.0,
+                3.0,
+                4.0,
+                5.0,
+                6.0,
+                7.0,
+                8.0,
+                9.0,
+                10.0,
+                11.0
+              ],
+              "dtype": "float32",
+              "shape": [
+                1,
+                1,
+                12
+              ]
+            }
+          },
+          "outputs": [
+            {
+              "keyframes": {
+                "dtype": "float32",
+                "nonzero": 7,
+                "sha256": "48d4af22a2eee615d75cde43f585cccb3758b51453cf60cfa2c2fd68bf7d9dc6",
+                "shape": [
+                  4,
+                  2,
+                  2,
+                  1
+                ]
+              },
+              "mask": {
+                "dtype": "float32",
+                "nonzero": 8,
+                "sha256": "f0bc7d9559abef398f1f63869acc001785758b47b71214ed58a18922effe7c7c",
+                "shape": [
+                  4,
+                  2,
+                  2
+                ]
+              },
+              "sampleRate": 30,
+              "waveform": {
+                "dtype": "float32",
+                "nonzero": 3,
+                "sha256": "4c9c4f354e74153db012329d71c8562ec23e498148174b2c49de58f45d47cdbe",
+                "shape": [
+                  1,
+                  1,
+                  4
+                ]
+              }
+            },
+            {
+              "keyframes": {
+                "dtype": "float32",
+                "nonzero": 8,
+                "sha256": "d3d264ad145e016d0a1b7ab3bd98f3c6ee5b61480bdf851032d44a1bf21f48e8",
+                "shape": [
+                  4,
+                  2,
+                  2,
+                  1
+                ]
+              },
+              "mask": {
+                "dtype": "float32",
+                "nonzero": 8,
+                "sha256": "f0bc7d9559abef398f1f63869acc001785758b47b71214ed58a18922effe7c7c",
+                "shape": [
+                  4,
+                  2,
+                  2
+                ]
+              },
+              "sampleRate": 30,
+              "waveform": {
+                "dtype": "float32",
+                "nonzero": 4,
+                "sha256": "d82f299e4191d2c0c0ebca42fa459837422c205e893df917a9e3c8d50eefc6b0",
+                "shape": [
+                  1,
+                  1,
+                  4
+                ]
+              }
+            },
+            {
+              "keyframes": {
+                "dtype": "float32",
+                "nonzero": 8,
+                "sha256": "c887ceac1de812a3c1714279e231f92de3cd3a8464aa5812ffd546af490a2ed6",
+                "shape": [
+                  4,
+                  2,
+                  2,
+                  1
+                ]
+              },
+              "mask": {
+                "dtype": "float32",
+                "nonzero": 8,
+                "sha256": "f0bc7d9559abef398f1f63869acc001785758b47b71214ed58a18922effe7c7c",
+                "shape": [
+                  4,
+                  2,
+                  2
+                ]
+              },
+              "sampleRate": 30,
+              "waveform": {
+                "dtype": "float32",
+                "nonzero": 4,
+                "sha256": "9018a530b069da036c365420137e9f730dd2ac24a6782f636df999111f3ced54",
+                "shape": [
+                  1,
+                  1,
+                  4
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "nativeNode": "dinkster.wandancer.pad_keyframes_list",
+      "scope": "operation-only-not-family-parity",
+      "sourceNode": "WanDancerPadKeyframesList",
+      "sourcePath": "comfy_extras/nodes_wandancer.py"
+    },
+    {
+      "cases": [
+        {
+          "inputs": {
+            "audioFixture": "float32-mono-half-scale-440hz-sine",
+            "audioSamples": 8000,
+            "fps": 6.0,
+            "frameFixture": "float32-rgb-frame-index-and-constant-channels",
+            "frameShape": [
+              6,
+              64,
+              64,
+              3
+            ],
+            "sampleRate": 8000
+          },
+          "nativeObserved": {
+            "audioShape": [
+              1,
+              1,
+              8000
+            ],
+            "container": null,
+            "duration": 1.0,
+            "fps": 6.0,
+            "frameShape": [
+              6,
+              64,
+              64,
+              3
+            ],
+            "sampleRate": 8000,
+            "withinDeclaredBounds": {
+              "audio": true,
+              "frames": true
+            }
+          },
+          "sourceOutputs": {
+            "audio": {
+              "dtype": "float32",
+              "nonzero": 7999,
+              "sha256": "c50fffd014ee1bac42094d50d0f9f194790fba0b933a16f7f470f4aba31ae092",
+              "shape": [
+                1,
+                1,
+                8000
+              ]
+            },
+            "bitDepth": 8,
+            "colorSpace": "sRGB",
+            "fps": 6.0,
+            "images": {
+              "dtype": "float32",
+              "nonzero": 69632,
+              "sha256": "a0817cd917f977fa9e8bb290697dc885b9950c22d99847b83b007a8f8a36cca4",
+              "shape": [
+                6,
+                64,
+                64,
+                3
+              ]
+            },
+            "sampleRate": 8000
+          },
+          "verifiedBounds": {
+            "maxAudioAbs": 0.0,
+            "maxFrameAbs": 0.0
+          }
+        }
+      ],
+      "nativeNode": "dinkster.video.assemble + dinkster.video.disassemble",
+      "reason": "ComfyUI and Dinkster preserve these lazy source components exactly; this operation check does not establish translation coverage or encoder parity.",
+      "scope": "operation-only-not-mapping-parity",
+      "sourceNode": "CreateVideo + GetVideoComponents",
+      "sourcePath": "comfy_extras/nodes_video.py"
+    }
+  ],
+  "referenceCommit": "b78cec879b9460d5cb25228a83a942fb78d2cd24"
+}

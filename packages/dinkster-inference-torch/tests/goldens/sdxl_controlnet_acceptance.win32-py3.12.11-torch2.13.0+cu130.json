@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "platform": "win32",
+    "python": "Python 3.12.11",
+    "torch": "2.13.0+cu130"
+  },
+  "artifact": {
+    "repository": "diffusers/controlnet-canny-sdxl-1.0",
+    "revision": "eb115a19a10d14909256db740ed109532ab1483c",
+    "file": "diffusion_pytorch_model.fp16.safetensors",
+    "size": 2502139136,
+    "sha256": "b2e7d3921058a442cc80430d1ec8847f42599c705e2451c95e77cf4dcf8d6c25",
+    "blake3": "38b8924a1949fd2dea0edf12fde939f25ec3da3eafb690f9baf5dc2e461f7486"
+  },
+  "reference": {
+    "comfyui_commit": "de6b062fb5ed1c9b471a3ebcd614705d93d67560",
+    "comfyui_residuals_sha256": "37bb48f6e7a5baf12f2ef481bfe53f82fc2a80dc5ca0b67796ddd9d11209d893"
+  },
+  "workload": {
+    "seed": 20260821,
+    "latent_shape": [1, 4, 8, 8],
+    "hint_shape": [1, 3, 64, 64],
+    "context_shape": [1, 77, 2048],
+    "adm_shape": [1, 2816],
+    "timestep": 500.0
+  },
+  "result": {
+    "residuals_sha256": "37bb48f6e7a5baf12f2ef481bfe53f82fc2a80dc5ca0b67796ddd9d11209d893",
+    "residual_shapes": [
+      [1, 320, 8, 8],
+      [1, 320, 8, 8],
+      [1, 320, 8, 8],
+      [1, 320, 4, 4],
+      [1, 640, 4, 4],
+      [1, 640, 4, 4],
+      [1, 640, 2, 2],
+      [1, 1280, 2, 2],
+      [1, 1280, 2, 2],
+      [1, 1280, 2, 2]
+    ]
+  }
+}

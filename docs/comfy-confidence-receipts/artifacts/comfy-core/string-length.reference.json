@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "empty",
+      "output": 0
+    },
+    {
+      "id": "unicode-codepoints",
+      "output": 3
+    }
+  ]
+}

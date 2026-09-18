@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "counted",
+      "output": "x x a"
+    },
+    {
+      "id": "dotall",
+      "output": "joined"
+    }
+  ]
+}

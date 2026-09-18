@@ -1,0 +1,20 @@
+{
+  "cases": [
+    {
+      "id": "uppercase",
+      "output": "HELLO WORLD"
+    },
+    {
+      "id": "lowercase",
+      "output": "hello world"
+    },
+    {
+      "id": "capitalize",
+      "output": "Hello world"
+    },
+    {
+      "id": "title-case",
+      "output": "Hello World"
+    }
+  ]
+}

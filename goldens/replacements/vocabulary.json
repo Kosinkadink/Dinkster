@@ -1,0 +1,352 @@
+{
+  "schemas": [
+    {
+      "schemaVersion": 40,
+      "nodeType": "fixture.legacy",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "strength",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "input",
+          "id": "mode",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "input",
+          "id": "label",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "input",
+          "id": "enabled",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.boolean"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "input",
+          "id": "frames",
+          "type": {
+            "kind": "list",
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "core.string"
+              ]
+            }
+          },
+          "required": false
+        },
+        {
+          "role": "output",
+          "id": "result",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "mask",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "fixture.modern",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "picture",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "intensity",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": false,
+          "widget": {
+            "type": "NUMBER",
+            "display": "slider"
+          }
+        },
+        {
+          "role": "input",
+          "id": "quality",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "input",
+          "id": "caption",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "input",
+          "id": "frames",
+          "type": {
+            "kind": "list",
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "core.string"
+              ]
+            }
+          },
+          "required": false
+        },
+        {
+          "role": "output",
+          "id": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "alpha",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          }
+        }
+      ],
+      "replacements": [
+        {
+          "from": "fixture.legacy",
+          "note": "renamed and re-ranged in fixture pack 2.0",
+          "cases": [
+            {
+              "to": "fixture.modern",
+              "when": {
+                "kind": "all",
+                "of": [
+                  {
+                    "kind": "inputConnected",
+                    "input": "image"
+                  },
+                  {
+                    "kind": "any",
+                    "of": [
+                      {
+                        "kind": "valueEquals",
+                        "input": "mode",
+                        "value": "fast"
+                      },
+                      {
+                        "kind": "not",
+                        "of": {
+                          "kind": "valuePresent",
+                          "input": "label"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              "inputs": {
+                "picture": {
+                  "kind": "copy",
+                  "input": "image"
+                },
+                "intensity": {
+                  "kind": "value",
+                  "input": "strength",
+                  "transform": {
+                    "kind": "scale",
+                    "factor": 0.01,
+                    "offset": 0.5
+                  }
+                },
+                "quality": {
+                  "kind": "value",
+                  "input": "mode",
+                  "transform": {
+                    "kind": "enumRename",
+                    "map": {
+                      "fast": "draft",
+                      "slow": "final"
+                    }
+                  }
+                },
+                "frames": {
+                  "kind": "link",
+                  "input": "frames"
+                },
+                "caption": {
+                  "kind": "constant",
+                  "value": "migrated"
+                }
+              },
+              "outputs": {
+                "output": "result",
+                "alpha": "mask"
+              }
+            },
+            {
+              "to": "fixture.alternate",
+              "when": {
+                "kind": "valueEquals",
+                "input": "enabled",
+                "value": false
+              },
+              "inputs": {
+                "source": {
+                  "kind": "copy",
+                  "input": "image"
+                },
+                "amount": {
+                  "kind": "value",
+                  "input": "strength",
+                  "transform": {
+                    "kind": "scale",
+                    "factor": 2.0
+                  }
+                }
+              },
+              "outputs": {
+                "out": "result"
+              }
+            },
+            {
+              "to": "fixture.modern",
+              "inputs": {
+                "picture": {
+                  "kind": "copy",
+                  "input": "image"
+                }
+              },
+              "outputs": {
+                "output": "result"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "fixture.alternate",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "source",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "amount",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "output",
+          "id": "out",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+[project]
+name = "dinkster-model-ipadapter"
+version = "0.0.1"
+description = "Dinkster first-party native SD1.5 IP-Adapter node pack"
+requires-python = ">=3.12"
+dependencies = [
+    "dinkster-api",
+    "dinkster-inference",
+    "dinkster-inference-torch",
+    "numpy>=1.26",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_model_ipadapter"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"dinkster-pack.toml" = "dinkster_model_ipadapter_pack/dinkster-pack.toml"
+"src/dinkster_model_ipadapter" = "dinkster_model_ipadapter_pack/dinkster_model_ipadapter"
+
+[tool.uv.sources]
+dinkster-api = { workspace = true }
+dinkster-inference = { workspace = true }
+dinkster-inference-torch = { workspace = true }

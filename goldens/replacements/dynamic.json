@@ -1,0 +1,296 @@
+{
+  "schemas": [
+    {
+      "schemaVersion": 40,
+      "nodeType": "fixture.dynamic-legacy",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "color_value",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "tolerance",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "metric",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": true
+        }
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "fixture.dynamic-target",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "dynamicCombo",
+          "id": "policy",
+          "options": [
+            {
+              "key": "channel",
+              "inputs": [
+                {
+                  "role": "input",
+                  "id": "channel",
+                  "type": {
+                    "kind": "concrete",
+                    "types": [
+                      "core.string"
+                    ]
+                  },
+                  "required": true
+                }
+              ]
+            },
+            {
+              "key": "exact_color",
+              "inputs": [
+                {
+                  "role": "dynamicCombo",
+                  "id": "color_source",
+                  "options": [
+                    {
+                      "key": "hex",
+                      "inputs": [
+                        {
+                          "role": "input",
+                          "id": "color",
+                          "type": {
+                            "kind": "concrete",
+                            "types": [
+                              "core.string"
+                            ]
+                          },
+                          "required": true
+                        }
+                      ]
+                    },
+                    {
+                      "key": "integer",
+                      "inputs": [
+                        {
+                          "role": "input",
+                          "id": "color_value",
+                          "type": {
+                            "kind": "concrete",
+                            "types": [
+                              "core.int"
+                            ]
+                          },
+                          "required": true
+                        }
+                      ]
+                    },
+                    {
+                      "key": "channels",
+                      "inputs": [
+                        {
+                          "role": "input",
+                          "id": "red",
+                          "type": {
+                            "kind": "concrete",
+                            "types": [
+                              "core.int"
+                            ]
+                          },
+                          "required": true
+                        },
+                        {
+                          "role": "input",
+                          "id": "green",
+                          "type": {
+                            "kind": "concrete",
+                            "types": [
+                              "core.int"
+                            ]
+                          },
+                          "required": true
+                        },
+                        {
+                          "role": "input",
+                          "id": "blue",
+                          "type": {
+                            "kind": "concrete",
+                            "types": [
+                              "core.int"
+                            ]
+                          },
+                          "required": true
+                        }
+                      ]
+                    }
+                  ],
+                  "required": true
+                }
+              ]
+            },
+            {
+              "key": "tolerance_color",
+              "inputs": [
+                {
+                  "role": "dynamicCombo",
+                  "id": "color_source",
+                  "options": [
+                    {
+                      "key": "hex",
+                      "inputs": [
+                        {
+                          "role": "input",
+                          "id": "color",
+                          "type": {
+                            "kind": "concrete",
+                            "types": [
+                              "core.string"
+                            ]
+                          },
+                          "required": true
+                        }
+                      ]
+                    },
+                    {
+                      "key": "integer",
+                      "inputs": [
+                        {
+                          "role": "input",
+                          "id": "color_value",
+                          "type": {
+                            "kind": "concrete",
+                            "types": [
+                              "core.int"
+                            ]
+                          },
+                          "required": true
+                        }
+                      ]
+                    },
+                    {
+                      "key": "channels",
+                      "inputs": [
+                        {
+                          "role": "input",
+                          "id": "red",
+                          "type": {
+                            "kind": "concrete",
+                            "types": [
+                              "core.int"
+                            ]
+                          },
+                          "required": true
+                        },
+                        {
+                          "role": "input",
+                          "id": "green",
+                          "type": {
+                            "kind": "concrete",
+                            "types": [
+                              "core.int"
+                            ]
+                          },
+                          "required": true
+                        },
+                        {
+                          "role": "input",
+                          "id": "blue",
+                          "type": {
+                            "kind": "concrete",
+                            "types": [
+                              "core.int"
+                            ]
+                          },
+                          "required": true
+                        }
+                      ]
+                    }
+                  ],
+                  "required": true
+                },
+                {
+                  "role": "input",
+                  "id": "tolerance",
+                  "type": {
+                    "kind": "concrete",
+                    "types": [
+                      "core.float"
+                    ]
+                  },
+                  "required": true
+                },
+                {
+                  "role": "input",
+                  "id": "metric",
+                  "type": {
+                    "kind": "concrete",
+                    "types": [
+                      "core.string"
+                    ]
+                  },
+                  "required": true
+                }
+              ]
+            }
+          ],
+          "required": true
+        }
+      ],
+      "replacements": [
+        {
+          "from": "fixture.dynamic-legacy",
+          "cases": [
+            {
+              "to": "fixture.dynamic-target",
+              "slotVariants": {
+                "policy": "tolerance_color",
+                "policy.color_source": "integer"
+              },
+              "inputs": {
+                "policy.color_source.color_value": {
+                  "kind": "copy",
+                  "input": "color_value"
+                },
+                "policy.tolerance": {
+                  "kind": "copy",
+                  "input": "tolerance"
+                },
+                "policy.metric": {
+                  "kind": "copy",
+                  "input": "metric"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

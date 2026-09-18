@@ -1,0 +1,28 @@
+{
+  "results": [
+    {
+      "case": "lineart-realistic",
+      "outputDtype": "float32",
+      "outputFloat32Sha256": "e86a79d338d9d7b0ce183ae7f69e5351b7c2b45ab2632e8e3d2ce5a2c5c0e9c3",
+      "outputShape": [
+        1,
+        512,
+        615,
+        3
+      ],
+      "repeatMaxAbsDiff": 0.0
+    },
+    {
+      "case": "lineart-realistic-coarse",
+      "outputDtype": "float32",
+      "outputFloat32Sha256": "bae86413db384a4396f6d610a1d45731131956fc8c7536837ccd76dea4f8f994",
+      "outputShape": [
+        1,
+        512,
+        615,
+        3
+      ],
+      "repeatMaxAbsDiff": 0.0
+    }
+  ]
+}

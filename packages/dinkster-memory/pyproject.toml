@@ -1,0 +1,16 @@
+[project]
+name = "dinkster-memory"
+version = "0.0.1"
+description = "Dinkster memory governance: budgets, reservations, pressure-driven shedding"
+requires-python = ">=3.12"
+dependencies = ["dinkster-values", "psutil>=5.9"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_memory"]
+
+[tool.uv.sources]
+dinkster-values = { workspace = true }

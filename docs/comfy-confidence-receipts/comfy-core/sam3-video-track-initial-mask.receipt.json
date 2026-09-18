@@ -1,0 +1,53 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 369,
+      "path": "artifacts/comfy-core/sam3-video-track-initial-mask.native.json",
+      "sha256": "sha256:4a96b5a4007aaa5d31e0378f70be53783b225883d117a556bc255fa5502be1cb"
+    },
+    "reference": {
+      "bytes": 369,
+      "path": "artifacts/comfy-core/sam3-video-track-initial-mask.reference.json",
+      "sha256": "sha256:4a96b5a4007aaa5d31e0378f70be53783b225883d117a556bc255fa5502be1cb"
+    }
+  },
+  "caseId": "comfy-core/sam3-video-track-initial-mask/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_group:comfy-core/sam3-video-track-initial-mask",
+    "source": {
+      "name": "sam3-video-track-initial-mask",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "c67885b1"
+    },
+    "target": {
+      "id": "dinkster.detection.track",
+      "kind": "group"
+    },
+    "tier": "grouped"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "cases": [
+      {
+        "id": "initial-mask",
+        "sourceInputs": {
+          "images": "fixture:video-batch",
+          "initial_mask": "fixture:initial-mask"
+        }
+      }
+    ],
+    "mappingDigest": "sha256:024b7333b7740f2509ca87daea34932e6037ad9880864caa6fe3ade9cd7aad75",
+    "scope": "group input, output, provider, and parameter translation",
+    "sourceCommit": "c67885b14556cf3e4e061862925282d403d09862"
+  },
+  "pass": true
+}

@@ -1,0 +1,1728 @@
+{
+  "format": "dinkster-comfy-group/1",
+  "sourceSchemas": [
+    {
+      "schemaVersion": 38,
+      "nodeType": "comfy.comfyui-impact-pack.KSamplerAdvancedProvider",
+      "version": 1,
+      "displayName": "KSampler (Advanced) Provider",
+      "category": "comfy/ImpactPack/Sampler",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "cfg",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": false,
+          "default": 8.0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.0,
+            "max": 100.0
+          }
+        },
+        {
+          "role": "input",
+          "id": "sampler_name",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "euler",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "euler",
+              "euler_cfg_pp",
+              "euler_ancestral",
+              "euler_ancestral_cfg_pp",
+              "heun",
+              "heunpp2",
+              "exp_heun_2_x0",
+              "exp_heun_2_x0_sde",
+              "dpm_2",
+              "dpm_2_ancestral",
+              "lms",
+              "dpm_fast",
+              "dpm_adaptive",
+              "dpmpp_2s_ancestral",
+              "dpmpp_2s_ancestral_cfg_pp",
+              "dpmpp_sde",
+              "dpmpp_sde_gpu",
+              "dpmpp_2m",
+              "dpmpp_2m_cfg_pp",
+              "dpmpp_2m_sde",
+              "dpmpp_2m_sde_gpu",
+              "dpmpp_2m_sde_heun",
+              "dpmpp_2m_sde_heun_gpu",
+              "dpmpp_3m_sde",
+              "dpmpp_3m_sde_gpu",
+              "ddpm",
+              "lcm",
+              "ipndm",
+              "ipndm_v",
+              "deis",
+              "res_multistep",
+              "res_multistep_cfg_pp",
+              "res_multistep_ancestral",
+              "res_multistep_ancestral_cfg_pp",
+              "gradient_estimation",
+              "gradient_estimation_cfg_pp",
+              "er_sde",
+              "seeds_2",
+              "seeds_3",
+              "sa_solver",
+              "sa_solver_pece",
+              "ddim",
+              "uni_pc",
+              "uni_pc_bh2"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "scheduler",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "simple",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "simple",
+              "sgm_uniform",
+              "karras",
+              "exponential",
+              "ddim_uniform",
+              "beta",
+              "normal",
+              "linear_quadratic",
+              "kl_optimal"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "sigma_factor",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": false,
+          "default": 1.0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.0,
+            "max": 10.0,
+            "step": 0.01
+          }
+        },
+        {
+          "role": "input",
+          "id": "basic_pipe",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.BASIC_PIPE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "sampler_opt",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.SAMPLER"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "input",
+          "id": "scheduler_func_opt",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.SCHEDULER_FUNC"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "output",
+          "id": "_0_KSAMPLER_ADVANCED_",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.KSAMPLER_ADVANCED"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "KSamplerAdvancedProvider"
+      ]
+    },
+    {
+      "schemaVersion": 38,
+      "nodeType": "comfy.comfyui-impact-pack.RegionalPrompt",
+      "version": 1,
+      "displayName": "Regional Prompt",
+      "category": "comfy/ImpactPack/Regional",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "mask",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MASK"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "advanced_sampler",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.KSAMPLER_ADVANCED"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "variation_seed",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": false,
+          "default": 0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0,
+            "max": "18446744073709551615"
+          }
+        },
+        {
+          "role": "input",
+          "id": "variation_strength",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": false,
+          "default": 0.0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        },
+        {
+          "role": "input",
+          "id": "variation_method",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "linear",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "linear",
+              "slerp"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "_0_REGIONAL_PROMPTS_",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.REGIONAL_PROMPTS"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "RegionalPrompt"
+      ]
+    },
+    {
+      "schemaVersion": 38,
+      "nodeType": "comfy.comfyui-impact-pack.RegionalSampler",
+      "version": 1,
+      "displayName": "Regional Sampler",
+      "category": "comfy/ImpactPack/Regional",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "seed",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": false,
+          "default": 0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0,
+            "max": "18446744073709551615"
+          }
+        },
+        {
+          "role": "input",
+          "id": "seed_2nd",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": false,
+          "default": 0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0,
+            "max": "18446744073709551615"
+          }
+        },
+        {
+          "role": "input",
+          "id": "seed_2nd_mode",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "ignore",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "ignore",
+              "fixed",
+              "seed+seed_2nd",
+              "seed-seed_2nd",
+              "increment",
+              "decrement",
+              "randomize"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "steps",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": false,
+          "default": 20,
+          "widget": {
+            "type": "NUMBER",
+            "min": 1,
+            "max": 10000
+          }
+        },
+        {
+          "role": "input",
+          "id": "base_only_steps",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": false,
+          "default": 2,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0,
+            "max": 10000
+          }
+        },
+        {
+          "role": "input",
+          "id": "denoise",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": false,
+          "default": 1.0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        },
+        {
+          "role": "input",
+          "id": "samples",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "base_sampler",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.KSAMPLER_ADVANCED"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "regional_prompts",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.REGIONAL_PROMPTS"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "overlap_factor",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": false,
+          "default": 10,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0,
+            "max": 10000
+          }
+        },
+        {
+          "role": "input",
+          "id": "restore_latent",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.boolean"
+            ]
+          },
+          "required": false,
+          "default": true,
+          "widget": {
+            "type": "BOOLEAN",
+            "labelOn": "enabled",
+            "labelOff": "disabled"
+          }
+        },
+        {
+          "role": "input",
+          "id": "additional_mode",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "ratio between",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "DISABLE",
+              "ratio additional",
+              "ratio between"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "additional_sampler",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "AUTO",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "AUTO",
+              "euler",
+              "heun",
+              "heunpp2",
+              "dpm_2",
+              "dpm_fast",
+              "dpmpp_2m",
+              "ddpm"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "additional_sigma_ratio",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": false,
+          "default": 0.3,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        },
+        {
+          "role": "output",
+          "id": "_0_LATENT_",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "RegionalSampler"
+      ]
+    }
+  ],
+  "groupSchemas": [
+    {
+      "schemaVersion": 38,
+      "nodeType": "comfy-group.comfyui-impact-pack.regional-sampler-single-region",
+      "version": 1,
+      "displayName": "Impact Regional Sampler (Single Region)",
+      "category": "comfy/ImpactPack/Regional",
+      "description": "Canonical one-region Impact Pack regional-sampling subgraph.",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "base_basic_pipe",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.BASIC_PIPE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "region_basic_pipe",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.BASIC_PIPE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "mask",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MASK"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "samples",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "seed",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true,
+          "default": 0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0,
+            "max": "18446744073709551615",
+            "step": 1
+          }
+        },
+        {
+          "role": "input",
+          "id": "steps",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true,
+          "default": 20,
+          "widget": {
+            "type": "NUMBER",
+            "min": 1,
+            "max": 10000
+          }
+        },
+        {
+          "role": "input",
+          "id": "base_only_steps",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true,
+          "default": 2,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0,
+            "max": 10000
+          }
+        },
+        {
+          "role": "input",
+          "id": "denoise",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": true,
+          "default": 1.0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        },
+        {
+          "role": "input",
+          "id": "overlap_factor",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true,
+          "default": 10,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0,
+            "max": 10000
+          }
+        },
+        {
+          "role": "input",
+          "id": "restore_latent",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.boolean"
+            ]
+          },
+          "required": true,
+          "default": true,
+          "widget": {
+            "type": "BOOLEAN",
+            "labelOn": "enabled",
+            "labelOff": "disabled"
+          }
+        },
+        {
+          "role": "input",
+          "id": "base_cfg",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": true,
+          "default": 8.0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.0,
+            "max": 100.0,
+            "step": 0.1
+          }
+        },
+        {
+          "role": "input",
+          "id": "base_sampler_name",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": true,
+          "default": "dinkster.euler",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              {
+                "value": "dinkster.ar_video",
+                "label": "ar_video"
+              },
+              {
+                "value": "dinkster.euler",
+                "label": "euler"
+              },
+              {
+                "value": "dinkster.euler_cfg_pp",
+                "label": "euler_cfg_pp"
+              },
+              {
+                "value": "dinkster.euler_ancestral",
+                "label": "euler_ancestral"
+              },
+              {
+                "value": "dinkster.euler_ancestral_cfg_pp",
+                "label": "euler_ancestral_cfg_pp"
+              },
+              {
+                "value": "dinkster.heun",
+                "label": "heun"
+              },
+              {
+                "value": "dinkster.heunpp2",
+                "label": "heunpp2"
+              },
+              {
+                "value": "dinkster.exp_heun_2_x0",
+                "label": "exp_heun_2_x0"
+              },
+              {
+                "value": "dinkster.exp_heun_2_x0_sde",
+                "label": "exp_heun_2_x0_sde"
+              },
+              {
+                "value": "dinkster.dpm_2",
+                "label": "dpm_2"
+              },
+              {
+                "value": "dinkster.dpm_2_ancestral",
+                "label": "dpm_2_ancestral"
+              },
+              {
+                "value": "dinkster.lms",
+                "label": "lms"
+              },
+              {
+                "value": "dinkster.dpm_fast",
+                "label": "dpm_fast"
+              },
+              {
+                "value": "dinkster.dpm_adaptive",
+                "label": "dpm_adaptive"
+              },
+              {
+                "value": "dinkster.dpmpp_2s_ancestral",
+                "label": "dpmpp_2s_ancestral"
+              },
+              {
+                "value": "dinkster.dpmpp_2s_ancestral_cfg_pp",
+                "label": "dpmpp_2s_ancestral_cfg_pp"
+              },
+              {
+                "value": "dinkster.dpmpp_sde",
+                "label": "dpmpp_sde"
+              },
+              {
+                "value": "dinkster.dpmpp_sde_gpu",
+                "label": "dpmpp_sde_gpu"
+              },
+              {
+                "value": "dinkster.dpmpp_2m",
+                "label": "dpmpp_2m"
+              },
+              {
+                "value": "dinkster.dpmpp_2m_cfg_pp",
+                "label": "dpmpp_2m_cfg_pp"
+              },
+              {
+                "value": "dinkster.dpmpp_2m_sde",
+                "label": "dpmpp_2m_sde"
+              },
+              {
+                "value": "dinkster.dpmpp_2m_sde_gpu",
+                "label": "dpmpp_2m_sde_gpu"
+              },
+              {
+                "value": "dinkster.dpmpp_2m_sde_heun",
+                "label": "dpmpp_2m_sde_heun"
+              },
+              {
+                "value": "dinkster.dpmpp_2m_sde_heun_gpu",
+                "label": "dpmpp_2m_sde_heun_gpu"
+              },
+              {
+                "value": "dinkster.dpmpp_3m_sde",
+                "label": "dpmpp_3m_sde"
+              },
+              {
+                "value": "dinkster.dpmpp_3m_sde_gpu",
+                "label": "dpmpp_3m_sde_gpu"
+              },
+              {
+                "value": "dinkster.ddpm",
+                "label": "ddpm"
+              },
+              {
+                "value": "dinkster.lcm",
+                "label": "lcm"
+              },
+              {
+                "value": "dinkster.ipndm",
+                "label": "ipndm"
+              },
+              {
+                "value": "dinkster.ipndm_v",
+                "label": "ipndm_v"
+              },
+              {
+                "value": "dinkster.deis",
+                "label": "deis"
+              },
+              {
+                "value": "dinkster.res_multistep",
+                "label": "res_multistep"
+              },
+              {
+                "value": "dinkster.res_multistep_cfg_pp",
+                "label": "res_multistep_cfg_pp"
+              },
+              {
+                "value": "dinkster.res_multistep_ancestral",
+                "label": "res_multistep_ancestral"
+              },
+              {
+                "value": "dinkster.res_multistep_ancestral_cfg_pp",
+                "label": "res_multistep_ancestral_cfg_pp"
+              },
+              {
+                "value": "dinkster.gradient_estimation",
+                "label": "gradient_estimation"
+              },
+              {
+                "value": "dinkster.gradient_estimation_cfg_pp",
+                "label": "gradient_estimation_cfg_pp"
+              },
+              {
+                "value": "dinkster.er_sde",
+                "label": "er_sde"
+              },
+              {
+                "value": "dinkster.seeds_2",
+                "label": "seeds_2"
+              },
+              {
+                "value": "dinkster.seeds_3",
+                "label": "seeds_3"
+              },
+              {
+                "value": "dinkster.sa_solver",
+                "label": "sa_solver"
+              },
+              {
+                "value": "dinkster.sa_solver_pece",
+                "label": "sa_solver_pece"
+              },
+              {
+                "value": "dinkster.ddim",
+                "label": "ddim"
+              },
+              {
+                "value": "dinkster.uni_pc",
+                "label": "uni_pc"
+              },
+              {
+                "value": "dinkster.uni_pc_bh2",
+                "label": "uni_pc_bh2"
+              },
+              {
+                "value": "res4lyf.res_2m",
+                "label": "res_2m"
+              },
+              {
+                "value": "res4lyf.res_3m",
+                "label": "res_3m"
+              },
+              {
+                "value": "res4lyf.res_2s",
+                "label": "res_2s"
+              },
+              {
+                "value": "res4lyf.res_3s",
+                "label": "res_3s"
+              },
+              {
+                "value": "res4lyf.res_5s",
+                "label": "res_5s"
+              },
+              {
+                "value": "res4lyf.res_6s",
+                "label": "res_6s"
+              },
+              {
+                "value": "res4lyf.res_2m_ode",
+                "label": "res_2m_ode"
+              },
+              {
+                "value": "res4lyf.res_3m_ode",
+                "label": "res_3m_ode"
+              },
+              {
+                "value": "res4lyf.res_2s_ode",
+                "label": "res_2s_ode"
+              },
+              {
+                "value": "res4lyf.res_3s_ode",
+                "label": "res_3s_ode"
+              },
+              {
+                "value": "res4lyf.res_5s_ode",
+                "label": "res_5s_ode"
+              },
+              {
+                "value": "res4lyf.res_6s_ode",
+                "label": "res_6s_ode"
+              },
+              {
+                "value": "res4lyf.deis_2m",
+                "label": "deis_2m"
+              },
+              {
+                "value": "res4lyf.deis_3m",
+                "label": "deis_3m"
+              },
+              {
+                "value": "res4lyf.deis_2m_ode",
+                "label": "deis_2m_ode"
+              },
+              {
+                "value": "res4lyf.deis_3m_ode",
+                "label": "deis_3m_ode"
+              },
+              {
+                "value": "res4lyf.rk_beta",
+                "label": "rk_beta"
+              }
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "base_scheduler",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": true,
+          "default": "dinkster.simple",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              {
+                "value": "dinkster.simple",
+                "label": "simple"
+              },
+              {
+                "value": "dinkster.sgm_uniform",
+                "label": "sgm_uniform"
+              },
+              {
+                "value": "dinkster.karras",
+                "label": "karras"
+              },
+              {
+                "value": "dinkster.exponential",
+                "label": "exponential"
+              },
+              {
+                "value": "dinkster.ddim_uniform",
+                "label": "ddim_uniform"
+              },
+              {
+                "value": "dinkster.beta",
+                "label": "beta"
+              },
+              {
+                "value": "dinkster.normal",
+                "label": "normal"
+              },
+              {
+                "value": "dinkster.linear_quadratic",
+                "label": "linear_quadratic"
+              },
+              {
+                "value": "dinkster.kl_optimal",
+                "label": "kl_optimal"
+              },
+              {
+                "value": "res4lyf.bong_tangent",
+                "label": "bong_tangent"
+              },
+              {
+                "value": "res4lyf.beta57",
+                "label": "beta57"
+              }
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "region_cfg",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": true,
+          "default": 8.0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.0,
+            "max": 100.0,
+            "step": 0.1
+          }
+        },
+        {
+          "role": "input",
+          "id": "region_sampler_name",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": true,
+          "default": "dinkster.euler",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              {
+                "value": "dinkster.ar_video",
+                "label": "ar_video"
+              },
+              {
+                "value": "dinkster.euler",
+                "label": "euler"
+              },
+              {
+                "value": "dinkster.euler_cfg_pp",
+                "label": "euler_cfg_pp"
+              },
+              {
+                "value": "dinkster.euler_ancestral",
+                "label": "euler_ancestral"
+              },
+              {
+                "value": "dinkster.euler_ancestral_cfg_pp",
+                "label": "euler_ancestral_cfg_pp"
+              },
+              {
+                "value": "dinkster.heun",
+                "label": "heun"
+              },
+              {
+                "value": "dinkster.heunpp2",
+                "label": "heunpp2"
+              },
+              {
+                "value": "dinkster.exp_heun_2_x0",
+                "label": "exp_heun_2_x0"
+              },
+              {
+                "value": "dinkster.exp_heun_2_x0_sde",
+                "label": "exp_heun_2_x0_sde"
+              },
+              {
+                "value": "dinkster.dpm_2",
+                "label": "dpm_2"
+              },
+              {
+                "value": "dinkster.dpm_2_ancestral",
+                "label": "dpm_2_ancestral"
+              },
+              {
+                "value": "dinkster.lms",
+                "label": "lms"
+              },
+              {
+                "value": "dinkster.dpm_fast",
+                "label": "dpm_fast"
+              },
+              {
+                "value": "dinkster.dpm_adaptive",
+                "label": "dpm_adaptive"
+              },
+              {
+                "value": "dinkster.dpmpp_2s_ancestral",
+                "label": "dpmpp_2s_ancestral"
+              },
+              {
+                "value": "dinkster.dpmpp_2s_ancestral_cfg_pp",
+                "label": "dpmpp_2s_ancestral_cfg_pp"
+              },
+              {
+                "value": "dinkster.dpmpp_sde",
+                "label": "dpmpp_sde"
+              },
+              {
+                "value": "dinkster.dpmpp_sde_gpu",
+                "label": "dpmpp_sde_gpu"
+              },
+              {
+                "value": "dinkster.dpmpp_2m",
+                "label": "dpmpp_2m"
+              },
+              {
+                "value": "dinkster.dpmpp_2m_cfg_pp",
+                "label": "dpmpp_2m_cfg_pp"
+              },
+              {
+                "value": "dinkster.dpmpp_2m_sde",
+                "label": "dpmpp_2m_sde"
+              },
+              {
+                "value": "dinkster.dpmpp_2m_sde_gpu",
+                "label": "dpmpp_2m_sde_gpu"
+              },
+              {
+                "value": "dinkster.dpmpp_2m_sde_heun",
+                "label": "dpmpp_2m_sde_heun"
+              },
+              {
+                "value": "dinkster.dpmpp_2m_sde_heun_gpu",
+                "label": "dpmpp_2m_sde_heun_gpu"
+              },
+              {
+                "value": "dinkster.dpmpp_3m_sde",
+                "label": "dpmpp_3m_sde"
+              },
+              {
+                "value": "dinkster.dpmpp_3m_sde_gpu",
+                "label": "dpmpp_3m_sde_gpu"
+              },
+              {
+                "value": "dinkster.ddpm",
+                "label": "ddpm"
+              },
+              {
+                "value": "dinkster.lcm",
+                "label": "lcm"
+              },
+              {
+                "value": "dinkster.ipndm",
+                "label": "ipndm"
+              },
+              {
+                "value": "dinkster.ipndm_v",
+                "label": "ipndm_v"
+              },
+              {
+                "value": "dinkster.deis",
+                "label": "deis"
+              },
+              {
+                "value": "dinkster.res_multistep",
+                "label": "res_multistep"
+              },
+              {
+                "value": "dinkster.res_multistep_cfg_pp",
+                "label": "res_multistep_cfg_pp"
+              },
+              {
+                "value": "dinkster.res_multistep_ancestral",
+                "label": "res_multistep_ancestral"
+              },
+              {
+                "value": "dinkster.res_multistep_ancestral_cfg_pp",
+                "label": "res_multistep_ancestral_cfg_pp"
+              },
+              {
+                "value": "dinkster.gradient_estimation",
+                "label": "gradient_estimation"
+              },
+              {
+                "value": "dinkster.gradient_estimation_cfg_pp",
+                "label": "gradient_estimation_cfg_pp"
+              },
+              {
+                "value": "dinkster.er_sde",
+                "label": "er_sde"
+              },
+              {
+                "value": "dinkster.seeds_2",
+                "label": "seeds_2"
+              },
+              {
+                "value": "dinkster.seeds_3",
+                "label": "seeds_3"
+              },
+              {
+                "value": "dinkster.sa_solver",
+                "label": "sa_solver"
+              },
+              {
+                "value": "dinkster.sa_solver_pece",
+                "label": "sa_solver_pece"
+              },
+              {
+                "value": "dinkster.ddim",
+                "label": "ddim"
+              },
+              {
+                "value": "dinkster.uni_pc",
+                "label": "uni_pc"
+              },
+              {
+                "value": "dinkster.uni_pc_bh2",
+                "label": "uni_pc_bh2"
+              },
+              {
+                "value": "res4lyf.res_2m",
+                "label": "res_2m"
+              },
+              {
+                "value": "res4lyf.res_3m",
+                "label": "res_3m"
+              },
+              {
+                "value": "res4lyf.res_2s",
+                "label": "res_2s"
+              },
+              {
+                "value": "res4lyf.res_3s",
+                "label": "res_3s"
+              },
+              {
+                "value": "res4lyf.res_5s",
+                "label": "res_5s"
+              },
+              {
+                "value": "res4lyf.res_6s",
+                "label": "res_6s"
+              },
+              {
+                "value": "res4lyf.res_2m_ode",
+                "label": "res_2m_ode"
+              },
+              {
+                "value": "res4lyf.res_3m_ode",
+                "label": "res_3m_ode"
+              },
+              {
+                "value": "res4lyf.res_2s_ode",
+                "label": "res_2s_ode"
+              },
+              {
+                "value": "res4lyf.res_3s_ode",
+                "label": "res_3s_ode"
+              },
+              {
+                "value": "res4lyf.res_5s_ode",
+                "label": "res_5s_ode"
+              },
+              {
+                "value": "res4lyf.res_6s_ode",
+                "label": "res_6s_ode"
+              },
+              {
+                "value": "res4lyf.deis_2m",
+                "label": "deis_2m"
+              },
+              {
+                "value": "res4lyf.deis_3m",
+                "label": "deis_3m"
+              },
+              {
+                "value": "res4lyf.deis_2m_ode",
+                "label": "deis_2m_ode"
+              },
+              {
+                "value": "res4lyf.deis_3m_ode",
+                "label": "deis_3m_ode"
+              },
+              {
+                "value": "res4lyf.rk_beta",
+                "label": "rk_beta"
+              }
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "region_scheduler",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": true,
+          "default": "dinkster.simple",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              {
+                "value": "dinkster.simple",
+                "label": "simple"
+              },
+              {
+                "value": "dinkster.sgm_uniform",
+                "label": "sgm_uniform"
+              },
+              {
+                "value": "dinkster.karras",
+                "label": "karras"
+              },
+              {
+                "value": "dinkster.exponential",
+                "label": "exponential"
+              },
+              {
+                "value": "dinkster.ddim_uniform",
+                "label": "ddim_uniform"
+              },
+              {
+                "value": "dinkster.beta",
+                "label": "beta"
+              },
+              {
+                "value": "dinkster.normal",
+                "label": "normal"
+              },
+              {
+                "value": "dinkster.linear_quadratic",
+                "label": "linear_quadratic"
+              },
+              {
+                "value": "dinkster.kl_optimal",
+                "label": "kl_optimal"
+              },
+              {
+                "value": "res4lyf.bong_tangent",
+                "label": "bong_tangent"
+              },
+              {
+                "value": "res4lyf.beta57",
+                "label": "beta57"
+              }
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "latent",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "records": [
+    {
+      "id": "comfy_group:comfyui-impact-pack/regional-sampler-single-region",
+      "mappingKind": "op",
+      "carrier": "dinkster.compat.impact_regional_sampler",
+      "source": {
+        "pack": "comfyui-impact-pack",
+        "name": "regional-sampler-single-region",
+        "revision": "429d0159ad429e64d2b3916e6e7be9c22d025c3c"
+      },
+      "pattern": {
+        "groupType": "comfy-group.comfyui-impact-pack.regional-sampler-single-region",
+        "anchor": "regional_sampler",
+        "nodes": {
+          "base_provider": {
+            "source": {
+              "pack": "comfyui-impact-pack",
+              "nodeClass": "KSamplerAdvancedProvider",
+              "nodeType": "comfy.comfyui-impact-pack.KSamplerAdvancedProvider",
+              "revision": "429d0159ad429e64d2b3916e6e7be9c22d025c3c"
+            },
+            "mode": "active"
+          },
+          "region_provider": {
+            "source": {
+              "pack": "comfyui-impact-pack",
+              "nodeClass": "KSamplerAdvancedProvider",
+              "nodeType": "comfy.comfyui-impact-pack.KSamplerAdvancedProvider",
+              "revision": "429d0159ad429e64d2b3916e6e7be9c22d025c3c"
+            },
+            "mode": "active"
+          },
+          "regional_prompt": {
+            "source": {
+              "pack": "comfyui-impact-pack",
+              "nodeClass": "RegionalPrompt",
+              "nodeType": "comfy.comfyui-impact-pack.RegionalPrompt",
+              "revision": "429d0159ad429e64d2b3916e6e7be9c22d025c3c"
+            },
+            "mode": "active"
+          },
+          "regional_sampler": {
+            "source": {
+              "pack": "comfyui-impact-pack",
+              "nodeClass": "RegionalSampler",
+              "nodeType": "comfy.comfyui-impact-pack.RegionalSampler",
+              "revision": "429d0159ad429e64d2b3916e6e7be9c22d025c3c"
+            },
+            "mode": "active"
+          }
+        },
+        "edges": [
+          {
+            "from": "base_provider:_0_KSAMPLER_ADVANCED_",
+            "to": "regional_sampler:base_sampler"
+          },
+          {
+            "from": "region_provider:_0_KSAMPLER_ADVANCED_",
+            "to": "regional_prompt:advanced_sampler"
+          },
+          {
+            "from": "regional_prompt:_0_REGIONAL_PROMPTS_",
+            "to": "regional_sampler:regional_prompts"
+          }
+        ],
+        "boundary": {
+          "inputs": {
+            "base_basic_pipe": "base_provider:basic_pipe",
+            "region_basic_pipe": "region_provider:basic_pipe",
+            "mask": "regional_prompt:mask",
+            "samples": "regional_sampler:samples"
+          },
+          "outputs": {
+            "latent": "regional_sampler:_0_LATENT_"
+          }
+        },
+        "parameters": {
+          "base_cfg": "base_provider:cfg",
+          "base_sampler_name": "base_provider:sampler_name",
+          "base_scheduler": "base_provider:scheduler",
+          "region_cfg": "region_provider:cfg",
+          "region_sampler_name": "region_provider:sampler_name",
+          "region_scheduler": "region_provider:scheduler",
+          "seed": "regional_sampler:seed",
+          "steps": "regional_sampler:steps",
+          "base_only_steps": "regional_sampler:base_only_steps",
+          "denoise": "regional_sampler:denoise",
+          "overlap_factor": "regional_sampler:overlap_factor",
+          "restore_latent": "regional_sampler:restore_latent"
+        },
+        "constants": {
+          "base_provider:sigma_factor": 1.0,
+          "region_provider:sigma_factor": 1.0,
+          "regional_prompt:variation_seed": 0,
+          "regional_prompt:variation_strength": 0.0,
+          "regional_prompt:variation_method": "linear",
+          "regional_sampler:seed_2nd": 0,
+          "regional_sampler:seed_2nd_mode": "ignore",
+          "regional_sampler:additional_mode": "DISABLE",
+          "regional_sampler:additional_sampler": "AUTO",
+          "regional_sampler:additional_sigma_ratio": 0.3
+        },
+        "disconnected": [
+          "base_provider:sampler_opt",
+          "base_provider:scheduler_func_opt",
+          "region_provider:sampler_opt",
+          "region_provider:scheduler_func_opt"
+        ]
+      },
+      "replacement": {
+        "from": "comfy-group.comfyui-impact-pack.regional-sampler-single-region",
+        "note": "Only the pinned one-region configuration is translated; unsupported options do not match this group.",
+        "cases": [
+          {
+            "to": "dinkster.compat.impact_regional_sampler",
+            "inputs": {
+              "base_basic_pipe": {
+                "kind": "copy",
+                "input": "base_basic_pipe"
+              },
+              "region_basic_pipe": {
+                "kind": "copy",
+                "input": "region_basic_pipe"
+              },
+              "mask": {
+                "kind": "copy",
+                "input": "mask"
+              },
+              "samples": {
+                "kind": "copy",
+                "input": "samples"
+              },
+              "seed": {
+                "kind": "copy",
+                "input": "seed"
+              },
+              "steps": {
+                "kind": "copy",
+                "input": "steps"
+              },
+              "base_only_steps": {
+                "kind": "copy",
+                "input": "base_only_steps"
+              },
+              "denoise": {
+                "kind": "copy",
+                "input": "denoise"
+              },
+              "overlap_factor": {
+                "kind": "copy",
+                "input": "overlap_factor"
+              },
+              "restore_latent": {
+                "kind": "copy",
+                "input": "restore_latent"
+              },
+              "base_cfg": {
+                "kind": "copy",
+                "input": "base_cfg"
+              },
+              "base_sampler_name": {
+                "kind": "value",
+                "input": "base_sampler_name",
+                "transform": {
+                  "kind": "enumRename",
+                  "map": {
+                    "euler": "dinkster.euler",
+                    "euler_cfg_pp": "dinkster.euler_cfg_pp",
+                    "euler_ancestral": "dinkster.euler_ancestral",
+                    "euler_ancestral_cfg_pp": "dinkster.euler_ancestral_cfg_pp",
+                    "heun": "dinkster.heun",
+                    "heunpp2": "dinkster.heunpp2",
+                    "exp_heun_2_x0": "dinkster.exp_heun_2_x0",
+                    "exp_heun_2_x0_sde": "dinkster.exp_heun_2_x0_sde",
+                    "dpm_2": "dinkster.dpm_2",
+                    "dpm_2_ancestral": "dinkster.dpm_2_ancestral",
+                    "lms": "dinkster.lms",
+                    "dpm_fast": "dinkster.dpm_fast",
+                    "dpm_adaptive": "dinkster.dpm_adaptive",
+                    "dpmpp_2s_ancestral": "dinkster.dpmpp_2s_ancestral",
+                    "dpmpp_2s_ancestral_cfg_pp": "dinkster.dpmpp_2s_ancestral_cfg_pp",
+                    "dpmpp_sde": "dinkster.dpmpp_sde",
+                    "dpmpp_sde_gpu": "dinkster.dpmpp_sde_gpu",
+                    "dpmpp_2m": "dinkster.dpmpp_2m",
+                    "dpmpp_2m_cfg_pp": "dinkster.dpmpp_2m_cfg_pp",
+                    "dpmpp_2m_sde": "dinkster.dpmpp_2m_sde",
+                    "dpmpp_2m_sde_gpu": "dinkster.dpmpp_2m_sde_gpu",
+                    "dpmpp_2m_sde_heun": "dinkster.dpmpp_2m_sde_heun",
+                    "dpmpp_2m_sde_heun_gpu": "dinkster.dpmpp_2m_sde_heun_gpu",
+                    "dpmpp_3m_sde": "dinkster.dpmpp_3m_sde",
+                    "dpmpp_3m_sde_gpu": "dinkster.dpmpp_3m_sde_gpu",
+                    "ddpm": "dinkster.ddpm",
+                    "lcm": "dinkster.lcm",
+                    "ipndm": "dinkster.ipndm",
+                    "ipndm_v": "dinkster.ipndm_v",
+                    "deis": "dinkster.deis",
+                    "res_multistep": "dinkster.res_multistep",
+                    "res_multistep_cfg_pp": "dinkster.res_multistep_cfg_pp",
+                    "res_multistep_ancestral": "dinkster.res_multistep_ancestral",
+                    "res_multistep_ancestral_cfg_pp": "dinkster.res_multistep_ancestral_cfg_pp",
+                    "gradient_estimation": "dinkster.gradient_estimation",
+                    "gradient_estimation_cfg_pp": "dinkster.gradient_estimation_cfg_pp",
+                    "er_sde": "dinkster.er_sde",
+                    "seeds_2": "dinkster.seeds_2",
+                    "seeds_3": "dinkster.seeds_3",
+                    "sa_solver": "dinkster.sa_solver",
+                    "sa_solver_pece": "dinkster.sa_solver_pece",
+                    "ddim": "dinkster.ddim",
+                    "uni_pc": "dinkster.uni_pc",
+                    "uni_pc_bh2": "dinkster.uni_pc_bh2"
+                  }
+                }
+              },
+              "base_scheduler": {
+                "kind": "value",
+                "input": "base_scheduler",
+                "transform": {
+                  "kind": "enumRename",
+                  "map": {
+                    "simple": "dinkster.simple",
+                    "sgm_uniform": "dinkster.sgm_uniform",
+                    "karras": "dinkster.karras",
+                    "exponential": "dinkster.exponential",
+                    "ddim_uniform": "dinkster.ddim_uniform",
+                    "beta": "dinkster.beta",
+                    "normal": "dinkster.normal",
+                    "linear_quadratic": "dinkster.linear_quadratic",
+                    "kl_optimal": "dinkster.kl_optimal"
+                  }
+                }
+              },
+              "region_cfg": {
+                "kind": "copy",
+                "input": "region_cfg"
+              },
+              "region_sampler_name": {
+                "kind": "value",
+                "input": "region_sampler_name",
+                "transform": {
+                  "kind": "enumRename",
+                  "map": {
+                    "euler": "dinkster.euler",
+                    "euler_cfg_pp": "dinkster.euler_cfg_pp",
+                    "euler_ancestral": "dinkster.euler_ancestral",
+                    "euler_ancestral_cfg_pp": "dinkster.euler_ancestral_cfg_pp",
+                    "heun": "dinkster.heun",
+                    "heunpp2": "dinkster.heunpp2",
+                    "exp_heun_2_x0": "dinkster.exp_heun_2_x0",
+                    "exp_heun_2_x0_sde": "dinkster.exp_heun_2_x0_sde",
+                    "dpm_2": "dinkster.dpm_2",
+                    "dpm_2_ancestral": "dinkster.dpm_2_ancestral",
+                    "lms": "dinkster.lms",
+                    "dpm_fast": "dinkster.dpm_fast",
+                    "dpm_adaptive": "dinkster.dpm_adaptive",
+                    "dpmpp_2s_ancestral": "dinkster.dpmpp_2s_ancestral",
+                    "dpmpp_2s_ancestral_cfg_pp": "dinkster.dpmpp_2s_ancestral_cfg_pp",
+                    "dpmpp_sde": "dinkster.dpmpp_sde",
+                    "dpmpp_sde_gpu": "dinkster.dpmpp_sde_gpu",
+                    "dpmpp_2m": "dinkster.dpmpp_2m",
+                    "dpmpp_2m_cfg_pp": "dinkster.dpmpp_2m_cfg_pp",
+                    "dpmpp_2m_sde": "dinkster.dpmpp_2m_sde",
+                    "dpmpp_2m_sde_gpu": "dinkster.dpmpp_2m_sde_gpu",
+                    "dpmpp_2m_sde_heun": "dinkster.dpmpp_2m_sde_heun",
+                    "dpmpp_2m_sde_heun_gpu": "dinkster.dpmpp_2m_sde_heun_gpu",
+                    "dpmpp_3m_sde": "dinkster.dpmpp_3m_sde",
+                    "dpmpp_3m_sde_gpu": "dinkster.dpmpp_3m_sde_gpu",
+                    "ddpm": "dinkster.ddpm",
+                    "lcm": "dinkster.lcm",
+                    "ipndm": "dinkster.ipndm",
+                    "ipndm_v": "dinkster.ipndm_v",
+                    "deis": "dinkster.deis",
+                    "res_multistep": "dinkster.res_multistep",
+                    "res_multistep_cfg_pp": "dinkster.res_multistep_cfg_pp",
+                    "res_multistep_ancestral": "dinkster.res_multistep_ancestral",
+                    "res_multistep_ancestral_cfg_pp": "dinkster.res_multistep_ancestral_cfg_pp",
+                    "gradient_estimation": "dinkster.gradient_estimation",
+                    "gradient_estimation_cfg_pp": "dinkster.gradient_estimation_cfg_pp",
+                    "er_sde": "dinkster.er_sde",
+                    "seeds_2": "dinkster.seeds_2",
+                    "seeds_3": "dinkster.seeds_3",
+                    "sa_solver": "dinkster.sa_solver",
+                    "sa_solver_pece": "dinkster.sa_solver_pece",
+                    "ddim": "dinkster.ddim",
+                    "uni_pc": "dinkster.uni_pc",
+                    "uni_pc_bh2": "dinkster.uni_pc_bh2"
+                  }
+                }
+              },
+              "region_scheduler": {
+                "kind": "value",
+                "input": "region_scheduler",
+                "transform": {
+                  "kind": "enumRename",
+                  "map": {
+                    "simple": "dinkster.simple",
+                    "sgm_uniform": "dinkster.sgm_uniform",
+                    "karras": "dinkster.karras",
+                    "exponential": "dinkster.exponential",
+                    "ddim_uniform": "dinkster.ddim_uniform",
+                    "beta": "dinkster.beta",
+                    "normal": "dinkster.normal",
+                    "linear_quadratic": "dinkster.linear_quadratic",
+                    "kl_optimal": "dinkster.kl_optimal"
+                  }
+                }
+              }
+            },
+            "outputs": {
+              "latent": "latent"
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "grouped",
+        "evidence": [
+          "tests/test_generation_comfy_groups.py::test_impact_regional_single_region_group_is_valid"
+        ]
+      }
+    }
+  ]
+}

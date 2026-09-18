@@ -1,0 +1,43 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 250,
+      "path": "artifacts/comfy-core/controlnet-loader.native.json",
+      "sha256": "sha256:8816e0ddaadda90baca1192f51faa0d76d0f29cb5e5862908c798b9e292bddd2"
+    },
+    "reference": {
+      "bytes": 250,
+      "path": "artifacts/comfy-core/controlnet-loader.reference.json",
+      "sha256": "sha256:8816e0ddaadda90baca1192f51faa0d76d0f29cb5e5862908c798b9e292bddd2"
+    }
+  },
+  "caseId": "comfy-core/controlnet-loader/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/ControlNetLoader",
+    "source": {
+      "name": "ControlNetLoader",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.load_controlnet",
+      "kind": "node"
+    },
+    "tier": "exact"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "mappingDigest": "sha256:e361f34059212ce39358f8fd57a71f764da9cda574d40d76dbb97086b7f53d52",
+    "scope": "pinned wrapper path resolution and mocked architecture selection; no model weights are loaded or executed"
+  },
+  "pass": true
+}

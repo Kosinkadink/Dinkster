@@ -1,0 +1,60 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 140,
+      "path": "artifacts/comfy-core/string-contains.native.json",
+      "sha256": "sha256:49558f50bf17667378b6525802686e7a14037a30f9bc485f73a266c03da851bb"
+    },
+    "reference": {
+      "bytes": 140,
+      "path": "artifacts/comfy-core/string-contains.reference.json",
+      "sha256": "sha256:49558f50bf17667378b6525802686e7a14037a30f9bc485f73a266c03da851bb"
+    }
+  },
+  "caseId": "comfy-core/string-contains/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/StringContains",
+    "source": {
+      "name": "StringContains",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.string.test",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "cases": [
+      {
+        "id": "sensitive",
+        "inputs": {
+          "case_sensitive": true,
+          "string": "AlphaBeta",
+          "substring": "Beta"
+        }
+      },
+      {
+        "id": "insensitive",
+        "inputs": {
+          "case_sensitive": false,
+          "string": "AlphaBeta",
+          "substring": "beta"
+        }
+      }
+    ],
+    "mappingDigest": "sha256:3261da4575ce2822e63cce5e34baa374675360c9c8f817d2b7d0f5a797533859"
+  },
+  "pass": true
+}

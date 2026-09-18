@@ -1,0 +1,43 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 348,
+      "path": "artifacts/comfy-core/vae-loader.native.json",
+      "sha256": "sha256:6aed10c57809f7eda02561b8c4561548093e7f7c4fa28d7c0961597e5bc7c7cf"
+    },
+    "reference": {
+      "bytes": 348,
+      "path": "artifacts/comfy-core/vae-loader.reference.json",
+      "sha256": "sha256:6aed10c57809f7eda02561b8c4561548093e7f7c4fa28d7c0961597e5bc7c7cf"
+    }
+  },
+  "caseId": "comfy-core/vae-loader/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/VAELoader",
+    "source": {
+      "name": "VAELoader",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.load_vae",
+      "kind": "node"
+    },
+    "tier": "exact"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "mappingDigest": "sha256:773c3d52b907690657e0a8819872e07ccfcc3db708eeedb968d616e6f1094fad",
+    "scope": "single-file state-dict loading, metadata propagation, and VAE validation; path-backed reload factories are excluded by the digest-backed asset contract"
+  },
+  "pass": true
+}

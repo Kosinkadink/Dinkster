@@ -1,0 +1,46 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 10006,
+      "path": "artifacts/comfy-core/vae-encode-tiled.native.json",
+      "sha256": "sha256:92e0480b8be82ee91d9a64b65ab8cb75c834fa089df4191653e5840171a10b04"
+    },
+    "reference": {
+      "bytes": 10006,
+      "path": "artifacts/comfy-core/vae-encode-tiled.reference.json",
+      "sha256": "sha256:92e0480b8be82ee91d9a64b65ab8cb75c834fa089df4191653e5840171a10b04"
+    }
+  },
+  "caseId": "comfy-core/vae-encode-tiled/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/VAEEncodeTiled",
+    "source": {
+      "name": "VAEEncodeTiled",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.vae_encode_tiled",
+      "kind": "node"
+    },
+    "tier": "exact"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "mappingDigest": "sha256:8a6ff8f923d9386e9abd143d4fb78213d93364353a2488730e593776cd740f17",
+    "overlap": 128,
+    "temporalOverlap": 8,
+    "temporalSize": 64,
+    "tileSize": 512
+  },
+  "pass": true
+}

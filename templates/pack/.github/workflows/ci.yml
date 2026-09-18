@@ -1,0 +1,37 @@
+# Pack CI: lint, types, tests, and the doctor publish gate.
+#
+# Dinkster is unpublished (and currently private), so CI checks out a Dinkster
+# copy next to the pack and runs everything through its environment with
+# `uv run --project`. While the Dinkster repository is private, the checkout
+# needs a token with read access (secrets.DINKSTER_TOKEN below); once Dinkster
+# is public or on an index, drop the token (and, for an index release,
+# replace the checkout with a normal dependency).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Kosinkadink/Dinkster
+          token: ${{ secrets.DINKSTER_TOKEN }}
+          path: .dinkster
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages
+        working-directory: .dinkster
+      - run: uv run --project .dinkster ruff check .
+      - run: uv run --project .dinkster pyright my_pack_nodes.py tests
+      - run: uv run --project .dinkster pytest -q tests
+      # The publish gate: an unhealthy pack fails CI exactly as it would
+      # fail publishing. --json is machine-checkable if you want to allow
+      # specific warnings; the plain form fails on any error.
+      - run: uv run --project .dinkster dinkster-doctor .

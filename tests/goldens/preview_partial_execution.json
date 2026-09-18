@@ -1,0 +1,1066 @@
+{
+  "cases": [
+    {
+      "graph": {
+        "nodes": {
+          "downstream": {
+            "inputs": {
+              "value": {
+                "$link": {
+                  "node": "left",
+                  "output": "value"
+                }
+              }
+            },
+            "nodeType": "dev.conformance.add"
+          },
+          "left": {
+            "inputs": {
+              "amount": 10,
+              "value": {
+                "$link": {
+                  "node": "split",
+                  "output": "left"
+                }
+              }
+            },
+            "nodeType": "dev.conformance.add"
+          },
+          "right": {
+            "inputs": {
+              "amount": 20,
+              "value": {
+                "$link": {
+                  "node": "split",
+                  "output": "right"
+                }
+              }
+            },
+            "nodeType": "dev.conformance.add"
+          },
+          "source": {
+            "inputs": {
+              "value": 3
+            },
+            "nodeType": "dev.conformance.source"
+          },
+          "split": {
+            "inputs": {
+              "value": {
+                "$link": {
+                  "node": "source",
+                  "output": "value"
+                }
+              }
+            },
+            "nodeType": "dev.conformance.split"
+          },
+          "unselectedEffect": {
+            "inputs": {
+              "value": {
+                "$link": {
+                  "node": "source",
+                  "output": "value"
+                }
+              }
+            },
+            "nodeType": "dev.conformance.effect"
+          }
+        }
+      },
+      "graphDigest": "sha256:b0293aeee5645795684a344fef92097513e8db261df93dca16418f3b2e17633f",
+      "id": "selected-target-closure",
+      "inspectSelections": [
+        {
+          "nodeId": "split",
+          "outputId": "left"
+        },
+        {
+          "nodeId": "split",
+          "outputId": "right"
+        },
+        {
+          "nodeId": "left",
+          "outputId": "value"
+        },
+        {
+          "nodeId": "right",
+          "outputId": "value"
+        }
+      ],
+      "phases": {
+        "cold": {
+          "eventConstraints": [
+            "run_started precedes node terminal events",
+            "each executed node has one terminal node_finished event",
+            "run_finished is terminal"
+          ],
+          "expectedCached": [],
+          "expectedExecuted": [
+            "left",
+            "right",
+            "source",
+            "split"
+          ],
+          "expectedSkipped": [],
+          "outputs": {
+            "left": {
+              "value": {
+                "fingerprint": "8be6da4fd03da618275b638e7fa34ba1bc4f8734",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 13
+              }
+            },
+            "right": {
+              "value": {
+                "fingerprint": "3ab591aa4c267f25aeb0b9332eb5d55d0449e9f0",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 24
+              }
+            },
+            "split": {
+              "left": {
+                "fingerprint": "849c00892d28acea2d8fb8f3b2455205db0c14a0",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 3
+              },
+              "right": {
+                "fingerprint": "784b0c533aef383a6c32dc4ff695ae873cfd6461",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 4
+              }
+            }
+          },
+          "postRunInspection": [
+            {
+              "descriptor": {
+                "fingerprint": "849c00892d28acea2d8fb8f3b2455205db0c14a0",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 3
+              },
+              "nodeId": "split",
+              "outputId": "left"
+            },
+            {
+              "descriptor": {
+                "fingerprint": "784b0c533aef383a6c32dc4ff695ae873cfd6461",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 4
+              },
+              "nodeId": "split",
+              "outputId": "right"
+            },
+            {
+              "descriptor": {
+                "fingerprint": "8be6da4fd03da618275b638e7fa34ba1bc4f8734",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 13
+              },
+              "nodeId": "left",
+              "outputId": "value"
+            },
+            {
+              "descriptor": {
+                "fingerprint": "3ab591aa4c267f25aeb0b9332eb5d55d0449e9f0",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 24
+              },
+              "nodeId": "right",
+              "outputId": "value"
+            }
+          ],
+          "terminalState": "completed"
+        },
+        "inputMutated": {
+          "eventConstraints": [
+            "run_started precedes node terminal events",
+            "each executed node has one terminal node_finished event",
+            "run_finished is terminal"
+          ],
+          "expectedCached": [],
+          "expectedExecuted": [
+            "left",
+            "right",
+            "source",
+            "split"
+          ],
+          "expectedSkipped": [],
+          "graph": {
+            "nodes": {
+              "downstream": {
+                "inputs": {
+                  "value": {
+                    "$link": {
+                      "node": "left",
+                      "output": "value"
+                    }
+                  }
+                },
+                "nodeType": "dev.conformance.add"
+              },
+              "left": {
+                "inputs": {
+                  "amount": 10,
+                  "value": {
+                    "$link": {
+                      "node": "split",
+                      "output": "left"
+                    }
+                  }
+                },
+                "nodeType": "dev.conformance.add"
+              },
+              "right": {
+                "inputs": {
+                  "amount": 20,
+                  "value": {
+                    "$link": {
+                      "node": "split",
+                      "output": "right"
+                    }
+                  }
+                },
+                "nodeType": "dev.conformance.add"
+              },
+              "source": {
+                "inputs": {
+                  "value": 4
+                },
+                "nodeType": "dev.conformance.source"
+              },
+              "split": {
+                "inputs": {
+                  "value": {
+                    "$link": {
+                      "node": "source",
+                      "output": "value"
+                    }
+                  }
+                },
+                "nodeType": "dev.conformance.split"
+              },
+              "unselectedEffect": {
+                "inputs": {
+                  "value": {
+                    "$link": {
+                      "node": "source",
+                      "output": "value"
+                    }
+                  }
+                },
+                "nodeType": "dev.conformance.effect"
+              }
+            }
+          },
+          "graphDigest": "sha256:b4efd0f0da506685ce4621fc4ae51dbdf94eec952472e1b7002656d47ac8be02",
+          "outputs": {
+            "left": {
+              "value": {
+                "fingerprint": "fc3685e71380201d9e1fcd6f8f08e91dcd455051",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 14
+              }
+            },
+            "right": {
+              "value": {
+                "fingerprint": "a4af0b3f03c146ae4080b193b5d655184ef8f178",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 25
+              }
+            },
+            "split": {
+              "left": {
+                "fingerprint": "784b0c533aef383a6c32dc4ff695ae873cfd6461",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 4
+              },
+              "right": {
+                "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 5
+              }
+            }
+          },
+          "postRunInspection": [
+            {
+              "descriptor": {
+                "fingerprint": "784b0c533aef383a6c32dc4ff695ae873cfd6461",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 4
+              },
+              "nodeId": "split",
+              "outputId": "left"
+            },
+            {
+              "descriptor": {
+                "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 5
+              },
+              "nodeId": "split",
+              "outputId": "right"
+            },
+            {
+              "descriptor": {
+                "fingerprint": "fc3685e71380201d9e1fcd6f8f08e91dcd455051",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 14
+              },
+              "nodeId": "left",
+              "outputId": "value"
+            },
+            {
+              "descriptor": {
+                "fingerprint": "a4af0b3f03c146ae4080b193b5d655184ef8f178",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 25
+              },
+              "nodeId": "right",
+              "outputId": "value"
+            }
+          ],
+          "terminalState": "completed"
+        },
+        "warm": {
+          "eventConstraints": [
+            "run_started precedes node terminal events",
+            "each executed node has one terminal node_finished event",
+            "run_finished is terminal"
+          ],
+          "expectedCached": [
+            "left",
+            "right",
+            "source",
+            "split"
+          ],
+          "expectedExecuted": [],
+          "expectedSkipped": [],
+          "outputs": {
+            "left": {
+              "value": {
+                "fingerprint": "8be6da4fd03da618275b638e7fa34ba1bc4f8734",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 13
+              }
+            },
+            "right": {
+              "value": {
+                "fingerprint": "3ab591aa4c267f25aeb0b9332eb5d55d0449e9f0",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 24
+              }
+            },
+            "split": {
+              "left": {
+                "fingerprint": "849c00892d28acea2d8fb8f3b2455205db0c14a0",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 3
+              },
+              "right": {
+                "fingerprint": "784b0c533aef383a6c32dc4ff695ae873cfd6461",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 4
+              }
+            }
+          },
+          "postRunInspection": [
+            {
+              "descriptor": {
+                "fingerprint": "849c00892d28acea2d8fb8f3b2455205db0c14a0",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 3
+              },
+              "nodeId": "split",
+              "outputId": "left"
+            },
+            {
+              "descriptor": {
+                "fingerprint": "784b0c533aef383a6c32dc4ff695ae873cfd6461",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 4
+              },
+              "nodeId": "split",
+              "outputId": "right"
+            },
+            {
+              "descriptor": {
+                "fingerprint": "8be6da4fd03da618275b638e7fa34ba1bc4f8734",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 13
+              },
+              "nodeId": "left",
+              "outputId": "value"
+            },
+            {
+              "descriptor": {
+                "fingerprint": "3ab591aa4c267f25aeb0b9332eb5d55d0449e9f0",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 24
+              },
+              "nodeId": "right",
+              "outputId": "value"
+            }
+          ],
+          "terminalState": "completed"
+        }
+      },
+      "targetNodeIds": [
+        "split",
+        "left",
+        "right"
+      ]
+    },
+    {
+      "graph": {
+        "nodes": {
+          "effect": {
+            "inputs": {
+              "value": {
+                "$link": {
+                  "node": "source",
+                  "output": "value"
+                }
+              }
+            },
+            "nodeType": "dev.conformance.effect"
+          },
+          "source": {
+            "inputs": {
+              "value": 5
+            },
+            "nodeType": "dev.conformance.source"
+          }
+        }
+      },
+      "graphDigest": "sha256:0478a8a0126b92359bdb33d55d1b295c64a75622fed1b58c610482f1eacbb133",
+      "id": "effectful-rerun",
+      "inspectSelections": [
+        {
+          "nodeId": "effect",
+          "outputId": "value"
+        }
+      ],
+      "phases": {
+        "first": {
+          "eventConstraints": [
+            "run_started precedes node terminal events",
+            "each executed node has one terminal node_finished event",
+            "run_finished is terminal"
+          ],
+          "expectedCached": [],
+          "expectedExecuted": [
+            "effect",
+            "source"
+          ],
+          "expectedSkipped": [],
+          "outputs": {
+            "effect": {
+              "value": {
+                "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 5
+              }
+            }
+          },
+          "postRunInspection": [
+            {
+              "descriptor": {
+                "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 5
+              },
+              "nodeId": "effect",
+              "outputId": "value"
+            }
+          ],
+          "terminalState": "completed"
+        },
+        "second": {
+          "eventConstraints": [
+            "run_started precedes node terminal events",
+            "each executed node has one terminal node_finished event",
+            "run_finished is terminal"
+          ],
+          "expectedCached": [
+            "source"
+          ],
+          "expectedExecuted": [
+            "effect"
+          ],
+          "expectedSkipped": [],
+          "outputs": {
+            "effect": {
+              "value": {
+                "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 5
+              }
+            }
+          },
+          "postRunInspection": [
+            {
+              "descriptor": {
+                "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 5
+              },
+              "nodeId": "effect",
+              "outputId": "value"
+            }
+          ],
+          "terminalState": "completed"
+        }
+      },
+      "targetNodeIds": [
+        "effect"
+      ]
+    },
+    {
+      "graph": {
+        "nodes": {
+          "fail": {
+            "inputs": {
+              "value": {
+                "$link": {
+                  "node": "maybe",
+                  "output": "value"
+                }
+              }
+            },
+            "nodeType": "dev.conformance.fail-absent"
+          },
+          "maybe": {
+            "inputs": {
+              "present": false
+            },
+            "nodeType": "dev.conformance.maybe"
+          },
+          "omit": {
+            "inputs": {
+              "base": 11,
+              "optional": {
+                "$link": {
+                  "node": "maybe",
+                  "output": "value"
+                }
+              }
+            },
+            "nodeType": "dev.conformance.omit"
+          },
+          "skip": {
+            "inputs": {
+              "value": {
+                "$link": {
+                  "node": "maybe",
+                  "output": "value"
+                }
+              }
+            },
+            "nodeType": "dev.conformance.add"
+          }
+        }
+      },
+      "graphDigest": "sha256:402e2721161bc7ab4937b2cdf97dd2d108c753ccfd4ab5a5e089a978dc35c104",
+      "id": "absence-policies",
+      "inspectSelections": [
+        {
+          "nodeId": "maybe",
+          "outputId": "value"
+        },
+        {
+          "nodeId": "skip",
+          "outputId": "value"
+        },
+        {
+          "nodeId": "omit",
+          "outputId": "value"
+        }
+      ],
+      "phases": {
+        "defaultSkipAndOmit": {
+          "eventConstraints": [
+            "run_started precedes node terminal events",
+            "each executed node has one terminal node_finished event",
+            "run_finished is terminal"
+          ],
+          "expectedCached": [],
+          "expectedExecuted": [
+            "maybe",
+            "omit"
+          ],
+          "expectedSkipped": [
+            "skip"
+          ],
+          "outputs": {
+            "maybe": {
+              "value": {
+                "fingerprint": "500f86040a82b3f490a35eee7898de5fd059aaa6",
+                "meta": {
+                  "absent.origin": "maybe/value",
+                  "absent.reason": "proof value omitted",
+                  "absent.standsFor": "core.int"
+                },
+                "typeId": "core.absent"
+              }
+            },
+            "omit": {
+              "value": {
+                "fingerprint": "d50c95bcfa10669748ee7aa441bdbd96dec32257",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 11
+              }
+            },
+            "skip": {
+              "value": {
+                "fingerprint": "500f86040a82b3f490a35eee7898de5fd059aaa6",
+                "meta": {
+                  "absent.origin": "maybe/value",
+                  "absent.reason": "proof value omitted",
+                  "absent.standsFor": "core.int"
+                },
+                "typeId": "core.absent"
+              }
+            }
+          },
+          "postRunInspection": [
+            {
+              "descriptor": {
+                "fingerprint": "500f86040a82b3f490a35eee7898de5fd059aaa6",
+                "meta": {
+                  "absent.origin": "maybe/value",
+                  "absent.reason": "proof value omitted",
+                  "absent.standsFor": "core.int"
+                },
+                "typeId": "core.absent"
+              },
+              "nodeId": "maybe",
+              "outputId": "value"
+            },
+            {
+              "descriptor": {
+                "fingerprint": "500f86040a82b3f490a35eee7898de5fd059aaa6",
+                "meta": {
+                  "absent.origin": "maybe/value",
+                  "absent.reason": "proof value omitted",
+                  "absent.standsFor": "core.int"
+                },
+                "typeId": "core.absent"
+              },
+              "nodeId": "skip",
+              "outputId": "value"
+            },
+            {
+              "descriptor": {
+                "fingerprint": "d50c95bcfa10669748ee7aa441bdbd96dec32257",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 11
+              },
+              "nodeId": "omit",
+              "outputId": "value"
+            }
+          ],
+          "terminalState": "completed"
+        },
+        "fail": {
+          "error": "input 'value' is absent - no value was produced by maybe/value (proof value omitted) - and this input declares on_absent='fail'",
+          "eventConstraints": [
+            "absent fail policy rejects before consumer invocation"
+          ],
+          "expectedCached": [
+            "maybe"
+          ],
+          "expectedExecuted": [],
+          "expectedSkipped": [],
+          "inspectSelections": [],
+          "postRunInspection": [],
+          "targetNodeIds": [
+            "fail"
+          ],
+          "terminalState": "failed"
+        }
+      },
+      "targetNodeIds": [
+        "maybe",
+        "skip",
+        "omit"
+      ]
+    },
+    {
+      "graph": {
+        "nodes": {
+          "mapped": {
+            "region": {
+              "body": {
+                "nodes": {
+                  "add": {
+                    "inputs": {
+                      "amount": 1,
+                      "value": {
+                        "$link": {
+                          "node": "$region",
+                          "output": "item"
+                        }
+                      }
+                    },
+                    "nodeType": "dev.conformance.add"
+                  }
+                }
+              },
+              "elementPorts": [
+                "item"
+              ],
+              "inputs": {
+                "item": [
+                  2,
+                  4,
+                  8
+                ]
+              },
+              "kind": "map",
+              "outputs": {
+                "values": {
+                  "mode": "gather",
+                  "source": {
+                    "node": "add",
+                    "output": "value"
+                  }
+                }
+              },
+              "ports": {
+                "item": {
+                  "kind": "concrete",
+                  "types": [
+                    "core.int"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "graphDigest": "sha256:1da0a1cba96290c12554da127d16ee4bc105fce1ea571cc3b9754555ce0bea45",
+      "id": "region-list-inspection",
+      "inspectSelections": [
+        {
+          "nodeId": "mapped",
+          "outputId": "values"
+        }
+      ],
+      "phases": {
+        "run": {
+          "eventConstraints": [
+            "region_expanded precedes region_finished",
+            "iteration identities are observation-only and never target ids",
+            "run_finished is terminal"
+          ],
+          "exactElementInspection": {
+            "element": 1,
+            "nodeId": "mapped",
+            "outputId": "values",
+            "value": 5
+          },
+          "expectedCached": [],
+          "expectedExecuted": [
+            "mapped[0]/add",
+            "mapped[1]/add",
+            "mapped[2]/add"
+          ],
+          "expectedSkipped": [],
+          "outputs": {
+            "mapped": {
+              "values": {
+                "elements": [
+                  {
+                    "fingerprint": "849c00892d28acea2d8fb8f3b2455205db0c14a0",
+                    "meta": {},
+                    "typeId": "core.int",
+                    "value": 3
+                  },
+                  {
+                    "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
+                    "meta": {},
+                    "typeId": "core.int",
+                    "value": 5
+                  },
+                  {
+                    "fingerprint": "aefa02b5c4daa3640ef1517afa790314228e2402",
+                    "meta": {},
+                    "typeId": "core.int",
+                    "value": 9
+                  }
+                ],
+                "fingerprint": "b6309414bed7b72cadeac75d673e5ea36c59619c",
+                "length": 3,
+                "meta": {
+                  "length": 3
+                },
+                "typeId": "list<core.int>"
+              }
+            }
+          },
+          "postRunInspection": [
+            {
+              "descriptor": {
+                "elements": [
+                  {
+                    "fingerprint": "849c00892d28acea2d8fb8f3b2455205db0c14a0",
+                    "meta": {},
+                    "typeId": "core.int",
+                    "value": 3
+                  },
+                  {
+                    "fingerprint": "a664867224ffa6661704138c729b09e88d99236a",
+                    "meta": {},
+                    "typeId": "core.int",
+                    "value": 5
+                  },
+                  {
+                    "fingerprint": "aefa02b5c4daa3640ef1517afa790314228e2402",
+                    "meta": {},
+                    "typeId": "core.int",
+                    "value": 9
+                  }
+                ],
+                "fingerprint": "b6309414bed7b72cadeac75d673e5ea36c59619c",
+                "length": 3,
+                "meta": {
+                  "length": 3
+                },
+                "typeId": "list<core.int>"
+              },
+              "nodeId": "mapped",
+              "outputId": "values"
+            }
+          ],
+          "terminalState": "completed"
+        }
+      },
+      "targetNodeIds": [
+        "mapped"
+      ]
+    },
+    {
+      "graph": {
+        "nodes": {
+          "preview": {
+            "inputs": {
+              "seed": 9
+            },
+            "nodeType": "dev.conformance.preview"
+          }
+        }
+      },
+      "graphDigest": "sha256:8791343322e03a07e2b364aac18e4ec710457132d95acb7a7dd8401b0e6fe8d8",
+      "id": "preview-and-terminal-paths",
+      "inspectSelections": [
+        {
+          "nodeId": "preview",
+          "outputId": "image"
+        },
+        {
+          "nodeId": "preview",
+          "outputId": "fallback"
+        }
+      ],
+      "phases": {
+        "cancelled": {
+          "eventConstraints": [
+            "progress precedes cancellation",
+            "resource admission is released after cancellation"
+          ],
+          "expectedCached": [],
+          "expectedExecuted": [],
+          "expectedSkipped": [],
+          "graph": {
+            "nodes": {
+              "cancel": {
+                "inputs": {},
+                "nodeType": "dev.conformance.cancellable"
+              }
+            }
+          },
+          "graphDigest": "sha256:92ee4cd00f3cf075626beb41e8de729140380afbe1027fadf381760768bd30ab",
+          "inspectSelections": [],
+          "postRunInspection": [],
+          "resourceInUseAfterCancel": 0,
+          "resourceInUseBeforeCancel": 1,
+          "targetNodeIds": [
+            "cancel"
+          ],
+          "terminalState": "cancelled"
+        },
+        "preview": {
+          "eventConstraints": [
+            "run_started precedes node terminal events",
+            "each executed node has one terminal node_finished event",
+            "run_finished is terminal"
+          ],
+          "expectedCached": [],
+          "expectedExecuted": [
+            "preview"
+          ],
+          "expectedSkipped": [],
+          "fallbackRenditions": [],
+          "finalRenditionSha256": "4435173df100c60f0cb72f3716b608a53c73e98a988541ba039c3de49ec992f4",
+          "outputs": {
+            "preview": {
+              "fallback": {
+                "fingerprint": "aefa02b5c4daa3640ef1517afa790314228e2402",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 9
+              },
+              "image": {
+                "fingerprint": "aa7ed316adab5519479e4444b01b98fe6e071870",
+                "meta": {
+                  "channels": {
+                    "alpha": "none",
+                    "layout": "gray"
+                  },
+                  "color": {
+                    "primaries": 1,
+                    "range": 2,
+                    "transfer": 13
+                  },
+                  "dtype": "float32",
+                  "shape": [
+                    2,
+                    2
+                  ]
+                },
+                "typeId": "dev.image"
+              }
+            }
+          },
+          "postRunInspection": [
+            {
+              "descriptor": {
+                "fingerprint": "aa7ed316adab5519479e4444b01b98fe6e071870",
+                "meta": {
+                  "channels": {
+                    "alpha": "none",
+                    "layout": "gray"
+                  },
+                  "color": {
+                    "primaries": 1,
+                    "range": 2,
+                    "transfer": 13
+                  },
+                  "dtype": "float32",
+                  "shape": [
+                    2,
+                    2
+                  ]
+                },
+                "typeId": "dev.image"
+              },
+              "nodeId": "preview",
+              "outputId": "image"
+            },
+            {
+              "descriptor": {
+                "fingerprint": "aefa02b5c4daa3640ef1517afa790314228e2402",
+                "meta": {},
+                "typeId": "core.int",
+                "value": 9
+              },
+              "nodeId": "preview",
+              "outputId": "fallback"
+            }
+          ],
+          "renditions": [
+            {
+              "default": true,
+              "kind": "png",
+              "mime": "image/png"
+            }
+          ],
+          "runtimePreviews": [
+            {
+              "blobSha256": "c5456cd1dbb831b70c645401dd921118f966e15cdcf8c8690385a2ade985b124",
+              "data": {
+                "height": 2,
+                "mime": "image/png",
+                "width": 2
+              },
+              "nodeId": "preview"
+            },
+            {
+              "blobSha256": "c97fcd8c808bd60bbbfc1f83bb770060c0063cf67b88f8efea7a7faadf287cbc",
+              "data": {
+                "height": 2,
+                "mime": "image/webp",
+                "width": 2
+              },
+              "nodeId": "preview"
+            }
+          ],
+          "terminalState": "completed"
+        },
+        "stableFailure": {
+          "error": "stable conformance failure",
+          "eventConstraints": [
+            "node_failed carries stable failure text"
+          ],
+          "expectedCached": [],
+          "expectedExecuted": [],
+          "expectedSkipped": [],
+          "graph": {
+            "nodes": {
+              "failure": {
+                "inputs": {},
+                "nodeType": "dev.conformance.failure"
+              }
+            }
+          },
+          "graphDigest": "sha256:1e30beb164b392ce031dee74872f11d442a855b36d3e6b7b1ec5af783eb7e6c2",
+          "inspectSelections": [],
+          "postRunInspection": [],
+          "targetNodeIds": [
+            "failure"
+          ],
+          "terminalState": "failed"
+        }
+      },
+      "targetNodeIds": [
+        "preview"
+      ]
+    }
+  ],
+  "formatVersion": 1,
+  "semantics": {
+    "events": "causal constraints only; progress and node chatter may coalesce or drop",
+    "inspection": "post-run (nodeId, outputId), never planner or cache identity",
+    "targets": "top-level node ids only"
+  }
+}

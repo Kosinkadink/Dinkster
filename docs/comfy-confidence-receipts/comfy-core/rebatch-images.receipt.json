@@ -1,0 +1,57 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 554,
+      "path": "artifacts/comfy-core/rebatch-images.native.json",
+      "sha256": "sha256:3e9ef6d2a936d4afed7d6374d79ff0a9c19ed821d3b4cda05b5c24c1932bf255"
+    },
+    "reference": {
+      "bytes": 554,
+      "path": "artifacts/comfy-core/rebatch-images.reference.json",
+      "sha256": "sha256:3e9ef6d2a936d4afed7d6374d79ff0a9c19ed821d3b4cda05b5c24c1932bf255"
+    }
+  },
+  "caseId": "comfy-core/rebatch-images/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/RebatchImages",
+    "source": {
+      "name": "RebatchImages",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.image.rebatch",
+      "kind": "node"
+    },
+    "tier": "exact"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "batchSize": 3,
+    "inputShapes": [
+      [
+        2,
+        2,
+        2,
+        1
+      ],
+      [
+        3,
+        2,
+        2,
+        1
+      ]
+    ],
+    "mappingDigest": "sha256:b1385dcd2c66518542507f7227b6ee986bf74fb2451e15eb50f91982e6b2fb03"
+  },
+  "pass": true
+}

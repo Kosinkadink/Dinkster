@@ -1,0 +1,20 @@
+[pack]
+name = "dinkster-model-ipadapter"
+namespaces = ["dinkster"]
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+inference = "dinkster-inference/1"
+
+[pack.requirements.registry]
+"dinkster.model-families" = ["dinkster.sd15"]
+
+[pack.requirements.capabilities]
+"dinkster.generation.schemas" = ">=1.0.0,<2"
+
+[pack.entry]
+nodes = "dinkster_model_ipadapter:IPADAPTER_MODEL_NODES"

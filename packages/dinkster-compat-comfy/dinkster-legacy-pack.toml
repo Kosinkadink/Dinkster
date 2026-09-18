@@ -1,0 +1,22 @@
+# Legacy ComfyUI custom-pack quarantine (DESIGN 3.8). Same package, second
+# manifest: a worker launched with this manifest loads unmodified custom
+# node packs (DINKSTER_LEGACY_PACKS) instead of the translated core surface.
+# Runs on the ComfyUI install's own interpreter, like dinkster-pack.toml.
+[pack]
+name = "dinkster-compat-legacy"
+# Quarantined legacy nodes arrive as comfy.<pack>.<v1 name>: the same
+# reserved "comfy" claim the core compat worker holds - trusted workers
+# may share one reserved root (the host granted it to both).
+namespaces = ["comfy"]
+requires = []
+
+[pack.sandbox]
+gpu = true
+writable-mounts = true
+
+[pack.entry]
+nodes = "dinkster_compat_comfy.legacy_entry:LEGACY_NODES"
+types = "dinkster_compat_comfy.legacy_entry:register_types"
+reservations = "dinkster_compat_comfy.memory:plan_reservations"
+consumers = "dinkster_compat_comfy.pool:memory_consumers"
+skips = "dinkster_compat_comfy.legacy_entry:translation_skips"

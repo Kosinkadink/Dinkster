@@ -1,0 +1,510 @@
+{
+  "reference_commit": "139e9169012533407f49c4730cce6beaf4ffefa2",
+  "reference_epoch": 101,
+  "cases": [
+    {
+      "family": "dinkster.minimax_h3",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.minimax_h3:539d5e335a5a1f033a2bca79a92267b71d0c139a2ca136d526bb2f678796b3d9",
+        "float32": "native:dinkster.minimax_h3:c6fff9adbed02d41e253a9fcd5ac729896b317730cbef3bbb2aa42ab3b7a88cc",
+        "float16": "native:dinkster.minimax_h3:f644ad7a461af3b73aa4b6566cd6d9466e700ff129c10d1e3fdc85d319d58caf"
+      }
+    },
+    {
+      "family": "dinkster.minimax_h3",
+      "role": "qwen3vl-32b-conditioner",
+      "identities": {
+        "bfloat16": "native:dinkster.minimax_h3:81f44cfe96f8baad5cc8a6c8b853921e64feda7c7ba570fd560fc6bbd1ff8ad5",
+        "float32": "native:dinkster.minimax_h3:0aa115e2a2c441c7c1c319d3b9c22d3b1abffc5ed1ed30e02d2abde073081001",
+        "float16": "native:dinkster.minimax_h3:3fb2768e0a239ce224dc4fb4e713bea4a6da2a4e0887f8864983a2c4d59ffd7e"
+      }
+    },
+    {
+      "family": "dinkster.minimax_h3",
+      "role": "video-vae",
+      "identities": {
+        "bfloat16": "native:dinkster.minimax_h3:237d18cee92c3b2babf9ddf1d7a3443c02351f9f0ee46b8bd85170279a37bd55",
+        "float32": "native:dinkster.minimax_h3:dfb8f488ad717c42786bda8b548d8c5c839485f7daf3c248f282c2ffaab628b9",
+        "float16": "native:dinkster.minimax_h3:abe765b6430bb2a650cd40be096762c66154d3c8b41fe9d0e57c352a43919a77"
+      }
+    },
+    {
+      "family": "dinkster.minimax_h3",
+      "role": "audio-vae",
+      "identities": {
+        "bfloat16": "native:dinkster.minimax_h3:479a32a4187c366d9a025043fe8eeaf7ac97755078a29be353fd72730174756e",
+        "float32": "native:dinkster.minimax_h3:8eae99028326bf0aae9085ed81897034a1d7ab0e06222b76ec43a8fdab871793",
+        "float16": "native:dinkster.minimax_h3:4e177c2405cafe39480e780167320330fecd4b995e6893ce299d50186b9a6026"
+      }
+    },
+    {
+      "family": "dinkster.anima",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.anima:7efc38a2df4241d8eb0e1c2d0710fc94cfd8eff1a5c0c73b9e1b1ab6bbcf6681",
+        "float32": "native:dinkster.anima:5b3e80b8fbbac411e888c017dd86d8569cb54ea8f08526382643ec523655e56b",
+        "float16": "native:dinkster.anima:3286ee09f32c8a903d35ac5fb96fdc82a525fffaf0582ae1a3c5dc5518c10b5e"
+      }
+    },
+    {
+      "family": "dinkster.anima",
+      "role": "qwen3_06b",
+      "identities": {
+        "bfloat16": "native:dinkster.anima:55c07c09a866ca1ce163d79a6788688e445c006c28c7e437e1e4a75ba0ac67b2",
+        "float32": "native:dinkster.anima:de52423740cad2bde85ba65c262afe9ed99fb650c0689b316331e0dad0d8ae50",
+        "float16": "native:dinkster.anima:73401023c5682603bae4b686da17402fa0685e1d6c9d21a387d0e119b797fa37"
+      }
+    },
+    {
+      "family": "dinkster.lumina2",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.lumina2:0c50841c9f7b934969bd362baf6c94ef624ced549e26ea1bc5708ff7e8dd48bb",
+        "float32": "native:dinkster.lumina2:3c7d0c95e81496c0b87abc162a158d26bc06efcac1e6fede1e0c4d12adaaef03",
+        "float16": "native:dinkster.lumina2:63e02848b532430e56915fdcd29051b2687a6878200c18c7f32a9bdedbae6681"
+      }
+    },
+    {
+      "family": "dinkster.lumina2",
+      "role": "gemma2_2b",
+      "identities": {
+        "bfloat16": "native:dinkster.lumina2:c5aec5b1858f8bd6911fb02d602614064d08ed580789ce27a3ddf49411331746",
+        "float32": "native:dinkster.lumina2:6cc9af51e713cab7b390c572b18e50ff2fa7b668340fd2f41dcdf88c8a8d2d35",
+        "float16": "native:dinkster.lumina2:7ce659aad30ce321ee6ccd7bb9ffd889a917f4e2c0e789b17b0e7a36b2e04a68"
+      }
+    },
+    {
+      "family": "dinkster.lumina2",
+      "role": "vae",
+      "identities": {
+        "bfloat16": "native:dinkster.lumina2:5a15d2e79dc7d1a3e18e04e4d9367b62fa2a23b5c33fe05bc7518d0c997842d4",
+        "float32": "native:dinkster.lumina2:9fcf03001f7eaa3651c0fafdfadd7e9968037d4e7fff0a49e5175b380a63edee",
+        "float16": "native:dinkster.lumina2:1cb8a43bc110c5481b8a82af81c3b82bd25a6137412fc7b9b6c755c80da2b256"
+      }
+    },
+    {
+      "family": "dinkster.krea2",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.krea2:d0e6baf16f029a033091a5d5fff01b8d0b3293b70e98e8ee5a86eb6d059dc933",
+        "float32": "native:dinkster.krea2:c60d34118cf5aa29b822f0e76fb0b966094bc4e5163792c63656688bf79fd785",
+        "float16": "native:dinkster.krea2:470190e8eb4052a964ac6aa3f32eb1654e9343677024d85eac06a5b8bdd9d751"
+      }
+    },
+    {
+      "family": "dinkster.krea2",
+      "role": "qwen3vl_4b",
+      "identities": {
+        "bfloat16": "native:dinkster.krea2:67777a342f29489a068ce8facb1f73951906c76a5f9234ff53425d2a9a64c497",
+        "float32": "native:dinkster.krea2:be79ce2c113c681a4282b771744f07b6f01e6d1a875728c8a673fff12cfbc86f",
+        "float16": "native:dinkster.krea2:89689f9b377e4cdafbf95530870ffff22f8165e92b4b82f377ddafa9806c1556"
+      }
+    },
+    {
+      "family": "dinkster.ideogram4",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.ideogram4:20b59f0ac9add5a49d273020b9df8008013e83018f54c98237bf67687cd0d548",
+        "float32": "native:dinkster.ideogram4:6e2d8b724c7ec92a899e4b7bd70324a6848779a89c732838817de1b61027e034",
+        "float16": "native:dinkster.ideogram4:2d0936f04bc7b47efade336d74749c08de751af7524b2cee3b8860539e0923c5"
+      }
+    },
+    {
+      "family": "dinkster.ideogram4",
+      "role": "qwen3vl_8b",
+      "identities": {
+        "bfloat16": "native:dinkster.ideogram4:057dd6cc42cd3a444f8cbe19b732a82d6b5f375819c2c68ce8e9bfc170db6bd7",
+        "float32": "native:dinkster.ideogram4:25d37d21ab08791c810b34f9915b28f46f3f68019edabbf04a1d2e4b5c60c8f1",
+        "float16": "native:dinkster.ideogram4:a3cae5ff15250ad65523fa7dde1fd719c3c6a8d3a80b25ecccfa46d2346d3111"
+      }
+    },
+    {
+      "family": "dinkster.seedvr2",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.seedvr2:a99f51472d6e7880158c3bff02bddf9d183502cf8125ac7117f8e93d2aa9d968",
+        "float32": "native:dinkster.seedvr2:4eea4143cb045d88cc95807c42662fbd37ed59a6b6caabbeba93c1948935c265",
+        "float16": "native:dinkster.seedvr2:954d2f86d8cd14a76afbd9ef6073836811180564e63e5c366edfb4a1a663a60f"
+      }
+    },
+    {
+      "family": "dinkster.seedvr2",
+      "role": "vae",
+      "identities": {
+        "bfloat16": "native:dinkster.seedvr2:e5a5416260348edb6ed2ebb0e769fdb74f6492646a9979c8e5cf201c4a3da4e6",
+        "float32": "native:dinkster.seedvr2:4e3140ae3ce1cd47e6192c2927c9e6d938d5067a442ad744c6d1973ec61b7616",
+        "float16": "native:dinkster.seedvr2:fd05d3dca1ef87c6e874f00f681155d9d069aad9b76c4c8f97e306bc7089759e"
+      }
+    },
+    {
+      "family": "dinkster.chroma",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.chroma:15def47b86a75a6fa372f8d03bd50f1a9099b1200ba8101bc7e40c09f8ef98c5",
+        "float32": "native:dinkster.chroma:5b68570549b4c3c413b06efee003259a6eac5ee60563232c48a33605f34f2c2a",
+        "float16": "native:dinkster.chroma:fc7cd91ef52625a6882591a251646e433482e05463b1336aa3396e9f6f07fd50"
+      }
+    },
+    {
+      "family": "dinkster.chroma",
+      "role": "t5xxl",
+      "identities": {
+        "bfloat16": "native:dinkster.chroma:211712863b22b9d95cdad2f1f17432017c152bb5ccd81eee07001e85c333259f",
+        "float32": "native:dinkster.chroma:680615218c8e2677b8630b095fa82084910343985ae217640ae9d370e4b2858f",
+        "float16": "native:dinkster.chroma:0595b191886c0ba57563f5d03a6565955e90359ff9d6a2f63096848a5cc1cc0f"
+      }
+    },
+    {
+      "family": "dinkster.chroma",
+      "role": "vae",
+      "identities": {
+        "bfloat16": "native:dinkster.chroma:af1d787386f8bda139f870f383ed4edd5c48eb74489a0e3d0af680c206ef95ee",
+        "float32": "native:dinkster.chroma:dd039990f2342ab145b0d29f6f2c83ef7084b2905cec3eb521207a7b524dc54f",
+        "float16": "native:dinkster.chroma:c427694e10e6d93cf7ab3e500283dc9f2e870ce9321702676abf046c824ce23b"
+      }
+    },
+    {
+      "family": "dinkster.minimax_music3",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.minimax_music3:ec9f14a48e31ea5cb22f49d1eda57a977026e01880a77485ef3cb11eec813b55",
+        "float32": "native:dinkster.minimax_music3:712a54fe2dc9944e3d55567e6ca599d89ba911dbfa84038e2e55f40fb07784b1",
+        "float16": "native:dinkster.minimax_music3:a3a8f63e73a390a02b4a6352dd5a17fac47f86b142b1d3759d165690da42ff47"
+      }
+    },
+    {
+      "family": "dinkster.minimax_music3",
+      "role": "text",
+      "identities": {
+        "bfloat16": "native:dinkster.minimax_music3:b3de88ee293b5a1de8470bb70dfde5503709d9bb1bbe86dcbf6ec2438406c9c9",
+        "float32": "native:dinkster.minimax_music3:e6b1ae6c0a360f7fbdd6527c70fba514626c905182652f7cd960211e37b75f2f",
+        "float16": "native:dinkster.minimax_music3:0aa406496320062520a31e5057dd201fe47f09c3bc9184c4dc71d546de347ef6"
+      }
+    },
+    {
+      "family": "dinkster.minimax_music3",
+      "role": "vae",
+      "identities": {
+        "bfloat16": "native:dinkster.minimax_music3:4cce96ea336bfefad48158a5253c8a1e5d44c64fb2365b67cae0ccb8bbca275b",
+        "float32": "native:dinkster.minimax_music3:9967f28da80f354167de3b87bf1dffebc1eabf44a292d2d6a5872d85538c3273",
+        "float16": "native:dinkster.minimax_music3:9b8cceea2b15d37efc8ff635db7cc3d22908367bc01d4d4cfb6b953e4ff392f9"
+      }
+    },
+    {
+      "family": "dinkster.qwen_image",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.qwen_image:7a79d47881f630471c35d7e0547d9a3fd40d473b82d4ab3e52b3816fcf4e60fc",
+        "float32": "native:dinkster.qwen_image:0c177f2a86780f47c641e38909dbf1962c55bdd198f61dd0a6be25f60ae5b8f4",
+        "float16": "native:dinkster.qwen_image:40397a1d00ee0c712dd4bc53fef4e1ef7467e4cf14b1a5445a03b6bce0fb7904"
+      }
+    },
+    {
+      "family": "dinkster.qwen_image",
+      "role": "qwen2_5_vl_7b",
+      "identities": {
+        "bfloat16": "native:dinkster.qwen_image:5811db0079a0b10c1b75f4d734fd289d079e0e4d212ae6117364449edd323b8b",
+        "float32": "native:dinkster.qwen_image:23af9b11f964a52cba05ccf4dcdab2c92875e07d7f79ec83359d0cc781cde785",
+        "float16": "native:dinkster.qwen_image:134016c6a762b0975b9d7067927b79f5c04db37989aa1ecebb7016a97db3e508"
+      }
+    },
+    {
+      "family": "dinkster.qwen_image",
+      "role": "vae",
+      "identities": {
+        "bfloat16": "native:dinkster.qwen_image:617c3891021cc00c28c56f98e228fb39dbb7559d5b439d31572b1f26d0c0ca35",
+        "float32": "native:dinkster.qwen_image:014a255f0f4062ab9468a09c7ba66a0b366b7e776e346bda7dcc098cc3abe890",
+        "float16": "native:dinkster.qwen_image:099808f5952e5705bae0a34b195d8170911f99edf5d0d7a01630c5f1812b449a"
+      }
+    },
+    {
+      "family": "dinkster.wan21",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.wan21:22432dde487d287fcafc82f6aa4c79b91d4ad9320ba58f893b32bc84b9568ead",
+        "float32": "native:dinkster.wan21:55556d3676068d49becd6df79ffb13bf3ef2e0dee51bb22da03c714c088d9263",
+        "float16": "native:dinkster.wan21:bfde0c70d961de2baafb1583ac01a26a5501d01c5bf98f4767c056bafd827e9a"
+      }
+    },
+    {
+      "family": "dinkster.wan21",
+      "role": "umt5xxl",
+      "identities": {
+        "bfloat16": "native:dinkster.wan21:cb605edacfebf094dedb2c6f252746007a4b2dc9c9241c46fe242102b3ecdfb0",
+        "float32": "native:dinkster.wan21:1c75cabb8cf9610e14035071b346c4e18495f2d9c09e318fcaf2aa2f807559bf",
+        "float16": "native:dinkster.wan21:7fd2d344ddfb539c9a01b0a1e29fd69c711d00152b959ea992cc8acdabee781d"
+      }
+    },
+    {
+      "family": "dinkster.wan21",
+      "role": "vae",
+      "identities": {
+        "bfloat16": "native:dinkster.wan21:577ff20abd8a259056c0668b48d1e0a057ef5d934c37e29ad3ced9ea4ced2aed",
+        "float32": "native:dinkster.wan21:4335dafb69897f0f29b2caf04eb451eca1df43e11bd96c272a0aaf14884539f3",
+        "float16": "native:dinkster.wan21:f94a0690f7664f2c31634e25abd7405b6531dde4cb12ba8e0264a9e114d059f9"
+      }
+    },
+    {
+      "family": "dinkster.ltxv",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.ltxv:d2c9949ae27918ef46ae033b6048a302ca302ef119ca3b284f52753b6a74b176",
+        "float32": "native:dinkster.ltxv:e8fbeaf0c34c4926746a826fb85cd158a232b5d6f7c37815a8c4c1d801a3df30",
+        "float16": "native:dinkster.ltxv:f6fa47c8c358b39617dfe9fe5465eb05d8b309a4ee1101864fcdeda02ab898a3"
+      }
+    },
+    {
+      "family": "dinkster.ltxv",
+      "role": "t5xxl",
+      "identities": {
+        "bfloat16": "native:dinkster.ltxv:a63cf97b4cf4ea35f3258ccacd736a207d9388f533bedc8af6142c5b224bf12f",
+        "float32": "native:dinkster.ltxv:f42ec11de3505c8d2fa8f5de7c261ba6f2d80842baef06260c1a5f27b67bf17c",
+        "float16": "native:dinkster.ltxv:2f9ed91db62138e3e70b4613f5e26143e049058f8f73460a30c55b14b277164e"
+      }
+    },
+    {
+      "family": "dinkster.ltxv",
+      "role": "vae",
+      "identities": {
+        "bfloat16": "native:dinkster.ltxv:9f753b0a46c25b4a9b417df93b0facc6702f36131fee03f3ded4b5b8578bd83f",
+        "float32": "native:dinkster.ltxv:829e881aa5d159d8dc8309902f7fd28ed85e56c50d6d878c960a0e0dce31401e",
+        "float16": "native:dinkster.ltxv:0127d6e02ba8430f909e5edefa5bebde20133d3de855de1cba146a3f2ee5dd5c"
+      }
+    },
+    {
+      "family": "dinkster.ltxav",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.ltxav:b629ed37a6ead701108d955069a2e91a8ad85023276ad8e64c1d177d51e3aa7e",
+        "float32": "native:dinkster.ltxav:ddc0a8e72168f56a90d9fc128b93435f1de2aa00cecd00e5903f12d0baf3cadf",
+        "float16": "native:dinkster.ltxav:470cc01b264fa5dfab25b6795513ed5a764c52485e0b71f2a21a40f64eb02131"
+      }
+    },
+    {
+      "family": "dinkster.ltxav",
+      "role": "gemma3_12b",
+      "identities": {
+        "bfloat16": "native:dinkster.ltxav:5ad3db645fcf5bab10daf72447d22626ef82c83ea8f4ab81346cafc1c9cb9217",
+        "float32": "native:dinkster.ltxav:21c47b2d501f13ecf18de38f95dab1aaf896a93e158b917128dc3afca9ef94a6",
+        "float16": "native:dinkster.ltxav:0563b70cefa970f0ea34bdea2ad25c335f8cba629b9178defd0444dba3e34b1c"
+      }
+    },
+    {
+      "family": "dinkster.ltxav",
+      "role": "gemma4_12b",
+      "identities": {
+        "bfloat16": "native:dinkster.ltxav:c16ad8f1f048b86dbd78bb7cd6a0f2ba363aff44d6800851eb827e7e77bd9aef",
+        "float32": "native:dinkster.ltxav:cc16de56f38279051a17df73d54e9b2b991dc871114f3b25297966075c5331c3",
+        "float16": "native:dinkster.ltxav:178391f19518bd0acafcebb4232d374b428c6ad90d7dbb934e5e12d0984e8a29"
+      }
+    },
+    {
+      "family": "dinkster.ltxav",
+      "role": "text_projection",
+      "identities": {
+        "bfloat16": "native:dinkster.ltxav:c1f753496a655a7ec82e96fe5711698b463bd02867b1ca363249b9c10b07d67a",
+        "float32": "native:dinkster.ltxav:c3b4a2015c062674a8b4a659591d28b057189896da57782c88387b8dad6432e6",
+        "float16": "native:dinkster.ltxav:b18eb2ff06b6dddf067d2e73bedae69641f8f6a2d1b8aba6cb183f0b1d184e4b"
+      }
+    },
+    {
+      "family": "dinkster.ltxav",
+      "role": "connectors",
+      "identities": {
+        "bfloat16": "native:dinkster.ltxav:5bb8738b7d7e23dc0e505b4c00c06a99894258167d7a7c5e23ff8141f6d2a735",
+        "float32": "native:dinkster.ltxav:644f330598130889c7cccc286c461b57d65ef7b403b03ec70906e04aea898fc8",
+        "float16": "native:dinkster.ltxav:5a573899719b852f01cee1b1fdf6e62827b00f1db1a33f58514e0e83f9c072b0"
+      }
+    },
+    {
+      "family": "dinkster.ltxav",
+      "role": "vae",
+      "identities": {
+        "bfloat16": "native:dinkster.ltxav:c1d60b806af30a0366065421a81e8c5d579f699db029f785ee4766db807b1263",
+        "float32": "native:dinkster.ltxav:c4d28eb4394e0214fd1424a951f504be5acae381ce350f69c50ab6a7399a2155",
+        "float16": "native:dinkster.ltxav:204c7393e5d7fa3b063597602027a959b4a1289ebad880f7ceef78ed29763fa2"
+      }
+    },
+    {
+      "family": "dinkster.ltxav",
+      "role": "latent_upscaler",
+      "identities": {
+        "bfloat16": "native:dinkster.ltxav:70ef15ec85a94c89baa70e2fa3d712f549b77902f391e6770066717fe42e158a",
+        "float32": "native:dinkster.ltxav:f1f58515b344eaf96b1292545a741bfd22a0b0252d9dc6b93b7c3b623ec9a6b0",
+        "float16": "native:dinkster.ltxav:69d4069ebf4648259748a3d092f3baf5e7ef77597606ca7e640104f4d22819e5"
+      }
+    },
+    {
+      "family": "dinkster.triposplat",
+      "role": "dit",
+      "identities": {
+        "bfloat16": "native:dinkster.triposplat:65b72e55d36215771fc2c972403b32da2530e302136bfbe412f2a27848dc7814",
+        "float32": "native:dinkster.triposplat:7cdb8a9c7c01ee58e773a2ce1eedbd046e8551ea65c892990feeb7852331b913",
+        "float16": "native:dinkster.triposplat:22b582154887dffc2974adec1b2eaae9a5e233b0740cfd9c5224571e317dd298"
+      }
+    },
+    {
+      "family": "dinkster.triposplat",
+      "role": "dinov3-vision-conditioner",
+      "identities": {
+        "bfloat16": "native:dinkster.triposplat:8638724e60571e1b1257126acb7fdf6732b51dd812e757bea7cfac5b284e2bd2",
+        "float32": "native:dinkster.triposplat:fbd289b3a47a6acae523162aaf8d7d6afeeaf8c10569becdd78ce0b514449fcb",
+        "float16": "native:dinkster.triposplat:828c8b6cb53661814da7d6c72746412bdb7e550783ae2c2ab3264af5b72634c0"
+      }
+    },
+    {
+      "family": "dinkster.triposplat",
+      "role": "gaussian-decoder",
+      "identities": {
+        "bfloat16": "native:dinkster.triposplat:8b28021d20b7eb4c249e4bec6e8d51ef7611ed163bea917507942ec5100e393e",
+        "float32": "native:dinkster.triposplat:5c386186a08bd8ff40c87c3e2044ec057ad692d0d2a7c7222b9306def1b9aedd",
+        "float16": "native:dinkster.triposplat:80705ee87efeed7373359dfcf9fdc6f3bc1c737ea92ba0d96bded8361ed33f60"
+      }
+    },
+    {
+      "family": "dinkster.trellis2",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.trellis2:7da98d4a3278e7995a3d9b033060d4cee5e6b37f92c8e562e74404e05f1d5736",
+        "float32": "native:dinkster.trellis2:75d4adba634408397c34ed981230159eaf8ba1dd6416f1c482903e1cc967af4b",
+        "float16": "native:dinkster.trellis2:3cc920950399dde67df37987f91c27030950a73b600f32b54a27455623b847a4"
+      }
+    },
+    {
+      "family": "dinkster.trellis2",
+      "role": "vision",
+      "identities": {
+        "bfloat16": "native:dinkster.trellis2:be679763812bcb1a8a6c6c6151396f52a5aac5047cffdbe4b2117b04b9daff70",
+        "float32": "native:dinkster.trellis2:785953ec255b90adc4cd9b5111852d8d13d212fba489f326a739117544dd0ccb",
+        "float16": "native:dinkster.trellis2:e79bff68f5233ce94141650d2f9ceb253b01b66997ca44d623fd10fefd7be4b9"
+      }
+    },
+    {
+      "family": "dinkster.trellis2",
+      "role": "structure-decoder",
+      "identities": {
+        "bfloat16": "native:dinkster.trellis2:dcb5f71757226e3ae62ca1a1bb0ad7719d976b760182ff67e86a3df22753ac64",
+        "float32": "native:dinkster.trellis2:4026d5bb6d27ef9e2166fc9b8e08923211ecafaf933ad2e44c6c9af55d4d39dd",
+        "float16": "native:dinkster.trellis2:8ae314cfb4b46b672c01cb72a92e16c3b2d55595d9bebae9f7953637ca81e444"
+      }
+    },
+    {
+      "family": "dinkster.trellis2",
+      "role": "shape-decoder",
+      "identities": {
+        "bfloat16": "native:dinkster.trellis2:1d2988cd7646e98bce2539a1801539469916a8cef959da0800916c4f449f9957",
+        "float32": "native:dinkster.trellis2:9bdae259b0ad3f7f681c18e1fc8f86cfc98f8cc33aab04eba36ee59f3e205f39",
+        "float16": "native:dinkster.trellis2:59169afb2d670d3eeaebecd5c0cd016298735629aef1504486bc9f204c23f34c"
+      }
+    },
+    {
+      "family": "dinkster.trellis2",
+      "role": "texture-decoder",
+      "identities": {
+        "bfloat16": "native:dinkster.trellis2:f71527545de8264e4f2c6388468d2cfa606153ddb25c49d34e0b694b188de545",
+        "float32": "native:dinkster.trellis2:5bff0f1a52b07e1406b4c57d69ac833234ec486162c401f67cd6c3779f90705c",
+        "float16": "native:dinkster.trellis2:8c63504a1b7084b137ddf39d0d94987e92a5cf47a58857f867bfe4ae23e27530"
+      }
+    },
+    {
+      "family": "dinkster.flux2_dev",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.flux2_dev:c94c3f8edec2dfaa51a3f252e87c5b3352782732b897bd335068c3610842b7e8",
+        "float32": "native:dinkster.flux2_dev:85bfbd163a79f12da1fbadfd4323324759b3062317b7cfad097aaae6790f9188",
+        "float16": "native:dinkster.flux2_dev:698764068a052a7a75006b7f837e04867be47e3be71e3690ae58cff917e1784c"
+      }
+    },
+    {
+      "family": "dinkster.flux2_dev",
+      "role": "mistral3_24b",
+      "identities": {
+        "bfloat16": "native:dinkster.flux2_dev:08c22901916ddbf7d4edf76e60ae17aa34932cd740220ea66aa79ed4f857e4f1",
+        "float32": "native:dinkster.flux2_dev:bea550e4ba1d921c19372459d7f824019b57727e554f1c56d901c475412cd676",
+        "float16": "native:dinkster.flux2_dev:9a4aeff162625edf1dc76140c79ba4399cf367074df52955ebc79f4e9118577b"
+      }
+    },
+    {
+      "family": "dinkster.flux2_dev",
+      "role": "vae",
+      "identities": {
+        "bfloat16": "native:dinkster.flux2_dev:b083fbb9394498797cdc5f1c5be04503e6d0ed8d7bcd6c87b56c1fa882a0a0e2",
+        "float32": "native:dinkster.flux2_dev:00c4a28e0464fe90f72e84076011634832213868cd56b5e82758bd1f7274af02",
+        "float16": "native:dinkster.flux2_dev:788f8824c8357e47730ab46152ade5bf9e885b2890e8b5b614b7e8efc95642cb"
+      }
+    },
+    {
+      "family": "dinkster.flux2_klein_4b",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.flux2_klein_4b:a919a477fae00bda129d854be130878ae59cda9e2a21ef26a1e3e58d0760052a",
+        "float32": "native:dinkster.flux2_klein_4b:6b8a8fc0fce1a3224d32073c83cbf24cd0b66607c6c78ad0f3d598bba9315cd7",
+        "float16": "native:dinkster.flux2_klein_4b:5e2a231e5f28c2d604df36ffb28245cbe763f174a10f571041040cdf57444a97"
+      }
+    },
+    {
+      "family": "dinkster.flux2_klein_4b",
+      "role": "qwen3_4b",
+      "identities": {
+        "bfloat16": "native:dinkster.flux2_klein_4b:1ba32b57402da76ba7bbed94a5dc35422a3ac08f6a0972dcd9e5cd342b5c0bdd",
+        "float32": "native:dinkster.flux2_klein_4b:e2651a0cace2f4eb65df20e1ba976c94c416731973dbcae835fa61db0869ad05",
+        "float16": "native:dinkster.flux2_klein_4b:0d2935c1d4b0ad496b033f7241e015060a4b05dc6c4b9e55bec95a9bf9104910"
+      }
+    },
+    {
+      "family": "dinkster.flux2_klein_4b",
+      "role": "vae",
+      "identities": {
+        "bfloat16": "native:dinkster.flux2_klein_4b:4738df483531878b725cef75a67c3641220cc18204549a88bf365d970c613701",
+        "float32": "native:dinkster.flux2_klein_4b:a89893f99347483d670cde1f1f55c9e6fe813c06a0508f99757d63f85c6bac9a",
+        "float16": "native:dinkster.flux2_klein_4b:3ffa9edf00c412c4c874b75aa488ec30f604b397a2865503d6781616740f659c"
+      }
+    },
+    {
+      "family": "dinkster.flux2_klein_9b",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.flux2_klein_9b:325f852ccbdc9d0cb8629d9a87b5870348f8e844946e81ad9df76e7cb1755f3d",
+        "float32": "native:dinkster.flux2_klein_9b:f7a8b1d83db78deabc9db2a7e85d30d3d5f009e7152e9b2798af132e93db595a",
+        "float16": "native:dinkster.flux2_klein_9b:6ce1eea6707c8f46ca54025866bf64b90de251ec303d0bbe4c15b6b0214c12f5"
+      }
+    },
+    {
+      "family": "dinkster.flux2_klein_9b",
+      "role": "qwen3_8b",
+      "identities": {
+        "bfloat16": "native:dinkster.flux2_klein_9b:4ab602477dd1ba2715ec790d103a733699771e14cdf602ac5418823657e31744",
+        "float32": "native:dinkster.flux2_klein_9b:2126431c277fa2fe7094da791ad0ad870f9854666752dbfa8c883f7dccdbeef0",
+        "float16": "native:dinkster.flux2_klein_9b:8105a654adaf6cb59a83e19a9e0f324ca9e59ce0201d5b569c891abcc985a937"
+      }
+    },
+    {
+      "family": "dinkster.flux2_klein_9b",
+      "role": "vae",
+      "identities": {
+        "bfloat16": "native:dinkster.flux2_klein_9b:e9c64921dcb6769c2c27522421053392ef88d62c4640aec97d3b2dbda0d2daaa",
+        "float32": "native:dinkster.flux2_klein_9b:63f82d124ee09cdd9b26940fac3f3d698a9acc4a0909f5897c955b726f767040",
+        "float16": "native:dinkster.flux2_klein_9b:ee9115ceb500095d7a558bf8c3b3052a8ea8e4c00ceef0f87c29b4a6a3b3dcea"
+      }
+    },
+    {
+      "family": "dinkster.flux2",
+      "role": "diffusion",
+      "identities": {
+        "bfloat16": "native:dinkster.flux2:520af3e601a7e5756433f63099e2e026e90c0195f30263383b6bbf4155902fc5",
+        "float32": "native:dinkster.flux2:6d38ba200c7f6033cc1b0f4895354f027184e0487907d01ac637155b3042a64b",
+        "float16": "native:dinkster.flux2:41b5407a068422c0ff3c20717a4fac6f2faac249946838a4885c1593db2b1cad"
+      }
+    },
+    {
+      "family": "dinkster.flux2",
+      "role": "vae",
+      "identities": {
+        "bfloat16": "native:dinkster.flux2:52c662c590386642ba0901019088e66eb5a40372d8d89ca67336af1d4b2c87d4",
+        "float32": "native:dinkster.flux2:542938a763f57c7bcac762ac77db3851860ecc1469812fb3a9a4cfab8fa44e35",
+        "float16": "native:dinkster.flux2:9b1d4201328989b2b7cfd14d9385913d1ada2d120613089f1530efc230a9b0ce"
+      }
+    }
+  ]
+}

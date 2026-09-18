@@ -1,0 +1,25 @@
+[pack]
+name = "dinkster-model-triposplat"
+namespaces = ["dinkster"]
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+inference = "dinkster-inference/1"
+
+[pack.dependencies]
+dinkster-nodes-media-io = ">=0.0.1,<1"
+
+[pack.requirements.registry]
+"dinkster.model-families" = ["dinkster.triposplat"]
+"dinkster.samplers" = ["dinkster.euler"]
+"dinkster.schedulers" = ["dinkster.simple"]
+
+[pack.requirements.capabilities]
+"dinkster.generation.schemas" = ">=1.0.0,<2"
+
+[pack.entry]
+nodes = "dinkster_model_triposplat:TRIPOSPLAT_MODEL_NODES"

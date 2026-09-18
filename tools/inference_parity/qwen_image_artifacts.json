@@ -1,0 +1,172 @@
+{
+  "artifact_root": "/home/kosin/ComfyUI-Shared/models",
+  "artifacts": [
+    {
+      "acquisition": "reused-existing",
+      "blake3": "d834b2740ee10a114d4472a541a8e0427a733a028194fb907d3df5454a4d5ac7",
+      "bytes": 40861031488,
+      "header_contract": {
+        "dtype_counts": {
+          "BF16": 1933
+        },
+        "public_contract": "dinkster_inference.qwen_image_layout.qwen_image_dit_layout",
+        "tensor_count": 1933
+      },
+      "header_sha256": "9356eb06d3b193fa894c2921ad8f61b19bb87823d54b0f57e22bdd76bc3a5b9f",
+      "local_path": "diffusion_models/qwen_image_bf16.safetensors",
+      "provider_path": "split_files/diffusion_models/qwen_image_bf16.safetensors",
+      "role": "qwen-image-dit",
+      "sha256": "d08fb5d68026c0d87325f9a7b3ad6454061113a2bc73cc883114dae172937ae7",
+      "source_url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/46839d338df81ce625d5fae27d7e370314c0fbc9/split_files/diffusion_models/qwen_image_bf16.safetensors"
+    },
+    {
+      "acquisition": "reused-existing",
+      "blake3": "6f5249d557373ca144505c1d4193adffdf33e4d3a8ded719de65a8cb77780722",
+      "bytes": 9384670680,
+      "header_contract": {
+        "dtype_counts": {
+          "BF16": 371,
+          "F32": 716,
+          "F8_E4M3": 359
+        },
+        "logical_contract": "dinkster_inference.qwen_image_text.qwen_image_text_layout",
+        "logical_contract_tensors": 728,
+        "provider_extras": [
+          "lm_head.weight",
+          "scaled_fp8"
+        ],
+        "tensor_count": 1446
+      },
+      "header_sha256": "c4e6e0abbd46c2216857d21eaef3e85ed56553e9ddd3103dbbeff243b8a38d73",
+      "local_path": "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "provider_path": "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "role": "qwen2.5-vl-7b-text",
+      "sha256": "cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4",
+      "source_url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/46839d338df81ce625d5fae27d7e370314c0fbc9/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
+    },
+    {
+      "acquisition": "reused-existing",
+      "blake3": "1018b941788940c4dfc449d5d749950cae58c9a7f6a794b00a2f8321abc885d1",
+      "bytes": 253806246,
+      "header_contract": {
+        "dtype_counts": {
+          "BF16": 194
+        },
+        "public_contract": "dinkster_inference_torch.wan21_vae.WanVAEConfig",
+        "required_tensors": {
+          "conv1.weight": [
+            32,
+            32,
+            1,
+            1,
+            1
+          ],
+          "conv2.weight": [
+            16,
+            16,
+            1,
+            1,
+            1
+          ],
+          "decoder.conv1.weight": [
+            384,
+            16,
+            3,
+            3,
+            3
+          ],
+          "decoder.head.2.weight": [
+            3,
+            96,
+            3,
+            3,
+            3
+          ],
+          "decoder.middle.1.proj.weight": [
+            384,
+            384,
+            1,
+            1
+          ],
+          "decoder.upsamples.11.resample.1.weight": [
+            96,
+            192,
+            3,
+            3
+          ],
+          "decoder.upsamples.3.time_conv.weight": [
+            768,
+            384,
+            3,
+            1,
+            1
+          ],
+          "encoder.conv1.weight": [
+            96,
+            3,
+            3,
+            3,
+            3
+          ],
+          "encoder.downsamples.5.resample.1.weight": [
+            192,
+            192,
+            3,
+            3
+          ],
+          "encoder.downsamples.5.time_conv.weight": [
+            192,
+            192,
+            3,
+            1,
+            1
+          ],
+          "encoder.head.2.weight": [
+            32,
+            384,
+            3,
+            3,
+            3
+          ],
+          "encoder.middle.1.to_qkv.weight": [
+            1152,
+            384,
+            1,
+            1
+          ]
+        },
+        "tensor_count": 194
+      },
+      "header_sha256": "5fcff35e07ec3899a69d23ddec25bc5ec29c092d2902a66c0135bf36f3ec7cc5",
+      "local_path": "vae/qwen_image_vae.safetensors",
+      "provider_path": "split_files/vae/qwen_image_vae.safetensors",
+      "role": "wan21-vae",
+      "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+      "source_url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/46839d338df81ce625d5fae27d7e370314c0fbc9/split_files/vae/qwen_image_vae.safetensors"
+    }
+  ],
+  "license_receipt": {
+    "bytes": 11343,
+    "name": "Apache License 2.0",
+    "repository": "Qwen/Qwen-Image",
+    "revision": "75e0b4be04f60ec59a75f475837eced720f823b6",
+    "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+    "source_url": "https://huggingface.co/Qwen/Qwen-Image/raw/75e0b4be04f60ec59a75f475837eced720f823b6/LICENSE"
+  },
+  "provider": {
+    "api_url": "https://huggingface.co/api/models/Comfy-Org/Qwen-Image_ComfyUI/revision/46839d338df81ce625d5fae27d7e370314c0fbc9",
+    "gated": false,
+    "license": "Apache-2.0",
+    "model_card_url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/raw/46839d338df81ce625d5fae27d7e370314c0fbc9/README.md",
+    "repository": "Comfy-Org/Qwen-Image_ComfyUI",
+    "revision": "46839d338df81ce625d5fae27d7e370314c0fbc9"
+  },
+  "schema": 1,
+  "storage_receipt": {
+    "after_free_bytes": 82977046528,
+    "before_free_bytes": 82899148800,
+    "minimum_free_bytes": 68719476736,
+    "required_download_bytes": 0,
+    "reused_existing_bytes": 50499508414
+  }
+}

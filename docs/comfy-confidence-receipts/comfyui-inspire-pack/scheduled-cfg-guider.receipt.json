@@ -1,0 +1,277 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 74922,
+      "path": "artifacts/comfyui-inspire-pack/scheduled-cfg-guider.native.json",
+      "sha256": "sha256:24d3da2acf0d9cf15c12419d7c90e6466f068347a531e4fa97e97287ee8bf97b"
+    },
+    "reference": {
+      "bytes": 74922,
+      "path": "artifacts/comfyui-inspire-pack/scheduled-cfg-guider.reference.json",
+      "sha256": "sha256:24d3da2acf0d9cf15c12419d7c90e6466f068347a531e4fa97e97287ee8bf97b"
+    }
+  },
+  "caseId": "comfyui-inspire-pack/scheduled-cfg-guider/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfyui-inspire-pack/ScheduledCFGGuider //Inspire",
+    "source": {
+      "name": "ScheduledCFGGuider //Inspire",
+      "pack": "comfyui-inspire-pack",
+      "referenceKind": "ecosystem-pinned",
+      "revision": "6b2ca017a168bcdba5f22c258b3b86c5c76470ca"
+    },
+    "target": {
+      "id": "dinkster.scheduled_cfg_guider",
+      "kind": "node"
+    },
+    "tier": "exact"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "cases": [
+      {
+        "evaluations": [
+          1.0,
+          0.85,
+          0.25,
+          0.0
+        ],
+        "family": "sd-eps",
+        "from_cfg": 6.5,
+        "id": "sd-eps-linear-6.5-1",
+        "schedule": "linear",
+        "sigmas": [
+          1.0,
+          0.7,
+          0.25,
+          0.0
+        ],
+        "to_cfg": 1.0
+      },
+      {
+        "evaluations": [
+          1.0,
+          0.85,
+          0.25,
+          0.0
+        ],
+        "family": "sd-eps",
+        "from_cfg": 7.0,
+        "id": "sd-eps-log-7-2",
+        "schedule": "log",
+        "sigmas": [
+          1.0,
+          0.7,
+          0.25,
+          0.0
+        ],
+        "to_cfg": 2.0
+      },
+      {
+        "evaluations": [
+          1.0,
+          0.85,
+          0.25,
+          0.0
+        ],
+        "family": "sd-eps",
+        "from_cfg": 5.5,
+        "id": "sd-eps-cos-5.5-1.5",
+        "schedule": "cos",
+        "sigmas": [
+          1.0,
+          0.7,
+          0.25,
+          0.0
+        ],
+        "to_cfg": 1.5
+      },
+      {
+        "evaluations": [
+          1.0,
+          0.85,
+          0.25,
+          0.0
+        ],
+        "family": "sd-eps",
+        "from_cfg": 0.0,
+        "id": "sd-eps-exp-0-4",
+        "schedule": "exp",
+        "sigmas": [
+          1.0,
+          0.7,
+          0.25,
+          0.0
+        ],
+        "to_cfg": 4.0
+      },
+      {
+        "evaluations": [
+          1.0,
+          0.85,
+          0.25,
+          0.0
+        ],
+        "family": "sd-eps",
+        "from_cfg": 4.0,
+        "id": "sd-eps-exp-4-0",
+        "schedule": "exp",
+        "sigmas": [
+          1.0,
+          0.7,
+          0.25,
+          0.0
+        ],
+        "to_cfg": 0.0
+      },
+      {
+        "evaluations": [
+          1.0,
+          0.85,
+          0.25,
+          0.0
+        ],
+        "family": "sd-eps",
+        "from_cfg": 3.0,
+        "id": "sd-eps-exp-3-6",
+        "schedule": "exp",
+        "sigmas": [
+          1.0,
+          0.7,
+          0.25,
+          0.0
+        ],
+        "to_cfg": 6.0
+      },
+      {
+        "evaluations": [
+          1.0,
+          0.85,
+          0.25,
+          0.0
+        ],
+        "family": "flux-flow",
+        "from_cfg": 6.5,
+        "id": "flux-flow-linear-6.5-1",
+        "schedule": "linear",
+        "sigmas": [
+          1.0,
+          0.7,
+          0.25,
+          0.0
+        ],
+        "to_cfg": 1.0
+      },
+      {
+        "evaluations": [
+          1.0,
+          0.85,
+          0.25,
+          0.0
+        ],
+        "family": "flux-flow",
+        "from_cfg": 7.0,
+        "id": "flux-flow-log-7-2",
+        "schedule": "log",
+        "sigmas": [
+          1.0,
+          0.7,
+          0.25,
+          0.0
+        ],
+        "to_cfg": 2.0
+      },
+      {
+        "evaluations": [
+          1.0,
+          0.85,
+          0.25,
+          0.0
+        ],
+        "family": "flux-flow",
+        "from_cfg": 5.5,
+        "id": "flux-flow-cos-5.5-1.5",
+        "schedule": "cos",
+        "sigmas": [
+          1.0,
+          0.7,
+          0.25,
+          0.0
+        ],
+        "to_cfg": 1.5
+      },
+      {
+        "evaluations": [
+          1.0,
+          0.85,
+          0.25,
+          0.0
+        ],
+        "family": "flux-flow",
+        "from_cfg": 0.0,
+        "id": "flux-flow-exp-0-4",
+        "schedule": "exp",
+        "sigmas": [
+          1.0,
+          0.7,
+          0.25,
+          0.0
+        ],
+        "to_cfg": 4.0
+      },
+      {
+        "evaluations": [
+          1.0,
+          0.85,
+          0.25,
+          0.0
+        ],
+        "family": "flux-flow",
+        "from_cfg": 4.0,
+        "id": "flux-flow-exp-4-0",
+        "schedule": "exp",
+        "sigmas": [
+          1.0,
+          0.7,
+          0.25,
+          0.0
+        ],
+        "to_cfg": 0.0
+      },
+      {
+        "evaluations": [
+          1.0,
+          0.85,
+          0.25,
+          0.0
+        ],
+        "family": "flux-flow",
+        "from_cfg": 3.0,
+        "id": "flux-flow-exp-3-6",
+        "schedule": "exp",
+        "sigmas": [
+          1.0,
+          0.7,
+          0.25,
+          0.0
+        ],
+        "to_cfg": 6.0
+      }
+    ],
+    "mappingDigest": "sha256:13348ffc7e2cde8b1c84287e3b8a296b7ef1872f6ecdba32789dab30ad397c43",
+    "scope": "all source interpolation branches, exact-sigma and sequential fallback lookup, CFG-one lane admission, and guided reduction on SD/EPS and Flux/flow tensors",
+    "sourceCommit": "6b2ca017a168bcdba5f22c258b3b86c5c76470ca",
+    "sourceFiles": {
+      "inspire/sampler_nodes.py": "153c5cbf334ca67176569625d10feac924bb289a8c18321bcaee0d9a99d18c51"
+    }
+  },
+  "pass": true
+}

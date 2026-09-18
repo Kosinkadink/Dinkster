@@ -1,0 +1,846 @@
+{
+  "component_artifacts": [
+    {
+      "bytes": 12541383144,
+      "digest": "sha256:7c83c314a3d879d43e5700072033256000f46a56900ae48b209a77ac1921488b",
+      "follow_up_deferral": {
+        "name": "W0-LONGCAT-EXECUTION",
+        "reason": "Component-layout acceptance does not port LongCat production text/diffusion execution, mixed-FP8 strict loading, image-edit execution, reference-pin adjudication, or executable-workload promotion.",
+        "trigger": "Explicit coordinator adjudication must replace canonical ComfyUI f4b99bc62389af315013dda85f24f2bbd262b686, which predates LongCat and is not an ancestor of current master; candidate 9cf91339b708a245762fa38ffeec9702b381e0db requires review of cross-cutting attention, Comfy Kitchen, model-loading, embedding, model-management, patcher, sampler, and dependency changes, plus proof for strict loading of the present but upstream-uninstantiated root lm_head, before production execution and executable-workload acceptance evidence."
+      },
+      "id": "longcat-image-bf16-diffusion",
+      "layout": {
+        "block_structure": "10 double blocks and 20 single blocks",
+        "double_block_mlp": "img_mlp/txt_mlp [3072, 12288, 3072]",
+        "dtype": "bfloat16",
+        "final_layer": "linear.weight [64, 3072]; adaLN_modulation.1.weight [6144, 3072]",
+        "gated_mlp": "absent; double MLP [3072, 12288, 3072], single packed MLP width 12288",
+        "guidance_input": "absent",
+        "image_input": "img_in.weight [3072, 64]",
+        "key_count": 412,
+        "single_block_mlp": "linear1.weight [21504, 3072]; linear2.weight [3072, 15360]",
+        "text_input": "txt_in.weight [3072, 3584]",
+        "text_normalization": "absent",
+        "vector_input": "absent"
+      },
+      "path": "diffusion_models/longcat_image_bf16.safetensors",
+      "policy": {
+        "execution": "deferred to W0-LONGCAT-EXECUTION",
+        "guidance": "FluxGuidance sets the conditioning value, LongCat extra_conds removes it, and Flux consumes it only when guidance_embed is true; external KSampler CFG 4 remains active (ComfyUI 9cf91339b708a245762fa38ffeec9702b381e0db: comfy_extras/nodes_flux.py:59-77, comfy/model_base.py:1068-1071, comfy/ldm/flux/model.py:171-173)",
+        "model": "Flux with no vector/ADM or guidance embedding; text-length RoPE shifts [1.0, text_len, text_len] (ComfyUI 9cf91339b708a245762fa38ffeec9702b381e0db: comfy/supported_models.py:2161-2190, comfy/model_base.py:1053-1071)"
+      },
+      "provenance": {
+        "download_date": "2026-07-30",
+        "template_commit": "aa3661d9fc1a493f8de6b029f5b8af27da3c5d08",
+        "template_digest": "sha256:30f5a89de5e516a36b47d7bbb912c6901079064ba4f9b31bcda43188103450a4",
+        "upstream_reference_commit": "9cf91339b708a245762fa38ffeec9702b381e0db",
+        "verified_on": "RipperPC"
+      },
+      "role": "longcat-3584-wide-vector-free-flux-diffusion",
+      "source_url": "https://huggingface.co/Comfy-Org/LongCat-Image/resolve/main/split_files/diffusion_models/longcat_image_bf16.safetensors",
+      "status": "accepted-component-layout"
+    },
+    {
+      "bytes": 9384670680,
+      "digest": "sha256:cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4",
+      "follow_up_deferral": {
+        "name": "W0-LONGCAT-EXECUTION",
+        "reason": "Component-layout acceptance does not port LongCat production text/diffusion execution, mixed-FP8 strict loading, image-edit execution, reference-pin adjudication, or executable-workload promotion.",
+        "trigger": "Explicit coordinator adjudication must replace canonical ComfyUI f4b99bc62389af315013dda85f24f2bbd262b686, which predates LongCat and is not an ancestor of current master; candidate 9cf91339b708a245762fa38ffeec9702b381e0db requires review of cross-cutting attention, Comfy Kitchen, model-loading, embedding, model-management, patcher, sampler, and dependency changes, plus proof for strict loading of the present but upstream-uninstantiated root lm_head, before production execution and executable-workload acceptance evidence."
+      },
+      "id": "longcat-qwen-2.5-vl-7b-fp8-text",
+      "layout": {
+        "dtype_counts": "371 bfloat16, 716 float32 scales, 359 float8_e4m3 (358 weights plus marker)",
+        "embedding": "model.embed_tokens.weight [152064, 3584] bfloat16",
+        "key_count": 1446,
+        "model_subtree": "model.* (730 keys: 142 bfloat16, 392 float32 scales, 196 float8_e4m3 weights)",
+        "model_subtree_keys": 730,
+        "profile": "Qwen2.5-VL 7B mixed bfloat16/scaled-fp8 text plus role-separated visual subtree",
+        "root_lm_head": "lm_head.weight [152064, 3584] bfloat16; present but not instantiated by upstream encoder",
+        "scaled_fp8": "F8_E4M3 weights; each of 358 linear weights has scalar float32 .scale_weight and .scale_input; zero-length scaled_fp8 marker",
+        "visual_subtree": "visual.* (714 keys: 228 bfloat16, 324 float32 scales, 162 float8_e4m3 weights)",
+        "visual_subtree_keys": 714
+      },
+      "path": "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "policy": {
+        "execution": "deferred to W0-LONGCAT-EXECUTION",
+        "roles": "model.* text transformer; visual.* image-edit encoder; lm_head unused by encoder; scaled_fp8 conversion marker is metadata (ComfyUI 9cf91339b708a245762fa38ffeec9702b381e0db: comfy/text_encoders/llama.py:1112-1163, comfy/utils.py:1396-1461)",
+        "text": "Quote-aware 512-token Qwen2.5 tokenizer with LongCat T2I/edit templates, no prompt weighting, pad 151643, attention mask, and template/suffix hidden-state slicing (ComfyUI 9cf91339b708a245762fa38ffeec9702b381e0db: comfy/text_encoders/longcat_image.py:10-199, comfy/text_encoders/qwen_image.py:8-11,52-54)"
+      },
+      "provenance": {
+        "download_date": "2026-07-30",
+        "template_commit": "aa3661d9fc1a493f8de6b029f5b8af27da3c5d08",
+        "template_digest": "sha256:30f5a89de5e516a36b47d7bbb912c6901079064ba4f9b31bcda43188103450a4",
+        "upstream_reference_commit": "9cf91339b708a245762fa38ffeec9702b381e0db",
+        "verified_on": "RipperPC"
+      },
+      "role": "longcat-qwen2.5-vl-7b-text-encoder",
+      "source_url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "status": "accepted-component-layout"
+    }
+  ],
+  "deferred_workloads": [],
+  "schema": 1,
+  "template_source": {
+    "commit": "aa3661d9fc1a493f8de6b029f5b8af27da3c5d08",
+    "repository": "https://github.com/Comfy-Org/workflow_templates.git"
+  },
+  "workloads": [
+    {
+      "acceptance_manifest": {
+        "digest": "sha256:b043f4e1e640197f6e023bff7312b21ad8395ba1a994b68f00882c360f22d740",
+        "id": "w0-harness-ovis-v1",
+        "path": "acceptance.json"
+      },
+      "artifacts": [
+        {
+          "bytes": 14740943536,
+          "digest": "sha256:eb3d9e1b201412b3b527472cf82a2c5add6b5a40a37e94d99f11c381f18a9e2b",
+          "layout": {
+            "dtype": "bfloat16",
+            "gated_mlp": "double_blocks.0.img_mlp.gate_proj.weight [12288, 3072]",
+            "guidance_input": "absent",
+            "key_count": 397,
+            "text_input": "txt_in.weight [3072, 2048]",
+            "text_normalization": "txt_norm.scale [2048]",
+            "vector_input": "absent"
+          },
+          "path": "/home/kosin/model-artifacts/dinkster-w0-flux-vector-free/diffusion_models/ovis_image_bf16.safetensors",
+          "role": "ovis-vector-free-gated-txt-norm-flux-diffusion",
+          "source_url": "https://huggingface.co/Comfy-Org/Ovis-Image/resolve/main/split_files/diffusion_models/ovis_image_bf16.safetensors"
+        },
+        {
+          "bytes": 5140950080,
+          "digest": "sha256:f453ee5e7a25cb23cf2adf7aae3e5b405f22097cb67f2cfcca029688cb3f740d",
+          "layout": {
+            "accepted_key_count": 310,
+            "accepted_subtree": "model.*",
+            "dtype": "bfloat16",
+            "embedding": "model.embed_tokens.weight [151936, 2048]",
+            "ignored_role_subtrees": [
+              "vision_model.* (437 keys)",
+              "visual_tokenizer.* (3 keys)",
+              "vte.weight (1 key)"
+            ],
+            "profile": "ovis_qwen3_2b: 28 layers, 16 query heads, 8 key/value heads, q/k RMS normalization, 6144-wide SiLU-gated MLP"
+          },
+          "path": "/home/kosin/model-artifacts/dinkster-w0-flux-vector-free/text_encoders/ovis_2.5.safetensors",
+          "role": "ovis-qwen3-2b-text-encoder",
+          "source_url": "https://huggingface.co/Comfy-Org/Ovis-Image/resolve/main/split_files/text_encoders/ovis_2.5.safetensors"
+        },
+        {
+          "bytes": 335304388,
+          "digest": "sha256:afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38",
+          "layout": {
+            "dtype": "float32",
+            "key_count": 244,
+            "profile": "native regularizer-only AutoencoderKL: 16 latent channels, embed_dim 16, x8 spatial downscale, no quant_conv or post_quant_conv"
+          },
+          "path": "/home/kosin/model-artifacts/dinkster-w0-flux-vector-free/vae/ae.safetensors",
+          "role": "flux-16-channel-kl-codec",
+          "source_url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors"
+        }
+      ],
+      "engines": {
+        "comfyui": {
+          "adapter": "ovis_comfyui_adapter.py",
+          "commit": "f4b99bc62389af315013dda85f24f2bbd262b686",
+          "python": "/home/kosin/ComfyUI/venv/bin/python"
+        },
+        "dinkster": {
+          "adapter": "ovis_dinkster_adapter.py",
+          "commit": "HEAD",
+          "python": "/home/kosin/ComfyUI/venv/bin/python"
+        }
+      },
+      "execution": {
+        "application_cache_initial_state": "empty",
+        "batch": 1,
+        "cfg": 5.0,
+        "codec": "/home/kosin/model-artifacts/dinkster-w0-flux-vector-free/vae/ae.safetensors",
+        "decode_modes": {
+          "comfyui": "tiled",
+          "dinkster": "tiled"
+        },
+        "denoise": 1.0,
+        "device_ordinal": 0,
+        "diffusion_model": "/home/kosin/model-artifacts/dinkster-w0-flux-vector-free/diffusion_models/ovis_image_bf16.safetensors",
+        "hardware": {
+          "device_uuid": "GPU-666d1242-9c20-341c-73ea-e63770947451",
+          "gpu_count": 2,
+          "gpu_names": [
+            "NVIDIA GeForce RTX 4090",
+            "NVIDIA GeForce RTX 4090"
+          ]
+        },
+        "height": 1024,
+        "model_sampling": "ModelSamplingAuraFlow",
+        "model_sampling_multiplier": 1.0,
+        "model_sampling_shift": 3.0,
+        "negative_prompt": "",
+        "os_page_cache": "record-only-not-cleared",
+        "outputs": [
+          "image",
+          "latent"
+        ],
+        "precision": {
+          "codec": "bfloat16",
+          "diffusion": "bfloat16",
+          "text": {
+            "compute": "float32",
+            "storage": "bfloat16"
+          }
+        },
+        "process_initial_state": "fresh",
+        "prompt": "Child lying on bed with balloons, streamers, and plush toys, surreal dreamlike scene. Close-up, centered on the child and surrounding objects. Soft, diffused lighting.",
+        "sampler": "euler",
+        "scheduler": "simple",
+        "seed": 775709856082329,
+        "sigma_recipe": "ModelSamplingAuraFlow shift 3 multiplier 1, simple scheduler, 20 steps, denoise 1.0",
+        "steps": 20,
+        "text_encoder": "/home/kosin/model-artifacts/dinkster-w0-flux-vector-free/text_encoders/ovis_2.5.safetensors",
+        "throughput_unit": "output-megapixels-per-second",
+        "width": 1024
+      },
+      "graph": {
+        "comfyui": {
+          "commit": "aa3661d9fc1a493f8de6b029f5b8af27da3c5d08",
+          "digest": "sha256:e999794ceb26a1f56330cbde4ba9fd151378f1d3f85aa9690c0e1e6ab359b798",
+          "path": "templates/image_ovis_text_to_image.json",
+          "root": "template"
+        },
+        "dinkster": {
+          "commit": "aa3661d9fc1a493f8de6b029f5b8af27da3c5d08",
+          "digest": "sha256:e999794ceb26a1f56330cbde4ba9fd151378f1d3f85aa9690c0e1e6ab359b798",
+          "path": "templates/image_ovis_text_to_image.json",
+          "root": "template"
+        }
+      },
+      "id": "W0-FLUX-GATED-OVIS-TXT2IMG",
+      "provenance": {
+        "discharged_deferrals": [
+          "W0-FLUX-GATED-OVIS-TWO-PHASE",
+          "W0-FLUX-TXT-NORM-TWO-PHASE"
+        ],
+        "fired_trigger": "W0-FLUX-VECTOR-FREE landed at 272e842",
+        "temporary_runner_digest": "sha256:15ebc97be364e000b89adc72b62eac74cead226277b37ee6cd2c8c089245056a"
+      },
+      "purpose": "Canonical official-template Ovis text-to-image acceptance proof"
+    },
+    {
+      "acceptance_manifest": {
+        "digest": "sha256:b043f4e1e640197f6e023bff7312b21ad8395ba1a994b68f00882c360f22d740",
+        "id": "w0-harness-sd15-v1",
+        "path": "acceptance.json"
+      },
+      "artifacts": [
+        {
+          "bytes": 2132696762,
+          "digest": "sha256:e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916",
+          "path": "checkpoints/v1-5-pruned-emaonly-fp16.safetensors",
+          "role": "combined-checkpoint",
+          "source_url": "https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/resolve/main/v1-5-pruned-emaonly-fp16.safetensors?download=true"
+        }
+      ],
+      "engines": {
+        "comfyui": {
+          "adapter": "comfyui_adapter.py",
+          "commit": "f4b99bc62389af315013dda85f24f2bbd262b686",
+          "python": "{root}/venv/bin/python"
+        },
+        "dinkster": {
+          "adapter": "dinkster_adapter.py",
+          "commit": "HEAD",
+          "python": "/home/kosin/ComfyUI/venv/bin/python"
+        }
+      },
+      "execution": {
+        "application_cache_initial_state": "empty",
+        "batch": 1,
+        "cfg": 8.0,
+        "checkpoint": "checkpoints/v1-5-pruned-emaonly-fp16.safetensors",
+        "denoise": 1.0,
+        "device_ordinal": 0,
+        "hardware": {
+          "device_uuid": "GPU-666d1242-9c20-341c-73ea-e63770947451",
+          "gpu_count": 2,
+          "gpu_names": [
+            "NVIDIA GeForce RTX 4090",
+            "NVIDIA GeForce RTX 4090"
+          ]
+        },
+        "height": 512,
+        "negative_prompt": "text, watermark",
+        "os_page_cache": "record-only-not-cleared",
+        "precision": {
+          "codec": "float32",
+          "diffusion": "float16",
+          "text": "float32"
+        },
+        "process_initial_state": "fresh",
+        "prompt": "beautiful scenery nature glass bottle landscape, purple galaxy bottle,",
+        "sampler": "euler",
+        "scheduler": "normal",
+        "seed": 685468484323813,
+        "sigma_recipe": "ComfyUI ModelSamplingDiscrete linear beta, normal scheduler, 20 steps, denoise 1.0",
+        "steps": 20,
+        "throughput_unit": "output-megapixels-per-second",
+        "width": 512
+      },
+      "graph": {
+        "comfyui": {
+          "commit": "aa3661d9fc1a493f8de6b029f5b8af27da3c5d08",
+          "digest": "sha256:396fb34efa019c5f1cc242da22f89a7fcc43fce7240d014d75290278cb2f6dc0",
+          "path": "templates/default.json",
+          "root": "template"
+        },
+        "dinkster": {
+          "commit": "HEAD",
+          "digest": "sha256:4a8bc366e27e3482b838c481d0d4ccb2dfd60a61eee81a740ef73e73aa05962c",
+          "path": "tools/inference_parity/graphs/sd15_text_to_image_dinkster.json",
+          "root": "engine"
+        }
+      },
+      "id": "W0-HARNESS-SD15-TXT2IMG",
+      "purpose": "Canonical official-template SD1.5 text-to-image acceptance proof"
+    },
+    {
+      "acceptance_manifest": {
+        "digest": "sha256:b043f4e1e640197f6e023bff7312b21ad8395ba1a994b68f00882c360f22d740",
+        "id": "w0-sd15-inpaint-v1",
+        "path": "acceptance.json"
+      },
+      "artifacts": [
+        {
+          "bytes": 4265203868,
+          "conversion": {
+            "dropped_keys": [
+              "epoch",
+              "global_step",
+              "pytorch-lightning_version"
+            ],
+            "source_bytes": 4265437280,
+            "source_digest": "sha256:c6bbc15e3224e6973459ba78de4998b80b50112b0ae5b5c67113d56b4e366b19",
+            "tool": "tools/convert_ckpt_to_safetensors.py",
+            "weights_only": true
+          },
+          "digest": "sha256:7eca34abcebf1662d0e7021e4f6dd362d5e3e7ab3b5dfb4326b8b08b39b9145d",
+          "path": "checkpoints/sd-v1-5-inpainting-converted.safetensors",
+          "role": "combined-sd15-inpaint-checkpoint",
+          "source_url": "https://huggingface.co/runwayml/stable-diffusion-inpainting"
+        },
+        {
+          "bytes": 1296300,
+          "digest": "sha256:ebbf24255b79907c90fe692696eea41fdbe9822d4bbc8ae0f660079f0a9b4559",
+          "layout": {
+            "alpha_mask_below_128_percent": "5.068",
+            "mode": "RGBA",
+            "size": "1024x1024"
+          },
+          "path": "input/inpaint_example_input_image.png",
+          "role": "template-input-image"
+        },
+        {
+          "bytes": 11878,
+          "digest": "sha256:b5cc720dcc1b41bb772fbadac2fbda1202c2bd955cd13bb61ce59b86006ba0b8",
+          "path": "input/inpaint_example.json",
+          "role": "historical-official-template"
+        }
+      ],
+      "engines": {
+        "comfyui": {
+          "adapter": "sd15_inpaint_comfyui_adapter.py",
+          "commit": "f4b99bc62389af315013dda85f24f2bbd262b686",
+          "python": "{root}/venv/bin/python"
+        },
+        "dinkster": {
+          "adapter": "sd15_inpaint_dinkster_adapter.py",
+          "commit": "HEAD",
+          "python": "/home/kosin/ComfyUI/venv/bin/python"
+        }
+      },
+      "execution": {
+        "application_cache_initial_state": "empty",
+        "batch": 1,
+        "cfg": 8.0,
+        "checkpoint": "checkpoints/sd-v1-5-inpainting-converted.safetensors",
+        "decode_modes": {
+          "comfyui": "regular",
+          "dinkster": "regular"
+        },
+        "denoise": 1.0,
+        "device_ordinal": 0,
+        "grow_mask_by": 6,
+        "hardware": {
+          "device_uuid": "GPU-666d1242-9c20-341c-73ea-e63770947451",
+          "gpu_count": 2,
+          "gpu_names": [
+            "NVIDIA GeForce RTX 4090",
+            "NVIDIA GeForce RTX 4090"
+          ]
+        },
+        "height": 512,
+        "input_image": "inpaint_example_input_image.png",
+        "megapixels": 0.25,
+        "negative_prompt": "watermark, text\n",
+        "os_page_cache": "record-only-not-cleared",
+        "precision": {
+          "codec": "float32",
+          "diffusion": "float16",
+          "text": "float32"
+        },
+        "process_initial_state": "fresh",
+        "prompt": "teacup on pink tablecloth, Anime style",
+        "sampler": "uni_pc_bh2",
+        "scheduler": "normal",
+        "seed": 808369199502636,
+        "sigma_recipe": "ComfyUI ModelSamplingDiscrete linear beta, normal scheduler, 20 steps, denoise 1.0",
+        "steps": 20,
+        "throughput_unit": "output-megapixels-per-second",
+        "upscale_method": "nearest-exact",
+        "width": 512
+      },
+      "graph": {
+        "comfyui": {
+          "commit": "5b32eb71d46ca0b2fd6c1d48ad6e5a383f95d629",
+          "digest": "sha256:b5cc720dcc1b41bb772fbadac2fbda1202c2bd955cd13bb61ce59b86006ba0b8",
+          "path": "input/inpaint_example.json",
+          "root": "artifact"
+        },
+        "dinkster": {
+          "commit": "5b32eb71d46ca0b2fd6c1d48ad6e5a383f95d629",
+          "digest": "sha256:b5cc720dcc1b41bb772fbadac2fbda1202c2bd955cd13bb61ce59b86006ba0b8",
+          "path": "input/inpaint_example.json",
+          "root": "artifact"
+        }
+      },
+      "id": "W0-SD15-INPAINT",
+      "provenance": {
+        "adjudication": "The template's 512-inpainting-ema.safetensors is SD2.0 inpainting, an unsupported Dinkster family; substitute the converted SD1.5 inpaint artifact from Phase 0. The graph is architecture-agnostic for 9-channel inpaint checkpoints.",
+        "input_image_digest": "sha256:ebbf24255b79907c90fe692696eea41fdbe9822d4bbc8ae0f660079f0a9b4559",
+        "template_commit": "5b32eb71d46ca0b2fd6c1d48ad6e5a383f95d629",
+        "template_digest": "sha256:b5cc720dcc1b41bb772fbadac2fbda1202c2bd955cd13bb61ce59b86006ba0b8",
+        "template_path": "templates/inpaint_example.json"
+      },
+      "purpose": "Canonical historical official-template SD1.5 inpaint acceptance proof"
+    },
+    {
+      "acceptance_manifest": {
+        "digest": "sha256:33a8b23818789b6670c430103191e51194cd71a772286601177717066e8fcb20",
+        "id": "w0-sdxl-inpaint-v1",
+        "path": "acceptance_sdxl_inpaint.json"
+      },
+      "artifacts": [
+        {
+          "bytes": 6938069944,
+          "digest": "sha256:fe1b97fe6544814eb6fc8ce53f04ad8d339ec6946b58b0afd566fcc47813fa8a",
+          "layout": {
+            "adm": "F16 [1280,2816]",
+            "clip_g": "embedded OpenCLIP-ViT/G",
+            "clip_l": "embedded CLIP-ViT/L",
+            "diffusion_input": "F16 [320,9,3,3]",
+            "diffusion_output": "F16 [4,320,3,3]",
+            "external_component_substitution": false,
+            "vae": "embedded fp16-fixed SDXL VAE"
+          },
+          "license": "CreativeML Open RAIL++-M",
+          "path": "checkpoints/sd_xl_base_1.0_inpainting_0.1.safetensors",
+          "repository_revision": "2c65165f0d5c3d93f671ef7613f3a94f4b3ec30a",
+          "role": "combined-sdxl-inpaint-checkpoint",
+          "source_url": "https://huggingface.co/benjamin-paine/sd-xl-alternative-bases/resolve/2c65165f0d5c3d93f671ef7613f3a94f4b3ec30a/sd_xl_base_1.0_inpainting_0.1.safetensors"
+        },
+        {
+          "bytes": 1296300,
+          "digest": "sha256:ebbf24255b79907c90fe692696eea41fdbe9822d4bbc8ae0f660079f0a9b4559",
+          "layout": {
+            "alpha_mask_below_128_percent": "5.068",
+            "mode": "RGBA",
+            "size": "1024x1024"
+          },
+          "path": "input/inpaint_example_input_image.png",
+          "role": "template-input-image"
+        },
+        {
+          "bytes": 11878,
+          "digest": "sha256:b5cc720dcc1b41bb772fbadac2fbda1202c2bd955cd13bb61ce59b86006ba0b8",
+          "path": "input/inpaint_example.json",
+          "role": "historical-official-template"
+        }
+      ],
+      "engines": {
+        "comfyui": {
+          "adapter": "sdxl_inpaint_comfyui_adapter.py",
+          "commit": "00d02f2854892ee5b9808bc2f6348b972017886a",
+          "python": "/home/kosin/ComfyUI/venv/bin/python"
+        },
+        "dinkster": {
+          "adapter": "sdxl_inpaint_dinkster_adapter.py",
+          "commit": "HEAD",
+          "python": "/home/kosin/ComfyUI/venv/bin/python"
+        }
+      },
+      "execution": {
+        "application_cache_initial_state": "empty",
+        "batch": 1,
+        "cfg": 8.0,
+        "checkpoint": "checkpoints/sd_xl_base_1.0_inpainting_0.1.safetensors",
+        "decode_modes": {
+          "comfyui": "regular",
+          "dinkster": "regular"
+        },
+        "denoise": 1.0,
+        "device_ordinal": 0,
+        "grow_mask_by": 6,
+        "hardware": {
+          "device_uuid": "GPU-ff7692e5-eec5-36b4-4c72-e879f32c5e98",
+          "driver": "595.84",
+          "gpu_count": 4,
+          "gpu_names": [
+            "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+            "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+            "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+            "NVIDIA RTX PRO 6000 Blackwell Workstation Edition"
+          ],
+          "gpu_uuids": [
+            "GPU-ff7692e5-eec5-36b4-4c72-e879f32c5e98",
+            "GPU-73bdaf24-bdbd-c2ee-7442-08a7f4ab3b9d",
+            "GPU-ea539630-50c6-a154-5789-852977375e95",
+            "GPU-66e690fe-c321-d3f3-5192-17a757c711f5"
+          ],
+          "memory_total_mib": 97887
+        },
+        "height": 1024,
+        "input_image": "inpaint_example_input_image.png",
+        "mask_polarity": "1-alpha",
+        "megapixels": 1.0,
+        "negative_prompt": "watermark, text\n",
+        "no_crop": true,
+        "os_page_cache": "record-only-not-cleared",
+        "outputs": [
+          "image",
+          "latent"
+        ],
+        "precision": {
+          "codec": "float32",
+          "diffusion": "float16",
+          "text": "float32"
+        },
+        "process_initial_state": "fresh",
+        "prompt": "teacup on pink tablecloth, Anime style",
+        "sampler": "uni_pc_bh2",
+        "scheduler": "normal",
+        "seed": 808369199502636,
+        "sigma_recipe": "ComfyUI ModelSamplingDiscrete linear beta, normal scheduler, 20 steps, denoise 1.0",
+        "steps": 20,
+        "throughput_unit": "output-megapixels-per-second",
+        "upscale_method": "nearest-exact",
+        "width": 1024
+      },
+      "graph": {
+        "comfyui": {
+          "commit": "5b32eb71d46ca0b2fd6c1d48ad6e5a383f95d629",
+          "digest": "sha256:b5cc720dcc1b41bb772fbadac2fbda1202c2bd955cd13bb61ce59b86006ba0b8",
+          "path": "input/inpaint_example.json",
+          "root": "artifact"
+        },
+        "dinkster": {
+          "commit": "5b32eb71d46ca0b2fd6c1d48ad6e5a383f95d629",
+          "digest": "sha256:b5cc720dcc1b41bb772fbadac2fbda1202c2bd955cd13bb61ce59b86006ba0b8",
+          "path": "input/inpaint_example.json",
+          "root": "artifact"
+        }
+      },
+      "id": "W0-SDXL-INPAINT",
+      "preflight": {
+        "fixture": {
+          "alpha_mask_below_128_percent": "5.068",
+          "mode": "RGBA",
+          "size": "1024x1024"
+        },
+        "interpreter": {
+          "digest": "sha256:1643dacd9feaedc58f3cc581e4d22577dfe25c09b10282936186ccf0f2e61118",
+          "path": "/home/kosin/ComfyUI/venv/bin/python",
+          "python_version": "Python 3.12.3",
+          "realpath": "/usr/bin/python3.12",
+          "torch_version": "2.8.0+cu129"
+        },
+        "safetensors": {
+          "required_tensors": {
+            "conditioner.embedders.0.transformer.text_model.embeddings.token_embedding.weight": {
+              "dtype": "F16",
+              "shape": [
+                49408,
+                768
+              ]
+            },
+            "conditioner.embedders.1.model.token_embedding.weight": {
+              "dtype": "F16",
+              "shape": [
+                49408,
+                1280
+              ]
+            },
+            "first_stage_model.decoder.conv_out.weight": {
+              "dtype": "F16",
+              "shape": [
+                3,
+                128,
+                3,
+                3
+              ]
+            },
+            "first_stage_model.encoder.conv_in.weight": {
+              "dtype": "F16",
+              "shape": [
+                128,
+                3,
+                3,
+                3
+              ]
+            },
+            "model.diffusion_model.input_blocks.0.0.weight": {
+              "dtype": "F16",
+              "shape": [
+                320,
+                9,
+                3,
+                3
+              ]
+            },
+            "model.diffusion_model.label_emb.0.0.weight": {
+              "dtype": "F16",
+              "shape": [
+                1280,
+                2816
+              ]
+            },
+            "model.diffusion_model.out.2.weight": {
+              "dtype": "F16",
+              "shape": [
+                4,
+                320,
+                3,
+                3
+              ]
+            }
+          }
+        },
+        "source_files": {
+          "tools/inference_parity/acceptance_sdxl_inpaint.json": "sha256:33a8b23818789b6670c430103191e51194cd71a772286601177717066e8fcb20",
+          "tools/inference_parity/comfyui_adapter.py": "sha256:c3445a0faacf341cc642c04eeede1e98f27990e16ed669b512514121977895dd",
+          "tools/inference_parity/harness.py": "sha256:dc5991bd585576553b47bb128087d6f03190b003c5df9f2f540d33a2507bc35d",
+          "tools/inference_parity/ovis_decode_calibration.py": "sha256:d163c011fa7acb1f4aaafab772b289ec21d350d11f3344db5498712f4908011b",
+          "tools/inference_parity/sd15_inpaint_dinkster_adapter.py": "sha256:1bef4522eec632e6d1a59a457b13ae170f1e6b5ae2d4661e8b19d2f14ec75e3d",
+          "tools/inference_parity/sdxl_inpaint_comfyui_adapter.py": "sha256:b9f76518723298d892c233044f4b60ff3c99653f0fdf9925be7280d0871630e9",
+          "tools/inference_parity/sdxl_inpaint_dinkster_adapter.py": "sha256:c5d601aec8ac3275dc492e215a277428b305495a00a22a31eaf8488a4847bb55"
+        }
+      },
+      "provenance": {
+        "adjudication": "Derive W0-SD15-INPAINT with only the combined checkpoint substitution and megapixels 0.25 to 1.0; retain prompt, negative prompt, seed, steps, CFG, sampler, scheduler, denoise, resize, mask growth, mask polarity, no-crop behavior, and precision.",
+        "artifact_repository_commit": "2c65165f0d5c3d93f671ef7613f3a94f4b3ec30a",
+        "component_policy": "The 9-channel UNet, CLIP-L, CLIP-G, and fp16-fixed VAE are one digest-bound object; external component substitution is forbidden.",
+        "input_image_digest": "sha256:ebbf24255b79907c90fe692696eea41fdbe9822d4bbc8ae0f660079f0a9b4559",
+        "license": "CreativeML Open RAIL++-M",
+        "template_commit": "5b32eb71d46ca0b2fd6c1d48ad6e5a383f95d629",
+        "template_digest": "sha256:b5cc720dcc1b41bb772fbadac2fbda1202c2bd955cd13bb61ce59b86006ba0b8",
+        "template_path": "templates/inpaint_example.json"
+      },
+      "purpose": "Canonical historical official-template SDXL inpaint acceptance proof"
+    },
+    {
+      "acceptance_manifest": {
+        "digest": "sha256:b043f4e1e640197f6e023bff7312b21ad8395ba1a994b68f00882c360f22d740",
+        "id": "w0-sdxl-vpred-v1",
+        "path": "acceptance.json"
+      },
+      "artifacts": [
+        {
+          "bytes": 7105350110,
+          "digest": "sha256:ea349eeae87ca8d25ba902c93810f7ca83e5c82f920edf12f273af004ae02819",
+          "layout": {
+            "adm": "BF16 [1280,2816]",
+            "diffusion_input": "BF16 [320,4,3,3]",
+            "diffusion_output": "BF16 [4,320,3,3]",
+            "sampling_markers": "top-level v_pred F32[0] + ztsnr F32[0]",
+            "source_weight_dtype": "bfloat16"
+          },
+          "path": "checkpoints/NoobAI-XL-Vpred-v1.0.safetensors",
+          "role": "combined-sdxl-vpred-ztsnr-checkpoint",
+          "source_url": "https://huggingface.co/Laxhar/noobai-XL-Vpred-1.0/resolve/66aa55e3469c27c29a89813cd35dd95fb7485fa1/NoobAI-XL-Vpred-v1.0.safetensors"
+        }
+      ],
+      "engines": {
+        "comfyui": {
+          "adapter": "sdxl_vpred_comfyui_adapter.py",
+          "commit": "f4b99bc62389af315013dda85f24f2bbd262b686",
+          "python": "{root}/venv/bin/python"
+        },
+        "dinkster": {
+          "adapter": "sdxl_vpred_dinkster_adapter.py",
+          "commit": "HEAD",
+          "python": "/home/kosin/ComfyUI/venv/bin/python"
+        }
+      },
+      "execution": {
+        "application_cache_initial_state": "empty",
+        "batch": 1,
+        "cfg": 8.0,
+        "checkpoint": "checkpoints/NoobAI-XL-Vpred-v1.0.safetensors",
+        "decode_modes": {
+          "comfyui": "regular",
+          "dinkster": "regular"
+        },
+        "denoise": 1.0,
+        "device_ordinal": 0,
+        "hardware": {
+          "device_uuid": "GPU-666d1242-9c20-341c-73ea-e63770947451",
+          "gpu_count": 2,
+          "gpu_names": [
+            "NVIDIA GeForce RTX 4090",
+            "NVIDIA GeForce RTX 4090"
+          ]
+        },
+        "height": 1024,
+        "negative_prompt": "text, watermark",
+        "os_page_cache": "record-only-not-cleared",
+        "precision": {
+          "codec": "float32",
+          "diffusion": "float16",
+          "text": "float32"
+        },
+        "process_initial_state": "fresh",
+        "prompt": "beautiful scenery nature glass bottle landscape, purple galaxy bottle,",
+        "sampler": "euler",
+        "scheduler": "normal",
+        "seed": 685468484323813,
+        "sigma_recipe": "ComfyUI ModelSamplingDiscrete v_prediction linear beta with zsnr, normal scheduler, 20 steps, denoise 1.0",
+        "steps": 20,
+        "throughput_unit": "output-megapixels-per-second",
+        "width": 1024
+      },
+      "graph": {
+        "comfyui": {
+          "commit": "aa3661d9fc1a493f8de6b029f5b8af27da3c5d08",
+          "digest": "sha256:396fb34efa019c5f1cc242da22f89a7fcc43fce7240d014d75290278cb2f6dc0",
+          "path": "templates/default.json",
+          "root": "template"
+        },
+        "dinkster": {
+          "commit": "HEAD",
+          "digest": "sha256:4a8bc366e27e3482b838c481d0d4ccb2dfd60a61eee81a740ef73e73aa05962c",
+          "path": "tools/inference_parity/graphs/sdxl_vpred_text_to_image_dinkster.json",
+          "root": "engine"
+        }
+      },
+      "id": "W0-SDXL-VPRED",
+      "provenance": {
+        "adjudication": "No plain single-checkpoint SDXL template exists at aa3661d9: sdxl_simple_example and sdxl_refiner_prompt_example are two-checkpoint base+refiner; sdxl_revision_text_prompts requires CLIPVision/unCLIP conditioning; sdxlturbo_example is 1-step turbo sampling; txt_to_image_to_video chains into video. Use canonical templates/default.json plain txt2img with exactly three substitutions: digest-pinned NoobAI-XL-Vpred-v1.0 checkpoint; EmptyLatentImage 512x512 to SDXL-native 1024x1024, grounded by sdxl_simple_example [1024,1024,1] and default.json's SD1.5-specific size note; randomize to fixed while retaining literal seed 685468484323813.",
+        "artifact_repository_commit": "66aa55e3469c27c29a89813cd35dd95fb7485fa1",
+        "template_commit": "aa3661d9fc1a493f8de6b029f5b8af27da3c5d08",
+        "template_digest": "sha256:396fb34efa019c5f1cc242da22f89a7fcc43fce7240d014d75290278cb2f6dc0",
+        "template_path": "templates/default.json"
+      },
+      "purpose": "Canonical official-structure SDXL v-prediction/ztsnr text-to-image acceptance proof"
+    },
+    {
+      "acceptance_manifest": {
+        "digest": "sha256:b043f4e1e640197f6e023bff7312b21ad8395ba1a994b68f00882c360f22d740",
+        "id": "w0-sdxl-edm-vpred-v1",
+        "path": "acceptance.json"
+      },
+      "artifacts": [
+        {
+          "bytes": 6938075892,
+          "digest": "sha256:0c2ff84b8dea2cea110dc71b62be29c6b417d6c50f31e89d9fb37596c77062c6",
+          "layout": {
+            "adm": "F16 [1280,2816]",
+            "diffusion_input": "F16 [320,4,3,3]",
+            "diffusion_output": "F16 [4,320,3,3]",
+            "header_length": 399986,
+            "header_entries": "2518 total = 2517 tensors + __metadata__",
+            "sampling_markers": "top-level edm_vpred.sigma_max F32[] = 120.0 + edm_vpred.sigma_min F32[] = 0.0020000000949949026",
+            "source_weight_dtype": "float16",
+            "tensor_payload_digest": "sha256:e22fb3899fa1b0bec3fafecc9b061d2e36502eccee484590f40b43eb9a56d552"
+          },
+          "path": "checkpoints/cosxl.safetensors",
+          "role": "combined-sdxl-edm-vpred-checkpoint",
+          "source_url": "https://huggingface.co/Mothersuperior/cosXL/resolve/a80a98e082877fa98621698dfcf5cd0e6a643315/cosxl.safetensors"
+        }
+      ],
+      "engines": {
+        "comfyui": {
+          "adapter": "sdxl_edm_vpred_comfyui_adapter.py",
+          "commit": "f4b99bc62389af315013dda85f24f2bbd262b686",
+          "python": "{root}/venv/bin/python"
+        },
+        "dinkster": {
+          "adapter": "sdxl_edm_vpred_dinkster_adapter.py",
+          "commit": "HEAD",
+          "python": "/home/kosin/ComfyUI/venv/bin/python"
+        }
+      },
+      "execution": {
+        "application_cache_initial_state": "empty",
+        "batch": 1,
+        "cfg": 8.0,
+        "checkpoint": "checkpoints/cosxl.safetensors",
+        "decode_modes": {
+          "comfyui": "regular",
+          "dinkster": "regular"
+        },
+        "denoise": 1.0,
+        "device_ordinal": 0,
+        "hardware": {
+          "device_uuid": "GPU-666d1242-9c20-341c-73ea-e63770947451",
+          "gpu_count": 2,
+          "gpu_names": [
+            "NVIDIA GeForce RTX 4090",
+            "NVIDIA GeForce RTX 4090"
+          ]
+        },
+        "height": 1024,
+        "negative_prompt": "text, watermark",
+        "os_page_cache": "record-only-not-cleared",
+        "precision": {
+          "codec": "float32",
+          "diffusion": "float16",
+          "text": "float32"
+        },
+        "process_initial_state": "fresh",
+        "prompt": "beautiful scenery nature glass bottle landscape, purple galaxy bottle,",
+        "sampler": "euler",
+        "scheduler": "normal",
+        "seed": 685468484323813,
+        "sigma_recipe": "ComfyUI ModelSamplingContinuousEDM v_prediction with checkpoint sigma_min 0.0020000000949949026 and sigma_max 120.0, normal scheduler, 20 steps, denoise 1.0",
+        "steps": 20,
+        "throughput_unit": "output-megapixels-per-second",
+        "width": 1024
+      },
+      "graph": {
+        "comfyui": {
+          "commit": "aa3661d9fc1a493f8de6b029f5b8af27da3c5d08",
+          "digest": "sha256:396fb34efa019c5f1cc242da22f89a7fcc43fce7240d014d75290278cb2f6dc0",
+          "path": "templates/default.json",
+          "root": "template"
+        },
+        "dinkster": {
+          "commit": "HEAD",
+          "digest": "sha256:4a8bc366e27e3482b838c481d0d4ccb2dfd60a61eee81a740ef73e73aa05962c",
+          "path": "tools/inference_parity/graphs/sdxl_vpred_text_to_image_dinkster.json",
+          "root": "engine"
+        }
+      },
+      "id": "W0-SDXL-EDM-VPRED",
+      "provenance": {
+        "adjudication": "The immutable official CosXL model card says the base model uses a cosine-continuous EDM v-pred schedule and works as a regular ComfyUI checkpoint, but provides no numeric sampling recommendation. Retain default.json's CFG 8, 20 steps, Euler, normal scheduler, prompts, and literal seed. The only substitutions are the digest-pinned checkpoint, SDXL-native 1024x1024, and fixed seed mode. Mirror byte provenance and embedded StabilityAI attribution are separate; these bytes are not attributed to the different-digest gated stabilityai/cosxl revision 518d250114442c64254986d0ae7cd62b8b300bb8.",
+        "artifact_repository_commit": "a80a98e082877fa98621698dfcf5cd0e6a643315",
+        "embedded_author": "StabilityAI",
+        "embedded_modelspec": "CosXL / stable-diffusion-xl-v1-base / 2024-04-05 / 1024x1024 / Cosine-Continuous EDM VPred",
+        "template_commit": "aa3661d9fc1a493f8de6b029f5b8af27da3c5d08",
+        "template_digest": "sha256:396fb34efa019c5f1cc242da22f89a7fcc43fce7240d014d75290278cb2f6dc0",
+        "template_path": "templates/default.json"
+      },
+      "purpose": "Canonical official-structure SDXL continuous-EDM v-prediction text-to-image acceptance proof"
+    }
+  ]
+}

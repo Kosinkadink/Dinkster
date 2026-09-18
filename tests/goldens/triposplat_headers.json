@@ -1,0 +1,5438 @@
+{
+ "_provenance": {
+  "source": "https://huggingface.co/VAST-AI/TripoSplat",
+  "files": {
+   "diffusion": "diffusion_models/triposplat_fp16.safetensors (F16)",
+   "gaussian_decoder": "vae/triposplat_vae_decoder_fp16.safetensors (F16)",
+   "dinov3_vith": "clip_vision/dino_v3_vit_h.safetensors (BF16)"
+  },
+  "note": "safetensors header key/shape listings fetched from the published artifacts; dtypes are uniform per file and recorded above"
+ },
+ "diffusion": {
+  "adaLN_modulation.1.bias": [
+   6144
+  ],
+  "adaLN_modulation.1.weight": [
+   6144,
+   1024
+  ],
+  "blocks.0.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.0.attn.out.bias": [
+   1024
+  ],
+  "blocks.0.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.0.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.0.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.0.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.0.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.0.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.0.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.0.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.0.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.1.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.1.attn.out.bias": [
+   1024
+  ],
+  "blocks.1.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.1.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.1.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.1.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.1.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.1.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.1.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.1.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.1.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.10.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.10.attn.out.bias": [
+   1024
+  ],
+  "blocks.10.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.10.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.10.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.10.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.10.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.10.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.10.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.10.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.10.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.11.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.11.attn.out.bias": [
+   1024
+  ],
+  "blocks.11.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.11.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.11.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.11.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.11.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.11.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.11.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.11.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.11.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.12.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.12.attn.out.bias": [
+   1024
+  ],
+  "blocks.12.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.12.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.12.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.12.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.12.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.12.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.12.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.12.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.12.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.13.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.13.attn.out.bias": [
+   1024
+  ],
+  "blocks.13.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.13.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.13.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.13.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.13.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.13.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.13.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.13.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.13.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.14.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.14.attn.out.bias": [
+   1024
+  ],
+  "blocks.14.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.14.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.14.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.14.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.14.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.14.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.14.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.14.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.14.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.15.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.15.attn.out.bias": [
+   1024
+  ],
+  "blocks.15.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.15.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.15.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.15.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.15.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.15.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.15.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.15.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.15.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.16.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.16.attn.out.bias": [
+   1024
+  ],
+  "blocks.16.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.16.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.16.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.16.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.16.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.16.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.16.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.16.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.16.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.17.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.17.attn.out.bias": [
+   1024
+  ],
+  "blocks.17.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.17.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.17.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.17.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.17.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.17.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.17.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.17.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.17.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.18.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.18.attn.out.bias": [
+   1024
+  ],
+  "blocks.18.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.18.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.18.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.18.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.18.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.18.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.18.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.18.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.18.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.19.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.19.attn.out.bias": [
+   1024
+  ],
+  "blocks.19.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.19.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.19.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.19.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.19.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.19.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.19.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.19.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.19.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.2.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.2.attn.out.bias": [
+   1024
+  ],
+  "blocks.2.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.2.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.2.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.2.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.2.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.2.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.2.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.2.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.2.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.20.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.20.attn.out.bias": [
+   1024
+  ],
+  "blocks.20.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.20.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.20.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.20.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.20.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.20.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.20.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.20.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.20.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.21.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.21.attn.out.bias": [
+   1024
+  ],
+  "blocks.21.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.21.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.21.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.21.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.21.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.21.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.21.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.21.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.21.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.22.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.22.attn.out.bias": [
+   1024
+  ],
+  "blocks.22.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.22.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.22.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.22.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.22.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.22.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.22.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.22.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.22.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.23.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.23.attn.out.bias": [
+   1024
+  ],
+  "blocks.23.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.23.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.23.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.23.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.23.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.23.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.23.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.23.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.23.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.3.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.3.attn.out.bias": [
+   1024
+  ],
+  "blocks.3.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.3.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.3.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.3.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.3.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.3.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.3.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.3.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.3.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.4.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.4.attn.out.bias": [
+   1024
+  ],
+  "blocks.4.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.4.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.4.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.4.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.4.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.4.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.4.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.4.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.4.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.5.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.5.attn.out.bias": [
+   1024
+  ],
+  "blocks.5.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.5.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.5.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.5.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.5.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.5.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.5.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.5.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.5.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.6.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.6.attn.out.bias": [
+   1024
+  ],
+  "blocks.6.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.6.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.6.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.6.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.6.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.6.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.6.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.6.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.6.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.7.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.7.attn.out.bias": [
+   1024
+  ],
+  "blocks.7.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.7.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.7.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.7.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.7.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.7.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.7.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.7.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.7.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.8.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.8.attn.out.bias": [
+   1024
+  ],
+  "blocks.8.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.8.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.8.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.8.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.8.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.8.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.8.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.8.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.8.shift_table": [
+   1,
+   6144
+  ],
+  "blocks.9.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.9.attn.out.bias": [
+   1024
+  ],
+  "blocks.9.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "blocks.9.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "blocks.9.attn.qkv.bias": [
+   3072
+  ],
+  "blocks.9.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "blocks.9.mlp.mlp.0.bias": [
+   4096
+  ],
+  "blocks.9.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "blocks.9.mlp.mlp.2.bias": [
+   1024
+  ],
+  "blocks.9.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "blocks.9.shift_table": [
+   1,
+   6144
+  ],
+  "cam_out_layer.bias": [
+   5
+  ],
+  "cam_out_layer.weight": [
+   5,
+   1024
+  ],
+  "cam_refiner.mlp.0.bias": [
+   1024
+  ],
+  "cam_refiner.mlp.0.weight": [
+   1024,
+   5
+  ],
+  "cam_refiner.mlp.2.bias": [
+   1024
+  ],
+  "cam_refiner.mlp.2.weight": [
+   1024,
+   1024
+  ],
+  "cond_embedder.bias": [
+   1024
+  ],
+  "cond_embedder.weight": [
+   1024,
+   1280
+  ],
+  "cond_embedder2.bias": [
+   1024
+  ],
+  "cond_embedder2.weight": [
+   1024,
+   128
+  ],
+  "context_refiner.0.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "context_refiner.0.attn.out.bias": [
+   1024
+  ],
+  "context_refiner.0.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "context_refiner.0.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "context_refiner.0.attn.qkv.bias": [
+   3072
+  ],
+  "context_refiner.0.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "context_refiner.0.mlp.mlp.0.bias": [
+   4096
+  ],
+  "context_refiner.0.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "context_refiner.0.mlp.mlp.2.bias": [
+   1024
+  ],
+  "context_refiner.0.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "context_refiner.0.norm1.bias": [
+   1024
+  ],
+  "context_refiner.0.norm1.weight": [
+   1024
+  ],
+  "context_refiner.0.norm2.bias": [
+   1024
+  ],
+  "context_refiner.0.norm2.weight": [
+   1024
+  ],
+  "context_refiner.1.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "context_refiner.1.attn.out.bias": [
+   1024
+  ],
+  "context_refiner.1.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "context_refiner.1.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "context_refiner.1.attn.qkv.bias": [
+   3072
+  ],
+  "context_refiner.1.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "context_refiner.1.mlp.mlp.0.bias": [
+   4096
+  ],
+  "context_refiner.1.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "context_refiner.1.mlp.mlp.2.bias": [
+   1024
+  ],
+  "context_refiner.1.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "context_refiner.1.norm1.bias": [
+   1024
+  ],
+  "context_refiner.1.norm1.weight": [
+   1024
+  ],
+  "context_refiner.1.norm2.bias": [
+   1024
+  ],
+  "context_refiner.1.norm2.weight": [
+   1024
+  ],
+  "context_repo_layers.0.content_map.weight": [
+   128,
+   1024
+  ],
+  "context_repo_layers.0.final_map.weight": [
+   48,
+   128
+  ],
+  "context_repo_layers.0.freqs_0": [
+   10
+  ],
+  "context_repo_layers.0.freqs_1": [
+   10
+  ],
+  "context_repo_layers.0.freqs_2": [
+   12
+  ],
+  "context_repo_layers.0.gate_map.weight": [
+   128,
+   1024
+  ],
+  "context_repo_layers.0.norm.bias": [
+   1024
+  ],
+  "context_repo_layers.0.norm.weight": [
+   1024
+  ],
+  "context_repo_layers.1.content_map.weight": [
+   128,
+   1024
+  ],
+  "context_repo_layers.1.final_map.weight": [
+   48,
+   128
+  ],
+  "context_repo_layers.1.freqs_0": [
+   10
+  ],
+  "context_repo_layers.1.freqs_1": [
+   10
+  ],
+  "context_repo_layers.1.freqs_2": [
+   12
+  ],
+  "context_repo_layers.1.gate_map.weight": [
+   128,
+   1024
+  ],
+  "context_repo_layers.1.norm.bias": [
+   1024
+  ],
+  "context_repo_layers.1.norm.weight": [
+   1024
+  ],
+  "input_layer.bias": [
+   1024
+  ],
+  "input_layer.weight": [
+   1024,
+   16
+  ],
+  "noise_refiner.0.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "noise_refiner.0.attn.out.bias": [
+   1024
+  ],
+  "noise_refiner.0.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "noise_refiner.0.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "noise_refiner.0.attn.qkv.bias": [
+   3072
+  ],
+  "noise_refiner.0.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "noise_refiner.0.mlp.mlp.0.bias": [
+   4096
+  ],
+  "noise_refiner.0.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "noise_refiner.0.mlp.mlp.2.bias": [
+   1024
+  ],
+  "noise_refiner.0.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "noise_refiner.0.shift_table": [
+   1,
+   6144
+  ],
+  "noise_refiner.1.attn.k_norm.gamma": [
+   16,
+   64
+  ],
+  "noise_refiner.1.attn.out.bias": [
+   1024
+  ],
+  "noise_refiner.1.attn.out.weight": [
+   1024,
+   1024
+  ],
+  "noise_refiner.1.attn.q_norm.gamma": [
+   16,
+   64
+  ],
+  "noise_refiner.1.attn.qkv.bias": [
+   3072
+  ],
+  "noise_refiner.1.attn.qkv.weight": [
+   3072,
+   1024
+  ],
+  "noise_refiner.1.mlp.mlp.0.bias": [
+   4096
+  ],
+  "noise_refiner.1.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "noise_refiner.1.mlp.mlp.2.bias": [
+   1024
+  ],
+  "noise_refiner.1.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "noise_refiner.1.shift_table": [
+   1,
+   6144
+  ],
+  "noise_repo_layers.0.content_map.weight": [
+   128,
+   1024
+  ],
+  "noise_repo_layers.0.final_map.weight": [
+   48,
+   128
+  ],
+  "noise_repo_layers.0.freqs_0": [
+   10
+  ],
+  "noise_repo_layers.0.freqs_1": [
+   10
+  ],
+  "noise_repo_layers.0.freqs_2": [
+   12
+  ],
+  "noise_repo_layers.0.gate_map.weight": [
+   128,
+   1024
+  ],
+  "noise_repo_layers.0.norm.bias": [
+   1024
+  ],
+  "noise_repo_layers.0.norm.weight": [
+   1024
+  ],
+  "noise_repo_layers.1.content_map.weight": [
+   128,
+   1024
+  ],
+  "noise_repo_layers.1.final_map.weight": [
+   48,
+   128
+  ],
+  "noise_repo_layers.1.freqs_0": [
+   10
+  ],
+  "noise_repo_layers.1.freqs_1": [
+   10
+  ],
+  "noise_repo_layers.1.freqs_2": [
+   12
+  ],
+  "noise_repo_layers.1.gate_map.weight": [
+   128,
+   1024
+  ],
+  "noise_repo_layers.1.norm.bias": [
+   1024
+  ],
+  "noise_repo_layers.1.norm.weight": [
+   1024
+  ],
+  "out_layer.bias": [
+   16
+  ],
+  "out_layer.weight": [
+   16,
+   1024
+  ],
+  "repo_layers.0.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.0.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.0.freqs_0": [
+   10
+  ],
+  "repo_layers.0.freqs_1": [
+   10
+  ],
+  "repo_layers.0.freqs_2": [
+   12
+  ],
+  "repo_layers.0.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.0.norm.bias": [
+   1024
+  ],
+  "repo_layers.0.norm.weight": [
+   1024
+  ],
+  "repo_layers.1.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.1.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.1.freqs_0": [
+   10
+  ],
+  "repo_layers.1.freqs_1": [
+   10
+  ],
+  "repo_layers.1.freqs_2": [
+   12
+  ],
+  "repo_layers.1.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.1.norm.bias": [
+   1024
+  ],
+  "repo_layers.1.norm.weight": [
+   1024
+  ],
+  "repo_layers.10.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.10.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.10.freqs_0": [
+   10
+  ],
+  "repo_layers.10.freqs_1": [
+   10
+  ],
+  "repo_layers.10.freqs_2": [
+   12
+  ],
+  "repo_layers.10.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.10.norm.bias": [
+   1024
+  ],
+  "repo_layers.10.norm.weight": [
+   1024
+  ],
+  "repo_layers.11.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.11.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.11.freqs_0": [
+   10
+  ],
+  "repo_layers.11.freqs_1": [
+   10
+  ],
+  "repo_layers.11.freqs_2": [
+   12
+  ],
+  "repo_layers.11.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.11.norm.bias": [
+   1024
+  ],
+  "repo_layers.11.norm.weight": [
+   1024
+  ],
+  "repo_layers.12.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.12.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.12.freqs_0": [
+   10
+  ],
+  "repo_layers.12.freqs_1": [
+   10
+  ],
+  "repo_layers.12.freqs_2": [
+   12
+  ],
+  "repo_layers.12.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.12.norm.bias": [
+   1024
+  ],
+  "repo_layers.12.norm.weight": [
+   1024
+  ],
+  "repo_layers.13.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.13.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.13.freqs_0": [
+   10
+  ],
+  "repo_layers.13.freqs_1": [
+   10
+  ],
+  "repo_layers.13.freqs_2": [
+   12
+  ],
+  "repo_layers.13.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.13.norm.bias": [
+   1024
+  ],
+  "repo_layers.13.norm.weight": [
+   1024
+  ],
+  "repo_layers.14.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.14.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.14.freqs_0": [
+   10
+  ],
+  "repo_layers.14.freqs_1": [
+   10
+  ],
+  "repo_layers.14.freqs_2": [
+   12
+  ],
+  "repo_layers.14.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.14.norm.bias": [
+   1024
+  ],
+  "repo_layers.14.norm.weight": [
+   1024
+  ],
+  "repo_layers.15.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.15.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.15.freqs_0": [
+   10
+  ],
+  "repo_layers.15.freqs_1": [
+   10
+  ],
+  "repo_layers.15.freqs_2": [
+   12
+  ],
+  "repo_layers.15.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.15.norm.bias": [
+   1024
+  ],
+  "repo_layers.15.norm.weight": [
+   1024
+  ],
+  "repo_layers.16.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.16.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.16.freqs_0": [
+   10
+  ],
+  "repo_layers.16.freqs_1": [
+   10
+  ],
+  "repo_layers.16.freqs_2": [
+   12
+  ],
+  "repo_layers.16.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.16.norm.bias": [
+   1024
+  ],
+  "repo_layers.16.norm.weight": [
+   1024
+  ],
+  "repo_layers.17.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.17.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.17.freqs_0": [
+   10
+  ],
+  "repo_layers.17.freqs_1": [
+   10
+  ],
+  "repo_layers.17.freqs_2": [
+   12
+  ],
+  "repo_layers.17.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.17.norm.bias": [
+   1024
+  ],
+  "repo_layers.17.norm.weight": [
+   1024
+  ],
+  "repo_layers.18.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.18.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.18.freqs_0": [
+   10
+  ],
+  "repo_layers.18.freqs_1": [
+   10
+  ],
+  "repo_layers.18.freqs_2": [
+   12
+  ],
+  "repo_layers.18.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.18.norm.bias": [
+   1024
+  ],
+  "repo_layers.18.norm.weight": [
+   1024
+  ],
+  "repo_layers.19.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.19.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.19.freqs_0": [
+   10
+  ],
+  "repo_layers.19.freqs_1": [
+   10
+  ],
+  "repo_layers.19.freqs_2": [
+   12
+  ],
+  "repo_layers.19.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.19.norm.bias": [
+   1024
+  ],
+  "repo_layers.19.norm.weight": [
+   1024
+  ],
+  "repo_layers.2.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.2.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.2.freqs_0": [
+   10
+  ],
+  "repo_layers.2.freqs_1": [
+   10
+  ],
+  "repo_layers.2.freqs_2": [
+   12
+  ],
+  "repo_layers.2.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.2.norm.bias": [
+   1024
+  ],
+  "repo_layers.2.norm.weight": [
+   1024
+  ],
+  "repo_layers.20.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.20.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.20.freqs_0": [
+   10
+  ],
+  "repo_layers.20.freqs_1": [
+   10
+  ],
+  "repo_layers.20.freqs_2": [
+   12
+  ],
+  "repo_layers.20.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.20.norm.bias": [
+   1024
+  ],
+  "repo_layers.20.norm.weight": [
+   1024
+  ],
+  "repo_layers.21.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.21.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.21.freqs_0": [
+   10
+  ],
+  "repo_layers.21.freqs_1": [
+   10
+  ],
+  "repo_layers.21.freqs_2": [
+   12
+  ],
+  "repo_layers.21.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.21.norm.bias": [
+   1024
+  ],
+  "repo_layers.21.norm.weight": [
+   1024
+  ],
+  "repo_layers.22.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.22.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.22.freqs_0": [
+   10
+  ],
+  "repo_layers.22.freqs_1": [
+   10
+  ],
+  "repo_layers.22.freqs_2": [
+   12
+  ],
+  "repo_layers.22.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.22.norm.bias": [
+   1024
+  ],
+  "repo_layers.22.norm.weight": [
+   1024
+  ],
+  "repo_layers.23.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.23.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.23.freqs_0": [
+   10
+  ],
+  "repo_layers.23.freqs_1": [
+   10
+  ],
+  "repo_layers.23.freqs_2": [
+   12
+  ],
+  "repo_layers.23.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.23.norm.bias": [
+   1024
+  ],
+  "repo_layers.23.norm.weight": [
+   1024
+  ],
+  "repo_layers.3.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.3.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.3.freqs_0": [
+   10
+  ],
+  "repo_layers.3.freqs_1": [
+   10
+  ],
+  "repo_layers.3.freqs_2": [
+   12
+  ],
+  "repo_layers.3.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.3.norm.bias": [
+   1024
+  ],
+  "repo_layers.3.norm.weight": [
+   1024
+  ],
+  "repo_layers.4.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.4.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.4.freqs_0": [
+   10
+  ],
+  "repo_layers.4.freqs_1": [
+   10
+  ],
+  "repo_layers.4.freqs_2": [
+   12
+  ],
+  "repo_layers.4.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.4.norm.bias": [
+   1024
+  ],
+  "repo_layers.4.norm.weight": [
+   1024
+  ],
+  "repo_layers.5.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.5.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.5.freqs_0": [
+   10
+  ],
+  "repo_layers.5.freqs_1": [
+   10
+  ],
+  "repo_layers.5.freqs_2": [
+   12
+  ],
+  "repo_layers.5.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.5.norm.bias": [
+   1024
+  ],
+  "repo_layers.5.norm.weight": [
+   1024
+  ],
+  "repo_layers.6.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.6.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.6.freqs_0": [
+   10
+  ],
+  "repo_layers.6.freqs_1": [
+   10
+  ],
+  "repo_layers.6.freqs_2": [
+   12
+  ],
+  "repo_layers.6.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.6.norm.bias": [
+   1024
+  ],
+  "repo_layers.6.norm.weight": [
+   1024
+  ],
+  "repo_layers.7.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.7.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.7.freqs_0": [
+   10
+  ],
+  "repo_layers.7.freqs_1": [
+   10
+  ],
+  "repo_layers.7.freqs_2": [
+   12
+  ],
+  "repo_layers.7.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.7.norm.bias": [
+   1024
+  ],
+  "repo_layers.7.norm.weight": [
+   1024
+  ],
+  "repo_layers.8.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.8.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.8.freqs_0": [
+   10
+  ],
+  "repo_layers.8.freqs_1": [
+   10
+  ],
+  "repo_layers.8.freqs_2": [
+   12
+  ],
+  "repo_layers.8.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.8.norm.bias": [
+   1024
+  ],
+  "repo_layers.8.norm.weight": [
+   1024
+  ],
+  "repo_layers.9.content_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.9.final_map.weight": [
+   48,
+   128
+  ],
+  "repo_layers.9.freqs_0": [
+   10
+  ],
+  "repo_layers.9.freqs_1": [
+   10
+  ],
+  "repo_layers.9.freqs_2": [
+   12
+  ],
+  "repo_layers.9.gate_map.weight": [
+   128,
+   1024
+  ],
+  "repo_layers.9.norm.bias": [
+   1024
+  ],
+  "repo_layers.9.norm.weight": [
+   1024
+  ],
+  "shift_table": [
+   1,
+   2,
+   1024
+  ],
+  "t_embedder.mlp.0.bias": [
+   1024
+  ],
+  "t_embedder.mlp.0.weight": [
+   1024,
+   256
+  ],
+  "t_embedder.mlp.2.bias": [
+   1024
+  ],
+  "t_embedder.mlp.2.weight": [
+   1024,
+   1024
+  ]
+ },
+ "gaussian_decoder": {
+  "gs.base_offset_scale": [],
+  "gs.blocks.0.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.0.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.0.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.0.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.0.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.0.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.0.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.0.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.0.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.0.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.0.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.0.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.0.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.0.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.0.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.0.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.0.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.0.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.0.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.0.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.1.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.1.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.1.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.1.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.1.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.1.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.1.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.1.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.1.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.1.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.1.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.1.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.1.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.1.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.1.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.1.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.1.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.1.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.1.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.1.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.10.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.10.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.10.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.10.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.10.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.10.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.10.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.10.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.10.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.10.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.10.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.10.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.10.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.10.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.10.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.10.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.10.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.10.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.10.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.10.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.11.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.11.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.11.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.11.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.11.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.11.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.11.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.11.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.11.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.11.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.11.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.11.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.11.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.11.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.11.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.11.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.11.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.11.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.11.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.11.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.12.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.12.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.12.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.12.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.12.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.12.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.12.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.12.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.12.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.12.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.12.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.12.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.12.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.12.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.12.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.12.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.12.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.12.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.12.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.12.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.13.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.13.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.13.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.13.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.13.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.13.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.13.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.13.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.13.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.13.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.13.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.13.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.13.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.13.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.13.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.13.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.13.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.13.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.13.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.13.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.14.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.14.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.14.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.14.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.14.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.14.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.14.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.14.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.14.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.14.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.14.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.14.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.14.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.14.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.14.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.14.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.14.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.14.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.14.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.14.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.15.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.15.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.15.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.15.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.15.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.15.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.15.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.15.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.15.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.15.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.15.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.15.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.15.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.15.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.15.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.15.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.15.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.15.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.15.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.15.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.2.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.2.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.2.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.2.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.2.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.2.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.2.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.2.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.2.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.2.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.2.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.2.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.2.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.2.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.2.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.2.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.2.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.2.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.2.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.2.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.3.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.3.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.3.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.3.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.3.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.3.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.3.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.3.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.3.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.3.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.3.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.3.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.3.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.3.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.3.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.3.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.3.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.3.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.3.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.3.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.4.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.4.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.4.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.4.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.4.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.4.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.4.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.4.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.4.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.4.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.4.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.4.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.4.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.4.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.4.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.4.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.4.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.4.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.4.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.4.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.5.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.5.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.5.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.5.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.5.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.5.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.5.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.5.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.5.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.5.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.5.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.5.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.5.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.5.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.5.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.5.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.5.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.5.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.5.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.5.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.6.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.6.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.6.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.6.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.6.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.6.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.6.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.6.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.6.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.6.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.6.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.6.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.6.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.6.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.6.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.6.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.6.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.6.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.6.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.6.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.7.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.7.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.7.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.7.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.7.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.7.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.7.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.7.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.7.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.7.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.7.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.7.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.7.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.7.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.7.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.7.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.7.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.7.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.7.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.7.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.8.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.8.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.8.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.8.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.8.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.8.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.8.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.8.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.8.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.8.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.8.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.8.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.8.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.8.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.8.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.8.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.8.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.8.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.8.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.8.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.blocks.9.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.9.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.9.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "gs.blocks.9.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "gs.blocks.9.cross_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.9.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.9.cross_attn.to_q.bias": [
+   1024
+  ],
+  "gs.blocks.9.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.9.mlp.mlp.0.bias": [
+   4096
+  ],
+  "gs.blocks.9.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "gs.blocks.9.mlp.mlp.2.bias": [
+   1024
+  ],
+  "gs.blocks.9.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "gs.blocks.9.norm2.bias": [
+   1024
+  ],
+  "gs.blocks.9.norm2.weight": [
+   1024
+  ],
+  "gs.blocks.9.self_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.9.self_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "gs.blocks.9.self_attn.to_out.bias": [
+   1024
+  ],
+  "gs.blocks.9.self_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "gs.blocks.9.self_attn.to_qkv.bias": [
+   3072
+  ],
+  "gs.blocks.9.self_attn.to_qkv.weight": [
+   3072,
+   1024
+  ],
+  "gs.in_proj.bias": [
+   1024
+  ],
+  "gs.in_proj.weight": [
+   1024,
+   3
+  ],
+  "gs.input_layer.bias": [
+   1024
+  ],
+  "gs.input_layer.weight": [
+   1024,
+   1024
+  ],
+  "gs.out_proj.bias": [
+   480
+  ],
+  "gs.out_proj.weight": [
+   480,
+   1024
+  ],
+  "gs.points_offset_perturbation": [
+   32,
+   3
+  ],
+  "octree.adaLN_modulation.1.bias": [
+   6144
+  ],
+  "octree.adaLN_modulation.1.weight": [
+   6144,
+   1024
+  ],
+  "octree.blocks.0.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "octree.blocks.0.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "octree.blocks.0.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "octree.blocks.0.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "octree.blocks.0.cross_attn.to_out.bias": [
+   1024
+  ],
+  "octree.blocks.0.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "octree.blocks.0.cross_attn.to_q.bias": [
+   1024
+  ],
+  "octree.blocks.0.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "octree.blocks.0.mlp.mlp.0.bias": [
+   4096
+  ],
+  "octree.blocks.0.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "octree.blocks.0.mlp.mlp.2.bias": [
+   1024
+  ],
+  "octree.blocks.0.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "octree.blocks.1.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "octree.blocks.1.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "octree.blocks.1.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "octree.blocks.1.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "octree.blocks.1.cross_attn.to_out.bias": [
+   1024
+  ],
+  "octree.blocks.1.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "octree.blocks.1.cross_attn.to_q.bias": [
+   1024
+  ],
+  "octree.blocks.1.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "octree.blocks.1.mlp.mlp.0.bias": [
+   4096
+  ],
+  "octree.blocks.1.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "octree.blocks.1.mlp.mlp.2.bias": [
+   1024
+  ],
+  "octree.blocks.1.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "octree.blocks.2.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "octree.blocks.2.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "octree.blocks.2.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "octree.blocks.2.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "octree.blocks.2.cross_attn.to_out.bias": [
+   1024
+  ],
+  "octree.blocks.2.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "octree.blocks.2.cross_attn.to_q.bias": [
+   1024
+  ],
+  "octree.blocks.2.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "octree.blocks.2.mlp.mlp.0.bias": [
+   4096
+  ],
+  "octree.blocks.2.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "octree.blocks.2.mlp.mlp.2.bias": [
+   1024
+  ],
+  "octree.blocks.2.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "octree.blocks.3.cross_attn.k_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "octree.blocks.3.cross_attn.q_rms_norm.gamma": [
+   16,
+   64
+  ],
+  "octree.blocks.3.cross_attn.to_kv.bias": [
+   2048
+  ],
+  "octree.blocks.3.cross_attn.to_kv.weight": [
+   2048,
+   16
+  ],
+  "octree.blocks.3.cross_attn.to_out.bias": [
+   1024
+  ],
+  "octree.blocks.3.cross_attn.to_out.weight": [
+   1024,
+   1024
+  ],
+  "octree.blocks.3.cross_attn.to_q.bias": [
+   1024
+  ],
+  "octree.blocks.3.cross_attn.to_q.weight": [
+   1024,
+   1024
+  ],
+  "octree.blocks.3.mlp.mlp.0.bias": [
+   4096
+  ],
+  "octree.blocks.3.mlp.mlp.0.weight": [
+   4096,
+   1024
+  ],
+  "octree.blocks.3.mlp.mlp.2.bias": [
+   1024
+  ],
+  "octree.blocks.3.mlp.mlp.2.weight": [
+   1024,
+   4096
+  ],
+  "octree.in_proj.bias": [
+   1024
+  ],
+  "octree.in_proj.weight": [
+   1024,
+   3
+  ],
+  "octree.input_layer.bias": [
+   1024
+  ],
+  "octree.input_layer.weight": [
+   1024,
+   1024
+  ],
+  "octree.l_embedder.mlp.0.bias": [
+   1024
+  ],
+  "octree.l_embedder.mlp.0.weight": [
+   1024,
+   256
+  ],
+  "octree.l_embedder.mlp.2.bias": [
+   1024
+  ],
+  "octree.l_embedder.mlp.2.weight": [
+   1024,
+   1024
+  ],
+  "octree.out_proj.bias": [
+   8
+  ],
+  "octree.out_proj.weight": [
+   8,
+   1024
+  ]
+ },
+ "dinov3_vith": {
+  "embeddings.cls_token": [
+   1,
+   1,
+   1280
+  ],
+  "embeddings.mask_token": [
+   1,
+   1,
+   1280
+  ],
+  "embeddings.patch_embeddings.bias": [
+   1280
+  ],
+  "embeddings.patch_embeddings.weight": [
+   1280,
+   3,
+   16,
+   16
+  ],
+  "embeddings.register_tokens": [
+   1,
+   4,
+   1280
+  ],
+  "layer.0.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.0.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.0.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.0.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.0.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.0.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.0.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.0.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.0.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.0.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.0.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.0.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.0.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.0.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.0.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.0.norm1.bias": [
+   1280
+  ],
+  "layer.0.norm1.weight": [
+   1280
+  ],
+  "layer.0.norm2.bias": [
+   1280
+  ],
+  "layer.0.norm2.weight": [
+   1280
+  ],
+  "layer.1.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.1.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.1.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.1.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.1.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.1.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.1.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.1.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.1.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.1.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.1.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.1.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.1.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.1.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.1.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.1.norm1.bias": [
+   1280
+  ],
+  "layer.1.norm1.weight": [
+   1280
+  ],
+  "layer.1.norm2.bias": [
+   1280
+  ],
+  "layer.1.norm2.weight": [
+   1280
+  ],
+  "layer.10.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.10.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.10.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.10.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.10.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.10.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.10.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.10.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.10.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.10.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.10.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.10.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.10.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.10.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.10.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.10.norm1.bias": [
+   1280
+  ],
+  "layer.10.norm1.weight": [
+   1280
+  ],
+  "layer.10.norm2.bias": [
+   1280
+  ],
+  "layer.10.norm2.weight": [
+   1280
+  ],
+  "layer.11.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.11.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.11.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.11.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.11.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.11.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.11.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.11.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.11.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.11.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.11.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.11.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.11.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.11.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.11.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.11.norm1.bias": [
+   1280
+  ],
+  "layer.11.norm1.weight": [
+   1280
+  ],
+  "layer.11.norm2.bias": [
+   1280
+  ],
+  "layer.11.norm2.weight": [
+   1280
+  ],
+  "layer.12.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.12.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.12.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.12.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.12.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.12.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.12.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.12.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.12.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.12.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.12.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.12.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.12.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.12.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.12.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.12.norm1.bias": [
+   1280
+  ],
+  "layer.12.norm1.weight": [
+   1280
+  ],
+  "layer.12.norm2.bias": [
+   1280
+  ],
+  "layer.12.norm2.weight": [
+   1280
+  ],
+  "layer.13.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.13.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.13.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.13.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.13.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.13.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.13.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.13.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.13.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.13.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.13.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.13.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.13.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.13.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.13.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.13.norm1.bias": [
+   1280
+  ],
+  "layer.13.norm1.weight": [
+   1280
+  ],
+  "layer.13.norm2.bias": [
+   1280
+  ],
+  "layer.13.norm2.weight": [
+   1280
+  ],
+  "layer.14.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.14.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.14.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.14.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.14.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.14.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.14.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.14.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.14.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.14.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.14.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.14.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.14.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.14.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.14.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.14.norm1.bias": [
+   1280
+  ],
+  "layer.14.norm1.weight": [
+   1280
+  ],
+  "layer.14.norm2.bias": [
+   1280
+  ],
+  "layer.14.norm2.weight": [
+   1280
+  ],
+  "layer.15.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.15.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.15.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.15.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.15.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.15.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.15.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.15.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.15.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.15.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.15.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.15.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.15.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.15.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.15.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.15.norm1.bias": [
+   1280
+  ],
+  "layer.15.norm1.weight": [
+   1280
+  ],
+  "layer.15.norm2.bias": [
+   1280
+  ],
+  "layer.15.norm2.weight": [
+   1280
+  ],
+  "layer.16.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.16.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.16.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.16.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.16.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.16.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.16.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.16.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.16.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.16.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.16.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.16.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.16.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.16.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.16.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.16.norm1.bias": [
+   1280
+  ],
+  "layer.16.norm1.weight": [
+   1280
+  ],
+  "layer.16.norm2.bias": [
+   1280
+  ],
+  "layer.16.norm2.weight": [
+   1280
+  ],
+  "layer.17.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.17.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.17.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.17.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.17.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.17.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.17.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.17.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.17.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.17.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.17.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.17.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.17.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.17.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.17.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.17.norm1.bias": [
+   1280
+  ],
+  "layer.17.norm1.weight": [
+   1280
+  ],
+  "layer.17.norm2.bias": [
+   1280
+  ],
+  "layer.17.norm2.weight": [
+   1280
+  ],
+  "layer.18.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.18.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.18.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.18.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.18.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.18.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.18.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.18.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.18.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.18.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.18.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.18.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.18.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.18.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.18.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.18.norm1.bias": [
+   1280
+  ],
+  "layer.18.norm1.weight": [
+   1280
+  ],
+  "layer.18.norm2.bias": [
+   1280
+  ],
+  "layer.18.norm2.weight": [
+   1280
+  ],
+  "layer.19.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.19.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.19.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.19.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.19.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.19.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.19.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.19.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.19.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.19.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.19.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.19.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.19.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.19.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.19.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.19.norm1.bias": [
+   1280
+  ],
+  "layer.19.norm1.weight": [
+   1280
+  ],
+  "layer.19.norm2.bias": [
+   1280
+  ],
+  "layer.19.norm2.weight": [
+   1280
+  ],
+  "layer.2.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.2.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.2.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.2.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.2.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.2.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.2.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.2.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.2.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.2.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.2.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.2.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.2.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.2.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.2.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.2.norm1.bias": [
+   1280
+  ],
+  "layer.2.norm1.weight": [
+   1280
+  ],
+  "layer.2.norm2.bias": [
+   1280
+  ],
+  "layer.2.norm2.weight": [
+   1280
+  ],
+  "layer.20.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.20.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.20.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.20.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.20.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.20.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.20.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.20.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.20.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.20.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.20.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.20.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.20.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.20.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.20.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.20.norm1.bias": [
+   1280
+  ],
+  "layer.20.norm1.weight": [
+   1280
+  ],
+  "layer.20.norm2.bias": [
+   1280
+  ],
+  "layer.20.norm2.weight": [
+   1280
+  ],
+  "layer.21.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.21.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.21.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.21.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.21.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.21.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.21.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.21.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.21.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.21.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.21.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.21.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.21.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.21.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.21.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.21.norm1.bias": [
+   1280
+  ],
+  "layer.21.norm1.weight": [
+   1280
+  ],
+  "layer.21.norm2.bias": [
+   1280
+  ],
+  "layer.21.norm2.weight": [
+   1280
+  ],
+  "layer.22.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.22.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.22.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.22.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.22.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.22.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.22.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.22.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.22.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.22.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.22.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.22.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.22.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.22.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.22.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.22.norm1.bias": [
+   1280
+  ],
+  "layer.22.norm1.weight": [
+   1280
+  ],
+  "layer.22.norm2.bias": [
+   1280
+  ],
+  "layer.22.norm2.weight": [
+   1280
+  ],
+  "layer.23.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.23.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.23.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.23.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.23.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.23.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.23.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.23.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.23.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.23.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.23.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.23.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.23.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.23.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.23.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.23.norm1.bias": [
+   1280
+  ],
+  "layer.23.norm1.weight": [
+   1280
+  ],
+  "layer.23.norm2.bias": [
+   1280
+  ],
+  "layer.23.norm2.weight": [
+   1280
+  ],
+  "layer.24.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.24.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.24.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.24.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.24.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.24.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.24.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.24.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.24.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.24.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.24.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.24.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.24.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.24.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.24.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.24.norm1.bias": [
+   1280
+  ],
+  "layer.24.norm1.weight": [
+   1280
+  ],
+  "layer.24.norm2.bias": [
+   1280
+  ],
+  "layer.24.norm2.weight": [
+   1280
+  ],
+  "layer.25.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.25.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.25.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.25.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.25.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.25.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.25.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.25.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.25.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.25.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.25.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.25.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.25.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.25.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.25.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.25.norm1.bias": [
+   1280
+  ],
+  "layer.25.norm1.weight": [
+   1280
+  ],
+  "layer.25.norm2.bias": [
+   1280
+  ],
+  "layer.25.norm2.weight": [
+   1280
+  ],
+  "layer.26.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.26.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.26.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.26.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.26.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.26.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.26.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.26.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.26.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.26.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.26.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.26.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.26.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.26.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.26.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.26.norm1.bias": [
+   1280
+  ],
+  "layer.26.norm1.weight": [
+   1280
+  ],
+  "layer.26.norm2.bias": [
+   1280
+  ],
+  "layer.26.norm2.weight": [
+   1280
+  ],
+  "layer.27.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.27.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.27.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.27.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.27.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.27.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.27.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.27.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.27.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.27.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.27.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.27.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.27.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.27.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.27.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.27.norm1.bias": [
+   1280
+  ],
+  "layer.27.norm1.weight": [
+   1280
+  ],
+  "layer.27.norm2.bias": [
+   1280
+  ],
+  "layer.27.norm2.weight": [
+   1280
+  ],
+  "layer.28.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.28.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.28.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.28.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.28.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.28.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.28.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.28.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.28.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.28.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.28.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.28.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.28.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.28.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.28.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.28.norm1.bias": [
+   1280
+  ],
+  "layer.28.norm1.weight": [
+   1280
+  ],
+  "layer.28.norm2.bias": [
+   1280
+  ],
+  "layer.28.norm2.weight": [
+   1280
+  ],
+  "layer.29.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.29.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.29.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.29.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.29.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.29.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.29.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.29.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.29.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.29.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.29.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.29.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.29.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.29.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.29.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.29.norm1.bias": [
+   1280
+  ],
+  "layer.29.norm1.weight": [
+   1280
+  ],
+  "layer.29.norm2.bias": [
+   1280
+  ],
+  "layer.29.norm2.weight": [
+   1280
+  ],
+  "layer.3.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.3.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.3.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.3.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.3.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.3.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.3.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.3.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.3.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.3.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.3.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.3.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.3.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.3.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.3.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.3.norm1.bias": [
+   1280
+  ],
+  "layer.3.norm1.weight": [
+   1280
+  ],
+  "layer.3.norm2.bias": [
+   1280
+  ],
+  "layer.3.norm2.weight": [
+   1280
+  ],
+  "layer.30.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.30.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.30.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.30.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.30.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.30.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.30.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.30.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.30.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.30.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.30.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.30.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.30.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.30.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.30.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.30.norm1.bias": [
+   1280
+  ],
+  "layer.30.norm1.weight": [
+   1280
+  ],
+  "layer.30.norm2.bias": [
+   1280
+  ],
+  "layer.30.norm2.weight": [
+   1280
+  ],
+  "layer.31.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.31.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.31.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.31.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.31.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.31.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.31.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.31.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.31.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.31.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.31.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.31.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.31.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.31.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.31.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.31.norm1.bias": [
+   1280
+  ],
+  "layer.31.norm1.weight": [
+   1280
+  ],
+  "layer.31.norm2.bias": [
+   1280
+  ],
+  "layer.31.norm2.weight": [
+   1280
+  ],
+  "layer.4.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.4.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.4.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.4.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.4.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.4.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.4.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.4.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.4.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.4.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.4.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.4.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.4.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.4.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.4.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.4.norm1.bias": [
+   1280
+  ],
+  "layer.4.norm1.weight": [
+   1280
+  ],
+  "layer.4.norm2.bias": [
+   1280
+  ],
+  "layer.4.norm2.weight": [
+   1280
+  ],
+  "layer.5.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.5.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.5.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.5.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.5.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.5.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.5.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.5.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.5.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.5.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.5.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.5.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.5.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.5.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.5.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.5.norm1.bias": [
+   1280
+  ],
+  "layer.5.norm1.weight": [
+   1280
+  ],
+  "layer.5.norm2.bias": [
+   1280
+  ],
+  "layer.5.norm2.weight": [
+   1280
+  ],
+  "layer.6.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.6.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.6.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.6.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.6.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.6.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.6.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.6.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.6.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.6.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.6.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.6.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.6.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.6.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.6.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.6.norm1.bias": [
+   1280
+  ],
+  "layer.6.norm1.weight": [
+   1280
+  ],
+  "layer.6.norm2.bias": [
+   1280
+  ],
+  "layer.6.norm2.weight": [
+   1280
+  ],
+  "layer.7.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.7.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.7.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.7.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.7.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.7.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.7.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.7.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.7.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.7.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.7.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.7.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.7.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.7.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.7.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.7.norm1.bias": [
+   1280
+  ],
+  "layer.7.norm1.weight": [
+   1280
+  ],
+  "layer.7.norm2.bias": [
+   1280
+  ],
+  "layer.7.norm2.weight": [
+   1280
+  ],
+  "layer.8.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.8.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.8.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.8.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.8.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.8.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.8.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.8.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.8.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.8.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.8.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.8.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.8.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.8.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.8.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.8.norm1.bias": [
+   1280
+  ],
+  "layer.8.norm1.weight": [
+   1280
+  ],
+  "layer.8.norm2.bias": [
+   1280
+  ],
+  "layer.8.norm2.weight": [
+   1280
+  ],
+  "layer.9.attention.k_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.9.attention.o_proj.bias": [
+   1280
+  ],
+  "layer.9.attention.o_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.9.attention.q_proj.bias": [
+   1280
+  ],
+  "layer.9.attention.q_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.9.attention.v_proj.bias": [
+   1280
+  ],
+  "layer.9.attention.v_proj.weight": [
+   1280,
+   1280
+  ],
+  "layer.9.layer_scale1.lambda1": [
+   1280
+  ],
+  "layer.9.layer_scale2.lambda1": [
+   1280
+  ],
+  "layer.9.mlp.down_proj.bias": [
+   1280
+  ],
+  "layer.9.mlp.down_proj.weight": [
+   1280,
+   5120
+  ],
+  "layer.9.mlp.gate_proj.bias": [
+   5120
+  ],
+  "layer.9.mlp.gate_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.9.mlp.up_proj.bias": [
+   5120
+  ],
+  "layer.9.mlp.up_proj.weight": [
+   5120,
+   1280
+  ],
+  "layer.9.norm1.bias": [
+   1280
+  ],
+  "layer.9.norm1.weight": [
+   1280
+  ],
+  "layer.9.norm2.bias": [
+   1280
+  ],
+  "layer.9.norm2.weight": [
+   1280
+  ],
+  "norm.bias": [
+   1280
+  ],
+  "norm.weight": [
+   1280
+  ]
+ }
+}

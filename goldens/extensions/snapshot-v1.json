@@ -1,0 +1,84 @@
+{
+  "snapshot": {
+    "format": "dinkster.extension-snapshot",
+    "version": 1,
+    "frontendApi": "1.0.0",
+    "extensions": [
+      {
+        "id": "example.attention",
+        "version": "2.4.1",
+        "packageDigest": "sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        "contributionIds": [
+          "attention/qkv-normalize",
+          "attention/kernel-wrapper"
+        ],
+        "selectorResolutions": [
+          {
+            "selector": "attention:cross",
+            "points": [
+              "double-block/0/attn",
+              "single-block/0/attn"
+            ]
+          }
+        ],
+        "serviceProviders": [
+          {
+            "service": "attention.kernel",
+            "provider": "example.attention/kernel-wrapper"
+          }
+        ],
+        "capabilities": [
+          "model-family-registration"
+        ],
+        "behaviorConfiguration": [
+          {
+            "key": "enabled",
+            "value": true
+          },
+          {
+            "key": "limit",
+            "value": 4
+          },
+          {
+            "key": "mode",
+            "value": "strict"
+          },
+          {
+            "key": "offset",
+            "value": -2
+          },
+          {
+            "key": "override",
+            "value": null
+          }
+        ]
+      },
+      {
+        "id": "example.monitor",
+        "version": "1.0.0",
+        "packageDigest": "sha256:b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7",
+        "contributionIds": [
+          "events/progress-observer"
+        ],
+        "selectorResolutions": [],
+        "serviceProviders": [],
+        "capabilities": [
+          "background-jobs",
+          "routes"
+        ],
+        "behaviorConfiguration": [
+          {
+            "key": "sampleEvery",
+            "value": 5
+          },
+          {
+            "key": "unicode",
+            "value": "coffee \u2615"
+          }
+        ]
+      }
+    ]
+  },
+  "canonicalSerialization": "{\"format\":\"dinkster.extension-snapshot\",\"version\":1,\"frontendApi\":\"1.0.0\",\"extensions\":[{\"id\":\"example.attention\",\"version\":\"2.4.1\",\"packageDigest\":\"sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a\",\"contributionIds\":[\"attention/qkv-normalize\",\"attention/kernel-wrapper\"],\"selectorResolutions\":[{\"selector\":\"attention:cross\",\"points\":[\"double-block/0/attn\",\"single-block/0/attn\"]}],\"serviceProviders\":[{\"service\":\"attention.kernel\",\"provider\":\"example.attention/kernel-wrapper\"}],\"capabilities\":[\"model-family-registration\"],\"behaviorConfiguration\":[{\"key\":\"enabled\",\"value\":true},{\"key\":\"limit\",\"value\":4},{\"key\":\"mode\",\"value\":\"strict\"},{\"key\":\"offset\",\"value\":-2},{\"key\":\"override\",\"value\":null}]},{\"id\":\"example.monitor\",\"version\":\"1.0.0\",\"packageDigest\":\"sha256:b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7\",\"contributionIds\":[\"events/progress-observer\"],\"selectorResolutions\":[],\"serviceProviders\":[],\"capabilities\":[\"background-jobs\",\"routes\"],\"behaviorConfiguration\":[{\"key\":\"sampleEvery\",\"value\":5},{\"key\":\"unicode\",\"value\":\"coffee \\u2615\"}]}]}",
+  "behaviorSha256": "5993c8adce86ae2d8b57255777b9ee544259eac822d42b2925e8a375a998d28c"
+}

@@ -1,0 +1,16 @@
+{
+  "results": [
+    {
+      "case": "lineart-anime",
+      "outputDtype": "float32",
+      "outputFloat32Sha256": "e88f6531a36069f24d15b15e6a5b6c9ddc796194f5c8432063d13191ca3c85f8",
+      "outputShape": [
+        1,
+        512,
+        615,
+        3
+      ],
+      "repeatMaxAbsDiff": 0.0
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {
+      "id": "middle",
+      "output": "1234"
+    },
+    {
+      "id": "negative",
+      "output": "cde"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "connections": [
+    ["gguf-diffusion", "sampler"],
+    ["clip-l", "positive-text"],
+    ["clip-g", "positive-text"],
+    ["clip-l", "negative-text"],
+    ["clip-g", "negative-text"],
+    ["positive-text", "sampler"],
+    ["negative-text", "sampler"],
+    ["empty-latent", "sampler"],
+    ["sampler", "vae-decode"],
+    ["vae", "vae-decode"]
+  ],
+  "nodes": {
+    "clip-g": "external-clip-g",
+    "clip-l": "external-clip-l",
+    "empty-latent": "empty-latent-image",
+    "gguf-diffusion": "sdxl-gguf-q8-0",
+    "negative-text": "clip-text-encode",
+    "positive-text": "clip-text-encode",
+    "sampler": "euler-simple",
+    "vae": "external-sdxl-vae",
+    "vae-decode": "vae-decode"
+  },
+  "schema": 1
+}

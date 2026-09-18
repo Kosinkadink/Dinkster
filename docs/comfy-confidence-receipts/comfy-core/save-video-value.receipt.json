@@ -1,0 +1,44 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 83,
+      "path": "artifacts/comfy-core/save-video-value.native.json",
+      "sha256": "sha256:b01c3b2aeee92555d3bd7cc12b5155e77dd5e5b184a849634a2b35c0e56cf90e"
+    },
+    "reference": {
+      "bytes": 83,
+      "path": "artifacts/comfy-core/save-video-value.reference.json",
+      "sha256": "sha256:b01c3b2aeee92555d3bd7cc12b5155e77dd5e5b184a849634a2b35c0e56cf90e"
+    }
+  },
+  "caseId": "comfy-core/save-video-value/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/SaveVideo",
+    "source": {
+      "name": "SaveVideo",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "15eb748b"
+    },
+    "target": {
+      "id": "dinkster.save_video",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "codec": "auto",
+    "format": "auto",
+    "mappingDigest": "sha256:920c3afa35bb8e3d8976845106645be6a0a0da19adabd236ef6017118cf16e0f"
+  },
+  "pass": true
+}

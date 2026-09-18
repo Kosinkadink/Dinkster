@@ -1,0 +1,22 @@
+# Partner nodes are isolated from the host and depend only on dinkster_api.v1.
+[pack]
+name = "dinkster-nodes-partner"
+namespaces = ["partner"]
+requires = ["httpx==0.28.1", "httpcore==1.0.9", "pillow==12.0.0", "av==16.0.1"]
+
+[pack.sandbox]
+network = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.presentation]
+display_name = "Partner Nodes"
+abbr = "API"
+mark = "API"
+color = "#3b82f6"
+
+[pack.entry]
+nodes = "dinkster_nodes_partner:PARTNER_NODES"
+types = "dinkster_nodes_partner:register_partner_types"

@@ -1,0 +1,119 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 146,
+      "path": "artifacts/comfy-core/trellis2-trellis2conditioning.native.json",
+      "sha256": "sha256:025886f0fa4788009dacbb43536c6a3df49ba319bba39c205e15e4ce13aab836"
+    },
+    "reference": {
+      "bytes": 146,
+      "path": "artifacts/comfy-core/trellis2-trellis2conditioning.reference.json",
+      "sha256": "sha256:025886f0fa4788009dacbb43536c6a3df49ba319bba39c205e15e4ce13aab836"
+    }
+  },
+  "caseId": "comfy-core/trellis2-trellis2conditioning/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/Trellis2Conditioning",
+    "source": {
+      "name": "Trellis2Conditioning",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "8a33128f"
+    },
+    "target": {
+      "id": "dinkster.trellis2_conditioning",
+      "kind": "node"
+    },
+    "tier": "exact"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "binding": {
+      "disposition": "executed",
+      "variant": "trellis2"
+    },
+    "confidenceEvidence": [
+      "tests/test_generation_comfy_aliases.py::test_trellis2_official_workflow_surface_is_maintained"
+    ],
+    "evidence": {
+      "path": "inference-parity/records/trellis2-1083/official-workflow.json",
+      "repository": "Kosinkadink/dinkster-evidence",
+      "sha256": "sha256:5d8f28957721172681da35aceefc8af4a6c9b98e1f95cc1102335a9cf679ce77"
+    },
+    "input": {
+      "bytes": 1106832,
+      "sha256": "aaf42f16e262e88bef7c947771a745e817cc0b533922a8388b51165ede091fce",
+      "url": "https://raw.githubusercontent.com/Comfy-Org/workflow_templates/d3b4a9e89573162b005961865164c18c8ae2206b/input/viking_wolf_rune_axe.png"
+    },
+    "mappingDigest": "sha256:6d19907c01b92caa1ef3dbd4ae3620c137f6d726efdd666297963313fe87e101",
+    "nativeRun": {
+      "cached": 12,
+      "documentBytes": 31233,
+      "documentSha256": "670d8753b6e9c685c9891ce3b789bfc221ebb9f6e14549a117a286cfb1ea53c0",
+      "executed": 46,
+      "runId": "01a05790502edd985d1447f549e05428",
+      "skipped": 0,
+      "sourceDocument": "blake3:9923d25bbf6a70fb658f55f639918a34623a5e7081bb26d4859791e7b6f527a3",
+      "state": "completed",
+      "variant": "trellis2"
+    },
+    "numericalParity": [
+      {
+        "comparison": {
+          "bytes": 4559,
+          "sha256": "6c2ecf82ddcdda70558b679cdc8a4a528b5c961ba9688b54ed23368120be0a9d"
+        },
+        "metrics": {
+          "normalizedChamferSquared": 8.577690685126808e-06,
+          "occupancyIou": 0.994066882416397,
+          "pbrCosine": 0.9699723553577766,
+          "structureCosine": 0.99966315160513
+        },
+        "nativeArtifact": {
+          "bytes": 596084761,
+          "sha256": "e490a17bc08fb112c96852b6e16f291ffeaf0ebdecaa57f110805ee9a1a75ac9"
+        },
+        "referenceArtifact": {
+          "bytes": 556838573,
+          "sha256": "b8b15de6a187d0243a6ab044815b4e1b87e43e56bddc230987a8a49c6a219a04"
+        },
+        "variant": "trellis2"
+      },
+      {
+        "comparison": {
+          "bytes": 4524,
+          "sha256": "9f3dbbeaebfb0fe7adf59b7fdecc87c738527200477b363640a9ca8ea09ffd10"
+        },
+        "metrics": {
+          "normalizedChamferSquared": 4.115135977290021e-06,
+          "occupancyIou": 0.9885151763740772,
+          "pbrCosine": 0.9520475856973519,
+          "structureCosine": 0.9997996549633982
+        },
+        "nativeArtifact": {
+          "bytes": 314259719,
+          "sha256": "8ac02185026ce3c5f80e2a64316d871888524e2773dd990e57a6cd2f64ecd54c"
+        },
+        "referenceArtifact": {
+          "bytes": 298077787,
+          "sha256": "f50db353a1d5507842cb892594c60d483df0c4c91ab6aca0107a4ad13cbd69c9"
+        },
+        "variant": "pixal3d"
+      }
+    ],
+    "sourceWorkflow": {
+      "bytes": 79521,
+      "path": "templates/3d_pixal3d_trellis2_image_to_model.json",
+      "sha256": "594295ae20490b4ed990655686f2d0c15ba06732df5553bc22bda98966c40a97"
+    }
+  },
+  "pass": true
+}

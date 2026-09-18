@@ -1,0 +1,48 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 238095,
+      "path": "artifacts/comfy-core/seedvr2-preprocess.native.json",
+      "sha256": "sha256:df2d9a4481ca326888ed199221b48dbc3bbab2495343209d14a43f5d124c399c"
+    },
+    "reference": {
+      "bytes": 238095,
+      "path": "artifacts/comfy-core/seedvr2-preprocess.reference.json",
+      "sha256": "sha256:df2d9a4481ca326888ed199221b48dbc3bbab2495343209d14a43f5d124c399c"
+    }
+  },
+  "caseId": "comfy-core/seedvr2-preprocess/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/SeedVR2Preprocess",
+    "source": {
+      "name": "SeedVR2Preprocess",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.seedvr2_preprocess",
+      "kind": "node"
+    },
+    "tier": "exact"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "inputShape": [
+      2,
+      17,
+      18,
+      4
+    ],
+    "mappingDigest": "sha256:7c2b373acb5d7a9670e85c4409b5092a73dc80d7de669cce78de3bbf6b11881c"
+  },
+  "pass": true
+}

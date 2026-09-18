@@ -1,0 +1,23 @@
+[project]
+name = "dinkster-image-document"
+version = "0.0.1"
+description = "Strict ImageDocument format and deterministic CPU reference renderer"
+requires-python = ">=3.12"
+dependencies = [
+    "dinkster-assets",
+    "dinkster-values",
+    "numpy>=1.26",
+    "pillow>=10",
+    "psd-tools>=1.14.3,<1.20",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_image_document"]
+
+[tool.uv.sources]
+dinkster-assets = { workspace = true }
+dinkster-values = { workspace = true }

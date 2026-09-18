@@ -1,0 +1,49 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 1081,
+      "path": "artifacts/comfy-core/load-image-mask.native.json",
+      "sha256": "sha256:74255dfecde0fb978ff6c9c8fe586b6f7d0b41f5ce86abbefef3a1c4823ab8ff"
+    },
+    "reference": {
+      "bytes": 1081,
+      "path": "artifacts/comfy-core/load-image-mask.reference.json",
+      "sha256": "sha256:74255dfecde0fb978ff6c9c8fe586b6f7d0b41f5ce86abbefef3a1c4823ab8ff"
+    }
+  },
+  "caseId": "comfy-core/load-image-mask/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/LoadImageMask",
+    "source": {
+      "name": "LoadImageMask",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.load_mask",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "channels": [
+      "alpha",
+      "red",
+      "green",
+      "blue"
+    ],
+    "mappingDigest": "sha256:a7474343fa2c7f906ad9ae70c834b23ad88aaf4b6d4383e88686838feb9e7642",
+    "scope": "RGBA channel extraction with mapped alpha polarity"
+  },
+  "pass": true
+}

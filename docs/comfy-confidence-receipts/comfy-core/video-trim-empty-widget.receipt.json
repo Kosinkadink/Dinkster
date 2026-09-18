@@ -1,0 +1,49 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 183,
+      "path": "artifacts/comfy-core/video-trim-empty-widget.native.json",
+      "sha256": "sha256:d6329dbda12a94dd55ef15d75140dff79b5f2f78d2051bfd5509a6d9c173d479"
+    },
+    "reference": {
+      "bytes": 183,
+      "path": "artifacts/comfy-core/video-trim-empty-widget.reference.json",
+      "sha256": "sha256:d6329dbda12a94dd55ef15d75140dff79b5f2f78d2051bfd5509a6d9c173d479"
+    }
+  },
+  "caseId": "comfy-core/video-trim-empty-widget/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/VideoTrim",
+    "source": {
+      "name": "VideoTrim",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "15eb748b"
+    },
+    "target": {
+      "id": "dinkster.video.trim",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "mappingDigest": "sha256:d690dd183b910aba28055b52d6eb972c4b609c14d8cd48de53edbe34e1efe33c",
+    "previewDisposition": "not-compared",
+    "widgets": [
+      {},
+      {
+        "trim": {}
+      }
+    ]
+  },
+  "pass": true
+}

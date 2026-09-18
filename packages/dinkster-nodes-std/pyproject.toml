@@ -1,0 +1,45 @@
+[project]
+name = "dinkster-nodes-std"
+version = "0.0.1"
+description = "Dinkster standard first-party node pack suite"
+requires-python = ">=3.12"
+dependencies = [
+    "dinkster-nodes-foundation==0.0.1",
+    "dinkster-nodes-media-io==0.0.1",
+    "dinkster-nodes-image==0.0.1",
+    "dinkster-nodes-remote==0.0.1",
+    "dinkster-vision-birefnet==0.0.1",
+    "dinkster-vision-depth-anything-v2==0.0.1",
+    "dinkster-vision-depth-anything-v3==0.0.1",
+    "dinkster-vision-detr==0.0.1",
+    "dinkster-vision-efficient-sam==0.0.1",
+    "dinkster-vision-hed==0.0.1",
+    "dinkster-vision-rtdetr==0.0.1",
+    "dinkster-vision-sam31==0.0.1",
+    "dinkster-vision-upscale==0.0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.hatch.build.targets.wheel.force-include]
+"dinkster.lock" = "dinkster_nodes_std_suite/dinkster.lock"
+
+[tool.uv.sources]
+dinkster-nodes-foundation = { workspace = true }
+dinkster-nodes-media-io = { workspace = true }
+dinkster-nodes-image = { workspace = true }
+dinkster-nodes-remote = { workspace = true }
+dinkster-vision-birefnet = { workspace = true }
+dinkster-vision-depth-anything-v2 = { workspace = true }
+dinkster-vision-depth-anything-v3 = { workspace = true }
+dinkster-vision-detr = { workspace = true }
+dinkster-vision-efficient-sam = { workspace = true }
+dinkster-vision-hed = { workspace = true }
+dinkster-vision-rtdetr = { workspace = true }
+dinkster-vision-sam31 = { workspace = true }
+dinkster-vision-upscale = { workspace = true }

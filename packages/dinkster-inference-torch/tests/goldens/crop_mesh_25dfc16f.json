@@ -1,0 +1,750 @@
+{
+  "crops": {
+    "batch_error": {
+      "error": "Mask batch 3 does not match image batch 2"
+    },
+    "center:16x24:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "7cc7e0cb058c3702ab9b1b5f66e4a28e9cfd5158b2765a4743e22c1ab8719e89",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "center:16x24:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "3843ec49e0a80eb2061f24b8380a6268401efae58cf0cbce0738b7cbaff58514",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "center:16x24:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "0955d23e3a6d675802dd5197cd64c0a7bd360f6cc14ef49542df28a59860beb6",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "center:8x6:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "102fbbb95e0dcabcd4aa0fef4f48fba6bbbd32c2592ef9983d0298cec38205f1",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "center:8x6:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "521819da8311379036252f26a37cb38f0fd239d9d90c687a727dfd2eb5cb0462",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "center:8x6:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "953261a34408355d40b84380a7eb8067e5244d0f03fafd024d1a19d036f84f9e",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "edge:16x24:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "8681992529c918c547d411d5c2a7037df85cdb3d3a91ba7a08ad77ac1f0b4593",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "edge:16x24:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "0ac2bcad22ae484f8d7e5d2f829315925c4e04a29cc356a052c0ed89c22268d8",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "edge:16x24:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "c10e068376645b032409128cf1b0908c6006bb87dbbb370b3a5422246316244e",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "edge:8x6:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "a43e6900317800866ea298e1908b438c57eac3ca824c34cd623962e9efc437af",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "edge:8x6:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "a2232c001a03053593bfdcc9f37a018754a8dcd9656017ebc7f81f96564dbdd7",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "edge:8x6:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "87ac2d1669f88b8e1ba7f74a2a24413d06ece16d3b3be395a6402033b37a029d",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "full:16x24:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "6d6264412ccbcc79b7139ec58910cb9a81b0e80a8b08b10308578a57e04c2d3b",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "full:16x24:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "6d6264412ccbcc79b7139ec58910cb9a81b0e80a8b08b10308578a57e04c2d3b",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "full:16x24:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "6d6264412ccbcc79b7139ec58910cb9a81b0e80a8b08b10308578a57e04c2d3b",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "full:8x6:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "ce773de358ac06eb98ee53268f0c7e2316ef4f100ed08e7aa5036c65a810e76f",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "full:8x6:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "ce773de358ac06eb98ee53268f0c7e2316ef4f100ed08e7aa5036c65a810e76f",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "full:8x6:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "ce773de358ac06eb98ee53268f0c7e2316ef4f100ed08e7aa5036c65a810e76f",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "inverted:16x24:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "7cc7e0cb058c3702ab9b1b5f66e4a28e9cfd5158b2765a4743e22c1ab8719e89",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "inverted:16x24:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "3843ec49e0a80eb2061f24b8380a6268401efae58cf0cbce0738b7cbaff58514",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "inverted:16x24:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "0955d23e3a6d675802dd5197cd64c0a7bd360f6cc14ef49542df28a59860beb6",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "inverted:8x6:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "102fbbb95e0dcabcd4aa0fef4f48fba6bbbd32c2592ef9983d0298cec38205f1",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "inverted:8x6:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "521819da8311379036252f26a37cb38f0fd239d9d90c687a727dfd2eb5cb0462",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "inverted:8x6:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "953261a34408355d40b84380a7eb8067e5244d0f03fafd024d1a19d036f84f9e",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "per_item:16x24:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "7cc7e0cb058c3702ab9b1b5f66e4a28e9cfd5158b2765a4743e22c1ab8719e89",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "per_item:16x24:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "3843ec49e0a80eb2061f24b8380a6268401efae58cf0cbce0738b7cbaff58514",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "per_item:16x24:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "0955d23e3a6d675802dd5197cd64c0a7bd360f6cc14ef49542df28a59860beb6",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "per_item:8x6:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "102fbbb95e0dcabcd4aa0fef4f48fba6bbbd32c2592ef9983d0298cec38205f1",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "per_item:8x6:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "521819da8311379036252f26a37cb38f0fd239d9d90c687a727dfd2eb5cb0462",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "per_item:8x6:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "953261a34408355d40b84380a7eb8067e5244d0f03fafd024d1a19d036f84f9e",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "resize_mask:16x24:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "8189e5dd11452d7c954114e938028f14da9e5a8f71ad8f3163556c5ae838e948",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "resize_mask:16x24:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "b823dfa6ab907cf69441c8b4b75dc3a3cd734ebea023adefb1dfdc585f05ae7f",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "resize_mask:16x24:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "e85a38852fd2da5eb335528efb8e0121e44c2219da93eaa68b88d3998f67cc45",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "resize_mask:8x6:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "ff2c9051a8b58a318f85ad672156135a8bc094b69b63e13204732b36e7464dad",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "resize_mask:8x6:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "5087d1f93b2c276d71e2705f63cc40a40af67752147eefab2ce4cfde7e32f0cd",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "resize_mask:8x6:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "342edbc564fa6faf7a30a5fb5950b55316c8b289c6f2236f6485c5da6edd4c87",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "soft:16x24:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "deb61b747cff1b357d5bd409eabc48a548b9cf7207edbb235aeaf2c1901c30fe",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "soft:16x24:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "deb61b747cff1b357d5bd409eabc48a548b9cf7207edbb235aeaf2c1901c30fe",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "soft:16x24:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "deb61b747cff1b357d5bd409eabc48a548b9cf7207edbb235aeaf2c1901c30fe",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "soft:8x6:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "a343301740645182d1f5e697431d79e180b783997c53a229152c40249d938237",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "soft:8x6:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "a343301740645182d1f5e697431d79e180b783997c53a229152c40249d938237",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "soft:8x6:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "a343301740645182d1f5e697431d79e180b783997c53a229152c40249d938237",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "threshold:16x24:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "f0169f30655812f853e43edf2429fcea99d37c57e0c2897217e6851440e328c2",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "threshold:16x24:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "c5dfa020f053f0d9e009d8c833702d4f40551364977e45cd0ae06e95449ba402",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "threshold:16x24:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "e0d6042269a724396fd352adb2d38561d90c2fd927c9159dbd219f5ad03ffc35",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "threshold:8x6:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "af54a2b7c3362b2a1ec93aff3773d912d6e41ed49f2c9e89f2957b47d2fc0eb0",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "threshold:8x6:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "38838419465edcd4157b7af287e1827f3dcbb5e340a783be744838d812f159ed",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "threshold:8x6:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "740a61e135cb190c47748bb59db4c6ceb0ae1814a3db342ed28bc57e4f3fcda0",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "torch.float16": {
+      "dtype": "torch.float32",
+      "sha256": "470252110d78326bd7070faf2116d9e7f0b490e54b8d7cfa3f490a0784a2bf27",
+      "shape": [
+        2,
+        8,
+        16,
+        3
+      ]
+    },
+    "torch.float64": {
+      "dtype": "torch.float32",
+      "sha256": "c8736944f9bad36d1524563c550490b85600140e5b2404a0631fe7960fa093ae",
+      "shape": [
+        2,
+        8,
+        16,
+        3
+      ]
+    },
+    "zero:16x24:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "6d6264412ccbcc79b7139ec58910cb9a81b0e80a8b08b10308578a57e04c2d3b",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "zero:16x24:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "6d6264412ccbcc79b7139ec58910cb9a81b0e80a8b08b10308578a57e04c2d3b",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "zero:16x24:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "6d6264412ccbcc79b7139ec58910cb9a81b0e80a8b08b10308578a57e04c2d3b",
+      "shape": [
+        2,
+        24,
+        16,
+        3
+      ]
+    },
+    "zero:8x6:grow-1": {
+      "dtype": "torch.float32",
+      "sha256": "ce773de358ac06eb98ee53268f0c7e2316ef4f100ed08e7aa5036c65a810e76f",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "zero:8x6:grow0": {
+      "dtype": "torch.float32",
+      "sha256": "ce773de358ac06eb98ee53268f0c7e2316ef4f100ed08e7aa5036c65a810e76f",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    },
+    "zero:8x6:grow2": {
+      "dtype": "torch.float32",
+      "sha256": "ce773de358ac06eb98ee53268f0c7e2316ef4f100ed08e7aa5036c65a810e76f",
+      "shape": [
+        2,
+        6,
+        8,
+        3
+      ]
+    }
+  },
+  "meshes": {
+    "all_attributes": {
+      "info": "Vertices:   4\nFaces:      2\nAttributes: uvs, vertex_colors, normals, tangents, texture 2\u00d73, metallic_roughness 2\u00d73, normal_map 2\u00d73",
+      "items": [
+        {
+          "length": 3068,
+          "sha256": "86915a2a78c53e61f75b9bf70a7f11c689f58241685f1a9407bb10628750a0f5"
+        }
+      ]
+    },
+    "bad_face": {
+      "info": "Vertices:   4\nFaces:      1\nAttributes: none",
+      "items": [
+        {
+          "error": "save_glb: face index out of range [0, 4): min=-1, max=2"
+        }
+      ]
+    },
+    "bad_tangents": {
+      "info": "Vertices:   4\nFaces:      2\nAttributes: tangents",
+      "items": [
+        {
+          "error": "save_glb: tangents must be (N, 4) with N=4, got (4, 3)"
+        }
+      ]
+    },
+    "bad_uvs": {
+      "info": "Vertices:   4\nFaces:      2\nAttributes: uvs",
+      "items": [
+        {
+          "error": "save_glb: uvs has 2 entries but vertex count is 4"
+        }
+      ]
+    },
+    "bare": {
+      "info": "Vertices:   4\nFaces:      2\nAttributes: none",
+      "items": [
+        {
+          "length": 900,
+          "sha256": "a3f9877946a5a26b0a7e7dca83a8ed47a4a2f2c3426b9816958aab82cd960732"
+        }
+      ]
+    },
+    "batch": {
+      "info": "Batch:      2 meshes\nVertices:   7 total\nFaces:      3 total\n  [0]           3 verts  \u00b7           1 faces\n  [1]           4 verts  \u00b7           2 faces\nAttributes: uvs, vertex_colors, normals, tangents, texture 2\u00d73, metallic_roughness 2\u00d73, normal_map 2\u00d73",
+      "items": [
+        {
+          "length": 2988,
+          "sha256": "28f42f63f4ef1db9e040a9dadb61fa7483a24bab8bf98b492aaae12d1affcd9d"
+        },
+        {
+          "length": 3068,
+          "sha256": "86915a2a78c53e61f75b9bf70a7f11c689f58241685f1a9407bb10628750a0f5"
+        }
+      ]
+    },
+    "emissive_no_texture": {
+      "info": "Vertices:   4\nFaces:      2\nAttributes: none",
+      "items": [
+        {
+          "length": 1068,
+          "sha256": "0c1668d2b5a35fd92afb31e30899a865f71c8f675995d7c7ddf620ffd8c7487c"
+        }
+      ]
+    },
+    "empty_count": {
+      "info": "Vertices:   0\nFaces:      0\nAttributes: none",
+      "items": [
+        {
+          "empty": true
+        }
+      ]
+    },
+    "empty_faces": {
+      "info": "Vertices:   4\nFaces:      0\nAttributes: none",
+      "items": [
+        {
+          "empty": true
+        }
+      ]
+    },
+    "empty_vertices": {
+      "info": "Vertices:   0\nFaces:      2\nAttributes: none",
+      "items": [
+        {
+          "empty": true
+        }
+      ]
+    },
+    "maps_without_uv": {
+      "info": "Vertices:   4\nFaces:      2\nAttributes: vertex_colors, normals, tangents, texture 2\u00d73, metallic_roughness 2\u00d73, normal_map 2\u00d73",
+      "items": [
+        {
+          "length": 1936,
+          "sha256": "70b3043eb694b7b892b2fe62747a1aace6809425bd8e6405631e095c2bd55260"
+        }
+      ]
+    },
+    "material": {
+      "info": "Vertices:   4\nFaces:      2\nAttributes: uvs, vertex_colors, normals, tangents, texture 2\u00d73, metallic_roughness 2\u00d73, normal_map 2\u00d73",
+      "items": [
+        {
+          "length": 3200,
+          "sha256": "b1447e3575e867d13719c9347e80e905a0263557ad267dbd2fab3dd1bd484916"
+        }
+      ]
+    },
+    "negative_count_slice": {
+      "info": "Vertices:   -1\nFaces:      -1\nAttributes: uvs, vertex_colors, normals, tangents, texture 2\u00d73, metallic_roughness 2\u00d73, normal_map 2\u00d73",
+      "items": [
+        {
+          "length": 2988,
+          "sha256": "28f42f63f4ef1db9e040a9dadb61fa7483a24bab8bf98b492aaae12d1affcd9d"
+        }
+      ]
+    },
+    "oversized_count_and_uvs": {
+      "info": "Vertices:   6\nFaces:      2\nAttributes: uvs",
+      "items": [
+        {
+          "error": "save_glb: uvs has 5 entries but vertex count is 4"
+        }
+      ]
+    },
+    "rgb": {
+      "info": "Vertices:   4\nFaces:      2\nAttributes: vertex_colors",
+      "items": [
+        {
+          "length": 1116,
+          "sha256": "196067f1799309477d6f080b77ba828eac66d0d22415e3eb26bbdfe70fb6fc90"
+        }
+      ]
+    },
+    "rgba_unlit": {
+      "info": "Vertices:   4\nFaces:      2\nAttributes: vertex_colors",
+      "items": [
+        {
+          "length": 1216,
+          "sha256": "8d5f23227cb953a4cc8e6a07dc103cf9ca1edbabcfb129c1f48b963c7028b7f6"
+        }
+      ]
+    },
+    "textured_unlit_uses_pbr": {
+      "info": "Vertices:   4\nFaces:      2\nAttributes: uvs, vertex_colors, normals, tangents, texture 2\u00d73, metallic_roughness 2\u00d73, normal_map 2\u00d73",
+      "items": [
+        {
+          "length": 3068,
+          "sha256": "86915a2a78c53e61f75b9bf70a7f11c689f58241685f1a9407bb10628750a0f5"
+        }
+      ]
+    },
+    "unlit_ignores_pbr": {
+      "info": "Vertices:   4\nFaces:      2\nAttributes: uvs, vertex_colors, normals, tangents, metallic_roughness 2\u00d73, normal_map 2\u00d73",
+      "items": [
+        {
+          "length": 2136,
+          "sha256": "51cfbc0341b5ad2d4364a7f36babd9571d179adcb4995d4a6dc3b41a3c4433de"
+        }
+      ]
+    },
+    "variable": {
+      "info": "Vertices:   3\nFaces:      1\nAttributes: uvs, vertex_colors, normals, tangents, texture 2\u00d73, metallic_roughness 2\u00d73, normal_map 2\u00d73",
+      "items": [
+        {
+          "length": 2988,
+          "sha256": "28f42f63f4ef1db9e040a9dadb61fa7483a24bab8bf98b492aaae12d1affcd9d"
+        }
+      ]
+    }
+  },
+  "reference": {
+    "commit": "25dfc16f9ac0a87991d34fbf5f02d6c25c844639",
+    "source_sha256": {
+      "comfy/utils.py": "f3ee59baf72f6910b7662224854e372c713ba3ad01c89739ba092e5ee22460e6",
+      "comfy_extras/nodes_images.py": "c1503a3949530d5708948329e050aa89aedaf739678cdb4084e40d95bea46a60",
+      "comfy_extras/nodes_save_3d.py": "eac509e5a836e431c878cb031c01aa05afeec90a3145a24e930bd5e90c8e51d4"
+    }
+  },
+  "runtime": {
+    "numpy": "2.5.1",
+    "pillow": "12.0.0",
+    "torch": "2.13.0+cpu"
+  }
+}

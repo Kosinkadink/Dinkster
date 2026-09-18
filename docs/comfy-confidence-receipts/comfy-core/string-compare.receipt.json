@@ -1,0 +1,71 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 204,
+      "path": "artifacts/comfy-core/string-compare.native.json",
+      "sha256": "sha256:a0b03f9aeefb1cae5187afca2dc5668b9f61ec6df19c797a104cf3ea76e31450"
+    },
+    "reference": {
+      "bytes": 204,
+      "path": "artifacts/comfy-core/string-compare.reference.json",
+      "sha256": "sha256:a0b03f9aeefb1cae5187afca2dc5668b9f61ec6df19c797a104cf3ea76e31450"
+    }
+  },
+  "caseId": "comfy-core/string-compare/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/StringCompare",
+    "source": {
+      "name": "StringCompare",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.string.test",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "cases": [
+      {
+        "id": "equal-insensitive",
+        "inputs": {
+          "case_sensitive": false,
+          "mode": "Equal",
+          "string_a": "Alpha",
+          "string_b": "alpha"
+        }
+      },
+      {
+        "id": "starts",
+        "inputs": {
+          "case_sensitive": true,
+          "mode": "Starts With",
+          "string_a": "alphabet",
+          "string_b": "alpha"
+        }
+      },
+      {
+        "id": "ends-false",
+        "inputs": {
+          "case_sensitive": false,
+          "mode": "Ends With",
+          "string_a": "alphabet",
+          "string_b": "ALPHA"
+        }
+      }
+    ],
+    "mappingDigest": "sha256:acf799fe4d3d5d206b72bacdcfe7f8b842d7cbffac8bcdd5915d13296af9ed79"
+  },
+  "pass": true
+}

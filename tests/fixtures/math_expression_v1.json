@@ -1,0 +1,305 @@
+{
+  "format_version": 2,
+  "grammar_version": 1,
+  "comfyui_behavioral_reference_commit": "b78cec879b9460d5cb25228a83a942fb78d2cd24",
+  "comfyui_reference": {
+    "commit": "b78cec879b9460d5cb25228a83a942fb78d2cd24",
+    "path": "comfy_extras/nodes_math.py",
+    "source_sha256": "b117db3e5eadf7e1689a7a2edaad9436bb6282ab3d57865ec2cd78004de9fb88",
+    "executed_symbol": "MathExpressionNode.execute",
+    "simpleeval_version": "1.0.3",
+    "generator": "tools/generate_math_expression_vector.py"
+  },
+  "mirror_relative_tolerance": 1e-12,
+  "cases": [
+    {
+      "id": "operator-precedence",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "exact",
+      "expression": "a + b * 2",
+      "inputs": {
+        "a": 3,
+        "b": 2.5
+      },
+      "outputs": {
+        "float": 8.0,
+        "int": 8,
+        "boolean": true
+      },
+      "float_bits": "4020000000000000"
+    },
+    {
+      "id": "division-and-int-output",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "exact",
+      "expression": "a / b",
+      "inputs": {
+        "a": 7,
+        "b": 2
+      },
+      "outputs": {
+        "float": 3.5,
+        "int": 3,
+        "boolean": true
+      },
+      "float_bits": "400c000000000000"
+    },
+    {
+      "id": "core-functions",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "bounded",
+      "expression": "round(sqrt(a) + log2(b), 3)",
+      "inputs": {
+        "a": 9,
+        "b": 8
+      },
+      "outputs": {
+        "float": 6.0,
+        "int": 6,
+        "boolean": true
+      },
+      "float_bits": "4018000000000000"
+    },
+    {
+      "id": "conditional",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "exact",
+      "expression": "a if a > b else b",
+      "inputs": {
+        "a": -4,
+        "b": -1
+      },
+      "outputs": {
+        "float": -1.0,
+        "int": -1,
+        "boolean": true
+      },
+      "float_bits": "bff0000000000000"
+    },
+    {
+      "id": "ordered-values",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "exact",
+      "expression": "sum(values)",
+      "inputs": {
+        "a": 1,
+        "b": 2.5,
+        "c": true
+      },
+      "outputs": {
+        "float": 4.5,
+        "int": 4,
+        "boolean": true
+      },
+      "float_bits": "4012000000000000"
+    },
+    {
+      "id": "highest-named-operand",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "exact",
+      "expression": "a + z",
+      "inputs": {
+        "a": 1,
+        "z": 2.5
+      },
+      "outputs": {
+        "float": 3.5,
+        "int": 3,
+        "boolean": true
+      },
+      "float_bits": "400c000000000000"
+    },
+    {
+      "id": "floor-division-and-modulo-negatives",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "exact",
+      "expression": "(a // b) * 1000 + a % b",
+      "inputs": {
+        "a": -7,
+        "b": 3
+      },
+      "outputs": {
+        "float": -2998.0,
+        "int": -2998,
+        "boolean": true
+      },
+      "float_bits": "c0a76c0000000000"
+    },
+    {
+      "id": "float-modulo-follows-divisor-sign",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "exact",
+      "expression": "a % b",
+      "inputs": {
+        "a": -7.5,
+        "b": 3.0
+      },
+      "outputs": {
+        "float": 1.5,
+        "int": 1,
+        "boolean": true
+      },
+      "float_bits": "3ff8000000000000"
+    },
+    {
+      "id": "bankers-rounding",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "exact",
+      "expression": "round(a) + round(b) * 10",
+      "inputs": {
+        "a": 2.5,
+        "b": 3.5
+      },
+      "outputs": {
+        "float": 42.0,
+        "int": 42,
+        "boolean": true
+      },
+      "float_bits": "4045000000000000"
+    },
+    {
+      "id": "big-integer-power",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "exact",
+      "expression": "a ** b + 1",
+      "inputs": {
+        "a": 2,
+        "b": 80
+      },
+      "outputs": {
+        "float": 1.2089258196146292e+24,
+        "int": 1208925819614629174706177,
+        "boolean": true
+      },
+      "float_bits": "44f0000000000000",
+      "int_strings": "1208925819614629174706177"
+    },
+    {
+      "id": "bitwise-and-shifts",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "exact",
+      "expression": "(a << 5) ^ b | (a & b)",
+      "inputs": {
+        "a": 13,
+        "b": 9
+      },
+      "outputs": {
+        "float": 425.0,
+        "int": 425,
+        "boolean": true
+      },
+      "float_bits": "407a900000000000"
+    },
+    {
+      "id": "sqrt-irrational",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "exact",
+      "expression": "sqrt(a)",
+      "inputs": {
+        "a": 2.0
+      },
+      "outputs": {
+        "float": 1.4142135623730951,
+        "int": 1,
+        "boolean": true
+      },
+      "float_bits": "3ff6a09e667f3bcd"
+    },
+    {
+      "id": "negative-zero-product",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "exact",
+      "expression": "a * b",
+      "inputs": {
+        "a": -1.0,
+        "b": 0.0
+      },
+      "outputs": {
+        "float": -0.0,
+        "int": 0,
+        "boolean": false
+      },
+      "float_bits": "8000000000000000"
+    },
+    {
+      "id": "lerp-and-minmax",
+      "compatibility": "dinkster-extension",
+      "mirror_class": "exact",
+      "expression": "lerp(min(a, b), max(a, b), 0.25)",
+      "inputs": {
+        "a": 0.1,
+        "b": 0.7
+      },
+      "outputs": {
+        "float": 0.25,
+        "int": 0,
+        "boolean": true
+      },
+      "float_bits": "3fd0000000000000"
+    },
+    {
+      "id": "sin-cos-product",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "bounded",
+      "expression": "sin(a) * cos(b)",
+      "inputs": {
+        "a": 1.2,
+        "b": 0.4
+      },
+      "outputs": {
+        "float": 0.858464846970514,
+        "int": 0,
+        "boolean": true
+      },
+      "float_bits": "3feb788b455020c9"
+    },
+    {
+      "id": "exp-log-round-trip",
+      "compatibility": "dinkster-extension",
+      "mirror_class": "bounded",
+      "expression": "log(exp(a)) + log(b, 10)",
+      "inputs": {
+        "a": 0.75,
+        "b": 1000
+      },
+      "outputs": {
+        "float": 3.7499999999999996,
+        "int": 3,
+        "boolean": true
+      },
+      "float_bits": "400dffffffffffff"
+    },
+    {
+      "id": "float-power",
+      "compatibility": "ComfyMathExpression",
+      "mirror_class": "bounded",
+      "expression": "pow(a, b)",
+      "inputs": {
+        "a": 2.0,
+        "b": 0.5
+      },
+      "outputs": {
+        "float": 1.4142135623730951,
+        "int": 1,
+        "boolean": true
+      },
+      "float_bits": "3ff6a09e667f3bcd"
+    },
+    {
+      "id": "atan2-and-tan",
+      "compatibility": "dinkster-extension",
+      "mirror_class": "bounded",
+      "expression": "atan2(a, b) + tan(a / 4)",
+      "inputs": {
+        "a": 1.0,
+        "b": 2.0
+      },
+      "outputs": {
+        "float": 0.7189895302218423,
+        "int": 0,
+        "boolean": true
+      },
+      "float_bits": "3fe701f654cf03d2"
+    }
+  ]
+}

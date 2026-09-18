@@ -1,0 +1,29 @@
+# Pack manifest (DESIGN 3.6): what this pack is, declared as data.
+# Loading the manifest never imports pack code.
+
+[pack]
+name = "dinkster-nodes-foundation"
+# std and dinkster are reserved roots. This first-party pack receives explicit
+# host trust but otherwise follows the same composition path as every pack.
+namespaces = ["std", "dinkster"]
+
+[pack.docs]
+dir = "docs"
+default_locale = "en"
+
+[pack.sandbox]
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_nodes_foundation:FOUNDATION_NODES"
+types = "dinkster_nodes_foundation:register_foundation_types"
+
+[[pack.templates]]
+id = "map-and-gather"
+name = "Map and Gather"
+description = "Map integers through a subgraph and gather the sums."
+tags = ["map", "gather", "subgraph"]
+file = "src/dinkster_nodes_foundation/map_and_gather_template.json"

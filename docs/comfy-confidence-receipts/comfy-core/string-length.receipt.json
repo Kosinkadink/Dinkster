@@ -1,0 +1,56 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 137,
+      "path": "artifacts/comfy-core/string-length.native.json",
+      "sha256": "sha256:31a7608a7d5bbd99181f72379d3e58766164090887189ab87c1483e553d89250"
+    },
+    "reference": {
+      "bytes": 137,
+      "path": "artifacts/comfy-core/string-length.reference.json",
+      "sha256": "sha256:31a7608a7d5bbd99181f72379d3e58766164090887189ab87c1483e553d89250"
+    }
+  },
+  "caseId": "comfy-core/string-length/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/StringLength",
+    "source": {
+      "name": "StringLength",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.string.length",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "cases": [
+      {
+        "id": "empty",
+        "inputs": {
+          "string": ""
+        }
+      },
+      {
+        "id": "unicode-codepoints",
+        "inputs": {
+          "string": "A\u030a\ud83d\ude42"
+        }
+      }
+    ],
+    "mappingDigest": "sha256:36e11257a690dee898edeb224bfc1f23bc243629e61fb082781442f381e9d535"
+  },
+  "pass": true
+}

@@ -1,0 +1,45 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 83,
+      "path": "artifacts/comfy-core/video-slice-zero-window.native.json",
+      "sha256": "sha256:b01c3b2aeee92555d3bd7cc12b5155e77dd5e5b184a849634a2b35c0e56cf90e"
+    },
+    "reference": {
+      "bytes": 83,
+      "path": "artifacts/comfy-core/video-slice-zero-window.reference.json",
+      "sha256": "sha256:b01c3b2aeee92555d3bd7cc12b5155e77dd5e5b184a849634a2b35c0e56cf90e"
+    }
+  },
+  "caseId": "comfy-core/video-slice-zero-window/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/Video Slice",
+    "source": {
+      "name": "Video Slice",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "15eb748b"
+    },
+    "target": {
+      "id": "dinkster.video.trim",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "duration": 0.0,
+    "mappingDigest": "sha256:ccb21bb872b5b2d4c75d83210b3e311d138e43cfc236146f2b9fa857bdfb243f",
+    "startTime": 0.0,
+    "strictDuration": false
+  },
+  "pass": true
+}

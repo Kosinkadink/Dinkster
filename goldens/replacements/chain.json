@@ -1,0 +1,204 @@
+{
+  "schemas": [
+    {
+      "schemaVersion": 40,
+      "nodeType": "fixture.chain-a",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "level",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "mode",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "output",
+          "id": "value",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          }
+        }
+      ],
+      "deprecation": {
+        "message": "chain-a is superseded; use chain-b",
+        "since": "1.2.0",
+        "replacement": "fixture.chain-b"
+      },
+      "searchVisibility": "deprecated"
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "fixture.chain-b",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "amount",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "preset",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "output",
+          "id": "value",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          }
+        }
+      ],
+      "deprecation": {
+        "message": "chain-b was an interim shape; use chain-c",
+        "since": "2.0.0",
+        "replacement": "fixture.chain-c"
+      },
+      "searchVisibility": "hidden",
+      "replacements": [
+        {
+          "from": "fixture.chain-a",
+          "note": "hop 1: level scaled x10 into amount",
+          "cases": [
+            {
+              "to": "fixture.chain-b",
+              "inputs": {
+                "amount": {
+                  "kind": "value",
+                  "input": "level",
+                  "transform": {
+                    "kind": "scale",
+                    "factor": 10.0
+                  }
+                },
+                "preset": {
+                  "kind": "copy",
+                  "input": "mode"
+                }
+              },
+              "outputs": {
+                "value": "value"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "fixture.chain-c",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "amount",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "profile",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "output",
+          "id": "value",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          }
+        }
+      ],
+      "replacements": [
+        {
+          "from": "fixture.chain-b",
+          "note": "hop 2: preset vocabulary renamed into profile",
+          "cases": [
+            {
+              "to": "fixture.chain-c",
+              "inputs": {
+                "amount": {
+                  "kind": "copy",
+                  "input": "amount"
+                },
+                "profile": {
+                  "kind": "value",
+                  "input": "preset",
+                  "transform": {
+                    "kind": "enumRename",
+                    "map": {
+                      "lo": "low",
+                      "hi": "high"
+                    }
+                  }
+                }
+              },
+              "outputs": {
+                "value": "value"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

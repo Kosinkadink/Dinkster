@@ -1,0 +1,45 @@
+[project]
+name = "dinkster-server"
+version = "0.0.1"
+description = "Dinkster server: job queue (policy above the engine), native protocol, WS events (DESIGN 3.5)"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.10",
+    "dinkster-identity @ git+https://github.com/Kosinkadink/dinkster-identity.git@67b84c769c7add627c738245553c932772610b34",
+    "dinkster-schema",
+    "dinkster-values",
+    "dinkster-graph",
+    "dinkster-protocol",
+    "dinkster-engine",
+    "dinkster-memory",
+    "dinkster-caches",
+    "dinkster-assets",
+    "dinkster-image-document",
+    "pillow>=10",
+    "dinkster-p2p",
+    "pyobjc-framework-Network>=12.2.2; sys_platform == 'darwin'",
+    "pyobjc-framework-libdispatch>=12.2.2; sys_platform == 'darwin'",
+    "zeroconf>=0.147",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_server"]
+
+[tool.uv.sources]
+dinkster-schema = { workspace = true }
+dinkster-values = { workspace = true }
+dinkster-graph = { workspace = true }
+dinkster-protocol = { workspace = true }
+dinkster-engine = { workspace = true }
+dinkster-memory = { workspace = true }
+dinkster-caches = { workspace = true }
+dinkster-assets = { workspace = true }
+dinkster-image-document = { workspace = true }
+dinkster-p2p = { workspace = true }

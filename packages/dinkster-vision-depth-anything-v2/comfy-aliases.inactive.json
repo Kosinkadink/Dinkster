@@ -1,0 +1,297 @@
+{
+  "format": "dinkster-comfy-alias/1",
+  "sourceSchemas": [
+    {
+      "schemaVersion": 37,
+      "nodeType": "comfy.comfyui_controlnet_aux.DepthAnythingV2Preprocessor",
+      "version": 1,
+      "displayName": "DepthAnythingV2Preprocessor",
+      "category": "comfy/ControlNet Preprocessors/Normal and Depth Estimators",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "ckpt_name",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "depth_anything_v2_vitl.pth",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "depth_anything_v2_vitg.pth",
+              "depth_anything_v2_vitl.pth",
+              "depth_anything_v2_vitb.pth",
+              "depth_anything_v2_vits.pth"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "resolution",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": false,
+          "default": 512,
+          "widget": {
+            "type": "NUMBER",
+            "min": 64,
+            "max": 16384,
+            "step": 64
+          }
+        },
+        {
+          "role": "output",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "DepthAnythingV2Preprocessor"
+      ]
+    },
+    {
+      "schemaVersion": 37,
+      "nodeType": "comfy.comfyui_controlnet_aux.AIO_Preprocessor",
+      "version": 1,
+      "displayName": "AIO_Preprocessor",
+      "category": "comfy/ControlNet Preprocessors",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "preprocessor",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "none",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "none",
+              "TilePreprocessor",
+              "TTPlanet_TileGF_Preprocessor",
+              "TTPlanet_TileSimple_Preprocessor",
+              "ImageLuminanceDetector",
+              "ImageIntensityDetector",
+              "DepthAnythingPreprocessor",
+              "Zoe_DepthAnythingPreprocessor",
+              "HEDPreprocessor",
+              "FakeScribblePreprocessor",
+              "OneFormer-COCO-SemSegPreprocessor",
+              "OneFormer-ADE20K-SemSegPreprocessor",
+              "PyraCannyPreprocessor",
+              "LineartStandardPreprocessor",
+              "M-LSDPreprocessor",
+              "MediaPipe-FaceMeshPreprocessor",
+              "SAMPreprocessor",
+              "DensePosePreprocessor",
+              "UniFormer-SemSegPreprocessor",
+              "SemSegPreprocessor",
+              "BAE-NormalMapPreprocessor",
+              "MeshGraphormer-DepthMapPreprocessor",
+              "PiDiNetPreprocessor",
+              "ShufflePreprocessor",
+              "Zoe-DepthMapPreprocessor",
+              "DSINE-NormalMapPreprocessor",
+              "AnyLineArtPreprocessor_aux",
+              "AnimeFace_SemSegPreprocessor",
+              "LineArtPreprocessor",
+              "ColorPreprocessor",
+              "OpenposePreprocessor",
+              "LeReS-DepthMapPreprocessor",
+              "BinaryPreprocessor",
+              "TEEDPreprocessor",
+              "DepthAnythingV2Preprocessor",
+              "MiDaS-NormalMapPreprocessor",
+              "MiDaS-DepthMapPreprocessor",
+              "CannyEdgePreprocessor",
+              "ScribblePreprocessor",
+              "Scribble_XDoG_Preprocessor",
+              "Scribble_PiDiNet_Preprocessor",
+              "DWPreprocessor",
+              "AnimalPosePreprocessor",
+              "AnimeLineArtPreprocessor",
+              "Metric3D-DepthMapPreprocessor",
+              "Metric3D-NormalMapPreprocessor",
+              "Manga2Anime_LineArt_Preprocessor"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "resolution",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": false,
+          "default": 512,
+          "widget": {
+            "type": "NUMBER",
+            "min": 64,
+            "max": 16384,
+            "step": 64
+          }
+        },
+        {
+          "role": "output",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "AIO_Preprocessor"
+      ]
+    }
+  ],
+  "records": [
+    {
+      "id": "comfy_alias:comfyui_controlnet_aux/DepthAnythingV2Preprocessor",
+      "mappingKind": "op",
+      "carrier": "dinkster.preprocess.model_depth",
+      "source": {
+        "pack": "comfyui_controlnet_aux",
+        "nodeClass": "DepthAnythingV2Preprocessor",
+        "nodeType": "comfy.comfyui_controlnet_aux.DepthAnythingV2Preprocessor",
+        "revision": "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
+      },
+      "replacement": {
+        "from": "comfy.comfyui_controlnet_aux.DepthAnythingV2Preprocessor",
+        "cases": [
+          {
+            "to": "dinkster.preprocess.model_depth",
+            "inputs": {
+              "image": {
+                "kind": "copy",
+                "input": "image"
+              },
+              "resolution": {
+                "kind": "copy",
+                "input": "resolution"
+              },
+              "provider": {
+                "kind": "value",
+                "input": "ckpt_name",
+                "transform": {
+                  "kind": "enumRename",
+                  "map": {
+                    "depth_anything_v2_vitl.pth": "dinkster-vision-depth-anything-v2"
+                  }
+                }
+              }
+            },
+            "outputs": {
+              "image": "image"
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "exact",
+        "evidence": [
+          "packages/dinkster-vision-depth-anything-v2/tests/test_provider.py::test_depth_output_matches_pinned_controlnet_aux_vector",
+          "tests/test_vision_depth_anything_v2_schema.py::test_depth_aliases_are_provider_local_and_inactive"
+        ]
+      }
+    },
+    {
+      "id": "comfy_alias:comfyui_controlnet_aux/AIO_Preprocessor",
+      "mappingKind": "op",
+      "carrier": "dinkster.preprocess.model_depth",
+      "source": {
+        "pack": "comfyui_controlnet_aux",
+        "nodeClass": "AIO_Preprocessor",
+        "nodeType": "comfy.comfyui_controlnet_aux.AIO_Preprocessor",
+        "revision": "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
+      },
+      "replacement": {
+        "from": "comfy.comfyui_controlnet_aux.AIO_Preprocessor",
+        "note": "Only the DepthAnythingV2Preprocessor selector is supported; every other selector fails closed during enum translation.",
+        "cases": [
+          {
+            "to": "dinkster.preprocess.model_depth",
+            "inputs": {
+              "image": {
+                "kind": "copy",
+                "input": "image"
+              },
+              "resolution": {
+                "kind": "copy",
+                "input": "resolution"
+              },
+              "provider": {
+                "kind": "value",
+                "input": "preprocessor",
+                "transform": {
+                  "kind": "enumRename",
+                  "map": {
+                    "DepthAnythingV2Preprocessor": "dinkster-vision-depth-anything-v2"
+                  }
+                }
+              }
+            },
+            "outputs": {
+              "image": "image"
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "exact",
+        "evidence": [
+          "packages/dinkster-vision-depth-anything-v2/tests/test_provider.py::test_depth_output_matches_pinned_controlnet_aux_vector",
+          "tests/test_vision_depth_anything_v2_schema.py::test_depth_aliases_are_provider_local_and_inactive"
+        ]
+      }
+    }
+  ]
+}

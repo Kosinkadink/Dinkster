@@ -1,0 +1,58 @@
+{
+  "revision": "e20d433a4966dcc88fa5abbae6ace824cb78b263",
+  "generator": "tools/gen_text_io_goldens.py",
+  "cases": {
+    "txt_plain_ascii": {
+      "format": "txt",
+      "textB64": "cGxhaW4gYm9keSB3aXRoIG5vIHRyYWlsaW5nIG5ld2xpbmU=",
+      "filename": "txt_plain_ascii_00001.txt",
+      "passthrough": true,
+      "fileB64": "cGxhaW4gYm9keSB3aXRoIG5vIHRyYWlsaW5nIG5ld2xpbmU="
+    },
+    "txt_multiline_unicode": {
+      "format": "txt",
+      "textB64": "Zmlyc3QgbGluZQpzZWNvbmQgbGluZSB3aXRoIGUtYWN1dGUgw6kK",
+      "filename": "txt_multiline_unicode_00001.txt",
+      "passthrough": true,
+      "fileB64": "Zmlyc3QgbGluZQpzZWNvbmQgbGluZSB3aXRoIGUtYWN1dGUgw6kK"
+    },
+    "csv_rows": {
+      "format": "csv",
+      "textB64": "YSxiLGMKMSwyLDMK",
+      "filename": "csv_rows_00001.csv",
+      "passthrough": true,
+      "fileB64": "YSxiLGMKMSwyLDMK"
+    },
+    "md_heading": {
+      "format": "md",
+      "textB64": "IyBUaXRsZQoKQm9keSBwYXJhZ3JhcGguCg==",
+      "filename": "md_heading_00001.md",
+      "passthrough": true,
+      "fileB64": "IyBUaXRsZQoKQm9keSBwYXJhZ3JhcGguCg=="
+    },
+    "json_valid_pretty": {
+      "format": "json",
+      "textB64": "eyJiIjoyLCJhIjpbMSwyXSwicyI6ImNhZsOpIn0=",
+      "filename": "json_valid_pretty_00001.json",
+      "passthrough": true,
+      "fileB64": "ewogICJiIjogMiwKICAiYSI6IFsKICAgIDEsCiAgICAyCiAgXSwKICAicyI6ICJjYWbDqSIKfQ=="
+    },
+    "json_invalid_raw": {
+      "format": "json",
+      "textB64": "bm90IGpzb24gew==",
+      "filename": "json_invalid_raw_00001.json",
+      "passthrough": true,
+      "fileB64": "bm90IGpzb24gew=="
+    },
+    "json_scalar": {
+      "format": "json",
+      "textB64": "NDI=",
+      "filename": "json_scalar_00001.json",
+      "passthrough": true,
+      "fileB64": "NDI="
+    },
+    "counter_second_save": {
+      "filename": "counter_00002.txt"
+    }
+  }
+}

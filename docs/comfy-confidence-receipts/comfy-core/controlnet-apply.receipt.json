@@ -1,0 +1,43 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 561,
+      "path": "artifacts/comfy-core/controlnet-apply.native.json",
+      "sha256": "sha256:33b5bd7d071222aa1bc87baad837ef74ded06e29a7b4668a0a2d49bfb2222030"
+    },
+    "reference": {
+      "bytes": 561,
+      "path": "artifacts/comfy-core/controlnet-apply.reference.json",
+      "sha256": "sha256:33b5bd7d071222aa1bc87baad837ef74ded06e29a7b4668a0a2d49bfb2222030"
+    }
+  },
+  "caseId": "comfy-core/controlnet-apply/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/ControlNetApply",
+    "source": {
+      "name": "ControlNetApply",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.apply_controlnet",
+      "kind": "node"
+    },
+    "tier": "exact"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "mappingDigest": "sha256:ed18e3d13575232e982c0ad8fc59032cf34c3d708f13d2764f54724ff59a1f6f",
+    "scope": "deprecated wrapper strength-zero identity, copied conditioning metadata, positive application strength, hint layout, and unconditional-copy flag"
+  },
+  "pass": true
+}

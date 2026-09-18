@@ -1,0 +1,2252 @@
+{
+  "documented_deltas": [
+    "hidden inputs auth_token_comfy_org, api_key_comfy_org, and unique_id are host-owned and omitted",
+    "provider names are stripped from canonical node types; upstream class IDs remain aliases"
+  ],
+  "nodes": {
+    "HappyHorseImageToVideoApi": {
+      "aliases": [
+        "HappyHorseImageToVideoApi"
+      ],
+      "category": "partner/video/Wan",
+      "combos": [
+        {
+          "id": "model",
+          "options": [
+            {
+              "inputs": [
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "720P",
+                  "id": "resolution",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "720P",
+                      "1080P"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": 5,
+                  "id": "duration",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int",
+                  "widget": {
+                    "control_after_generate": null,
+                    "kind": "NumberWidget",
+                    "max": 15,
+                    "min": 3,
+                    "step": 1
+                  }
+                }
+              ],
+              "key": "happyhorse-1.1-i2v"
+            },
+            {
+              "inputs": [
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "720P",
+                  "id": "resolution",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "720P",
+                      "1080P"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": 5,
+                  "id": "duration",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int",
+                  "widget": {
+                    "control_after_generate": null,
+                    "kind": "NumberWidget",
+                    "max": 15,
+                    "min": 3,
+                    "step": 1
+                  }
+                }
+              ],
+              "key": "happyhorse-1.0-i2v"
+            }
+          ]
+        }
+      ],
+      "description": "Generate a video from a first-frame image using the HappyHorse model.",
+      "display_name": "HappyHorse Image to Video",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": null,
+          "id": "first_frame",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "comfy.IMAGE",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        }
+      ],
+      "node_type": "partner.wan.happy-horse-image-to-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "HappyHorseReferenceVideoApi": {
+      "aliases": [
+        "HappyHorseReferenceVideoApi"
+      ],
+      "category": "partner/video/Wan",
+      "combos": [
+        {
+          "id": "model",
+          "options": [
+            {
+              "inputs": [
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "720P",
+                  "id": "resolution",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "720P",
+                      "1080P"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "16:9",
+                  "id": "ratio",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "16:9",
+                      "9:16",
+                      "1:1",
+                      "4:3",
+                      "3:4",
+                      "21:9",
+                      "9:21",
+                      "5:4",
+                      "4:5"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": 5,
+                  "id": "duration",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int",
+                  "widget": {
+                    "control_after_generate": null,
+                    "kind": "NumberWidget",
+                    "max": 15,
+                    "min": 3,
+                    "step": 1
+                  }
+                },
+                {
+                  "id": "reference_images",
+                  "kind": "InputFamilySpec",
+                  "max_members": 9,
+                  "member_names": [
+                    "image1",
+                    "image2",
+                    "image3",
+                    "image4",
+                    "image5",
+                    "image6",
+                    "image7",
+                    "image8",
+                    "image9"
+                  ],
+                  "min_members": 1,
+                  "required": true,
+                  "template": {
+                    "advanced": false,
+                    "default": null,
+                    "id": "reference_image",
+                    "kind": "InputSpec",
+                    "required": true,
+                    "type": "comfy.IMAGE",
+                    "widget": null
+                  }
+                }
+              ],
+              "key": "happyhorse-1.1-r2v"
+            },
+            {
+              "inputs": [
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "720P",
+                  "id": "resolution",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "720P",
+                      "1080P"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "16:9",
+                  "id": "ratio",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "16:9",
+                      "9:16",
+                      "1:1",
+                      "4:3",
+                      "3:4"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": 5,
+                  "id": "duration",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int",
+                  "widget": {
+                    "control_after_generate": null,
+                    "kind": "NumberWidget",
+                    "max": 15,
+                    "min": 3,
+                    "step": 1
+                  }
+                },
+                {
+                  "id": "reference_images",
+                  "kind": "InputFamilySpec",
+                  "max_members": 9,
+                  "member_names": [
+                    "image1",
+                    "image2",
+                    "image3",
+                    "image4",
+                    "image5",
+                    "image6",
+                    "image7",
+                    "image8",
+                    "image9"
+                  ],
+                  "min_members": 1,
+                  "required": true,
+                  "template": {
+                    "advanced": false,
+                    "default": null,
+                    "id": "reference_image",
+                    "kind": "InputSpec",
+                    "required": true,
+                    "type": "comfy.IMAGE",
+                    "widget": null
+                  }
+                }
+              ],
+              "key": "happyhorse-1.0-r2v"
+            }
+          ]
+        }
+      ],
+      "description": "Generate a video featuring a person or object from reference materials with the HappyHorse model. Supports single-character performances and multi-character interactions.",
+      "display_name": "HappyHorse Reference to Video",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        }
+      ],
+      "node_type": "partner.wan.happy-horse-reference-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "HappyHorseTextToVideoApi": {
+      "aliases": [
+        "HappyHorseTextToVideoApi"
+      ],
+      "category": "partner/video/Wan",
+      "combos": [
+        {
+          "id": "model",
+          "options": [
+            {
+              "inputs": [
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "720P",
+                  "id": "resolution",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "720P",
+                      "1080P"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "16:9",
+                  "id": "ratio",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "16:9",
+                      "9:16",
+                      "1:1",
+                      "4:3",
+                      "3:4",
+                      "21:9",
+                      "9:21",
+                      "5:4",
+                      "4:5"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": 5,
+                  "id": "duration",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int",
+                  "widget": {
+                    "control_after_generate": null,
+                    "kind": "NumberWidget",
+                    "max": 15,
+                    "min": 3,
+                    "step": 1
+                  }
+                }
+              ],
+              "key": "happyhorse-1.1-t2v"
+            },
+            {
+              "inputs": [
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "720P",
+                  "id": "resolution",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "720P",
+                      "1080P"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "16:9",
+                  "id": "ratio",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "16:9",
+                      "9:16",
+                      "1:1",
+                      "4:3",
+                      "3:4"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": 5,
+                  "id": "duration",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int",
+                  "widget": {
+                    "control_after_generate": null,
+                    "kind": "NumberWidget",
+                    "max": 15,
+                    "min": 3,
+                    "step": 1
+                  }
+                }
+              ],
+              "key": "happyhorse-1.0-t2v"
+            }
+          ]
+        }
+      ],
+      "description": "Generates a video based on a text prompt using the HappyHorse model.",
+      "display_name": "HappyHorse Text to Video",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        }
+      ],
+      "node_type": "partner.wan.happy-horse-text-to-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "HappyHorseVideoEditApi": {
+      "aliases": [
+        "HappyHorseVideoEditApi"
+      ],
+      "category": "partner/video/Wan",
+      "combos": [
+        {
+          "id": "model",
+          "options": [
+            {
+              "inputs": [
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "720P",
+                  "id": "resolution",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "720P",
+                      "1080P"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "16:9",
+                  "id": "ratio",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "16:9",
+                      "9:16",
+                      "1:1",
+                      "4:3",
+                      "3:4"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "id": "reference_images",
+                  "kind": "InputFamilySpec",
+                  "max_members": 5,
+                  "member_names": [
+                    "image1",
+                    "image2",
+                    "image3",
+                    "image4",
+                    "image5"
+                  ],
+                  "min_members": 0,
+                  "required": true,
+                  "template": {
+                    "advanced": false,
+                    "default": null,
+                    "id": "reference_image",
+                    "kind": "InputSpec",
+                    "required": true,
+                    "type": "comfy.IMAGE",
+                    "widget": null
+                  }
+                }
+              ],
+              "key": "happyhorse-1.0-video-edit"
+            }
+          ]
+        }
+      ],
+      "description": "Edit a video using text instructions or reference images with the HappyHorse model. Output duration is 3-15s and matches the input video; inputs longer than 15s are truncated.",
+      "display_name": "HappyHorse Video Edit",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": null,
+          "id": "video",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "comfy.VIDEO",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        }
+      ],
+      "node_type": "partner.wan.happy-horse-video-edit",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "Wan2ImageToVideoApi": {
+      "aliases": [
+        "Wan2ImageToVideoApi"
+      ],
+      "category": "partner/video/Wan",
+      "combos": [
+        {
+          "id": "model",
+          "options": [
+            {
+              "inputs": [
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "negative_prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "720P",
+                  "id": "resolution",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "720P",
+                      "1080P"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": 5,
+                  "id": "duration",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int",
+                  "widget": {
+                    "control_after_generate": null,
+                    "kind": "NumberWidget",
+                    "max": 15,
+                    "min": 2,
+                    "step": 1
+                  }
+                }
+              ],
+              "key": "wan2.7-i2v"
+            }
+          ]
+        }
+      ],
+      "description": "Generate a video from a first-frame image, with optional last-frame image and audio.",
+      "display_name": "Wan 2.7 Image to Video",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": null,
+          "id": "first_frame",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "comfy.IMAGE",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": null,
+          "id": "last_frame",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "comfy.IMAGE",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": null,
+          "id": "audio",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "comfy.AUDIO",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": true,
+          "id": "prompt_extend",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        }
+      ],
+      "node_type": "partner.wan.2-image-to-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "Wan2ReferenceVideoApi": {
+      "aliases": [
+        "Wan2ReferenceVideoApi"
+      ],
+      "category": "partner/video/Wan",
+      "combos": [
+        {
+          "id": "model",
+          "options": [
+            {
+              "inputs": [
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "negative_prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "720P",
+                  "id": "resolution",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "720P",
+                      "1080P"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "16:9",
+                  "id": "ratio",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "16:9",
+                      "9:16",
+                      "1:1",
+                      "4:3",
+                      "3:4"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": 5,
+                  "id": "duration",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int",
+                  "widget": {
+                    "control_after_generate": null,
+                    "kind": "NumberWidget",
+                    "max": 10,
+                    "min": 2,
+                    "step": 1
+                  }
+                },
+                {
+                  "id": "reference_videos",
+                  "kind": "InputFamilySpec",
+                  "max_members": 3,
+                  "member_names": [
+                    "video1",
+                    "video2",
+                    "video3"
+                  ],
+                  "min_members": 0,
+                  "required": true,
+                  "template": {
+                    "advanced": false,
+                    "default": null,
+                    "id": "reference_video",
+                    "kind": "InputSpec",
+                    "required": true,
+                    "type": "comfy.VIDEO",
+                    "widget": null
+                  }
+                },
+                {
+                  "id": "reference_images",
+                  "kind": "InputFamilySpec",
+                  "max_members": 5,
+                  "member_names": [
+                    "image1",
+                    "image2",
+                    "image3",
+                    "image4",
+                    "image5"
+                  ],
+                  "min_members": 0,
+                  "required": true,
+                  "template": {
+                    "advanced": false,
+                    "default": null,
+                    "id": "reference_image",
+                    "kind": "InputSpec",
+                    "required": true,
+                    "type": "comfy.IMAGE",
+                    "widget": null
+                  }
+                }
+              ],
+              "key": "wan2.7-r2v"
+            }
+          ]
+        }
+      ],
+      "description": "Generate a video featuring a person or object from reference materials. Supports single-character performances and multi-character interactions.",
+      "display_name": "Wan 2.7 Reference to Video",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        }
+      ],
+      "node_type": "partner.wan.2-reference-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "Wan2TextToVideoApi": {
+      "aliases": [
+        "Wan2TextToVideoApi"
+      ],
+      "category": "partner/video/Wan",
+      "combos": [
+        {
+          "id": "model",
+          "options": [
+            {
+              "inputs": [
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "negative_prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "720P",
+                  "id": "resolution",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "720P",
+                      "1080P"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "16:9",
+                  "id": "ratio",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "16:9",
+                      "9:16",
+                      "1:1",
+                      "4:3",
+                      "3:4"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": 5,
+                  "id": "duration",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int",
+                  "widget": {
+                    "control_after_generate": null,
+                    "kind": "NumberWidget",
+                    "max": 15,
+                    "min": 2,
+                    "step": 1
+                  }
+                }
+              ],
+              "key": "wan2.7-t2v"
+            }
+          ]
+        }
+      ],
+      "description": "Generates a video based on a text prompt using the Wan 2.7 model.",
+      "display_name": "Wan 2.7 Text to Video",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": null,
+          "id": "audio",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "comfy.AUDIO",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": true,
+          "id": "prompt_extend",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        }
+      ],
+      "node_type": "partner.wan.2-text-to-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "Wan2VideoContinuationApi": {
+      "aliases": [
+        "Wan2VideoContinuationApi"
+      ],
+      "category": "partner/video/Wan",
+      "combos": [
+        {
+          "id": "model",
+          "options": [
+            {
+              "inputs": [
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "negative_prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "720P",
+                  "id": "resolution",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "720P",
+                      "1080P"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": 5,
+                  "id": "duration",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int",
+                  "widget": {
+                    "control_after_generate": null,
+                    "kind": "NumberWidget",
+                    "max": 15,
+                    "min": 2,
+                    "step": 1
+                  }
+                }
+              ],
+              "key": "wan2.7-i2v"
+            }
+          ]
+        }
+      ],
+      "description": "Continue a video from where it left off, with optional last-frame control.",
+      "display_name": "Wan 2.7 Video Continuation",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": null,
+          "id": "first_clip",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "comfy.VIDEO",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": null,
+          "id": "last_frame",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "comfy.IMAGE",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": true,
+          "id": "prompt_extend",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        }
+      ],
+      "node_type": "partner.wan.2-video-continuation",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "Wan2VideoEditApi": {
+      "aliases": [
+        "Wan2VideoEditApi"
+      ],
+      "category": "partner/video/Wan",
+      "combos": [
+        {
+          "id": "model",
+          "options": [
+            {
+              "inputs": [
+                {
+                  "advanced": false,
+                  "default": "",
+                  "id": "prompt",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.string",
+                  "widget": {
+                    "kind": "StringWidget",
+                    "multiline": true
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "720P",
+                  "id": "resolution",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "720P",
+                      "1080P"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "16:9",
+                  "id": "ratio",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "16:9",
+                      "9:16",
+                      "1:1",
+                      "4:3",
+                      "3:4"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "advanced": false,
+                  "default": "auto",
+                  "id": "duration",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.combo",
+                  "widget": {
+                    "kind": "ComboWidget",
+                    "options": [
+                      "auto",
+                      "2",
+                      "3",
+                      "4",
+                      "5",
+                      "6",
+                      "7",
+                      "8",
+                      "9",
+                      "10"
+                    ],
+                    "refresh_button": false,
+                    "remote_route": ""
+                  }
+                },
+                {
+                  "id": "reference_images",
+                  "kind": "InputFamilySpec",
+                  "max_members": 4,
+                  "member_names": [
+                    "image1",
+                    "image2",
+                    "image3",
+                    "image4"
+                  ],
+                  "min_members": 0,
+                  "required": true,
+                  "template": {
+                    "advanced": false,
+                    "default": null,
+                    "id": "reference_image",
+                    "kind": "InputSpec",
+                    "required": true,
+                    "type": "comfy.IMAGE",
+                    "widget": null
+                  }
+                }
+              ],
+              "key": "wan2.7-videoedit"
+            }
+          ]
+        }
+      ],
+      "description": "Edit a video using text instructions, reference images, or style transfer.",
+      "display_name": "Wan 2.7 Video Edit",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": null,
+          "id": "video",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "comfy.VIDEO",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": "auto",
+          "id": "audio_setting",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.combo",
+          "widget": {
+            "kind": "ComboWidget",
+            "options": [
+              "auto",
+              "origin"
+            ],
+            "refresh_button": false,
+            "remote_route": ""
+          }
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        }
+      ],
+      "node_type": "partner.wan.2-video-edit",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "WanImageToImageApi": {
+      "aliases": [
+        "WanImageToImageApi"
+      ],
+      "category": "partner/image/Wan",
+      "combos": [],
+      "description": "Generates an image from one or two input images and a text prompt. The output image is currently fixed at 1.6 MP, and its aspect ratio matches the input image(s).",
+      "display_name": "Wan Image to Image",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": "wan2.5-i2i-preview",
+          "id": "model",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.combo",
+          "widget": {
+            "kind": "ComboWidget",
+            "options": [
+              "wan2.5-i2i-preview"
+            ],
+            "refresh_button": false,
+            "remote_route": ""
+          }
+        },
+        {
+          "advanced": false,
+          "default": null,
+          "id": "image",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "comfy.IMAGE",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": "",
+          "id": "prompt",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.string",
+          "widget": {
+            "kind": "StringWidget",
+            "multiline": true
+          }
+        },
+        {
+          "advanced": false,
+          "default": "",
+          "id": "negative_prompt",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.string",
+          "widget": {
+            "kind": "StringWidget",
+            "multiline": true
+          }
+        },
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.boolean",
+          "widget": null
+        }
+      ],
+      "node_type": "partner.wan.image-to-image",
+      "outputs": [
+        {
+          "id": "image",
+          "type": "comfy.IMAGE"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "WanImageToVideoApi": {
+      "aliases": [
+        "WanImageToVideoApi"
+      ],
+      "category": "partner/video/Wan",
+      "combos": [],
+      "description": "Generates a video from the first frame and a text prompt.",
+      "display_name": "Wan Image to Video",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": "wan2.6-i2v",
+          "id": "model",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.combo",
+          "widget": {
+            "kind": "ComboWidget",
+            "options": [
+              "wan2.5-i2v-preview",
+              "wan2.6-i2v"
+            ],
+            "refresh_button": false,
+            "remote_route": ""
+          }
+        },
+        {
+          "advanced": false,
+          "default": null,
+          "id": "image",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "comfy.IMAGE",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": "",
+          "id": "prompt",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.string",
+          "widget": {
+            "kind": "StringWidget",
+            "multiline": true
+          }
+        },
+        {
+          "advanced": false,
+          "default": "",
+          "id": "negative_prompt",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.string",
+          "widget": {
+            "kind": "StringWidget",
+            "multiline": true
+          }
+        },
+        {
+          "advanced": false,
+          "default": "720P",
+          "id": "resolution",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.combo",
+          "widget": {
+            "kind": "ComboWidget",
+            "options": [
+              "480P",
+              "720P",
+              "1080P"
+            ],
+            "refresh_button": false,
+            "remote_route": ""
+          }
+        },
+        {
+          "advanced": false,
+          "default": 5,
+          "id": "duration",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": null,
+            "kind": "NumberWidget",
+            "max": 15,
+            "min": 5,
+            "step": 5
+          }
+        },
+        {
+          "advanced": false,
+          "default": null,
+          "id": "audio",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "comfy.AUDIO",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "generate_audio",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.boolean",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": true,
+          "id": "prompt_extend",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.boolean",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.boolean",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": "single",
+          "id": "shot_type",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.combo",
+          "widget": {
+            "kind": "ComboWidget",
+            "options": [
+              "single",
+              "multi"
+            ],
+            "refresh_button": false,
+            "remote_route": ""
+          }
+        }
+      ],
+      "node_type": "partner.wan.image-to-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "WanReferenceVideoApi": {
+      "aliases": [
+        "WanReferenceVideoApi"
+      ],
+      "category": "partner/video/Wan",
+      "combos": [],
+      "description": "Use the character and voice from input videos, combined with a prompt, to generate a new video that maintains character consistency.",
+      "display_name": "Wan Reference to Video",
+      "input_families": [
+        {
+          "id": "reference_videos",
+          "kind": "InputFamilySpec",
+          "max_members": 3,
+          "member_names": [
+            "character1",
+            "character2",
+            "character3"
+          ],
+          "min_members": 1,
+          "required": true,
+          "template": {
+            "advanced": false,
+            "default": null,
+            "id": "reference_video",
+            "kind": "InputSpec",
+            "required": true,
+            "type": "comfy.VIDEO",
+            "widget": null
+          }
+        }
+      ],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": "wan2.6-r2v",
+          "id": "model",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.combo",
+          "widget": {
+            "kind": "ComboWidget",
+            "options": [
+              "wan2.6-r2v"
+            ],
+            "refresh_button": false,
+            "remote_route": ""
+          }
+        },
+        {
+          "advanced": false,
+          "default": "",
+          "id": "prompt",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.string",
+          "widget": {
+            "kind": "StringWidget",
+            "multiline": true
+          }
+        },
+        {
+          "advanced": false,
+          "default": "",
+          "id": "negative_prompt",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.string",
+          "widget": {
+            "kind": "StringWidget",
+            "multiline": true
+          }
+        },
+        {
+          "advanced": false,
+          "default": "720p: 1:1 (960x960)",
+          "id": "size",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.combo",
+          "widget": {
+            "kind": "ComboWidget",
+            "options": [
+              "720p: 1:1 (960x960)",
+              "720p: 16:9 (1280x720)",
+              "720p: 9:16 (720x1280)",
+              "720p: 4:3 (1088x832)",
+              "720p: 3:4 (832x1088)",
+              "1080p: 1:1 (1440x1440)",
+              "1080p: 16:9 (1920x1080)",
+              "1080p: 9:16 (1080x1920)",
+              "1080p: 4:3 (1632x1248)",
+              "1080p: 3:4 (1248x1632)"
+            ],
+            "refresh_button": false,
+            "remote_route": ""
+          }
+        },
+        {
+          "advanced": false,
+          "default": 5,
+          "id": "duration",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": null,
+            "kind": "NumberWidget",
+            "max": 10,
+            "min": 5,
+            "step": 5
+          }
+        },
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": "single",
+          "id": "shot_type",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.combo",
+          "widget": {
+            "kind": "ComboWidget",
+            "options": [
+              "single",
+              "multi"
+            ],
+            "refresh_button": false,
+            "remote_route": ""
+          }
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.boolean",
+          "widget": null
+        }
+      ],
+      "node_type": "partner.wan.reference-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "WanTextToImageApi": {
+      "aliases": [
+        "WanTextToImageApi"
+      ],
+      "category": "partner/image/Wan",
+      "combos": [],
+      "description": "Generates an image based on a text prompt.",
+      "display_name": "Wan Text to Image",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": "wan2.5-t2i-preview",
+          "id": "model",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.combo",
+          "widget": {
+            "kind": "ComboWidget",
+            "options": [
+              "wan2.5-t2i-preview"
+            ],
+            "refresh_button": false,
+            "remote_route": ""
+          }
+        },
+        {
+          "advanced": false,
+          "default": "",
+          "id": "prompt",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.string",
+          "widget": {
+            "kind": "StringWidget",
+            "multiline": true
+          }
+        },
+        {
+          "advanced": false,
+          "default": "",
+          "id": "negative_prompt",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.string",
+          "widget": {
+            "kind": "StringWidget",
+            "multiline": true
+          }
+        },
+        {
+          "advanced": false,
+          "default": 1024,
+          "id": "width",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": null,
+            "kind": "NumberWidget",
+            "max": 1440,
+            "min": 768,
+            "step": 32
+          }
+        },
+        {
+          "advanced": false,
+          "default": 1024,
+          "id": "height",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": null,
+            "kind": "NumberWidget",
+            "max": 1440,
+            "min": 768,
+            "step": 32
+          }
+        },
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": true,
+          "id": "prompt_extend",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.boolean",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.boolean",
+          "widget": null
+        }
+      ],
+      "node_type": "partner.wan.text-to-image",
+      "outputs": [
+        {
+          "id": "image",
+          "type": "comfy.IMAGE"
+        }
+      ],
+      "search_visibility": "normal"
+    },
+    "WanTextToVideoApi": {
+      "aliases": [
+        "WanTextToVideoApi"
+      ],
+      "category": "partner/video/Wan",
+      "combos": [],
+      "description": "Generates a video based on a text prompt.",
+      "display_name": "Wan Text to Video",
+      "input_families": [],
+      "inputs": [
+        {
+          "advanced": false,
+          "default": "wan2.6-t2v",
+          "id": "model",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.combo",
+          "widget": {
+            "kind": "ComboWidget",
+            "options": [
+              "wan2.5-t2v-preview",
+              "wan2.6-t2v"
+            ],
+            "refresh_button": false,
+            "remote_route": ""
+          }
+        },
+        {
+          "advanced": false,
+          "default": "",
+          "id": "prompt",
+          "kind": "InputSpec",
+          "required": true,
+          "type": "core.string",
+          "widget": {
+            "kind": "StringWidget",
+            "multiline": true
+          }
+        },
+        {
+          "advanced": false,
+          "default": "",
+          "id": "negative_prompt",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.string",
+          "widget": {
+            "kind": "StringWidget",
+            "multiline": true
+          }
+        },
+        {
+          "advanced": false,
+          "default": "720p: 1:1 (960x960)",
+          "id": "size",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.combo",
+          "widget": {
+            "kind": "ComboWidget",
+            "options": [
+              "480p: 1:1 (624x624)",
+              "480p: 16:9 (832x480)",
+              "480p: 9:16 (480x832)",
+              "720p: 1:1 (960x960)",
+              "720p: 16:9 (1280x720)",
+              "720p: 9:16 (720x1280)",
+              "720p: 4:3 (1088x832)",
+              "720p: 3:4 (832x1088)",
+              "1080p: 1:1 (1440x1440)",
+              "1080p: 16:9 (1920x1080)",
+              "1080p: 9:16 (1080x1920)",
+              "1080p: 4:3 (1632x1248)",
+              "1080p: 3:4 (1248x1632)"
+            ],
+            "refresh_button": false,
+            "remote_route": ""
+          }
+        },
+        {
+          "advanced": false,
+          "default": 5,
+          "id": "duration",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": null,
+            "kind": "NumberWidget",
+            "max": 15,
+            "min": 5,
+            "step": 5
+          }
+        },
+        {
+          "advanced": false,
+          "default": null,
+          "id": "audio",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "comfy.AUDIO",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": 0,
+          "id": "seed",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.int",
+          "widget": {
+            "control_after_generate": "randomize",
+            "kind": "NumberWidget",
+            "max": 2147483647,
+            "min": 0,
+            "step": 1
+          }
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "generate_audio",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.boolean",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": true,
+          "id": "prompt_extend",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.boolean",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": false,
+          "id": "watermark",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.boolean",
+          "widget": null
+        },
+        {
+          "advanced": false,
+          "default": "single",
+          "id": "shot_type",
+          "kind": "InputSpec",
+          "required": false,
+          "type": "core.combo",
+          "widget": {
+            "kind": "ComboWidget",
+            "options": [
+              "single",
+              "multi"
+            ],
+            "refresh_button": false,
+            "remote_route": ""
+          }
+        }
+      ],
+      "node_type": "partner.wan.text-to-video",
+      "outputs": [
+        {
+          "id": "video",
+          "type": "comfy.VIDEO"
+        }
+      ],
+      "search_visibility": "normal"
+    }
+  },
+  "provenance": {
+    "commit": "e651b7bef55a5376343dcb1c0edb79f0142c985e",
+    "method": "manual transcription",
+    "source": "comfy_api_nodes/nodes_wan.py"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "cases": [
+    {
+      "id": "all-classes",
+      "translation": {
+        "inputs": {
+          "image": "fixture:image-batch",
+          "max_results": 5,
+          "min_score": 0.25,
+          "prompt": "",
+          "provider": "dinkster-vision-rtdetr",
+          "result_limit_mode": "slice-stop"
+        },
+        "outputs": {
+          "detections": "bboxes"
+        },
+        "target": "dinkster.detection.detect"
+      }
+    },
+    {
+      "id": "one-class",
+      "translation": {
+        "inputs": {
+          "image": "fixture:image-batch",
+          "max_results": 3,
+          "min_score": 0.4,
+          "prompt": "person",
+          "provider": "dinkster-vision-rtdetr",
+          "result_limit_mode": "slice-stop"
+        },
+        "outputs": {
+          "detections": "bboxes"
+        },
+        "target": "dinkster.detection.detect"
+      }
+    }
+  ]
+}

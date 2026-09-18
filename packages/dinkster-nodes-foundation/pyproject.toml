@@ -1,0 +1,22 @@
+[project]
+name = "dinkster-nodes-foundation"
+version = "0.0.1"
+description = "Dinkster first-party logic, math, text, list, and utility node pack"
+requires-python = ">=3.12"
+dependencies = ["dinkster-api"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_nodes_foundation"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"dinkster-pack.toml" = "dinkster_nodes_foundation_pack/dinkster-pack.toml"
+"comfy-aliases.json" = "dinkster_nodes_foundation_pack/comfy-aliases.json"
+"docs" = "dinkster_nodes_foundation_pack/docs"
+"src/dinkster_nodes_foundation" = "dinkster_nodes_foundation_pack/dinkster_nodes_foundation"
+
+[tool.uv.sources]
+dinkster-api = { workspace = true }

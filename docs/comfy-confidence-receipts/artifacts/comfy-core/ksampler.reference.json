@@ -1,0 +1,12 @@
+{
+  "calls": [
+    {
+      "cfg": 1.0,
+      "denoise": 0.75,
+      "sampler_name": "dinkster.euler",
+      "scheduler": "dinkster.simple",
+      "seed": 7,
+      "steps": 2
+    }
+  ]
+}

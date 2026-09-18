@@ -1,0 +1,13 @@
+[project]
+name = "dinkster-schema"
+version = "0.0.1"
+description = "Dinkster node schema model: the single source of truth (hazard H1)"
+requires-python = ">=3.12"
+dependencies = ["dinkster-values"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_schema"]

@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {
+      "id": "insensitive",
+      "output": true
+    },
+    {
+      "id": "multiline",
+      "output": true
+    },
+    {
+      "id": "invalid",
+      "output": false
+    }
+  ]
+}

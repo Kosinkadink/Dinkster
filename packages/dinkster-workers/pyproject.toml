@@ -1,0 +1,22 @@
+[project]
+name = "dinkster-workers"
+version = "0.0.1"
+description = "Dinkster Worker implementations (in-process now; isolated venv and remote later)"
+requires-python = ">=3.12"
+dependencies = ["dinkster-schema", "dinkster-values", "dinkster-protocol", "dinkster-memory", "dinkster-assets", "dinkster-caches", "packaging>=23"]
+
+[project.scripts]
+dinkster-doctor = "dinkster_workers.doctor:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_workers"]
+
+[tool.uv.sources]
+dinkster-schema = { workspace = true }
+dinkster-values = { workspace = true }
+dinkster-protocol = { workspace = true }
+dinkster-caches = { workspace = true }

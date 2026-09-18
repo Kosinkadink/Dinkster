@@ -1,0 +1,181 @@
+[project]
+name = "dinkster"
+version = "0.0.1"
+description = "Dinkster - a clean-slate ComfyUI backend (umbrella dev package + demo CLI)"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.10",
+    "blake3>=0.4",
+    "dinkster-api",
+    "dinkster-schema",
+    "dinkster-values",
+    "dinkster-graph",
+    "dinkster-inference",
+    "dinkster-protocol",
+    "dinkster-engine",
+    "dinkster-workers",
+    "dinkster-caches",
+    "dinkster-assets",
+    "dinkster-image-document",
+    "dinkster-p2p",
+    "dinkster-memory",
+    "dinkster-native",
+    "dinkster-compat-comfy",
+    "dinkster-nodes-std",
+    "dinkster-nodes-remote",
+    "dinkster-nodes-generation",
+    "dinkster-nodes-generation-openai",
+    "dinkster-nodes-image",
+    "dinkster-model-wan",
+    "dinkster-model-qwen-image",
+    "dinkster-model-ipadapter",
+    "dinkster-model-triposplat",
+    "dinkster-nodes-dev",
+    "dinkster-nodes-training",
+    "dinkster-training-worker",
+    "dinkster-server",
+    "dinkster-collab",
+    "dinkster-registry",
+    "dinkster-registry-service",
+    "dinkster-supervisor",
+    # The comfy compat host registration (comfy_compose.register_comfy_host_types)
+    # decodes and renders comfy.IMAGE values with numpy; dinkster-values itself
+    # stays dependency-free (its image codec needs numpy at call time only).
+    "numpy>=1.26",
+    # Image-file asset decoding (typed assets: decode_image_file) opens files
+    # with Pillow, imported at call time only - same pattern as numpy above.
+    "pillow>=10",
+]
+
+[project.scripts]
+dinkster = "dinkster.cli:main"
+dinkster-serve = "dinkster.serve:main"
+dinkster-pack = "dinkster.manager:main"
+dinkster-registry = "dinkster.registry_service:main"
+dinkster-isolated = "dinkster.isolated_demo:main"
+dinkster-port = "dinkster.port:main"
+dinkster-installs = "dinkster.install_manager:main"
+dinkster-p2p-diagnostics = "dinkster.p2p_diagnostics:main"
+
+[dependency-groups]
+angle = [
+    "comfy-angle==0.1.1",
+    "PyOpenGL>=3.1.8,<4",
+]
+dev = [
+    "hypothesis>=6",
+    "pytest>=8",
+    "pytest-cov>=6",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+    "scipy-stubs>=1.18.1.0",
+    "libtorrent==2.1.1",
+    "opentimelineio==0.18.1",
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+dinkster-api = { workspace = true }
+dinkster-schema = { workspace = true }
+dinkster-values = { workspace = true }
+dinkster-video = { workspace = true }
+dinkster-graph = { workspace = true }
+dinkster-inference = { workspace = true }
+dinkster-protocol = { workspace = true }
+dinkster-engine = { workspace = true }
+dinkster-workers = { workspace = true }
+dinkster-caches = { workspace = true }
+dinkster-assets = { workspace = true }
+dinkster-image-document = { workspace = true }
+dinkster-p2p = { workspace = true }
+dinkster-memory = { workspace = true }
+dinkster-native = { workspace = true }
+dinkster-compat-comfy = { workspace = true }
+dinkster-nodes-std = { workspace = true }
+dinkster-nodes-remote = { workspace = true }
+dinkster-nodes-generation = { workspace = true }
+dinkster-nodes-generation-openai = { workspace = true }
+dinkster-nodes-image = { workspace = true }
+dinkster-model-wan = { workspace = true }
+dinkster-model-qwen-image = { workspace = true }
+dinkster-model-ipadapter = { workspace = true }
+dinkster-model-triposplat = { workspace = true }
+dinkster-nodes-dev = { workspace = true }
+dinkster-nodes-training = { workspace = true }
+dinkster-training-worker = { workspace = true }
+dinkster-server = { workspace = true }
+dinkster-collab = { workspace = true }
+dinkster-registry = { workspace = true }
+dinkster-registry-service = { workspace = true }
+dinkster-supervisor = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["UP040", "UP046", "UP047"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests",
+    "packages/dinkster-nodes-partner/tests",
+    "packages/dinkster-nodes-remote/tests",
+]
+# Tests import helpers as `tests.*` / `tools.*`, which requires the repo
+# root on sys.path. `python -m pytest` adds it implicitly; the `pytest`
+# entrypoint (what CI's `uv run pytest` invokes) does not.
+pythonpath = ["."]
+
+[tool.pyright]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+include = ["packages", "src", "tests"]
+# Torch execution packages import torch, absent from the torch-free root
+# venv; each has its own [tool.pyright] gate against .venv-torch:
+#   .venv/bin/pyright -p packages/dinkster-inference-torch
+#   .venv/bin/pyright -p packages/dinkster-training-torch
+# dinkster-kernels additionally needs triton, so its gate resolves against
+# .venv-gpu (GPU machines): .venv/bin/pyright -p packages/dinkster-kernels
+# Vision provider packages import execution dependencies absent from the root
+# environment, so their gates also resolve against .venv-torch.
+# Hosted CI enforces every .venv-torch pyright project in the torch-cpu
+# suite (#981); only the .venv-gpu dinkster-kernels gate stays local-only.
+exclude = [
+    "packages/dinkster-acceptance",
+    "packages/dinkster-inference-torch",
+    "packages/dinkster-kernels",
+    "packages/dinkster-vision-birefnet",
+    "packages/dinkster-vision-depth-anything-v2",
+    "packages/dinkster-vision-depth-anything-v3",
+    "packages/dinkster-vision-detr",
+    "packages/dinkster-vision-efficient-sam",
+    "packages/dinkster-vision-hed",
+    "packages/dinkster-vision-rtdetr",
+    "packages/dinkster-vision-sam31",
+    "packages/dinkster-vision-upscale",
+    "packages/dinkster-training-torch",
+    "packages/dinkster-model-wan/src/dinkster_model_wan/provider.py",
+    "packages/dinkster-model-qwen-image/src/dinkster_model_qwen_image/provider.py",
+    "packages/dinkster-model-qwen-image/tests",
+    "packages/dinkster-model-ipadapter/src/dinkster_model_ipadapter/provider.py",
+    "packages/dinkster-model-ipadapter/tests",
+    "packages/dinkster-model-triposplat/src/dinkster_model_triposplat/provider.py",
+    "packages/dinkster-model-triposplat/tests",
+    "packages/dinkster-nodes-partner/tests",
+]
+# The packages are the load-bearing code: strict there. Tests and the demo
+# CLI stay on standard - useful checking without annotation ceremony.
+strict = ["packages"]
+typeCheckingMode = "standard"

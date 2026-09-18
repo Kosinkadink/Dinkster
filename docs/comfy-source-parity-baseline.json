@@ -1,0 +1,34 @@
+{
+  "excludedFromParityCounts": [
+    "maintained-native-refusals",
+    "mapped-workflow-occurrences",
+    "translation-ready-workflows"
+  ],
+  "excludedNativePacks": [
+    {
+      "disposition": "development-only-no-comfy-execution-counterpart",
+      "package": "dinkster-nodes-dev",
+      "reason": "Dinkster-only development scaffolding and conformance nodes have no ComfyUI execution counterpart; parity is not claimed."
+    },
+    {
+      "disposition": "remote-service-no-local-comfy-execution-counterpart",
+      "package": "dinkster-nodes-partner",
+      "reason": "Remote partner API contracts are tested against provider schemas and requests, not local pinned ComfyUI execution; parity is not claimed."
+    },
+    {
+      "disposition": "schema-only-no-comfy-execution-counterpart",
+      "package": "dinkster-nodes-training",
+      "reason": "The manifest-declared training session nodes are schema-only and have no ComfyUI execution counterpart; parity is not claimed."
+    }
+  ],
+  "format": "dinkster-comfy-source-parity-baseline/1",
+  "grandfatheredUnreceiptedDigest": "sha256:16602666ec72d69a8b02f92f5a8e79357a1257536984a74ac7fc5a78bf63baae",
+  "measured": {
+    "passingReceiptCases": 17,
+    "receiptBackedMappings": 17,
+    "translationDeclarations": 230,
+    "unreceiptedMappings": 213
+  },
+  "parityUnit": "unique-mapping-with-verified-passing-receipt",
+  "scope": "maintained-comfy-mapping-records"
+}

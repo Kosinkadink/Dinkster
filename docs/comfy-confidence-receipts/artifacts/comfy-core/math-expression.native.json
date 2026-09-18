@@ -1,0 +1,124 @@
+{
+  "cases": [
+    {
+      "id": "operator-precedence",
+      "outputs": {
+        "boolean": true,
+        "float": 8.0,
+        "int": 8
+      }
+    },
+    {
+      "id": "division-and-int-output",
+      "outputs": {
+        "boolean": true,
+        "float": 3.5,
+        "int": 3
+      }
+    },
+    {
+      "id": "core-functions",
+      "outputs": {
+        "boolean": true,
+        "float": 6.0,
+        "int": 6
+      }
+    },
+    {
+      "id": "conditional",
+      "outputs": {
+        "boolean": true,
+        "float": -1.0,
+        "int": -1
+      }
+    },
+    {
+      "id": "ordered-values",
+      "outputs": {
+        "boolean": true,
+        "float": 4.5,
+        "int": 4
+      }
+    },
+    {
+      "id": "highest-named-operand",
+      "outputs": {
+        "boolean": true,
+        "float": 3.5,
+        "int": 3
+      }
+    },
+    {
+      "id": "floor-division-and-modulo-negatives",
+      "outputs": {
+        "boolean": true,
+        "float": -2998.0,
+        "int": -2998
+      }
+    },
+    {
+      "id": "float-modulo-follows-divisor-sign",
+      "outputs": {
+        "boolean": true,
+        "float": 1.5,
+        "int": 1
+      }
+    },
+    {
+      "id": "bankers-rounding",
+      "outputs": {
+        "boolean": true,
+        "float": 42.0,
+        "int": 42
+      }
+    },
+    {
+      "id": "big-integer-power",
+      "outputs": {
+        "boolean": true,
+        "float": 1.2089258196146292e+24,
+        "int": 1208925819614629174706177
+      }
+    },
+    {
+      "id": "bitwise-and-shifts",
+      "outputs": {
+        "boolean": true,
+        "float": 425.0,
+        "int": 425
+      }
+    },
+    {
+      "id": "sqrt-irrational",
+      "outputs": {
+        "boolean": true,
+        "float": 1.4142135623730951,
+        "int": 1
+      }
+    },
+    {
+      "id": "negative-zero-product",
+      "outputs": {
+        "boolean": false,
+        "float": -0.0,
+        "int": 0
+      }
+    },
+    {
+      "id": "sin-cos-product",
+      "outputs": {
+        "boolean": true,
+        "float": 0.858464846970514,
+        "int": 0
+      }
+    },
+    {
+      "id": "float-power",
+      "outputs": {
+        "boolean": true,
+        "float": 1.4142135623730951,
+        "int": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 23059,
+      "path": "artifacts/comfy-core/seedvr2-conditioning.native.json",
+      "sha256": "sha256:a695e271bcf943bb5b866af2ee252bbe101c74a67fd299a57ec35c35d8f9b6f1"
+    },
+    "reference": {
+      "bytes": 23059,
+      "path": "artifacts/comfy-core/seedvr2-conditioning.reference.json",
+      "sha256": "sha256:a695e271bcf943bb5b866af2ee252bbe101c74a67fd299a57ec35c35d8f9b6f1"
+    }
+  },
+  "caseId": "comfy-core/seedvr2-conditioning/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/SeedVR2Conditioning",
+    "source": {
+      "name": "SeedVR2Conditioning",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.seedvr2_conditioning",
+      "kind": "node"
+    },
+    "tier": "exact"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "latentShape": [
+      1,
+      16,
+      2,
+      3,
+      4
+    ],
+    "mappingDigest": "sha256:1b161b3ffde5e6bb6f8512f91f29bc7f600bb46103d25bda2464665fb0a45d64"
+  },
+  "pass": true
+}

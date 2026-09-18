@@ -1,0 +1,46 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 38528,
+      "path": "artifacts/comfyui-videohelpersuite/vhs_loadaudio.native.npy",
+      "sha256": "sha256:9a6f0fab9e877d643baf8f9ab866200d7b58260ee11207b10b401d55ee35be00"
+    },
+    "reference": {
+      "bytes": 38528,
+      "path": "artifacts/comfyui-videohelpersuite/vhs_loadaudio.reference.npy",
+      "sha256": "sha256:9a6f0fab9e877d643baf8f9ab866200d7b58260ee11207b10b401d55ee35be00"
+    }
+  },
+  "caseId": "comfyui-videohelpersuite/vhs_loadaudio/source-parity",
+  "comparison": {
+    "comparator": "exact-array/1",
+    "dataKind": "tensor"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfyui-videohelpersuite/VHS_LoadAudio",
+    "source": {
+      "name": "VHS_LoadAudio",
+      "pack": "comfyui-videohelpersuite",
+      "referenceKind": "ecosystem-pinned",
+      "revision": "4d907bee61e92c2e65af3bd6383a4e4d356126d1"
+    },
+    "target": {
+      "id": "dinkster.load_audio",
+      "kind": "node"
+    },
+    "tier": "parametric"
+  },
+  "observed": {
+    "dtype_equal": true,
+    "shape_equal": true,
+    "values_equal": true
+  },
+  "parameters": {
+    "goldenSha256": "36273a4d4684f6eda36575b925a55b51a5bbf10baf04eb0a62f7b178f50f6226",
+    "mappingDigest": "sha256:8b1ffb36660a08beb596218821e1855e504d0a67fd19a4a63b05ab02346fb077",
+    "windows": 3
+  },
+  "pass": true
+}

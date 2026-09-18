@@ -1,0 +1,24 @@
+[pack]
+name = "dinkster-nodes-remote"
+namespaces = ["dinkster.remote"]
+
+[pack.sandbox]
+network = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.dependencies]
+dinkster-nodes-media-io = ">=0.0.1,<1"
+
+[pack.presentation]
+display_name = "Remote Nodes"
+abbr = "Remote"
+mark = "API"
+color = "#6366f1"
+
+[pack.entry]
+nodes = "dinkster_nodes_remote:REMOTE_NODES"
+types = "dinkster_nodes_remote:register_remote_types"
+schema_reload = "dinkster_nodes_remote:wait_for_schema_reload"

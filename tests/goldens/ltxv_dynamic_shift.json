@@ -1,0 +1,47 @@
+{
+  "comfyui_commit": "b78cec879b9460d5cb25228a83a942fb78d2cd24",
+  "cases": [
+    {
+      "name": "default",
+      "tokens": 4096,
+      "max_shift": 2.05,
+      "base_shift": 0.95,
+      "shift": 2.05
+    },
+    {
+      "name": "low_endpoint",
+      "tokens": 1024,
+      "max_shift": 3.5,
+      "base_shift": 1.25,
+      "shift": 1.25
+    },
+    {
+      "name": "midpoint",
+      "tokens": 2560,
+      "max_shift": 3.5,
+      "base_shift": 1.25,
+      "shift": 2.375
+    },
+    {
+      "name": "high_endpoint",
+      "tokens": 4096,
+      "max_shift": 3.5,
+      "base_shift": 1.25,
+      "shift": 3.5
+    },
+    {
+      "name": "below_range",
+      "tokens": 512,
+      "max_shift": 2.05,
+      "base_shift": 0.95,
+      "shift": 0.7666666666666666
+    },
+    {
+      "name": "above_range",
+      "tokens": 8192,
+      "max_shift": 2.05,
+      "base_shift": 0.95,
+      "shift": 3.5166666666666666
+    }
+  ]
+}

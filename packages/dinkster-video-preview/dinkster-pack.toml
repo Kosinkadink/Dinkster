@@ -1,0 +1,35 @@
+[pack]
+name = "dinkster-video-preview"
+namespaces = ["video-preview"]
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_video_preview:NODES"
+types = "dinkster_video_preview:register_types"
+
+[pack.extension]
+privileges = ["schema", "server", "frontend"]
+capabilities = ["routes"]
+
+[[pack.extension.routes]]
+id = "preview-policy"
+method = "GET"
+handler = "dinkster_video_preview:preview_policy"
+request = {}
+response = { defaultFps = "number", maxFrames = "integer", maxWidth = "integer" }
+
+[[pack.extension.events]]
+name = "video-preview.initialized"
+payload = { fps = "number", frameCount = "integer", height = "integer", width = "integer" }
+
+[[pack.extension.frontend-modules]]
+id = "dinkster-video-preview.frontend.preview"
+module = "./src/dinkster_video_preview/preview.js"
+privileges = ["app-workflow", "event-consumer"]
+contributions = [
+  { id = "dinkster-video-preview.preview.initialized", kind = "eventConsumer", event = "video-preview.initialized" },
+  { id = "dinkster-video-preview.preview.status", kind = "hostUi" },
+]

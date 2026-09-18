@@ -1,0 +1,18 @@
+{
+  "cases": [
+    {
+      "id": "initial-mask",
+      "translation": {
+        "inputs": {
+          "image": "fixture:video-batch",
+          "initial_masks": "fixture:initial-mask",
+          "provider": "dinkster-vision-sam31"
+        },
+        "outputs": {
+          "combined": "masks"
+        },
+        "target": "dinkster.detection.track"
+      }
+    }
+  ]
+}

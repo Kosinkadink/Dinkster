@@ -1,0 +1,134 @@
+{
+  "cases": {
+    "audio_only": {
+      "output": [
+        210848.65625,
+        32003.849609375
+      ]
+    },
+    "audio_video": {
+      "output": [
+        18713.365234375,
+        0.4065398573875427
+      ]
+    },
+    "video_only": {
+      "output": [
+        6.32360240615526e-07,
+        22.328540802001953
+      ]
+    }
+  },
+  "frames": {
+    "above_maximum": 473,
+    "below_minimum": 25,
+    "inside": 97
+  },
+  "reference": {
+    "commit": "8a33128f2f8c5585c57486c07de481241e70a39c",
+    "generator": "tools/gen_ltx_duration_goldens.py",
+    "platform": "linux",
+    "python": "3.12.11",
+    "repo": "ComfyUI",
+    "torch": "2.13.0+cpu"
+  },
+  "state_dict": [
+    [
+      "video_modality_emb",
+      [
+        256
+      ]
+    ],
+    [
+      "audio_modality_emb",
+      [
+        256
+      ]
+    ],
+    [
+      "video_input_proj.weight",
+      [
+        256,
+        4096
+      ]
+    ],
+    [
+      "video_input_proj.bias",
+      [
+        256
+      ]
+    ],
+    [
+      "audio_input_proj.weight",
+      [
+        256,
+        2048
+      ]
+    ],
+    [
+      "audio_input_proj.bias",
+      [
+        256
+      ]
+    ],
+    [
+      "attention_pooler.query_tokens",
+      [
+        1,
+        256
+      ]
+    ],
+    [
+      "attention_pooler.cross_attn.in_proj_weight",
+      [
+        768,
+        256
+      ]
+    ],
+    [
+      "attention_pooler.cross_attn.in_proj_bias",
+      [
+        768
+      ]
+    ],
+    [
+      "attention_pooler.cross_attn.out_proj.weight",
+      [
+        256,
+        256
+      ]
+    ],
+    [
+      "attention_pooler.cross_attn.out_proj.bias",
+      [
+        256
+      ]
+    ],
+    [
+      "mlp_hidden.weight",
+      [
+        256,
+        256
+      ]
+    ],
+    [
+      "mlp_hidden.bias",
+      [
+        256
+      ]
+    ],
+    [
+      "mlp_out.weight",
+      [
+        1,
+        256
+      ]
+    ],
+    [
+      "mlp_out.bias",
+      [
+        1
+      ]
+    ]
+  ]
+}

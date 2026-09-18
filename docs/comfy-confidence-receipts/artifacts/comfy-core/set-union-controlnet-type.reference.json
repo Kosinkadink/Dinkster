@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {
+      "inputUnchanged": true,
+      "modeIndex": null,
+      "selector": "auto"
+    },
+    {
+      "inputUnchanged": true,
+      "modeIndex": 3,
+      "selector": "canny/lineart/anime_lineart/mlsd"
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 370,
+      "path": "artifacts/comfy-core/comfy-switch.native.json",
+      "sha256": "sha256:b6d2a071985a451acf7da8fd2d3bc16c3c9c144a8d4ba6a89753a3e005f7f236"
+    },
+    "reference": {
+      "bytes": 370,
+      "path": "artifacts/comfy-core/comfy-switch.reference.json",
+      "sha256": "sha256:b6d2a071985a451acf7da8fd2d3bc16c3c9c144a8d4ba6a89753a3e005f7f236"
+    }
+  },
+  "caseId": "comfy-core/comfy-switch/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/ComfySwitchNode",
+    "source": {
+      "name": "ComfySwitchNode",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.value.select",
+      "kind": "node"
+    },
+    "tier": "exact"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "cases": [
+      {
+        "id": "false",
+        "inputs": {
+          "on_false": "left",
+          "on_true": "right",
+          "switch": false
+        }
+      },
+      {
+        "id": "true",
+        "inputs": {
+          "on_false": 1,
+          "on_true": 2,
+          "switch": true
+        }
+      },
+      {
+        "id": "lazy-true",
+        "inputs": {
+          "on_false": "left",
+          "on_true": null,
+          "switch": true
+        }
+      },
+      {
+        "id": "lazy-false",
+        "inputs": {
+          "on_false": null,
+          "on_true": "right",
+          "switch": false
+        }
+      }
+    ],
+    "mappingDigest": "sha256:14d5d05b30fffb04096bf52949234fe839d77e5530bd0c026b693a57c56ad6a8"
+  },
+  "pass": true
+}

@@ -1,0 +1,234 @@
+[
+ {
+  "pack": "cg-use-everywhere",
+  "status": "v3-entrypoint",
+  "nodes_translated": 0,
+  "nodes_skipped": {},
+  "server_routes_added": 0,
+  "hook_imports": [],
+  "web_directory": "./js",
+  "error": "pack uses the V3 comfy_entrypoint API; port it to a native Dinkster pack instead of the legacy quarantine",
+  "missing_module": ""
+ },
+ {
+  "pack": "ComfyUI_Comfyroll_CustomNodes",
+  "status": "loaded",
+  "nodes_translated": 179,
+  "nodes_skipped": {
+   "CR Text List": "CR Text List: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Prompt List": "CR Prompt List: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Simple List": "CR Simple List: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Float Range List": "CR Float Range List: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Integer Range List": "CR Integer Range List: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Load Text List": "CR Load Text List: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Binary To Bit List": "CR Binary To Bit List: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Text Cycler": "CR Text Cycler: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Value Cycler": "CR Value Cycler: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Load Image List": "CR Load Image List: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Load Image List Plus": "CR Load Image List Plus: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Load GIF As List": "CR Load GIF As List: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Font File List": "CR Font File List: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Batch Images From List": "CR Batch Images From List: INPUT_IS_LIST calling convention is not supported",
+   "CR Intertwine Lists": "CR Intertwine Lists: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Repeater": "CR Repeater: OUTPUT_IS_LIST calling convention is not supported",
+   "CR XY Product": "CR XY Product: OUTPUT_IS_LIST calling convention is not supported",
+   "CR Text List To String": "CR Text List To String: INPUT_IS_LIST calling convention is not supported",
+   "CR Aspect Ratio SDXL": "duplicate RETURN_NAMES: ['INT', 'INT', 'FLOAT', 'FLOAT', 'INT', 'show_help']",
+   "CR Debatch Frames": "CR Debatch Frames: OUTPUT_IS_LIST calling convention is not supported"
+  },
+  "server_routes_added": 0,
+  "hook_imports": [
+   "server"
+  ],
+  "web_directory": "",
+  "error": "",
+  "missing_module": ""
+ },
+ {
+  "pack": "comfyui_controlnet_aux",
+  "status": "missing-dependency",
+  "nodes_translated": 0,
+  "nodes_skipped": {},
+  "server_routes_added": 0,
+  "hook_imports": [],
+  "web_directory": "",
+  "error": "ModuleNotFoundError: No module named 'cv2'",
+  "missing_module": "cv2"
+ },
+ {
+  "pack": "ComfyUI-Custom-Scripts",
+  "status": "loaded",
+  "nodes_translated": 8,
+  "nodes_skipped": {
+   "ShowText|pysssss": "ShowText|pysssss: INPUT_IS_LIST calling convention is not supported",
+   "SystemNotification|pysssss": "SystemNotification|pysssss: INPUT_IS_LIST calling convention is not supported",
+   "PlaySound|pysssss": "PlaySound|pysssss: INPUT_IS_LIST calling convention is not supported",
+   "ConstrainImage|pysssss": "ConstrainImage|pysssss: OUTPUT_IS_LIST calling convention is not supported",
+   "Repeater|pysssss": "Repeater|pysssss: OUTPUT_IS_LIST calling convention is not supported"
+  },
+  "server_routes_added": 14,
+  "hook_imports": [
+   "aiohttp",
+   "server"
+  ],
+  "web_directory": "./web",
+  "error": "",
+  "missing_module": ""
+ },
+ {
+  "pack": "ComfyUI-Easy-Use",
+  "status": "missing-dependency",
+  "nodes_translated": 0,
+  "nodes_skipped": {},
+  "server_routes_added": 15,
+  "hook_imports": [],
+  "web_directory": "",
+  "error": "ModuleNotFoundError: No module named 'cv2'",
+  "missing_module": "cv2"
+ },
+ {
+  "pack": "ComfyUI_essentials",
+  "status": "loaded",
+  "nodes_translated": 83,
+  "nodes_skipped": {
+   "ImageListToBatch+": "ImageListToBatch+: INPUT_IS_LIST calling convention is not supported",
+   "ImageBatchToList+": "ImageBatchToList+: OUTPUT_IS_LIST calling convention is not supported"
+  },
+  "server_routes_added": 0,
+  "hook_imports": [],
+  "web_directory": "./js",
+  "error": "",
+  "missing_module": ""
+ },
+ {
+  "pack": "ComfyUI-GGUF",
+  "status": "missing-dependency",
+  "nodes_translated": 0,
+  "nodes_skipped": {},
+  "server_routes_added": 0,
+  "hook_imports": [],
+  "web_directory": "",
+  "error": "ModuleNotFoundError: No module named 'gguf'",
+  "missing_module": "gguf"
+ },
+ {
+  "pack": "ComfyUI-Impact-Pack",
+  "status": "missing-dependency",
+  "nodes_translated": 0,
+  "nodes_skipped": {},
+  "server_routes_added": 0,
+  "hook_imports": [],
+  "web_directory": "",
+  "error": "ModuleNotFoundError: No module named 'cv2'",
+  "missing_module": "cv2"
+ },
+ {
+  "pack": "ComfyUI-Impact-Subpack",
+  "status": "missing-dependency",
+  "nodes_translated": 0,
+  "nodes_skipped": {},
+  "server_routes_added": 0,
+  "hook_imports": [],
+  "web_directory": "",
+  "error": "ModuleNotFoundError: No module named 'cv2'",
+  "missing_module": "cv2"
+ },
+ {
+  "pack": "ComfyUI-KJNodes",
+  "status": "loaded",
+  "nodes_translated": 229,
+  "nodes_skipped": {
+   "ImageTransformKJ": "ImageTransformKJ: OUTPUT_IS_LIST calling convention is not supported",
+   "Ideogram4PromptBuilderKJ": "AttributeError: module 'comfy_api.latest._io_public' has no attribute 'BoundingBox'",
+   "StartRecordCUDAMemoryHistory": "RETURN_NAMES has 2 entries for 1 RETURN_TYPES"
+  },
+  "server_routes_added": 0,
+  "hook_imports": [
+   "server"
+  ],
+  "web_directory": "./web",
+  "error": "",
+  "missing_module": ""
+ },
+ {
+  "pack": "ComfyUI_LayerStyle",
+  "status": "missing-dependency",
+  "nodes_translated": 0,
+  "nodes_skipped": {},
+  "server_routes_added": 0,
+  "hook_imports": [],
+  "web_directory": "",
+  "error": "ModuleNotFoundError: No module named 'cv2'",
+  "missing_module": "cv2"
+ },
+ {
+  "pack": "ComfyUI_UltimateSDUpscale",
+  "status": "loaded",
+  "nodes_translated": 4,
+  "nodes_skipped": {},
+  "server_routes_added": 0,
+  "hook_imports": [],
+  "web_directory": "./js",
+  "error": "",
+  "missing_module": ""
+ },
+ {
+  "pack": "ComfyUI-WanVideoWrapper",
+  "status": "missing-dependency",
+  "nodes_translated": 0,
+  "nodes_skipped": {},
+  "server_routes_added": 0,
+  "hook_imports": [],
+  "web_directory": "",
+  "error": "ModuleNotFoundError: No module named 'accelerate'",
+  "missing_module": "accelerate"
+ },
+ {
+  "pack": "RES4LYF",
+  "status": "missing-dependency",
+  "nodes_translated": 0,
+  "nodes_skipped": {},
+  "server_routes_added": 2,
+  "hook_imports": [],
+  "web_directory": "",
+  "error": "ModuleNotFoundError: No module named 'pywt'",
+  "missing_module": "pywt"
+ },
+ {
+  "pack": "rgthree-comfy",
+  "status": "loaded",
+  "nodes_translated": 24,
+  "nodes_skipped": {},
+  "server_routes_added": 22,
+  "hook_imports": [
+   "aiohttp",
+   "execution",
+   "server"
+  ],
+  "web_directory": "./web/comfyui",
+  "error": "",
+  "missing_module": ""
+ },
+ {
+  "pack": "was-node-suite-comfyui",
+  "status": "missing-dependency",
+  "nodes_translated": 0,
+  "nodes_skipped": {},
+  "server_routes_added": 0,
+  "hook_imports": [],
+  "web_directory": "",
+  "error": "ModuleNotFoundError: No module named 'numba'",
+  "missing_module": "numba"
+ },
+ {
+  "pack": "ComfyUI-VideoHelperSuite",
+  "status": "missing-dependency",
+  "nodes_translated": 0,
+  "nodes_skipped": {},
+  "server_routes_added": 0,
+  "hook_imports": [],
+  "web_directory": "",
+  "error": "ModuleNotFoundError: No module named 'cv2'",
+  "missing_module": "cv2"
+ }
+]

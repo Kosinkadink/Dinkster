@@ -1,0 +1,38 @@
+# Pack manifest (see docs/pack-authoring.md for the full reference).
+# Rename everything "my-pack"/"my_pack_nodes" to your pack's name; the
+# [pack] name is your pack id - it prefixes node types and keys attribution.
+
+[pack]
+name = "my-pack"
+# Namespace claims: every node type must live under one of these (doctor
+# checks it; composition and registry policy enforce it). Omitted, the
+# pack claims its own name - which is exactly right here, since the node
+# types below are my-pack.*:
+# namespaces = ["my-pack"]
+# Pin every requirement (dinkster doctor warns on unpinned entries). This
+# template needs nothing beyond the api door:
+requires = []
+
+[pack.docs]
+dir = "docs"
+default_locale = "en"
+
+[pack.sandbox]
+# These are requests only. The host must separately grant each resource.
+gpu = false
+network = false
+writable-mounts = false
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "my_pack_nodes:NODES"
+types = "my_pack_nodes:register_types"
+
+[pack.presentation]
+display_name = "My Pack"
+abbr = "MP"
+color = "#4a7d5e"
+icon = "icon.png"  # exactly 64x64, static PNG/WebP, <= 64 KiB

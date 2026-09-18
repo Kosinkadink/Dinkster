@@ -1,0 +1,477 @@
+{
+  "nodes": {
+    "Flux2ImageNode": {
+      "combos": [
+        {
+          "id": "model",
+          "options": [
+            {
+              "inputs": [
+                {
+                  "default": 1024,
+                  "id": "width",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int"
+                },
+                {
+                  "default": 768,
+                  "id": "height",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int"
+                },
+                {
+                  "id": "images",
+                  "kind": "InputFamilySpec",
+                  "member_names": ["image_1", "image_2", "image_3", "image_4", "image_5", "image_6", "image_7", "image_8"],
+                  "min_members": 0,
+                  "type": "comfy.IMAGE"
+                }
+              ],
+              "key": "Flux.2 [pro]"
+            },
+            {
+              "inputs": [
+                {
+                  "default": 1024,
+                  "id": "width",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int"
+                },
+                {
+                  "default": 768,
+                  "id": "height",
+                  "kind": "InputSpec",
+                  "required": true,
+                  "type": "core.int"
+                },
+                {
+                  "id": "images",
+                  "kind": "InputFamilySpec",
+                  "member_names": ["image_1", "image_2", "image_3", "image_4", "image_5", "image_6", "image_7", "image_8"],
+                  "min_members": 0,
+                  "type": "comfy.IMAGE"
+                }
+              ],
+              "key": "Flux.2 [max]"
+            }
+          ]
+        }
+      ],
+      "inputs": [
+        {
+          "default": "",
+          "id": "prompt",
+          "required": true,
+          "type": "core.string"
+        },
+        {
+          "default": 0,
+          "id": "seed",
+          "required": true,
+          "type": "core.int"
+        }
+      ]
+    },
+    "Flux2MaxImageNode": {
+      "combos": [],
+      "inputs": [
+        {
+          "default": "",
+          "id": "prompt",
+          "required": true,
+          "type": "core.string"
+        },
+        {
+          "default": 1024,
+          "id": "width",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 768,
+          "id": "height",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 0,
+          "id": "seed",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": true,
+          "id": "prompt_upsampling",
+          "required": true,
+          "type": "core.boolean"
+        },
+        {
+          "default": null,
+          "id": "images",
+          "required": false,
+          "type": "comfy.IMAGE"
+        }
+      ]
+    },
+    "Flux2ProImageNode": {
+      "combos": [],
+      "inputs": [
+        {
+          "default": "",
+          "id": "prompt",
+          "required": true,
+          "type": "core.string"
+        },
+        {
+          "default": 1024,
+          "id": "width",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 768,
+          "id": "height",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 0,
+          "id": "seed",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": true,
+          "id": "prompt_upsampling",
+          "required": true,
+          "type": "core.boolean"
+        },
+        {
+          "default": null,
+          "id": "images",
+          "required": false,
+          "type": "comfy.IMAGE"
+        }
+      ]
+    },
+    "FluxEraseNode": {
+      "combos": [],
+      "inputs": [
+        {
+          "default": null,
+          "id": "image",
+          "required": true,
+          "type": "comfy.IMAGE"
+        },
+        {
+          "default": null,
+          "id": "mask",
+          "required": true,
+          "type": "comfy.MASK"
+        },
+        {
+          "default": 10,
+          "id": "dilate_pixels",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 0,
+          "id": "seed",
+          "required": false,
+          "type": "core.int"
+        }
+      ]
+    },
+    "FluxKontextMaxImageNode": {
+      "combos": [],
+      "inputs": [
+        {
+          "default": "",
+          "id": "prompt",
+          "required": true,
+          "type": "core.string"
+        },
+        {
+          "default": "16:9",
+          "id": "aspect_ratio",
+          "required": true,
+          "type": "core.string"
+        },
+        {
+          "default": 3.0,
+          "id": "guidance",
+          "required": true,
+          "type": "core.float"
+        },
+        {
+          "default": 50,
+          "id": "steps",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 1234,
+          "id": "seed",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": false,
+          "id": "prompt_upsampling",
+          "required": true,
+          "type": "core.boolean"
+        },
+        {
+          "default": null,
+          "id": "input_image",
+          "required": false,
+          "type": "comfy.IMAGE"
+        }
+      ]
+    },
+    "FluxKontextProImageNode": {
+      "combos": [],
+      "inputs": [
+        {
+          "default": "",
+          "id": "prompt",
+          "required": true,
+          "type": "core.string"
+        },
+        {
+          "default": "16:9",
+          "id": "aspect_ratio",
+          "required": true,
+          "type": "core.string"
+        },
+        {
+          "default": 3.0,
+          "id": "guidance",
+          "required": true,
+          "type": "core.float"
+        },
+        {
+          "default": 50,
+          "id": "steps",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 1234,
+          "id": "seed",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": false,
+          "id": "prompt_upsampling",
+          "required": true,
+          "type": "core.boolean"
+        },
+        {
+          "default": null,
+          "id": "input_image",
+          "required": false,
+          "type": "comfy.IMAGE"
+        }
+      ]
+    },
+    "FluxProExpandNode": {
+      "combos": [],
+      "inputs": [
+        {
+          "default": null,
+          "id": "image",
+          "required": true,
+          "type": "comfy.IMAGE"
+        },
+        {
+          "default": "",
+          "id": "prompt",
+          "required": true,
+          "type": "core.string"
+        },
+        {
+          "default": false,
+          "id": "prompt_upsampling",
+          "required": true,
+          "type": "core.boolean"
+        },
+        {
+          "default": 0,
+          "id": "top",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 0,
+          "id": "bottom",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 0,
+          "id": "left",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 0,
+          "id": "right",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 60,
+          "id": "guidance",
+          "required": true,
+          "type": "core.float"
+        },
+        {
+          "default": 50,
+          "id": "steps",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 0,
+          "id": "seed",
+          "required": true,
+          "type": "core.int"
+        }
+      ]
+    },
+    "FluxProFillNode": {
+      "combos": [],
+      "inputs": [
+        {
+          "default": null,
+          "id": "image",
+          "required": true,
+          "type": "comfy.IMAGE"
+        },
+        {
+          "default": null,
+          "id": "mask",
+          "required": true,
+          "type": "comfy.MASK"
+        },
+        {
+          "default": "",
+          "id": "prompt",
+          "required": true,
+          "type": "core.string"
+        },
+        {
+          "default": false,
+          "id": "prompt_upsampling",
+          "required": true,
+          "type": "core.boolean"
+        },
+        {
+          "default": 60,
+          "id": "guidance",
+          "required": true,
+          "type": "core.float"
+        },
+        {
+          "default": 50,
+          "id": "steps",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": 0,
+          "id": "seed",
+          "required": true,
+          "type": "core.int"
+        }
+      ]
+    },
+    "FluxProUltraImageNode": {
+      "combos": [],
+      "inputs": [
+        {
+          "default": "",
+          "id": "prompt",
+          "required": true,
+          "type": "core.string"
+        },
+        {
+          "default": false,
+          "id": "prompt_upsampling",
+          "required": true,
+          "type": "core.boolean"
+        },
+        {
+          "default": 0,
+          "id": "seed",
+          "required": true,
+          "type": "core.int"
+        },
+        {
+          "default": "16:9",
+          "id": "aspect_ratio",
+          "required": true,
+          "type": "core.string"
+        },
+        {
+          "default": false,
+          "id": "raw",
+          "required": true,
+          "type": "core.boolean"
+        },
+        {
+          "default": null,
+          "id": "image_prompt",
+          "required": false,
+          "type": "comfy.IMAGE"
+        },
+        {
+          "default": 0.1,
+          "id": "image_prompt_strength",
+          "required": false,
+          "type": "core.float"
+        }
+      ]
+    },
+    "FluxVTONode": {
+      "combos": [],
+      "inputs": [
+        {
+          "default": null,
+          "id": "person",
+          "required": true,
+          "type": "comfy.IMAGE"
+        },
+        {
+          "default": null,
+          "id": "garment",
+          "required": true,
+          "type": "comfy.IMAGE"
+        },
+        {
+          "default": "",
+          "id": "prompt",
+          "required": true,
+          "type": "core.string"
+        },
+        {
+          "default": 0,
+          "id": "seed",
+          "required": true,
+          "type": "core.int"
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "commit": "e651b7bef55a5376343dcb1c0edb79f0142c985e",
+    "repository": "Comfy-Org/ComfyUI",
+    "source": "comfy_api_nodes/nodes_bfl.py"
+  }
+}

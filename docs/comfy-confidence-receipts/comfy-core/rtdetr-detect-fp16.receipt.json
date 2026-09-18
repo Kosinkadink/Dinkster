@@ -1,0 +1,64 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 879,
+      "path": "artifacts/comfy-core/rtdetr-detect-fp16.native.json",
+      "sha256": "sha256:3214314cc03421d676118f64e70f3e5473a28d8342fc088e915714105ae66173"
+    },
+    "reference": {
+      "bytes": 879,
+      "path": "artifacts/comfy-core/rtdetr-detect-fp16.reference.json",
+      "sha256": "sha256:3214314cc03421d676118f64e70f3e5473a28d8342fc088e915714105ae66173"
+    }
+  },
+  "caseId": "comfy-core/rtdetr-detect-fp16/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_group:comfy-core/rtdetr-detect-fp16",
+    "source": {
+      "name": "rtdetr-detect-fp16",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "c67885b1"
+    },
+    "target": {
+      "id": "dinkster.detection.detect",
+      "kind": "group"
+    },
+    "tier": "grouped"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "cases": [
+      {
+        "id": "all-classes",
+        "sourceInputs": {
+          "class_name": "all",
+          "image": "fixture:image-batch",
+          "max_detections": 5,
+          "threshold": 0.25
+        }
+      },
+      {
+        "id": "one-class",
+        "sourceInputs": {
+          "class_name": "person",
+          "image": "fixture:image-batch",
+          "max_detections": 3,
+          "threshold": 0.4
+        }
+      }
+    ],
+    "mappingDigest": "sha256:a0766bb026b9f6cbb8ddfc91803b817a0a1b2d47a505f9127906eee058ff7892",
+    "scope": "group input, output, provider, and parameter translation",
+    "sourceCommit": "c67885b14556cf3e4e061862925282d403d09862"
+  },
+  "pass": true
+}

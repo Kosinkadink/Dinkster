@@ -1,0 +1,16 @@
+{
+  "results": [
+    {
+      "case": "mlsd",
+      "outputDtype": "float32",
+      "outputFloat32Sha256": "948a4bb50c8bd43ab23a4cf5c986d48bbe6fffcdf5040cbff69bdf654d828baf",
+      "outputShape": [
+        1,
+        512,
+        615,
+        3
+      ],
+      "repeatMaxAbsDiff": 0.0
+    }
+  ]
+}

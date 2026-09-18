@@ -1,0 +1,77 @@
+{
+  "reference": "947c2749dd04c51ef0e21b069544d8b0b4f9b411",
+  "cases": [
+    {
+      "family": "flux2",
+      "shift": null,
+      "sigmas": [
+        1.0,
+        0.9378067255020142,
+        0.7903692126274109,
+        0.0
+      ],
+      "noise_hash": "648035ec8abd4a891cb35169c4c2d3a558791149188016481ce0bedd060b6de7",
+      "output_hash": "965aa071ae6af1fffc1e02e66428824e7932811c9486034406318d5f330523e4"
+    },
+    {
+      "family": "flux2",
+      "shift": 0.4,
+      "sigmas": [
+        1.0,
+        0.7490020394325256,
+        0.42730700969696045,
+        0.0
+      ],
+      "noise_hash": "648035ec8abd4a891cb35169c4c2d3a558791149188016481ce0bedd060b6de7",
+      "output_hash": "f3f61f67097bcf2b15592b3914252579f047281a87790a2e393608b0cf90e1cd"
+    },
+    {
+      "family": "flux2",
+      "shift": 2.0,
+      "sigmas": [
+        1.0,
+        0.9366300106048584,
+        0.7870363593101501,
+        0.0
+      ],
+      "noise_hash": "648035ec8abd4a891cb35169c4c2d3a558791149188016481ce0bedd060b6de7",
+      "output_hash": "1241aa607718349b54518938a16a5e03bf517a69390b8a0480ab2c7748f50047"
+    },
+    {
+      "family": "lumina2",
+      "shift": null,
+      "sigmas": [
+        1.0,
+        0.9231833219528198,
+        0.7505617737770081,
+        0.0
+      ],
+      "noise_hash": "aa7d32a6f35d724d9dd5044a7f572e1bdefd9b35422eaffc01b8ba76a4b3d985",
+      "output_hash": "a2ce54e2d2bca9c704e727d12301dfb58a044c2d3ca9e481a96c00f39113f770"
+    },
+    {
+      "family": "lumina2",
+      "shift": 0.4,
+      "sigmas": [
+        1.0000001192092896,
+        0.4448149800300598,
+        0.1670835316181183,
+        0.0
+      ],
+      "noise_hash": "aa7d32a6f35d724d9dd5044a7f572e1bdefd9b35422eaffc01b8ba76a4b3d985",
+      "output_hash": "836d15dd99368a18b9caf33ab0f598a4b8d0a67836fa85e35d6aae6f2e1dba26"
+    },
+    {
+      "family": "lumina2",
+      "shift": 2.0,
+      "sigmas": [
+        1.0,
+        0.8002399206161499,
+        0.5007495880126953,
+        0.0
+      ],
+      "noise_hash": "aa7d32a6f35d724d9dd5044a7f572e1bdefd9b35422eaffc01b8ba76a4b3d985",
+      "output_hash": "6cfbc4b6a2d3a0359213a9e6fe4673c97a0cc3d1da7048ed297734a5ef8466cf"
+    }
+  ]
+}

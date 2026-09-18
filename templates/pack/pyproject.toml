@@ -1,0 +1,35 @@
+# Dev tooling ONLY. A pack's real metadata lives in dinkster-pack.toml:
+# the host reads `name`/`entry` there and installs `requires` into the
+# pack's worker environment - your pyproject never drives pack loading.
+#
+# Dinkster itself is the HOST, not a dependency you vendor: while it is
+# unpublished, develop against a checkout (see README.md and the CI
+# workflow, which run this pack's gates through `uv run --project
+# <dinkster-checkout>`). When Dinkster publishes to an index, add it to the
+# dev group here and the indirection disappears.
+
+[project]
+name = "my-pack"
+version = "0.1.0"
+description = "A Dinkster node pack (template)"
+requires-python = ">=3.12"
+dependencies = []  # runtime deps go in dinkster-pack.toml `requires`, pinned
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.8", "pyright>=1.1.390"]
+
+# Match Dinkster's own lint/type settings so a pack developed inside a Dinkster
+# checkout and one developed standalone see the same rules.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"

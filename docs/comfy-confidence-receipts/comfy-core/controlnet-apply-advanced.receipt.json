@@ -1,0 +1,43 @@
+{
+  "artifacts": {
+    "native": {
+      "bytes": 1896,
+      "path": "artifacts/comfy-core/controlnet-apply-advanced.native.json",
+      "sha256": "sha256:45f528937f5774e4acd6b1bbe0bc571e4b6bcbf6d1ebe1cd1c18e0423e2201b8"
+    },
+    "reference": {
+      "bytes": 1896,
+      "path": "artifacts/comfy-core/controlnet-apply-advanced.reference.json",
+      "sha256": "sha256:45f528937f5774e4acd6b1bbe0bc571e4b6bcbf6d1ebe1cd1c18e0423e2201b8"
+    }
+  },
+  "caseId": "comfy-core/controlnet-apply-advanced/source-parity",
+  "comparison": {
+    "comparator": "exact-value/1",
+    "dataKind": "value"
+  },
+  "format": "dinkster-comfy-confidence-receipt/1",
+  "mapping": {
+    "mappingKind": "op",
+    "registryId": "comfy_alias:comfy-core/ControlNetApplyAdvanced",
+    "source": {
+      "name": "ControlNetApplyAdvanced",
+      "pack": "comfy-core",
+      "referenceKind": "comfyui-pinned",
+      "revision": "b78cec87"
+    },
+    "target": {
+      "id": "dinkster.apply_controlnet_advanced",
+      "kind": "node"
+    },
+    "tier": "exact"
+  },
+  "observed": {
+    "equal": true
+  },
+  "parameters": {
+    "mappingDigest": "sha256:cbf30387866083a6c8276e8f6d5709c0989eb9ccfbe97b03ca8da28ddf529eb2",
+    "scope": "positive and negative wrapper application, immutable two-control chaining, strength-zero identity, hint layout, strengths, and start/end windows"
+  },
+  "pass": true
+}

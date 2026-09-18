@@ -1,0 +1,28 @@
+{
+  "results": [
+    {
+      "case": "hed-safe",
+      "outputDtype": "float32",
+      "outputFloat32Sha256": "07187dd2407c39d1ce9cc52f0b6b25e502ad47e21268688c9d6f0104975cee2a",
+      "outputShape": [
+        1,
+        512,
+        615,
+        3
+      ],
+      "repeatMaxAbsDiff": 0.0
+    },
+    {
+      "case": "hed-soft",
+      "outputDtype": "float32",
+      "outputFloat32Sha256": "dea07197568a4df7ae247aa97097e9dbc6a9408c12a436b679732b18417df0f2",
+      "outputShape": [
+        1,
+        512,
+        615,
+        3
+      ],
+      "repeatMaxAbsDiff": 0.0
+    }
+  ]
+}

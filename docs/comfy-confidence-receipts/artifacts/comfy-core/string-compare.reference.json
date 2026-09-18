@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {
+      "id": "equal-insensitive",
+      "output": true
+    },
+    {
+      "id": "starts",
+      "output": true
+    },
+    {
+      "id": "ends-false",
+      "output": false
+    }
+  ]
+}

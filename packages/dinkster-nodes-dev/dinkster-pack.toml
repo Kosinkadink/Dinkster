@@ -1,0 +1,33 @@
+# Pack manifest (DESIGN 3.6): what this pack is, declared as data.
+#
+# Dev scaffolding, deliberately separate from the first-party default packs:
+# exist for demos, engine tests, and the write-path E2E, and must never
+# appear on a user's node surface. dinkster-serve composes them in-process
+# only under --dev; the default packs stay user-facing.
+
+[pack]
+name = "dinkster-nodes-dev"
+namespaces = ["dev"]
+requires = ["numpy>=1.26"]
+
+[pack.sandbox]
+writable-mounts = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_nodes_dev:PACK_NODES"
+types = "dinkster_nodes_dev:register_dev_types"
+choices = "dinkster_nodes_dev:combo_choices"
+
+# The widget/socket gallery's starter document. When dinkster-serve composes
+# this pack in-process (--dev) the same file ships through the core packs
+# table; this declaration keeps the manifest path equivalent.
+[[pack.templates]]
+id = "dev-gallery"
+name = "Widget & Socket Gallery"
+description = "Every native wire construct on one canvas: widgets, socket variants, lists, match templates - connected and unconnected."
+tags = ["dev", "gallery"]
+file = "src/dinkster_nodes_dev/gallery_template.json"

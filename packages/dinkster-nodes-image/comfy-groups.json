@@ -1,0 +1,1539 @@
+{
+  "format": "dinkster-comfy-group/1",
+  "sourceSchemas": [
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy.UNETLoader",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "unet_name",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": true,
+          "default": "rt_detr_v4-x-hgnet_fp32.safetensors",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "rt_detr_v4-x-hgnet_fp16.safetensors",
+              "rt_detr_v4-x-hgnet_fp32.safetensors"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "weight_dtype",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": true,
+          "default": "default",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "default",
+              "fp8_e4m3fn",
+              "fp8_e4m3fn_fast",
+              "fp8_e5m2"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "model",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MODEL"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "UNETLoader"
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy.RTDETR_detect",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "model",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MODEL"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "threshold",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": true,
+          "default": 0.5,
+          "widget": {
+            "type": "NUMBER",
+            "step": 0.01
+          }
+        },
+        {
+          "role": "input",
+          "id": "class_name",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": true,
+          "default": "all",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "all",
+              "person",
+              "bicycle",
+              "car",
+              "motorcycle",
+              "airplane",
+              "bus",
+              "train",
+              "truck",
+              "boat",
+              "traffic light",
+              "fire hydrant",
+              "stop sign",
+              "parking meter",
+              "bench",
+              "bird",
+              "cat",
+              "dog",
+              "horse",
+              "sheep",
+              "cow",
+              "elephant",
+              "bear",
+              "zebra",
+              "giraffe",
+              "backpack",
+              "umbrella",
+              "handbag",
+              "tie",
+              "suitcase",
+              "frisbee",
+              "skis",
+              "snowboard",
+              "sports ball",
+              "kite",
+              "baseball bat",
+              "baseball glove",
+              "skateboard",
+              "surfboard",
+              "tennis racket",
+              "bottle",
+              "wine glass",
+              "cup",
+              "fork",
+              "knife",
+              "spoon",
+              "bowl",
+              "banana",
+              "apple",
+              "sandwich",
+              "orange",
+              "broccoli",
+              "carrot",
+              "hot dog",
+              "pizza",
+              "donut",
+              "cake",
+              "chair",
+              "couch",
+              "potted plant",
+              "bed",
+              "dining table",
+              "toilet",
+              "tv",
+              "laptop",
+              "mouse",
+              "remote",
+              "keyboard",
+              "cell phone",
+              "microwave",
+              "oven",
+              "toaster",
+              "sink",
+              "refrigerator",
+              "book",
+              "clock",
+              "vase",
+              "scissors",
+              "teddy bear",
+              "hair drier",
+              "toothbrush"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "max_detections",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true,
+          "default": 100,
+          "widget": {
+            "type": "NUMBER",
+            "step": 1
+          }
+        },
+        {
+          "role": "output",
+          "id": "bboxes",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.BOUNDING_BOX"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "RTDETR_detect"
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy.CheckpointLoaderSimple",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "ckpt_name",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": true,
+          "default": "sam3.1_multiplex_fp16.safetensors",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "sam3.1_multiplex_fp16.safetensors"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "model",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MODEL"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "clip",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CLIP"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "vae",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.VAE"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "CheckpointLoaderSimple"
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy.CLIPTextEncode",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "clip",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CLIP"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "text",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": true,
+          "default": "",
+          "widget": {
+            "type": "STRING",
+            "multiline": true
+          }
+        },
+        {
+          "role": "output",
+          "id": "conditioning",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "CLIPTextEncode"
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy.SAM3_Detect",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "model",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MODEL"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "conditioning",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "input",
+          "id": "bboxes",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.BOUNDING_BOX"
+            ]
+          },
+          "required": false,
+          "default": {
+            "x": 0,
+            "y": 0,
+            "width": 512,
+            "height": 512
+          },
+          "forceInput": true
+        },
+        {
+          "role": "input",
+          "id": "positive_coords",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": false,
+          "widget": {
+            "type": "STRING",
+            "multiline": true
+          },
+          "forceInput": true
+        },
+        {
+          "role": "input",
+          "id": "negative_coords",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": false,
+          "widget": {
+            "type": "STRING",
+            "multiline": true
+          },
+          "forceInput": true
+        },
+        {
+          "role": "input",
+          "id": "threshold",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": true,
+          "default": 0.5,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        },
+        {
+          "role": "input",
+          "id": "refine_iterations",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true,
+          "default": 2,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0,
+            "max": 5
+          }
+        },
+        {
+          "role": "input",
+          "id": "individual_masks",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.boolean"
+            ]
+          },
+          "required": true,
+          "default": false,
+          "widget": {
+            "type": "BOOLEAN",
+            "labelOn": "true",
+            "labelOff": "false"
+          }
+        },
+        {
+          "role": "output",
+          "id": "masks",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MASK"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "bboxes",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.BOUNDING_BOX"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "SAM3_Detect"
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy.SAM3_VideoTrack",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "images",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "model",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MODEL"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "initial_mask",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MASK"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "input",
+          "id": "conditioning",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "input",
+          "id": "detection_threshold",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": true,
+          "default": 0.5,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        },
+        {
+          "role": "input",
+          "id": "max_objects",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true,
+          "default": 4,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0,
+            "max": 64
+          }
+        },
+        {
+          "role": "input",
+          "id": "detect_interval",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true,
+          "default": 1,
+          "widget": {
+            "type": "NUMBER",
+            "min": 1
+          }
+        },
+        {
+          "role": "output",
+          "id": "track_data",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.SAM3_TRACK_DATA"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "SAM3_VideoTrack"
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy.SAM3_TrackToMask",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "track_data",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.SAM3_TRACK_DATA"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "object_indices",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": true,
+          "default": "",
+          "widget": {
+            "type": "STRING",
+            "multiline": true
+          }
+        },
+        {
+          "role": "output",
+          "id": "masks",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MASK"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "SAM3_TrackToMask"
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy.LoadBackgroundRemovalModel",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "bg_removal_name",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": true,
+          "default": "birefnet.safetensors",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "birefnet.safetensors"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "bg_model",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.BACKGROUND_REMOVAL"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "LoadBackgroundRemovalModel"
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy.RemoveBackground",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "bg_removal_model",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.BACKGROUND_REMOVAL"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "output",
+          "id": "mask",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MASK"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "RemoveBackground"
+      ]
+    }
+  ],
+  "groupSchemas": [
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy-group.comfy-core.rtdetr-detect-fp16",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "threshold",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": true,
+          "default": 0.5,
+          "widget": {
+            "type": "NUMBER",
+            "step": 0.01
+          }
+        },
+        {
+          "role": "input",
+          "id": "class_name",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": true,
+          "default": "all",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "all",
+              "person",
+              "bicycle",
+              "car",
+              "motorcycle",
+              "airplane",
+              "bus",
+              "train",
+              "truck",
+              "boat",
+              "traffic light",
+              "fire hydrant",
+              "stop sign",
+              "parking meter",
+              "bench",
+              "bird",
+              "cat",
+              "dog",
+              "horse",
+              "sheep",
+              "cow",
+              "elephant",
+              "bear",
+              "zebra",
+              "giraffe",
+              "backpack",
+              "umbrella",
+              "handbag",
+              "tie",
+              "suitcase",
+              "frisbee",
+              "skis",
+              "snowboard",
+              "sports ball",
+              "kite",
+              "baseball bat",
+              "baseball glove",
+              "skateboard",
+              "surfboard",
+              "tennis racket",
+              "bottle",
+              "wine glass",
+              "cup",
+              "fork",
+              "knife",
+              "spoon",
+              "bowl",
+              "banana",
+              "apple",
+              "sandwich",
+              "orange",
+              "broccoli",
+              "carrot",
+              "hot dog",
+              "pizza",
+              "donut",
+              "cake",
+              "chair",
+              "couch",
+              "potted plant",
+              "bed",
+              "dining table",
+              "toilet",
+              "tv",
+              "laptop",
+              "mouse",
+              "remote",
+              "keyboard",
+              "cell phone",
+              "microwave",
+              "oven",
+              "toaster",
+              "sink",
+              "refrigerator",
+              "book",
+              "clock",
+              "vase",
+              "scissors",
+              "teddy bear",
+              "hair drier",
+              "toothbrush"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "max_detections",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": true,
+          "default": 100,
+          "widget": {
+            "type": "NUMBER",
+            "step": 1
+          }
+        },
+        {
+          "role": "output",
+          "id": "bboxes",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.BOUNDING_BOX"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy-group.comfy-core.sam3-text-detection",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "text",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": true,
+          "default": "",
+          "widget": {
+            "type": "STRING",
+            "multiline": true
+          }
+        },
+        {
+          "role": "input",
+          "id": "threshold",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": true,
+          "default": 0.5,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.01
+          }
+        },
+        {
+          "role": "output",
+          "id": "bboxes",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.BOUNDING_BOX"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy-group.comfy-core.sam3-video-track-initial-mask",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "images",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "initial_mask",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MASK"
+            ]
+          },
+          "required": false
+        },
+        {
+          "role": "output",
+          "id": "masks",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MASK"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "schemaVersion": 40,
+      "nodeType": "comfy-group.comfy-core.remove-background-birefnet",
+      "version": 1,
+      "displayName": "",
+      "category": "",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "output",
+          "id": "mask",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MASK"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "records": [
+    {
+      "id": "comfy_group:comfy-core/rtdetr-detect-fp16",
+      "mappingKind": "op",
+      "carrier": "dinkster.detection.detect",
+      "source": {
+        "pack": "comfy-core",
+        "name": "rtdetr-detect-fp16",
+        "revision": "c67885b1"
+      },
+      "pattern": {
+        "groupType": "comfy-group.comfy-core.rtdetr-detect-fp16",
+        "anchor": "detect",
+        "nodes": {
+          "loader": {
+            "source": {
+              "pack": "comfy-core",
+              "nodeClass": "UNETLoader",
+              "nodeType": "comfy.UNETLoader",
+              "revision": "c67885b1"
+            },
+            "mode": "active"
+          },
+          "detect": {
+            "source": {
+              "pack": "comfy-core",
+              "nodeClass": "RTDETR_detect",
+              "nodeType": "comfy.RTDETR_detect",
+              "revision": "c67885b1"
+            },
+            "mode": "active"
+          }
+        },
+        "edges": [
+          {
+            "from": "loader:model",
+            "to": "detect:model"
+          }
+        ],
+        "boundary": {
+          "inputs": {
+            "image": "detect:image"
+          },
+          "outputs": {
+            "bboxes": "detect:bboxes"
+          }
+        },
+        "parameters": {
+          "threshold": "detect:threshold",
+          "class_name": "detect:class_name",
+          "max_detections": "detect:max_detections"
+        },
+        "constants": {
+          "loader:unet_name": "rt_detr_v4-x-hgnet_fp16.safetensors",
+          "loader:weight_dtype": "default"
+        },
+        "disconnected": []
+      },
+      "replacement": {
+        "from": "comfy-group.comfy-core.rtdetr-detect-fp16",
+        "note": "The native RT-DETR provider preserves the source model, COCO label filtering, score threshold, descending score order, and per-frame result limits.",
+        "cases": [
+          {
+            "to": "dinkster.detection.detect",
+            "when": {
+              "kind": "valueEquals",
+              "input": "class_name",
+              "value": "all"
+            },
+            "inputs": {
+              "image": {
+                "kind": "copy",
+                "input": "image"
+              },
+              "prompt": {
+                "kind": "constant",
+                "value": ""
+              },
+              "min_score": {
+                "kind": "copy",
+                "input": "threshold"
+              },
+              "max_results": {
+                "kind": "copy",
+                "input": "max_detections"
+              },
+              "result_limit_mode": {
+                "kind": "constant",
+                "value": "slice-stop"
+              },
+              "provider": {
+                "kind": "constant",
+                "value": "dinkster-vision-rtdetr"
+              }
+            },
+            "outputs": {
+              "detections": "bboxes"
+            }
+          },
+          {
+            "to": "dinkster.detection.detect",
+            "inputs": {
+              "image": {
+                "kind": "copy",
+                "input": "image"
+              },
+              "prompt": {
+                "kind": "copy",
+                "input": "class_name"
+              },
+              "min_score": {
+                "kind": "copy",
+                "input": "threshold"
+              },
+              "max_results": {
+                "kind": "copy",
+                "input": "max_detections"
+              },
+              "result_limit_mode": {
+                "kind": "constant",
+                "value": "slice-stop"
+              },
+              "provider": {
+                "kind": "constant",
+                "value": "dinkster-vision-rtdetr"
+              }
+            },
+            "outputs": {
+              "detections": "bboxes"
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "grouped",
+        "evidence": [
+          "tests/test_image_comfy_groups.py::test_rtdetr_groups_preserve_detection_parameters"
+        ]
+      }
+    },
+    {
+      "id": "comfy_group:comfy-core/sam3-text-detection",
+      "mappingKind": "op",
+      "carrier": "dinkster.detection.detect",
+      "source": {
+        "pack": "comfy-core",
+        "name": "sam3-text-detection",
+        "revision": "c67885b1"
+      },
+      "pattern": {
+        "groupType": "comfy-group.comfy-core.sam3-text-detection",
+        "anchor": "detect",
+        "nodes": {
+          "loader": {
+            "source": {
+              "pack": "comfy-core",
+              "nodeClass": "CheckpointLoaderSimple",
+              "nodeType": "comfy.CheckpointLoaderSimple",
+              "revision": "c67885b1"
+            },
+            "mode": "active"
+          },
+          "encode": {
+            "source": {
+              "pack": "comfy-core",
+              "nodeClass": "CLIPTextEncode",
+              "nodeType": "comfy.CLIPTextEncode",
+              "revision": "c67885b1"
+            },
+            "mode": "active"
+          },
+          "detect": {
+            "source": {
+              "pack": "comfy-core",
+              "nodeClass": "SAM3_Detect",
+              "nodeType": "comfy.SAM3_Detect",
+              "revision": "c67885b1"
+            },
+            "mode": "active"
+          }
+        },
+        "edges": [
+          {
+            "from": "loader:model",
+            "to": "detect:model"
+          },
+          {
+            "from": "loader:clip",
+            "to": "encode:clip"
+          },
+          {
+            "from": "encode:conditioning",
+            "to": "detect:conditioning"
+          }
+        ],
+        "boundary": {
+          "inputs": {
+            "image": "detect:image"
+          },
+          "outputs": {
+            "bboxes": "detect:bboxes"
+          }
+        },
+        "parameters": {
+          "text": "encode:text",
+          "threshold": "detect:threshold"
+        },
+        "constants": {
+          "loader:ckpt_name": "sam3.1_multiplex_fp16.safetensors",
+          "detect:refine_iterations": 2,
+          "detect:individual_masks": false
+        },
+        "disconnected": [
+          "detect:bboxes",
+          "detect:positive_coords",
+          "detect:negative_coords"
+        ]
+      },
+      "replacement": {
+        "from": "comfy-group.comfy-core.sam3-text-detection",
+        "note": "Text-only SAM 3 detection preserves the pinned model, threshold, frame-major box order, and one result per text prompt.",
+        "cases": [
+          {
+            "to": "dinkster.detection.detect",
+            "inputs": {
+              "image": {
+                "kind": "copy",
+                "input": "image"
+              },
+              "prompt": {
+                "kind": "copy",
+                "input": "text"
+              },
+              "prompt_mode": {
+                "kind": "constant",
+                "value": "literal"
+              },
+              "min_score": {
+                "kind": "copy",
+                "input": "threshold"
+              },
+              "max_results": {
+                "kind": "constant",
+                "value": 1
+              },
+              "provider": {
+                "kind": "constant",
+                "value": "dinkster-vision-sam31"
+              }
+            },
+            "outputs": {
+              "detections": "bboxes"
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "grouped",
+        "evidence": [
+          "tests/test_image_comfy_groups.py::test_sam3_text_detection_preserves_supported_inputs"
+        ]
+      }
+    },
+    {
+      "id": "comfy_group:comfy-core/sam3-video-track-initial-mask",
+      "mappingKind": "op",
+      "carrier": "dinkster.detection.track",
+      "source": {
+        "pack": "comfy-core",
+        "name": "sam3-video-track-initial-mask",
+        "revision": "c67885b1"
+      },
+      "pattern": {
+        "groupType": "comfy-group.comfy-core.sam3-video-track-initial-mask",
+        "anchor": "track",
+        "nodes": {
+          "loader": {
+            "source": {
+              "pack": "comfy-core",
+              "nodeClass": "CheckpointLoaderSimple",
+              "nodeType": "comfy.CheckpointLoaderSimple",
+              "revision": "c67885b1"
+            },
+            "mode": "active"
+          },
+          "track": {
+            "source": {
+              "pack": "comfy-core",
+              "nodeClass": "SAM3_VideoTrack",
+              "nodeType": "comfy.SAM3_VideoTrack",
+              "revision": "c67885b1"
+            },
+            "mode": "active"
+          },
+          "to_mask": {
+            "source": {
+              "pack": "comfy-core",
+              "nodeClass": "SAM3_TrackToMask",
+              "nodeType": "comfy.SAM3_TrackToMask",
+              "revision": "c67885b1"
+            },
+            "mode": "active"
+          }
+        },
+        "edges": [
+          {
+            "from": "loader:model",
+            "to": "track:model"
+          },
+          {
+            "from": "track:track_data",
+            "to": "to_mask:track_data"
+          }
+        ],
+        "boundary": {
+          "inputs": {
+            "images": "track:images",
+            "initial_mask": "track:initial_mask"
+          },
+          "outputs": {
+            "masks": "to_mask:masks"
+          }
+        },
+        "parameters": {},
+        "constants": {
+          "loader:ckpt_name": "sam3.1_multiplex_fp16.safetensors",
+          "track:detection_threshold": 0.5,
+          "track:max_objects": 4,
+          "track:detect_interval": 1,
+          "to_mask:object_indices": ""
+        },
+        "disconnected": [
+          "track:conditioning"
+        ]
+      },
+      "replacement": {
+        "from": "comfy-group.comfy-core.sam3-video-track-initial-mask",
+        "note": "Initial-mask SAM 3 tracking preserves frame order, object masks, source dimensions, and the all-object mask union.",
+        "cases": [
+          {
+            "to": "dinkster.detection.track",
+            "inputs": {
+              "image": {
+                "kind": "copy",
+                "input": "images"
+              },
+              "initial_masks": {
+                "kind": "copy",
+                "input": "initial_mask"
+              },
+              "provider": {
+                "kind": "constant",
+                "value": "dinkster-vision-sam31"
+              }
+            },
+            "outputs": {
+              "combined": "masks"
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "grouped",
+        "evidence": [
+          "tests/test_image_comfy_groups.py::test_sam3_video_tracking_preserves_initial_masks"
+        ]
+      }
+    },
+    {
+      "id": "comfy_group:comfy-core/remove-background-birefnet",
+      "mappingKind": "op",
+      "carrier": "dinkster.image.matte",
+      "source": {
+        "pack": "comfy-core",
+        "name": "remove-background-birefnet",
+        "revision": "c67885b1"
+      },
+      "pattern": {
+        "groupType": "comfy-group.comfy-core.remove-background-birefnet",
+        "anchor": "remove",
+        "nodes": {
+          "loader": {
+            "source": {
+              "pack": "comfy-core",
+              "nodeClass": "LoadBackgroundRemovalModel",
+              "nodeType": "comfy.LoadBackgroundRemovalModel",
+              "revision": "c67885b1"
+            },
+            "mode": "active"
+          },
+          "remove": {
+            "source": {
+              "pack": "comfy-core",
+              "nodeClass": "RemoveBackground",
+              "nodeType": "comfy.RemoveBackground",
+              "revision": "c67885b1"
+            },
+            "mode": "active"
+          }
+        },
+        "edges": [
+          {
+            "from": "loader:bg_model",
+            "to": "remove:bg_removal_model"
+          }
+        ],
+        "boundary": {
+          "inputs": {
+            "image": "remove:image"
+          },
+          "outputs": {
+            "mask": "remove:mask"
+          }
+        },
+        "parameters": {},
+        "constants": {
+          "loader:bg_removal_name": "birefnet.safetensors"
+        },
+        "disconnected": []
+      },
+      "replacement": {
+        "from": "comfy-group.comfy-core.remove-background-birefnet",
+        "cases": [
+          {
+            "to": "dinkster.image.matte",
+            "inputs": {
+              "image": {
+                "kind": "copy",
+                "input": "image"
+              },
+              "provider": {
+                "kind": "constant",
+                "value": "dinkster-vision-birefnet"
+              }
+            },
+            "outputs": {
+              "mask": "mask"
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "grouped",
+        "evidence": [
+          "tests/test_image_comfy_groups.py::test_background_group_selects_birefnet"
+        ]
+      }
+    }
+  ]
+}

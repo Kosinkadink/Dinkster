@@ -1,0 +1,20 @@
+# Pack manifest (DESIGN 3.6): what this pack is, declared as data.
+# Loading the manifest never imports pack code.
+
+[pack]
+name = "dinkster-nodes-media-io"
+# dinkster is reserved. This first-party pack receives explicit host trust but
+# otherwise follows the same composition path as every pack.
+namespaces = ["dinkster"]
+
+[pack.sandbox]
+writable-mounts = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "dinkster_nodes_media_io:MEDIA_IO_NODES"
+types = "dinkster_nodes_media_io:register_media_types"
+choices = "dinkster_nodes_media_io:capture_device_choices"

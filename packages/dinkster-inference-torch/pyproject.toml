@@ -1,0 +1,99 @@
+[project]
+name = "dinkster-inference-torch"
+version = "0.0.1"
+description = "Dinkster torch execution layer: adapters, patches, ops, residency, codecs, model forwards, fp8 linear, assembly, and denoising"
+requires-python = ">=3.12"
+dependencies = [
+    "blake3>=0.4",
+    "dinkster-assets",
+    "dinkster-inference",
+    "dinkster-memory",
+    "pyyaml>=6.0.1",
+]
+
+# torch is a REAL runtime requirement, declared as an extra on purpose:
+# the workspace .venv is deliberately torch-free (AGENTS.md), so a hard
+# dependency here would drag torch into every `uv sync`. Install the
+# extra (or use .venv-torch, see README) wherever this package actually
+# executes.
+# Feature floor would be 2.4 (torch.nn.RMSNorm for the operations.py
+# rms_norm seam; torch.compiler.is_compiling landed 2.3), but the
+# declared floor tracks upstream ComfyUI's minimum, since compat
+# workers execute upstream code: ComfyUI dropped torch 2.4 in #14772
+# (2026-07-07, partly security-motivated - torch.load weights_only
+# hardening lives in newer torch).
+# Do not lower this below upstream's published minimum.
+# The floor is a COMPATIBILITY promise for consumers; our own
+# testing/validation environments run torch >= 2.10 (user directive,
+# 2026-07-26) - see README "GPU validation" and the repo AGENTS.md.
+[project.optional-dependencies]
+torch = [
+    "torch>=2.5",
+    "torchvision>=0.20",
+    # packaging and numpy compensate for undeclared runtime requirements
+    # of the runtime dependencies: comfy-kitchen 0.2.32 imports packaging,
+    # and dinkster-aimdo's torch bridge needs numpy (torch.as_tensor over a
+    # __cuda_array_interface__ holder fails without it).
+    "packaging",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pillow>=10",
+    "tqdm>=4.66",
+    "comfy-kitchen==0.2.32",
+    # This release retains the comfy_aimdo compatibility package used at runtime.
+    # scripts/setup_envs.sh installs the same release from its pinned wheel.
+    "dinkster-aimdo==0.5.5.post1",
+    "sentencepiece==0.2.1",
+    "tokenizers==0.23.1",
+    "dinkster-kernels",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_inference_torch"]
+
+[tool.uv.sources]
+dinkster-assets = { workspace = true }
+dinkster-inference = { workspace = true }
+dinkster-kernels = { workspace = true }
+dinkster-memory = { workspace = true }
+
+# Typing gate: the root pyright excludes this package (its venv is
+# torch-free); check it with `.venv/bin/pyright -p packages/dinkster-inference-torch`,
+# which resolves imports against .venv-torch (see README).
+[tool.pyright]
+pythonVersion = "3.12"
+venvPath = "../.."
+venv = ".venv-torch"
+include = [
+    "src",
+    "tests",
+    "../dinkster-model-wan/src/dinkster_model_wan/provider.py",
+    "../dinkster-model-qwen-image/src/dinkster_model_qwen_image/provider.py",
+    "../dinkster-model-qwen-image/tests",
+    "../dinkster-model-ipadapter/src/dinkster_model_ipadapter/provider.py",
+    "../dinkster-model-ipadapter/tests",
+    "../dinkster-model-triposplat/src/dinkster_model_triposplat/provider.py",
+    "../dinkster-model-triposplat/tests",
+]
+extraPaths = [
+    "src",
+    "../dinkster-inference/src",
+    "../dinkster-native/src",
+    "../dinkster-model-wan/src",
+    "../dinkster-model-qwen-image/src",
+    "../dinkster-model-ipadapter/src",
+    "../dinkster-model-triposplat/src",
+]
+# config-level strict (not the per-file strict list, which would
+# override the rule relaxations below)
+typeCheckingMode = "strict"
+# torch's stubs are partially untyped (operator overloads, .type());
+# the unknown-propagation rules would need inline ignores on nearly
+# every tensor expression. Everything else in strict stays on.
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false

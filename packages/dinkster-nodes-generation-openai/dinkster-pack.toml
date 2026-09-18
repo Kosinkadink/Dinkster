@@ -1,0 +1,34 @@
+[pack]
+name = "dinkster-nodes-generation-openai"
+namespaces = []
+executes = ["dinkster.text_generate", "dinkster.prompt_enhance"]
+
+[pack.sandbox]
+network = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+inference = "dinkster-inference/1"
+
+[pack.dependencies]
+dinkster-nodes-generation = ">=0.0.1,<1"
+
+[[pack.generation-providers]]
+choice = "dinkster.generation.providers"
+node = "dinkster.text_generate"
+label = "Configured OpenAI-compatible service"
+
+[[pack.generation-providers]]
+choice = "dinkster.generation.providers"
+node = "dinkster.prompt_enhance"
+label = "Configured OpenAI-compatible service"
+
+[pack.presentation]
+display_name = "OpenAI Generation"
+abbr = "LLM"
+mark = "LLM"
+color = "#10b981"
+
+[pack.entry]
+nodes = "dinkster_nodes_generation_openai:OPENAI_GENERATION_NODES"

@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "id": "false",
+      "lazy": [],
+      "output": "left"
+    },
+    {
+      "id": "true",
+      "lazy": [],
+      "output": 2
+    },
+    {
+      "id": "lazy-true",
+      "lazy": [
+        "on_true"
+      ],
+      "output": null
+    },
+    {
+      "id": "lazy-false",
+      "lazy": [
+        "on_false"
+      ],
+      "output": null
+    }
+  ]
+}

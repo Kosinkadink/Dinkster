@@ -1,0 +1,10 @@
+*.gz -text
+*.json text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+**/CLIP_LICENSE text eol=lf
+**/SAM_LICENSE text eol=lf
+**/py.typed text eol=lf
+tests/fixtures/otio/*.otio -text whitespace=-blank-at-eol
+tests/fixtures/otio/NOTICE.txt -text whitespace=-blank-at-eol

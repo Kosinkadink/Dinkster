@@ -1,0 +1,47 @@
+[pack]
+name = "dinkster-vision-depth-anything-v2"
+namespaces = []
+executes = ["dinkster.preprocess.model_depth"]
+requires = [
+    "numpy==2.5.1",
+    "opencv-python-headless==5.0.0.93",
+    "safetensors==0.8.0",
+    "torch==2.13.0",
+    "transformers==5.16.1",
+]
+
+[pack.sandbox]
+gpu = false
+network = false
+writable-mounts = false
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.dependencies]
+dinkster-nodes-image = ">=0.0.1,<1"
+
+[[pack.vision-providers]]
+choice = "dinkster.preprocess.model_depth.providers"
+node = "dinkster.preprocess.model_depth"
+model = "depth-anything-v2-large"
+devices = ["cpu"]
+dtypes = ["float32"]
+batching = "per-image"
+artifacts = ["depth-anything-v2-large"]
+
+[[pack.assets]]
+id = "depth-anything-v2-large"
+name = "Depth Anything V2 Large relative-depth model (CC-BY-NC-4.0)"
+digest = "blake3:e577785fc18ba89b5ae681d69574f975e6f61b329aa14b4a58d68f12dda00c29"
+kind = "model/preprocessor"
+size = 1341322868
+media_type = "application/octet-stream"
+urls = [
+    "https://huggingface.co/depth-anything/Depth-Anything-V2-Large-hf/resolve/7581137eff8d4e94f6e796d3baea0e9fa79b22d2/model.safetensors",
+]
+
+[pack.entry]
+nodes = "dinkster_vision_depth_anything_v2:DEPTH_ANYTHING_V2_PROVIDER_NODES"
+types = "dinkster_vision_depth_anything_v2:register_types"

@@ -1,0 +1,663 @@
+"""Executable image-to-splat sampling runtime for the TripoSplat DiT.
+
+The runtime samples the latent and camera streams jointly (the model
+forward consumes and denoises both); the octree gaussian decoder and
+the Flux2 VAE conditioning encoder stay upstream of sampling.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
+from types import MappingProxyType
+from typing import cast
+
+import torch
+from dinkster_inference import (
+    TRIPOSPLAT,
+    TRIPOSPLAT_CONFIG,
+    TRIPOSPLAT_SIGMAS,
+    ConditioningCarrier,
+    ConditioningChannel,
+    ConditioningRecord,
+    ConditioningSet,
+    ContextWindowsSpec,
+    CustomSamplingRequest,
+    CustomSamplingResult,
+    DualSamplingGuidance,
+    ExecutionObserverAttachment,
+    GuidanceRole,
+    InpaintConditioning,
+    ModelFamily,
+    MultiStreamConditioningRuntime,
+    MultiStreamFamilyRuntime,
+    MultiStreamLatent,
+    NoiseKind,
+    Parameterization,
+    PayloadDescriptor,
+    PayloadReference,
+    PercentRange,
+    PerpNegSamplingGuidance,
+    PreparedMultiStreamConditioning,
+    Registry,
+    SamplerDescriptor,
+    SamplingCancelled,
+    SamplingGuidance,
+    SamplingStateCallback,
+    SamplingStateEvent,
+    SchedulerDescriptor,
+    SigmaSpace,
+    StepCallback,
+    StepEvent,
+    TripoSplatConfig,
+    calculate_denoised,
+    calculate_input,
+    encode_conditioning_carrier,
+    make_conditioning_carrier,
+    sampling_environment_cancellation,
+    sampling_execution_context,
+)
+
+from .denoise import run_sampler_engine, to_batch
+from .guidance import ConditioningEvaluation
+from .latent_streams import pack_latent_mask, pack_latent_streams, unpack_latent_streams
+from .operations import bound_compute_device
+from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
+from .sampling_execution import (
+    CustomSamplingCfgValue,
+    CustomSamplingCondValue,
+    CustomSamplingLatentValue,
+    brownian_step_noise,
+    build_custom_sampling_schedule,
+    compile_guidance_plan,
+    guided_denoiser,
+    resolve_custom_sampling_request,
+)
+from .sampling_runtime import MultiStreamSamplingRuntime
+from .schedules import (
+    torch_scheduler_registry,
+)
+from .solvers import torch_sampler_registry
+from .triposplat_model import TripoSplatModel
+
+
+class TripoSplatRuntimeError(ValueError):
+    """The requested operation is outside the loaded TripoSplat profile."""
+
+
+@dataclass(frozen=True)
+class TripoSplatConditioning:
+    """DINOv3 vision features plus the optional Flux2 reference latent."""
+
+    features: torch.Tensor
+    reference_latent: torch.Tensor | None = None
+
+
+_REFERENCE_LATENT_KEY = "dinkster-model-triposplat/reference-latent"
+_FEATURES_SPACE = "triposplat-vision-features"
+_REFERENCE_SPACE = "triposplat-reference-latent"
+
+
+def _check_cancelled(cancelled: Callable[[], bool]) -> None:
+    if cancelled():
+        raise SamplingCancelled("sampling cancelled")
+
+
+def _validate_features(value: object, *, config: TripoSplatConfig) -> torch.Tensor:
+    if (
+        type(value) is not torch.Tensor
+        or not value.is_floating_point()
+        or value.layout != torch.strided
+    ):
+        raise TypeError("TripoSplat features must be an exact strided floating torch.Tensor")
+    if (
+        value.ndim != 3
+        or value.shape[0] <= 0
+        or value.shape[1] <= 0
+        or value.shape[2] != config.cond_channels
+    ):
+        raise TripoSplatRuntimeError(
+            f"TripoSplat features must be nonempty [B,rows,{config.cond_channels}],"
+            f" got {tuple(value.shape)}"
+        )
+    return value
+
+
+def _validate_reference(
+    value: object,
+    features: torch.Tensor,
+    *,
+    config: TripoSplatConfig,
+) -> torch.Tensor:
+    if (
+        type(value) is not torch.Tensor
+        or not value.is_floating_point()
+        or value.layout != torch.strided
+    ):
+        raise TypeError(
+            "TripoSplat reference latent must be an exact strided floating torch.Tensor"
+        )
+    if (
+        value.ndim != 4
+        or value.shape[0] != features.shape[0]
+        or value.shape[1] != config.cond2_channels
+    ):
+        raise TripoSplatRuntimeError(
+            f"TripoSplat reference latent must be [B,{config.cond2_channels},height,width]"
+            f" over the features batch, got {tuple(value.shape)}"
+        )
+    if value.shape[2] * value.shape[3] > features.shape[1]:
+        raise TripoSplatRuntimeError(
+            "TripoSplat reference latent tokens must not exceed the features rows"
+            f" ({value.shape[2] * value.shape[3]} > {features.shape[1]})"
+        )
+    return value
+
+
+def triposplat_conditioning_to_carrier(value: TripoSplatConditioning) -> ConditioningCarrier:
+    """Encode exact TripoSplat conditioning without discarding the reference."""
+
+    if type(value) is not TripoSplatConditioning:
+        raise TypeError("value must be exact TripoSplatConditioning")
+    features = tensor_to_payload_binding("features", value.features, space=_FEATURES_SPACE)
+    bindings = [features]
+    channels = [
+        (
+            ConditioningChannel.TEXT,
+            PayloadDescriptor(
+                PayloadReference(features.reference_id),
+                features.shape,
+                features.dtype,
+                features.space,
+            ),
+        )
+    ]
+    metadata: list[tuple[str, PayloadReference | tuple[PayloadReference, ...]]] = []
+    if value.reference_latent is not None:
+        reference = tensor_to_payload_binding(
+            "reference-latent", value.reference_latent, space=_REFERENCE_SPACE
+        )
+        bindings.append(reference)
+        metadata.append((_REFERENCE_LATENT_KEY, PayloadReference(reference.reference_id)))
+    record = ConditioningRecord(
+        channels=tuple(channels),
+        extension_metadata=tuple(metadata),
+    )
+    return make_conditioning_carrier(ConditioningSet((record,)), tuple(bindings))
+
+
+def materialize_triposplat_conditioning(
+    carrier: ConditioningCarrier,
+    *,
+    device: torch.device | str,
+) -> TripoSplatConditioning:
+    """Materialize one canonical TripoSplat carrier on the requested device."""
+
+    if type(carrier) is not ConditioningCarrier:
+        raise TypeError("carrier must be exact ConditioningCarrier")
+    encode_conditioning_carrier(carrier)
+    records = carrier.conditioning.records
+    if len(records) != 1:
+        raise TripoSplatRuntimeError("TripoSplat conditioning requires one record")
+    record = records[0]
+    if (
+        record.area is not None
+        or record.mask is not None
+        or record.scale_vector is not None
+        or record.token_layout is not None
+        or type(record.schedule) is not PercentRange
+        or (record.schedule.start_percent, record.schedule.end_percent) != (0.0, 1.0)
+    ):
+        raise TripoSplatRuntimeError("TripoSplat conditioning requires one full unmodified record")
+    channels = dict(record.channels)
+    features = channels.pop(ConditioningChannel.TEXT, None)
+    if features is None or channels:
+        raise TripoSplatRuntimeError("TripoSplat conditioning requires exactly the TEXT channel")
+    metadata = dict(record.extension_metadata)
+    unknown = set(metadata) - {_REFERENCE_LATENT_KEY}
+    if unknown:
+        raise TripoSplatRuntimeError("TripoSplat conditioning contains unknown extension metadata")
+    bindings = {binding.reference_id: binding for binding in carrier.bindings}
+
+    def tensor(reference: PayloadReference, space: str) -> torch.Tensor:
+        binding = bindings.get(reference.id)
+        if binding is None or binding.space != space:
+            raise TripoSplatRuntimeError(f"TripoSplat conditioning requires {space!r} payloads")
+        return payload_binding_to_tensor(binding).to(device)
+
+    features_tensor = tensor(features.reference, _FEATURES_SPACE)
+    reference_value = metadata.get(_REFERENCE_LATENT_KEY)
+    if reference_value is not None and type(reference_value) is not PayloadReference:
+        raise TripoSplatRuntimeError("TripoSplat reference latent metadata must be one payload")
+    reference_tensor = (
+        None if reference_value is None else tensor(reference_value, _REFERENCE_SPACE)
+    )
+    return TripoSplatConditioning(features_tensor, reference_tensor)
+
+
+@dataclass(frozen=True, slots=True)
+class _TripoSplatModelConditioning:
+    features: torch.Tensor
+    reference_latent: torch.Tensor | None
+
+
+@dataclass(frozen=True)
+class _TripoSplatDiffusionAssembly:
+    diffusion: TripoSplatModel
+    compute: torch.dtype
+    family: ModelFamily = TRIPOSPLAT
+    _storage_dtype_follows_compute: bool = False
+
+    @property
+    def components(self) -> Mapping[str, torch.nn.Module]:
+        return MappingProxyType({"dit": self.diffusion})
+
+    def compute_dtype(self, component: str) -> torch.dtype | None:
+        return self.compute if component in ("dit", "diffusion") else None
+
+
+class TripoSplatDiffusionRuntime(MultiStreamSamplingRuntime):
+    """Joint FLOW sampling of the TripoSplat latent and camera streams."""
+
+    sampling_error = TripoSplatRuntimeError
+    supports_denoised_capture = True
+
+    def __init__(
+        self,
+        model: TripoSplatModel,
+        *,
+        runtime_identity: str,
+        compute_dtype: torch.dtype,
+        sampler_registry: Registry[SamplerDescriptor[torch.Tensor]] | None = None,
+        scheduler_registry: Registry[SchedulerDescriptor] | None = None,
+    ) -> None:
+        if not runtime_identity:
+            raise ValueError("TripoSplat runtime identity must be nonempty")
+        self._model = model
+        self.assembled = _TripoSplatDiffusionAssembly(model, compute_dtype)
+        # The family admits exactly one published architecture, so the
+        # runtime binds the canonical config rather than trusting the
+        # module attribute.
+        self._config: TripoSplatConfig = TRIPOSPLAT_CONFIG
+        self._runtime_identity = runtime_identity
+        self._compute_dtype = compute_dtype
+        self._samplers = torch_sampler_registry() if sampler_registry is None else sampler_registry
+        self._schedulers = (
+            torch_scheduler_registry() if scheduler_registry is None else scheduler_registry
+        )
+
+    @property
+    def model(self) -> TripoSplatModel:
+        return self._model
+
+    @property
+    def family(self) -> ModelFamily:
+        # The family admits exactly one published architecture, so the
+        # canonical catalog entry describes every runtime instance.
+        return TRIPOSPLAT
+
+    @property
+    def runtime_identity(self) -> str:
+        return self._runtime_identity
+
+    @property
+    def conditioning_identity(self) -> str:
+        """Stable compatibility identity for materialized TripoSplat conditioning."""
+        config = self._config
+        fields = (
+            config.family_id,
+            config.q_token_length,
+            config.latent_channels,
+            config.cond_channels,
+            config.cond2_channels,
+            config.cam_channels,
+            config.model_channels,
+            config.num_blocks,
+            config.num_refiner_blocks,
+        )
+        return "dinkster.triposplat.conditioning:v1:" + ":".join(str(field) for field in fields)
+
+    def prepare_conditioning(self, carrier: ConditioningCarrier) -> TripoSplatConditioning:
+        value = materialize_triposplat_conditioning(carrier, device="cpu")
+        _validate_features(value.features, config=self._config)
+        if value.reference_latent is not None:
+            _validate_reference(value.reference_latent, value.features, config=self._config)
+        return value
+
+    def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
+        return TRIPOSPLAT_SIGMAS
+
+    def sample_custom(
+        self,
+        latent: CustomSamplingLatentValue,
+        *,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue = None,
+        request: CustomSamplingRequest[torch.Tensor],
+        seed: int = 0,
+        guidance: float | None = None,
+        denoise_mask: CustomSamplingLatentValue | None = None,
+        inpaint: InpaintConditioning[torch.Tensor] | None = None,
+        context_windows: ContextWindowsSpec | None = None,
+        on_step: StepCallback | None = None,
+        on_state: SamplingStateCallback | None = None,
+        cancelled: Callable[[], bool] | None = None,
+        observer: ExecutionObserverAttachment | None = None,
+        parent_span_id: int | None = None,
+        capture_denoised: bool = True,
+    ) -> CustomSamplingResult[MultiStreamLatent[torch.Tensor]]:
+        del observer, parent_span_id
+        model = self._model
+        config = self._config
+        if type(latent) is not MultiStreamLatent:
+            raise TripoSplatRuntimeError(
+                "TripoSplat custom sampling requires a MultiStreamLatent latent"
+            )
+        if latent.roles != ("latent", "camera"):
+            raise TripoSplatRuntimeError(
+                "TripoSplat sampling requires exactly the ('latent', 'camera') streams,"
+                f" got {latent.roles}"
+            )
+        latent_tensor = latent.by_role("latent")
+        camera_tensor = latent.by_role("camera")
+        for name, tensor in (("latent", latent_tensor), ("camera", camera_tensor)):
+            if (
+                type(tensor) is not torch.Tensor
+                or not tensor.is_floating_point()
+                or tensor.layout != torch.strided
+            ):
+                raise TypeError(
+                    f"TripoSplat {name} stream must be an exact strided floating torch.Tensor"
+                )
+        if latent_tensor.ndim != 3:
+            raise TripoSplatRuntimeError(
+                "TripoSplat latent stream must have shape"
+                f" (batch, {config.q_token_length}, {config.latent_channels}),"
+                f" got {tuple(latent_tensor.shape)}"
+            )
+        expected_latent = (latent_tensor.shape[0], config.q_token_length, config.latent_channels)
+        if tuple(latent_tensor.shape) != expected_latent:
+            raise TripoSplatRuntimeError(
+                f"TripoSplat latent stream must have shape {expected_latent},"
+                f" got {tuple(latent_tensor.shape)}"
+            )
+        expected_camera = (latent_tensor.shape[0], 1, config.cam_channels)
+        if camera_tensor.ndim != 3 or tuple(camera_tensor.shape) != expected_camera:
+            raise TripoSplatRuntimeError(
+                f"TripoSplat camera stream must have shape {expected_camera},"
+                f" got {tuple(camera_tensor.shape)}"
+            )
+        if camera_tensor.dtype != latent_tensor.dtype:
+            raise TripoSplatRuntimeError("TripoSplat streams must share one dtype")
+        if camera_tensor.device != latent_tensor.device:
+            raise TripoSplatRuntimeError("TripoSplat streams must share one device")
+        if type(noise) is not MultiStreamLatent:
+            raise TripoSplatRuntimeError(
+                "TripoSplat custom sampling requires MultiStreamLatent noise"
+            )
+        if isinstance(cfg, DualSamplingGuidance):
+            raise TripoSplatRuntimeError("TripoSplat has no dual-guidance recipe")
+        if isinstance(cfg, PerpNegSamplingGuidance):
+            raise TripoSplatRuntimeError(
+                "TripoSplat custom sampling does not support PerpNegSamplingGuidance"
+                " (perp-neg guidance); pass SamplingGuidance"
+            )
+        if type(cond) is not PreparedMultiStreamConditioning:
+            raise TripoSplatRuntimeError(
+                "TripoSplat custom sampling requires prepared multi-stream conditioning"
+            )
+        if cond.runtime_identity != self.conditioning_identity:
+            raise TripoSplatRuntimeError(
+                "TripoSplat conditioning was prepared by a different conditioner component"
+            )
+        conditioning = cond.payload
+        if type(conditioning) is not TripoSplatConditioning:
+            raise TypeError("conditioning must be exact TripoSplatConditioning")
+        guidance_cfg: SamplingGuidance[object] | None = None
+        if cfg is not None:
+            uncond_value = cfg.uncond
+            if uncond_value is None:
+                guidance_cfg = cast("SamplingGuidance[object]", cfg)
+            else:
+                if type(uncond_value) is not PreparedMultiStreamConditioning:
+                    raise TripoSplatRuntimeError(
+                        "TripoSplat custom sampling guidance requires prepared"
+                        " multi-stream conditioning"
+                    )
+                if uncond_value.runtime_identity != cond.runtime_identity:
+                    raise TripoSplatRuntimeError(
+                        "TripoSplat conditional and unconditional lanes were prepared"
+                        " by different conditioner components"
+                    )
+                uncond_payload = uncond_value.payload
+                if type(uncond_payload) is not TripoSplatConditioning:
+                    raise TypeError(
+                        "TripoSplat guidance lanes require exact TripoSplatConditioning"
+                    )
+                guidance_cfg = replace(cast("SamplingGuidance[object]", cfg), uncond=uncond_payload)
+        self.check_custom_sampling(
+            request,
+            has_denoise_mask=denoise_mask is not None,
+            has_inpaint=inpaint is not None,
+            has_context_windows=context_windows is not None,
+            guidance=guidance,
+        )
+        sampler, request = resolve_custom_sampling_request(
+            self._samplers, request, error=TripoSplatRuntimeError
+        )
+        if cancelled is None:
+            cancelled = sampling_environment_cancellation()
+        _check_cancelled(cancelled)
+        schedule_plan = build_custom_sampling_schedule(
+            request.sigmas, TRIPOSPLAT_SIGMAS, sampler, flow=True
+        )
+        schedule = schedule_plan.sigmas
+        guidance_plan = compile_guidance_plan(conditioning, guidance_cfg, sampler, None)
+        weight = model.input_layer.weight
+        load_device = bound_compute_device(model.input_layer) or weight.device
+        selected_dtype = self._compute_dtype
+        moved = MultiStreamLatent.from_pairs(
+            (
+                ("latent", latent_tensor.to(load_device)),
+                ("camera", camera_tensor.to(load_device)),
+            )
+        )
+        packed, layout = pack_latent_streams(moved)
+
+        if denoise_mask is not None and not isinstance(
+            denoise_mask, (torch.Tensor, MultiStreamLatent)
+        ):
+            raise TypeError("multi-stream denoise masks must be dense or multi-stream tensors")
+        packed_mask = None if denoise_mask is None else pack_latent_mask(denoise_mask, moved)
+
+        def prepare_lane(value: object, _role: GuidanceRole) -> _TripoSplatModelConditioning:
+            _check_cancelled(cancelled)
+            if type(value) is not TripoSplatConditioning:
+                raise TypeError("TripoSplat guidance lanes require exact TripoSplatConditioning")
+            features = _validate_features(value.features, config=config).to(
+                device=load_device, dtype=selected_dtype
+            )
+            reference = value.reference_latent
+            if reference is not None:
+                reference = _validate_reference(reference, value.features, config=config).to(
+                    device=load_device, dtype=selected_dtype
+                )
+            return _TripoSplatModelConditioning(features, reference)
+
+        def evaluate(
+            x: torch.Tensor,
+            sigma: float,
+            context: _TripoSplatModelConditioning,
+        ) -> torch.Tensor:
+            return evaluate_batch(x, sigma, (context,))[0]
+
+        def batchable(contexts: tuple[_TripoSplatModelConditioning, ...]) -> bool:
+            if not contexts:
+                return False
+            first = contexts[0]
+            return all(
+                context.features.shape[1:] == first.features.shape[1:]
+                and (context.reference_latent is None) == (first.reference_latent is None)
+                and (
+                    context.reference_latent is None
+                    or first.reference_latent is None
+                    or context.reference_latent.shape[1:] == first.reference_latent.shape[1:]
+                )
+                for context in contexts[1:]
+            )
+
+        def evaluate_batch(
+            x: torch.Tensor,
+            sigma: float,
+            contexts: tuple[_TripoSplatModelConditioning, ...],
+        ) -> tuple[torch.Tensor, ...]:
+            _check_cancelled(cancelled)
+            if not batchable(contexts):
+                raise TripoSplatRuntimeError(
+                    "TripoSplat conditioning batch is empty or incompatible"
+                )
+            batch = x.shape[0]
+            first_reference = contexts[0].reference_latent
+            model_input = calculate_input(Parameterization.FLOW, sigma, x).to(selected_dtype)
+            if len(contexts) > 1:
+                model_input = torch.cat([model_input] * len(contexts), dim=0)
+            pieces = model_input.split(tuple(stream.elements for stream in layout.streams), dim=2)
+            latent_in, camera_in = (
+                piece.reshape(batch * len(contexts), *stream.shape[1:])
+                for piece, stream in zip(pieces, layout.streams, strict=True)
+            )
+            timesteps = torch.full(
+                (batch * len(contexts),),
+                TRIPOSPLAT_SIGMAS.timestep(sigma),
+                device=load_device,
+                dtype=torch.float32,
+            )
+            features = torch.cat([to_batch(context.features, batch) for context in contexts], dim=0)
+            reference = (
+                None
+                if first_reference is None
+                else torch.cat(
+                    [
+                        to_batch(cast("torch.Tensor", context.reference_latent), batch)
+                        for context in contexts
+                    ],
+                    dim=0,
+                )
+            )
+            latent_out, camera_out = model(
+                latent_in,
+                camera_in,
+                timesteps,
+                features,
+                reference_latent=reference,
+            )
+            velocity = pack_latent_streams(
+                MultiStreamLatent.from_pairs(
+                    (("latent", latent_out.float()), ("camera", camera_out.float()))
+                )
+            )[0]
+            flow_input = x if len(contexts) == 1 else torch.cat([x] * len(contexts), dim=0)
+            denoised = calculate_denoised(Parameterization.FLOW, sigma, velocity, flow_input)
+            return tuple(denoised.chunk(len(contexts)))
+
+        evaluation = ConditioningEvaluation(
+            prepare_lane,
+            evaluate,
+            batchable,
+            evaluate_batch,
+            evaluator_identity=lambda _role: "dinkster.triposplat.conditioning.v1",
+            standard_activation_memory_factor=self.family.memory_factor,
+        )
+
+        def report_step(event: StepEvent) -> None:
+            _check_cancelled(cancelled)
+            if on_step is not None:
+                on_step(event)
+
+        denoiser = guided_denoiser(
+            evaluation,
+            input=packed,
+            executor=None,
+            plan=guidance_plan,
+            execution=sampling_execution_context(schedule, seed, report_step, on_state),
+        )
+        if not schedule_plan.pre_offset:
+            return CustomSamplingResult(latent, None)
+
+        packed_noise, noise_layout = pack_latent_streams(noise)
+        if noise_layout != layout:
+            raise TripoSplatRuntimeError("TripoSplat noise streams lost the latent layout")
+        # Rounding a float32 draw to the sampling dtype here is
+        # bit-identical to drawing at the stream dtype (torch.randn
+        # always draws float32 first), so float32 noise from the
+        # composed KSampler path reproduces the reference draw exactly.
+        packed_noise = packed_noise.to(device=load_device, dtype=packed.dtype)
+        if sampler.noise in (NoiseKind.BROWNIAN, NoiseKind.BROWNIAN_GPU) and not any(
+            value > 0.0 for value in schedule_plan.pre_offset
+        ):
+            raise TripoSplatRuntimeError("TripoSplat brownian sampler needs positive sigmas")
+        step_noise = brownian_step_noise(
+            sampler, schedule_plan, packed, seed=seed, device=load_device
+        )
+        captured_denoised: list[MultiStreamLatent[torch.Tensor]] = []
+
+        def state_progress(event: SamplingStateEvent[object]) -> None:
+            _check_cancelled(cancelled)
+            if capture_denoised:
+                denoised = event.denoised
+                if type(denoised) is MultiStreamLatent:
+                    captured_denoised[:] = [cast("MultiStreamLatent[torch.Tensor]", denoised)]
+            if on_state is not None:
+                on_state(event)
+            _check_cancelled(cancelled)
+
+        output = run_sampler_engine(
+            denoiser,
+            request.build_solver(),
+            latent=packed,
+            noise=packed_noise,
+            sigmas=schedule,
+            initial_sigma=schedule_plan.initial_sigma,
+            parameterization=Parameterization.FLOW,
+            sigma_min=TRIPOSPLAT_SIGMAS.sigma_min,
+            sigma_max=TRIPOSPLAT_SIGMAS.sigma_max,
+            # The TripoSplat latent format is the identity (no scaling),
+            # so the sampler-side latent transform is the identity.
+            process_in=lambda value: value,
+            process_out=lambda value: value,
+            seed=seed,
+            noise_kind=sampler.noise,
+            noise_sampler=step_noise,
+            percent_to_sigma=TRIPOSPLAT_SIGMAS.percent_to_sigma,
+            device=load_device,
+            on_step=report_step,
+            on_state=state_progress if capture_denoised or on_state is not None else None,
+            unpack_state=lambda value: unpack_latent_streams(value, layout),
+            denoise_mask=packed_mask,
+        )
+        _check_cancelled(cancelled)
+        unpacked = unpack_latent_streams(output, layout)
+        output_latent = latent.replace("latent", unpacked.by_role("latent")).replace(
+            "camera", unpacked.by_role("camera")
+        )
+        denoised_output: MultiStreamLatent[torch.Tensor] | None = None
+        if captured_denoised:
+            last_denoised = captured_denoised[-1]
+            denoised_output = latent.replace("latent", last_denoised.by_role("latent")).replace(
+                "camera", last_denoised.by_role("camera")
+            )
+        return CustomSamplingResult(output_latent, denoised_output)
+
+
+_MultiStreamRuntimeCheck: type[MultiStreamFamilyRuntime[torch.Tensor]] = TripoSplatDiffusionRuntime
+_ConditioningRuntimeCheck: type[MultiStreamConditioningRuntime] = TripoSplatDiffusionRuntime
+
+
+__all__ = [
+    "TripoSplatConditioning",
+    "TripoSplatDiffusionRuntime",
+    "TripoSplatRuntimeError",
+    "materialize_triposplat_conditioning",
+    "triposplat_conditioning_to_carrier",
+]

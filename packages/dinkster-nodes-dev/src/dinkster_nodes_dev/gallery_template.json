@@ -1,0 +1,116 @@
+{
+  "format": "dinkster-workflow",
+  "formatVersion": 1,
+  "lineage": "dev-gallery",
+  "root": "g0",
+  "graphs": {
+    "g0": {
+      "id": "g0",
+      "name": "Widget & Socket Gallery",
+      "nodes": {
+        "source": {
+          "id": "source",
+          "type": "dev.gallery.source",
+          "values": { "size": 4 }
+        },
+        "sockets": {
+          "id": "sockets",
+          "type": "dev.gallery.sockets",
+          "values": {}
+        },
+        "lists": {
+          "id": "lists",
+          "type": "dev.gallery.lists",
+          "values": {}
+        },
+        "match_solved": {
+          "id": "match_solved",
+          "type": "dev.gallery.match",
+          "values": {}
+        },
+        "match_open": {
+          "id": "match_open",
+          "type": "dev.gallery.match",
+          "values": {}
+        },
+        "widgets": {
+          "id": "widgets",
+          "type": "dev.gallery.widgets",
+          "values": { "count": 25, "combo_static": "beta" }
+        },
+        "assets": {
+          "id": "assets",
+          "type": "dev.gallery.assets",
+          "values": {}
+        },
+        "exotic": {
+          "id": "exotic",
+          "type": "dev.gallery.exotic_out",
+          "values": {}
+        }
+      },
+      "links": {
+        "l_req": {
+          "id": "l_req",
+          "from": { "node": "source", "port": "image" },
+          "to": { "node": "sockets", "port": "req_image" }
+        },
+        "l_maybe": {
+          "id": "l_maybe",
+          "from": { "node": "source", "port": "maybe_image" },
+          "to": { "node": "sockets", "port": "opt_image" }
+        },
+        "l_union": {
+          "id": "l_union",
+          "from": { "node": "exotic", "port": "union_out" },
+          "to": { "node": "sockets", "port": "union2" }
+        },
+        "l_any": {
+          "id": "l_any",
+          "from": { "node": "exotic", "port": "any_out" },
+          "to": { "node": "sockets", "port": "any_in" }
+        },
+        "l_list": {
+          "id": "l_list",
+          "from": { "node": "source", "port": "image_list" },
+          "to": { "node": "lists", "port": "list_req" }
+        },
+        "l_list_union": {
+          "id": "l_list_union",
+          "from": { "node": "source", "port": "mask_list" },
+          "to": { "node": "lists", "port": "list_of_union" }
+        },
+        "l_nested": {
+          "id": "l_nested",
+          "from": { "node": "source", "port": "image_grid" },
+          "to": { "node": "lists", "port": "list_nested" }
+        },
+        "l_var": {
+          "id": "l_var",
+          "from": { "node": "source", "port": "mask" },
+          "to": { "node": "match_solved", "port": "var_in" }
+        }
+      },
+      "nets": {},
+      "reroutes": {},
+      "nextOrdinal": 20
+    }
+  },
+  "view": {
+    "graphs": {
+      "g0": {
+        "nodes": {
+          "source": { "position": { "x": 60, "y": 380 } },
+          "exotic": { "position": { "x": 60, "y": 880 } },
+          "sockets": { "position": { "x": 540, "y": 60 } },
+          "lists": { "position": { "x": 540, "y": 620 } },
+          "match_solved": { "position": { "x": 540, "y": 980 } },
+          "match_open": { "position": { "x": 540, "y": 1160 } },
+          "widgets": { "position": { "x": 1040, "y": 60 } },
+          "assets": { "position": { "x": 1040, "y": 820 } }
+        }
+      }
+    }
+  },
+  "meta": { "title": "Widget & Socket Gallery" }
+}

@@ -1,0 +1,9 @@
+## Installed pack startup
+
+- Installed pack schemas and static choices are available before pack workers
+  start. Workers activate on demand, including in-process packs and explicitly
+  configured shared-process groups.
+- Pack install, update, and doctor refresh the persisted schema catalog.
+  Serving fails before binding when an installed catalog is missing or stale.
+- Health reports composed and failed counts and is not ready when composition
+  is empty or any pack failed.

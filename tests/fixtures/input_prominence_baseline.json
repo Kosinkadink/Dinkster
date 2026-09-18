@@ -1,0 +1,1902 @@
+[
+  {
+    "node": "dinkster.empty_audio",
+    "path": "sample_rate",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.empty_audio",
+    "path": "channels",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.record_audio",
+    "path": "sample_rate",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.record_audio",
+    "path": "channels",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.adjust",
+    "path": "operation[normalize].mean",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.adjust",
+    "path": "operation[normalize].standard_deviation",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.batch.combine",
+    "path": "input_count",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.image.batch.combine",
+    "path": "mask_fallback",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.batch.combine",
+    "path": "shape_policy[resize_to_first].interpolation",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.batch.edit",
+    "path": "mask",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.batch.edit",
+    "path": "operation[range].range_end",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.batch.edit",
+    "path": "operation[repeat_each].generate_repeat_marker",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.batch.edit",
+    "path": "operation[shuffle].seed",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.list.to_batch",
+    "path": "shape_policy[resize_to_first].interpolation",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.transition",
+    "path": "input_count",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.image.transition",
+    "path": "shape_policy[resize_to_first].resize_interpolation",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.alpha.join",
+    "path": "batch_policy",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.channels.merge",
+    "path": "batch_policy",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.channels.split",
+    "path": "channel_layout",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.image.channels.split",
+    "path": "single_channel_image",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.composite",
+    "path": "clamp_output",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.composite",
+    "path": "batch_policy",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.composite",
+    "path": "source_resize[stretch].interpolation",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.composite",
+    "path": "source_resize[fill].interpolation",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.composite",
+    "path": "mask<mask>.mask_polarity",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.porter_duff",
+    "path": "batch_policy",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.layers.add",
+    "path": "visible",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.layers.add",
+    "path": "flip_horizontal",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.layers.add",
+    "path": "flip_vertical",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.image.create_layered",
+    "path": "color_space",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.generate",
+    "path": "color_source[integer].color_value",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.generate",
+    "path": "operation[linear_gradient].angle",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.generate",
+    "path": "operation[radial_gradient].center_x",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.generate",
+    "path": "operation[radial_gradient].center_y",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.generate",
+    "path": "operation[radial_gradient].radius",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.generate",
+    "path": "operation[checkerboard].tile_size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.detection.to_masks",
+    "path": "tapered_corners",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.detection.detect",
+    "path": "prompt_mode",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.detection.detect",
+    "path": "result_limit_mode",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.detection.segment_text",
+    "path": "prompt_mode",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.detection.filter",
+    "path": "min_area",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.detection.filter",
+    "path": "max_area",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.image.draw_mask",
+    "path": "invert",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.image.draw_mask",
+    "path": "mask_size",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.draw_mask",
+    "path": "batch_policy",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.draw_mask",
+    "path": "alpha_mode",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.draw_region",
+    "path": "coordinate_format",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.image.draw_region",
+    "path": "batch_policy",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.draw_text",
+    "path": "line_spacing",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.filter",
+    "path": "operation[quantize].colors",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.filter",
+    "path": "operation[quantize].dither",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.filter",
+    "path": "operation[noise].seed",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.filter",
+    "path": "operation[erode].kernel_size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.filter",
+    "path": "operation[dilate].kernel_size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.filter",
+    "path": "operation[open].kernel_size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.filter",
+    "path": "operation[close].kernel_size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.filter",
+    "path": "operation[gradient].kernel_size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.filter",
+    "path": "operation[bottom_hat].kernel_size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.filter",
+    "path": "operation[top_hat].kernel_size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.crop",
+    "path": "padding",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.image.crop",
+    "path": "rounding",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.crop",
+    "path": "source[coordinates].placement",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.crop",
+    "path": "source[region].mask_blur",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.crop",
+    "path": "source[mask].mask_threshold",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.crop",
+    "path": "source[mask].mask_blur",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.crop",
+    "path": "outside[pad].fill",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "image",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "mask",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "apply",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "interpolation",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "target",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "target[dimensions].width",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "target[dimensions].height",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "target[width].width",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "target[height].height",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "target[longest].size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "target[shortest].size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "target[factor].factor",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "target[total_pixels].megapixels",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "target[total_pixels].resolution_steps",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "target[match].reference",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "target[multiple_cover].multiple_of",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "mode",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "mode[fill].mode_anchor",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "mode[pad].mode_anchor",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "mode[pad].mode_padding",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "mode[pad].mode_padding[constant].pad_value",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "mode[pad].mode_padding[constant].pad_color",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "divisibility",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "divisibility[nearest].multiple_of",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "divisibility[crop].multiple_of",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "divisibility[crop].final_anchor",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "divisibility[pad].multiple_of",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "divisibility[pad].final_anchor",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "divisibility[pad].final_padding",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "divisibility[pad].final_padding[constant].final_pad_value",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "divisibility[pad].final_padding[constant].final_pad_color",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.resize",
+    "path": "fit_rounding",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[rotate].expand",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[rotate].interpolation",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[rotate].fill",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[translate].units",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[translate].interpolation",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[translate].fill",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[shear].units",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[shear].interpolation",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[shear].fill",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[pad].left",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[pad].top",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[pad].right",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[pad].bottom",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.transform",
+    "path": "operation[pad].feathering",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.uncrop",
+    "path": "border_blending",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.uncrop",
+    "path": "rounding",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.uncrop",
+    "path": "interpolation",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.uncrop",
+    "path": "outside",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.tracked_uncrop",
+    "path": "interpolation",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.save_animated_image",
+    "path": "metadata_json",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.save_image",
+    "path": "metadata_json",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.webcam_capture",
+    "path": "timeout_seconds",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.image.stitch",
+    "path": "spacing_width",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.image.stitch",
+    "path": "spacing_color",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.pose.render",
+    "path": "confidence_threshold",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.pose.render",
+    "path": "xinsr_stick_scaling",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.region.info",
+    "path": "integer_rounding",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.batch.combine",
+    "path": "shape_policy[resize_to_first].interpolation",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.batch.edit",
+    "path": "operation[range].range_end",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.batch.edit",
+    "path": "operation[shuffle].seed",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "invert",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "policy[exact_color].color_source[hex].color",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "policy[exact_color].color_source[integer].color_value",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "policy[exact_color].color_source[channels].red",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "policy[exact_color].color_source[channels].green",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "policy[exact_color].color_source[channels].blue",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "policy[tolerance_color].color_source[hex].color",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "policy[tolerance_color].color_source[integer].color_value",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "policy[tolerance_color].color_source[channels].red",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "policy[tolerance_color].color_source[channels].green",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "policy[tolerance_color].color_source[channels].blue",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "policy[tolerance_color].tolerance",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.image.to_mask",
+    "path": "policy[tolerance_color].metric",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.to_image",
+    "path": "channels[rgba].color",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.to_image",
+    "path": "channels[rgba].mask_polarity",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "invert",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[rectangle].x",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[rectangle].y",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[rectangle].shape_origin",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[rectangle].shape_width",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[rectangle].shape_height",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[ellipse].x",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[ellipse].y",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[ellipse].shape_origin",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[ellipse].shape_width",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[ellipse].shape_height",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[triangle].x",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[triangle].y",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[triangle].shape_origin",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[triangle].shape_width",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[triangle].shape_height",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[polygon].points_x",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[polygon].points_y",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[region].region",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[linear_gradient].angle",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[radial_gradient].center_x",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[radial_gradient].center_y",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[radial_gradient].radius",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[transition].start_frame",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[transition].end_frame",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[transition].transition_type",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[transition].timing_function",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[checkerboard].tile_size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[noise].seed",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.make",
+    "path": "operation[noise].noise_mode[binary].noise_density",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.text",
+    "path": "color",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.mask.text",
+    "path": "line_spacing",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.text",
+    "path": "start_rotation",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.mask.text",
+    "path": "end_rotation",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.mask.text",
+    "path": "invert",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.mask.info",
+    "path": "empty",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.combine",
+    "path": "batch_policy",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[remove_small_components].minimum_area",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[remove_small_components].threshold",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[remove_small_components].connectivity",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_erode].iterations",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_erode].tapered_corners",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_erode].edge_policy[constant].edge_value",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_blur].blur_radius",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_blur].blur_amount",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_blur].incremental_expandrate",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_blur].flip_input",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_blur].lerp_alpha",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_blur].decay_factor",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_blur].fill_holes",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_blur].iterations",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_blur].tapered_corners",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_blur].sigma",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[grow_blur].edge_policy[constant].edge_value",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[open].kernel_size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[open].iterations",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[open].tapered_corners",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[open].edge_policy[constant].edge_value",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[close].kernel_size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[close].iterations",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[close].tapered_corners",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[close].edge_policy[constant].edge_value",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[feather_edges].left",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[feather_edges].top",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[feather_edges].right",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[feather_edges].bottom",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[blur].sigma",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[blur].edge_policy[constant].edge_value",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[offset].x",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[offset].y",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[offset].edge_policy[constant].edge_value",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[remap].input_low",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[remap].input_high",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[remap].output_low",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[remap].output_high",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[remap].clamp",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[round].iterations",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[round].edge_policy[constant].edge_value",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[block].kernel_size",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[block].block_mode",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[crop].x",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[crop].y",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[crop].width",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.mask.morphology",
+    "path": "operation[crop].height",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.clip_set_last_layer",
+    "path": "stop_at_clip_layer",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.ltxav_id_lora_reference_audio",
+    "path": "start_percent",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.ltxav_id_lora_reference_audio",
+    "path": "end_percent",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.ltxv_spatiotemporal_guidance",
+    "path": "start_percent",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.ltxv_spatiotemporal_guidance",
+    "path": "end_percent",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.ltxv_modality_guidance",
+    "path": "start_percent",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.ltxv_modality_guidance",
+    "path": "end_percent",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan21_animate2_to_video",
+    "path": "video_frame_offset",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan22_animate_to_video",
+    "path": "continue_motion_max_frames",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan22_animate_to_video",
+    "path": "video_frame_offset",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan_camera_embedding",
+    "path": "fx",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan_camera_embedding",
+    "path": "fy",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan_camera_embedding",
+    "path": "cx",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan_camera_embedding",
+    "path": "cy",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan_move_visualize_tracks",
+    "path": "circle_size",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.wan_move_visualize_tracks",
+    "path": "line_width",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.wan_track_to_video",
+    "path": "temperature",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan_track_to_video",
+    "path": "topk",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan21_scail_to_video",
+    "path": "video_frame_offset",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan21_scail_to_video",
+    "path": "previous_frame_count",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.vae_decode_tiled",
+    "path": "tile_size",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.vae_decode_tiled",
+    "path": "overlap",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.vae_decode_tiled",
+    "path": "temporal_size",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.vae_decode_tiled",
+    "path": "temporal_overlap",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.vae_encode_tiled",
+    "path": "tile_size",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.vae_encode_tiled",
+    "path": "overlap",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.vae_encode_tiled",
+    "path": "temporal_size",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.vae_encode_tiled",
+    "path": "temporal_overlap",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.apply_lora_stack_model_only",
+    "path": "execution_mode",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.apply_lora_stack",
+    "path": "execution_mode",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.load_checkpoint_stack",
+    "path": "stop_at_clip_layer",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.load_checkpoint_stack",
+    "path": "execution_mode",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.load_ltxav_text_encoder",
+    "path": "device",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.load_lora_model_only",
+    "path": "execution_mode",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.load_lora",
+    "path": "execution_mode",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.load_vae",
+    "path": "pixel_space",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.context_windows_manual",
+    "path": "causal_window_fix",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.ltxv_context_windows",
+    "path": "context_stride",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.ltxv_context_windows",
+    "path": "closed_loop",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.ltxv_context_windows",
+    "path": "freenoise",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.chroma_radiance_options",
+    "path": "start_sigma",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.chroma_radiance_options",
+    "path": "end_sigma",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.chroma_radiance_options",
+    "path": "nerf_tile_size",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.chroma_radiance_options",
+    "path": "force_sequential_txt_ids",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.wan_context_windows_manual",
+    "path": "context_stride",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan_context_windows_manual",
+    "path": "closed_loop",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.wan_context_windows_manual",
+    "path": "freenoise",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.ksampler_advanced",
+    "path": "add_noise",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.ksampler_advanced",
+    "path": "start_at_step",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.ksampler_advanced",
+    "path": "end_at_step",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.ksampler_advanced",
+    "path": "return_with_leftover_noise",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_custom",
+    "path": "add_noise",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpm_adaptative",
+    "path": "order",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpm_adaptative",
+    "path": "rtol",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpm_adaptative",
+    "path": "atol",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpm_adaptative",
+    "path": "h_init",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpm_adaptative",
+    "path": "pcoeff",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpm_adaptative",
+    "path": "icoeff",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpm_adaptative",
+    "path": "dcoeff",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpm_adaptative",
+    "path": "accept_safety",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpm_adaptative",
+    "path": "eta",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpm_adaptative",
+    "path": "s_noise",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpmpp_2m_sde",
+    "path": "eta",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpmpp_2m_sde",
+    "path": "s_noise",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpmpp_2m_sde",
+    "path": "noise_device",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.sampler_dpmpp_3m_sde",
+    "path": "eta",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpmpp_3m_sde",
+    "path": "s_noise",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpmpp_3m_sde",
+    "path": "noise_device",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.sampler_dpmpp_sde",
+    "path": "eta",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpmpp_sde",
+    "path": "s_noise",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpmpp_sde",
+    "path": "r",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_dpmpp_sde",
+    "path": "noise_device",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.sampler_er_sde",
+    "path": "max_stage",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_er_sde",
+    "path": "eta",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_er_sde",
+    "path": "s_noise",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_euler_ancestral",
+    "path": "eta",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_euler_ancestral",
+    "path": "s_noise",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_lms",
+    "path": "order",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_seeds_2",
+    "path": "eta",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_seeds_2",
+    "path": "s_noise",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_seeds_2",
+    "path": "r",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.sampler_sa_solver",
+    "path": "eta",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.sampler_sa_solver",
+    "path": "sde_start_percent",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.sampler_sa_solver",
+    "path": "sde_end_percent",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.sampler_sa_solver",
+    "path": "s_noise",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.sampler_sa_solver",
+    "path": "predictor_order",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.sampler_sa_solver",
+    "path": "corrector_order",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.sampler_sa_solver",
+    "path": "use_pece",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.sampler_sa_solver",
+    "path": "simple_order_2",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.beta_sampling_scheduler",
+    "path": "alpha",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.beta_sampling_scheduler",
+    "path": "beta",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.exponential_scheduler",
+    "path": "sigma_max",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.exponential_scheduler",
+    "path": "sigma_min",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.gits_scheduler",
+    "path": "coeff",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.karras_scheduler",
+    "path": "sigma_max",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.karras_scheduler",
+    "path": "sigma_min",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.karras_scheduler",
+    "path": "rho",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.laplace_scheduler",
+    "path": "sigma_max",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.laplace_scheduler",
+    "path": "sigma_min",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.laplace_scheduler",
+    "path": "mu",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.laplace_scheduler",
+    "path": "beta",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.polyexponential_scheduler",
+    "path": "sigma_max",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.polyexponential_scheduler",
+    "path": "sigma_min",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.polyexponential_scheduler",
+    "path": "rho",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.vp_scheduler",
+    "path": "beta_d",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.vp_scheduler",
+    "path": "beta_min",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.vp_scheduler",
+    "path": "eps_s",
+    "class": "P"
+  },
+  {
+    "node": "partner.bfl.flux-pro-ultra-image",
+    "path": "prompt_upsampling",
+    "class": "P"
+  },
+  {
+    "node": "partner.bfl.flux-pro-expand",
+    "path": "prompt_upsampling",
+    "class": "P"
+  },
+  {
+    "node": "partner.bfl.flux-pro-fill",
+    "path": "prompt_upsampling",
+    "class": "P"
+  },
+  {
+    "node": "partner.bfl.flux-kontext-max-image",
+    "path": "prompt_upsampling",
+    "class": "P"
+  },
+  {
+    "node": "partner.bfl.flux-kontext-pro-image",
+    "path": "prompt_upsampling",
+    "class": "P"
+  },
+  {
+    "node": "partner.bfl.flux2-max-image",
+    "path": "prompt_upsampling",
+    "class": "P"
+  },
+  {
+    "node": "partner.bfl.flux2-pro-image",
+    "path": "prompt_upsampling",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.image-to-image",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.text-to-image",
+    "path": "prompt_extend",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.text-to-image",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.happy-horse-image-to-video",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.happy-horse-reference-video",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.happy-horse-text-to-video",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.happy-horse-video-edit",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.2-image-to-video",
+    "path": "prompt_extend",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.2-image-to-video",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.2-reference-video",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.2-text-to-video",
+    "path": "prompt_extend",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.2-text-to-video",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.2-video-continuation",
+    "path": "prompt_extend",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.2-video-continuation",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.2-video-edit",
+    "path": "audio_setting",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.2-video-edit",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.image-to-video",
+    "path": "generate_audio",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.image-to-video",
+    "path": "prompt_extend",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.image-to-video",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.image-to-video",
+    "path": "shot_type",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.reference-video",
+    "path": "shot_type",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.reference-video",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.text-to-video",
+    "path": "generate_audio",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.text-to-video",
+    "path": "prompt_extend",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.text-to-video",
+    "path": "watermark",
+    "class": "P"
+  },
+  {
+    "node": "partner.wan.text-to-video",
+    "path": "shot_type",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.string.join",
+    "path": "delimiter_escape",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.string.regex",
+    "path": "multiline",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.string.regex",
+    "path": "dotall",
+    "class": "P"
+  },
+  {
+    "node": "dinkster.string.transform",
+    "path": "unit",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.string.transform",
+    "path": "side",
+    "class": "CP"
+  },
+  {
+    "node": "dinkster.prompt_enhance",
+    "path": "provider",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.prompt_enhance",
+    "path": "use_default_template",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.text_generate",
+    "path": "provider",
+    "class": "I"
+  },
+  {
+    "node": "dinkster.text_generate",
+    "path": "use_default_template",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.value.convert",
+    "path": "force_lossy",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.model_sampling_flux",
+    "path": "max_shift",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.model_sampling_flux",
+    "path": "base_shift",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.save_video",
+    "path": "format",
+    "class": "A"
+  }
+]
