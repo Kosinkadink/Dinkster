@@ -1091,7 +1091,8 @@ def test_diagnose_wraps_the_probe_argv_in_the_jail(
         seen_kwargs.append(kwargs)
         inherited = kwargs["pass_fds"]
         assert isinstance(inherited, tuple) and len(inherited) == 1
-        seen_environment_files.append(json.loads(os.pread(inherited[0], 4096, 0)))
+        with os.fdopen(os.dup(inherited[0]), "rb") as environment_file:
+            seen_environment_files.append(json.load(environment_file))
         runnable = dict(kwargs)
         runnable.pop("pass_fds", None)
         runnable["env"] = None
