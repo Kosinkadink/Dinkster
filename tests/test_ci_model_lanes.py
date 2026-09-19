@@ -224,7 +224,7 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
     (checkout,) = [step for step in preparation_steps if step.get("uses") == "actions/checkout@v4"]
     assert checkout["with"] == {
         "repository": "Kosinkadink/dinkster-evidence",
-        "ref": "4435206cb4c34902712e224bed654a2b8c46bb92",
+        "ref": "324e580a983d7e51a1b10ee4fafd78ef2012915c",
         "path": ".evidence-source",
         "clean": True,
         "persist-credentials": False,
@@ -264,6 +264,24 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
                 assert step["with"]["evidence-deploy-key"] == (
                     "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}"
                 )
+
+
+def test_validation_inputs_expose_existing_git_bash_only_on_windows() -> None:
+    helper_path = ROOT / ".github/actions/prepare-validation-inputs/action.yml"
+    helper = yaml.safe_load(helper_path.read_text(encoding="utf-8"))
+    steps = helper["runs"]["steps"]
+    (bootstrap,) = [step for step in steps if "GITHUB_PATH" in step.get("run", "")]
+    assert bootstrap["if"] == "runner.os == 'Windows'"
+    assert bootstrap["shell"] == "pwsh"
+    assert "Join-Path $env:ProgramFiles 'Git/bin'" in bootstrap["run"]
+    assert "Test-Path (Join-Path $bashDirectory 'bash.exe') -PathType Leaf" in bootstrap["run"]
+    assert "throw 'Git Bash is required for validation input preparation'" in bootstrap["run"]
+    assert "$bashDirectory >> $env:GITHUB_PATH" in bootstrap["run"]
+    assert all(
+        steps.index(bootstrap) < index
+        for index, step in enumerate(steps)
+        if step.get("shell") == "bash"
+    )
 
 
 def test_validation_history_access_uses_only_step_scoped_credentials() -> None:

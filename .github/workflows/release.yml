@@ -75,6 +75,15 @@ jobs:
           - os: macos
             labels: [self-hosted, macos, arm64]
     steps:
+      - name: Expose Git Bash on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bashDirectory = Join-Path $env:ProgramFiles 'Git/bin'
+          if (-not (Test-Path (Join-Path $bashDirectory 'bash.exe') -PathType Leaf)) {
+            throw 'Git Bash is required for validation input preparation'
+          }
+          $bashDirectory >> $env:GITHUB_PATH
       - uses: actions/download-artifact@v4
         with:
           name: backend-release
@@ -109,7 +118,9 @@ jobs:
           GIT_CONFIG_VALUE_0: https://github.com/Kosinkadink/Dinkster
           GIT_CONFIG_KEY_1: credential.helper
           GIT_CONFIG_VALUE_1: ""
-        run: uv sync --project registry --all-packages --frozen
+        run: |
+          trap 'unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1' EXIT
+          uv sync --project registry --all-packages --frozen
       - name: Install from the archive without a checkout
         shell: bash
         working-directory: ${{ runner.temp }}

@@ -10,6 +10,15 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Expose Git Bash on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $bashDirectory = Join-Path $env:ProgramFiles 'Git/bin'
+        if (-not (Test-Path (Join-Path $bashDirectory 'bash.exe') -PathType Leaf)) {
+          throw 'Git Bash is required for validation input preparation'
+        }
+        $bashDirectory >> $env:GITHUB_PATH
     - uses: ./.github/actions/configure-dinkster-identity
       with:
         repository: Kosinkadink/dinkster-evidence
@@ -17,7 +26,7 @@ runs:
     - uses: actions/checkout@v4
       with:
         repository: Kosinkadink/dinkster-evidence
-        ref: 4435206cb4c34902712e224bed654a2b8c46bb92
+        ref: 324e580a983d7e51a1b10ee4fafd78ef2012915c
         path: .evidence-source
         clean: true
         persist-credentials: false
