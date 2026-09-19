@@ -74,7 +74,7 @@ jobs:
           GIT_CONFIG_COUNT=1 \
           GIT_CONFIG_KEY_0="url.https://x-access-token:${DINKSTER_REPO_TOKEN}@github.com/.insteadOf" \
           GIT_CONFIG_VALUE_0="https://github.com/" \
-          env -u GITHUB_TOKEN uv sync --project registry --frozen
+          env -u GITHUB_TOKEN uv sync --project registry --all-packages --frozen
       - name: Install from the archive without a checkout
         shell: bash
         run: |
