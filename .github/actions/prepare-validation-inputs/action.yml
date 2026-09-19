@@ -13,7 +13,7 @@ runs:
     - uses: actions/checkout@v4
       with:
         repository: Kosinkadink/dinkster-evidence
-        ref: bbbd0e96f10983c3021075ac00bfa6d1d8dd5c5b
+        ref: e20e6fe92ddbb4886eb1dff22dc0a18313e38b2d
         path: .evidence-source
         ssh-key: ${{ inputs.evidence-deploy-key }}
         persist-credentials: false
