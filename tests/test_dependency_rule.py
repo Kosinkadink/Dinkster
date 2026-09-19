@@ -11,6 +11,8 @@ import ast
 import tomllib
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 ALLOWED: dict[str, set[str]] = {
@@ -376,3 +378,25 @@ def test_torch_runtime_backends_are_constrained_behind_torch_extra() -> None:
     assert packages["dinkster-aimdo"]["source"] == {"registry": "https://pypi.org/simple"}
     assert packages["sentencepiece"]["source"] == {"registry": "https://pypi.org/simple"}
     assert packages["tokenizers"]["source"] == {"registry": "https://pypi.org/simple"}
+
+
+def test_windows_ci_installs_published_engine_dependencies_without_torch() -> None:
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["test"]["steps"]
+    (install_step,) = [
+        step
+        for step in steps
+        if step.get("name") == "Install and verify published Windows engine dependencies"
+    ]
+
+    assert install_step["if"] == "matrix.os == 'windows-latest'"
+    assert install_step["shell"] == "pwsh"
+    command = install_step["run"]
+    assert "uv run --no-sync python" in command
+    assert (
+        "uv pip install --python $python --no-deps --index-url https://pypi.org/simple" in command
+    )
+    assert '"dinkster-kitchen==0.2.35.post1"' in command
+    assert '"dinkster-aimdo==0.5.5.post2"' in command
+    assert "find_spec('dinkster_kitchen') is not None" in command
+    assert "find_spec('dinkster_aimdo') is not None" in command
