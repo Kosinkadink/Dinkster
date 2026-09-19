@@ -40,7 +40,7 @@ def _condition_matches(expression: str, context: dict[str, str]) -> bool:
     return all(matches)
 
 
-def test_every_hosted_composite_caller_explicitly_excludes_model_tests() -> None:
+def test_every_cpu_composite_caller_explicitly_excludes_model_tests() -> None:
     callers = []
     for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
         for name, job in yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"].items():
@@ -52,7 +52,7 @@ def test_every_hosted_composite_caller_explicitly_excludes_model_tests() -> None
                     "true" if name == "model-tests" else "false"
                 )
                 if name != "model-tests":
-                    assert job["runs-on"] == "ubuntu-latest"
+                    assert job["runs-on"] == ["self-hosted", "linux", "x64"]
     assert set(callers) == {
         ("ci.yml", "model-tests"),
         *(("ci.yml", f"torch-cpu-try{number}") for number in range(1, 6)),
@@ -134,7 +134,7 @@ def test_model_lane_commands_artifact_pins_and_environments_match_reviewed_contr
         if step.get("if") == MODEL_CONDITION
     ]
     assert hashlib.sha256(json.dumps(steps, sort_keys=True).encode()).hexdigest() == (
-        "38deb3c27cfb03269f04d5db7f32efceed2a1d3be98aa8662effce791444f220"
+        "b4a973bd73f333947e477bc8a124e96539e43adbab799705e2fd170a959eac06"
     )
 
 
@@ -173,7 +173,7 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
     assert f".venv-torch/bin/python -m pytest -q {ACCEPTANCE_CLOSURE_TEST}" in commands
     assert all(ACCEPTANCE_SAMPLING_TEST not in command for command in commands)
     assert ".venv-torch/bin/python tools/gen_comfy_source_parity_receipts.py --check" in commands
-    assert "UV_CONSTRAINT=/tmp/torch-constraints.txt ./scripts/setup_envs.sh" in commands
+    assert 'UV_CONSTRAINT="$RUNNER_TEMP/torch-constraints.txt" ./scripts/setup_envs.sh' in commands
     assert {step["name"] for step in retained if "name" in step} == {
         "Checkout pinned ComfyUI source",
         "Checkout pinned workflow templates",
@@ -189,12 +189,12 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
 @pytest.mark.parametrize("event", ["pull_request", "push"])
 @pytest.mark.parametrize("ref", ["refs/heads/main", "refs/heads/feature"])
 @pytest.mark.parametrize("repository", ["Kosinkadink/Dinkster", "other/Dinkster"])
-def test_dedicated_job_allocates_only_for_enabled_trusted_main_push(
+def test_model_job_preserves_enabled_trusted_main_push_path(
     enabled: str, event: str, ref: str, repository: str
 ) -> None:
     job = JOBS["model-tests"]
     assert _condition_matches(
-        job["if"],
+        job["if"].split("||")[0].strip().removeprefix("(").removesuffix(")"),
         {
             "vars.DINKSTER_MODEL_TESTS_ENABLED": enabled,
             "github.event_name": event,
@@ -207,11 +207,30 @@ def test_dedicated_job_allocates_only_for_enabled_trusted_main_push(
         and ref == "refs/heads/main"
         and repository == "Kosinkadink/Dinkster"
     )
-    assert job["runs-on"] == ["self-hosted", "linux", "x64", "dinkster-model-tests"]
+    assert job["runs-on"] == ["self-hosted", "linux", "x64"]
     assert "needs" not in job
     for name, hosted in JOBS.items():
         if name != "model-tests":
             assert "model-tests" not in hosted.get("needs", [])
+
+
+def test_model_job_requires_same_repository_and_explicit_label_on_pull_requests() -> None:
+    branches = JOBS["model-tests"]["if"].split("||")
+    assert len(branches) == 2
+    assert " ".join(branches[1].split()) == (
+        "(github.event_name == 'pull_request' && "
+        "github.repository == 'Kosinkadink/Dinkster' && "
+        "github.event.pull_request.head.repo.full_name == github.repository && "
+        "contains(github.event.pull_request.labels.*.name, 'model-tests'))"
+    )
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    assert workflow[True]["pull_request"]["types"] == [
+        "opened",
+        "synchronize",
+        "reopened",
+        "labeled",
+        "unlabeled",
+    ]
 
 
 def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
@@ -219,7 +238,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
     assert job["permissions"] == {"contents": "read"}
     assert job["steps"][0] == {
         "uses": "actions/checkout@v4",
-        "with": {"persist-credentials": False},
+        "with": {"clean": True, "persist-credentials": False},
     }
     assert job["steps"][1] == {
         "uses": ACTION_PATH,
@@ -236,7 +255,10 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         "MKL_NUM_THREADS": "4",
     }
     for name in ("p2p-descriptor-macos", "p2p-artifact-smoke"):
-        assert JOBS[name]["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+        assert JOBS[name]["if"] == (
+            "github.event_name == 'workflow_dispatch' || "
+            "(github.event_name == 'push' && github.ref == 'refs/heads/main')"
+        )
 
 
 @pytest.mark.parametrize("environment", ["github-hosted", "self-hosted"])

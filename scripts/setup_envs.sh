@@ -130,10 +130,11 @@ if [ "$os" = "Darwin" ]; then
 else
     kitchen_commit=f0092e814e73c0e82e9bfa364d55bad8f84280b6
     kitchen_source=../comfy-kitchen
+    kitchen_temp=${RUNNER_TEMP:-/tmp}
     sibling_tag=$(git -C "$kitchen_source" rev-parse v0.2.32^{commit} 2>/dev/null || true)
     if ! git -C "$kitchen_source" cat-file -e "$kitchen_commit^{commit}" 2>/dev/null || \
         [ "$sibling_tag" != "$kitchen_commit" ]; then
-        kitchen_source=/tmp/ck-source
+        kitchen_source="$kitchen_temp/ck-source"
         rm -rf "$kitchen_source"
         git init -q "$kitchen_source"
         git -C "$kitchen_source" remote add origin https://github.com/Comfy-Org/comfy-kitchen.git
@@ -144,13 +145,13 @@ else
         exit 1
     fi
     echo "==> comfy-kitchen CPU wheel (release $kitchen_commit)"
-    rm -rf /tmp/ck-build /tmp/ck-venv
-    mkdir /tmp/ck-build
-    git -C "$kitchen_source" archive "$kitchen_commit" | tar -x -C /tmp/ck-build
-    uv venv /tmp/ck-venv -q
-    uv pip install --python /tmp/ck-venv/bin/python -q setuptools wheel
-    (cd /tmp/ck-build && /tmp/ck-venv/bin/python setup.py bdist_wheel --no-cuda)
-    kitchen_wheel=$(find /tmp/ck-build/dist -maxdepth 1 -type f \
+    rm -rf "$kitchen_temp/ck-build" "$kitchen_temp/ck-venv"
+    mkdir "$kitchen_temp/ck-build"
+    git -C "$kitchen_source" archive "$kitchen_commit" | tar -x -C "$kitchen_temp/ck-build"
+    uv venv "$kitchen_temp/ck-venv" -q
+    uv pip install --python "$kitchen_temp/ck-venv/bin/python" -q setuptools wheel
+    (cd "$kitchen_temp/ck-build" && "$kitchen_temp/ck-venv/bin/python" setup.py bdist_wheel --no-cuda)
+    kitchen_wheel=$(find "$kitchen_temp/ck-build/dist" -maxdepth 1 -type f \
         -name 'comfy_kitchen-0.2.32-*.whl' -print -quit)
     if [ -z "$kitchen_wheel" ]; then
         echo "error: comfy-kitchen did not build the pinned 0.2.32 wheel" >&2

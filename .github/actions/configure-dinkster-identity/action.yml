@@ -1,42 +1,14 @@
-name: Configure dinkster-identity access
-description: Configure read-only SSH access to the private dinkster-identity dependency
+name: Configure private dependency access
+description: Configure read-only SSH access without writing a private key to disk
 inputs:
   deploy-key:
-    description: Read-only dinkster-identity deploy key
+    description: Read-only repository deploy key
     required: true
+  repository:
+    description: Repository the deploy key can read
+    default: Kosinkadink/dinkster-identity
 runs:
-  using: composite
-  steps:
-    - name: Configure private dependency access
-      shell: bash
-      env:
-        DINKSTER_IDENTITY_DEPLOY_KEY: ${{ inputs.deploy-key }}
-      run: |
-        if [ -z "$DINKSTER_IDENTITY_DEPLOY_KEY" ]; then
-          echo "::error::DINKSTER_IDENTITY_DEPLOY_KEY is not configured"
-          exit 1
-        fi
-        umask 077
-        mkdir -p "$HOME/.ssh"
-        printf '%s\n' "$DINKSTER_IDENTITY_DEPLOY_KEY" > "$HOME/.ssh/dinkster_identity"
-        cat > "$HOME/.ssh/dinkster_identity_known_hosts" <<'EOF'
-        github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
-        EOF
-        cat >> "$HOME/.ssh/config" <<'EOF'
-
-        Host dinkster-identity.github.com
-          HostName github.com
-          HostKeyAlias github.com
-          User git
-          IdentityFile ~/.ssh/dinkster_identity
-          IdentitiesOnly yes
-          StrictHostKeyChecking yes
-          UserKnownHostsFile ~/.ssh/dinkster_identity_known_hosts
-        EOF
-        chmod 600 \
-          "$HOME/.ssh/dinkster_identity" \
-          "$HOME/.ssh/dinkster_identity_known_hosts" \
-          "$HOME/.ssh/config"
-        git config --global \
-          url."ssh://git@dinkster-identity.github.com/Kosinkadink/dinkster-identity.git".insteadOf \
-          "https://github.com/Kosinkadink/dinkster-identity.git"
+  using: node20
+  main: agent.cjs
+  post: agent.cjs
+  post-if: always()
