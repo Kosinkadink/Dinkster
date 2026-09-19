@@ -8,7 +8,6 @@ from copy import deepcopy
 from typing import Any
 
 import numpy as np
-
 from tools.inference_parity.flux_window_comparison import (
     CHECKPOINT_SHA256,
     COMFYUI_COMMIT,

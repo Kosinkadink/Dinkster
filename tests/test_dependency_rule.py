@@ -13,6 +13,8 @@ from pathlib import Path
 
 import yaml
 
+from tools.evidence_paths import EVIDENCE_ROOT
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 ALLOWED: dict[str, set[str]] = {
@@ -268,7 +270,10 @@ def test_every_package_is_governed() -> None:
     every packages/dinkster-* directory must have an explicit allowed set."""
     on_disk = {
         path.name.replace("-", "_")
-        for path in (REPO_ROOT / "packages").iterdir()
+        for path in (
+            *(REPO_ROOT / "packages").iterdir(),
+            EVIDENCE_ROOT / "packages/dinkster-acceptance",
+        )
         if path.is_dir() and path.name.startswith("dinkster-")
     }
     assert on_disk == set(ALLOWED), (
@@ -281,7 +286,8 @@ def test_one_way_dependencies() -> None:
     violations: list[str] = []
     checked = 0
     for package, allowed in ALLOWED.items():
-        src = REPO_ROOT / "packages" / package.replace("_", "-") / "src" / package
+        root = EVIDENCE_ROOT if package == "dinkster_acceptance" else REPO_ROOT
+        src = root / "packages" / package.replace("_", "-") / "src" / package
         if not src.exists():
             assert not allowed, f"metadata-only package {package} declares code dependencies"
             continue
@@ -290,7 +296,7 @@ def test_one_way_dependencies() -> None:
             checked += 1
             for imported in dinkster_imports(module) - {package}:
                 if imported not in allowed:
-                    violations.append(f"{module.relative_to(REPO_ROOT)} imports {imported}")
+                    violations.append(f"{module.relative_to(root)} imports {imported}")
     assert checked > 0
     assert not violations, "one-way dependency rule violated:\n" + "\n".join(violations)
 

@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from pathlib import Path
 from typing import Any
 
 import pytest
-
 from tools.inference_parity.minimax_h3_runtime_receipts import (
     ArtifactReceiptError,
     load_manifest,
     validate_manifest,
 )
 
-MANIFEST = Path("tools/inference_parity/minimax_h3_runtime_artifacts.json")
+from tools.evidence_paths import EVIDENCE_ROOT
+
+MANIFEST = EVIDENCE_ROOT / "tools/inference_parity/minimax_h3_runtime_artifacts.json"
 
 
 def test_runtime_authority_pins_int8_graph_and_bf16_dit_alternates() -> None:

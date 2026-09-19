@@ -13,7 +13,6 @@ resolution-markers = [
 [manifest]
 members = [
     "dinkster",
-    "dinkster-acceptance",
     "dinkster-api",
     "dinkster-assets",
     "dinkster-caches",
@@ -928,42 +927,6 @@ dev = [
     { name = "ruff", specifier = ">=0.8" },
     { name = "scipy-stubs", specifier = ">=1.18.1.0" },
 ]
-
-[[package]]
-name = "dinkster-acceptance"
-version = "0.0.1"
-source = { editable = "packages/dinkster-acceptance" }
-dependencies = [
-    { name = "dinkster-caches" },
-    { name = "dinkster-compat-comfy" },
-    { name = "dinkster-engine" },
-    { name = "dinkster-graph" },
-    { name = "dinkster-inference" },
-    { name = "dinkster-inference-torch" },
-    { name = "dinkster-schema" },
-    { name = "dinkster-values" },
-    { name = "dinkster-workers" },
-]
-
-[package.optional-dependencies]
-cloud = [
-    { name = "dinkster-inference-torch", extra = ["torch"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-caches", editable = "packages/dinkster-caches" },
-    { name = "dinkster-compat-comfy", editable = "packages/dinkster-compat-comfy" },
-    { name = "dinkster-engine", editable = "packages/dinkster-engine" },
-    { name = "dinkster-graph", editable = "packages/dinkster-graph" },
-    { name = "dinkster-inference", editable = "packages/dinkster-inference" },
-    { name = "dinkster-inference-torch", editable = "packages/dinkster-inference-torch" },
-    { name = "dinkster-inference-torch", extras = ["torch"], marker = "extra == 'cloud'", editable = "packages/dinkster-inference-torch" },
-    { name = "dinkster-schema", editable = "packages/dinkster-schema" },
-    { name = "dinkster-values", editable = "packages/dinkster-values" },
-    { name = "dinkster-workers", editable = "packages/dinkster-workers" },
-]
-provides-extras = ["cloud"]
 
 [[package]]
 name = "dinkster-aimdo"

@@ -11,8 +11,9 @@ from typing import cast
 import pytest
 
 import tools.benchmark_qwen_layer_placement as benchmark
+from tools.evidence_paths import EVIDENCE_ROOT
 
-EVIDENCE = Path(__file__).parents[1] / "benchmarks" / "qwen-generation"
+EVIDENCE = EVIDENCE_ROOT / "benchmarks" / "qwen-generation"
 DINKSTER_COMMIT = benchmark._git_head(Path(__file__).parents[1])
 
 

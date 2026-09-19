@@ -28,6 +28,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 os=$(uname -s)
+evidence_root=${DINKSTER_EVIDENCE_ROOT:-"$PWD/../dinkster-evidence"}
 
 FORCE=0
 for arg in "$@"; do
@@ -67,7 +68,7 @@ fi
 # TripoSplat preprocessing, OpenCV supports HED preprocessing, and scipy
 # supports WanDancer audio features.
 # dinkster-workers (and its values/protocol/assets/caches deps) makes
-# scripts/benchmark_inference.py importable here, so torch-dependent
+# the benchmark scripts in dinkster-evidence importable, so torch-dependent
 # benchmark-harness tests can run in this venv.
 uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "scipy>=1.11" \
     "simpleeval==1.0.3" \
@@ -89,7 +90,6 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     -e packages/dinkster-inference-torch \
     -e packages/dinkster-nodes-generation \
     -e packages/dinkster-compat-comfy \
-    -e packages/dinkster-acceptance \
     -e packages/dinkster-model-ipadapter \
     -e packages/dinkster-model-qwen-image \
     -e packages/dinkster-model-triposplat \
@@ -104,6 +104,8 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     -e packages/dinkster-vision-upscale \
     -e packages/dinkster-workers \
     -e 'packages/dinkster-training-torch[torch]'
+uv pip install --python .venv-torch/bin/python --no-deps --no-sources \
+    -e "$evidence_root/packages/dinkster-acceptance"
 
 # The direct PyPI URL forces the device-agnostic wheel in the CPU environment;
 # the platform wheels contain accelerator-specific native extensions.
@@ -195,11 +197,12 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         -e packages/dinkster-workers \
         -e packages/dinkster-nodes-generation \
         -e packages/dinkster-compat-comfy \
-        -e packages/dinkster-acceptance \
         -e packages/dinkster-model-ipadapter \
         -e packages/dinkster-model-triposplat \
         -e packages/dinkster-model-wan \
         -e 'packages/dinkster-training-torch[torch]'
+    uv pip install --python .venv-gpu/bin/python --no-deps --no-sources \
+        -e "$evidence_root/packages/dinkster-acceptance"
 
 else
     echo "==> no NVIDIA GPU detected - skipping .venv-gpu (the GPU gate"

@@ -21,6 +21,7 @@ import pytest
 from tests.test_compare_benchmark_reports import compare_benchmark_reports as comparator
 from tools import workflow_benchmark as benchmark
 from tools import workflow_benchmark_observer as observer
+from tools.evidence_paths import EVIDENCE_ROOT
 from tools.workflow_benchmark_observer import (
     ObserverInstallation,
     validate_free_response,
@@ -1572,7 +1573,7 @@ runpy.run_path(script, run_name='__main__')
             sys.executable,
             "-c",
             code,
-            str(ROOT / "scripts" / script),
+            str(EVIDENCE_ROOT / "scripts" / script),
             *flag,
             "--family",
             "unknown",

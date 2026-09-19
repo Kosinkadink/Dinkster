@@ -8,10 +8,17 @@ from typing import Any
 
 import numpy as np
 import pytest
-
 from tools.inference_parity import harness
 from tools.inference_parity.gguf_comfyui_adapter import _regular_decode
 from tools.inference_parity.gguf_reference import compare_reference
+
+from tools.evidence_paths import EVIDENCE_ROOT
+
+
+@pytest.fixture(autouse=True)
+def evidence_working_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Harness manifests use paths relative to the evidence checkout.
+    monkeypatch.chdir(EVIDENCE_ROOT)
 
 
 def _receipt(root: Path, engine: str) -> dict[str, Any]:

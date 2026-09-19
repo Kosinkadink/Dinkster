@@ -11,7 +11,6 @@ from typing import cast
 import pytest
 from dinkster_inference.qwen_image_layout import qwen_image_dit_layout
 from dinkster_inference.qwen_image_text import qwen_image_text_layout
-
 from tools.inference_parity import qwen_image_receipts
 from tools.inference_parity.qwen_image_receipts import (
     ArtifactReceiptError,
@@ -26,7 +25,9 @@ from tools.inference_parity.qwen_image_receipts import (
     verify_receipts,
 )
 
-MANIFEST_PATH = Path("tools/inference_parity/qwen_image_artifacts.json")
+from tools.evidence_paths import EVIDENCE_ROOT
+
+MANIFEST_PATH = EVIDENCE_ROOT / "tools/inference_parity/qwen_image_artifacts.json"
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="requires POSIX descriptor APIs")
 _pread = cast("Callable[[int, int, int], bytes]", getattr(os, "pread", None))
 

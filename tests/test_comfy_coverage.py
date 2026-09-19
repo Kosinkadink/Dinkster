@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -39,6 +40,35 @@ from tools.comfy_coverage import (
 )
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(scope="module")
+def generated_reports(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict, dict]:
+    output = tmp_path_factory.mktemp("comfy-coverage")
+    templates = Path(os.environ.get("WORKFLOW_TEMPLATES_ROOT", REPO.parent / "workflow_templates"))
+    comfyui = Path(os.environ.get("COMFYUI_ROOT", REPO.parent / "ComfyUI"))
+    arguments = [
+        "--templates",
+        str(templates / "templates"),
+        "--comfyui",
+        str(comfyui),
+        "--supported",
+        str(REPO / "docs" / "supported"),
+        "--json-output",
+        str(output / "coverage.json"),
+        "--markdown-output",
+        str(output / "coverage.md"),
+        "--evidence-json-output",
+        str(output / "evidence.json"),
+        "--evidence-markdown-output",
+        str(output / "evidence.md"),
+    ]
+    assert coverage.main(arguments) == 0
+    assert coverage.main([*arguments, "--check"]) == 0
+    return (
+        json.loads((output / "coverage.json").read_text()),
+        json.loads((output / "evidence.json").read_text()),
+    )
 
 
 def snapshot() -> DownloadSnapshot:
@@ -732,8 +762,10 @@ def test_checked_in_source_parity_baseline_has_explicit_non_parity_dispositions(
     } == {"dinkster-nodes-dev", "dinkster-nodes-partner", "dinkster-nodes-training"}
 
 
-def test_video_operation_evidence_is_not_counted_as_mapping_parity() -> None:
-    report = json.loads((REPO / "docs" / "comfy-translation-coverage.json").read_text())
+def test_video_operation_evidence_is_not_counted_as_mapping_parity(
+    generated_reports: tuple[dict, dict],
+) -> None:
+    report, _ = generated_reports
     backed = set(report["receipts"]["recordsWithPassingReceipts"])
     assert backed.isdisjoint(
         {
@@ -846,6 +878,26 @@ def test_evidence_source_enforces_native_drift_and_tier_requirements(
     path.write_text(json.dumps(document), encoding="ascii")
     with pytest.raises(CoverageError, match="lacks evidence kinds required by T4"):
         load_evidence_source(path, tmp_path)
+
+
+def test_parity_selectors_use_external_evidence_without_allowing_traversal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    evidence = tmp_path / "evidence"
+    parity = evidence / "tools" / "inference_parity"
+    parity.mkdir(parents=True)
+    (parity / "test_reference.py").write_text("def test_reference(): pass\n", encoding="ascii")
+    monkeypatch.setattr(coverage, "EVIDENCE_ROOT", evidence)
+    selector = "tools/inference_parity/test_reference.py::test_reference"
+    coverage._validate_evidence_selector(selector, tmp_path / "core", require_collected_test=True)
+    with pytest.raises(CoverageError, match="names no test function"):
+        coverage._validate_evidence_selector(
+            "tools/inference_parity/test_reference.py::test_missing", tmp_path / "core"
+        )
+    with pytest.raises(CoverageError, match="must be repository-relative"):
+        coverage._validate_evidence_selector(
+            "tools/inference_parity/../../outside.py", tmp_path / "core"
+        )
 
 
 def test_supported_claim_lint_checks_tier_and_exposure(tmp_path: Path) -> None:
@@ -1102,10 +1154,21 @@ def test_generated_outputs_are_deterministic_and_check_detects_staleness(
     assert coverage.main([*arguments, "--check"]) == 1
 
 
-def test_checked_in_report_describes_the_pinned_corpus_and_loaded_registries() -> None:
-    report = json.loads((REPO / "docs" / "comfy-translation-coverage.json").read_text())
-    ledger = json.loads((REPO / "docs" / "comfy-capability-evidence.json").read_text())
-    historical = (REPO / "docs" / "research" / "comfy-translation-coverage-aa3661d9.md").read_text()
+def test_generated_report_describes_the_pinned_corpus_and_loaded_registries(
+    generated_reports: tuple[dict, dict],
+) -> None:
+    report, ledger = generated_reports
+    # The comparison is against an immutable historical report, not current research.
+    historical = subprocess.check_output(
+        [
+            "git",
+            "show",
+            "fd02ae351d2ba3eb84f5a68cb89fe208a7365ae3:"
+            "docs/research/comfy-translation-coverage-aa3661d9.md",
+        ],
+        cwd=REPO,
+        text=True,
+    )
     assert report["format"] == coverage.FORMAT
     assert report["inputs"]["templateRevision"] == coverage.TEMPLATE_REVISION
     assert report["inputs"]["comfyuiRevision"] == coverage.COMFYUI_REVISION
