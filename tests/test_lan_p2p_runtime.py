@@ -750,12 +750,11 @@ def test_restored_inactive_lease_does_not_consume_active_seed_cap(
     second_seed, _download = _leases(second_source, "second")
     policy = LanNetworkPolicy(())
     monkeypatch.setattr(p2p_runtime, "current_lan_policy", lambda: policy)
-    monkeypatch.setattr(p2p_runtime, "MAX_ACTIVE_SEEDS", 1)
     arguments = {
         "state_root": tmp_path / "vault" / ".p2p",
         "vault_root": tmp_path / "vault",
         "installation_root": tmp_path / "install",
-        "settings": _settings(seeding=True),
+        "settings": {**_settings(seeding=True), "maxActiveSeeds": 1},
     }
 
     first = SidecarRuntime(**arguments)
@@ -768,6 +767,12 @@ def test_restored_inactive_lease_does_not_consume_active_seed_cap(
     try:
         assert restored._lease_status(first_seed)["state"] == "inactive"
         assert restored.grant(second_seed.to_wire(), "seed")["leaseId"] == second_seed.lease_id
+        assert restored.grant(second_seed.to_wire(), "seed")["leaseId"] == second_seed.lease_id
+        with pytest.raises(SidecarError, match="limit reached"):
+            restored.grant(first_seed.to_wire(), "seed")
+        assert len(restored._session.get_torrents()) == 1
+        restored.revoke({"leaseId": second_seed.lease_id})
+        assert restored.grant(first_seed.to_wire(), "seed")["leaseId"] == first_seed.lease_id
     finally:
         restored.close()
 
@@ -1121,12 +1126,15 @@ def test_controller_maps_trusted_resolver_snapshot_to_global_download_and_tombst
         global_network_policy = ("unmetered", False)
 
         def __init__(self) -> None:
-            self.reconciliations: list[tuple[AuthorizedGlobalLease, ...]] = []
+            self.reconciliations: list[tuple[bool, tuple[AuthorizedGlobalLease, ...]]] = []
 
         async def reconcile_global(
-            self, authorizations: tuple[AuthorizedGlobalLease, ...]
+            self,
+            authorizations: tuple[AuthorizedGlobalLease, ...],
+            *,
+            revoke_only: bool = False,
         ) -> dict[str, tuple[str, ...]]:
-            self.reconciliations.append(authorizations)
+            self.reconciliations.append((revoke_only, authorizations))
             return {"granted": (), "revoked": ()}
 
     async def scenario() -> None:
@@ -1142,12 +1150,13 @@ def test_controller_maps_trusted_resolver_snapshot_to_global_download_and_tombst
         controller._settings = default_p2p_settings()
 
         await controller.reconcile()
-        assert manager.reconciliations == [()]
+        assert manager.reconciliations == [(True, ()), (False, ())]
         (candidate,) = controller._known_transports(derived.asset_digest)
         assert candidate.kind == "global-p2p"
         lease_id = await controller._request_global_download(derived.asset_digest, candidate.source)
         assert lease_id == f"global:download:{candidate.source}"
-        (authorization,) = manager.reconciliations[-1]
+        revoke_only, (authorization,) = manager.reconciliations[-1]
+        assert not revoke_only
         assert isinstance(authorization.lease, DownloadLease)
         assert authorization.lease.digest == derived.asset_digest
         assert authorization.trackers == ()
@@ -1156,7 +1165,7 @@ def test_controller_maps_trusted_resolver_snapshot_to_global_download_and_tombst
         write_index(include_p2p=False)
         indexes.refresh(subscription.id)
         await controller.reconcile()
-        assert manager.reconciliations[-1] == ()
+        assert manager.reconciliations[-2:] == [(True, ()), (False, ())]
         assert controller._known_transports(derived.asset_digest) == ()
 
     asyncio.run(scenario())
