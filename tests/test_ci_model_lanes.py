@@ -13,7 +13,10 @@ from tools.evidence_paths import EVIDENCE_ROOT
 ROOT = Path(__file__).resolve().parents[1]
 ACTION_PATH = "./.github/actions/torch-cpu-suite"
 ACTION = yaml.safe_load((ROOT / ACTION_PATH / "action.yml").read_text(encoding="utf-8"))
-JOBS = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))["jobs"]
+WORKFLOW = yaml.safe_load(
+    (ROOT / ".github/workflows/full-validation.yml").read_text(encoding="utf-8")
+)
+JOBS = WORKFLOW["jobs"]
 MODEL_CONDITION = "inputs.run-model-tests == 'true'"
 RECEIPT_TEST = "tests/test_gen_comfy_source_parity_receipts.py"
 ACCEPTANCE_CLOSURE_TEST = (
@@ -60,8 +63,8 @@ def test_every_hosted_composite_caller_explicitly_excludes_model_tests() -> None
                 if name != "model-tests":
                     assert job["runs-on"] == "ubuntu-latest"
     assert set(callers) == {
-        ("ci.yml", "model-tests"),
-        *(("ci.yml", f"torch-cpu-try{number}") for number in range(1, 6)),
+        ("full-validation.yml", "model-tests"),
+        *(("full-validation.yml", f"torch-cpu-try{number}") for number in range(1, 6)),
     }
     assert len(callers) == 6
     assert ACTION["inputs"]["run-model-tests"]["default"] == "false"
@@ -201,14 +204,17 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
 
 
 @pytest.mark.parametrize("enabled", ["", "false", "true"])
-@pytest.mark.parametrize("event", ["pull_request", "push"])
+@pytest.mark.parametrize("event", ["pull_request", "push", "schedule", "workflow_dispatch"])
 @pytest.mark.parametrize("ref", ["refs/heads/main", "refs/heads/feature"])
 @pytest.mark.parametrize("repository", ["Kosinkadink/Dinkster", "other/Dinkster"])
-def test_dedicated_job_allocates_only_for_enabled_trusted_main_push(
+def test_dedicated_job_allocates_only_for_enabled_trusted_full_validation(
     enabled: str, event: str, ref: str, repository: str
 ) -> None:
     job = JOBS["model-tests"]
-    assert _condition_matches(
+    # PyYAML reads the YAML 1.1 spelling "on" as True.
+    triggers = WORKFLOW[True]
+    triggered = event in triggers and (event != "push" or ref == "refs/heads/main")
+    allocated = triggered and _condition_matches(
         job["if"],
         {
             "vars.DINKSTER_MODEL_TESTS_ENABLED": enabled,
@@ -216,10 +222,13 @@ def test_dedicated_job_allocates_only_for_enabled_trusted_main_push(
             "github.ref": ref,
             "github.repository": repository,
         },
-    ) == (
+    )
+    assert allocated == (
         enabled == "true"
-        and event == "push"
-        and ref == "refs/heads/main"
+        and (
+            event in {"schedule", "workflow_dispatch"}
+            or (event == "push" and ref == "refs/heads/main")
+        )
         and repository == "Kosinkadink/Dinkster"
     )
     assert job["runs-on"] == ["self-hosted", "linux", "x64", "dinkster-model-tests"]
@@ -251,7 +260,40 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         "MKL_NUM_THREADS": "4",
     }
     for name in ("p2p-descriptor-macos", "p2p-artifact-smoke"):
-        assert JOBS[name]["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+        assert "if" not in JOBS[name]
+
+
+def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    assert set(workflow["jobs"]) == {"fast"}
+    assert set(workflow[True]) == {"pull_request", "workflow_dispatch"}
+    assert WORKFLOW[True] == {
+        "push": {"branches": ["main"]},
+        "schedule": [{"cron": "23 10 * * *"}],
+        "workflow_dispatch": None,
+    }
+    job = workflow["jobs"]["fast"]
+    assert job["timeout-minutes"] == 5
+    assert job["steps"][-1] == {"run": "bash scripts/ci-fast.sh"}
+    preparation = [
+        step
+        for step in job["steps"]
+        if step.get("uses") == "./.github/actions/prepare-validation-inputs"
+    ]
+    assert len(preparation) == 1
+    assert preparation[0]["with"]["coverage"] == "false"
+    script = (ROOT / "scripts/ci-fast.sh").read_text(encoding="utf-8")
+    assert "ruff format --check ." in script
+    assert "ruff check ." in script
+    assert "uv run --locked pyright" in script
+    assert re.findall(r"tests/\S+\.py", script) == [
+        "tests/test_schema.py",
+        "tests/test_values.py",
+        "tests/test_graph.py",
+        "tests/test_graph_wire.py",
+    ]
+    assert "--cov" not in script
+    assert "torch-cpu-suite" not in str(job)
 
 
 @pytest.mark.parametrize("environment", ["github-hosted", "self-hosted"])

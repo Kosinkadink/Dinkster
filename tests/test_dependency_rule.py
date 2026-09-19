@@ -389,7 +389,9 @@ def test_torch_runtime_backends_are_constrained_behind_torch_extra() -> None:
 
 
 def test_windows_ci_installs_published_engine_dependencies_without_torch() -> None:
-    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/full-validation.yml").read_text(encoding="utf-8")
+    )
     steps = workflow["jobs"]["test"]["steps"]
     (install_step,) = [
         step
