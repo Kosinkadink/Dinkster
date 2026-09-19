@@ -119,7 +119,7 @@ def _install_attention_tracking() -> None:
         function = getattr(ops, "scaled_dot_product_attention", None)
         if function is not None:
             ops.scaled_dot_product_attention = _record_provider_call(function)
-    elif _ATTENTION_POLICY == "comfy_kitchen_int8":
+    elif _ATTENTION_POLICY == "dinkster_kitchen_int8":
         kitchen = getattr(attention, "comfy_kitchen", None)
         for name in ("int8_attention", "int8_attention_from_prequantized"):
             function = getattr(kitchen, name, None)
@@ -666,14 +666,14 @@ def _attention_identity() -> dict[str, object]:
     args = comfy.model_management.args
     flags = {
         "sdpa": bool(getattr(args, "use_pytorch_cross_attention", False)),
-        "comfy_kitchen_int8": bool(getattr(args, "use_ck_attention", False)),
+        "dinkster_kitchen_int8": bool(getattr(args, "use_ck_attention", False)),
         "sage": bool(getattr(args, "use_sage_attention", False)),
     }
     selected = [policy for policy, enabled in flags.items() if enabled]
     selected_policy = selected[0] if len(selected) == 1 else "auto" if not selected else "invalid"
     versions: list[list[str | None]] = [["torch", str(torch.__version__)]]
     provider_module = None
-    if _ATTENTION_POLICY == "comfy_kitchen_int8":
+    if _ATTENTION_POLICY == "dinkster_kitchen_int8":
         versions.append(["comfy-kitchen", _distribution_version("comfy-kitchen")])
     elif _ATTENTION_POLICY == "sage":
         provider_module = _sage_module_identity()

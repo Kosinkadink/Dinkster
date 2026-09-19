@@ -14,7 +14,7 @@ function-local import would risk a graph break inside fullgraph
 compiled forwards).
 
 :func:`scaled_mm_available` gates the route to CUDA hosts and declines
-HIP runtimes, where comfy-kitchen serves the fp8 matmul through its
+HIP runtimes, where dinkster-kitchen serves the fp8 matmul through its
 own WMMA kernel; consumers keep kitchen and eager-torch fallbacks.
 """
 
@@ -52,7 +52,7 @@ _FUNCTIONAL_SCALED_MM = _resolve_functional_scaled_mm()
 def scaled_mm_available() -> bool:
     """Whether the owned fp8 scaled-matmul route can serve this host.
 
-    False on HIP runtimes (comfy-kitchen's WMMA kernel owns that
+    False on HIP runtimes (dinkster-kitchen's WMMA kernel owns that
     route) and on hosts with no CUDA device. Per-operand eligibility
     (fp8 dtypes, compute capability) stays with the consumer's
     capability checks.

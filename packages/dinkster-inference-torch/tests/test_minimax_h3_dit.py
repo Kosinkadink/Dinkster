@@ -12,7 +12,7 @@ from pathlib import Path
 from types import MethodType
 from typing import Any, cast
 
-import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 import pytest
 import torch
 import torch.distributed as dist
@@ -59,7 +59,7 @@ from dinkster_inference_torch.attention import (
     AttentionSelectionError,
     AttentionTensorLease,
     builtin_sdpa_kernel,
-    comfy_kitchen_int8_available,
+    dinkster_kitchen_int8_available,
     select_attention,
 )
 from dinkster_inference_torch.distributed import (
@@ -359,7 +359,7 @@ def test_inference_uses_in_place_kitchen_norm_rope(monkeypatch: pytest.MonkeyPat
         )
         return query, key
 
-    monkeypatch.setattr(comfy_kitchen, "rms_rope_split_half_", fake_fused_norm_rope)
+    monkeypatch.setattr(dinkster_kitchen, "rms_rope_split_half_", fake_fused_norm_rope)
     with torch.no_grad():
         model(hidden, table)
 
@@ -2812,7 +2812,7 @@ def test_consuming_kernel_takes_shared_projection_views_without_v_clone(
         geometry, cast(AttentionKernel, consuming), _evidence(), operations=InitlessOperations()
     )
     _fill_attention(model)
-    monkeypatch.setattr(comfy_kitchen, "rms_rope_split_half_", _in_place_norm_rope)
+    monkeypatch.setattr(dinkster_kitchen, "rms_rope_split_half_", _in_place_norm_rope)
     hidden = torch.randn(1, 3, 12)
     table = _rope_table(3, 6)
 
@@ -2859,11 +2859,11 @@ def test_attention_provider_maps_selection_to_kernel_and_evidence(
     assert sdpa_evidence == _evidence()
 
     monkeypatch.setattr(attention_module, "_KITCHEN_AVAILABLE", lambda: True)
-    selection = select_attention("flux", "comfy_kitchen_int8")
+    selection = select_attention("flux", "dinkster_kitchen_int8")
     kitchen_kernel, kitchen_evidence = minimax_h3_attention_provider(selection)
     assert kitchen_kernel is selection.kernel
     assert kitchen_evidence.provider == COMFY_KITCHEN_INT8_PROVIDER
-    assert kitchen_evidence.provider_version == importlib.metadata.version("comfy-kitchen")
+    assert kitchen_evidence.provider_version == importlib.metadata.version("dinkster-kitchen")
 
     monkeypatch.setattr(attention_module, "_KITCHEN_SOL_ATTENTION", object())
     monkeypatch.setattr(
@@ -2882,7 +2882,7 @@ def test_attention_provider_maps_selection_to_kernel_and_evidence(
     sol_kernel, sol_evidence = minimax_h3_attention_provider(sol)
     assert sol_kernel is sol.kernel
     assert sol_evidence.provider == SOL_ATTENTION_PROVIDER
-    assert sol_evidence.provider_version == importlib.metadata.version("comfy-kitchen")
+    assert sol_evidence.provider_version == importlib.metadata.version("dinkster-kitchen")
 
     with pytest.raises(TypeError, match="exact AttentionSelection"):
         minimax_h3_attention_provider(cast(Any, object()))
@@ -2892,14 +2892,14 @@ def test_attention_provider_maps_selection_to_kernel_and_evidence(
 
 def test_kitchen_provider_evidence_requires_exact_installed_version() -> None:
     version = str(torch.__version__)
-    kitchen_version = importlib.metadata.version("comfy-kitchen")
+    kitchen_version = importlib.metadata.version("dinkster-kitchen")
     evidence = MiniMaxH3AttentionProviderEvidence(
         COMFY_KITCHEN_INT8_PROVIDER, version, kitchen_version
     )
     assert evidence.provider_version == kitchen_version
-    with pytest.raises(ValueError, match="installed comfy-kitchen version"):
+    with pytest.raises(ValueError, match="installed dinkster-kitchen version"):
         MiniMaxH3AttentionProviderEvidence(COMFY_KITCHEN_INT8_PROVIDER, version, None)
-    with pytest.raises(ValueError, match="installed comfy-kitchen version"):
+    with pytest.raises(ValueError, match="installed dinkster-kitchen version"):
         MiniMaxH3AttentionProviderEvidence(COMFY_KITCHEN_INT8_PROVIDER, version, "0.0.0")
     with pytest.raises(ValueError, match="carries no provider version"):
         MiniMaxH3AttentionProviderEvidence(BUILTIN_SDPA_PROVIDER, version, kitchen_version)
@@ -2907,12 +2907,12 @@ def test_kitchen_provider_evidence_requires_exact_installed_version() -> None:
 
 def test_sol_provider_evidence_requires_exact_installed_version() -> None:
     version = str(torch.__version__)
-    kitchen_version = importlib.metadata.version("comfy-kitchen")
+    kitchen_version = importlib.metadata.version("dinkster-kitchen")
     evidence = MiniMaxH3AttentionProviderEvidence(SOL_ATTENTION_PROVIDER, version, kitchen_version)
     assert evidence.provider_version == kitchen_version
-    with pytest.raises(ValueError, match="installed comfy-kitchen version"):
+    with pytest.raises(ValueError, match="installed dinkster-kitchen version"):
         MiniMaxH3AttentionProviderEvidence(SOL_ATTENTION_PROVIDER, version, None)
-    with pytest.raises(ValueError, match="installed comfy-kitchen version"):
+    with pytest.raises(ValueError, match="installed dinkster-kitchen version"):
         MiniMaxH3AttentionProviderEvidence(SOL_ATTENTION_PROVIDER, version, "0.0.0")
 
 
@@ -2936,7 +2936,7 @@ def test_attention_factory_works_with_any_authenticated_provider() -> None:
     kitchen_evidence = MiniMaxH3AttentionProviderEvidence(
         COMFY_KITCHEN_INT8_PROVIDER,
         str(torch.__version__),
-        importlib.metadata.version("comfy-kitchen"),
+        importlib.metadata.version("dinkster-kitchen"),
     )
     model = MiniMaxH3DiT(
         cast(MiniMaxH3Config, _ReducedConfig()),
@@ -2962,19 +2962,19 @@ def test_attention_factory_works_with_any_authenticated_provider() -> None:
 
 
 @pytest.mark.skipif(
-    not torch.cuda.is_available() or not comfy_kitchen_int8_available(),
-    reason="comfy-kitchen INT8 attention on a CUDA GPU is required",
+    not torch.cuda.is_available() or not dinkster_kitchen_int8_available(),
+    reason="dinkster-kitchen INT8 attention on a CUDA GPU is required",
 )
 def test_attention_factory_dispatches_kitchen_provider_on_cuda(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = torch.device("cuda:0")
-    selection = select_attention("flux", "comfy_kitchen_int8")
-    assert selection.status.primary == "comfy_kitchen_int8"
+    selection = select_attention("flux", "dinkster_kitchen_int8")
+    assert selection.status.primary == "dinkster_kitchen_int8"
     kitchen_evidence = MiniMaxH3AttentionProviderEvidence(
         COMFY_KITCHEN_INT8_PROVIDER,
         str(torch.__version__),
-        importlib.metadata.version("comfy-kitchen"),
+        importlib.metadata.version("dinkster-kitchen"),
     )
     model = _gpu_geometry_model(device, kernel=selection.kernel, evidence=kitchen_evidence)
     value, context = _gpu_geometry_inputs(device)
@@ -3015,7 +3015,7 @@ def test_attention_factory_dispatches_kitchen_provider_on_cuda(
         difference = (actual.by_role(role).float() - expected.by_role(role).float()).abs()
         # This model fills each parameter tensor with one constant, so the
         # attention output is nearly seed-free; measured max drift is 1e-8
-        # (RTX PRO 6000 Blackwell, torch 2.13.0+cu130, comfy-kitchen 0.2.31).
+        # (RTX PRO 6000 Blackwell, torch 2.13.0+cu130, dinkster-kitchen 0.2.31).
         # The 1e-6 cap is a gross-defect trip with 100x headroom.
         assert difference.max().item() <= 1e-6, role
 
@@ -3049,7 +3049,7 @@ def test_sequence_receipt_identity_changes_with_attention_provider() -> None:
         MiniMaxH3AttentionProviderEvidence(
             COMFY_KITCHEN_INT8_PROVIDER,
             str(torch.__version__),
-            importlib.metadata.version("comfy-kitchen"),
+            importlib.metadata.version("dinkster-kitchen"),
         ),
         operations=InitlessOperations(),
     )

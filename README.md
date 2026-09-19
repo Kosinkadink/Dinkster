@@ -31,23 +31,16 @@ node, dtype, training, and compatibility coverage is linked from the
 which also build the torch/GPU test venvs - see
 `packages/dinkster-inference-torch/README.md`), then:
 
-On Linux and Windows, the setup script installs the exact native comfy-aimdo
-wheel from the private maintained fork. Provide `DINKSTER_AIMDO_TOKEN`,
-`GH_TOKEN`, or `GITHUB_TOKEN` with private-repository read access, or
-authenticate the `gh` CLI first. The installer sends credentials only in
-GitHub API headers and fails closed when the pinned release or a compatible
-verified wheel is absent.
-macOS does not invoke Aimdo because the mechanism does not support that OS.
-When the maintained fork is published to public PyPI, the private installer
-is replaced by a normal exact dependency and removed.
+On Linux and Windows, the setup script installs `dinkster-kitchen==0.2.35.post1`
+and `dinkster-aimdo==0.5.5.post2` from PyPI. macOS installs the pure-Python
+kitchen wheel and does not install Aimdo because the mechanism does not support
+that OS.
 
 Both setup scripts pin root synchronization to this checkout's torch-free
 `.venv`, regardless of `UV_PROJECT` or `UV_PROJECT_ENVIRONMENT`. They manage
-`.venv-torch` and `.venv-gpu` separately with `uv pip` and the private installer.
-Do not target those Torch environments with project `uv sync`: exact sync can
-remove the private wheel or replace it with the public version selected by the
-Torch extra. After a manual dependency change, restore the owned wheel with
-that environment's Python running `scripts/install_dinkster_aimdo.py` before use.
+`.venv-torch` and `.venv-gpu` separately with `uv pip`. Do not target those
+Torch environments with project `uv sync`: exact sync can remove their
+platform-specific torch and kitchen wheels.
 
 - `uv run pytest` - test suite (incl. the one-way dependency rule, hazard H6)
 - `uv run pyright` - static type checking (strict for `packages/`, standard

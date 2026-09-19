@@ -7,10 +7,10 @@ and the kitchen-CUDA / triton / multi-GPU tests state exactly which
 capability is missing instead of silently passing on a fallback path.
 Run instructions for a GPU interpreter are in this package's README
 ("GPU validation"). First validated 2026-07 on 2x RTX 4090 (torch
-2.9.1+cu130, triton 3.5.1, comfy-kitchen 0.2.22 wheel with the
+2.9.1+cu130, triton 3.5.1, dinkster-kitchen 0.2.22 wheel with the
 prebuilt CUDA backend).
 
-Dispatch honesty matters: comfy_kitchen routes per-tensor-device, so a
+Dispatch honesty matters: dinkster_kitchen routes per-tensor-device, so a
 test that merely calls stochastic_rounding on a CPU tensor exercises
 the eager backend even when CUDA is present. The tests below pin the
 registry's backend CHOICE for CUDA tensors, not just the numerics.
@@ -598,7 +598,7 @@ def test_z_image_qk_rmsnorm_uses_official_epsilon_on_cuda() -> None:
 
 
 def test_int8_convrot_embedding_matches_kitchen_on_cuda() -> None:
-    pytest.importorskip("comfy_kitchen")
+    pytest.importorskip("dinkster_kitchen")
     from dinkster_inference_torch.quant_linear import Int8Embedding
 
     device = torch.device("cuda:0")
@@ -617,9 +617,9 @@ def test_int8_convrot_embedding_matches_kitchen_on_cuda() -> None:
     ).to(device)
     layer.load_state_dict({"weight": weight, "weight_scale": scale}, assign=True)
 
-    expected = torch.ops.comfy_kitchen.dequantize_int8_embedding(weight, scale, indices, 256, 2).to(
-        torch.bfloat16
-    )
+    expected = torch.ops.dinkster_kitchen.dequantize_int8_embedding(
+        weight, scale, indices, 256, 2
+    ).to(torch.bfloat16)
     torch.testing.assert_close(layer(indices), expected, rtol=0, atol=0)
 
 
@@ -652,7 +652,7 @@ def test_gemma4_rope_matches_cpu_precomputed_inverse_frequencies_on_cuda() -> No
 
 
 def test_int8_fused_training_forward_and_input_gradient_on_cuda() -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
     from dinkster_inference_torch.quant_linear import Int8Linear
 
     device = torch.device("cuda:0")
@@ -676,7 +676,7 @@ def test_int8_fused_training_forward_and_input_gradient_on_cuda() -> None:
     layer.load_state_dict({"weight": weight, "weight_scale": scale, "bias": bias}, assign=True)
     layer.bind_fused_training(True)
     grad_output = torch.randn((2, 3, 384), generator=generator, device=device, dtype=torch.bfloat16)
-    expected = comfy_kitchen.int8_linear(
+    expected = dinkster_kitchen.int8_linear(
         input.detach(),
         weight,
         scale,
@@ -685,7 +685,9 @@ def test_int8_fused_training_forward_and_input_gradient_on_cuda() -> None:
         convrot=True,
         convrot_groupsize=64,
     )
-    dequantized = torch.ops.comfy_kitchen.dequantize_int8_convrot_weight_dtype(weight, scale, 64, 2)
+    dequantized = torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight_dtype(
+        weight, scale, 64, 2
+    )
     expected_grad = grad_output.reshape(-1, 384).matmul(dequantized).reshape(input.shape)
 
     actual = layer(input)
@@ -697,7 +699,7 @@ def test_int8_fused_training_forward_and_input_gradient_on_cuda() -> None:
 
 
 def test_int8_fused_training_accepts_unaligned_output_width_on_cuda() -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
     from dinkster_inference_torch.quant_linear import Int8Linear
 
     device = torch.device("cuda:0")
@@ -718,7 +720,7 @@ def test_int8_fused_training_accepts_unaligned_output_width_on_cuda() -> None:
     layer.load_state_dict({"weight": weight, "weight_scale": scale}, assign=True)
     layer.bind_fused_training(True)
     grad_output = torch.randn((2, 6), generator=generator, device=device, dtype=torch.bfloat16)
-    expected = comfy_kitchen.int8_linear(
+    expected = dinkster_kitchen.int8_linear(
         input.detach(),
         weight,
         scale,
@@ -736,7 +738,7 @@ def test_int8_fused_training_accepts_unaligned_output_width_on_cuda() -> None:
 
 
 def test_int8_fused_training_casts_autocast_gradient_to_matmul_dtype() -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
     from dinkster_inference_torch.quant_linear import Int8Linear
 
     device = torch.device("cuda:0")
@@ -759,7 +761,7 @@ def test_int8_fused_training_casts_autocast_gradient_to_matmul_dtype() -> None:
     ).to(device)
     layer.load_state_dict({"weight": weight, "weight_scale": scale}, assign=True)
     layer.bind_fused_training(True)
-    expected = comfy_kitchen.int8_linear(
+    expected = dinkster_kitchen.int8_linear(
         input.detach().to(torch.float16),
         weight,
         scale,
@@ -768,7 +770,9 @@ def test_int8_fused_training_casts_autocast_gradient_to_matmul_dtype() -> None:
         convrot=True,
         convrot_groupsize=64,
     )
-    dequantized = torch.ops.comfy_kitchen.dequantize_int8_convrot_weight_dtype(weight, scale, 64, 1)
+    dequantized = torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight_dtype(
+        weight, scale, 64, 1
+    )
     expected_grad = (
         grad_output.reshape(-1, 384)
         .to(torch.float16)
@@ -831,12 +835,12 @@ def test_int8_input_activation_folding_matches_materialized_order(
     input_act: Literal["gelu_tanh", "swiglu"],
 ) -> None:
     require_gpu_tests_enabled()
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
-    from comfy_kitchen.tensor import (  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    from dinkster_inference_torch.quant_linear import Int8Linear
+    from dinkster_kitchen.tensor import (  # pyright: ignore[reportMissingTypeStubs]
         QuantizedTensor,
         TensorWiseINT8Layout,
     )
-    from dinkster_inference_torch.quant_linear import Int8Linear
 
     torch.manual_seed(20260823)
     device = torch.device("cuda:0")
@@ -876,7 +880,7 @@ def test_int8_input_activation_folding_matches_materialized_order(
         activated = torch.nn.functional.gelu(input, approximate="tanh")
     expected = torch.nn.functional.linear(activated, wrapped)
     actual = quant_linear_mod.linear_input_act(layer, input, input_act)
-    fused = comfy_kitchen.int8_linear(
+    fused = dinkster_kitchen.int8_linear(
         input,
         weight,
         params.scale,
@@ -1278,15 +1282,15 @@ def test_aimdo_dual_dtype_warm_forwards_stay_bit_identical() -> None:
     require_gpu_tests_enabled()
     import importlib.util
 
-    if importlib.util.find_spec("comfy_aimdo") is None:
-        pytest.skip("comfy_aimdo is not installed")
+    if importlib.util.find_spec("dinkster_aimdo") is None:
+        pytest.skip("dinkster_aimdo is not installed")
     root = Path(__file__).resolve().parents[3]
     script = textwrap.dedent(
         """
         import os
         if os.environ.get("DINKSTER_ENABLE_GPU_TESTS") != "1":
             raise RuntimeError("GPU test worker requires DINKSTER_ENABLE_GPU_TESTS=1")
-        import comfy_aimdo.control as control
+        import dinkster_aimdo.control as control
         assert control.init(simple_vram_headroom=1 << 28)
         import torch
         from dinkster_inference_torch import aimdo_residency
@@ -1355,14 +1359,14 @@ def test_aimdo_dual_dtype_warm_forwards_stay_bit_identical() -> None:
 
 
 def _kitchen_cuda_backend_available() -> bool:
-    """True when comfy_kitchen's compiled CUDA backend is importable
+    """True when dinkster_kitchen's compiled CUDA backend is importable
     AND advertises the stochastic-rounding kernel - the only state in
     which the accelerated GPU rounding path is actually proven."""
     if not kitchen_available:
         return False
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
-    info = comfy_kitchen.list_backends().get("cuda")
+    info = dinkster_kitchen.list_backends().get("cuda")
     return bool(info and info["available"] and "stochastic_rounding_fp8" in info["capabilities"])
 
 
@@ -1378,7 +1382,7 @@ def _triton_available() -> bool:
 requires_kitchen_cuda = pytest.mark.skipif(
     not _kitchen_cuda_backend_available(),
     reason=(
-        "comfy-kitchen CUDA backend unavailable - accelerated GPU"
+        "dinkster-kitchen CUDA backend unavailable - accelerated GPU"
         " rounding NOT proven (install the PyPI wheel, which ships"
         " the prebuilt _C.abi3.so; see README)"
     ),
@@ -1638,11 +1642,11 @@ def diff_entry(
 
 @requires_kitchen_cuda
 def test_h3_norm_rope_dispatches_kitchen_cuda_backend_in_place() -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
-    from comfy_kitchen import registry  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
     from dinkster_inference_torch.minimax_h3_dit import (
         _fused_h3_norm_rope,  # pyright: ignore[reportPrivateUsage]
     )
+    from dinkster_kitchen import registry  # pyright: ignore[reportMissingTypeStubs]
 
     # Input is SEEDED: the tail bit-exactness pinned below is not universal.
     # Draws landing within half a bf16 ulp of a rounding boundary make the
@@ -1681,8 +1685,8 @@ def test_h3_norm_rope_dispatches_kitchen_cuda_backend_in_place() -> None:
             "rot_dim": 96,
         },
     )
-    assert impl.__module__ == "comfy_kitchen.backends.cuda"
-    assert comfy_kitchen.rms_rope_split_half_ is not None
+    assert impl.__module__ == "dinkster_kitchen.backends.cuda"
+    assert dinkster_kitchen.rms_rope_split_half_ is not None
 
     with torch.no_grad():
         actual_query, actual_key = _fused_h3_norm_rope(
@@ -1755,7 +1759,7 @@ def test_fp8_cast_dequantizes_on_cuda() -> None:
 def test_int8_convrot_packed_weight_uses_owned_bit_identical_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    importlib.import_module("comfy_kitchen")
+    importlib.import_module("dinkster_kitchen")
     import dinkster_kernels
     from dinkster_inference_torch.quant import Int8PackedWeight
 
@@ -1771,7 +1775,7 @@ def test_int8_convrot_packed_weight_uses_owned_bit_identical_route(
         generator=generator,
     )
     scale = torch.rand((17, 1), dtype=torch.float32, device="cuda", generator=generator)
-    expected = torch.ops.comfy_kitchen.dequantize_int8_convrot_weight(qdata, scale, 256)
+    expected = torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight(qdata, scale, 256)
     owned = dinkster_kernels.dequantize_int8_convrot_weight
     called = False
 
@@ -2598,8 +2602,8 @@ def test_rounding_dispatches_kitchen_cuda_backend(device: str, dtype: torch.dtyp
     tensors (not silently fall back to eager), and the kernel's output
     must be a valid adjacent-grid rounding, seed-deterministic through
     Dinkster's wrapper - on every GPU in the machine."""
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
-    from comfy_kitchen import (  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    from dinkster_kitchen import (  # pyright: ignore[reportMissingTypeStubs]
         registry,
     )
 
@@ -2609,8 +2613,8 @@ def test_rounding_dispatches_kitchen_cuda_backend(device: str, dtype: torch.dtyp
         "stochastic_rounding_fp8",
         kwargs={"x": value, "rng": rng, "output_type": dtype},
     )
-    assert impl.__module__ == "comfy_kitchen.backends.cuda"
-    assert comfy_kitchen.stochastic_rounding_fp8 is not None
+    assert impl.__module__ == "dinkster_kitchen.backends.cuda"
+    assert dinkster_kitchen.stochastic_rounding_fp8 is not None
 
     # Imported here: test_patches loads a platform golden at import, and an
     # unminted tuple must skip only the tests that need it.
@@ -2630,7 +2634,7 @@ def test_rounding_dispatches_kitchen_cuda_backend(device: str, dtype: torch.dtyp
 @requires_two_gpus
 def test_kitchen_cuda_stochastic_rounding_wrong_device_canary() -> None:
     """Pin the 0.2.31 DLPack current-device defect until upstream fixes it."""
-    from comfy_kitchen.backends.cuda import (  # pyright: ignore[reportMissingTypeStubs]
+    from dinkster_kitchen.backends.cuda import (  # pyright: ignore[reportMissingTypeStubs]
         stochastic_rounding_fp8 as kitchen_round,
     )
 
@@ -2656,7 +2660,7 @@ def test_kitchen_cuda_kernel_matches_eager_bitwise(
     stochastic-rounding-fp16-log2-boundary.md, pinned by the canary
     below), so an unseeded draw flakes whenever it lands within half
     an fp16 ulp below a boundary."""
-    import comfy_kitchen as ck  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen as ck  # pyright: ignore[reportMissingTypeStubs]
 
     generator = torch.Generator(device="cuda:0").manual_seed(1234)
     x = torch.randn(128, 96, device="cuda:0", generator=generator) * 3.0
@@ -2686,7 +2690,7 @@ def test_kitchen_cuda_rng_mutation_canary() -> None:
     docs/comfyui-issues/comfy-kitchen-cuda-stochastic-rounding-mutates-rng.md
     and drop the defensive clones in test_kitchen_cuda_kernel_matches_
     eager_bitwise."""
-    import comfy_kitchen as ck  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen as ck  # pyright: ignore[reportMissingTypeStubs]
 
     x = torch.randn(64, 64, device="cuda:0")
     rng = torch.randint(0, 256, x.shape, dtype=torch.uint8, device="cuda:0")
@@ -2707,7 +2711,7 @@ def test_kitchen_eager_log2_boundary_divergence_canary() -> None:
     test ever FAILS, upstream fixed the eager path: update the issue
     file's status line and fold these inputs back into the seeded
     bitwise test above."""
-    import comfy_kitchen as ck  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen as ck  # pyright: ignore[reportMissingTypeStubs]
 
     x = torch.tensor([7.99614334, -0.249910235, 0.0624428205], device="cuda:0")
     rng = torch.zeros(x.shape, dtype=torch.uint8, device="cuda:0")
@@ -3530,7 +3534,7 @@ import os
 if os.environ.get("DINKSTER_ENABLE_GPU_TESTS") != "1":
     raise RuntimeError("GPU test worker requires DINKSTER_ENABLE_GPU_TESTS=1")
 try:
-    from comfy_aimdo import control
+    from dinkster_aimdo import control
     initialized = control.init()
 except Exception:
     raise SystemExit(77)
@@ -3594,7 +3598,7 @@ def make_fp8():
         timeout=60,
     )
     if result.returncode == 77:
-        pytest.skip("comfy-aimdo native init/init_devices unavailable in child process")
+        pytest.skip("dinkster-aimdo native init/init_devices unavailable in child process")
     assert result.returncode == 0, (
         f"aimdo child failed ({result.returncode})\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
@@ -5557,7 +5561,7 @@ def test_unet_runs_from_worker_threads_per_device() -> None:
 # Same discipline as the UNet block above, plus the
 # Flux-specific seam: apply_rope routes through the Dinkster-owned fused
 # rotation on CUDA (bit-identical to the pure-torch reference), with
-# comfy-kitchen's combined operation as the fallback tier, when no
+# dinkster-kitchen's combined operation as the fallback tier, when no
 # input needs gradients. Every no-grad forward here proves the owned
 # route; the kitchen tier is pinned separately with the owned probe
 # disabled. Golden comparisons use atol=1e-4 because CUDA SDPA
@@ -5610,7 +5614,7 @@ def _flux_kitchen_rope_available() -> bool:
 requires_kitchen_rope = pytest.mark.skipif(
     not _flux_kitchen_rope_available(),
     reason=(
-        "comfy_kitchen apply_rope unavailable - the fused RoPE"
+        "dinkster_kitchen apply_rope unavailable - the fused RoPE"
         " path is NOT proven (install the PyPI wheel; see README)"
     ),
 )
@@ -5627,7 +5631,7 @@ import os
 if os.environ.get("DINKSTER_ENABLE_GPU_TESTS") != "1":
     raise RuntimeError("GPU test worker requires DINKSTER_ENABLE_GPU_TESTS=1")
 import torch
-from comfy_kitchen.backends.triton.rope import apply_rope1
+from dinkster_kitchen.backends.triton.rope import apply_rope1
 
 def inputs(device):
     value = torch.randn(2, 3, 17, 64, device=device)
@@ -5759,7 +5763,7 @@ def test_flux_kitchen_rope_tier_matches_direct_backend(
 ) -> None:
     """With the owned kernel unavailable, Dinkster dispatches the same
     combined operation as pinned ComfyUI."""
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
     from dinkster_inference_torch import flux as flux_module
     from dinkster_inference_torch.flux import apply_rope
 
@@ -5769,7 +5773,7 @@ def test_flux_kitchen_rope_tier_matches_direct_backend(
         q, k, freqs = _rope_case(device, torch.bfloat16)
         with torch.cuda.device(q.device), torch.no_grad():
             kitchen_q, kitchen_k = apply_rope(q, k, freqs)
-            direct_q, direct_k = comfy_kitchen.apply_rope(q, k, freqs)
+            direct_q, direct_k = dinkster_kitchen.apply_rope(q, k, freqs)
         assert torch.equal(kitchen_q, direct_q)
         assert torch.equal(kitchen_k, direct_k)
 
@@ -6207,7 +6211,7 @@ def test_owned_and_kitchen_fp8_quantizers_match_reference_thresholds_and_saturat
     input_dtype: torch.dtype,
     divergent_value: float,
 ) -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
     from dinkster_kernels import quantize_per_tensor_fp8
 
     scale = torch.tensor(0.03, device="cuda:0", dtype=torch.float32)
@@ -6238,7 +6242,7 @@ def test_owned_and_kitchen_fp8_quantizers_match_reference_thresholds_and_saturat
     assert values.dtype is input_dtype
 
     owned = quantize_per_tensor_fp8(values, scale, torch.float8_e4m3fn)
-    kitchen = comfy_kitchen.quantize_per_tensor_fp8(values, scale, torch.float8_e4m3fn)
+    kitchen = dinkster_kitchen.quantize_per_tensor_fp8(values, scale, torch.float8_e4m3fn)
     eager = quant_linear_mod._quantize_per_tensor_fp8_eager(  # pyright: ignore[reportPrivateUsage]
         values, scale, torch.float8_e4m3fn
     )
@@ -9884,16 +9888,16 @@ def test_real_bfloat16_vae_decode_matches_comfyui_on_cuda(family: str) -> None:
 def _kitchen_int8_attention_available() -> bool:
     if not cuda_available:
         return False
-    from dinkster_inference_torch import comfy_kitchen_int8_available
+    from dinkster_inference_torch import dinkster_kitchen_int8_available
 
-    return comfy_kitchen_int8_available()
+    return dinkster_kitchen_int8_available()
 
 
 requires_kitchen_int8_attention = pytest.mark.skipif(
     not _kitchen_int8_attention_available(),
     reason=(
-        "comfy-kitchen INT8 attention unavailable - the optimized H3"
-        " attention route is NOT proven (needs the comfy-kitchen CUDA"
+        "dinkster-kitchen INT8 attention unavailable - the optimized H3"
+        " attention route is NOT proven (needs the dinkster-kitchen CUDA"
         " backend; see README)"
     ),
 )
@@ -9910,8 +9914,8 @@ def _sol_attention_available() -> bool:
 requires_sol_attention = pytest.mark.skipif(
     not _sol_attention_available(),
     reason=(
-        "comfy-kitchen Sol attention unavailable - the sparse attention route is NOT proven"
-        " (needs comfy-kitchen 0.2.32 CUDA on NVIDIA SM80+)"
+        "dinkster-kitchen Sol attention unavailable - the sparse attention route is NOT proven"
+        " (needs dinkster-kitchen 0.2.35.post1 CUDA on NVIDIA SM80+)"
     ),
 )
 
@@ -9971,7 +9975,7 @@ def test_sol_attention_executes_fused_backend_and_preserves_fallback(
     assert selection.status.primary == "sol"
     assert attention_provider_identity(selection.status) == (
         SOL_ATTENTION_PROVIDER,
-        "0.2.32",
+        "0.2.35.post1",
     )
     device = torch.device("cuda:0")
     generator = torch.Generator(device=device).manual_seed(20_260_902)
@@ -10175,14 +10179,14 @@ def test_managed_sageattention_executes_and_preserves_sdpa_fallback(
 def test_kitchen_int8_attention_matches_sdpa_on_h3_geometry() -> None:
     from dinkster_inference_torch.attention import builtin_sdpa_kernel
 
-    selection = select_attention("flux", "comfy_kitchen_int8")
-    assert selection.status.primary == "comfy_kitchen_int8"
+    selection = select_attention("flux", "dinkster_kitchen_int8")
+    assert selection.status.primary == "dinkster_kitchen_int8"
     sdpa = builtin_sdpa_kernel()
     device = torch.device("cuda:0")
     # The per-seed MEAN drift is the primary contract: measured bf16 mean
     # drift on N(0,1) inputs is 0.000603 at S=1024 and 0.000329 at S=4096,
     # stable to ~1e-6 across seeds and SKUs (RTX PRO 6000 Blackwell and
-    # RTX 5090, torch 2.13.0+cu130, comfy-kitchen 0.2.31); the mean limits
+    # RTX 5090, torch 2.13.0+cu130, dinkster-kitchen 0.2.31); the mean limits
     # keep >=32% headroom. The MAX drift is a per-element extreme value and
     # is seed- and SKU-sensitive: 20-seed sweeps observed worst-case
     # 0.019531 at S=1024 and 0.008789 at S=4096 (issue #845), so the max
@@ -10216,7 +10220,7 @@ def test_kitchen_int8_attention_consume_matches_borrow_and_frees_fused_qkv() -> 
         QkvConsumingAttentionKernel,
     )
 
-    kernel = select_attention("flux", "comfy_kitchen_int8").kernel
+    kernel = select_attention("flux", "dinkster_kitchen_int8").kernel
     assert isinstance(kernel, QkvConsumingAttentionKernel)
     device = torch.device("cuda:0")
     sequence = 4096
@@ -10284,7 +10288,7 @@ def test_h3_attention_module_kitchen_route_matches_sdpa_and_lowers_peak() -> Non
         for parameter in model.parameters():
             parameter.copy_(torch.randn_like(parameter) * 0.02)
     model = model.to(device=device, dtype=torch.bfloat16)
-    kitchen = select_attention("flux", "comfy_kitchen_int8").kernel
+    kitchen = select_attention("flux", "dinkster_kitchen_int8").kernel
 
     sequence = 1024
     generator = torch.Generator(device=device).manual_seed(sequence)
@@ -10341,17 +10345,17 @@ def test_kitchen_int8_discovery_route_authenticates_flux_selection() -> None:
 
     from dinkster_inference_torch import resolve_role_attention
 
-    token = discover_attention_route_token("comfy_kitchen_int8")
+    token = discover_attention_route_token("dinkster_kitchen_int8")
     routes = {route.role: route.primary for route in token.routes}
-    assert all(primary == "comfy_kitchen_int8" for primary in routes.values())
+    assert all(primary == "dinkster_kitchen_int8" for primary in routes.values())
     assert all(route.fallback == "sdpa" for route in token.routes)
-    assert token.requested_policy == "comfy_kitchen_int8"
-    assert ("comfy-kitchen", distribution_version("comfy-kitchen")) in token.provider_versions
+    assert token.requested_policy == "dinkster_kitchen_int8"
+    assert ("dinkster-kitchen", distribution_version("dinkster-kitchen")) in token.provider_versions
     assert token.device_kind == "cuda"
 
-    selection = resolve_role_attention("flux", "comfy_kitchen_int8", token)
+    selection = resolve_role_attention("flux", "dinkster_kitchen_int8", token)
     assert selection.status.authenticated is True
-    assert selection.status.primary == "comfy_kitchen_int8"
+    assert selection.status.primary == "dinkster_kitchen_int8"
     assert selection.status.device_kind == "cuda"
     assert selection.status.provider_versions == token.provider_versions
 
@@ -10384,7 +10388,7 @@ def test_kitchen_int8_attention_matches_sdpa_on_each_permitted_role_geometry(
     #
     # Per-seed MEAN drift is the primary contract; MAX is a gross-defect cap.
     # Bounds are minted from 20-seed sweeps (seeds 10000-10019) on N(0,1)
-    # bf16 inputs (RTX PRO 6000 Blackwell, torch 2.13.0+cu130, comfy-kitchen
+    # bf16 inputs (RTX PRO 6000 Blackwell, torch 2.13.0+cu130, dinkster-kitchen
     # 0.2.31), worst observed mean/max per geometry, >=28% headroom:
     #   vae  (32h x 64d,  S=1024): mean 0.000587 / max 0.019531
     #   clip (16h x 64d,  S=257):  mean 0.001101 / max 0.017578
@@ -10399,8 +10403,8 @@ def test_kitchen_int8_attention_matches_sdpa_on_each_permitted_role_geometry(
         ("qwen", (1, 24, 1101, 128), False, None, 0.0008, 0.015),
     )
     for role, shape, masked, scale, mean_bound, max_cap in cases:
-        selection = select_attention(role, "comfy_kitchen_int8")
-        assert selection.status.primary == "comfy_kitchen_int8", role
+        selection = select_attention(role, "dinkster_kitchen_int8")
+        assert selection.status.primary == "dinkster_kitchen_int8", role
         _, heads, sequence, head_dim = shape
         factor = head_dim**-0.25 if scale is not None else 1.0
         before = executed
@@ -10450,11 +10454,11 @@ def test_kitchen_int8_serves_kl_vae_wide_head_attention_through_sdpa_fallback(
 
     monkeypatch.setattr(attention_module, "_KITCHEN_ATTENTION", refusing_kitchen)
     monkeypatch.setattr(attention_module, "_KITCHEN_PREQUANTIZE", refusing_kitchen)
-    kernel = select_attention("vae", "comfy_kitchen_int8").kernel
+    kernel = select_attention("vae", "dinkster_kitchen_int8").kernel
     sdpa = builtin_sdpa_kernel()
     device = torch.device("cuda:0")
     # The KL VAE mid-block runs single-head attention whose head dim is the
-    # channel axis (512), above comfy-kitchen's 256 head-dim limit.
+    # channel axis (512), above dinkster-kitchen's 256 head-dim limit.
     shape = (1, 1, 4096, 512)
     generator = torch.Generator(device=device).manual_seed(512)
     q = torch.randn(shape, device=device, dtype=torch.bfloat16, generator=generator)

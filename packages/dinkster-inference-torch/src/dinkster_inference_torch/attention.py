@@ -49,12 +49,12 @@ logger = logging.getLogger(__name__)
 
 AttentionRole = Literal["unet", "flux", "vae", "clip", "t5", "qwen"]
 AttentionPolicy = Literal[
-    "auto", "sdpa", "flash", "xformers", "sage", "sage3", "sol", "comfy_kitchen_int8"
+    "auto", "sdpa", "flash", "xformers", "sage", "sage3", "sol", "dinkster_kitchen_int8"
 ]
 
 _ROLES: frozenset[str] = frozenset(("unet", "flux", "vae", "clip", "t5", "qwen"))
 _POLICIES: frozenset[str] = frozenset(
-    ("auto", "sdpa", "flash", "xformers", "sage", "sage3", "sol", "comfy_kitchen_int8")
+    ("auto", "sdpa", "flash", "xformers", "sage", "sage3", "sol", "dinkster_kitchen_int8")
 )
 _OPTIONAL_POLICIES: frozenset[str] = frozenset(("flash", "xformers", "sage3"))
 
@@ -66,8 +66,8 @@ SDP_PRIORITY_MIN_ELEMENTS = 1024 * 128
 ATTENTION_ADAPTER_CONTRACT = "dinkster.attention-kernel.v2"
 BUILTIN_SDPA_PROVIDER = "torch-sdpa-priority-v1"
 BOUNDED_ATTENTION_PROVIDER = "torch-bounded-attention-v1"
-COMFY_KITCHEN_INT8_PROVIDER = "comfy-kitchen-int8-attention-v1"
-SOL_ATTENTION_PROVIDER = "comfy-kitchen-sol-attention-v1"
+COMFY_KITCHEN_INT8_PROVIDER = "dinkster-kitchen-int8-attention-v1"
+SOL_ATTENTION_PROVIDER = "dinkster-kitchen-sol-attention-v1"
 SAGE2_PROVIDER = "sageattention2-int8-v1"
 _SOL_BLOCK_SIZE = 64
 _SOL_CONDITIONING_MODIFIERS = frozenset(("sol_conditioning_exact_kv",))
@@ -627,7 +627,7 @@ class AttentionStatus:
 
     requested_policy: AttentionPolicy
     role: AttentionRole
-    primary: Literal["sdpa", "bounded", "sage", "sol", "comfy_kitchen_int8"]
+    primary: Literal["sdpa", "bounded", "sage", "sol", "dinkster_kitchen_int8"]
     fallback: Literal["sdpa", "bounded"] | None
     reason: str
     authenticated: bool
@@ -995,7 +995,7 @@ _BOUNDED = _BoundedAttentionKernel()
 _VAE_SDPA = _VaeSDPAKernel()
 
 # Indirection points so CPU tests can substitute the capability probe and the
-# kernel entry points without touching the comfy_kitchen module itself.
+# kernel entry points without touching the dinkster_kitchen module itself.
 _KITCHEN_UNPROBED = object()
 _KITCHEN_AVAILABLE: Any = _KITCHEN_UNPROBED
 _KITCHEN_ATTENTION: Any = _KITCHEN_UNPROBED
@@ -1004,7 +1004,7 @@ _KITCHEN_FROM_PREQUANTIZED: Any = _KITCHEN_UNPROBED
 _KITCHEN_SOL_ATTENTION: Any = _KITCHEN_UNPROBED
 _KITCHEN_LIST_BACKENDS: Any = _KITCHEN_UNPROBED
 
-# comfy-kitchen's INT8 kernel rejects head_dim > 256. The KL and Wan VAE
+# dinkster-kitchen's INT8 kernel rejects head_dim > 256. The KL and Wan VAE
 # families run single-head attention whose head dim is the channel axis
 # (384-512), so those invocations must take the SDPA fallback.
 _KITCHEN_MAX_HEAD_DIM = 256
@@ -1017,7 +1017,7 @@ def _load_kitchen_apis() -> None:
     global _KITCHEN_FROM_PREQUANTIZED
     global _KITCHEN_SOL_ATTENTION
     global _KITCHEN_LIST_BACKENDS
-    kitchen = importlib.import_module("comfy_kitchen")
+    kitchen = importlib.import_module("dinkster_kitchen")
     for name, attribute in (
         ("_KITCHEN_AVAILABLE", "int8_attention_is_available"),
         ("_KITCHEN_ATTENTION", "int8_attention"),
@@ -1044,10 +1044,10 @@ def _missing_kitchen_int8_apis() -> tuple[str, ...]:
     )
 
 
-def comfy_kitchen_int8_available() -> bool:
-    """Whether the comfy-kitchen INT8 attention kernel supports this machine.
+def dinkster_kitchen_int8_available() -> bool:
+    """Whether the dinkster-kitchen INT8 attention kernel supports this machine.
 
-    The attention entry points bypass comfy-kitchen's backend registry, so
+    The attention entry points bypass dinkster-kitchen's backend registry, so
     this direct capability probe governs their availability.
     """
     if _missing_kitchen_int8_apis():
@@ -1062,19 +1062,19 @@ def _kitchen_invocation_supported(
     causal: bool,
 ) -> bool:
     if causal:
-        raise AttentionValidationError("comfy-kitchen INT8 attention has no causal path")
+        raise AttentionValidationError("dinkster-kitchen INT8 attention has no causal path")
     if q.device.type != "cuda":
-        logger.warning("comfy-kitchen INT8 attention unavailable on %s; using SDPA", q.device)
+        logger.warning("dinkster-kitchen INT8 attention unavailable on %s; using SDPA", q.device)
         return False
     if torch.is_grad_enabled() and q.requires_grad:
         raise AttentionValidationError(
-            "comfy-kitchen INT8 attention is inference-only and cannot record gradients"
+            "dinkster-kitchen INT8 attention is inference-only and cannot record gradients"
         )
     return True
 
 
 class _ComfyKitchenInt8Kernel:
-    """INT8 tensor-core attention through comfy-kitchen.
+    """INT8 tensor-core attention through dinkster-kitchen.
 
     The borrowing call quantizes and runs in one step. ``consume`` mirrors the
     audited ComfyUI container path: prequantize q/k/v to INT8, drop the
@@ -1218,7 +1218,7 @@ def _sol_device_supported(device: torch.device | None = None) -> bool:
 
 
 def sol_attention_available() -> bool:
-    """Whether the fused comfy-kitchen Sol backend supports this machine."""
+    """Whether the fused dinkster-kitchen Sol backend supports this machine."""
     return _sol_backend_available() and _sol_device_supported()
 
 
@@ -1280,7 +1280,7 @@ def _validate_sol_sink_range(value: tuple[int, int], name: str, sequence_length:
 
 
 class _SolAttentionKernel:
-    """Training-free Sol sparse attention through comfy-kitchen.
+    """Training-free Sol sparse attention through dinkster-kitchen.
 
     Sol executes equal-shape BF16 self-attention with 128-wide heads on
     NVIDIA SM80+ devices. Calls outside that contract retain their exact
@@ -1732,7 +1732,7 @@ class _ScheduledConsumingAttentionKernel(_ScheduledAttentionKernel):
 
 def schedule_aware_attention_kernel(provider: str, kernel: AttentionKernel) -> AttentionKernel:
     """Apply realized attention plans without changing the static provider."""
-    if provider not in ("sdpa", "comfy_kitchen_int8", "sage", "sol"):
+    if provider not in ("sdpa", "dinkster_kitchen_int8", "sage", "sol"):
         return kernel
     if isinstance(kernel, QkvConsumingAttentionKernel):
         return _ScheduledConsumingAttentionKernel(provider, kernel)
@@ -1887,11 +1887,11 @@ def select_attention(role: AttentionRole, policy: AttentionPolicy = "sdpa") -> A
         _load_kitchen_apis()
         if _KITCHEN_SOL_ATTENTION is None or _KITCHEN_LIST_BACKENDS is None:
             return _portable_attention_selection(
-                role, policy, "installed comfy-kitchen is missing the Sol sparse attention API"
+                role, policy, "installed dinkster-kitchen is missing the Sol sparse attention API"
             )
         if not sol_attention_available():
             return _portable_attention_selection(
-                role, policy, "the fused comfy-kitchen Sol backend does not support this machine"
+                role, policy, "the fused dinkster-kitchen Sol backend does not support this machine"
             )
         return AttentionSelection(
             kernel=_SOL,
@@ -1943,27 +1943,27 @@ def select_attention(role: AttentionRole, policy: AttentionPolicy = "sdpa") -> A
                 sdpa_torch_runtime="unknown",
             ),
         )
-    if policy == "comfy_kitchen_int8":
+    if policy == "dinkster_kitchen_int8":
         missing_apis = _missing_kitchen_int8_apis()
         if missing_apis:
             return _portable_attention_selection(
                 role,
                 policy,
-                f"installed comfy-kitchen is missing required APIs: {', '.join(missing_apis)}",
+                f"installed dinkster-kitchen is missing required APIs: {', '.join(missing_apis)}",
             )
-        if not comfy_kitchen_int8_available():
+        if not dinkster_kitchen_int8_available():
             return _portable_attention_selection(
-                role, policy, "comfy-kitchen INT8 attention does not support this machine"
+                role, policy, "dinkster-kitchen INT8 attention does not support this machine"
             )
         return AttentionSelection(
             kernel=_COMFY_KITCHEN_INT8,
             status=AttentionStatus(
                 requested_policy=typed_policy,
                 role=typed_role,
-                primary="comfy_kitchen_int8",
+                primary="dinkster_kitchen_int8",
                 fallback="sdpa",
                 reason=(
-                    "explicit comfy-kitchen INT8 policy; built-in SDPA serves "
+                    "explicit dinkster-kitchen INT8 policy; built-in SDPA serves "
                     "causal, grouped-query, and wider-than-256-head-dim "
                     "invocations the INT8 kernel cannot execute"
                 ),
@@ -2124,9 +2124,9 @@ def attention_provider_identity(status: AttentionStatus) -> tuple[str, str | Non
             raise AttentionSelectionError("the SageAttention distribution version is unavailable")
         return SAGE2_PROVIDER, version
     if status.primary == "sol":
-        return SOL_ATTENTION_PROVIDER, _distribution_version("comfy-kitchen")
-    if status.primary == "comfy_kitchen_int8":
-        return COMFY_KITCHEN_INT8_PROVIDER, _distribution_version("comfy-kitchen")
+        return SOL_ATTENTION_PROVIDER, _distribution_version("dinkster-kitchen")
+    if status.primary == "dinkster_kitchen_int8":
+        return COMFY_KITCHEN_INT8_PROVIDER, _distribution_version("dinkster-kitchen")
     raise AttentionSelectionError(
         f"attention primary {status.primary!r} has no provider identity mapping"
     )
@@ -2202,11 +2202,11 @@ def discover_attention_capabilities(
     ):
         available_policies.append("sol")
         kitchen_available = True
-    if comfy_kitchen_int8_available():
-        available_policies.append("comfy_kitchen_int8")
+    if dinkster_kitchen_int8_available():
+        available_policies.append("dinkster_kitchen_int8")
         kitchen_available = True
     if kitchen_available:
-        providers.append(("comfy-kitchen", _distribution_version("comfy-kitchen")))
+        providers.append(("dinkster-kitchen", _distribution_version("dinkster-kitchen")))
     runtime_line = version.split("+")[0]
     return AttentionCapabilityEvidence(
         version=1,
@@ -2264,7 +2264,7 @@ __all__ = [
     "attention_provider_identity",
     "bind_packed_attention_kernel",
     "builtin_sdpa_kernel",
-    "comfy_kitchen_int8_available",
+    "dinkster_kitchen_int8_available",
     "discover_attention_capabilities",
     "discover_attention_route_token",
     "exclude_packed_attention_modifiers",

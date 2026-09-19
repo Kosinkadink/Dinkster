@@ -19,7 +19,7 @@ if ($LASTEXITCODE -ne 0) { exit 1 }
 
 uv pip install --python .venv-rocm\Scripts\python.exe `
     pytest numpy scipy torchsde tqdm pillow packaging `
-    "comfy-kitchen@https://files.pythonhosted.org/packages/a3/43/ceed9307bf92bccdc420703c3800ed46eafcafbfd764cbd93726f43db2b6/comfy_kitchen-0.2.32-py3-none-any.whl#sha256=6a5fba5224abbb7c9d8248bb7fe607bfab26ee623d311fcfae70066f1c7cfd9b" `
+    "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f" `
     -e packages/dinkster-schema `
     -e packages/dinkster-graph `
     -e packages/dinkster-values `

@@ -6,8 +6,8 @@ rounding is LOAD-BEARING for patch application (ROADMAP): writing a
 patched fp8 weight back with plain nearest rounding loses the LoRA's
 effect; the stochastic path preserves it in expectation.
 
-Like the reference, fp8 rounding prefers the comfy-kitchen accelerated
-kernel when the installed comfy_kitchen exposes it (capability probe,
+Like the reference, fp8 rounding prefers the dinkster-kitchen accelerated
+kernel when the installed dinkster_kitchen exposes it (capability probe,
 never a version assumption) and falls back to the manual torch path
 otherwise. The two paths draw randomness differently and are not
 bit-equal - not even upstream, where both are accepted. The
@@ -30,14 +30,14 @@ _UNPROBED = object()
 
 
 def _probe_kitchen_fp8_kernel() -> _Fp8Kernel | None:
-    """Capability probe for comfy_kitchen.stochastic_rounding_fp8
+    """Capability probe for dinkster_kitchen.stochastic_rounding_fp8
     (comfy/float.py's optional-import block @ b78cec87): present and
     exposing the kernel -> accelerated path; anything else -> manual.
     Never a version check."""
     try:
-        import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+        import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
-        kernel: _Fp8Kernel = comfy_kitchen.stochastic_rounding_fp8
+        kernel: _Fp8Kernel = dinkster_kitchen.stochastic_rounding_fp8
         return kernel
     except (AttributeError, ImportError):
         return None
@@ -120,7 +120,7 @@ def _manual_stochastic_round_to_float8(
     # too high, and the low rng draws produce a result one ulp BELOW
     # the correct lower neighbor - off the adjacent-value grid
     # entirely (docs/comfyui-issues/
-    # stochastic-rounding-fp16-log2-boundary.md; the comfy-kitchen
+    # stochastic-rounding-fp16-log2-boundary.md; the dinkster-kitchen
     # CUDA kernel gets these right, so upstream's two paths disagree
     # bitwise). frexp is exact: abs_x = m * 2**e with m in [0.5, 1),
     # so floor(log2(abs_x)) == e - 1 for every finite nonzero input.
@@ -181,7 +181,7 @@ def stochastic_rounding(value: torch.Tensor, dtype: torch.dtype, seed: int = 0) 
                 # cuda:1 tensor while cuda:0 is current raises
                 # BufferError. Pin the context to the value's own
                 # device (upstream issue: docs/comfyui-issues/
-                # comfy-kitchen-cuda-stochastic-rounding-wrong-device.md).
+                # dinkster-kitchen-cuda-stochastic-rounding-wrong-device.md).
                 with torch.cuda.device(value.device):
                     return kitchen_fp8_kernel(value, rng, dtype)
             return kitchen_fp8_kernel(value, rng, dtype)

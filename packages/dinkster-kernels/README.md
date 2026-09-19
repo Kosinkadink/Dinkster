@@ -25,7 +25,7 @@ own scaled-matmul operation (`torch.nn.functional.scaled_mm` from
 torch 2.10, `torch._scaled_mm` before it), which is already
 compile-visible, and wrapping it would hide the native op from
 inductor. Its probe (`scaled_mm_available()`) is a host check only:
-it declines HIP runtimes, where comfy-kitchen's WMMA kernel owns the
+it declines HIP runtimes, where dinkster-kitchen's WMMA kernel owns the
 route, and hosts with no CUDA device.
 
 `quantize_per_tensor_fp8` accepts float32, float16, and bfloat16 CUDA
@@ -42,13 +42,13 @@ weight. Other group sizes remain eligible for consumer fallbacks.
 
 ## Numerical contract
 
-FP8 input quantization is bit-identical to comfy-kitchen's CUDA route,
+FP8 input quantization is bit-identical to dinkster-kitchen's CUDA route,
 including saturation, signed zero, and nonfinite values. For finite
 inputs it is also bit-identical to the eager float32-divide, clamp, and
 cast reference. Eligible input tensors therefore do not move the scaled
 matmul result or runtime identity.
 
-ConvRot dequantization is bit-identical to comfy-kitchen's fused CUDA
+ConvRot dequantization is bit-identical to dinkster-kitchen's fused CUDA
 route. Each radix-4 stage uses explicit IEEE float32 operations in the
 same order, including the exact multiply by 0.5, so the owned route does
 not change runtime identity.

@@ -466,10 +466,10 @@ class NativePlanningContext:
     """
 
     torch_version: str
-    comfy_kitchen_version: str
+    dinkster_kitchen_version: str
 
     def __post_init__(self) -> None:
-        for name in ("torch_version", "comfy_kitchen_version"):
+        for name in ("torch_version", "dinkster_kitchen_version"):
             value = getattr(self, name)
             if type(value) is not str or not value:
                 raise ValueError(f"{name} must be a non-empty string")

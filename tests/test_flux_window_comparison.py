@@ -5,7 +5,6 @@ import math
 import os
 import statistics
 from copy import deepcopy
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -22,14 +21,9 @@ from tools.inference_parity.flux_window_comparison import (
     compare_arrays,
 )
 
-RECORDS_ROOT = Path(
-    os.environ.get(
-        "DINKSTER_INFERENCE_PARITY_RECORDS",
-        Path(__file__).resolve().parents[1].parent
-        / "dinkster-evidence"
-        / "inference-parity"
-        / "records",
-    )
+RECORDS_ROOT = os.environ.get(
+    "DINKSTER_INFERENCE_PARITY_RECORDS",
+    os.path.join(os.path.dirname(__file__), "goldens", "inference_parity", "records"),
 )
 
 
@@ -324,8 +318,9 @@ def test_verdict_rejects_unmatched_actual_diffusion_dtype() -> None:
 
 
 def test_committed_receipt_recomputes_balanced_performance_verdict() -> None:
-    path = RECORDS_ROOT / "w0-flux-window-comparison/receipt.json"
-    receipt = json.loads(path.read_text())
+    path = os.path.join(RECORDS_ROOT, "w0-flux-window-comparison", "receipt.json")
+    with open(path, encoding="utf-8") as receipt_file:
+        receipt = json.load(receipt_file)
     combined = receipt["performance"]["combined"]
 
     values = {

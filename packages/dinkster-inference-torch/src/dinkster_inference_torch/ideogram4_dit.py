@@ -90,13 +90,13 @@ def _norm_rope(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if torch.is_grad_enabled():
         return _apply_rope(query_norm(query), matrix), _apply_rope(key_norm(key), matrix)
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
     with (
         materialized_rms_norm_weight(query_norm) as query_weight,
         materialized_rms_norm_weight(key_norm) as key_weight,
     ):
-        return comfy_kitchen.rms_rope_split_half_(
+        return dinkster_kitchen.rms_rope_split_half_(
             query,
             key,
             matrix,

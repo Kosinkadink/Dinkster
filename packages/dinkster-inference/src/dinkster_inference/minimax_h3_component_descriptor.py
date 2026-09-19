@@ -54,7 +54,7 @@ def detect_h3_components(
     if not bind_asset_identity or not isinstance(source, AssetIdentifiedSource):
         return ()
     detected: list[tuple[str, Any]] = []
-    context = NativePlanningContext(torch_version="detection", comfy_kitchen_version="detection")
+    context = NativePlanningContext(torch_version="detection", dinkster_kitchen_version="detection")
     for role in MINIMAX_H3_SPLIT_COMMON_ROLES:
         try:
             plan_minimax_h3_common_component(source, role=role, path=path, context=context)
@@ -87,7 +87,7 @@ class H3ComponentDescriptor(ComponentDescriptor):
                 path=candidate.path,
                 context=NativePlanningContext(
                     torch_version=runtime_versions.get("torch", ""),
-                    comfy_kitchen_version=runtime_versions.get("comfy-kitchen", ""),
+                    dinkster_kitchen_version=runtime_versions.get("dinkster-kitchen", ""),
                 ),
                 attention_policy=attention_policy,
             )
@@ -106,7 +106,7 @@ class H3ComponentDescriptor(ComponentDescriptor):
             path=candidate.path,
             context=NativePlanningContext(
                 torch_version=runtime_versions.get("torch", ""),
-                comfy_kitchen_version=runtime_versions.get("comfy-kitchen", ""),
+                dinkster_kitchen_version=runtime_versions.get("dinkster-kitchen", ""),
             ),
         )
         return super().component_identity(role, plan, compute_dtype)

@@ -49,8 +49,8 @@ def _report(tmp_path: Path, name: str, policy: str, offset: float = 0.0) -> dict
     report["dinkster"] = {"commit": "b" * 40, "clean": True}
     providers = {
         "sdpa": [["torch", "2.13.0+cu130"]],
-        "comfy_kitchen_int8": [
-            ["comfy-kitchen", "0.2.32"],
+        "dinkster_kitchen_int8": [
+            ["dinkster-kitchen", "0.2.35.post1"],
             ["torch", "2.13.0+cu130"],
         ],
         "sage": [["sageattention", "2.2.0.post1"], ["torch", "2.13.0+cu130"]],
@@ -102,7 +102,7 @@ def test_identical_captures_have_perfect_metrics(tmp_path: Path) -> None:
 
 def test_changed_capture_reports_quality_without_a_hidden_gate(tmp_path: Path) -> None:
     baseline = _report(tmp_path, "baseline", "sdpa")
-    candidate = _report(tmp_path, "candidate", "comfy_kitchen_int8", offset=0.01)
+    candidate = _report(tmp_path, "candidate", "dinkster_kitchen_int8", offset=0.01)
 
     comparison = compare_attention_quality.build_comparison(baseline, candidate)
     image = comparison["metrics"]["image"]
@@ -278,11 +278,11 @@ def test_comfyui_authentication_rejects_forged_int8_provider() -> None:
         "system": "comfyui",
         "torch": {"version": "2.13.0+cu130", "backend_runtime": "cuda 13.0"},
         "attention": {
-            "requested_policy": "comfy_kitchen_int8",
-            "selected_policy": "comfy_kitchen_int8",
+            "requested_policy": "dinkster_kitchen_int8",
+            "selected_policy": "dinkster_kitchen_int8",
             "provider_versions": [["torch", "fabricated"]],
             "execution": {
-                "policy": "comfy_kitchen_int8",
+                "policy": "dinkster_kitchen_int8",
                 "selected_calls": 10,
                 "provider_attempts": 10,
                 "provider_successes": 10,
@@ -293,7 +293,7 @@ def test_comfyui_authentication_rejects_forged_int8_provider() -> None:
     }
 
     problems = compare_attention_quality._attention_authentication_problems(
-        report, "candidate", "comfy_kitchen_int8"
+        report, "candidate", "dinkster_kitchen_int8"
     )
     assert any("torch runtime differs" in problem for problem in problems)
     assert any("comfy-kitchen provider version is missing" in problem for problem in problems)

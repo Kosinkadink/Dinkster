@@ -4,7 +4,7 @@ Every golden in goldens/anima_goldens.json was produced by RUNNING
 the reference Anima (comfy/ldm/anima/model.py: the Cosmos Predict2
 MiniTrainDIT backbone plus the LLM adapter @ the audited baseline,
 tools/gen_anima_goldens.py) with attention forced to pytorch SDPA;
-the backbone's norm+rope runs comfy_kitchen's rms_rope_split_half,
+the backbone's norm+rope runs dinkster_kitchen's rms_rope_split_half,
 which dispatches to the deterministic eager kernel on CPU. Weights
 come from the shared deterministic hash (unet_fill.py - every rank-1
 weight is a norm scale, so the rank rule holds) and inputs from its
@@ -167,7 +167,7 @@ def test_forward_adapter_and_block_match_executed_reference(case: str) -> None:
 
 
 def test_fused_and_autograd_rope_paths_agree() -> None:
-    """The no-grad path runs comfy_kitchen's fused norm+rope; under
+    """The no-grad path runs dinkster_kitchen's fused norm+rope; under
     autograd the same math runs as eager norm then split-half
     rotation. Both must produce the same forward values."""
     case = CASES[0]

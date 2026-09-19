@@ -1,9 +1,9 @@
 """Native packed quantized-weight storage.
 
-The reference stores fp8 weights as a comfy-kitchen QuantizedTensor
+The reference stores fp8 weights as a dinkster-kitchen QuantizedTensor
 (fp8 qdata + one float32 per-tensor scale + the compute dtype it
 dequantizes to), with quantize/dequantize/requantize semantics defined
-by comfy/quant_ops.py _TensorCoreFP8LayoutBase and comfy_kitchen's
+by comfy/quant_ops.py _TensorCoreFP8LayoutBase and dinkster_kitchen's
 TensorCoreFP8Layout @ b78cec87 / kitchen 0.2.31. Dinkster keeps the same
 three tensors-worth of state in a plain frozen value type instead of a
 torch wrapper subclass: nothing here is dispatched through torch
@@ -106,8 +106,8 @@ class Int8PackedWeight:
         except Exception:  # noqa: BLE001 - an optional accelerator is best-effort
             pass
         try:
-            importlib.import_module("comfy_kitchen")
-            value = torch.ops.comfy_kitchen.dequantize_int8_convrot_weight(
+            importlib.import_module("dinkster_kitchen")
+            value = torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight(
                 self.qdata,
                 self.scale,
                 self.convrot_groupsize,
@@ -116,7 +116,7 @@ class Int8PackedWeight:
             raise
         except Exception as error:
             raise RuntimeError(
-                f"comfy-kitchen ConvRot INT8 dequantization failed: {error}"
+                f"dinkster-kitchen ConvRot INT8 dequantization failed: {error}"
             ) from error
         return value.to(dtype=target)
 
@@ -195,7 +195,7 @@ class Nvfp4PackedWeight:
         return self.qdata.device
 
     def dequantize(self, dtype: torch.dtype | None = None) -> torch.Tensor:
-        kitchen = cast(Any, importlib.import_module("comfy_kitchen"))
+        kitchen = cast(Any, importlib.import_module("dinkster_kitchen"))
         target = self.orig_dtype if dtype is None else dtype
         try:
             value = kitchen.dequantize_nvfp4(
@@ -218,7 +218,7 @@ def requantize_int8(
     stored: Int8PackedWeight, tensor: torch.Tensor, *, seed: int = 0
 ) -> Int8PackedWeight:
     """Recalculate scales and requantize while preserving the INT8 layout."""
-    kitchen_tensor = cast(Any, importlib.import_module("comfy_kitchen.tensor"))
+    kitchen_tensor = cast(Any, importlib.import_module("dinkster_kitchen.tensor"))
     qdata, params = kitchen_tensor.TensorWiseINT8Layout.quantize(
         tensor,
         scale="recalculate",
@@ -239,7 +239,7 @@ def requantize_nvfp4(
     scale = (torch.amax(tensor.abs()) / (448.0 * 6.0)).to(torch.float32)
     try:
         if seed == 0:
-            kitchen = cast(Any, importlib.import_module("comfy_kitchen"))
+            kitchen = cast(Any, importlib.import_module("dinkster_kitchen"))
             qdata, block = kitchen.quantize_nvfp4(tensor, scale, pad_16x=True)
         else:
             qdata, block = _stochastic_quantize_nvfp4(tensor, scale, seed)

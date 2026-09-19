@@ -1153,24 +1153,24 @@ def _kitchen_token(
     contract: str = ATTENTION_ADAPTER_CONTRACT,
     torch_version: str | None = None,
 ) -> AttentionRouteToken:
-    kitchen_version = importlib.metadata.version("comfy-kitchen")
+    kitchen_version = importlib.metadata.version("dinkster-kitchen")
     torch_version = str(torch.__version__) if torch_version is None else torch_version
     return AttentionRouteToken(
         1,
-        tuple(AttentionRoute(role, "comfy_kitchen_int8", "sdpa") for role in ROLES),
-        (("comfy-kitchen", kitchen_version), ("torch", torch_version)),
+        tuple(AttentionRoute(role, "dinkster_kitchen_int8", "sdpa") for role in ROLES),
+        (("dinkster-kitchen", kitchen_version), ("torch", torch_version)),
         contract,
         "cuda",
         89,
         torch_version.split("+")[0],
-        "comfy_kitchen_int8",
+        "dinkster_kitchen_int8",
     )
 
 
 def _capabilities_for_token(token: AttentionRouteToken) -> AttentionCapabilityEvidence:
     return AttentionCapabilityEvidence(
         version=1,
-        available_policies=("sdpa", "comfy_kitchen_int8"),
+        available_policies=("sdpa", "dinkster_kitchen_int8"),
         provider_versions=token.provider_versions,
         adapter_contract_revision=token.adapter_contract_revision,
         device_kind=token.device_kind,
@@ -1184,9 +1184,9 @@ def test_kitchen_policy_selects_kitchen_for_every_role(
     role: AttentionRole, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(attention_module, "_KITCHEN_AVAILABLE", lambda: True)
-    selection = select_attention(role, "comfy_kitchen_int8")
-    assert selection.status.requested_policy == "comfy_kitchen_int8"
-    assert selection.status.primary == "comfy_kitchen_int8"
+    selection = select_attention(role, "dinkster_kitchen_int8")
+    assert selection.status.requested_policy == "dinkster_kitchen_int8"
+    assert selection.status.primary == "dinkster_kitchen_int8"
     assert selection.kernel is attention_module._COMFY_KITCHEN_INT8  # pyright: ignore[reportPrivateUsage]
     assert isinstance(selection.kernel, QkvConsumingAttentionKernel)
     assert selection.status.fallback == "sdpa"
@@ -1198,8 +1198,8 @@ def test_kitchen_policy_falls_back_when_kernel_is_unavailable(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr(attention_module, "_KITCHEN_AVAILABLE", lambda: False)
-    token = attention_module.discover_attention_route_token("comfy_kitchen_int8")
-    selection = attention_module.resolve_role_attention("flux", "comfy_kitchen_int8", token)
+    token = attention_module.discover_attention_route_token("dinkster_kitchen_int8")
+    selection = attention_module.resolve_role_attention("flux", "dinkster_kitchen_int8", token)
     assert token.version == 3
     assert selection.status.authenticated
     assert selection.status.primary == "sdpa"
@@ -1212,7 +1212,7 @@ def test_package_import_without_kitchen_int8_apis_keeps_sdpa_available() -> None
             sys.executable,
             "-c",
             """
-import comfy_kitchen
+import dinkster_kitchen
 
 missing = (
     "int8_attention_is_available",
@@ -1221,16 +1221,16 @@ missing = (
     "int8_attention_from_prequantized",
 )
 for name in missing:
-    if hasattr(comfy_kitchen, name):
-        delattr(comfy_kitchen, name)
+    if hasattr(dinkster_kitchen, name):
+        delattr(dinkster_kitchen, name)
 
 from dinkster_inference_torch import select_attention
 
 assert select_attention("flux").status.primary == "sdpa"
 assert select_attention("flux", "sdpa").status.primary == "sdpa"
-selection = select_attention("flux", "comfy_kitchen_int8")
+selection = select_attention("flux", "dinkster_kitchen_int8")
 assert selection.status.primary == "sdpa"
-assert "installed comfy-kitchen is missing required APIs" in selection.status.reason
+assert "installed dinkster-kitchen is missing required APIs" in selection.status.reason
 assert all(name in selection.status.reason for name in missing)
 """,
         ],
@@ -1246,7 +1246,7 @@ def test_kitchen_kernel_falls_back_for_non_cuda_inputs(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr(attention_module, "_KITCHEN_AVAILABLE", lambda: True)
-    kitchen = select_attention("unet", "comfy_kitchen_int8").kernel
+    kitchen = select_attention("unet", "dinkster_kitchen_int8").kernel
     q, k, v = tensors()
     expected = kernel()(q, k, v)
     assert torch.equal(kitchen(q, k, v), expected)
@@ -1262,7 +1262,7 @@ def test_kitchen_kernel_validates_rank_before_wide_head_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(attention_module, "_KITCHEN_AVAILABLE", lambda: True)
-    kitchen = select_attention("unet", "comfy_kitchen_int8").kernel
+    kitchen = select_attention("unet", "dinkster_kitchen_int8").kernel
     scalar = torch.tensor(1.0)
     # The wide-head fallback inspects the head dimension, so generic
     # validation must run first: a rank-0 tensor raises the adapter
@@ -1282,7 +1282,7 @@ def test_kitchen_kernel_serves_causal_gqa_and_wide_heads_through_sdpa_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(attention_module, "_KITCHEN_AVAILABLE", lambda: True)
-    kitchen = select_attention("qwen", "comfy_kitchen_int8").kernel
+    kitchen = select_attention("qwen", "dinkster_kitchen_int8").kernel
     sdpa = select_attention("qwen", "sdpa").kernel
     torch.manual_seed(7)
     q = torch.randn(2, 4, 6, 5)
@@ -1294,7 +1294,7 @@ def test_kitchen_kernel_serves_causal_gqa_and_wide_heads_through_sdpa_fallback(
         kitchen(gq, gk, gv, enable_gqa=True), sdpa(gq, gk, gv, enable_gqa=True)
     )
     # KL/Wan VAE single-head attention has head_dim = channels (384-512),
-    # above comfy-kitchen's 256 limit; these tensors run on CPU, so a passing
+    # above dinkster-kitchen's 256 limit; these tensors run on CPU, so a passing
     # equality proves the fallback branch fired before the CUDA device check.
     wq = torch.randn(1, 1, 6, 300)
     wk = torch.randn(1, 1, 6, 300)
@@ -1331,7 +1331,7 @@ def test_kitchen_consume_releases_leases_when_validation_fails(
 ) -> None:
     monkeypatch.setattr(attention_module, "_KITCHEN_AVAILABLE", lambda: True)
     kitchen = cast(
-        QkvConsumingAttentionKernel, select_attention("unet", "comfy_kitchen_int8").kernel
+        QkvConsumingAttentionKernel, select_attention("unet", "dinkster_kitchen_int8").kernel
     )
     q, k, v = tensors()
     k = k[..., :-1]
@@ -1354,30 +1354,30 @@ def test_kitchen_policy_discovers_on_any_device_the_probe_accepts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(attention_module, "_KITCHEN_AVAILABLE", lambda: True)
-    kitchen_version = importlib.metadata.version("comfy-kitchen")
+    kitchen_version = importlib.metadata.version("dinkster-kitchen")
     rocm_torch = SimpleNamespace(__version__="2.13.0+rocm6.4", version=SimpleNamespace(hip="6.4.0"))
     rocm = attention_module.discover_attention_route_token(
-        "comfy_kitchen_int8",
+        "dinkster_kitchen_int8",
         torch_module=rocm_torch,
         device_kind="rocm",
         device_sm=110,
     )
     assert rocm.device_kind == "rocm"
-    assert all(route.primary == "comfy_kitchen_int8" for route in rocm.routes)
+    assert all(route.primary == "dinkster_kitchen_int8" for route in rocm.routes)
     assert all(route.fallback == "sdpa" for route in rocm.routes)
     assert dict(rocm.provider_versions) == {
         "torch": "2.13.0+rocm6.4",
         "hip": "6.4.0",
-        "comfy-kitchen": kitchen_version,
+        "dinkster-kitchen": kitchen_version,
     }
     cpu_torch = SimpleNamespace(__version__="2.13.0+cpu", version=SimpleNamespace(hip=None))
     cpu = attention_module.discover_attention_route_token(
-        "comfy_kitchen_int8",
+        "dinkster_kitchen_int8",
         torch_module=cpu_torch,
         device_kind="cpu",
     )
     assert cpu.device_kind == "cpu"
-    assert all(route.primary == "comfy_kitchen_int8" for route in cpu.routes)
+    assert all(route.primary == "dinkster_kitchen_int8" for route in cpu.routes)
 
 
 def test_kitchen_kernel_runs_on_rocm_builds_without_build_refusal(
@@ -1389,7 +1389,7 @@ def test_kitchen_kernel_runs_on_rocm_builds_without_build_refusal(
         return "6.4.0"
 
     monkeypatch.setattr(attention_module, "_hip_runtime_version", fake_hip_runtime)
-    kitchen = select_attention("unet", "comfy_kitchen_int8").kernel
+    kitchen = select_attention("unet", "dinkster_kitchen_int8").kernel
     q, k, v = tensors()
     # CPU tensors use SDPA even when the worker has a supported HIP kernel.
     expected = kernel()(q, k, v)
@@ -1413,14 +1413,14 @@ def test_resolve_role_attention_carries_authenticated_kitchen_evidence(
         "discover_attention_capabilities",
         lambda: _capabilities_for_token(token),
     )
-    selection = attention_module.resolve_role_attention("flux", "comfy_kitchen_int8", token)
+    selection = attention_module.resolve_role_attention("flux", "dinkster_kitchen_int8", token)
     assert cast("Any", selection.kernel).active_kernel() is attention_module._COMFY_KITCHEN_INT8  # pyright: ignore[reportPrivateUsage]
-    assert selection.status.primary == "comfy_kitchen_int8"
+    assert selection.status.primary == "dinkster_kitchen_int8"
     assert selection.status.authenticated is True
     assert selection.status.provider_versions == token.provider_versions
     assert selection.status.device_kind == token.device_kind
-    vae = attention_module.resolve_role_attention("vae", "comfy_kitchen_int8", token)
-    assert vae.status.primary == "comfy_kitchen_int8"
+    vae = attention_module.resolve_role_attention("vae", "dinkster_kitchen_int8", token)
+    assert vae.status.primary == "dinkster_kitchen_int8"
     assert vae.status.fallback == "sdpa"
     assert vae.status.authenticated is True
 
@@ -1437,19 +1437,19 @@ def test_resolve_role_attention_refuses_route_and_contract_mismatch(
     )
     foreign_machine = replace(local_evidence, device_sm=90)
     with pytest.raises(AttentionSelectionError, match="rediscovered runtime evidence"):
-        attention_module.resolve_role_attention("flux", "comfy_kitchen_int8", foreign_machine)
+        attention_module.resolve_role_attention("flux", "dinkster_kitchen_int8", foreign_machine)
     foreign_provider = replace(
         local_evidence,
-        provider_versions=(("comfy-kitchen", "forged"), ("torch", str(torch.__version__))),
+        provider_versions=(("dinkster-kitchen", "forged"), ("torch", str(torch.__version__))),
     )
     with pytest.raises(AttentionSelectionError, match="rediscovered runtime evidence"):
-        attention_module.resolve_role_attention("flux", "comfy_kitchen_int8", foreign_provider)
+        attention_module.resolve_role_attention("flux", "dinkster_kitchen_int8", foreign_provider)
     sdpa_routes = tuple(AttentionRoute(role, "sdpa") for role in ROLES)
     with pytest.raises(ValueError, match="inconsistent with its effective policy"):
         replace(local_evidence, routes=sdpa_routes)
     foreign = _kitchen_token(contract="dinkster.attention-kernel.v0")
     with pytest.raises(AttentionSelectionError, match="adapter contract does not match"):
-        attention_module.resolve_role_attention("flux", "comfy_kitchen_int8", foreign)
+        attention_module.resolve_role_attention("flux", "dinkster_kitchen_int8", foreign)
 
 
 def test_discovery_with_kitchen_policy_binds_routes_and_provider(
@@ -1464,10 +1464,10 @@ def test_discovery_with_kitchen_policy_binds_routes_and_provider(
         device_kind="cuda",
         device_sm=89,
     )
-    assert capabilities.available_policies == ("sdpa", "comfy_kitchen_int8")
-    assert dict(capabilities.provider_versions).keys() == {"torch", "comfy-kitchen"}
+    assert capabilities.available_policies == ("sdpa", "dinkster_kitchen_int8")
+    assert dict(capabilities.provider_versions).keys() == {"torch", "dinkster-kitchen"}
     token = attention_module.discover_attention_route_token(
-        "comfy_kitchen_int8",
+        "dinkster_kitchen_int8",
         torch_module=fake_torch,
         device_kind="cuda",
         device_sm=89,
@@ -1488,7 +1488,7 @@ def test_discovery_with_role_overrides_mints_version_two_per_role_routes(
 ) -> None:
     monkeypatch.setattr(attention_module, "_KITCHEN_AVAILABLE", lambda: True)
     fake_torch = SimpleNamespace(__version__="2.13.0+cu130", version=SimpleNamespace(hip=None))
-    overrides: tuple[tuple[str, AttentionPolicy], ...] = (("flux", "comfy_kitchen_int8"),)
+    overrides: tuple[tuple[str, AttentionPolicy], ...] = (("flux", "dinkster_kitchen_int8"),)
     token = attention_module.discover_attention_route_token(
         "sdpa",
         requested_role_policies=overrides,
@@ -1500,13 +1500,13 @@ def test_discovery_with_role_overrides_mints_version_two_per_role_routes(
     assert token.requested_policy == "sdpa"
     assert token.requested_role_policies == overrides
     routes = {route.role: route for route in token.routes}
-    assert (routes["flux"].primary, routes["flux"].fallback) == ("comfy_kitchen_int8", "sdpa")
+    assert (routes["flux"].primary, routes["flux"].fallback) == ("dinkster_kitchen_int8", "sdpa")
     assert all(
         (route.primary, route.fallback) == ("sdpa", None)
         for role, route in routes.items()
         if role != "flux"
     )
-    assert dict(token.provider_versions).keys() == {"torch", "comfy-kitchen"}
+    assert dict(token.provider_versions).keys() == {"torch", "dinkster-kitchen"}
     fallback = attention_module.discover_attention_route_token(
         "sdpa",
         requested_role_policies=(("flux", "flash"),),
@@ -1532,15 +1532,15 @@ def test_resolve_role_attention_honors_role_overrides_or_refuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(attention_module, "_KITCHEN_AVAILABLE", lambda: True)
-    overrides: tuple[tuple[str, AttentionPolicy], ...] = (("flux", "comfy_kitchen_int8"),)
+    overrides: tuple[tuple[str, AttentionPolicy], ...] = (("flux", "dinkster_kitchen_int8"),)
     token = attention_module.discover_attention_route_token(
         "sdpa",
         requested_role_policies=overrides,
     )
     flux = attention_module.resolve_role_attention("flux", "sdpa", token)
     assert cast("Any", flux.kernel).active_kernel() is attention_module._COMFY_KITCHEN_INT8  # pyright: ignore[reportPrivateUsage]
-    assert flux.status.requested_policy == "comfy_kitchen_int8"
-    assert flux.status.primary == "comfy_kitchen_int8"
+    assert flux.status.requested_policy == "dinkster_kitchen_int8"
+    assert flux.status.primary == "dinkster_kitchen_int8"
     assert flux.status.authenticated is True
     vae = attention_module.resolve_role_attention("vae", "sdpa", token)
     assert vae.status.requested_policy == "sdpa"
@@ -1616,12 +1616,12 @@ def _sol_token(
     contract: str = ATTENTION_ADAPTER_CONTRACT,
     torch_version: str | None = None,
 ) -> AttentionRouteToken:
-    kitchen_version = importlib.metadata.version("comfy-kitchen")
+    kitchen_version = importlib.metadata.version("dinkster-kitchen")
     torch_version = str(torch.__version__) if torch_version is None else torch_version
     return AttentionRouteToken(
         1,
         tuple(AttentionRoute(role, "sol", "sdpa") for role in ROLES),
-        (("comfy-kitchen", kitchen_version), ("torch", torch_version)),
+        (("dinkster-kitchen", kitchen_version), ("torch", torch_version)),
         contract,
         "cuda",
         89,
@@ -1789,7 +1789,7 @@ def test_scheduled_attention_preserves_consuming_kernel_contract() -> None:
             return result
 
     scheduled = attention_module.schedule_aware_attention_kernel(
-        "comfy_kitchen_int8",
+        "dinkster_kitchen_int8",
         cast(AttentionKernel, Candidate()),
     )
     assert isinstance(scheduled, QkvConsumingAttentionKernel)
@@ -2006,15 +2006,15 @@ def test_discovery_with_sol_binds_one_kitchen_provider(
 ) -> None:
     _make_sol_available(monkeypatch)
     monkeypatch.setattr(attention_module, "sage2_attention_available", lambda: False)
-    monkeypatch.setattr(attention_module, "comfy_kitchen_int8_available", lambda: True)
+    monkeypatch.setattr(attention_module, "dinkster_kitchen_int8_available", lambda: True)
     fake_torch = SimpleNamespace(__version__="2.13.0+cu130", version=SimpleNamespace(hip=None))
     capabilities = attention_module.discover_attention_capabilities(
         torch_module=fake_torch,
         device_kind="cuda",
         device_sm=89,
     )
-    assert capabilities.available_policies == ("sdpa", "sol", "comfy_kitchen_int8")
-    assert tuple(name for name, _ in capabilities.provider_versions).count("comfy-kitchen") == 1
+    assert capabilities.available_policies == ("sdpa", "sol", "dinkster_kitchen_int8")
+    assert tuple(name for name, _ in capabilities.provider_versions).count("dinkster-kitchen") == 1
     token = attention_module.discover_attention_route_token(
         "sol",
         torch_module=fake_torch,
@@ -2062,7 +2062,7 @@ def test_sol_provider_identity_binds_installed_kitchen_version(
     status = select_attention("flux", "sol").status
     assert attention_provider_identity(status) == (
         SOL_ATTENTION_PROVIDER,
-        importlib.metadata.version("comfy-kitchen"),
+        importlib.metadata.version("dinkster-kitchen"),
     )
 
 

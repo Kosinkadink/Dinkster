@@ -648,7 +648,7 @@ def test_dinkster_rope_probe_resolves_available_kernel(
 def test_kitchen_rope_probe_requires_combined_operation() -> None:
     from dinkster_inference_torch import flux as flux_module
 
-    fake = types.ModuleType("comfy_kitchen")
+    fake = types.ModuleType("dinkster_kitchen")
 
     def combined(
         q: torch.Tensor, k: torch.Tensor, _freqs: torch.Tensor
@@ -657,8 +657,8 @@ def test_kitchen_rope_probe_requires_combined_operation() -> None:
 
     fake_module = cast(Any, fake)
     fake_module.apply_rope = combined
-    real = sys.modules.get("comfy_kitchen")
-    sys.modules["comfy_kitchen"] = fake
+    real = sys.modules.get("dinkster_kitchen")
+    sys.modules["dinkster_kitchen"] = fake
     try:
         probed = flux_module._probe_kitchen_apply_rope()  # pyright: ignore[reportPrivateUsage]
         assert probed is combined
@@ -669,9 +669,9 @@ def test_kitchen_rope_probe_requires_combined_operation() -> None:
         )
     finally:
         if real is not None:
-            sys.modules["comfy_kitchen"] = real
+            sys.modules["dinkster_kitchen"] = real
         else:
-            del sys.modules["comfy_kitchen"]
+            del sys.modules["dinkster_kitchen"]
 
 
 @pytest.mark.parametrize(

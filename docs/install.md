@@ -177,9 +177,8 @@ before configuring any shared access.
 
 For native generation, install a supported PyTorch execution environment using
 the [runtime setup instructions](../packages/dinkster-inference-torch/README.md).
-Windows/Linux NVIDIA execution also uses the maintained private Aimdo wheel;
-run `scripts/install_dinkster_aimdo.py` with that execution environment's Python
-and authorized private release access. macOS does not use Aimdo. Models are
+Windows/Linux NVIDIA execution installs the exact `dinkster-aimdo==0.5.5.post2`
+wheel from PyPI. macOS does not use Aimdo. Models are
 not bundled; consult [supported models](supported/model-families-native-execution.md)
 before downloading.
 Select the execution interpreter with `--comfy-python` and omit

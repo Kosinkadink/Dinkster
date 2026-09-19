@@ -35,7 +35,8 @@ PROMPT = (
 )
 MEASURED_RUNS = 5
 COMFYUI_KITCHEN_VERSION = "0.2.30"
-DINKSTER_KITCHEN_VERSION = "0.2.31"
+DINKSTER_KITCHEN_VERSION = "0.2.35.post1"
+DINKSTER_AIMDO_VERSION = "0.5.5.post2"
 
 
 class ComparisonError(RuntimeError):
@@ -124,8 +125,6 @@ def _device_receipt(torch: Any, device: Any) -> dict[str, object]:
     ).stdout.strip()
     properties = torch.cuda.get_device_properties(device)
     return {
-        "comfy_aimdo": _package_version("comfy-aimdo"),
-        "comfy_kitchen": _package_version("comfy-kitchen"),
         "cuda": torch.version.cuda,
         "device_uuid": uuid,
         "driver": driver,
@@ -262,6 +261,8 @@ def run_comfyui(args: argparse.Namespace) -> int:
         "receipts": {
             **_device_receipt(torch, device),
             "artifact": artifact,
+            "comfy_aimdo": _package_version("comfy-aimdo"),
+            "comfy_kitchen": _package_version("comfy-kitchen"),
             "commit": COMFYUI_COMMIT,
             "patcher": type(clip.patcher).__name__,
             "precision": {
@@ -294,7 +295,7 @@ def run_dinkster(args: argparse.Namespace) -> int:
     artifact = _artifact_receipt(text_encoder)
     _add_dinkster_sources(root)
 
-    import comfy_aimdo.control as control  # pyright: ignore[reportMissingImports]
+    import dinkster_aimdo.control as control  # pyright: ignore[reportMissingImports]
 
     control.init()
 
@@ -327,7 +328,7 @@ def run_dinkster(args: argparse.Namespace) -> int:
     device = torch.device("cuda:0")
     torch.cuda.set_device(device)
     if not ensure_aimdo_devices(((0, 0),)):
-        raise ComparisonError("Dinkster comfy-aimdo device initialization failed")
+        raise ComparisonError("Dinkster dinkster-aimdo device initialization failed")
     asset = AssetRef(
         f"blake3:{TEXT_ENCODER_BLAKE3}",
         text_encoder.name,
@@ -423,6 +424,8 @@ def run_dinkster(args: argparse.Namespace) -> int:
         "receipts": {
             **_device_receipt(torch, device),
             "artifact": artifact,
+            "dinkster_aimdo": _package_version("dinkster-aimdo"),
+            "dinkster_kitchen": _package_version("dinkster-kitchen"),
             "commit": args.dinkster_commit,
             "control_fixed_loaded_bytes": control_loaded,
             "demand_control_sha256": _array_sha256(control_output),
@@ -490,7 +493,6 @@ def build_verdict(records: list[dict[str, Any]], *, dinkster_commit: str) -> dic
         ):
             raise ComparisonError("text encoder receipt differs")
         for key in (
-            "comfy_aimdo",
             "cuda",
             "device_uuid",
             "driver",
@@ -506,17 +508,21 @@ def build_verdict(records: list[dict[str, Any]], *, dinkster_commit: str) -> dic
             raise ComparisonError(f"{record['engine']} output changed between runs")
     comfyui = [records[0], records[3]]
     dinkster = [records[1], records[2]]
-    if any(
-        record["receipts"]["commit"] != COMFYUI_COMMIT
-        or record["receipts"]["comfy_kitchen"] != COMFYUI_KITCHEN_VERSION
-        or record["receipts"]["patcher"] != "ModelPatcherDynamic"
-        or record["receipts"]["precision"] != {"activation": "float32", "storage": ["bfloat16"]}
-        for record in comfyui
+    if (
+        any(
+            record["receipts"]["commit"] != COMFYUI_COMMIT
+            or record["receipts"]["comfy_kitchen"] != COMFYUI_KITCHEN_VERSION
+            or record["receipts"]["patcher"] != "ModelPatcherDynamic"
+            or record["receipts"]["precision"] != {"activation": "float32", "storage": ["bfloat16"]}
+            for record in comfyui
+        )
+        or len({record["receipts"]["comfy_aimdo"] for record in comfyui}) != 1
     ):
         raise ComparisonError("ComfyUI source or dynamic residency receipt differs")
     if any(
         record["receipts"]["commit"] != dinkster_commit
-        or record["receipts"]["comfy_kitchen"] != DINKSTER_KITCHEN_VERSION
+        or record["receipts"]["dinkster_kitchen"] != DINKSTER_KITCHEN_VERSION
+        or record["receipts"]["dinkster_aimdo"] != DINKSTER_AIMDO_VERSION
         or record["receipts"]["hybrid_equals_demand_control"] is not True
         or record["receipts"]["demand_control_sha256"] != record["output"]["sha256"]
         or record["receipts"]["precision"] != {"activation": "bfloat16", "storage": ["bfloat16"]}

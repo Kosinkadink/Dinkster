@@ -1,4 +1,4 @@
-"""Demand-paged comfy-aimdo residency for eager inference forwards.
+"""Demand-paged dinkster-aimdo residency for eager inference forwards.
 
 ``AimdoWeights`` retains immutable CPU originals and uses conventional
 resident storage for units at or below 16 KiB. Latency-sensitive callers may
@@ -197,28 +197,28 @@ class VbarBackend(Protocol):
 
 
 class ComfyAimdoBackend:
-    """Lazy production wrapper around comfy-aimdo's public Python API."""
+    """Lazy production wrapper around dinkster-aimdo's public Python API."""
 
     def __init__(self) -> None:
-        # comfy-aimdo's torch bridge builds tensors from
+        # dinkster-aimdo's torch bridge builds tensors from
         # __cuda_array_interface__ holders, which torch.as_tensor rejects
         # without numpy. Fail with the typed error instead of a deep
-        # RuntimeError inside comfy_aimdo when the environment lacks it.
+        # RuntimeError inside dinkster_aimdo when the environment lacks it.
         try:
             importlib.import_module("numpy")
         except ImportError as error:
             raise AimdoUnavailableError(
-                "comfy-aimdo tensor views require numpy; install numpy in"
+                "dinkster-aimdo tensor views require numpy; install numpy in"
                 " the inference worker environment"
             ) from error
         # Import only after ensure_aimdo_devices proved get_devctx. In
-        # comfy-aimdo 0.4.13 model_vbar captures control.lib at import.
-        from comfy_aimdo import (  # pyright: ignore[reportMissingTypeStubs]
+        # Upstream comfy-aimdo 0.4.13 model_vbar captures control.lib at import.
+        from dinkster_aimdo import (  # pyright: ignore[reportMissingTypeStubs]
             host_buffer,
             model_vbar,
             vram_buffer,
         )
-        from comfy_aimdo import (  # pyright: ignore[reportMissingTypeStubs]
+        from dinkster_aimdo import (  # pyright: ignore[reportMissingTypeStubs]
             torch as aimdo_torch,
         )
 
@@ -601,7 +601,7 @@ def _classify_vbar_pages(statuses: Sequence[object]) -> tuple[int, int]:
     pinned_pages = 0
     for value in statuses:
         if type(value) is not int or value < 0 or value & ~3 or value == 2:
-            raise RuntimeError(f"comfy-aimdo returned invalid VBAR page status {value!r}")
+            raise RuntimeError(f"dinkster-aimdo returned invalid VBAR page status {value!r}")
         if value == 1:
             evictable_pages += 1
         elif value == 3:
@@ -635,7 +635,7 @@ def production_vbar_memory(device_index: int) -> tuple[int, int]:
             try:
                 statuses = cast("Sequence[object]", query())
             except (AttributeError, ImportError):
-                # Older comfy-aimdo builds cannot classify pages. Unknown
+                # Older dinkster-aimdo builds cannot classify pages. Unknown
                 # residency stays absent rather than becoming fake free.
                 continue
             vbar_evictable, vbar_pinned = _classify_vbar_pages(statuses)
@@ -1192,7 +1192,7 @@ class AimdoWeights:
         with self._lock:
             if backend is None:
                 if not ensure_visible_aimdo_devices():
-                    raise AimdoUnavailableError(f"comfy-aimdo device {index} is not initialized")
+                    raise AimdoUnavailableError(f"dinkster-aimdo device {index} is not initialized")
                 backend = ComfyAimdoBackend()
             self._backend = backend
             self._physical_free_memory = (
@@ -1585,7 +1585,7 @@ class AimdoWeights:
     def loaded_bytes(self) -> int:
         """Conventional eager bytes plus clamped resident VBAR bytes.
 
-        comfy-aimdo accounts 32 MiB pages, and fp32 cast allocations can
+        dinkster-aimdo accounts 32 MiB pages, and fp32 cast allocations can
         exceed compact storage, so native loaded size may exceed the model's
         logical demand-paged total. Tiny conventional units compose beside
         that value like upstream's ``model_loaded_weight_memory`` and remain

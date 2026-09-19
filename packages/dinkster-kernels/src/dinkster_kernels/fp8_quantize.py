@@ -3,7 +3,7 @@
 The CUDA route converts float32, float16, or bfloat16 input through
 float32 division by one float32 scale, clamps to the finite range of
 the requested FP8 dtype, and casts once to FP8. This is the arithmetic
-used by comfy-kitchen's CUDA quantizer and by the eager reference in
+used by dinkster-kitchen's CUDA quantizer and by the eager reference in
 ``dinkster_inference_torch.quant_linear``.
 """
 

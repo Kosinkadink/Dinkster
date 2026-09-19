@@ -176,23 +176,23 @@ def _apply_rope_qk(
         return _apply_rope_torch(q, matrix, split), _apply_rope_torch(k, matrix, split)
     q_shape = q.shape
     k_shape = k.shape
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
     q = q.reshape(q.shape[0], q.shape[1], matrix.shape[2], -1)
     k = k.reshape(k.shape[0], k.shape[1], matrix.shape[2], -1)
     if split:
-        q, k = comfy_kitchen.apply_rope_split_half(q, k, matrix)
+        q, k = dinkster_kitchen.apply_rope_split_half(q, k, matrix)
     else:
-        q, k = comfy_kitchen.apply_rope(q, k, matrix)
+        q, k = dinkster_kitchen.apply_rope(q, k, matrix)
     return q.reshape(q_shape), k.reshape(k_shape)
 
 
 def _rms_adaln(x: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor) -> torch.Tensor:
     if torch.is_grad_enabled():
         return _rms(x) * (1 + scale) + shift
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
-    return comfy_kitchen.rms_adaln(x, scale, shift)
+    return dinkster_kitchen.rms_adaln(x, scale, shift)
 
 
 class _GuideAttentionMask:

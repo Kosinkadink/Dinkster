@@ -166,7 +166,7 @@ def _apply_split_rope_qk(
             _apply_rope_torch(q, matrix, True),
             _apply_rope_torch(k, matrix if k_rope is None else k_rope[0], True),
         )
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
     q_shape = q.shape
     k_shape = k.shape
@@ -174,10 +174,10 @@ def _apply_split_rope_qk(
     k_matrix = matrix if k_rope is None else k_rope[0]
     k = k.reshape(k.shape[0], k.shape[1], k_matrix.shape[2], -1)
     if k_rope is None and q.shape == k.shape:
-        q, k = comfy_kitchen.apply_rope_split_half(q, k, matrix)
+        q, k = dinkster_kitchen.apply_rope_split_half(q, k, matrix)
     else:
-        q = comfy_kitchen.apply_rope_split_half1(q, matrix)
-        k = comfy_kitchen.apply_rope_split_half1(k, k_matrix)
+        q = dinkster_kitchen.apply_rope_split_half1(q, matrix)
+        k = dinkster_kitchen.apply_rope_split_half1(k, k_matrix)
     return q.reshape(q_shape), k.reshape(k_shape)
 
 

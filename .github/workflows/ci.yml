@@ -61,6 +61,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --all-packages
+      - name: Install and verify published Windows engine dependencies
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $python = uv run --no-sync python -c "import sys; print(sys.executable)"
+          uv pip install --python $python --no-deps --index-url https://pypi.org/simple `
+            "dinkster-kitchen==0.2.35.post1" "dinkster-aimdo==0.5.5.post2"
+          & $python -c "from importlib.metadata import version; from importlib.util import find_spec; assert find_spec('dinkster_kitchen') is not None; assert find_spec('dinkster_aimdo') is not None; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'; print('dinkster-kitchen', version('dinkster-kitchen')); print('dinkster-aimdo', version('dinkster-aimdo'))"
       - run: uv run --locked ruff format --check .
         if: matrix.run_checks
       - run: uv run ruff check .
@@ -186,7 +194,6 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          aimdo-release-token: ${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}
           run-model-tests: "false"
 
   torch-cpu-try2:
@@ -217,7 +224,6 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          aimdo-release-token: ${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}
           run-model-tests: "false"
 
   torch-cpu-try3:
@@ -248,7 +254,6 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          aimdo-release-token: ${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}
           run-model-tests: "false"
 
   torch-cpu-try4:
@@ -279,7 +284,6 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          aimdo-release-token: ${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}
           run-model-tests: "false"
 
   torch-cpu-try5:
@@ -310,7 +314,6 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          aimdo-release-token: ${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}
           run-model-tests: "false"
 
   torch-cpu:
@@ -360,7 +363,6 @@ jobs:
       - uses: ./.github/actions/torch-cpu-suite
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          aimdo-release-token: ${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}
           run-model-tests: "true"
 
   coverage:
