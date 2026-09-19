@@ -29,8 +29,10 @@ from dinkster_workers.manifest import (
 
 if __package__:
     from tools.comfy_confidence import ConfidenceReceiptError, load_receipt, verify_receipt
+    from tools.evidence_paths import EVIDENCE_ROOT
 else:
     from comfy_confidence import ConfidenceReceiptError, load_receipt, verify_receipt
+    from evidence_paths import EVIDENCE_ROOT
 
 FORMAT = "dinkster-comfy-coverage/1"
 EVIDENCE_FORMAT = "dinkster-capability-evidence/1"
@@ -424,6 +426,8 @@ def _validate_evidence_selector(
     relative = Path(pieces[0])
     if relative.is_absolute() or ".." in relative.parts:
         raise CoverageError(f"evidence selector must be repository-relative: {selector!r}")
+    if relative.is_relative_to("tools/inference_parity"):
+        repo_root = EVIDENCE_ROOT
     if require_collected_test and (
         len(pieces) != 2
         or not re.fullmatch(r"(?:test_.+|.+_test)\.py", relative.name)
@@ -2213,7 +2217,7 @@ def main(argv: list[str] | None = None) -> int:
         help="capability index or directory of capability documents",
     )
     parser.add_argument(
-        "--receipts", type=Path, default=_REPO_ROOT / "docs" / "comfy-confidence-receipts"
+        "--receipts", type=Path, default=EVIDENCE_ROOT / "docs" / "comfy-confidence-receipts"
     )
     parser.add_argument(
         "--source-parity-baseline",

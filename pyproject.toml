@@ -142,6 +142,7 @@ pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
 include = ["packages", "src", "tests"]
+extraPaths = ["src", "../dinkster-evidence", ".evidence-source"]
 # Torch execution packages import torch, absent from the torch-free root
 # venv; each has its own [tool.pyright] gate against .venv-torch:
 #   .venv/bin/pyright -p packages/dinkster-inference-torch
@@ -153,7 +154,6 @@ include = ["packages", "src", "tests"]
 # Hosted CI enforces every .venv-torch pyright project in the torch-cpu
 # suite (#981); only the .venv-gpu dinkster-kernels gate stays local-only.
 exclude = [
-    "packages/dinkster-acceptance",
     "packages/dinkster-inference-torch",
     "packages/dinkster-kernels",
     "packages/dinkster-vision-birefnet",

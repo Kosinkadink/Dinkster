@@ -5,13 +5,14 @@ import json
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
 
-_MODULE_PATH = Path(__file__).resolve().parent.parent / "scripts" / "benchmark_residency.py"
+from tools.evidence_paths import EVIDENCE_ROOT
+
+_MODULE_PATH = EVIDENCE_ROOT / "scripts" / "benchmark_residency.py"
 _SPEC = importlib.util.spec_from_file_location("benchmark_residency", _MODULE_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 benchmark_residency = importlib.util.module_from_spec(_SPEC)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -26,15 +27,16 @@ from dinkster_inference_torch import guidance_transforms
 from dinkster_inference_torch.guidance import GuidanceExecutor, GuidanceRegistry
 
 REPO = Path(__file__).resolve().parents[3]
+EVIDENCE_ROOT = Path(os.environ.get("DINKSTER_EVIDENCE_ROOT", REPO.parent / "dinkster-evidence"))
 RECEIPT = json.loads(
     (
-        REPO
+        EVIDENCE_ROOT
         / "docs/comfy-confidence-receipts/comfyui-inspire-pack/scheduled-cfg-guider.receipt.json"
     ).read_text(encoding="utf-8")
 )
 GOLDEN = json.loads(
     (
-        REPO
+        EVIDENCE_ROOT
         / "docs/comfy-confidence-receipts/artifacts/comfyui-inspire-pack"
         / "scheduled-cfg-guider.native.json"
     ).read_text(encoding="utf-8")

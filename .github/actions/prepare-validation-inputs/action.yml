@@ -1,0 +1,48 @@
+name: Prepare validation inputs
+description: Fetch the evidence checkout and pinned coverage input repositories
+inputs:
+  evidence-deploy-key:
+    description: Read-only dinkster-evidence deploy key
+    required: true
+  coverage:
+    description: Fetch pinned upstream inputs and historical report for coverage tests
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: Kosinkadink/dinkster-evidence
+        ref: bbbd0e96f10983c3021075ac00bfa6d1d8dd5c5b
+        path: .evidence-source
+        ssh-key: ${{ inputs.evidence-deploy-key }}
+        persist-credentials: false
+    - shell: bash
+      run: |
+        # Materialize the two core pointers even on hosts without Git symlink support.
+        rm .evidence-source/packages/dinkster-inference-torch
+        rm .evidence-source/scripts/comfyui_benchmark_nodes
+        cp -R packages/dinkster-inference-torch .evidence-source/packages/
+        cp -R scripts/comfyui_benchmark_nodes .evidence-source/scripts/
+        echo "DINKSTER_EVIDENCE_ROOT=$GITHUB_WORKSPACE/.evidence-source" >> "$GITHUB_ENV"
+        echo "DINKSTER_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+    - if: inputs.coverage == 'true'
+      shell: bash
+      run: |
+        git fetch --quiet --depth=1 origin fd02ae351d2ba3eb84f5a68cb89fe208a7365ae3
+        git init --quiet .coverage-inputs/workflow_templates
+        git -C .coverage-inputs/workflow_templates remote add origin https://github.com/Comfy-Org/workflow_templates.git
+        git -C .coverage-inputs/workflow_templates config core.sparseCheckout true
+        git -C .coverage-inputs/workflow_templates config core.sparseCheckoutCone false
+        printf '/templates/*.json\n' > .coverage-inputs/workflow_templates/.git/info/sparse-checkout
+        git -C .coverage-inputs/workflow_templates fetch --quiet --depth=1 --filter=blob:none origin d3b4a9e89573162b005961865164c18c8ae2206b
+        git -C .coverage-inputs/workflow_templates checkout --quiet --detach FETCH_HEAD
+        git init --quiet .coverage-inputs/ComfyUI
+        git -C .coverage-inputs/ComfyUI remote add origin https://github.com/Comfy-Org/ComfyUI.git
+        git -C .coverage-inputs/ComfyUI config core.sparseCheckout true
+        git -C .coverage-inputs/ComfyUI config core.sparseCheckoutCone false
+        printf '/nodes.py\n/comfy/supported_models.py\n/comfy_extras/**\n/comfy_api_nodes/**\n' > .coverage-inputs/ComfyUI/.git/info/sparse-checkout
+        git -C .coverage-inputs/ComfyUI fetch --quiet --depth=1 --filter=blob:none origin 15eb748b3ec5f8a0a2d470b7fb280e2d7579f916
+        git -C .coverage-inputs/ComfyUI checkout --quiet --detach FETCH_HEAD
+        echo "WORKFLOW_TEMPLATES_ROOT=$GITHUB_WORKSPACE/.coverage-inputs/workflow_templates" >> "$GITHUB_ENV"
+        echo "COMFYUI_ROOT=$GITHUB_WORKSPACE/.coverage-inputs/ComfyUI" >> "$GITHUB_ENV"

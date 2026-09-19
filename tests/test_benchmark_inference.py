@@ -26,7 +26,9 @@ from dinkster_inference import (
 )
 from PIL import Image
 
-_MODULE_PATH = Path(__file__).resolve().parent.parent / "scripts" / "benchmark_inference.py"
+from tools.evidence_paths import EVIDENCE_ROOT
+
+_MODULE_PATH = EVIDENCE_ROOT / "scripts" / "benchmark_inference.py"
 _SPEC = importlib.util.spec_from_file_location("benchmark_inference", _MODULE_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 benchmark_inference = importlib.util.module_from_spec(_SPEC)

@@ -24,9 +24,11 @@ from dinkster_inference import (
     tokenize_ovis_prompt,
 )
 
+from tools.evidence_paths import EVIDENCE_ROOT
+
 GOLDENS = json.loads((Path(__file__).parent / "goldens" / "ovis_text_goldens.json").read_text())
 WORKLOADS = json.loads(
-    (Path(__file__).parent.parent / "tools" / "inference_parity" / "workloads.json").read_text()
+    (EVIDENCE_ROOT / "tools" / "inference_parity" / "workloads.json").read_text()
 )
 
 

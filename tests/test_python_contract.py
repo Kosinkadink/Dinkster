@@ -8,6 +8,7 @@ import pytest
 from dinkster_workers import boundary
 
 from dinkster import port
+from tools.evidence_paths import EVIDENCE_ROOT
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -17,7 +18,11 @@ def _toml(path: Path) -> dict[str, object]:
 
 
 def test_workspace_and_generated_metadata_share_python_floor() -> None:
-    manifests = [ROOT / "pyproject.toml", *sorted((ROOT / "packages").glob("*/pyproject.toml"))]
+    manifests = [
+        ROOT / "pyproject.toml",
+        *sorted((ROOT / "packages").glob("*/pyproject.toml")),
+        EVIDENCE_ROOT / "packages/dinkster-acceptance/pyproject.toml",
+    ]
     assert len(manifests) == 51
     for manifest in manifests:
         project = _toml(manifest)["project"]

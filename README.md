@@ -20,6 +20,10 @@ edge is a typed value envelope, so caching and transport are location-independen
   healthy by this repo's own suite. `uv run dinkster-doctor <pack-dir>` is the
   pack linter and publish gate.
 - Companion frontend: [Dinkster-Frontend](https://github.com/Kosinkadink/Dinkster-Frontend)
+- Receipts, parity tooling, benchmarks, acceptance package, and hardware records:
+  [dinkster-evidence](https://github.com/Kosinkadink/dinkster-evidence)
+- Research notes:
+  [workspace research](https://github.com/Kosinkadink/comfy-vibe-station/tree/main/notes/research)
 
 Status: private preview, distributed through private backend and Desktop
 releases. See [installation](docs/install.md) for prerequisites, platform
@@ -41,6 +45,32 @@ Both setup scripts pin root synchronization to this checkout's torch-free
 `.venv-torch` and `.venv-gpu` separately with `uv pip`. Do not target those
 Torch environments with project `uv sync`: exact sync can remove their
 platform-specific torch and kitchen wheels.
+
+Validation requires a sibling `dinkster-evidence` checkout, or an absolute
+`DINKSTER_EVIDENCE_ROOT` override. The `tools.inference_parity` imports, parity
+manifest paths in harness tests, `scripts/benchmark_*` loaders, `benchmarks/`
+fixtures, and `packages/dinkster-acceptance` install/test paths refer to that
+checkout, not to files in core. Harness tests run with the evidence checkout as
+their working directory. Capability evidence selectors under
+`tools/inference_parity/` use the same external root. The receipt generator
+writes its `docs/comfy-confidence-receipts/` there; `--check` verifies those bytes.
+
+Coverage tests generate JSON into temporary directories from pinned input
+checkouts. Set `WORKFLOW_TEMPLATES_ROOT` to workflow_templates at
+`d3b4a9e89573162b005961865164c18c8ae2206b` and `COMFYUI_ROOT` to ComfyUI at
+`15eb748b3ec5f8a0a2d470b7fb280e2d7579f916`; defaults are sibling checkouts with
+those names. The historical research comparison reads the immutable report in
+Dinkster commit `fd02ae351d2ba3eb84f5a68cb89fe208a7365ae3` with `git show`; shallow
+clones must fetch that commit. Current research lives only in the workspace.
+`docs/comfy-source-parity-baseline.json` is a maintained debt baseline, not a
+generated report, and remains tracked. Generated translation/capability JSON
+is ignored; CI regenerates it and verifies the tracked Markdown separately.
+CI's input action requires the read-only `DINKSTER_EVIDENCE_READ_KEY` secret.
+
+For cloud acceptance archives, pass both `--commit` and `--evidence-commit` to
+`scripts/prepare_cloud_acceptance.py`. It assembles the pinned external acceptance
+package with core in a disposable workspace, updates that workspace's lockfile,
+performs a locked install and import check, and records both Git identities.
 
 - `uv run pytest` - test suite (incl. the one-way dependency rule, hazard H6)
 - `uv run pyright` - static type checking (strict for `packages/`, standard

@@ -1,9 +1,11 @@
 """Run an exported API workflow against a fresh ordinary Dinkster or ComfyUI server.
 
-Use either scripts/benchmark_inference.py or scripts/benchmark_comfyui.py with
---workflow to select this contract before Torch or residency bootstrap. Example:
+Use scripts/benchmark_inference.py or scripts/benchmark_comfyui.py from the
+dinkster-evidence checkout with --workflow to select this contract before Torch
+or residency bootstrap. Example from the Dinkster checkout:
 
-  python scripts/benchmark_inference.py --workflow tests/fixtures/lumina2-workflow-api.json \
+  python ../dinkster-evidence/scripts/benchmark_inference.py \
+    --workflow tests/fixtures/lumina2-workflow-api.json \
     --workflow-provenance export.json --artifacts artifacts.json \
     --repo /work/Dinkster --server-python /work/Dinkster/.venv-gpu/bin/python \
     --reference-root /work/ComfyUI --reference-commit FULL_COMMIT \

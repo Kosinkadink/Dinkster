@@ -2,7 +2,7 @@
 
 Status: BINDING SPEC 2026-07-30 (backend design pass; user directed
 starting the LISTEXP census slices immediately). Evidence base:
-docs/research/listexp-conclusions.md - implicit single-list mapping
+[list expansion research](https://github.com/Kosinkadink/comfy-vibe-station/blob/main/notes/research/listexp-conclusions.md) - implicit single-list mapping
 carries 34.2 percent user-weighted fan-out usage (census slice A) and
 is compat's one real feature-set regression risk; zero packs author
 against multi-list broadcast (L3 = 0 in 1172 rows).
