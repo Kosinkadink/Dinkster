@@ -2,7 +2,7 @@
   "format": "dinkster-comfy-group/1",
   "sourceSchemas": [
     {
-      "schemaVersion": 38,
+      "schemaVersion": 39,
       "nodeType": "comfy.comfyui-impact-pack.KSamplerAdvancedProvider",
       "version": 1,
       "displayName": "KSampler (Advanced) Provider",
@@ -181,7 +181,7 @@
       ]
     },
     {
-      "schemaVersion": 38,
+      "schemaVersion": 39,
       "nodeType": "comfy.comfyui-impact-pack.RegionalPrompt",
       "version": 1,
       "displayName": "Regional Prompt",
@@ -281,7 +281,7 @@
       ]
     },
     {
-      "schemaVersion": 38,
+      "schemaVersion": 39,
       "nodeType": "comfy.comfyui-impact-pack.RegionalSampler",
       "version": 1,
       "displayName": "Regional Sampler",
@@ -547,7 +547,7 @@
   ],
   "groupSchemas": [
     {
-      "schemaVersion": 38,
+      "schemaVersion": 39,
       "nodeType": "comfy-group.comfyui-impact-pack.regional-sampler-single-region",
       "version": 1,
       "displayName": "Impact Regional Sampler (Single Region)",

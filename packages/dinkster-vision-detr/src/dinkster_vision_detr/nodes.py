@@ -25,6 +25,7 @@ from dinkster_api.v1 import (
     coerce_region,
     decode_detection,
     decode_image_array,
+    decode_image_array_buffer,
     decode_region,
     detection_meta,
     encode_detection,
@@ -32,6 +33,7 @@ from dinkster_api.v1 import (
     encode_region,
     image_array_fingerprint,
     image_array_meta,
+    image_input,
     prepare_image_array_encoding,
     region_meta,
 )
@@ -164,9 +166,11 @@ def register_types(registry: TypeRegistry) -> None:
             IMAGE_TYPE,
             encode=encode_image_array,
             decode=decode_image_array,
+            decode_buffer=decode_image_array_buffer,
             prepare_buffer_encoding=prepare_image_array_encoding,
             fingerprint=image_array_fingerprint(IMAGE_TYPE),
             meta=image_array_meta,
+            input_convert=image_input,
         )
     if REGION_TYPE not in registry:
         registry.register(

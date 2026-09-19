@@ -71,7 +71,7 @@ MAX_ENCODED_IMAGE_BYTES = 1024 * 1024 * 1024
 MAX_ANIMATION_FRAMES = 4096
 MAX_IMAGE_DIMENSION = 16384
 IMAGE_FILE_DECODER_ID = "dinkster.media-image-file@2"
-MASK_FILE_DECODER_ID = "dinkster.mask-file@1"
+MASK_FILE_DECODER_ID = "dinkster.mask-file@2"
 
 MAX_MASK_PAINT_JSON_BYTES = 4 * 1024 * 1024
 MAX_MASK_PAINT_COMMANDS = 2048
@@ -118,12 +118,14 @@ def _validate_asset_size(asset: AssetRef) -> None:
         raise ValueError(f"image asset exceeds the {MAX_IMAGE_FILE_BYTES}-byte input limit")
 
 
-def _validate_dimensions(width: int, height: int, channels: int = 4) -> None:
+def _validate_dimensions(
+    width: int, height: int, channels: int = 4, bytes_per_channel: int = 4
+) -> None:
     if width < 1 or height < 1:
         raise ValueError("image dimensions must be nonzero")
     if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
         raise ValueError(f"image dimensions exceed {MAX_IMAGE_DIMENSION} pixels")
-    if width * height * channels * np.dtype(np.float32).itemsize > MAX_IMAGE_ARRAY_BYTES:
+    if width * height * channels * bytes_per_channel > MAX_IMAGE_ARRAY_BYTES:
         raise ValueError(f"decoded image exceeds the {MAX_IMAGE_ARRAY_BYTES}-byte array limit")
 
 
@@ -142,7 +144,9 @@ def _open_still(asset: AssetRef, *, allow_batch: bool = False) -> tuple[BinaryIO
         if not allow_batch and int(getattr(source, "n_frames", 1)) != 1:
             source.close()
             raise ValueError("still image loaders reject animated and multipage assets")
-        _validate_dimensions(*source.size)
+        _validate_dimensions(
+            *source.size, bytes_per_channel=2 if source.mode.startswith("I;16") else 1
+        )
         return handle, source, actual_size
     except (Image.DecompressionBombWarning, Image.DecompressionBombError) as exc:
         handle.close()
@@ -190,18 +194,23 @@ def _decode_still(asset: AssetRef, *, allow_batch: bool = False) -> _DecodedImag
                     size = oriented.size
                 if oriented.size != size:
                     continue
-                _validate_dimensions(*oriented.size)
-                if (len(images) + 1) * size[0] * size[1] * 16 > MAX_IMAGE_ARRAY_BYTES:
+                sixteen_bit = oriented.mode.startswith("I;16")
+                _validate_dimensions(*oriented.size, bytes_per_channel=2 if sixteen_bit else 1)
+                if (len(images) + 1) * size[0] * size[1] * (
+                    8 if sixteen_bit else 4
+                ) > MAX_IMAGE_ARRAY_BYTES:
                     raise ValueError(
                         f"decoded image exceeds the {MAX_IMAGE_ARRAY_BYTES}-byte limit"
                     )
                 has_alpha |= "A" in oriented.getbands() or "transparency" in oriented.info
-                alpha_frame = (
-                    np.asarray(oriented.convert("RGBA").getchannel("A"), dtype=np.float32) / 255.0
-                )
+                alpha_frame = np.asarray(oriented.convert("RGBA").getchannel("A"), dtype=np.uint8)
                 alphas.append(alpha_frame)
-                rgb = np.asarray(_srgb(oriented, info.get("icc_profile")), dtype=np.float32)
-                images.append(rgb / 255.0)
+                if sixteen_bit:
+                    plane = np.asarray(oriented, dtype=np.uint16)
+                    rgb = np.repeat(plane[..., None], 3, axis=-1)
+                else:
+                    rgb = np.asarray(_srgb(oriented, info.get("icc_profile")), dtype=np.uint8)
+                images.append(rgb)
             image = np.stack(images)
             alpha = np.stack(alphas) if has_alpha else None
             document = metadata_document(
@@ -244,22 +253,21 @@ def _load_mask_values(asset: AssetRef, channel: str, mask_polarity: str) -> np.n
             oriented = ImageOps.exif_transpose(source)
             if channel == "alpha":
                 if "A" in oriented.getbands() or "transparency" in info:
-                    plane = np.asarray(oriented.convert("RGBA").getchannel("A"), dtype=np.float32)
-                    mask = plane / 255.0
+                    mask = np.asarray(oriented.convert("RGBA").getchannel("A"), dtype=np.uint8)
                 else:
-                    mask = np.ones((64, 64), dtype=np.float32)
-            elif channel == "luminance" and oriented.mode.startswith("I;16"):
-                mask = np.asarray(oriented, dtype=np.float32) / 65535.0
+                    mask = np.full((64, 64), 255, dtype=np.uint8)
+            elif oriented.mode.startswith("I;16"):
+                mask = np.asarray(oriented, dtype=np.uint16)
             elif channel == "luminance":
-                mask = np.asarray(oriented.convert("L"), dtype=np.float32) / 255.0
+                mask = np.asarray(oriented.convert("L"), dtype=np.uint8)
             else:
                 index = {"red": 0, "green": 1, "blue": 2}[channel]
-                rgb = np.asarray(_srgb(oriented, info.get("icc_profile")), dtype=np.float32)
-                mask = rgb[..., index] / 255.0
+                rgb = np.asarray(_srgb(oriented, info.get("icc_profile")), dtype=np.uint8)
+                mask = rgb[..., index]
             if mask_polarity == "transparency":
-                mask = 1.0 - mask
+                mask = np.iinfo(mask.dtype).max - mask
             return annotate_mask(
-                np.ascontiguousarray(mask, dtype=np.float32)[None, :, :],
+                np.ascontiguousarray(mask)[None, :, :],
                 polarity=mask_polarity,
                 semantic="alpha" if channel == "alpha" else "selection",
             )
@@ -444,12 +452,12 @@ class LoadImage(Node):
             raise ValueError(f"unknown mask polarity: {mask_polarity}")
         decoded = _decode_still(image, allow_batch=True)
         mask = (
-            np.zeros((decoded.image.shape[0], 64, 64), dtype=np.float32)
+            np.zeros((decoded.image.shape[0], 64, 64), dtype=np.uint8)
             if decoded.alpha is None
-            else np.ascontiguousarray(1.0 - decoded.alpha, dtype=np.float32)
+            else np.ascontiguousarray(255 - decoded.alpha)
         )
         if mask_polarity == "coverage":
-            mask = np.ones_like(mask) if decoded.alpha is None else decoded.alpha
+            mask = np.full_like(mask, 255) if decoded.alpha is None else decoded.alpha
         return cls.outputs(
             image=decoded.image,
             mask=annotate_mask(mask, polarity=mask_polarity, semantic="alpha"),
@@ -693,8 +701,7 @@ class PaintMask(Node):
         if decoded.alpha is None:
             base = np.zeros((height, width), dtype=np.uint8)
         else:
-            alpha = np.asarray(decoded.alpha[0], dtype=np.float64)
-            base = 255 - np.floor(alpha * 255 + 0.5).astype(np.uint8)
+            base = 255 - decoded.alpha[0]
         painted = _replay_mask_paint(base, commands)
         return cls.outputs(
             mask=annotate_mask(

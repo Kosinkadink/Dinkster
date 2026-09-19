@@ -36,6 +36,7 @@ from dinkster_values import (
     TypeRegistry,
     ValueMeta,
     default_encode,
+    encode_image_array,
     encode_latent,
     make_list_value,
     register_core_types,
@@ -285,9 +286,11 @@ def test_fresh_handlers_and_durable_cas(harness: Harness, reuse_cache: bool) -> 
             "comfy.IMAGE", Transform.execute(**Generate.execute())["image"]
         )
         assert result.outputs["image"].fingerprint == expected.fingerprint
-        assert default_encode(dict(result.outputs["image"].meta.entries)) == default_encode(
-            dict(expected.meta.entries)
-        )
+        actual_meta = dict(result.outputs["image"].meta.entries)
+        expected_meta = dict(expected.meta.entries)
+        assert actual_meta.pop("cost") == {"ram": len(encode_image_array(expected.resolve()))}
+        expected_meta.pop("cost")
+        assert default_encode(actual_meta) == default_encode(expected_meta)
 
     asyncio.run(scenario())
 

@@ -21,6 +21,7 @@ from .absent import CORE_ABSENT
 from .assets import ASSET_BASE_TYPE, parse_asset_type_id, runtime_type_atom
 from .lists import make_list_value, parse_list_type_id
 from .model import (
+    BufferDecoder,
     EncodedPayload,
     PyObjPayload,
     TypeId,
@@ -147,6 +148,15 @@ class TypeSpec:
     prepare_buffer_encoding: PrepareBufferEncodingFn | None = None
     """Optionally prepare the declared codec's exact bytes for direct writes
     into caller-owned storage. Other transports continue to use ``encode``."""
+
+    input_convert: CoerceFn | None = None
+    """Convert storage to the ordinary input form at invocation, without
+    mutating the stored object. None preserves it; accepts_storage bypasses
+    this hook. Unlike coerce, this never changes output storage or identity."""
+
+    decode_buffer: BufferDecoder | None = None
+    """Decode a borrowed read-only view and retain its release callback until
+    every returned view dies. The caller releases the borrow on exceptions."""
 
 
 @dataclass(frozen=True)
@@ -294,14 +304,18 @@ class TypeRegistry:
         fingerprint: FingerprintFn | None = None,
         meta: MetaFn | None = None,
         coerce: CoerceFn | None = None,
+        input_convert: CoerceFn | None = None,
         inline: InlineFn | None = None,
         validate_encoded: ValidateEncodedFn | None = None,
         validate_encoded_buffer: ValidateEncodedBufferFn | None = None,
+        decode_buffer: BufferDecoder | None = None,
     ) -> TypeSpec:
         if (encode is None) != (decode is None):
             raise ValueError(f"{type_id}: encode and decode must be declared together")
         if prepare_buffer_encoding is not None and encode is None:
             raise ValueError(f"{type_id}: buffer encoding requires a declared codec")
+        if decode_buffer is not None and decode is None:
+            raise ValueError(f"{type_id}: buffer decoding requires a declared codec")
         if "<" in type_id or ">" in type_id:
             # The canonical type-id grammar is closed: name | "list<" id ">".
             # Angle brackets are constructor syntax, never part of an atom
@@ -319,9 +333,11 @@ class TypeRegistry:
             declared_codec=encode is not None,
             prepare_buffer_encoding=prepare_buffer_encoding,
             coerce=coerce,
+            input_convert=input_convert,
             inline=inline,
             validate_encoded=validate_encoded,
             validate_encoded_buffer=validate_encoded_buffer,
+            decode_buffer=decode_buffer,
         )
         self._types[type_id] = spec
         return spec
@@ -511,12 +527,13 @@ class TypeRegistry:
         source = self.spec(value.type_id)
         target = self.spec(target_type_id)
         if isinstance(value.payload, EncodedPayload) and value.payload.type_id == value.type_id:
-            payload = value.payload.restamped(target_type_id, target.decode)
+            payload = value.payload.restamped(target_type_id, target.decode, target.decode_buffer)
         else:
             payload = EncodedPayload(
                 target_type_id,
                 source.encode(value.payload.load()),
                 target.decode,
+                decode_buffer=target.decode_buffer,
             )
         fingerprint = _equivalent_fingerprint(
             provider_id, value.type_id, target_type_id, value.fingerprint
@@ -630,6 +647,20 @@ class TypeRegistry:
             return self._types[base]
         except KeyError:
             raise KeyError(f"unregistered value type: {type_id}") from None
+
+    def input_object(self, type_id: TypeId, obj: object) -> object:
+        """Convert a resolved typed input, recursively through list storage.
+
+        Asset references stay references until worker-side decoding supplies
+        the target type. Unknown types keep the default pass-through behavior.
+        """
+        element = parse_list_type_id(type_id)
+        if element is not None:
+            return [self.input_object(element, item) for item in cast(Sequence[object], obj)]
+        spec = self._types.get(type_id)
+        return (
+            spec.input_convert(obj) if spec is not None and spec.input_convert is not None else obj
+        )
 
     def wrap(self, type_id: TypeId, obj: object) -> Value:
         """Build an envelope for a raw object. Worker shims call this; node

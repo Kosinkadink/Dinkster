@@ -45,6 +45,7 @@ from dinkster_protocol import GRAPH_COMPILERS_SURFACE, KeyedContribution, extens
 from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import TypeRegistry
+from dinkster_values.storage import image_input
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
 
@@ -138,7 +139,7 @@ def test_lazy_media_pack_resolves_assets_after_compat_host_registration(
                 ["load"],
             )
             loaded = cast("np.ndarray", result.outputs["load"]["image"].resolve())
-            np.testing.assert_array_equal(loaded[0] * 255, pixels)
+            np.testing.assert_array_equal(cast("np.ndarray", image_input(loaded))[0] * 255, pixels)
         finally:
             await composer.close()
 
@@ -1083,11 +1084,11 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
         ),
         (
             "dinkster-nodes-media-io",
-            "sha256:6fe365fabc7a5b853b66b4d67f77e575ae918b6cedd903a6c461f74c591a31d0",
+            "sha256:cd7bf17d8a97315139cecb85151bbace24bd204e49a3f75f4d632846d3eb5217",
         ),
         (
             "dinkster-nodes-image",
-            "sha256:0ee5a6f50cdb3cd53d3f2a7c8138127e5ce797f6f1247c7d24858d516f6bafcd",
+            "sha256:774daab2e9025fec9c24d37f074dbad2ac1ac19949081abae07341e4216e59f9",
         ),
         (
             "dinkster-nodes-remote",

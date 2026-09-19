@@ -31,12 +31,14 @@ import io
 import json
 import math
 import struct
+import weakref
 import zlib
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
 from .model import stable_hash
 from .registry import BufferEncoding
+from .storage import array_storage_meta, image_input, storage_array, storage_dtype
 
 __all__ = [
     "IMAGE_BATCH_MERGER_ID",
@@ -46,6 +48,7 @@ __all__ = [
     "annotate_mask",
     "copy_media_semantics",
     "decode_image_array",
+    "decode_image_array_buffer",
     "decode_image_file",
     "encode_canonical_png",
     "encode_image_array",
@@ -71,15 +74,8 @@ def _numpy() -> Any:
 
 
 def _as_array(obj: object) -> Any:
-    """The object's numpy form. Torch tensors are detected by duck type
-    (detach/cpu/numpy) so this module never imports torch - CUDA tensors
-    hop to host memory here, which np.asarray alone refuses to do."""
-    if hasattr(obj, "detach"):
-        tensor = cast("Any", obj).detach().cpu()
-        if str(getattr(tensor, "dtype", "")) == "torch.bfloat16":
-            tensor = tensor.float()
-        obj = tensor.numpy()
-    return _numpy().asarray(obj)
+    """The portable storage form, without expanding reduced-precision values."""
+    return storage_array(obj)
 
 
 _MEDIA_MAGIC = b"DINKSTER-MEDIA\x01"
@@ -293,17 +289,22 @@ def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-def _encoded_parts(data: bytes | memoryview) -> tuple[tuple[int, ...], Any, dict[str, object]]:
+def _array_header(data: bytes | memoryview) -> tuple[tuple[int, ...], bool, Any, int]:
     np = _numpy()
     stream = io.BytesIO(data[:10_032])
     version = np.lib.format.read_magic(stream)
     read_header = getattr(np.lib.format, "_read_array_header", None)
     if read_header is None:
         read_header = importlib.import_module("numpy.lib._format_impl")._read_array_header
-    shape, _, dtype = read_header(stream, version)
+    shape, fortran, dtype = read_header(stream, version)
     if dtype.hasobject or any(type(n) is not int or n < 0 for n in shape):
         raise ValueError("invalid media array header")
-    end = stream.tell() + math.prod(shape) * int(dtype.itemsize)
+    return tuple(shape), bool(fortran), dtype, stream.tell()
+
+
+def _encoded_parts(data: bytes | memoryview) -> tuple[tuple[int, ...], Any, dict[str, object]]:
+    shape, _, dtype, offset = _array_header(data)
+    end = offset + math.prod(shape) * int(dtype.itemsize)
     if end > len(data):
         raise ValueError("media array dimensions exceed its payload")
     if len(data) - end > _MEDIA_LIMIT + len(_MEDIA_MAGIC) + 4:
@@ -328,6 +329,18 @@ def decode_image_array(data: bytes) -> object:
     """Validate header and semantics before allocating the array."""
     _, _, metadata = _encoded_parts(data)
     array = _numpy().load(io.BytesIO(data), allow_pickle=False)
+    return _annotate(array, metadata) if metadata else array
+
+
+def decode_image_array_buffer(data: memoryview, release: Callable[[], None]) -> object:
+    np = _numpy()
+    _, _, metadata = _encoded_parts(data)
+    shape, fortran, dtype, offset = _array_header(data)
+    array = np.ndarray(
+        shape, dtype=dtype, buffer=data, offset=offset, order="F" if fortran else "C"
+    )
+    array.setflags(write=False)
+    weakref.finalize(array, release)
     return _annotate(array, metadata) if metadata else array
 
 
@@ -362,15 +375,19 @@ def _array_fingerprint(type_id: str, array: Any) -> str:
 def image_array_meta(obj: object) -> Mapping[str, object]:
     """Interrogable envelope meta: shape and dtype, so clients can show
     dimensions (and batch size) without touching the payload."""
-    return _runtime_array_meta(obj, mask=False)
+    return _resident_array_meta(obj, mask=False)
 
 
-def _runtime_array_meta(obj: object, *, mask: bool) -> Mapping[str, object]:
+def _resident_array_meta(obj: object, *, mask: bool) -> dict[str, object]:
     array = cast("Any", obj) if hasattr(obj, "dtype") and hasattr(obj, "shape") else _as_array(obj)
-    dtype = str(array.dtype).removeprefix("torch.")
-    if dtype == "bfloat16":
-        dtype = "float32"
-    return _array_meta(tuple(int(n) for n in array.shape), dtype, media_semantics(obj), mask=mask)
+    storage = array_storage_meta(array)
+    dtype = (
+        "float32" if storage["storage_dtype"] == "bf16" else str(array.dtype).removeprefix("torch.")
+    )
+    return {
+        **_array_meta(tuple(int(n) for n in array.shape), dtype, media_semantics(obj), mask=mask),
+        **storage,
+    }
 
 
 def _array_meta(
@@ -396,12 +413,16 @@ def _array_meta(
 
 
 def mask_array_meta(obj: object) -> Mapping[str, object]:
-    return _runtime_array_meta(obj, mask=True)
+    return _resident_array_meta(obj, mask=True)
 
 
 def image_encoded_meta(data: bytes | memoryview, *, mask: bool = False) -> dict[str, object]:
     shape, dtype, semantics = _encoded_parts(data)
-    return _array_meta(shape, str(dtype), semantics, mask=mask)
+    kind = storage_dtype(_numpy().empty(0, dtype=dtype))
+    return {
+        **_array_meta(shape, "float32" if kind == "bf16" else str(dtype), semantics, mask=mask),
+        "storage_dtype": kind,
+    }
 
 
 def validate_image_encoded(data: bytes | memoryview, meta: Mapping[str, object]) -> None:
@@ -464,6 +485,9 @@ def decode_image_file(asset: object) -> object:
             with pil.Image.open(handle) as image:
                 icc_profile = image.info.get("icc_profile")
                 image = pil.ImageOps.exif_transpose(image)
+                if image.mode.startswith("I;16"):
+                    plane = np.asarray(image, dtype=np.uint16)
+                    return np.repeat(plane[None, :, :, None], 3, axis=-1)
                 alpha = (
                     image.convert("RGBA").getchannel("A")
                     if "A" in image.getbands() or "transparency" in image.info
@@ -493,7 +517,7 @@ def decode_image_file(asset: object) -> object:
         except Exception as exc:
             name = getattr(asset, "name", "") or "asset"
             raise ValueError(f"cannot decode '{name}' as an image: {exc}") from exc
-    array = np.asarray(rgb, dtype=np.float32) / 255.0
+    array = np.asarray(rgb, dtype=np.uint8)
     return array[None, :, :, :]
 
 
@@ -548,9 +572,17 @@ def merge_image_batches(batches: Sequence[object]) -> object:
     np = _numpy()
     arrays: list[Any] = []
     semantics = [media_semantics(item) for item in batches]
+    colors = [cast("Mapping[str, object]", meta.get("color", _DEFAULT_COLOR)) for meta in semantics]
+    color = dict(colors[0])
+    for other in colors[1:]:
+        if any(other[key] != color[key] for key in ("primaries", "transfer", "range")):
+            raise ValueError("cannot merge image batches with different color semantics")
+        for key in ("matrix", "bit_depth"):
+            if color.get(key) != other.get(key):
+                color.pop(key, None)
     premultiplied = all(meta.get("alpha") == "premultiplied" for meta in semantics)
     for item, meta in zip(batches, semantics, strict=True):
-        array = np.asarray(_as_array(item), dtype=np.float32)
+        array = np.asarray(image_input(_as_array(item)))
         if array.ndim == 3:
             array = array[None, :, :, :]
         if array.ndim != 4:
@@ -578,7 +610,7 @@ def merge_image_batches(batches: Sequence[object]) -> object:
     return annotate_image(
         result,
         alpha="premultiplied" if premultiplied else None,
-        color=cast("Mapping[str, object] | None", semantics[0].get("color")),
+        color=color,
     )
 
 
@@ -630,11 +662,12 @@ def render_image_png(obj: object) -> bytes:
     beyond numpy: the browser-renderable form of an image is core
     contract (DESIGN 3.5), not an optional nicety."""
     np = _numpy()
-    array = np.asarray(_as_array(obj), dtype=np.float32)
+    array = _as_array(obj)
     if array.ndim == 4:
         if array.shape[0] < 1:
             raise ValueError("cannot render an empty image batch as PNG")
         array = array[0]
+    array = np.asarray(image_input(array))
     if media_semantics(obj).get("alpha") == "premultiplied":
         array = array.copy()
         alpha = array[..., -1:]
@@ -662,8 +695,7 @@ def render_image_png(obj: object) -> bytes:
 
 def render_mask_png(obj: object) -> bytes:
     """Encode a mask array (HxW or BxHxW) as a grayscale PNG."""
-    np = _numpy()
-    array = np.asarray(_as_array(obj), dtype=np.float32)
+    array = _as_array(obj)
     if array.ndim == 3:
         if array.shape[0] < 1:
             raise ValueError("cannot render an empty mask batch as PNG")

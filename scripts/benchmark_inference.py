@@ -1061,8 +1061,9 @@ def _decode_audio_file(path: Path) -> dict[str, object]:
 
 def _decode_image_file(path: Path) -> object:
     from dinkster_values import decode_image_file
+    from dinkster_values.storage import image_input
 
-    return decode_image_file(_asset_ref(path))
+    return image_input(decode_image_file(_asset_ref(path)))
 
 
 def _zero_conditioning(value: object) -> object:

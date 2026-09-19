@@ -37,6 +37,7 @@ from dinkster_values import (
     parse_list_type_id,
     value_resource_ids,
 )
+from dinkster_values.storage import encoded_storage_meta
 
 ENTRY_WIRE_VERSION = 2
 """v2: recursive list outputs (``elements`` instead of ``digest``/``size``).
@@ -215,6 +216,7 @@ async def _value_from_wire(
     data = await fetch_blob(digest, size)
     if data is None or len(data) != size:
         return None
+    meta = ValueMeta(encoded_storage_meta(meta.entries, size))
     spec = registry.spec(type_id) if type_id in registry else None
     if spec is not None and (
         spec.validate_encoded is not None or spec.validate_encoded_buffer is not None
@@ -232,7 +234,13 @@ async def _value_from_wire(
         type_id=type_id,
         fingerprint=fingerprint,
         meta=meta,
-        payload=EncodedPayload(type_id, data, decoder, transport="cas"),
+        payload=EncodedPayload(
+            type_id,
+            data,
+            decoder,
+            transport="cas",
+            decode_buffer=spec.decode_buffer if spec is not None else None,
+        ),
     )
 
 

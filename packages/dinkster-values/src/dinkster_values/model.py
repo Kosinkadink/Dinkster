@@ -17,6 +17,7 @@ from typing import ClassVar, Protocol, cast, runtime_checkable
 
 TypeId = str
 Fingerprint = str
+BufferDecoder = Callable[[memoryview, Callable[[], None]], object]
 
 RESOURCES_META_KEY = "resources"
 """Well-known ValueMeta entry: a mapping of resource kind -> concrete
@@ -248,6 +249,7 @@ class EncodedPayload:
     data: bytes
     decoder: Callable[[bytes], object] | None
     transport: str = "inline"
+    decode_buffer: BufferDecoder | None = None
     _encoded: ClassVar[bytes | _EncodedBufferStorage]
 
     def __init__(
@@ -256,11 +258,13 @@ class EncodedPayload:
         data: bytes,
         decoder: Callable[[bytes], object] | None,
         transport: str = "inline",
+        decode_buffer: BufferDecoder | None = None,
     ) -> None:
         object.__setattr__(self, "type_id", type_id)
         object.__setattr__(self, "_encoded", data)
         object.__setattr__(self, "decoder", decoder)
         object.__setattr__(self, "transport", transport)
+        object.__setattr__(self, "decode_buffer", decode_buffer)
 
     @classmethod
     def from_buffer(
@@ -271,12 +275,13 @@ class EncodedPayload:
         transport: str,
         release: Callable[[], None],
         size: int | None = None,
+        decode_buffer: BufferDecoder | None = None,
     ) -> EncodedPayload:
         """Take ownership of ``view`` and release its backing store when unused."""
         logical_size = view.nbytes if size is None else size
         if logical_size < 0 or logical_size > view.nbytes:
             raise ValueError("encoded buffer size must fit its backing view")
-        payload = cls(type_id, b"", decoder, transport)
+        payload = cls(type_id, b"", decoder, transport, decode_buffer)
         object.__setattr__(
             payload,
             "_encoded",
@@ -293,7 +298,7 @@ class EncodedPayload:
     def __reduce__(self) -> tuple[object, tuple[object, ...]]:
         return (
             EncodedPayload,
-            (self.type_id, self.data, self.decoder, self.transport),
+            (self.type_id, self.data, self.decoder, self.transport, self.decode_buffer),
         )
 
     @property
@@ -314,9 +319,14 @@ class EncodedPayload:
             with encoded.borrow() as view:
                 yield view
 
-    def restamped(self, type_id: str, decoder: Callable[[bytes], object] | None) -> EncodedPayload:
+    def restamped(
+        self,
+        type_id: str,
+        decoder: Callable[[bytes], object] | None,
+        decode_buffer: BufferDecoder | None = None,
+    ) -> EncodedPayload:
         """Share these codec bytes under an equivalent type stamp."""
-        payload = EncodedPayload(type_id, b"", decoder, self.transport)
+        payload = EncodedPayload(type_id, b"", decoder, self.transport, decode_buffer)
         object.__setattr__(payload, "_encoded", self._encoded)
         return payload
 
@@ -326,6 +336,22 @@ class EncodedPayload:
                 f"value type '{self.type_id}' is not registered in this process; "
                 "the payload can only be resolved where the type is registered"
             )
+        if self.decode_buffer is not None:
+            borrow = self.borrow_data()
+            view = borrow.__enter__()
+            released = False
+
+            def release() -> None:
+                nonlocal released
+                if not released:
+                    released = True
+                    borrow.__exit__(None, None, None)
+
+            try:
+                return self.decode_buffer(view, release)
+            except BaseException:
+                release()
+                raise
         return self.decoder(self.data)
 
 

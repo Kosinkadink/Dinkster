@@ -17,9 +17,11 @@ from dinkster_api.v1 import (
     TypeExpr,
     TypeRegistry,
     decode_image_array,
+    decode_image_array_buffer,
     encode_image_array,
     image_array_fingerprint,
     image_array_meta,
+    image_input,
     prepare_image_array_encoding,
 )
 
@@ -95,9 +97,11 @@ def register_types(registry: TypeRegistry) -> None:
             IMAGE_TYPE,
             encode=encode_image_array,
             decode=decode_image_array,
+            decode_buffer=decode_image_array_buffer,
             prepare_buffer_encoding=prepare_image_array_encoding,
             fingerprint=image_array_fingerprint(IMAGE_TYPE),
             meta=image_array_meta,
+            input_convert=image_input,
         )
 
 

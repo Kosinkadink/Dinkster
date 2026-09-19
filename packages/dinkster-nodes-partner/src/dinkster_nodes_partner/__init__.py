@@ -4,9 +4,12 @@ from dinkster_api.v1 import (
     PNG_CONTAINER_VERSION,
     TypeRegistry,
     decode_image_array,
+    decode_image_array_buffer,
     encode_image_array,
     image_array_fingerprint,
     image_array_meta,
+    image_input,
+    mask_array_meta,
     render_image_png,
 )
 
@@ -61,8 +64,10 @@ def register_partner_types(registry: TypeRegistry) -> None:
             type_id,
             encode=encode_image_array,
             decode=decode_image_array,
+            decode_buffer=decode_image_array_buffer,
             fingerprint=image_array_fingerprint(type_id),
-            meta=image_array_meta,
+            meta=mask_array_meta if type_id == "comfy.MASK" else image_array_meta,
+            input_convert=image_input,
         )
     registry.register_rendition(
         "comfy.IMAGE",

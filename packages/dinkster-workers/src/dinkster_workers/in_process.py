@@ -757,8 +757,14 @@ class InProcessWorker:
         the same pure planner over the same effective schema, so engine and
         worker can never disagree about which coercion applies."""
         spec = invocation.effective_schema.input(input_id)
-        if spec is None or is_absent(value) or spec.type.accepts_concrete(value.type_id):
+        if spec is None or is_absent(value):
             return value.resolve()
+
+        def input_object(type_id: str, obj: object) -> object:
+            return obj if spec.accepts_storage else self._registry.input_object(type_id, obj)
+
+        if spec.type.accepts_concrete(value.type_id):
+            return input_object(value.type_id, value.resolve())
         plan = plan_asset_coercion(value.type_id, spec.type)
         if plan is None:
             if combo_type_mismatch_is_error(value.type_id, spec.type):
@@ -766,7 +772,7 @@ class InProcessWorker:
                     f"input '{input_id}' rejects runtime type {value.type_id}: "
                     "core.combo mismatches require an explicit converter"
                 )
-            return value.resolve()
+            return input_object(value.type_id, value.resolve())
         decoder = self._registry.asset_decoder_for(plan.target_type_id)
         merger = (
             self._registry.batch_merge_for(plan.merge_type_id)
@@ -781,14 +787,17 @@ class InProcessWorker:
             )
         try:
             if plan.kind == "decode":
-                return decoder.decode(value.resolve())
+                return input_object(plan.target_type_id, decoder.decode(value.resolve()))
             children = list_children(value)
             if children is None:
                 raise InputCoercionError(
                     f"input '{input_id}': {value.type_id} arrived without "
                     "list structure; its elements cannot be decoded"
                 )
-            decoded = [decoder.decode(child.resolve()) for child in children]
+            decoded = [
+                input_object(plan.target_type_id, decoder.decode(child.resolve()))
+                for child in children
+            ]
             if plan.kind == "lift":
                 return decoded
             assert merger is not None  # merge plans always name a merger

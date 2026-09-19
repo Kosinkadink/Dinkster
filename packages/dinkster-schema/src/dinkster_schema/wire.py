@@ -1016,6 +1016,10 @@ def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object
         entry["default"] = spec.default
     if spec.on_absent is not None:
         entry["onAbsent"] = spec.on_absent
+    if spec.accepts_storage:
+        if wire_version < 39:
+            raise SchemaWireVersionRequirement("acceptsStorage input", 39)
+        entry["acceptsStorage"] = True
     omit_list_source_widget = (
         wire_version < 22
         and spec.source_filename is not None
