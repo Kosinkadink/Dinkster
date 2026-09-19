@@ -23,7 +23,6 @@ from typing import Any, NoReturn, cast
 
 import numpy as np
 import pytest
-
 from tools.inference_parity import harness
 from tools.inference_parity import nvfp4_flux_dinkster_adapter as nvfp4_adapter
 from tools.inference_parity.comfyui_adapter import (
@@ -68,6 +67,16 @@ from tools.inference_parity.sdxl_edm_vpred_comfyui_adapter import (
 from tools.inference_parity.sdxl_vpred_comfyui_adapter import (
     _configure_precision as _configure_sdxl_vpred_precision,
 )
+
+from tools.evidence_paths import EVIDENCE_ROOT
+
+CORE_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def evidence_working_directory(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Harness manifests and adapter commands are relative to the evidence checkout.
+    monkeypatch.chdir(EVIDENCE_ROOT)
 
 
 def test_records_path_resolves_relative_paths_only() -> None:
@@ -297,7 +306,7 @@ def timing_process(
             "device_uuid": hardware_pin["device_uuid"],
             "inventory": inventory,
         },
-        "harness": {"commit": harness._git_output(Path.cwd(), "rev-parse", "HEAD")},
+        "harness": {"commit": harness._git_output(CORE_ROOT, "rev-parse", "HEAD")},
         "observations": observations,
         "stderr_digest": digest_bytes(stderr.encode()),
         "stderr_path": f"{engine}.stderr.txt",
@@ -338,7 +347,7 @@ def timing_summary(
         },
         selected,
         timing_history() if history is None else history,
-        {"artifact": tmp_path, "comfyui": tmp_path, "dinkster": Path.cwd()},
+        {"artifact": tmp_path, "comfyui": tmp_path, "dinkster": CORE_ROOT},
         tmp_path,
         "2026-08-06T00:00:00+00:00",
     )
@@ -423,7 +432,7 @@ def test_timing_summary_retains_exact_values_and_first_baseline_is_null(tmp_path
         timing_process(tmp_path, "comfyui", 3, cold_ns=102, warm_ns=(82, 82), output=output),
     ]
     selected = timing_workload()
-    roots = {"artifact": tmp_path, "comfyui": tmp_path, "dinkster": Path.cwd()}
+    roots = {"artifact": tmp_path, "comfyui": tmp_path, "dinkster": CORE_ROOT}
     correctness = {
         "acceptance_manifest_digest": selected["acceptance_manifest"]["digest"],
         "checks": [{} for _ in range(16)],
@@ -496,7 +505,7 @@ def test_timing_regression_threshold_is_strictly_greater_than(
         timing_process(tmp_path, "comfyui", 3, cold_ns=100, warm_ns=(100, 100), output=output),
     ]
     selected = timing_workload()
-    roots = {"artifact": tmp_path, "comfyui": tmp_path, "dinkster": Path.cwd()}
+    roots = {"artifact": tmp_path, "comfyui": tmp_path, "dinkster": CORE_ROOT}
     contract_digest = digest_bytes(canonical_bytes(selected))
     history = timing_history(
         [
@@ -611,7 +620,7 @@ def test_timing_summary_discloses_incompatible_history_and_refuses_commit_drift(
             },
             selected,
             timing_history(),
-            {"artifact": tmp_path, "comfyui": tmp_path, "dinkster": Path.cwd()},
+            {"artifact": tmp_path, "comfyui": tmp_path, "dinkster": CORE_ROOT},
             tmp_path,
             "2026-08-06T00:00:00+00:00",
         )
@@ -630,7 +639,7 @@ def test_timing_summary_discloses_incompatible_history_and_refuses_commit_drift(
             },
             selected,
             timing_history(),
-            {"artifact": tmp_path, "comfyui": tmp_path, "dinkster": Path.cwd()},
+            {"artifact": tmp_path, "comfyui": tmp_path, "dinkster": CORE_ROOT},
             tmp_path,
             "2026-08-06T00:00:00+00:00",
         )
@@ -1225,7 +1234,7 @@ def test_sd15_inpaint_artifact_graph_digest_refuses(
     roots = {
         "artifact": artifact_root,
         "comfyui": tmp_path / "comfyui",
-        "dinkster": Path.cwd(),
+        "dinkster": CORE_ROOT,
         "template": tmp_path / "template",
     }
     with pytest.raises(HarnessError, match="graph digest mismatch"):
@@ -1266,7 +1275,7 @@ def test_sd15_inpaint_adapters_construct_with_cuda_hidden(tmp_path: Path) -> Non
             str(_STATION["python"]),
             "tools/inference_parity/sd15_inpaint_dinkster_adapter.py",
             "--repo",
-            str(Path.cwd()),
+            str(CORE_ROOT),
             *common,
         ],
         capture_output=True,
@@ -1617,7 +1626,7 @@ def test_sdxl_vpred_graph_digest_refuses(tmp_path: Path, monkeypatch: pytest.Mon
     roots = {
         "artifact": tmp_path / "artifact",
         "comfyui": tmp_path / "comfyui",
-        "dinkster": Path.cwd(),
+        "dinkster": EVIDENCE_ROOT,
         "template": tmp_path / "template",
     }
     with pytest.raises(HarnessError, match="graph digest mismatch"):
@@ -1659,7 +1668,7 @@ def test_sdxl_vpred_adapters_construct_with_cuda_hidden(tmp_path: Path) -> None:
             str(_STATION["python"]),
             "tools/inference_parity/sdxl_vpred_dinkster_adapter.py",
             "--repo",
-            str(Path.cwd()),
+            str(CORE_ROOT),
             *common,
         ],
         capture_output=True,
@@ -1818,7 +1827,7 @@ def test_sdxl_edm_vpred_adapters_construct_with_cuda_hidden(tmp_path: Path) -> N
             str(_STATION["python"]),
             "tools/inference_parity/sdxl_edm_vpred_dinkster_adapter.py",
             "--repo",
-            str(Path.cwd()),
+            str(CORE_ROOT),
             *common,
         ],
         capture_output=True,

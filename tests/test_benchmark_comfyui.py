@@ -14,8 +14,9 @@ import pytest
 from dinkster_workers.backend_env import validate_benchmark_report
 
 from tests.test_backend_env import complete_benchmark_report, complete_report
+from tools.evidence_paths import EVIDENCE_ROOT
 
-_MODULE_PATH = Path(__file__).resolve().parent.parent / "scripts" / "benchmark_comfyui.py"
+_MODULE_PATH = EVIDENCE_ROOT / "scripts" / "benchmark_comfyui.py"
 _SPEC = importlib.util.spec_from_file_location("benchmark_comfyui", _MODULE_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 benchmark_comfyui = importlib.util.module_from_spec(_SPEC)

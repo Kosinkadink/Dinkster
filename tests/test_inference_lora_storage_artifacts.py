@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-
 from tools.inference_parity import lora_storage_receipts as receipts
 
-PACKET = Path("tools/inference_parity/lora_storage_artifacts.json")
+from tools.evidence_paths import EVIDENCE_ROOT
+
+PACKET = EVIDENCE_ROOT / "tools/inference_parity/lora_storage_artifacts.json"
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="requires POSIX descriptor APIs")
 _pread = cast("Callable[[int, int, int], bytes]", getattr(os, "pread", None))
 

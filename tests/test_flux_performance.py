@@ -6,7 +6,6 @@ import json
 from typing import Any
 
 import pytest
-
 from tools.inference_parity.flux_performance import (
     ComparisonError,
     _workload_receipt,

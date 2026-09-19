@@ -61,5 +61,5 @@ either reproduce the upstream refusal behavior verbatim (schema parity
 including the dead option, refusal pinned by fixture) or, if upstream
 fixes the schema first, follow the fixed shape - decided at 3.2b
 adjudication. Recorded in the slice 3.2a audit (see
-docs/research/partner-nodes-census.md correction section and
+[partner-node census](https://github.com/Kosinkadink/comfy-vibe-station/blob/main/notes/research/partner-nodes-census.md) correction section and
 docs/DELEGATION-LEDGER-PARTNER.md wave 3.2a outcome).

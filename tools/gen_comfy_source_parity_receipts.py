@@ -7,7 +7,8 @@ NumPy, torch, Pillow, and PyAV. Pinned ecosystem receipts are projected from
 their committed cross-process execution evidence. Group receipts compare
 independently specified source interfaces with the maintained replacement
 mapper. This generator owns the complete ``docs/comfy-confidence-receipts``
-tree.
+tree in the sibling ``dinkster-evidence`` checkout. Set
+``DINKSTER_EVIDENCE_ROOT`` to use a different evidence checkout.
 
 Run with the torch test interpreter, then run again with ``--check``:
 
@@ -58,6 +59,11 @@ import torch
 from PIL import Image, ImageOps, ImageSequence
 from PIL.PngImagePlugin import PngInfo
 
+if __package__:
+    from tools.evidence_paths import EVIDENCE_ROOT
+else:
+    from evidence_paths import EVIDENCE_ROOT
+
 REPO = Path(__file__).resolve().parents[1]
 REFERENCE_COMMIT = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
 VIDEO_REFERENCE_COMMIT = "15eb748b3ec5f8a0a2d470b7fb280e2d7579f916"
@@ -67,12 +73,12 @@ IMPACT_PACK_CORE_SHA256 = "7989de178999904cacf440bd6c9fd6d250ff5f8df8a4a2dad7abe
 INSPIRE_PACK_COMMIT = "6b2ca017a168bcdba5f22c258b3b86c5c76470ca"
 INSPIRE_PACK_SOURCE_SHA256 = "153c5cbf334ca67176569625d10feac924bb289a8c18321bcaee0d9a99d18c51"
 VISION_REFERENCE_COMMIT = "c67885b14556cf3e4e061862925282d403d09862"
-RECEIPT_ROOT = REPO / "docs" / "comfy-confidence-receipts"
+RECEIPT_ROOT = EVIDENCE_ROOT / "docs" / "comfy-confidence-receipts"
 DIRECT_GOLDEN = REPO / "tests" / "goldens" / "comfy_direct_operations_b78cec87.json"
 INFERENCE_PARITY_RECORDS = Path(
     os.environ.get(
         "DINKSTER_INFERENCE_PARITY_RECORDS",
-        REPO.parent / "dinkster-evidence" / "inference-parity" / "records",
+        EVIDENCE_ROOT / "inference-parity" / "records",
     )
 )
 TRELLIS2_COMFYUI_COMMIT = "8a33128f2f8c5585c57486c07de481241e70a39c"

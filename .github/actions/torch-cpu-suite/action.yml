@@ -23,6 +23,10 @@ runs:
       run: |
         sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
         df -h /
+    - uses: ./.github/actions/prepare-validation-inputs
+      with:
+        evidence-deploy-key: ${{ inputs.evidence-deploy-key }}
+        coverage: "false"
     - uses: ./.github/actions/configure-dinkster-identity
       with:
         deploy-key: ${{ inputs.identity-deploy-key }}
@@ -42,18 +46,6 @@ runs:
         --constraint "${{ runner.temp }}/torch-constraints.txt"
         --index-url https://download.pytorch.org/whl/cpu
         torch==2.13.0+cpu
-    - uses: ./.github/actions/configure-dinkster-identity
-      with:
-        repository: Kosinkadink/dinkster-evidence
-        deploy-key: ${{ inputs.evidence-deploy-key }}
-    - name: Checkout pinned parity records
-      uses: actions/checkout@v4
-      with:
-        repository: Kosinkadink/dinkster-evidence
-        ref: 70edf4f5fe9d2b7054cb54be58f5078869519baa
-        path: .evidence-source
-        clean: true
-        persist-credentials: false
     - name: Checkout pinned ComfyUI source
       shell: bash
       run: |
@@ -116,11 +108,11 @@ runs:
     # against .venv-gpu (CUDA torch + triton), which CPU-only hosted
     # runners cannot build.
     - shell: bash
-      run: .venv/bin/pyright -p packages/dinkster-acceptance
+      run: .venv/bin/pyright -p .evidence-source/packages/dinkster-acceptance --pythonpath .venv-torch/bin/python
     - shell: bash
       run: >
         .venv-torch/bin/python -m pytest -q
-        packages/dinkster-acceptance/tests/test_acceptance_closure.py
+        .evidence-source/packages/dinkster-acceptance/tests/test_acceptance_closure.py
     - shell: bash
       run: .venv/bin/pyright -p packages/dinkster-inference-torch
     - shell: bash
@@ -169,7 +161,7 @@ runs:
       shell: bash
       run: >
         .venv-torch/bin/python -m pytest -q
-        packages/dinkster-acceptance/tests/test_acceptance_sampling.py
+        .evidence-source/packages/dinkster-acceptance/tests/test_acceptance_sampling.py
     - name: Acquire pinned line and edge parity artifacts
       if: inputs.run-model-tests == 'true'
       shell: bash

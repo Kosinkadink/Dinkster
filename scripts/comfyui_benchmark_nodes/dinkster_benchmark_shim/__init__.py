@@ -2,13 +2,13 @@
 
 Loaded into a pinned ComfyUI checkout as a custom node package through an
 extra_model_paths custom_nodes entry, so the checkout itself stays
-unmodified. scripts/benchmark_comfyui.py launches the server with that
+unmodified. dinkster-evidence's scripts/benchmark_comfyui.py launches the server with that
 configuration and reads the instrumentation over HTTP.
 
 This module must stay self-contained: it executes inside the ComfyUI
 process and venv, where no Dinkster package is installed. The host, driver,
 device, and peak-RSS helpers therefore mirror the ones in
-scripts/benchmark_inference.py instead of importing them.
+dinkster-evidence's scripts/benchmark_inference.py instead of importing them.
 
 What it provides:
 

@@ -3,7 +3,7 @@
 Status: PROPOSED 2026-07-29 (backend coordinator design pass; fulfils
 the ROADMAP M4 "pack-structure spec" commitment queued 2026-07-29).
 Grounded on the report-09 partner-node census
-(docs/research/partner-nodes-census.md; upstream pinned e651b7be:
+([partner-node research](https://github.com/Kosinkadink/comfy-vibe-station/blob/main/notes/research/partner-nodes-census.md); upstream pinned e651b7be:
 37 provider modules, 231 registered V3 nodes, 79.2% class 1+2
 standard-adapter, 13 imperative holdouts) and the report-10 template
 census (299 of 580 official templates carry partner/API nodes).

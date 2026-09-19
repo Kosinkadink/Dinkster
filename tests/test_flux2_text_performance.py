@@ -9,7 +9,6 @@ from typing import Any
 
 import numpy as np
 import pytest
-
 from tools.inference_parity.flux2_text_performance import (
     COMFYUI_COMMIT,
     COMFYUI_KITCHEN_VERSION,

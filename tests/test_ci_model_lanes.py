@@ -8,14 +8,20 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tools.evidence_paths import EVIDENCE_ROOT
+
 ROOT = Path(__file__).resolve().parents[1]
 ACTION_PATH = "./.github/actions/torch-cpu-suite"
 ACTION = yaml.safe_load((ROOT / ACTION_PATH / "action.yml").read_text(encoding="utf-8"))
 JOBS = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))["jobs"]
 MODEL_CONDITION = "inputs.run-model-tests == 'true'"
 RECEIPT_TEST = "tests/test_gen_comfy_source_parity_receipts.py"
-ACCEPTANCE_CLOSURE_TEST = "packages/dinkster-acceptance/tests/test_acceptance_closure.py"
-ACCEPTANCE_SAMPLING_TEST = "packages/dinkster-acceptance/tests/test_acceptance_sampling.py"
+ACCEPTANCE_CLOSURE_TEST = (
+    ".evidence-source/packages/dinkster-acceptance/tests/test_acceptance_closure.py"
+)
+ACCEPTANCE_SAMPLING_TEST = (
+    ".evidence-source/packages/dinkster-acceptance/tests/test_acceptance_sampling.py"
+)
 TRAINING_SUITE = "packages/dinkster-training-torch/tests"
 VISION_SUITES = (
     "packages/dinkster-vision-hed/tests",
@@ -134,7 +140,7 @@ def test_model_lane_commands_artifact_pins_and_environments_match_reviewed_contr
         if step.get("if") == MODEL_CONDITION
     ]
     assert hashlib.sha256(json.dumps(steps, sort_keys=True).encode()).hexdigest() == (
-        "b4a973bd73f333947e477bc8a124e96539e43adbab799705e2fd170a959eac06"
+        "bc5228fa3f12c1340acab8aacb04db1f5a2394399cfb6077bccc0dc4d08f9fda"
     )
 
 
@@ -148,12 +154,21 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
     commands = [step.get("run", "").strip() for step in retained]
     projects = {
         path.parent.name
-        for path in (ROOT / "packages").glob("*/pyproject.toml")
+        for path in (
+            *(ROOT / "packages").glob("*/pyproject.toml"),
+            EVIDENCE_ROOT / "packages/dinkster-acceptance/pyproject.toml",
+        )
         if 'venv = ".venv-torch"' in path.read_text(encoding="utf-8")
     }
     assert len(projects) == 12
     assert {command for command in commands if "pyright -p" in command} == {
-        f".venv/bin/pyright -p packages/{project}" for project in projects
+        (
+            ".venv/bin/pyright -p .evidence-source/packages/dinkster-acceptance "
+            "--pythonpath .venv-torch/bin/python"
+            if project == "dinkster-acceptance"
+            else f".venv/bin/pyright -p packages/{project}"
+        )
+        for project in projects
     }
     assert f".venv-torch/bin/python -m pytest -q {RECEIPT_TEST}" in commands
     training_steps = [step for step in retained if TRAINING_SUITE in step.get("run", "")]
@@ -175,7 +190,6 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
     assert ".venv-torch/bin/python tools/gen_comfy_source_parity_receipts.py --check" in commands
     assert 'UV_CONSTRAINT="$RUNNER_TEMP/torch-constraints.txt" ./scripts/setup_envs.sh' in commands
     assert {step["name"] for step in retained if "name" in step} == {
-        "Checkout pinned parity records",
         "Checkout pinned ComfyUI source",
         "Checkout pinned workflow templates",
         "Acquire pinned Impact Pack source",
@@ -188,39 +202,91 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
 
 def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
     steps = ACTION["runs"]["steps"]
+    prepare_path = "./.github/actions/prepare-validation-inputs"
+    (prepare,) = [step for step in steps if step.get("uses") == prepare_path]
+    assert prepare["with"] == {
+        "evidence-deploy-key": "${{ inputs.evidence-deploy-key }}",
+        "coverage": "false",
+    }
+    assert all(
+        step.get("with", {}).get("repository") != "Kosinkadink/dinkster-evidence" for step in steps
+    )
+    helper = yaml.safe_load((ROOT / prepare_path / "action.yml").read_text(encoding="utf-8"))
+    assert helper["inputs"]["coverage"]["default"] == "true"
+    preparation_steps = helper["runs"]["steps"]
     (access,) = [
         step
-        for step in steps
+        for step in preparation_steps
         if step.get("with", {}).get("repository") == "Kosinkadink/dinkster-evidence"
         and step.get("uses") == "./.github/actions/configure-dinkster-identity"
     ]
     assert access["with"]["deploy-key"] == "${{ inputs.evidence-deploy-key }}"
-    (checkout,) = [step for step in steps if step.get("name") == "Checkout pinned parity records"]
-    assert checkout["uses"] == "actions/checkout@v4"
+    (checkout,) = [step for step in preparation_steps if step.get("uses") == "actions/checkout@v4"]
     assert checkout["with"] == {
         "repository": "Kosinkadink/dinkster-evidence",
-        "ref": "70edf4f5fe9d2b7054cb54be58f5078869519baa",
+        "ref": "4435206cb4c34902712e224bed654a2b8c46bb92",
         "path": ".evidence-source",
         "clean": True,
         "persist-credentials": False,
     }
+    assert preparation_steps.index(access) < preparation_steps.index(checkout)
+    (identity,) = [
+        step
+        for step in steps
+        if step.get("uses") == "./.github/actions/configure-dinkster-identity"
+    ]
+    assert identity["with"]["deploy-key"] == "${{ inputs.identity-deploy-key }}"
     setup = next(step for step in steps if "./scripts/setup_envs.sh" in step.get("run", ""))
-    assert steps.index(setup) < steps.index(access) < steps.index(checkout)
+    assert steps.index(prepare) < steps.index(identity) < steps.index(setup)
     for name in (
         "Verify source-generated parity receipts",
         "Test source-parity receipt generation",
     ):
         (step,) = [step for step in steps if step.get("name") == name]
-        assert steps.index(checkout) < steps.index(step)
+        assert steps.index(prepare) < steps.index(step)
         assert step["env"]["DINKSTER_INFERENCE_PARITY_RECORDS"] == (
             "${{ github.workspace }}/.evidence-source/inference-parity/records"
         )
+    materialize = next(
+        step for step in preparation_steps if "DINKSTER_EVIDENCE_ROOT" in step.get("run", "")
+    )
+    assert preparation_steps.index(checkout) < preparation_steps.index(materialize)
+    for command in (
+        "cp -R packages/dinkster-inference-torch .evidence-source/packages/",
+        "cp -R scripts/comfyui_benchmark_nodes .evidence-source/scripts/",
+        'echo "DINKSTER_EVIDENCE_ROOT=$GITHUB_WORKSPACE/.evidence-source" >> "$GITHUB_ENV"',
+        'echo "DINKSTER_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"',
+    ):
+        assert command in materialize["run"]
     for job in JOBS.values():
         for step in job.get("steps", []):
-            if step.get("uses") == ACTION_PATH:
+            if step.get("uses") in {ACTION_PATH, prepare_path}:
                 assert step["with"]["evidence-deploy-key"] == (
                     "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}"
                 )
+
+
+def test_validation_history_access_uses_only_step_scoped_credentials() -> None:
+    helper_path = ROOT / ".github/actions/prepare-validation-inputs/action.yml"
+    helper = yaml.safe_load(helper_path.read_text(encoding="utf-8"))
+    (history,) = [
+        step
+        for step in helper["runs"]["steps"]
+        if "git fetch --quiet --depth=1 origin" in step.get("run", "")
+    ]
+    assert history["if"] == "inputs.coverage == 'true'"
+    assert history["env"] == {
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": (
+            "url.https://x-access-token:${{ github.token }}"
+            "@github.com/Kosinkadink/Dinkster.insteadOf"
+        ),
+        "GIT_CONFIG_VALUE_0": "https://github.com/Kosinkadink/Dinkster",
+        "GIT_CONFIG_KEY_1": "credential.helper",
+        "GIT_CONFIG_VALUE_1": "",
+    }
+    assert "git config --global" not in history["run"]
+    assert "github.token" not in history["run"]
 
 
 @pytest.mark.parametrize("enabled", ["", "false", "true"])
