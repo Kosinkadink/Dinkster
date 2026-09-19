@@ -1938,7 +1938,7 @@ def test_sampling_execution_owns_masks_denoise_range_cancellation_previews_and_d
         def batchable(_conditions: tuple[object, ...]) -> bool:
             return True
 
-        def evaluate_conditioning_batch(
+        def evaluate_batch(
             self,
             value: torch.Tensor,
             sigma: float,
@@ -1946,6 +1946,8 @@ def test_sampling_execution_owns_masks_denoise_range_cancellation_previews_and_d
             _context: object | None = None,
         ) -> tuple[torch.Tensor, ...]:
             return tuple(self.evaluate_conditioning(value, sigma, item) for item in conditions)
+
+        evaluate_conditioning_batch = evaluate_batch
 
     def denoiser(
         _runtime: object,
@@ -2006,7 +2008,15 @@ def test_sampling_execution_owns_masks_denoise_range_cancellation_previews_and_d
     assert torch.count_nonzero(output[..., 1])
     assert len(steps) == 2
     assert len(states) == 2
-    full_denoise = output
+    unmasked_full_denoise = runtime.sample(
+        latent,
+        cond=Conditioning(torch.ones((1, 2, 8)), None),
+        cfg=SamplingGuidance(Conditioning(torch.zeros((1, 2, 8)), None), cfg_scale),
+        sampler_id="dinkster.euler",
+        scheduler_id="dinkster.simple",
+        steps=2,
+        denoise=1.0,
+    )
     partial_denoise = runtime.sample(
         latent,
         cond=Conditioning(torch.ones((1, 2, 8)), None),
@@ -2016,7 +2026,7 @@ def test_sampling_execution_owns_masks_denoise_range_cancellation_previews_and_d
         steps=2,
         denoise=0.5,
     )
-    assert not torch.equal(partial_denoise, full_denoise)
+    assert not torch.equal(partial_denoise, unmasked_full_denoise)
 
     cancelled = False
 

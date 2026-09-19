@@ -606,6 +606,10 @@ class SingleStreamLatentAdapter:
 
 class SamplingDenoiserAdapter(Protocol):
     evaluator_identity: str
+    evaluate_conditioning_batch: Callable[
+        [torch.Tensor, float, tuple[object, ...]],
+        tuple[torch.Tensor, ...],
+    ]
 
     def prepare_conditioning(self, value: object, role: GuidanceRole) -> object: ...
 
@@ -617,14 +621,6 @@ class SamplingDenoiserAdapter(Protocol):
     ) -> torch.Tensor: ...
 
     def batchable(self, conditions: tuple[object, ...]) -> bool: ...
-
-    def evaluate_conditioning_batch(
-        self,
-        x: torch.Tensor,
-        sigma: float,
-        conditions: tuple[object, ...],
-        context: object | None = None,
-    ) -> tuple[torch.Tensor, ...]: ...
 
 
 @dataclass(frozen=True)
@@ -1025,8 +1021,14 @@ __all__ = [
     "CustomSamplingCfgValue",
     "CustomSamplingCondValue",
     "CustomSamplingLatentValue",
+    "SamplingAdapterContext",
+    "SamplingDenoiserAdapter",
+    "SamplingExecutionInputs",
+    "SamplingExecutionRegistration",
     "SamplingGuidancePlan",
+    "SamplingLatentAdapter",
     "SamplingSchedule",
+    "SingleStreamLatentAdapter",
     "SingleStreamCustomSamplingCfg",
     "brownian_step_noise",
     "build_custom_sampling_schedule",

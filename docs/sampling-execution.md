@@ -27,6 +27,9 @@ policy:
 - Invocation adapter context carries distilled guidance, inpaint data, context
   windows, and an immutable map of family-specific model-call options. These
   values may affect latent adaptation or the denoiser, never engine policy.
+  Each family must reject unknown option names rather than silently ignoring
+  them. Per-call cancellation uses the sampling environment and is not an
+  adapter option.
 
 A family may validate structural latents, pack or unpack streams, materialize
 typed conditioning, select device and dtype, and adapt the final result. It may
