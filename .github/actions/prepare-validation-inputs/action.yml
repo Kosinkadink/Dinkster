@@ -10,12 +10,25 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Expose Git Bash on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $bashDirectory = Join-Path $env:ProgramFiles 'Git/bin'
+        if (-not (Test-Path (Join-Path $bashDirectory 'bash.exe') -PathType Leaf)) {
+          throw 'Git Bash is required for validation input preparation'
+        }
+        $bashDirectory >> $env:GITHUB_PATH
+    - uses: ./.github/actions/configure-dinkster-identity
+      with:
+        repository: Kosinkadink/dinkster-evidence
+        deploy-key: ${{ inputs.evidence-deploy-key }}
     - uses: actions/checkout@v4
       with:
         repository: Kosinkadink/dinkster-evidence
-        ref: e20e6fe92ddbb4886eb1dff22dc0a18313e38b2d
+        ref: ef914dab9c8c2b959539f8e774bc35e6b4fe58b8
         path: .evidence-source
-        ssh-key: ${{ inputs.evidence-deploy-key }}
+        clean: true
         persist-credentials: false
     - shell: bash
       run: |
@@ -28,6 +41,12 @@ runs:
         echo "DINKSTER_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
     - if: inputs.coverage == 'true'
       shell: bash
+      env:
+        GIT_CONFIG_COUNT: "2"
+        GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/Kosinkadink/Dinkster.insteadOf
+        GIT_CONFIG_VALUE_0: https://github.com/Kosinkadink/Dinkster
+        GIT_CONFIG_KEY_1: credential.helper
+        GIT_CONFIG_VALUE_1: ""
       run: |
         git fetch --quiet --depth=1 origin fd02ae351d2ba3eb84f5a68cb89fe208a7365ae3
         git init --quiet .coverage-inputs/workflow_templates

@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
 
 # Superseded runs of the same ref are cancelled: with rapid pushes the
 # old runs only burn private-repo minutes without informing anyone.
@@ -14,46 +16,55 @@ concurrency:
 jobs:
   test:
     name: test (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.shard_name }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.labels }}
     strategy:
       fail-fast: false
       matrix:
-        # windows-latest keeps the tcp boundary transport and the shm
+        # Windows keeps the tcp boundary transport and the shm
         # handle-lifetime rules honest (DESIGN 3.11) - it is the dominant
         # user OS, not a nice-to-have.
         include:
-          - os: ubuntu-latest
+          - os: linux
+            labels: [self-hosted, linux, x64]
             python-version: "3.12"
             shard_name: ""
             pytest_args: ""
             run_checks: true
-          - os: ubuntu-latest
+          - os: linux
+            labels: [self-hosted, linux, x64]
             python-version: "3.13"
             shard_name: ""
             pytest_args: ""
             run_checks: true
-          - os: windows-latest
+          - os: windows
+            labels: [self-hosted, windows, x64]
             python-version: "3.12"
             shard_name: ", shard 1"
             pytest_args: "-p tools.pytest_file_shard --file-shard 1/2"
             run_checks: true
-          - os: windows-latest
+          - os: windows
+            labels: [self-hosted, windows, x64]
             python-version: "3.12"
             shard_name: ", shard 2"
             pytest_args: "-p tools.pytest_file_shard --file-shard 2/2"
             run_checks: false
-          - os: windows-latest
+          - os: windows
+            labels: [self-hosted, windows, x64]
             python-version: "3.13"
             shard_name: ", shard 1"
             pytest_args: "-p tools.pytest_file_shard --file-shard 1/2"
             run_checks: true
-          - os: windows-latest
+          - os: windows
+            labels: [self-hosted, windows, x64]
             python-version: "3.13"
             shard_name: ", shard 2"
             pytest_args: "-p tools.pytest_file_shard --file-shard 2/2"
             run_checks: false
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
       - uses: ./.github/actions/prepare-validation-inputs
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
@@ -65,7 +76,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --all-packages
       - name: Install and verify published Windows engine dependencies
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows'
         shell: pwsh
         run: |
           $python = uv run --no-sync python -c "import sys; print(sys.executable)"
@@ -81,41 +92,49 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
       - name: Verify bounded VIDEO save memory
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.python-version == '3.12'
         run: uv run --locked python tools/video_conformance.py --rss
       - name: Verify bounded AUDIO trim and save memory
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.python-version == '3.12'
         run: |
           mkdir -p "$RUNNER_TEMP/dinkster-audio-rss"
           uv run --locked python tools/audio_conformance.py --rss --directory "$RUNNER_TEMP/dinkster-audio-rss"
       - run: uv run python -m pytest -q ${{ matrix.pytest_args }}
+        if: runner.os == 'Windows'
+      - run: '"$HOME/comfy-vibe-station/run_counted_suite.sh" uv run python -m pytest -q ${{ matrix.pytest_args }}'
+        if: runner.os == 'Linux'
       - run: uv run dinkster demo
         if: matrix.run_checks
       - run: uv run dinkster-isolated
         if: matrix.run_checks
       - name: Export the published default catalog
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.python-version == '3.12'
         run: uv run --locked pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
         env:
           DINKSTER_CATALOG_WIRE_OUTPUT: ${{ runner.temp }}/default-catalog.json
-      - uses: actions/checkout@v4
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+      - uses: ./.github/actions/configure-dinkster-identity
+        if: matrix.os == 'linux' && matrix.python-version == '3.12'
         with:
+          repository: Kosinkadink/Dinkster-Frontend
+          deploy-key: ${{ secrets.DINKSTER_FRONTEND_READ_KEY }}
+      - uses: actions/checkout@v4
+        if: matrix.os == 'linux' && matrix.python-version == '3.12'
+        with:
+          clean: true
           repository: Kosinkadink/Dinkster-Frontend
           ref: main
           path: .frontend-validation
-          ssh-key: ${{ secrets.DINKSTER_FRONTEND_READ_KEY }}
           persist-credentials: false
       - uses: pnpm/action-setup@v4
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.python-version == '3.12'
         with:
           version: 10.31.0
       - uses: actions/setup-node@v4
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.python-version == '3.12'
         with:
           node-version: 22
       - name: Decode real registries with frontend main
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.python-version == '3.12'
         working-directory: .frontend-validation
         run: |
           pnpm install --frozen-lockfile
@@ -124,10 +143,13 @@ jobs:
           CATALOG: ${{ runner.temp }}/default-catalog.json
 
   p2p-descriptor-macos:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: macos-15
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: [self-hosted, macos, arm64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
       - uses: ./.github/actions/configure-dinkster-identity
         with:
           deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
@@ -138,15 +160,27 @@ jobs:
       - run: uv run --locked pytest -q tests/test_p2p_descriptor.py
 
   p2p-artifact-smoke:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ${{ matrix.os }}
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ${{ matrix.labels }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-15]
+        os: [linux, linux-arm64, windows, macos]
         python-version: ["3.12", "3.13"]
+        include:
+          - os: linux
+            labels: [self-hosted, linux, x64]
+          - os: linux-arm64
+            labels: ubuntu-24.04-arm
+          - os: windows
+            labels: [self-hosted, windows, x64]
+          - os: macos
+            labels: [self-hosted, macos, arm64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -172,7 +206,7 @@ jobs:
   # minting must match the pins and CNR:OFF state on an AMD host without
   # AVX-512 (README "Hosted-CI dispatch pins").
   torch-cpu-try1:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
@@ -193,6 +227,9 @@ jobs:
           echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         if: steps.cpu.outputs.eligible == 'true'
+        with:
+          clean: true
+          persist-credentials: false
       - uses: ./.github/actions/torch-cpu-suite
         if: steps.cpu.outputs.eligible == 'true'
         with:
@@ -201,7 +238,7 @@ jobs:
           run-model-tests: "false"
 
   torch-cpu-try2:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     needs: torch-cpu-try1
     if: needs.torch-cpu-try1.outputs.eligible != 'true'
     env:
@@ -224,6 +261,9 @@ jobs:
           echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         if: steps.cpu.outputs.eligible == 'true'
+        with:
+          clean: true
+          persist-credentials: false
       - uses: ./.github/actions/torch-cpu-suite
         if: steps.cpu.outputs.eligible == 'true'
         with:
@@ -232,7 +272,7 @@ jobs:
           run-model-tests: "false"
 
   torch-cpu-try3:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     needs: torch-cpu-try2
     if: needs.torch-cpu-try2.outputs.eligible != 'true'
     env:
@@ -255,6 +295,9 @@ jobs:
           echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         if: steps.cpu.outputs.eligible == 'true'
+        with:
+          clean: true
+          persist-credentials: false
       - uses: ./.github/actions/torch-cpu-suite
         if: steps.cpu.outputs.eligible == 'true'
         with:
@@ -263,7 +306,7 @@ jobs:
           run-model-tests: "false"
 
   torch-cpu-try4:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     needs: torch-cpu-try3
     if: needs.torch-cpu-try3.outputs.eligible != 'true'
     env:
@@ -286,6 +329,9 @@ jobs:
           echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         if: steps.cpu.outputs.eligible == 'true'
+        with:
+          clean: true
+          persist-credentials: false
       - uses: ./.github/actions/torch-cpu-suite
         if: steps.cpu.outputs.eligible == 'true'
         with:
@@ -294,7 +340,7 @@ jobs:
           run-model-tests: "false"
 
   torch-cpu-try5:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     needs: torch-cpu-try4
     if: needs.torch-cpu-try4.outputs.eligible != 'true'
     env:
@@ -317,6 +363,9 @@ jobs:
           echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         if: steps.cpu.outputs.eligible == 'true'
+        with:
+          clean: true
+          persist-credentials: false
       - uses: ./.github/actions/torch-cpu-suite
         if: steps.cpu.outputs.eligible == 'true'
         with:
@@ -325,7 +374,7 @@ jobs:
           run-model-tests: "false"
 
   torch-cpu:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     needs:
       - torch-cpu-try1
       - torch-cpu-try2
@@ -351,12 +400,15 @@ jobs:
           fi
 
   model-tests:
-    # The job-level condition skips allocation when no dedicated runner is configured.
     if: >-
-      vars.DINKSTER_MODEL_TESTS_ENABLED == 'true' &&
+      (vars.DINKSTER_MODEL_TESTS_ENABLED == 'true' &&
       github.event_name == 'push' && github.ref == 'refs/heads/main' &&
-      github.repository == 'Kosinkadink/Dinkster'
-    runs-on: [self-hosted, linux, x64, dinkster-model-tests]
+      github.repository == 'Kosinkadink/Dinkster') ||
+      (github.event_name == 'pull_request' &&
+      github.repository == 'Kosinkadink/Dinkster' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'model-tests'))
+    runs-on: [self-hosted, linux, x64]
     permissions:
       contents: read
     env:
@@ -367,6 +419,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          clean: true
           persist-credentials: false
       - uses: ./.github/actions/torch-cpu-suite
         with:
@@ -377,9 +430,12 @@ jobs:
   coverage:
     # Branch-coverage floor (docs/testing.md): a ratchet, not a target.
     # Raise --cov-fail-under when real coverage rises; never lower it.
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
       - uses: ./.github/actions/prepare-validation-inputs
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
@@ -391,6 +447,7 @@ jobs:
           python-version: "3.12"
       - run: uv sync --all-packages
       - run: >
+          "$HOME/comfy-vibe-station/run_counted_suite.sh"
           uv run pytest -q --cov=dinkster_api --cov=dinkster_assets
           --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine
           --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation
@@ -399,9 +456,12 @@ jobs:
           --cov=dinkster_workers --cov-branch --cov-fail-under=80
 
   translation-coverage:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
       - uses: ./.github/actions/prepare-validation-inputs
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}

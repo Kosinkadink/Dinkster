@@ -46,7 +46,7 @@ def _condition_matches(expression: str, context: dict[str, str]) -> bool:
     return all(matches)
 
 
-def test_every_hosted_composite_caller_explicitly_excludes_model_tests() -> None:
+def test_every_cpu_composite_caller_explicitly_excludes_model_tests() -> None:
     callers = []
     for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
         for name, job in yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"].items():
@@ -58,7 +58,7 @@ def test_every_hosted_composite_caller_explicitly_excludes_model_tests() -> None
                     "true" if name == "model-tests" else "false"
                 )
                 if name != "model-tests":
-                    assert job["runs-on"] == "ubuntu-latest"
+                    assert job["runs-on"] == ["self-hosted", "linux", "x64"]
     assert set(callers) == {
         ("ci.yml", "model-tests"),
         *(("ci.yml", f"torch-cpu-try{number}") for number in range(1, 6)),
@@ -140,7 +140,7 @@ def test_model_lane_commands_artifact_pins_and_environments_match_reviewed_contr
         if step.get("if") == MODEL_CONDITION
     ]
     assert hashlib.sha256(json.dumps(steps, sort_keys=True).encode()).hexdigest() == (
-        "0fb8c48ce81fddb3057ce834a0486c5cf6f12a1cf872215eb697a3dfc88a82b0"
+        "bc5228fa3f12c1340acab8aacb04db1f5a2394399cfb6077bccc0dc4d08f9fda"
     )
 
 
@@ -188,7 +188,7 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
     assert f".venv-torch/bin/python -m pytest -q {ACCEPTANCE_CLOSURE_TEST}" in commands
     assert all(ACCEPTANCE_SAMPLING_TEST not in command for command in commands)
     assert ".venv-torch/bin/python tools/gen_comfy_source_parity_receipts.py --check" in commands
-    assert "UV_CONSTRAINT=/tmp/torch-constraints.txt ./scripts/setup_envs.sh" in commands
+    assert 'UV_CONSTRAINT="$RUNNER_TEMP/torch-constraints.txt" ./scripts/setup_envs.sh' in commands
     assert {step["name"] for step in retained if "name" in step} == {
         "Checkout pinned ComfyUI source",
         "Checkout pinned workflow templates",
@@ -200,16 +200,123 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
     }
 
 
+def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
+    steps = ACTION["runs"]["steps"]
+    prepare_path = "./.github/actions/prepare-validation-inputs"
+    (prepare,) = [step for step in steps if step.get("uses") == prepare_path]
+    assert prepare["with"] == {
+        "evidence-deploy-key": "${{ inputs.evidence-deploy-key }}",
+        "coverage": "false",
+    }
+    assert all(
+        step.get("with", {}).get("repository") != "Kosinkadink/dinkster-evidence" for step in steps
+    )
+    helper = yaml.safe_load((ROOT / prepare_path / "action.yml").read_text(encoding="utf-8"))
+    assert helper["inputs"]["coverage"]["default"] == "true"
+    preparation_steps = helper["runs"]["steps"]
+    (access,) = [
+        step
+        for step in preparation_steps
+        if step.get("with", {}).get("repository") == "Kosinkadink/dinkster-evidence"
+        and step.get("uses") == "./.github/actions/configure-dinkster-identity"
+    ]
+    assert access["with"]["deploy-key"] == "${{ inputs.evidence-deploy-key }}"
+    (checkout,) = [step for step in preparation_steps if step.get("uses") == "actions/checkout@v4"]
+    assert checkout["with"] == {
+        "repository": "Kosinkadink/dinkster-evidence",
+        "ref": "ef914dab9c8c2b959539f8e774bc35e6b4fe58b8",
+        "path": ".evidence-source",
+        "clean": True,
+        "persist-credentials": False,
+    }
+    assert preparation_steps.index(access) < preparation_steps.index(checkout)
+    (identity,) = [
+        step
+        for step in steps
+        if step.get("uses") == "./.github/actions/configure-dinkster-identity"
+    ]
+    assert identity["with"]["deploy-key"] == "${{ inputs.identity-deploy-key }}"
+    setup = next(step for step in steps if "./scripts/setup_envs.sh" in step.get("run", ""))
+    assert steps.index(prepare) < steps.index(identity) < steps.index(setup)
+    for name in (
+        "Verify source-generated parity receipts",
+        "Test source-parity receipt generation",
+    ):
+        (step,) = [step for step in steps if step.get("name") == name]
+        assert steps.index(prepare) < steps.index(step)
+        assert step["env"]["DINKSTER_INFERENCE_PARITY_RECORDS"] == (
+            "${{ github.workspace }}/.evidence-source/inference-parity/records"
+        )
+    materialize = next(
+        step for step in preparation_steps if "DINKSTER_EVIDENCE_ROOT" in step.get("run", "")
+    )
+    assert preparation_steps.index(checkout) < preparation_steps.index(materialize)
+    for command in (
+        "cp -R packages/dinkster-inference-torch .evidence-source/packages/",
+        "cp -R scripts/comfyui_benchmark_nodes .evidence-source/scripts/",
+        'echo "DINKSTER_EVIDENCE_ROOT=$GITHUB_WORKSPACE/.evidence-source" >> "$GITHUB_ENV"',
+        'echo "DINKSTER_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"',
+    ):
+        assert command in materialize["run"]
+    for job in JOBS.values():
+        for step in job.get("steps", []):
+            if step.get("uses") in {ACTION_PATH, prepare_path}:
+                assert step["with"]["evidence-deploy-key"] == (
+                    "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}"
+                )
+
+
+def test_validation_inputs_expose_existing_git_bash_only_on_windows() -> None:
+    helper_path = ROOT / ".github/actions/prepare-validation-inputs/action.yml"
+    helper = yaml.safe_load(helper_path.read_text(encoding="utf-8"))
+    steps = helper["runs"]["steps"]
+    (bootstrap,) = [step for step in steps if "GITHUB_PATH" in step.get("run", "")]
+    assert bootstrap["if"] == "runner.os == 'Windows'"
+    assert bootstrap["shell"] == "pwsh"
+    assert "Join-Path $env:ProgramFiles 'Git/bin'" in bootstrap["run"]
+    assert "Test-Path (Join-Path $bashDirectory 'bash.exe') -PathType Leaf" in bootstrap["run"]
+    assert "throw 'Git Bash is required for validation input preparation'" in bootstrap["run"]
+    assert "$bashDirectory >> $env:GITHUB_PATH" in bootstrap["run"]
+    assert all(
+        steps.index(bootstrap) < index
+        for index, step in enumerate(steps)
+        if step.get("shell") == "bash"
+    )
+
+
+def test_validation_history_access_uses_only_step_scoped_credentials() -> None:
+    helper_path = ROOT / ".github/actions/prepare-validation-inputs/action.yml"
+    helper = yaml.safe_load(helper_path.read_text(encoding="utf-8"))
+    (history,) = [
+        step
+        for step in helper["runs"]["steps"]
+        if "git fetch --quiet --depth=1 origin" in step.get("run", "")
+    ]
+    assert history["if"] == "inputs.coverage == 'true'"
+    assert history["env"] == {
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": (
+            "url.https://x-access-token:${{ github.token }}"
+            "@github.com/Kosinkadink/Dinkster.insteadOf"
+        ),
+        "GIT_CONFIG_VALUE_0": "https://github.com/Kosinkadink/Dinkster",
+        "GIT_CONFIG_KEY_1": "credential.helper",
+        "GIT_CONFIG_VALUE_1": "",
+    }
+    assert "git config --global" not in history["run"]
+    assert "github.token" not in history["run"]
+
+
 @pytest.mark.parametrize("enabled", ["", "false", "true"])
 @pytest.mark.parametrize("event", ["pull_request", "push"])
 @pytest.mark.parametrize("ref", ["refs/heads/main", "refs/heads/feature"])
 @pytest.mark.parametrize("repository", ["Kosinkadink/Dinkster", "other/Dinkster"])
-def test_dedicated_job_allocates_only_for_enabled_trusted_main_push(
+def test_model_job_preserves_enabled_trusted_main_push_path(
     enabled: str, event: str, ref: str, repository: str
 ) -> None:
     job = JOBS["model-tests"]
     assert _condition_matches(
-        job["if"],
+        job["if"].split("||")[0].strip().removeprefix("(").removesuffix(")"),
         {
             "vars.DINKSTER_MODEL_TESTS_ENABLED": enabled,
             "github.event_name": event,
@@ -222,11 +329,30 @@ def test_dedicated_job_allocates_only_for_enabled_trusted_main_push(
         and ref == "refs/heads/main"
         and repository == "Kosinkadink/Dinkster"
     )
-    assert job["runs-on"] == ["self-hosted", "linux", "x64", "dinkster-model-tests"]
+    assert job["runs-on"] == ["self-hosted", "linux", "x64"]
     assert "needs" not in job
     for name, hosted in JOBS.items():
         if name != "model-tests":
             assert "model-tests" not in hosted.get("needs", [])
+
+
+def test_model_job_requires_same_repository_and_explicit_label_on_pull_requests() -> None:
+    branches = JOBS["model-tests"]["if"].split("||")
+    assert len(branches) == 2
+    assert " ".join(branches[1].split()) == (
+        "(github.event_name == 'pull_request' && "
+        "github.repository == 'Kosinkadink/Dinkster' && "
+        "github.event.pull_request.head.repo.full_name == github.repository && "
+        "contains(github.event.pull_request.labels.*.name, 'model-tests'))"
+    )
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    assert workflow[True]["pull_request"]["types"] == [
+        "opened",
+        "synchronize",
+        "reopened",
+        "labeled",
+        "unlabeled",
+    ]
 
 
 def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
@@ -234,7 +360,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
     assert job["permissions"] == {"contents": "read"}
     assert job["steps"][0] == {
         "uses": "actions/checkout@v4",
-        "with": {"persist-credentials": False},
+        "with": {"clean": True, "persist-credentials": False},
     }
     assert job["steps"][1] == {
         "uses": ACTION_PATH,
@@ -251,7 +377,10 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         "MKL_NUM_THREADS": "4",
     }
     for name in ("p2p-descriptor-macos", "p2p-artifact-smoke"):
-        assert JOBS[name]["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+        assert JOBS[name]["if"] == (
+            "github.event_name == 'workflow_dispatch' || "
+            "(github.event_name == 'push' && github.ref == 'refs/heads/main')"
+        )
 
 
 @pytest.mark.parametrize("environment", ["github-hosted", "self-hosted"])

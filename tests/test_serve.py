@@ -2735,7 +2735,8 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
             client = TestClient(TestServer(app))
             await client.start_server()
             try:
-                async with asyncio.timeout(60):
+                # Catalog composition under coverage took about 78 s on self-hosted Linux (#160).
+                async with asyncio.timeout(300):
                     while True:
                         payload = await (await client.get("/api/nodes")).json()
                         if "composing" not in payload:
