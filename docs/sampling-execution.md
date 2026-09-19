@@ -22,8 +22,9 @@ policy:
   model-specific conditioning arithmetic. Its stable evaluator identity lets
   the guidance engine reason about batching and distribution.
 - Device and compute-dtype resolvers select where and how the model call runs.
-  The `flow` flag declares schedule parameterization, and the capture flag
-  declares whether the result can carry a denoised preview.
+  The `flow` flag declares schedule parameterization. The runtime's
+  `supports_denoised_capture` capability declares whether the result can carry
+  a denoised preview.
 - Invocation adapter context carries distilled guidance, inpaint data, context
   windows, and an immutable map of family-specific model-call options. These
   values may affect latent adaptation or the denoiser, never engine policy.
@@ -39,22 +40,26 @@ invariants so every sampler surface observes identical behavior.
 
 ## Migration order
 
-Migration proceeds from the smallest adapter surface to the largest so each
-new latent shape extends the registration contract without changing engine
-semantics:
+Migration proceeds from the smallest adapter surface to the largest. The
+current engine state is one `torch.Tensor`; structural families require the
+registration seam to gain a structural-latent adapter shape before migration.
+That extension must preserve the engine policy and execution path:
 
 1. Flux2 uses `SingleStreamLatentAdapter`, shifted FLOW schedules, module
    placement, and its existing distilled-guidance-aware denoiser.
 2. The other single-stream runtimes follow: Anima, Chroma, Ideogram4,
    Lumina2, Qwen Image, SeedVR2, Z-Image, and the wiring-owned SD runtime.
-3. Wan21 introduces a structural video latent adapter. Its typed conditioning,
-   context windows, inpaint data, and masks remain denoiser or latent-adapter
-   inputs; its loop, cancellation, observers, and schedule move to the engine.
-4. LTXV, LTXAV, TRELLIS.2, and TripoSplat follow the structural-latent contract.
-5. MiniMax H3 introduces packed video/audio streams and finalization for audio
-   scaling and capture. Distributed model evaluation stays inside its denoiser
-   adapter; solver and callback execution stay in the engine. MiniMax Music 3
-   then reuses that multi-stream shape.
+3. Extend the registration seam with the structural-latent adapter shape.
+   This is an interface extension, not a Wan21 or MiniMax H3 branch in engine
+   policy.
+4. Wan21 then maps structural video streams, typed conditioning, context
+   windows, inpaint data, and masks into that adapter. Its loop, cancellation,
+   observers, and schedule move to the engine.
+5. LTXV, LTXAV, TRELLIS.2, and TripoSplat follow the structural-latent contract.
+6. MiniMax H3 packs video/audio streams through the structural adapter and
+   finalizes audio scaling and capture. Distributed model evaluation stays
+   inside its denoiser adapter; solver and callback execution stay in the
+   engine. MiniMax Music 3 then reuses that multi-stream shape.
 
 Autoregressive or windowed model evaluation is a denoiser implementation, not
 a second sampling run. A migration is complete only when KSampler and direct

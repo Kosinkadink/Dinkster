@@ -630,12 +630,12 @@ class SamplingExecutionRegistration:
     device: Callable[[object], torch.device | str | None]
     compute_dtype: Callable[[object], torch.dtype]
     flow: bool
-    capture_denoised: bool = True
 
 
 class SamplingExecutionRuntime(Protocol):
     family: ModelFamily
     sampling_error: type[Exception]
+    supports_denoised_capture: bool
     sampling_execution_registration: SamplingExecutionRegistration
     _samplers: Registry[SamplerDescriptor[Any]]
     _guidance: GuidanceExecutor | None
@@ -845,7 +845,7 @@ def sampling_execution(
     )
     report_state: SamplingStateCallback | None
     captured: list[torch.Tensor]
-    if capture_denoised and registration.capture_denoised:
+    if capture_denoised and owner.supports_denoised_capture:
         report_state, captured = custom_denoised_callback(owner.family, on_state)
     else:
         report_state, captured = on_state, []

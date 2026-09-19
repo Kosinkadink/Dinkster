@@ -349,6 +349,32 @@ def test_sample_custom_refuses_multistream_shapes_and_unsupported_modes() -> Non
     assert not model.calls
 
 
+def test_sampling_paths_reject_unknown_adapter_options() -> None:
+    model = RecordingKrea2(value=0.0)
+    runtime = _diffusion_runtime(model)
+    condition = Conditioning(torch.zeros((1, 3, 30720)), None)
+    latent = torch.zeros((1, 16, 1, 2, 2))
+
+    with pytest.raises(Krea2RuntimeError, match="adapter options: bogus_option"):
+        runtime.sample_custom(
+            latent,
+            noise=torch.zeros_like(latent),
+            cond=condition,
+            request=_custom_request(),
+            bogus_option=True,
+        )
+    with pytest.raises(Krea2RuntimeError, match="adapter options: bogus_option"):
+        runtime.sample(
+            latent,
+            cond=condition,
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=1,
+            bogus_option=True,
+        )
+    assert not model.calls
+
+
 def test_sample_custom_captures_denoised_output() -> None:
     runtime = _diffusion_runtime(RecordingKrea2(value=0.0))
     latent = torch.zeros((1, 16, 1, 2, 2))

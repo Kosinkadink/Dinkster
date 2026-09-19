@@ -1957,6 +1957,7 @@ def test_sampling_execution_owns_masks_denoise_range_cancellation_previews_and_d
         return cast("SamplingDenoiserAdapter", DenoiserAdapter())
 
     class SeamRuntime(SingleStreamSamplingRuntime):
+        supports_denoised_capture = True
         sampling_execution_registration = SamplingExecutionRegistration(
             latent=SingleStreamLatentAdapter(lambda _latent: None),
             denoiser=denoiser,
