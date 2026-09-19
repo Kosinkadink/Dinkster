@@ -62,6 +62,8 @@ jobs:
   install:
     needs: build
     runs-on: ${{ matrix.labels }}
+    env:
+      UV_PYTHON: "3.12"
     strategy:
       fail-fast: false
       matrix:
@@ -81,17 +83,47 @@ jobs:
         with:
           version: latest
           ignore-empty-workdir: true
-      - name: Install from the archive without a checkout
+      - name: Extract the archive and its dependency access action
         shell: bash
         working-directory: ${{ runner.temp }}
         run: |
           uv run --no-project --python 3.12 python -m zipfile -e dist/dinkster-backend-${GITHUB_SHA}.zip clean-install
+          mkdir -p "$GITHUB_WORKSPACE/.release-dependency-access"
+          cp clean-install/dinkster-backend-${GITHUB_SHA}/.github/actions/configure-dinkster-identity/{action.yml,agent.cjs} "$GITHUB_WORKSPACE/.release-dependency-access/"
+      - uses: ./.release-dependency-access
+        with:
+          repository: Kosinkadink/dinkster-registry
+          deploy-key: ${{ secrets.DINKSTER_REGISTRY_READ_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          repository: Kosinkadink/dinkster-registry
+          ref: 772dd2a230e50dcc4f05c513c3f27279e0a6a652
+          path: registry
+          persist-credentials: false
+      - name: Install the independent loopback registry
+        shell: bash
+        env:
+          GIT_CONFIG_COUNT: "2"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/Kosinkadink/Dinkster.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/Kosinkadink/Dinkster
+          GIT_CONFIG_KEY_1: credential.helper
+          GIT_CONFIG_VALUE_1: ""
+        run: uv sync --project registry --all-packages --frozen
+      - name: Install from the archive without a checkout
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
           uv run --no-project --python 3.12 clean-install/dinkster-backend-${GITHUB_SHA}/scripts/install.py
           uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster demo
           uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-serve --help
           uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-pack --help
           uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-installs --help
-          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync python clean-install/dinkster-backend-${GITHUB_SHA}/scripts/verify_release_install.py clean-install/dinkster-backend-${GITHUB_SHA}
+          registry_command="$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry-sqlite"
+          if [ "$RUNNER_OS" = Windows ]; then
+            registry_command="$GITHUB_WORKSPACE/registry/.venv/Scripts/dinkster-registry-sqlite.exe"
+          fi
+          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync python clean-install/dinkster-backend-${GITHUB_SHA}/scripts/verify_release_install.py clean-install/dinkster-backend-${GITHUB_SHA} --registry-command "$registry_command"
   publish:
     needs: install
     if: inputs.publish && github.ref == 'refs/heads/main'

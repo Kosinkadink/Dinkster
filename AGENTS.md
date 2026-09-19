@@ -47,16 +47,18 @@ There is exactly one sampling execution engine: the decomposed
 custom-sampling seam (noise / guider / sampler / sigmas / latent, the
 CustomSamplingRuntime contract in dinkster_inference/runtime.py). Every model
 family implements ONLY that seam. KSampler and every other sampler node are
-sugar - thin compositions of the seam (see run_ksampler_as_custom in
-dinkster_inference_torch/sampling_execution.py) - never a second execution
-path. Do not add bespoke per-family assembly branches, KSampler-only
-sampling code, or family gates that make the decomposed path reject what the
-KSampler path accepts. Cross-cutting sampling behavior (distributed
-admission, previews, cancellation, masks) is a property of the engine, so it
-applies identically to every sampler node; wiring it into one node or one
-path is a defect. Refusing a capability on the decomposed path that the
-KSampler path supports is acceptable only as a brief migration intermediate
-with an open issue, never as an end state. Reviews gate on this.
+sugar - thin compositions of the seam (see the runtime entry points in
+dinkster_inference_torch/sampling_runtime.py and the shared composition helper
+in dinkster_inference_torch/sampling_execution.py) - never a second execution
+path. The adapter boundary and migration rules are in
+docs/sampling-execution.md. Do not add bespoke per-family assembly branches,
+KSampler-only sampling code, or family gates that make the decomposed path
+reject what the KSampler path accepts. Cross-cutting sampling behavior
+(distributed admission, previews, cancellation, masks) is a property of the
+engine, so it applies identically to every sampler node; wiring it into one
+node or one path is a defect. Refusing a capability on the decomposed path
+that the KSampler path supports is acceptable only as a brief migration
+intermediate with an open issue, never as an end state. Reviews gate on this.
 
 ## Performance parity discipline
 

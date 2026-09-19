@@ -29,16 +29,70 @@ from scripts.verify_release_install import stop
 def test_artifact_install_does_not_activate_a_workspace_environment() -> None:
     root = Path(__file__).resolve().parent.parent
     workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
+    assert workflow["jobs"]["install"]["env"]["UV_PYTHON"] == "3.12"
     steps = workflow["jobs"]["install"]["steps"]
     (setup,) = [step for step in steps if step.get("uses") == "astral-sh/setup-uv@v5"]
     assert "python-version" not in setup["with"]
     assert setup["with"]["version"] == "latest"
-    assert not any(step.get("uses", "").startswith("actions/checkout@") for step in steps)
-    (install_step,) = [step for step in steps if "run" in step]
-    assert install_step["working-directory"] == "${{ runner.temp }}"
-    bootstrap = install_step["run"].splitlines()[:2]
-    assert len(bootstrap) == 2
-    assert all(command.startswith("uv run --no-project --python 3.12 ") for command in bootstrap)
+    checkouts = [step for step in steps if step.get("uses", "").startswith("actions/checkout@")]
+    assert [step["with"]["repository"] for step in checkouts] == ["Kosinkadink/dinkster-registry"]
+    (extract,) = [step for step in steps if step.get("name", "").startswith("Extract the archive")]
+    (install_step,) = [
+        step for step in steps if step.get("name") == "Install from the archive without a checkout"
+    ]
+    for step in (extract, install_step):
+        assert step["working-directory"] == "${{ runner.temp }}"
+        assert step["run"].splitlines()[0].startswith("uv run --no-project --python 3.12 ")
+    assert steps.index(extract) < steps.index(checkouts[0]) < steps.index(install_step)
+    assert (
+        'registry_command="$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry-sqlite"'
+        in (install_step["run"])
+    )
+    assert (
+        'registry_command="$GITHUB_WORKSPACE/registry/.venv/Scripts/dinkster-registry-sqlite.exe"'
+        in (install_step["run"])
+    )
+    assert '--registry-command "$registry_command"' in install_step["run"]
+
+
+def test_release_registry_access_does_not_persist_credentials() -> None:
+    root = Path(__file__).resolve().parent.parent
+    workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
+    steps = workflow["jobs"]["install"]["steps"]
+    (access,) = [step for step in steps if step.get("uses") == "./.release-dependency-access"]
+    assert access["with"] == {
+        "repository": "Kosinkadink/dinkster-registry",
+        "deploy-key": "${{ secrets.DINKSTER_REGISTRY_READ_KEY }}",
+    }
+    (extract,) = [step for step in steps if step.get("name", "").startswith("Extract the archive")]
+    assert (
+        "cp clean-install/dinkster-backend-${GITHUB_SHA}/.github/actions/"
+        "configure-dinkster-identity/{action.yml,agent.cjs} "
+        '"$GITHUB_WORKSPACE/.release-dependency-access/"'
+    ) in extract["run"]
+    (checkout,) = [step for step in steps if step.get("uses") == "actions/checkout@v4"]
+    assert checkout["with"] == {
+        "clean": True,
+        "repository": "Kosinkadink/dinkster-registry",
+        "ref": "772dd2a230e50dcc4f05c513c3f27279e0a6a652",
+        "path": "registry",
+        "persist-credentials": False,
+    }
+    (sync,) = [
+        step for step in steps if step.get("name") == "Install the independent loopback registry"
+    ]
+    assert sync["run"] == "uv sync --project registry --all-packages --frozen"
+    assert sync["env"] == {
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": (
+            "url.https://x-access-token:${{ github.token }}"
+            "@github.com/Kosinkadink/Dinkster.insteadOf"
+        ),
+        "GIT_CONFIG_VALUE_0": "https://github.com/Kosinkadink/Dinkster",
+        "GIT_CONFIG_KEY_1": "credential.helper",
+        "GIT_CONFIG_VALUE_1": "",
+    }
+    assert steps.index(extract) < steps.index(access) < steps.index(checkout) < steps.index(sync)
 
 
 @pytest.fixture

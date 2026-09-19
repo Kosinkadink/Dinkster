@@ -76,13 +76,13 @@ def test_help_lists_every_command_exit_0(capsys) -> None:
         "serve",
         "pack",
         "installs",
-        "registry",
         "port",
         "p2p-diagnostics",
         "demo",
         "isolated-demo",
     ):
         assert name in listing
+    assert "run/bootstrap a registry service" not in listing
 
 
 def test_unknown_command_is_loud_exit_2(capsys) -> None:

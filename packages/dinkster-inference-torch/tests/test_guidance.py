@@ -113,22 +113,38 @@ def test_conditioning_batch_engine_rejects_incomplete_adapter_contract() -> None
 
 def test_conditioning_batch_overrides_delegate_to_engine_evaluators() -> None:
     source_root = Path(__file__).parents[1] / "src" / "dinkster_inference_torch"
-    overrides: list[tuple[str, str]] = []
-    for path in source_root.glob("*.py"):
+    overrides: list[tuple[str, bool]] = []
+    for path in source_root.rglob("*.py"):
         source = path.read_text(encoding="utf-8")
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
                 node.name == "_evaluate_conditioning_batch"
             ):
-                body = ast.get_source_segment(source, node)
-                assert body is not None
-                overrides.append((path.name, body))
+                delegates_inward = any(
+                    isinstance(call, ast.Call)
+                    and (
+                        (
+                            isinstance(call.func, ast.Attribute)
+                            and call.func.attr == "evaluate_conditioning_batch"
+                            and not (
+                                isinstance(call.func.value, ast.Name)
+                                and call.func.value.id == "self"
+                            )
+                        )
+                        or (
+                            isinstance(call.func, ast.Name)
+                            and call.func.id == "evaluate_conditioning_batch"
+                        )
+                    )
+                    for call in ast.walk(node)
+                )
+                overrides.append((str(path.relative_to(source_root)), delegates_inward))
 
-    assert {path for path, _body in overrides} == {
+    assert {path for path, _delegates_inward in overrides} == {
         "flux_window.py",
         "flux_window_distributed.py",
     }
-    assert all("evaluate_conditioning_batch(" in body for _path, body in overrides)
+    assert all(delegates_inward for _path, delegates_inward in overrides)
 
 
 def lane(
