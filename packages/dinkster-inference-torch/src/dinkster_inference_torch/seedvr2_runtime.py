@@ -18,14 +18,12 @@ from dinkster_inference import (
     CustomSamplingResult,
     InpaintConditioning,
     ModelFamily,
-    Parameterization,
     Registry,
     SamplerDescriptor,
     SamplingStateCallback,
     SchedulerDescriptor,
     SigmaSpace,
     StepCallback,
-    calculate_denoised,
     sampling_execution_context,
 )
 
@@ -34,7 +32,14 @@ if TYPE_CHECKING:
 
 from .brownian import BrownianTreeNoise
 from .denoise import run_denoise
-from .guidance import ConditioningEvaluation, GuidanceExecutor
+from .guidance import (
+    ConditioningBatch,
+    ConditioningEvaluation,
+    GuidanceExecutor,
+)
+from .guidance import (
+    evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
+)
 from .operations import bound_compute_dtype, module_compute_device
 from .sampling_execution import (
     CustomSamplingCfgValue,
@@ -157,51 +162,48 @@ class SeedVR2Denoiser:
     ) -> torch.Tensor:
         return self.evaluate_conditioning_batch(x, sigma, (condition,))[0]
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _validate_conditioning_batch(
         self,
         x: torch.Tensor,
-        sigma: float,
         conditions: tuple[_PreparedSeedVR2Conditioning, ...],
-    ) -> tuple[torch.Tensor, ...]:
+    ) -> None:
         if not self.batchable(conditions):
             raise SeedVR2RuntimeError("SeedVR2 conditioning batch is empty or incompatible")
-        assert conditions
         batch = x.shape[0]
         if any(condition.condition.shape[0] not in (1, batch) for condition in conditions):
             raise SeedVR2RuntimeError("SeedVR2 conditioning batch must be one or match the latent")
-        model_input = x.to(dtype=self.compute_dtype)
-        if len(conditions) > 1:
-            model_input = torch.cat((model_input,) * len(conditions), dim=0)
+
+    @staticmethod
+    def _conditioning_timestep(sigma: float) -> float:
+        return SEEDVR2_SIGMAS.timestep(sigma)
+
+    def _evaluate_conditioning_model(
+        self,
+        batch: ConditioningBatch[_PreparedSeedVR2Conditioning],
+    ) -> torch.Tensor:
         condition_latent = torch.cat(
             tuple(
-                condition.condition.to(device=x.device, dtype=self.compute_dtype).expand(
-                    batch, -1, -1, -1, -1
+                condition.condition.to(device=batch.latent.device, dtype=self.compute_dtype).expand(
+                    batch.batch_size, -1, -1, -1, -1
                 )
-                for condition in conditions
+                for condition in batch.conditions
             ),
             dim=0,
         )
-        timestep = torch.full(
-            (model_input.shape[0],),
-            SEEDVR2_SIGMAS.timestep(sigma),
-            dtype=torch.float32,
-            device=x.device,
-        )
-        branch = next(iter(conditions)).branch
+        branch = batch.conditions[0].branch
         with self.model.materialized_text_conditioning(
-            branch, device=x.device, dtype=self.compute_dtype
+            branch, device=batch.latent.device, dtype=self.compute_dtype
         ) as model_context:
-            context = model_context.unsqueeze(0).expand(model_input.shape[0], -1, -1)
-            output = self.model(
-                model_input,
-                timestep,
+            context = model_context.unsqueeze(0).expand(batch.model_input.shape[0], -1, -1)
+            return self.model(
+                batch.model_input,
+                batch.timestep,
                 context,
                 condition=condition_latent,
-                transformer_options={"cond_or_uncond": [branch] * model_input.shape[0]},
+                transformer_options={"cond_or_uncond": [branch] * batch.model_input.shape[0]},
             ).float()
-        flow_input = x if len(conditions) == 1 else torch.cat((x,) * len(conditions), dim=0)
-        denoised = calculate_denoised(Parameterization.FLOW, sigma, output, flow_input)
-        return tuple(denoised.chunk(len(conditions)))
 
 
 def _exact_scheduler_registry(

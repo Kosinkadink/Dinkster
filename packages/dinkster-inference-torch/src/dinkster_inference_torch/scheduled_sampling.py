@@ -41,7 +41,13 @@ from dinkster_inference import (
 )
 
 from .denoise import DenoiseError, FluxGuidance, run_denoise
-from .guidance import ConditioningEvaluation
+from .guidance import (
+    ConditioningBatch,
+    ConditioningEvaluation,
+)
+from .guidance import (
+    evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
+)
 from .patch_providers import PatchProviderSnapshot
 from .regional import (
     MaterializedRegion,
@@ -429,14 +435,28 @@ class _ScheduledDenoiser:
         _, unconditional = self._evaluate_lanes(x, sigma, (), condition.regions)
         return unconditional
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _validate_conditioning_batch(
         self,
         x: torch.Tensor,
-        sigma: float,
         conditions: tuple[_ScheduledConditioning, ...],
-    ) -> tuple[torch.Tensor, ...]:
+    ) -> None:
         if not self.batchable(conditions):
             raise _refuse("conditioning-batch")
+
+    @staticmethod
+    def _stack_conditioning_model_input(
+        model_input: torch.Tensor,
+        conditions: tuple[_ScheduledConditioning, ...],
+    ) -> torch.Tensor:
+        return model_input
+
+    def _evaluate_conditioning_model(
+        self,
+        batch: ConditioningBatch[_ScheduledConditioning],
+    ) -> torch.Tensor:
+        conditions = batch.conditions
         conditional = next(
             (
                 condition.regions
@@ -453,11 +473,26 @@ class _ScheduledDenoiser:
             ),
             (),
         )
-        cond_output, uncond_output = self._evaluate_lanes(x, sigma, conditional, unconditional)
-        return tuple(
-            uncond_output if condition.role is GuidanceRole.UNCONDITIONAL else cond_output
-            for condition in conditions
+        cond_output, uncond_output = self._evaluate_lanes(
+            batch.latent,
+            batch.sigma,
+            conditional,
+            unconditional,
         )
+        return torch.cat(
+            tuple(
+                uncond_output if condition.role is GuidanceRole.UNCONDITIONAL else cond_output
+                for condition in conditions
+            )
+        )
+
+    @staticmethod
+    def _conditioning_denoised(
+        batch: ConditioningBatch[_ScheduledConditioning],
+        output: torch.Tensor,
+        model_input: torch.Tensor,
+    ) -> torch.Tensor:
+        return output
 
     def close(self) -> None:
         if self._closed:

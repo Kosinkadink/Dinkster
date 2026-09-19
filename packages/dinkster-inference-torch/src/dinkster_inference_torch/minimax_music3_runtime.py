@@ -41,7 +41,14 @@ from tokenizers import Tokenizer
 from .brownian import BrownianTreeNoise
 from .conditioning_adapters import basic_conditioning_to_carrier, materialize_basic_conditioning
 from .denoise import run_denoise
-from .guidance import ConditioningEvaluation, GuidanceExecutor
+from .guidance import (
+    ConditioningBatch,
+    ConditioningEvaluation,
+    GuidanceExecutor,
+)
+from .guidance import (
+    evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
+)
 from .memory import soft_empty_cache
 from .minimax_music3_model import MiniMaxMusic3DiT
 from .minimax_music3_text import MiniMaxMusic3TextModel, tokenize_music_prompt
@@ -270,12 +277,13 @@ class MiniMaxMusic3Denoiser:
     ) -> torch.Tensor:
         return self.evaluate_conditioning_batch(latent, sigma, (condition,))[0]
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _validate_conditioning_batch(
         self,
         latent: torch.Tensor,
-        sigma: float,
         conditions: tuple[tuple[torch.Tensor, str, torch.Tensor], ...],
-    ) -> tuple[torch.Tensor, ...]:
+    ) -> None:
         if not self.batchable(conditions):
             raise MiniMaxMusic3RuntimeError(
                 "MiniMax Music 3 conditioning batch is empty or incompatible"
@@ -285,73 +293,75 @@ class MiniMaxMusic3Denoiser:
             raise MiniMaxMusic3RuntimeError(
                 "MiniMax Music 3 conditioning batch must be one or match the latent"
             )
-        model_input = latent.to(dtype=self.compute_dtype)
-        if len(conditions) > 1:
-            model_input = (
-                model_input.unsqueeze(0).expand(len(conditions), *model_input.shape).flatten(0, 1)
-            )
+
+    @staticmethod
+    def _conditioning_timestep(sigma: float) -> float:
+        return 1.0 - sigma
+
+    def _evaluate_conditioning_model(
+        self,
+        batch: ConditioningBatch[tuple[torch.Tensor, str, torch.Tensor]],
+    ) -> torch.Tensor:
         condition_key = (
-            batch,
-            latent.shape[-1],
-            latent.device,
+            batch.batch_size,
+            batch.latent.shape[-1],
+            batch.latent.device,
             self.compute_dtype,
-            *((id(condition[0]), id(condition[2])) for condition in conditions),
+            *((id(condition[0]), id(condition[2])) for condition in batch.conditions),
         )
         if condition_key != self._condition_key:
             context = torch.cat(
                 [
                     condition[0]
-                    .to(device=latent.device, dtype=self.compute_dtype)
-                    .expand(batch, -1, -1)
-                    for condition in conditions
+                    .to(device=batch.latent.device, dtype=self.compute_dtype)
+                    .expand(batch.batch_size, -1, -1)
+                    for condition in batch.conditions
                 ],
                 dim=0,
             )
             conditioning_scale = torch.cat(
                 [
                     condition[2]
-                    .to(device=latent.device, dtype=self.compute_dtype)
+                    .to(device=batch.latent.device, dtype=self.compute_dtype)
                     .reshape(-1, 1, 1)
-                    .expand(batch, -1, -1)
-                    for condition in conditions
+                    .expand(batch.batch_size, -1, -1)
+                    for condition in batch.conditions
                 ],
                 dim=0,
             )
             self._prepared_condition = self.model.prepare_condition(context, conditioning_scale)
-            self._rotary_table = self.model.prepare_rotary(model_input)
+            self._rotary_table = self.model.prepare_rotary(batch.model_input)
             self._condition_key = condition_key
         assert self._prepared_condition is not None
         assert self._rotary_table is not None
-        timestep = torch.full(
-            (model_input.shape[0],),
-            1.0 - sigma,
-            dtype=torch.float32,
-            device=latent.device,
-        )
-        output = self.model.forward_prepared(
-            model_input,
-            timestep,
+        return self.model.forward_prepared(
+            batch.model_input,
+            batch.timestep,
             self._prepared_condition,
             self._rotary_table,
-        )
-        output = output.float()
-        if len(conditions) == 1:
-            flow_input = latent
-        else:
-            flow_input = latent.unsqueeze(0)
-            output = output.unflatten(0, (len(conditions), batch))
+        ).float()
+
+    @staticmethod
+    def _conditioning_denoised(
+        batch: ConditioningBatch[tuple[torch.Tensor, str, torch.Tensor]],
+        output: torch.Tensor,
+        flow_input: torch.Tensor,
+    ) -> torch.Tensor:
+        if batch.lane_count > 1:
+            flow_input = flow_input.unflatten(0, (batch.lane_count, batch.batch_size))
+            output = output.unflatten(0, (batch.lane_count, batch.batch_size))
         if torch.is_grad_enabled():
             denoised = calculate_denoised(
                 Parameterization.FLOW,
-                sigma,
+                batch.sigma,
                 output,
                 flow_input,
             )
         else:
-            denoised = flow_input - output.mul_(sigma)
-        if len(conditions) > 1:
+            denoised = flow_input - output.mul_(batch.sigma)
+        if batch.lane_count > 1:
             denoised = denoised.flatten(0, 1)
-        return tuple(denoised.chunk(len(conditions)))
+        return denoised
 
 
 @dataclass(frozen=True)

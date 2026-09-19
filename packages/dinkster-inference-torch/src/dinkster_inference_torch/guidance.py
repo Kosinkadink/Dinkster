@@ -8,7 +8,7 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, Generic, Protocol, TypeVar, cast, runtime_checkable
 
 import torch
 from dinkster_inference import (
@@ -35,9 +35,11 @@ from dinkster_inference import (
     GuidanceRole,
     GuidanceStrategyDescriptor,
     ModelTokenLayout,
+    Parameterization,
     SamplingExecutionContext,
     TokenGridTransform,
     TokenLayoutError,
+    calculate_denoised,
     cfg_combine,
     cfg_needs_uncond,
     map_transforms,
@@ -227,6 +229,130 @@ class _PreparedEvaluationPlan(Generic[PreparedCondition]):
             lane_id == lane.id and role is lane.role and source is lane.conditioning
             for (lane_id, role, source), lane in zip(self.sources, plan.lanes, strict=True)
         )
+
+
+@dataclass(frozen=True)
+class ConditioningBatch(Generic[PreparedCondition]):
+    latent: torch.Tensor
+    model_input: torch.Tensor
+    timestep: torch.Tensor
+    sigma: float
+    conditions: tuple[PreparedCondition, ...]
+    context: object | None = None
+
+    @property
+    def batch_size(self) -> int:
+        return self.latent.shape[0]
+
+    @property
+    def lane_count(self) -> int:
+        return len(self.conditions)
+
+
+@runtime_checkable
+class ConditioningBatchAdapter(Protocol[PreparedCondition]):
+    def _validate_conditioning_batch(
+        self,
+        x: torch.Tensor,
+        conditions: tuple[PreparedCondition, ...],
+    ) -> None: ...
+
+    def _evaluate_conditioning_model(
+        self,
+        batch: ConditioningBatch[PreparedCondition],
+    ) -> torch.Tensor: ...
+
+
+def evaluate_conditioning_batch(
+    evaluator: object,
+    x: torch.Tensor,
+    sigma: float,
+    conditions: tuple[PreparedCondition, ...],
+    context: object | None = None,
+) -> tuple[torch.Tensor, ...]:
+    """Evaluate one compatible conditioning batch through a family adapter."""
+
+    specialized = getattr(evaluator, "_evaluate_conditioning_batch", None)
+    if specialized is not None:
+        if context is not None:
+            raise GuidanceContractError(
+                "specialized conditioning batch adapter does not accept evaluation context"
+            )
+        outputs = specialized(x, sigma, conditions)
+    else:
+        if not isinstance(evaluator, ConditioningBatchAdapter):
+            raise GuidanceContractError(
+                "conditioning batch adapter must validate conditions and evaluate the model"
+            )
+        evaluator._validate_conditioning_batch(  # pyright: ignore[reportPrivateUsage]
+            x, conditions
+        )
+        input_adapter = getattr(evaluator, "_conditioning_model_input", None)
+        if input_adapter is None:
+            compute_dtype = getattr(evaluator, "compute_dtype", None)
+            if compute_dtype is None:
+                compute_dtype = getattr(evaluator, "_compute_dtype", None)
+            if compute_dtype is None:
+                raise GuidanceContractError(
+                    "conditioning batch adapter must declare its compute dtype"
+                )
+            model_input = x.to(dtype=compute_dtype)
+        else:
+            model_input = input_adapter(x, sigma)
+        if model_input.shape[0] != x.shape[0]:
+            raise GuidanceContractError(
+                "conditioning batch model input changed the latent batch size"
+            )
+        stack_adapter = getattr(evaluator, "_stack_conditioning_model_input", None)
+        if stack_adapter is not None:
+            model_input = stack_adapter(model_input, conditions)
+        elif len(conditions) > 1:
+            model_input = torch.cat((model_input,) * len(conditions), dim=0)
+        timestep_tensor_adapter = getattr(evaluator, "_conditioning_timestep_tensor", None)
+        timestep_adapter = getattr(evaluator, "_conditioning_timestep", None)
+        timestep_value = (
+            timestep_tensor_adapter(sigma, x.device)
+            if timestep_tensor_adapter is not None
+            else sigma
+            if timestep_adapter is None
+            else timestep_adapter(sigma)
+        )
+        timestep = (
+            timestep_value.to(device=x.device, dtype=torch.float32).expand(model_input.shape[0])
+            if isinstance(timestep_value, torch.Tensor)
+            else torch.full(
+                (model_input.shape[0],),
+                timestep_value,
+                dtype=torch.float32,
+                device=x.device,
+            )
+        )
+        batch = ConditioningBatch(x, model_input, timestep, sigma, conditions, context)
+        output = evaluator._evaluate_conditioning_model(  # pyright: ignore[reportPrivateUsage]
+            batch
+        )
+        output_adapter = getattr(evaluator, "_conditioning_model_output", None)
+        if output_adapter is not None:
+            output = output_adapter(batch, output)
+        flow_input = x if len(conditions) == 1 else torch.cat((x,) * len(conditions), dim=0)
+        denoised_adapter = getattr(evaluator, "_conditioning_denoised", None)
+        denoised = (
+            calculate_denoised(Parameterization.FLOW, sigma, output, flow_input)
+            if denoised_adapter is None
+            else denoised_adapter(batch, output, flow_input)
+        )
+        outputs = tuple(denoised.chunk(len(conditions)))
+    if type(outputs) is not tuple or len(outputs) != len(conditions):
+        raise GuidanceContractError(
+            "conditioning batch evaluation must return one tensor per condition"
+        )
+    expected_shape = tuple(x.shape)
+    if any(
+        type(output) is not torch.Tensor or tuple(output.shape) != expected_shape
+        for output in outputs
+    ):
+        raise GuidanceContractError("conditioning batch evaluation returned an incompatible tensor")
+    return outputs
 
 
 @dataclass(frozen=True)
@@ -1611,9 +1737,11 @@ __all__ = [
     "CompiledConditioningCall",
     "CompiledConditioningLane",
     "CompiledConditioningPlan",
+    "ConditioningBatch",
     "ConditioningEvaluation",
     "ConditioningValidationPath",
     "dual_cfg_executor",
+    "evaluate_conditioning_batch",
     "GuidanceExecutor",
     "GuidanceRegistry",
     "GuidedDenoiser",

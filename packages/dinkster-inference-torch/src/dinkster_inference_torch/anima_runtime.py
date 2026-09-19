@@ -23,7 +23,6 @@ from dinkster_inference import (
     GuidanceRole,
     InpaintConditioning,
     ModelFamily,
-    Parameterization,
     PayloadDescriptor,
     PayloadReference,
     PercentRange,
@@ -33,7 +32,6 @@ from dinkster_inference import (
     SamplingStateCallback,
     SchedulerDescriptor,
     StepCallback,
-    calculate_denoised,
     encode_conditioning_carrier,
     make_conditioning_carrier,
     sampling_execution_context,
@@ -46,7 +44,14 @@ if TYPE_CHECKING:
 from .anima_model import AnimaModel
 from .brownian import BrownianTreeNoise
 from .denoise import run_denoise
-from .guidance import ConditioningEvaluation, GuidanceExecutor
+from .guidance import (
+    ConditioningBatch,
+    ConditioningEvaluation,
+    GuidanceExecutor,
+)
+from .guidance import (
+    evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
+)
 from .operations import module_compute_device
 from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
 from .qwen_layer_placement import qwen_layer_placement
@@ -269,32 +274,33 @@ class AnimaDenoiser:
     ) -> torch.Tensor:
         return self.evaluate_conditioning_batch(x, sigma, (condition,))[0]
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _validate_conditioning_batch(
         self,
         x: torch.Tensor,
-        sigma: float,
         conditions: tuple[tuple[torch.Tensor, str], ...],
-    ) -> tuple[torch.Tensor, ...]:
+    ) -> None:
         if not self.batchable(conditions):
             raise AnimaRuntimeError("Anima conditioning batch is empty or incompatible")
         batch = x.shape[0]
         if any(condition[0].shape[0] not in (1, batch) for condition in conditions):
             raise AnimaRuntimeError("Anima conditioning batch must be one or match the latent")
-        model_input = x.to(dtype=self.compute_dtype)
-        if len(conditions) > 1:
-            model_input = torch.cat([model_input] * len(conditions), dim=0)
+
+    def _evaluate_conditioning_model(
+        self,
+        batch: ConditioningBatch[tuple[torch.Tensor, str]],
+    ) -> torch.Tensor:
         context = torch.cat(
             [
-                condition[0].to(device=x.device, dtype=self.compute_dtype).expand(batch, -1, -1)
-                for condition in conditions
+                condition[0]
+                .to(device=batch.latent.device, dtype=self.compute_dtype)
+                .expand(batch.batch_size, -1, -1)
+                for condition in batch.conditions
             ],
             dim=0,
         )
-        timestep = torch.full((model_input.shape[0],), sigma, dtype=torch.float32, device=x.device)
-        output = self.model(model_input, timestep, context).float()
-        flow_input = x if len(conditions) == 1 else torch.cat([x] * len(conditions), dim=0)
-        denoised = calculate_denoised(Parameterization.FLOW, sigma, output, flow_input)
-        return tuple(denoised.chunk(len(conditions)))
+        return self.model(batch.model_input, batch.timestep, context).float()
 
 
 def _exact_scheduler_registry(

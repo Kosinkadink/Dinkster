@@ -56,6 +56,7 @@ from .flux_window import (
     derive_flux_window_layout,
     merge_flux_window_outputs,
 )
+from .guidance import evaluate_conditioning_batch as _engine_evaluate_conditioning_batch
 
 PreparedConditionT = TypeVar("PreparedConditionT")
 
@@ -322,14 +323,16 @@ class DistributedFluxWindowEvaluation(Generic[PreparedConditionT]):
             return self.inner.evaluate_conditioning(x, sigma, condition)
         return self._scatter_evaluate(x, sigma, (condition,), batch=False)[0]
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _evaluate_conditioning_batch(
         self,
         x: torch.Tensor,
         sigma: float,
         conditions: tuple[PreparedFluxWindowConditioning[PreparedConditionT], ...],
     ) -> tuple[torch.Tensor, ...]:
         if rank_zero_sampling_active():
-            return self.inner.evaluate_conditioning_batch(x, sigma, conditions)
+            return self.inner.evaluate_conditioning_batch(x, sigma, conditions, None)
         return self._scatter_evaluate(x, sigma, conditions, batch=True)
 
     def _window_shape(self, x: torch.Tensor, window_index: int) -> tuple[int, int, int, int]:
@@ -421,6 +424,7 @@ class DistributedFluxWindowEvaluation(Generic[PreparedConditionT]):
                         window_x,
                         sigma,
                         tuple(condition.windows[index] for condition in conditions),
+                        None,
                     )
                     if type(raw) is not tuple or len(raw) != lane_count:
                         raise FluxWindowError(

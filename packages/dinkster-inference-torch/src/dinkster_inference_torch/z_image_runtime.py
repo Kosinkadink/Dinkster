@@ -21,14 +21,12 @@ from dinkster_inference import (
     GuidanceRole,
     InpaintConditioning,
     ModelFamily,
-    Parameterization,
     RealizedGainRow,
     Registry,
     SamplerDescriptor,
     SamplingStateCallback,
     SchedulerDescriptor,
     StepCallback,
-    calculate_denoised,
     contribution_gain_slot_facts,
     executed_sampling_timeline,
     realize_gain_table,
@@ -43,7 +41,14 @@ from .autoencoder_kl import kl_codec_plugin
 from .brownian import BrownianTreeNoise
 from .codecs import CodecPlugin
 from .denoise import run_denoise, to_batch
-from .guidance import ConditioningEvaluation, GuidanceExecutor
+from .guidance import (
+    ConditioningBatch,
+    ConditioningEvaluation,
+    GuidanceExecutor,
+)
+from .guidance import (
+    evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
+)
 from .qwen_text import ZImageTextEncoder
 from .sampling_execution import (
     CustomSamplingCfgValue,
@@ -148,36 +153,41 @@ class ZImageDenoiser:
     ) -> torch.Tensor:
         return self.evaluate_conditioning_batch(x, sigma, (condition,))[0]
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _validate_conditioning_batch(
         self,
         x: torch.Tensor,
-        sigma: float,
         conditions: tuple[tuple[torch.Tensor, str], ...],
-    ) -> tuple[torch.Tensor, ...]:
+    ) -> None:
         if not self.batchable(conditions):
             raise ZImageRuntimeError("Z-Image conditioning batch is empty or incompatible")
         batch = x.shape[0]
         if any(condition[0].shape[0] not in (1, batch) for condition in conditions):
             raise ZImageRuntimeError("Z-Image conditioning batch must be one or match the latent")
-        model_input = x.to(dtype=self.compute_dtype)
-        if len(conditions) > 1:
-            model_input = torch.cat([model_input] * len(conditions), dim=0)
+
+    def _evaluate_conditioning_model(
+        self,
+        batch: ConditioningBatch[tuple[torch.Tensor, str]],
+    ) -> torch.Tensor:
+        conditions = batch.conditions
         context = torch.cat(
             [
-                condition[0].to(device=x.device, dtype=self.compute_dtype).expand(batch, -1, -1)
+                condition[0]
+                .to(device=batch.latent.device, dtype=self.compute_dtype)
+                .expand(batch.batch_size, -1, -1)
                 for condition in conditions
             ],
             dim=0,
         )
-        timestep = torch.full((model_input.shape[0],), sigma, dtype=torch.float32, device=x.device)
         control = self.control
         control_latent = None if control is None else control.hint
         if control_latent is not None:
-            control_latent = control_latent.to(device=x.device, dtype=self.compute_dtype)
-            control_latent = to_batch(control_latent, x.shape[0])
+            control_latent = control_latent.to(device=batch.latent.device, dtype=self.compute_dtype)
+            control_latent = to_batch(control_latent, batch.batch_size)
             control_latent = torch.cat([control_latent] * len(conditions), dim=0)
         if control is None:
-            output = self.model(model_input, timestep, context).float()
+            output = self.model(batch.model_input, batch.timestep, context).float()
         else:
             condition_lane_ids = tuple(condition[1] for condition in conditions)
             if any(lane_id not in self._control_lane_ids for lane_id in condition_lane_ids):
@@ -190,13 +200,13 @@ class ZImageDenoiser:
                 for lane_id in condition_lane_ids
             )
             if not any(active):
-                output = self.model(model_input, timestep, context).float()
+                output = self.model(batch.model_input, batch.timestep, context).float()
             else:
                 validate_z_image_control_resource(control.model, control.model_digest)
                 active_indexes = tuple(index for index, enabled in enumerate(active) if enabled)
-                input_chunks = model_input.chunk(len(conditions))
+                input_chunks = batch.model_input.chunk(len(conditions))
                 context_chunks = context.chunk(len(conditions))
-                timestep_chunks = timestep.chunk(len(conditions))
+                timestep_chunks = batch.timestep.chunk(len(conditions))
                 assert control_latent is not None
                 control_chunks = control_latent.chunk(len(conditions))
                 active_lanes = tuple(condition_lane_ids[index] for index in active_indexes)
@@ -212,9 +222,9 @@ class ZImageDenoiser:
                         torch.cat(
                             tuple(
                                 torch.full(
-                                    (batch, 1, 1),
+                                    (batch.batch_size, 1, 1),
                                     site[self._control_lane_ids.index(lane_id)],
-                                    device=x.device,
+                                    device=batch.latent.device,
                                     dtype=self.compute_dtype,
                                 )
                                 for lane_id in active_lanes
@@ -242,9 +252,7 @@ class ZImageDenoiser:
                             for enabled in active
                         )
                     )
-        flow_input = x if len(conditions) == 1 else torch.cat([x] * len(conditions), dim=0)
-        denoised = calculate_denoised(Parameterization.FLOW, sigma, output, flow_input)
-        return tuple(denoised.chunk(len(conditions)))
+        return output
 
 
 def _exact_scheduler_registry(

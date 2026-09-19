@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import ast
 import weakref
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -44,6 +46,7 @@ from dinkster_inference import (
 )
 from dinkster_inference_torch import distributed
 from dinkster_inference_torch.guidance import (
+    ConditioningBatch,
     ConditioningEvaluation,
     ConditioningPlanCompiler,
     ConditioningValidationPath,
@@ -51,6 +54,7 @@ from dinkster_inference_torch.guidance import (
     GuidanceRegistry,
     GuidedDenoiser,
     dual_cfg_executor,
+    evaluate_conditioning_batch,
 )
 from dinkster_protocol import GuidancePhaseParticipation
 
@@ -61,6 +65,70 @@ def execution(cancelled: Callable[[], bool] = lambda: False) -> SamplingExecutio
 
 
 DEFAULT_CONDITIONING = Conditioning(torch.empty(0), None)
+
+
+def test_conditioning_batch_engine_owns_lane_stacking_and_flow_conversion() -> None:
+    class Adapter:
+        compute_dtype = torch.float64
+
+        def _validate_conditioning_batch(
+            self, x: torch.Tensor, conditions: tuple[int, ...]
+        ) -> None:
+            assert x.shape == (2, 3)
+            assert conditions == (5, 8)
+
+        def _evaluate_conditioning_model(self, batch: ConditioningBatch[int]) -> torch.Tensor:
+            assert batch.model_input.shape == (4, 3)
+            assert batch.model_input.dtype == torch.float64
+            assert torch.equal(batch.timestep, torch.full((4,), 0.25))
+            return torch.zeros_like(batch.model_input, dtype=torch.float32)
+
+    latent = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+
+    first, second = evaluate_conditioning_batch(Adapter(), latent, 0.25, (5, 8))
+
+    assert torch.equal(first, latent)
+    assert torch.equal(second, latent)
+
+
+def test_conditioning_batch_engine_rejects_wrong_adapter_cardinality() -> None:
+    class Adapter:
+        def _evaluate_conditioning_batch(
+            self,
+            x: torch.Tensor,
+            sigma: float,
+            conditions: tuple[int, ...],
+        ) -> tuple[torch.Tensor, ...]:
+            del sigma, conditions
+            return (x,)
+
+    with pytest.raises(GuidanceContractError, match="one tensor per condition"):
+        evaluate_conditioning_batch(Adapter(), torch.zeros(2, 3), 0.5, (1, 2))
+
+
+def test_conditioning_batch_engine_rejects_incomplete_adapter_contract() -> None:
+    with pytest.raises(GuidanceContractError, match="must validate conditions"):
+        evaluate_conditioning_batch(object(), torch.zeros(2, 3), 0.5, (1, 2))
+
+
+def test_conditioning_batch_overrides_delegate_to_engine_evaluators() -> None:
+    source_root = Path(__file__).parents[1] / "src" / "dinkster_inference_torch"
+    overrides: list[tuple[str, str]] = []
+    for path in source_root.glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+                node.name == "_evaluate_conditioning_batch"
+            ):
+                body = ast.get_source_segment(source, node)
+                assert body is not None
+                overrides.append((path.name, body))
+
+    assert {path for path, _body in overrides} == {
+        "flux_window.py",
+        "flux_window_distributed.py",
+    }
+    assert all("evaluate_conditioning_batch(" in body for _path, body in overrides)
 
 
 def lane(

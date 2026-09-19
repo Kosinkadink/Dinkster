@@ -50,7 +50,6 @@ from dinkster_inference import (
     StepCallback,
     StepEvent,
     UncondDenoiser,
-    calculate_denoised,
     calculate_input,
     inverse_noise_scaling,
     is_flow_parameterization,
@@ -69,6 +68,12 @@ from ._conditioning_layout import cross_attn_repeat, declared_token_count, repea
 from .brownian import BrownianTreeNoise
 from .flux import Flux
 from .flux_window import flux_window_position_ids
+from .guidance import (
+    ConditioningBatch,
+)
+from .guidance import (
+    evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
+)
 from .latent_streams import reshape_latent_mask
 
 if TYPE_CHECKING:
@@ -274,11 +279,8 @@ class FluxDenoiser:
         conds: Sequence[FluxCondition],
         repeats: list[int],
     ) -> torch.Tensor:
-        """One transformer call over ``len(conds)`` copies of ``xc``
-        stacked along the batch axis; returns float32 output."""
-        batch = xc.shape[0]
-        if len(conds) > 1:
-            xc = torch.cat([xc] * len(conds), dim=0)
+        """One transformer call over the engine-stacked conditioning lanes."""
+        batch = xc.shape[0] // len(conds)
         total = xc.shape[0]
         device = xc.device
         timesteps = torch.full((total,), sigma, device=device, dtype=torch.float32)
@@ -350,22 +352,33 @@ class FluxDenoiser:
     ) -> torch.Tensor:
         return self.evaluate_conditioning_batch(x, sigma, (condition,))[0]
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _validate_conditioning_batch(
         self,
         x: torch.Tensor,
-        sigma: float,
         conditions: tuple[FluxCondition, ...],
-    ) -> tuple[torch.Tensor, ...]:
+    ) -> None:
         if not conditions or not self.batchable(conditions):
             raise DenoiseError("Flux conditioning batch is empty or incompatible")
-        parameterization = Parameterization.FLOW
-        xc = calculate_input(parameterization, sigma, x).to(self.compute_dtype)
+
+    def _conditioning_model_input(self, x: torch.Tensor, sigma: float) -> torch.Tensor:
+        return calculate_input(Parameterization.FLOW, sigma, x).to(self.compute_dtype)
+
+    def _evaluate_conditioning_model(
+        self,
+        batch: ConditioningBatch[FluxCondition],
+    ) -> torch.Tensor:
         repeats = cross_attn_repeat(
-            [condition[0].shape[1] for condition in map(_flux_condition_parts, conditions)]
+            [condition[0].shape[1] for condition in map(_flux_condition_parts, batch.conditions)]
         )
         assert repeats is not None
-        outputs = self._forward(xc, sigma, conditions, repeats).chunk(len(conditions))
-        return tuple(calculate_denoised(parameterization, sigma, output, x) for output in outputs)
+        return self._forward(
+            batch.model_input,
+            batch.sigma,
+            batch.conditions,
+            repeats,
+        )
 
     def _grouped_conditioning_forward(
         self,
