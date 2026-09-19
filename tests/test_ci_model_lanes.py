@@ -175,6 +175,7 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
     assert ".venv-torch/bin/python tools/gen_comfy_source_parity_receipts.py --check" in commands
     assert 'UV_CONSTRAINT="$RUNNER_TEMP/torch-constraints.txt" ./scripts/setup_envs.sh' in commands
     assert {step["name"] for step in retained if "name" in step} == {
+        "Checkout pinned parity records",
         "Checkout pinned ComfyUI source",
         "Checkout pinned workflow templates",
         "Acquire pinned Impact Pack source",
@@ -183,6 +184,43 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
         "Assert pinned CPU dispatch",
         "Test training runtime",
     }
+
+
+def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
+    steps = ACTION["runs"]["steps"]
+    (access,) = [
+        step
+        for step in steps
+        if step.get("with", {}).get("repository") == "Kosinkadink/dinkster-evidence"
+        and step.get("uses") == "./.github/actions/configure-dinkster-identity"
+    ]
+    assert access["with"]["deploy-key"] == "${{ inputs.evidence-deploy-key }}"
+    (checkout,) = [step for step in steps if step.get("name") == "Checkout pinned parity records"]
+    assert checkout["uses"] == "actions/checkout@v4"
+    assert checkout["with"] == {
+        "repository": "Kosinkadink/dinkster-evidence",
+        "ref": "70edf4f5fe9d2b7054cb54be58f5078869519baa",
+        "path": ".evidence-source",
+        "clean": True,
+        "persist-credentials": False,
+    }
+    setup = next(step for step in steps if "./scripts/setup_envs.sh" in step.get("run", ""))
+    assert steps.index(setup) < steps.index(access) < steps.index(checkout)
+    for name in (
+        "Verify source-generated parity receipts",
+        "Test source-parity receipt generation",
+    ):
+        (step,) = [step for step in steps if step.get("name") == name]
+        assert steps.index(checkout) < steps.index(step)
+        assert step["env"]["DINKSTER_INFERENCE_PARITY_RECORDS"] == (
+            "${{ github.workspace }}/.evidence-source/inference-parity/records"
+        )
+    for job in JOBS.values():
+        for step in job.get("steps", []):
+            if step.get("uses") == ACTION_PATH:
+                assert step["with"]["evidence-deploy-key"] == (
+                    "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}"
+                )
 
 
 @pytest.mark.parametrize("enabled", ["", "false", "true"])
@@ -245,6 +283,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         "with": {
             "run-model-tests": "true",
             "identity-deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}",
+            "evidence-deploy-key": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
         },
     }
     assert job["env"] == {

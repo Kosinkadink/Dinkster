@@ -231,6 +231,7 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
 
   torch-cpu-try2:
@@ -264,6 +265,7 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
 
   torch-cpu-try3:
@@ -297,6 +299,7 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
 
   torch-cpu-try4:
@@ -330,6 +333,7 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
 
   torch-cpu-try5:
@@ -363,6 +367,7 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
 
   torch-cpu:
@@ -416,6 +421,7 @@ jobs:
       - uses: ./.github/actions/torch-cpu-suite
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "true"
 
   coverage:

@@ -11,6 +11,9 @@ inputs:
   identity-deploy-key:
     description: Read-only dinkster-identity deploy key
     required: true
+  evidence-deploy-key:
+    description: Read-only dinkster-evidence deploy key
+    required: true
 runs:
   using: composite
   steps:
@@ -39,6 +42,18 @@ runs:
         --constraint "${{ runner.temp }}/torch-constraints.txt"
         --index-url https://download.pytorch.org/whl/cpu
         torch==2.13.0+cpu
+    - uses: ./.github/actions/configure-dinkster-identity
+      with:
+        repository: Kosinkadink/dinkster-evidence
+        deploy-key: ${{ inputs.evidence-deploy-key }}
+    - name: Checkout pinned parity records
+      uses: actions/checkout@v4
+      with:
+        repository: Kosinkadink/dinkster-evidence
+        ref: 70edf4f5fe9d2b7054cb54be58f5078869519baa
+        path: .evidence-source
+        clean: true
+        persist-credentials: false
     - name: Checkout pinned ComfyUI source
       shell: bash
       run: |
@@ -75,6 +90,7 @@ runs:
     - name: Verify source-generated parity receipts
       shell: bash
       env:
+        DINKSTER_INFERENCE_PARITY_RECORDS: ${{ github.workspace }}/.evidence-source/inference-parity/records
         COMFYUI_ROOT: ${{ runner.temp }}/comfyui-source
         WORKFLOW_TEMPLATES_ROOT: ${{ runner.temp }}/workflow-templates-source
         IMPACT_PACK_SOURCE: ${{ runner.temp }}/impact-special-samplers.py
@@ -84,6 +100,7 @@ runs:
     - name: Test source-parity receipt generation
       shell: bash
       env:
+        DINKSTER_INFERENCE_PARITY_RECORDS: ${{ github.workspace }}/.evidence-source/inference-parity/records
         COMFYUI_ROOT: ${{ runner.temp }}/comfyui-source
         WORKFLOW_TEMPLATES_ROOT: ${{ runner.temp }}/workflow-templates-source
         IMPACT_PACK_SOURCE: ${{ runner.temp }}/impact-special-samplers.py
