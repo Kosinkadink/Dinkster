@@ -3,7 +3,7 @@
 The worker bootstrap owns ``dinkster_aimdo.control.init()`` because that
 native-library load must happen before torch is imported. This module
 owns the single later ``init_devices`` attempt. Readiness is proven by
-``get_devctx`` for every requested index: dinkster-aimdo 0.4.13 assigns
+``get_devctx`` for every requested index: upstream comfy-aimdo 0.4.13 assigns
 ``control.lib`` before all native symbols are bound, so ``lib is not
 None`` is not a valid activation test.
 """

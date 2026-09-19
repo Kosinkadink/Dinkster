@@ -212,7 +212,7 @@ class ComfyAimdoBackend:
                 " the inference worker environment"
             ) from error
         # Import only after ensure_aimdo_devices proved get_devctx. In
-        # dinkster-aimdo 0.4.13 model_vbar captures control.lib at import.
+        # Upstream comfy-aimdo 0.4.13 model_vbar captures control.lib at import.
         from dinkster_aimdo import (  # pyright: ignore[reportMissingTypeStubs]
             host_buffer,
             model_vbar,

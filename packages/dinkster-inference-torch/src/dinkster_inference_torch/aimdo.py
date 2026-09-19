@@ -9,7 +9,7 @@ to a temporary tensor on OOM), and unpins after - with an implicit
 newest-model-first, watermark-limited eviction policy. It exposes NO
 model wrapper or policy callback; the host application owns weight
 ordering, fault timing, copies, fallbacks, and unpin sequencing
-(dinkster-aimdo 0.4.13; ComfyUI @ b78cec87 integrates it by swapping
+(upstream comfy-aimdo 0.4.13; ComfyUI @ b78cec87 integrates it by swapping
 ModelPatcher for ModelPatcherDynamic and threading VBAR faults through
 comfy/ops.py cast_bias_weight).
 
