@@ -190,7 +190,9 @@ those files minimal and additive; everything else should live in
 family-owned modules so parallel ports do not collide.
 
 Every new or changed maintained Comfy mapping must include a source/native
-confidence receipt under `docs/comfy-confidence-receipts/`. CI verifies every
+confidence receipt under
+[`dinkster-evidence/docs/comfy-confidence-receipts/`](https://github.com/Kosinkadink/dinkster-evidence/tree/main/docs/comfy-confidence-receipts).
+CI verifies every
 receipt and rejects an increase in the unreceipted-mapping debt recorded in
 `docs/comfy-source-parity-baseline.json`; duplicate cases for one mapping do
 not increase the parity count. `tools/gen_comfy_source_parity_receipts.py`

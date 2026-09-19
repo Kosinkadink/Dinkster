@@ -11,6 +11,9 @@ inputs:
   identity-deploy-key:
     description: Read-only dinkster-identity deploy key
     required: true
+  evidence-deploy-key:
+    description: Read-only dinkster-evidence deploy key
+    required: true
 runs:
   using: composite
   steps:
@@ -23,6 +26,10 @@ runs:
     - uses: ./.github/actions/configure-dinkster-identity
       with:
         deploy-key: ${{ inputs.identity-deploy-key }}
+    - uses: ./.github/actions/prepare-validation-inputs
+      with:
+        evidence-deploy-key: ${{ inputs.evidence-deploy-key }}
+        coverage: "false"
     - uses: astral-sh/setup-uv@v5
       with:
         python-version: "3.12"
@@ -99,11 +106,11 @@ runs:
     # against .venv-gpu (CUDA torch + triton), which CPU-only hosted
     # runners cannot build.
     - shell: bash
-      run: .venv/bin/pyright -p packages/dinkster-acceptance
+      run: .venv/bin/pyright -p .evidence-source/packages/dinkster-acceptance --pythonpath .venv-torch/bin/python
     - shell: bash
       run: >
         .venv-torch/bin/python -m pytest -q
-        packages/dinkster-acceptance/tests/test_acceptance_closure.py
+        .evidence-source/packages/dinkster-acceptance/tests/test_acceptance_closure.py
     - shell: bash
       run: .venv/bin/pyright -p packages/dinkster-inference-torch
     - shell: bash
@@ -151,7 +158,7 @@ runs:
       shell: bash
       run: >
         .venv-torch/bin/python -m pytest -q
-        packages/dinkster-acceptance/tests/test_acceptance_sampling.py
+        .evidence-source/packages/dinkster-acceptance/tests/test_acceptance_sampling.py
     - name: Acquire pinned line and edge parity artifacts
       if: inputs.run-model-tests == 'true'
       shell: bash

@@ -10,7 +10,6 @@ from typing import Any
 
 import numpy as np
 import pytest
-
 import tools.inference_parity.chroma_e2e as chroma_e2e
 from tools.inference_parity.chroma_e2e import (
     COMFYUI_COMMIT,

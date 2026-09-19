@@ -3,7 +3,8 @@
 Status: historical investigation and architecture baseline completed in
 2026-07 against ComfyUI `947c2749`. This document is not a current-tip coverage
 census or proof. Current source and accepted-parity status are reconciled in
-`docs/research/inference-parity-conclusions.md` and `ROADMAP.md`. Direction is
+[inference parity research](https://github.com/Kosinkadink/comfy-vibe-station/blob/main/notes/research/inference-parity-conclusions.md)
+and `ROADMAP.md`. Direction is
 pinned in DESIGN.md (mission + section 4): Dinkster is the successor to
 ComfyUI. The compat pack remains the transitional execution backend and the
 conformance oracle; the native stack below replaces it slice by slice. No

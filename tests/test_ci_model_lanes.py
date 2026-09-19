@@ -8,14 +8,20 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tools.evidence_paths import EVIDENCE_ROOT
+
 ROOT = Path(__file__).resolve().parents[1]
 ACTION_PATH = "./.github/actions/torch-cpu-suite"
 ACTION = yaml.safe_load((ROOT / ACTION_PATH / "action.yml").read_text(encoding="utf-8"))
 JOBS = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))["jobs"]
 MODEL_CONDITION = "inputs.run-model-tests == 'true'"
 RECEIPT_TEST = "tests/test_gen_comfy_source_parity_receipts.py"
-ACCEPTANCE_CLOSURE_TEST = "packages/dinkster-acceptance/tests/test_acceptance_closure.py"
-ACCEPTANCE_SAMPLING_TEST = "packages/dinkster-acceptance/tests/test_acceptance_sampling.py"
+ACCEPTANCE_CLOSURE_TEST = (
+    ".evidence-source/packages/dinkster-acceptance/tests/test_acceptance_closure.py"
+)
+ACCEPTANCE_SAMPLING_TEST = (
+    ".evidence-source/packages/dinkster-acceptance/tests/test_acceptance_sampling.py"
+)
 TRAINING_SUITE = "packages/dinkster-training-torch/tests"
 VISION_SUITES = (
     "packages/dinkster-vision-hed/tests",
@@ -134,7 +140,7 @@ def test_model_lane_commands_artifact_pins_and_environments_match_reviewed_contr
         if step.get("if") == MODEL_CONDITION
     ]
     assert hashlib.sha256(json.dumps(steps, sort_keys=True).encode()).hexdigest() == (
-        "38deb3c27cfb03269f04d5db7f32efceed2a1d3be98aa8662effce791444f220"
+        "0fb8c48ce81fddb3057ce834a0486c5cf6f12a1cf872215eb697a3dfc88a82b0"
     )
 
 
@@ -148,12 +154,21 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
     commands = [step.get("run", "").strip() for step in retained]
     projects = {
         path.parent.name
-        for path in (ROOT / "packages").glob("*/pyproject.toml")
+        for path in (
+            *(ROOT / "packages").glob("*/pyproject.toml"),
+            EVIDENCE_ROOT / "packages/dinkster-acceptance/pyproject.toml",
+        )
         if 'venv = ".venv-torch"' in path.read_text(encoding="utf-8")
     }
     assert len(projects) == 12
     assert {command for command in commands if "pyright -p" in command} == {
-        f".venv/bin/pyright -p packages/{project}" for project in projects
+        (
+            ".venv/bin/pyright -p .evidence-source/packages/dinkster-acceptance "
+            "--pythonpath .venv-torch/bin/python"
+            if project == "dinkster-acceptance"
+            else f".venv/bin/pyright -p packages/{project}"
+        )
+        for project in projects
     }
     assert f".venv-torch/bin/python -m pytest -q {RECEIPT_TEST}" in commands
     training_steps = [step for step in retained if TRAINING_SUITE in step.get("run", "")]
@@ -226,6 +241,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         "with": {
             "run-model-tests": "true",
             "identity-deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}",
+            "evidence-deploy-key": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
         },
     }
     assert job["env"] == {

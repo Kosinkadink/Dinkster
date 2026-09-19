@@ -3206,7 +3206,9 @@ def test_vector_free_ovis_requires_qwen_text_component() -> None:
     reason="digest-verified Ovis artifact set absent",
 )
 def test_real_digest_pinned_vector_free_ovis_header_probes_native() -> None:
-    manifest = json.loads(Path("tools/inference_parity/workloads.json").read_text())
+    from tools.evidence_paths import EVIDENCE_ROOT
+
+    manifest = json.loads((EVIDENCE_ROOT / "tools/inference_parity/workloads.json").read_text())
     workload = next(
         item for item in manifest["workloads"] if item["id"] == "W0-FLUX-GATED-OVIS-TXT2IMG"
     )

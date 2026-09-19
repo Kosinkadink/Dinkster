@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 from dinkster_inference import MINIMAX_H3_CONFIG, builtin_families
-
 from tools.inference_parity import minimax_h3_codec_receipts
 from tools.inference_parity.minimax_h3_codec_receipts import (
     ArtifactReceiptError,
@@ -16,9 +15,11 @@ from tools.inference_parity.minimax_h3_codec_receipts import (
 )
 from tools.inference_parity.qwen_image_receipts import validate_manifest as validate_qwen
 
-MANIFEST_PATH = Path("tools/inference_parity/minimax_h3_codec_artifacts.json")
-MODULE_PATH = Path("tools/inference_parity/minimax_h3_codec_receipts.py")
-QWEN_MANIFEST_PATH = Path("tools/inference_parity/qwen_image_artifacts.json")
+from tools.evidence_paths import EVIDENCE_ROOT
+
+MANIFEST_PATH = EVIDENCE_ROOT / "tools/inference_parity/minimax_h3_codec_artifacts.json"
+MODULE_PATH = EVIDENCE_ROOT / "tools/inference_parity/minimax_h3_codec_receipts.py"
+QWEN_MANIFEST_PATH = EVIDENCE_ROOT / "tools/inference_parity/qwen_image_artifacts.json"
 
 
 def _set_path(value: dict[str, Any], path: tuple[object, ...], replacement: object) -> None:

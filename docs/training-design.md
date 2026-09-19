@@ -9,7 +9,7 @@ reconstruction-recipe invariant are fixed. The durable-journal shape
 (decision 18) requires a joint decision with the backend/extension-S5
 program before either ships. Research evidence lives in the private
 Kosinkadink/dinkster-research repository (dives/report-t1..t3); see
-docs/research/README.md.
+[the workspace research index](https://github.com/Kosinkadink/comfy-vibe-station/blob/main/notes/research/README.md).
 
 Status: DESIGN ONLY. This document proposes contracts and implementation slices. It
 does not claim that Dinkster currently implements training.

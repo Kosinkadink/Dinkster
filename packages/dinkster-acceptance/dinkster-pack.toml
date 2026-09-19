@@ -1,6 +1,0 @@
-[pack]
-name = "dinkster-acceptance"
-namespaces = ["acceptance"]
-
-[pack.entry]
-nodes = "dinkster_acceptance.model_sampling_flux:NODES"

@@ -54,6 +54,9 @@ jobs:
             run_checks: false
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare-validation-inputs
+        with:
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
       - uses: ./.github/actions/configure-dinkster-identity
         with:
           deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
@@ -194,6 +197,7 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
 
   torch-cpu-try2:
@@ -224,6 +228,7 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
 
   torch-cpu-try3:
@@ -254,6 +259,7 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
 
   torch-cpu-try4:
@@ -284,6 +290,7 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
 
   torch-cpu-try5:
@@ -314,6 +321,7 @@ jobs:
         if: steps.cpu.outputs.eligible == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
 
   torch-cpu:
@@ -363,6 +371,7 @@ jobs:
       - uses: ./.github/actions/torch-cpu-suite
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "true"
 
   coverage:
@@ -371,6 +380,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare-validation-inputs
+        with:
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
       - uses: ./.github/actions/configure-dinkster-identity
         with:
           deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
@@ -390,6 +402,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare-validation-inputs
+        with:
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
       - uses: ./.github/actions/configure-dinkster-identity
         with:
           deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
@@ -397,32 +412,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --all-packages
-      - name: Checkout pinned workflow templates
-        shell: bash
-        run: |
-          git init --quiet workflow_templates
-          git -C workflow_templates remote add origin https://github.com/Comfy-Org/workflow_templates.git
-          git -C workflow_templates config core.sparseCheckout true
-          git -C workflow_templates config core.sparseCheckoutCone false
-          printf '/templates/*.json\n' > workflow_templates/.git/info/sparse-checkout
-          git -C workflow_templates fetch --quiet --depth=1 --filter=blob:none origin d3b4a9e89573162b005961865164c18c8ae2206b
-          git -C workflow_templates checkout --quiet --detach FETCH_HEAD
-      - name: Checkout pinned ComfyUI source
-        shell: bash
-        run: |
-          git init --quiet ComfyUI
-          git -C ComfyUI remote add origin https://github.com/Comfy-Org/ComfyUI.git
-          git -C ComfyUI config core.sparseCheckout true
-          git -C ComfyUI config core.sparseCheckoutCone false
-          printf '/nodes.py\n/comfy/supported_models.py\n/comfy_extras/**\n/comfy_api_nodes/**\n' > ComfyUI/.git/info/sparse-checkout
-          git -C ComfyUI fetch --quiet --depth=1 --filter=blob:none origin 15eb748b3ec5f8a0a2d470b7fb280e2d7579f916
-          git -C ComfyUI checkout --quiet --detach FETCH_HEAD
       - name: Verify translation, capability, and source-parity evidence
-        run: >
-          uv run --locked python tools/comfy_coverage.py
-          --templates workflow_templates/templates --comfyui ComfyUI
-          --supported docs/supported --check
+        run: |
+          uv run --locked python tools/comfy_coverage.py \
+            --templates "$WORKFLOW_TEMPLATES_ROOT/templates" --comfyui "$COMFYUI_ROOT" \
+            --supported docs/supported
+          uv run --locked python tools/comfy_coverage.py \
+            --templates "$WORKFLOW_TEMPLATES_ROOT/templates" --comfyui "$COMFYUI_ROOT" \
+            --supported docs/supported --check
+          git diff --exit-code -- docs/comfy-translation-coverage.md docs/comfy-capability-evidence.md
       - name: Replay VIDEO template shapes
         run: uv run --locked pytest -q tests/test_video_alias_templates.py
-        env:
-          WORKFLOW_TEMPLATES_ROOT: workflow_templates
