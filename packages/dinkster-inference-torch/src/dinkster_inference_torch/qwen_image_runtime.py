@@ -43,7 +43,13 @@ from dinkster_inference import (
 from dinkster_inference.qwen_image_text import format_qwen_image_prompt
 
 from .denoise import prepare_denoise_mask, run_sampler_engine
-from .guidance import ConditioningEvaluation
+from .guidance import (
+    ConditioningBatch,
+    ConditioningEvaluation,
+)
+from .guidance import (
+    evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
+)
 from .operations import bound_compute_device, module_compute_device
 from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
 from .qwen_image import QwenImage
@@ -394,12 +400,13 @@ class _QwenImageDenoiser:
             for condition in conditions
         )
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _validate_conditioning_batch(
         self,
         x: torch.Tensor,
-        sigma: float,
         conditions: tuple[QwenImageConditioning, ...],
-    ) -> tuple[torch.Tensor, ...]:
+    ) -> None:
         if not self.batchable(conditions):
             raise QwenImageRuntimeError("Qwen Image conditioning batch is incompatible")
         batch = x.shape[0]
@@ -407,32 +414,47 @@ class _QwenImageDenoiser:
             raise QwenImageRuntimeError(
                 "Qwen Image conditioning batch must be one or match the latent"
             )
+
+    def _evaluate_conditioning_model(
+        self,
+        batch: ConditioningBatch[QwenImageConditioning],
+    ) -> torch.Tensor:
         contexts = tuple(
-            condition.embeddings.to(device=x.device, dtype=self._compute_dtype).expand(
-                batch, -1, -1
+            condition.embeddings.to(device=batch.latent.device, dtype=self._compute_dtype).expand(
+                batch.batch_size, -1, -1
             )
-            for condition in conditions
+            for condition in batch.conditions
         )
-        first_mask = conditions[0].attention_mask
+        first_mask = batch.conditions[0].attention_mask
         attention_mask = (
             None
             if first_mask is None
             else torch.cat(
                 tuple(
                     cast("torch.Tensor", condition.attention_mask)
-                    .to(device=x.device)
-                    .expand(batch, -1)
-                    for condition in conditions
+                    .to(device=batch.latent.device)
+                    .expand(batch.batch_size, -1)
+                    for condition in batch.conditions
                 )
             )
         )
-        model_latent = torch.cat((x.to(dtype=self._compute_dtype),) * len(conditions))
-        timestep = torch.full((model_latent.shape[0],), sigma, dtype=torch.float32, device=x.device)
         _check_cancelled(self._cancelled)
-        output = self._model(model_latent, timestep, torch.cat(contexts), attention_mask)
+        output = self._model(
+            batch.model_input,
+            batch.timestep,
+            torch.cat(contexts),
+            attention_mask,
+        )
         _check_cancelled(self._cancelled)
-        denoised = torch.cat((x,) * len(conditions)) - output.to(torch.float32) * sigma
-        return tuple(denoised.chunk(len(conditions)))
+        return output
+
+    @staticmethod
+    def _conditioning_denoised(
+        batch: ConditioningBatch[QwenImageConditioning],
+        output: torch.Tensor,
+        flow_input: torch.Tensor,
+    ) -> torch.Tensor:
+        return flow_input - output.to(torch.float32) * batch.sigma
 
 
 class QwenImageRuntime(FlowSamplingRuntime):

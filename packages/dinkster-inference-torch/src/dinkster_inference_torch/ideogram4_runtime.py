@@ -42,8 +42,12 @@ from .brownian import BrownianTreeNoise
 from .conditioning_adapters import materialize_basic_conditioning
 from .denoise import run_denoise
 from .guidance import (
+    ConditioningBatch,
     ConditioningEvaluation,
     GuidanceExecutor,
+)
+from .guidance import (
+    evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
 )
 from .ideogram4_conditioner import (
     Ideogram4Conditioning,
@@ -225,12 +229,13 @@ class _Ideogram4Denoiser:
             for context, attention in conditions[1:]
         )
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _validate_conditioning_batch(
         self,
         latent: torch.Tensor,
-        sigma: float,
         conditions: tuple[tuple[torch.Tensor | None, torch.Tensor | None], ...],
-    ) -> tuple[torch.Tensor, ...]:
+    ) -> None:
         if not self.batchable(conditions):
             raise Ideogram4RuntimeError("Ideogram 4 conditioning batch is incompatible")
         batch = latent.shape[0]
@@ -239,38 +244,43 @@ class _Ideogram4Denoiser:
             raise Ideogram4RuntimeError(
                 "Ideogram 4 conditioning batch must be one or match the latent"
             )
-        first_context = contexts[0]
+
+    def _evaluate_conditioning_model(
+        self,
+        batch: ConditioningBatch[tuple[torch.Tensor | None, torch.Tensor | None]],
+    ) -> torch.Tensor:
+        contexts = tuple(context for context, _attention in batch.conditions)
         model_context = (
             None
-            if first_context is None
+            if contexts[0] is None
             else torch.cat(
                 tuple(
                     cast("torch.Tensor", context)
-                    .to(device=latent.device, dtype=self.compute_dtype)
-                    .expand(batch, -1, -1)
+                    .to(device=batch.latent.device, dtype=self.compute_dtype)
+                    .expand(batch.batch_size, -1, -1)
                     for context in contexts
                 )
             )
         )
-        attentions = tuple(attention for _context, attention in conditions)
+        attentions = tuple(attention for _context, attention in batch.conditions)
         model_attention = (
             None
             if attentions[0] is None
             else torch.cat(
                 tuple(
-                    cast("torch.Tensor", attention).to(device=latent.device).expand(batch, -1)
+                    cast("torch.Tensor", attention)
+                    .to(device=batch.latent.device)
+                    .expand(batch.batch_size, -1)
                     for attention in attentions
                 )
             )
         )
-        model_input = torch.cat((latent.to(dtype=self.compute_dtype),) * len(conditions))
-        timestep = torch.full(
-            (model_input.shape[0],), sigma, dtype=torch.float32, device=latent.device
-        )
-        output = self.model(model_input, timestep, model_context, model_attention).float()
-        flow_input = torch.cat((latent,) * len(conditions))
-        denoised = calculate_denoised(Parameterization.FLOW, sigma, output, flow_input)
-        return tuple(denoised.chunk(len(conditions)))
+        return self.model(
+            batch.model_input,
+            batch.timestep,
+            model_context,
+            model_attention,
+        ).float()
 
 
 class Ideogram4TextRuntime:

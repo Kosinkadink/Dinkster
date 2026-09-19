@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Generic, Protocol, TypeVar, cast
 
@@ -24,6 +25,7 @@ from ._conditioning_layout import (
     conditioning_token_transforms,
     validate_flux_layout,
 )
+from .guidance import evaluate_conditioning_batch as _engine_evaluate_conditioning_batch
 
 PreparedConditionT = TypeVar("PreparedConditionT")
 
@@ -40,12 +42,10 @@ class FluxWindowInnerEvaluator(Protocol[PreparedConditionT]):
         condition: PreparedConditionT,
     ) -> torch.Tensor: ...
 
-    def evaluate_conditioning_batch(
-        self,
-        x: torch.Tensor,
-        sigma: float,
-        conditions: tuple[PreparedConditionT, ...],
-    ) -> tuple[torch.Tensor, ...]: ...
+    evaluate_conditioning_batch: Callable[
+        [torch.Tensor, float, tuple[PreparedConditionT, ...], object | None],
+        tuple[torch.Tensor, ...],
+    ]
 
 
 class FluxWindowError(ValueError):
@@ -583,7 +583,9 @@ class FluxWindowConditioningEvaluation(Generic[PreparedConditionT]):
         )
         return merge_flux_window_outputs(self.prepared_plan, outputs)
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _evaluate_conditioning_batch(
         self,
         x: torch.Tensor,
         sigma: float,
@@ -595,6 +597,7 @@ class FluxWindowConditioningEvaluation(Generic[PreparedConditionT]):
                 crop_flux_window(x, self.prepared_plan, index),
                 sigma,
                 tuple(condition.windows[index] for condition in conditions),
+                None,
             )
             if len(outputs) != len(conditions):
                 raise FluxWindowError(

@@ -69,6 +69,9 @@ from dinkster_inference_torch.flux_window_distributed import (
     window_receipt_identity,
     window_route_mismatch,
 )
+from dinkster_inference_torch.guidance import (
+    evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
+)
 
 _RUNTIME_IDENTITY = f"native:dinkster.flux-test:{hashlib.sha256(b'window').hexdigest()}"
 _FACTS = ("topology=window", "window_evaluation=full-replica-window-scatter")
@@ -152,7 +155,9 @@ class _ScaledEvaluator:
     ) -> torch.Tensor:
         return x * float(self._index + 2) + sigma + condition[0].sum()
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _evaluate_conditioning_batch(
         self,
         x: torch.Tensor,
         sigma: float,

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import cast
 
 import torch
 from dinkster_inference import (
@@ -69,6 +70,12 @@ from .controlnet import (
     normalize_control_hint,
 )
 from .denoise import DenoiseError, to_batch
+from .guidance import (
+    ConditioningBatch,
+)
+from .guidance import (
+    evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
+)
 from .ipadapter import (
     SD15AttentionExecutionContext,
     SD15IPAdapterConditioning,
@@ -605,6 +612,7 @@ class SDDenoiser:
     def _forward(
         self,
         xc: torch.Tensor,
+        timesteps: torch.Tensor,
         sigma: float,
         contexts: list[torch.Tensor],
         adms: list[torch.Tensor | None],
@@ -612,20 +620,11 @@ class SDDenoiser:
         repeats: list[int] | None = None,
         attention_guidance: AttentionGuidanceContext | None = None,
     ) -> torch.Tensor:
-        """One UNet call over ``len(contexts)`` copies of ``xc``
-        stacked along the batch axis; returns float32 output.
+        """One UNet call over the engine-stacked conditioning lanes.
+
         ``repeats`` carries the CONDCrossAttn repeat-to-lcm factors
         (None = all 1)."""
-        batch = xc.shape[0]
-        if self.model.config.in_channels == 9:
-            xc = inpaint_model_input(
-                xc,
-                denoise_mask=self._inpaint_mask,
-                masked_image=self._inpaint_masked_image,
-            )
-        if len(contexts) > 1:
-            xc = torch.cat([xc] * len(contexts), dim=0)
-        total = xc.shape[0]
+        batch = xc.shape[0] // len(contexts)
         device = xc.device
         ipadapter = SD15AttentionExecutionContext.for_sigma(
             self._ipadapter,
@@ -637,16 +636,6 @@ class SDDenoiser:
             device=device,
             dtype=self.compute_dtype,
         )
-        if isinstance(self.space, ContinuousEDMSigmas):
-            sigma_tensor = torch.tensor(sigma, device=device, dtype=torch.float32)
-            timesteps = (0.25 * sigma_tensor.log()).expand(total)
-        else:
-            timesteps = torch.full(
-                (total,),
-                self.space.timestep(sigma),
-                device=device,
-                dtype=torch.float32,
-            )
         parts = []
         for i, context in enumerate(contexts):
             part = to_batch(context, batch).to(device=device, dtype=self.compute_dtype)
@@ -850,29 +839,61 @@ class SDDenoiser:
     ) -> torch.Tensor:
         return self.evaluate_conditioning_batch(x, sigma, (condition,))[0]
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _validate_conditioning_batch(
         self,
         x: torch.Tensor,
-        sigma: float,
         conditions: tuple[SDCondition, ...],
-        attention_guidance: AttentionGuidanceContext | None = None,
-    ) -> tuple[torch.Tensor, ...]:
+    ) -> None:
         if not conditions or not self.batchable(conditions):
             raise DenoiseError("SD conditioning batch is empty or incompatible")
-        parameterization = self.parameterization
-        xc = _calculate_input(parameterization, sigma, x).to(self.compute_dtype)
+
+    def _conditioning_model_input(self, x: torch.Tensor, sigma: float) -> torch.Tensor:
+        model_input = _calculate_input(self.parameterization, sigma, x).to(self.compute_dtype)
+        if self.model.config.in_channels == 9:
+            model_input = inpaint_model_input(
+                model_input,
+                denoise_mask=self._inpaint_mask,
+                masked_image=self._inpaint_masked_image,
+            )
+        return model_input
+
+    def _conditioning_timestep_tensor(
+        self,
+        sigma: float,
+        device: torch.device,
+    ) -> float | torch.Tensor:
+        if isinstance(self.space, ContinuousEDMSigmas):
+            sigma_tensor = torch.tensor(sigma, device=device, dtype=torch.float32)
+            return 0.25 * sigma_tensor.log()
+        return self.space.timestep(sigma)
+
+    def _evaluate_conditioning_model(
+        self,
+        batch: ConditioningBatch[SDCondition],
+    ) -> torch.Tensor:
+        conditions = batch.conditions
         repeats = cross_attn_repeat([condition[0].shape[1] for condition in conditions])
         assert repeats is not None
-        outputs = self._forward(
-            xc,
-            sigma,
+        return self._forward(
+            batch.model_input,
+            batch.timestep,
+            batch.sigma,
             [condition[0] for condition in conditions],
             [condition[1] for condition in conditions],
             tuple(condition[2] for condition in conditions),
             repeats,
-            attention_guidance,
-        ).chunk(len(conditions))
-        return tuple(_calculate_denoised(parameterization, sigma, output, x) for output in outputs)
+            cast("AttentionGuidanceContext | None", batch.context),
+        )
+
+    def _conditioning_denoised(
+        self,
+        batch: ConditioningBatch[SDCondition],
+        output: torch.Tensor,
+        model_input: torch.Tensor,
+    ) -> torch.Tensor:
+        return _calculate_denoised(self.parameterization, batch.sigma, output, model_input)
 
     def evaluate_conditioning_batch_attention(
         self,

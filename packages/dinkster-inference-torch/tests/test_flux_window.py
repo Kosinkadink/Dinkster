@@ -38,6 +38,9 @@ from dinkster_inference_torch.flux_window import (
     merge_flux_window_outputs,
     prepare_flux_window_plan,
 )
+from dinkster_inference_torch.guidance import (
+    evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
+)
 
 
 class _IdentityEvaluator:
@@ -65,8 +68,10 @@ class _IdentityEvaluator:
         del sigma, condition
         return x
 
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
     @staticmethod
-    def evaluate_conditioning_batch(
+    def _evaluate_conditioning_batch(
         x: torch.Tensor,
         sigma: float,
         conditions: tuple[tuple[torch.Tensor, torch.Tensor | None], ...],

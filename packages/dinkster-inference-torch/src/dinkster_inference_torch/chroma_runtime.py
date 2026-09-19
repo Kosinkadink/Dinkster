@@ -22,14 +22,12 @@ from dinkster_inference import (
     GuidanceRole,
     InpaintConditioning,
     ModelFamily,
-    Parameterization,
     PromptTokenizer,
     Registry,
     SamplerDescriptor,
     SamplingStateCallback,
     SchedulerDescriptor,
     StepCallback,
-    calculate_denoised,
     load_t5_spm,
     sampling_execution_context,
 )
@@ -39,7 +37,14 @@ from .brownian import BrownianTreeNoise
 from .chroma import Chroma, ChromaRadiance, ChromaRadianceOptions
 from .conditioning_adapters import basic_conditioning_to_carrier, materialize_basic_conditioning
 from .denoise import FluxGuidance, run_denoise
-from .guidance import ConditioningEvaluation, GuidanceExecutor
+from .guidance import (
+    ConditioningBatch,
+    ConditioningEvaluation,
+    GuidanceExecutor,
+)
+from .guidance import (
+    evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
+)
 from .operations import module_compute_device
 from .sampling_execution import (
     CustomSamplingCfgValue,
@@ -167,42 +172,42 @@ class ChromaDenoiser:
     ) -> torch.Tensor:
         return self.evaluate_conditioning_batch(x, sigma, (condition,))[0]
 
-    def evaluate_conditioning_batch(
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def _validate_conditioning_batch(
         self,
         x: torch.Tensor,
-        sigma: float,
         conditions: tuple[tuple[torch.Tensor, str], ...],
-    ) -> tuple[torch.Tensor, ...]:
+    ) -> None:
         if not self.batchable(conditions):
             raise ChromaRuntimeError("Chroma conditioning batch is empty or incompatible")
         batch = x.shape[0]
         if any(condition[0].shape[0] not in (1, batch) for condition in conditions):
             raise ChromaRuntimeError("Chroma conditioning batch must be one or match the latent")
-        model_input = x.to(dtype=self.compute_dtype)
-        if len(conditions) > 1:
-            model_input = torch.cat([model_input] * len(conditions), dim=0)
+
+    def _evaluate_conditioning_model(
+        self,
+        batch: ConditioningBatch[tuple[torch.Tensor, str]],
+    ) -> torch.Tensor:
         context = torch.cat(
             [
-                condition[0].to(device=x.device, dtype=self.compute_dtype).expand(batch, -1, -1)
-                for condition in conditions
+                condition[0]
+                .to(device=batch.latent.device, dtype=self.compute_dtype)
+                .expand(batch.batch_size, -1, -1)
+                for condition in batch.conditions
             ],
             dim=0,
         )
-        timestep = torch.full((model_input.shape[0],), sigma, dtype=torch.float32, device=x.device)
-        guidance = torch.full_like(timestep, self.guidance)
+        guidance = torch.full_like(batch.timestep, self.guidance)
         if isinstance(self.model, ChromaRadiance):
-            output = self.model(
-                model_input,
-                timestep,
+            return self.model(
+                batch.model_input,
+                batch.timestep,
                 context,
                 guidance,
-                options=self._radiance_options(sigma),
+                options=self._radiance_options(batch.sigma),
             ).float()
-        else:
-            output = self.model(model_input, timestep, context, guidance).float()
-        flow_input = x if len(conditions) == 1 else torch.cat([x] * len(conditions), dim=0)
-        denoised = calculate_denoised(Parameterization.FLOW, sigma, output, flow_input)
-        return tuple(denoised.chunk(len(conditions)))
+        return self.model(batch.model_input, batch.timestep, context, guidance).float()
 
 
 @dataclass(frozen=True)
