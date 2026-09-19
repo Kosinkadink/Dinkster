@@ -163,7 +163,6 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_nodes_foundation": {"dinkster_api"},
     "dinkster_nodes_media_io": {"dinkster_api", "dinkster_image_document"},
     "dinkster_nodes_image": {"dinkster_api", "dinkster_image_document"},
-    "dinkster_video_preview": {"dinkster_api"},
     "dinkster_nodes_remote": {"dinkster_api", "dinkster_workers"},
     "dinkster_nodes_generation": {"dinkster_api"},
     "dinkster_nodes_generation_openai": {
@@ -220,11 +219,6 @@ ALLOWED: dict[str, set[str]] = {
     # report JSON, never a dinkster_workers import - the registry consumes
     # the machine interface, keeping it deployable without host machinery.
     "dinkster_registry": {"dinkster_schema"},
-    # The registry service persists and operates the pure model. It sees
-    # nothing of the engine stack: doctor evidence arrives as report JSON
-    # through dinkster_registry's Submission, and artifact bytes live in
-    # content-addressed files outside the database.
-    "dinkster_registry_service": {"dinkster_registry", "dinkster_schema"},
     # Layer 0, above even the server: the supervisor spawns engine hosts
     # and speaks HTTP to them, NEVER importing engine code - the layer
     # that will manage multiple installations (different code versions,
@@ -299,6 +293,14 @@ def test_one_way_dependencies() -> None:
                     violations.append(f"{module.relative_to(REPO_ROOT)} imports {imported}")
     assert checked > 0
     assert not violations, "one-way dependency rule violated:\n" + "\n".join(violations)
+
+
+def test_bundled_video_preview_imports_only_the_pack_api() -> None:
+    source = REPO_ROOT / "packages/dinkster-video/preview/src/dinkster_video_preview"
+    modules = list(source.rglob("*.py"))
+    assert modules
+    for module in modules:
+        assert dinkster_imports(module) <= {"dinkster_api", "dinkster_video_preview"}
 
 
 def test_gguf_dependency_is_locked_only_behind_inference_extra() -> None:

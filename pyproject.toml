@@ -36,7 +36,6 @@ dependencies = [
     "dinkster-server",
     "dinkster-collab",
     "dinkster-registry",
-    "dinkster-registry-service",
     "dinkster-supervisor",
     # The comfy compat host registration (comfy_compose.register_comfy_host_types)
     # decodes and renders comfy.IMAGE values with numpy; dinkster-values itself
@@ -51,7 +50,6 @@ dependencies = [
 dinkster = "dinkster.cli:main"
 dinkster-serve = "dinkster.serve:main"
 dinkster-pack = "dinkster.manager:main"
-dinkster-registry = "dinkster.registry_service:main"
 dinkster-isolated = "dinkster.isolated_demo:main"
 dinkster-port = "dinkster.port:main"
 dinkster-installs = "dinkster.install_manager:main"
@@ -108,7 +106,6 @@ dinkster-training-worker = { workspace = true }
 dinkster-server = { workspace = true }
 dinkster-collab = { workspace = true }
 dinkster-registry = { workspace = true }
-dinkster-registry-service = { workspace = true }
 dinkster-supervisor = { workspace = true }
 
 [build-system]

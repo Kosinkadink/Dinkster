@@ -175,7 +175,7 @@ undeclared chunks are not served. Stale, changed, removed, or unselected
 modules return 404. Catalog, snapshot, and module reads do not activate a
 worker or import pack code in the host.
 
-The opt-in first-party [video preview pack](../dinkster-video-preview/README.md)
+The opt-in first-party [video preview pack](../dinkster-video/README.md#preview-initialization)
 uses the same policy route and typed event to initialize VHS-style video
 preview metadata. No ComfyUI JavaScript, PromptServer, or global extension
 registry is involved.

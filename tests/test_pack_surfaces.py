@@ -30,7 +30,7 @@ from dinkster_workers.catalog import read_catalog, worker_declarations
 from dinkster.compose import PackSpec, ServingComposer
 from dinkster.extension_assets import read_module, resolve_frontend_modules
 
-PROOF_ROOT = Path(__file__).resolve().parents[1] / "packages/dinkster-video-preview"
+PROOF_ROOT = Path(__file__).resolve().parents[1] / "packages/dinkster-video/preview"
 PROOF_PACK = "dinkster-video-preview"
 PROOF_EVENT = "video-preview.initialized"
 PROOF_ROUTE = f"/api/extensions/{PROOF_PACK}/routes/preview-policy"

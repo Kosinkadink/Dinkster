@@ -65,8 +65,9 @@ def stop(process: subprocess.Popen[str]) -> None:
         raise RuntimeError("owned release verification descendants survived teardown")
 
 
-def verify(root: Path, state: Path) -> None:
+def verify(root: Path, state: Path, registry_command: Path) -> None:
     root = root.resolve()
+    registry_command = registry_command.resolve()
     state.mkdir(parents=True)
     python = root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     registry = str(state / "registry")
@@ -85,22 +86,23 @@ def verify(root: Path, state: Path) -> None:
         )
         return result.stdout
 
-    run("dinkster.registry_service", "--data", registry, "admin", "add-user", "local", "--operator")
-    run(
-        "dinkster.registry_service",
-        "--data",
-        registry,
-        "admin",
+    def registry_admin(*args: str) -> str:
+        return subprocess.run(
+            [str(registry_command), "--data", registry, "admin", *args],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout
+
+    registry_admin("add-user", "local", "--operator")
+    registry_admin(
         "add-publisher",
         "local",
         "--owner",
         "local",
     )
-    token = run(
-        "dinkster.registry_service",
-        "--data",
-        registry,
-        "admin",
+    token = registry_admin(
         "mint-token",
         "local",
         "--user",
@@ -110,10 +112,10 @@ def verify(root: Path, state: Path) -> None:
     ).strip()
     with ExitStack() as stack:
 
-        def service(name: str, module: str, *args: str) -> subprocess.Popen[str]:
+        def service(name: str, *command: str) -> subprocess.Popen[str]:
             log = stack.enter_context((state / f"{name}.log").open("w"))
             process = subprocess.Popen(
-                [str(python), "-m", module, *args],
+                command,
                 cwd=root,
                 stdout=log,
                 stderr=subprocess.STDOUT,
@@ -124,7 +126,7 @@ def verify(root: Path, state: Path) -> None:
 
         registry_process = service(
             "registry",
-            "dinkster.registry_service",
+            str(registry_command),
             "--data",
             registry,
             "serve",
@@ -193,6 +195,8 @@ def verify(root: Path, state: Path) -> None:
         (state / "catalog-preparation.log").write_text(preparation)
         backend = service(
             "backend",
+            str(python),
+            "-m",
             "dinkster.serve",
             "--host",
             "127.0.0.1",
@@ -270,9 +274,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("--state", type=Path)
+    parser.add_argument("--registry-command", type=Path, required=True)
     args = parser.parse_args()
     if args.state is not None:
-        verify(args.root, args.state.resolve())
+        verify(args.root, args.state.resolve(), args.registry_command)
     else:
         with tempfile.TemporaryDirectory(prefix="dinkster-release-") as directory:
-            verify(args.root, Path(directory) / "state")
+            verify(args.root, Path(directory) / "state", args.registry_command)
