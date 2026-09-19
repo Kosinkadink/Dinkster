@@ -61,6 +61,20 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: '3.12'
+      - uses: actions/checkout@v4
+        with:
+          repository: Kosinkadink/dinkster-registry
+          path: registry
+          token: ${{ secrets.DINKSTER_REPO_TOKEN }}
+      - name: Install the independent loopback registry
+        shell: bash
+        env:
+          DINKSTER_REPO_TOKEN: ${{ secrets.DINKSTER_REPO_TOKEN }}
+        run: |
+          GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0="url.https://x-access-token:${DINKSTER_REPO_TOKEN}@github.com/.insteadOf" \
+          GIT_CONFIG_VALUE_0="https://github.com/" \
+          env -u GITHUB_TOKEN uv sync --project registry --frozen
       - name: Install from the archive without a checkout
         shell: bash
         run: |
@@ -70,7 +84,11 @@ jobs:
           uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-serve --help
           uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-pack --help
           uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-installs --help
-          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync python clean-install/dinkster-backend-${GITHUB_SHA}/scripts/verify_release_install.py clean-install/dinkster-backend-${GITHUB_SHA}
+          registry_command="$PWD/registry/.venv/bin/dinkster-registry-sqlite"
+          if [ "$RUNNER_OS" = Windows ]; then
+            registry_command="$PWD/registry/.venv/Scripts/dinkster-registry-sqlite.exe"
+          fi
+          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync python clean-install/dinkster-backend-${GITHUB_SHA}/scripts/verify_release_install.py clean-install/dinkster-backend-${GITHUB_SHA} --registry-command "$registry_command"
   publish:
     needs: install
     runs-on: ubuntu-latest

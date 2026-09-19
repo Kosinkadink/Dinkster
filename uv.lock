@@ -44,7 +44,6 @@ members = [
     "dinkster-p2p",
     "dinkster-protocol",
     "dinkster-registry",
-    "dinkster-registry-service",
     "dinkster-schema",
     "dinkster-server",
     "dinkster-supervisor",
@@ -52,7 +51,6 @@ members = [
     "dinkster-training-worker",
     "dinkster-values",
     "dinkster-video",
-    "dinkster-video-preview",
     "dinkster-vision-birefnet",
     "dinkster-vision-depth-anything-v2",
     "dinkster-vision-depth-anything-v3",
@@ -862,7 +860,6 @@ dependencies = [
     { name = "dinkster-p2p" },
     { name = "dinkster-protocol" },
     { name = "dinkster-registry" },
-    { name = "dinkster-registry-service" },
     { name = "dinkster-schema" },
     { name = "dinkster-server" },
     { name = "dinkster-supervisor" },
@@ -918,7 +915,6 @@ requires-dist = [
     { name = "dinkster-p2p", editable = "packages/dinkster-p2p" },
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
     { name = "dinkster-registry", editable = "packages/dinkster-registry" },
-    { name = "dinkster-registry-service", editable = "packages/dinkster-registry-service" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
     { name = "dinkster-server", editable = "packages/dinkster-server" },
     { name = "dinkster-supervisor", editable = "packages/dinkster-supervisor" },
@@ -1648,23 +1644,6 @@ dependencies = [
 requires-dist = [{ name = "dinkster-schema", editable = "packages/dinkster-schema" }]
 
 [[package]]
-name = "dinkster-registry-service"
-version = "0.0.1"
-source = { editable = "packages/dinkster-registry-service" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "dinkster-registry" },
-    { name = "dinkster-schema" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", specifier = ">=3.10" },
-    { name = "dinkster-registry", editable = "packages/dinkster-registry" },
-    { name = "dinkster-schema", editable = "packages/dinkster-schema" },
-]
-
-[[package]]
 name = "dinkster-schema"
 version = "0.0.1"
 source = { editable = "packages/dinkster-schema" }
@@ -1842,17 +1821,6 @@ requires-dist = [
     { name = "opentimelineio", specifier = "==0.18.1" },
     { name = "pillow", specifier = ">=10" },
 ]
-
-[[package]]
-name = "dinkster-video-preview"
-version = "0.0.1"
-source = { editable = "packages/dinkster-video-preview" }
-dependencies = [
-    { name = "dinkster-api" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
 
 [[package]]
 name = "dinkster-vision-birefnet"

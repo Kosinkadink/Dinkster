@@ -18,7 +18,7 @@ def _toml(path: Path) -> dict[str, object]:
 
 def test_workspace_and_generated_metadata_share_python_floor() -> None:
     manifests = [ROOT / "pyproject.toml", *sorted((ROOT / "packages").glob("*/pyproject.toml"))]
-    assert len(manifests) == 51
+    assert len(manifests) == 49
     for manifest in manifests:
         project = _toml(manifest)["project"]
         assert isinstance(project, dict)

@@ -49,8 +49,7 @@ Publisher claims alone are not evidence.
 
 ## Learn more
 
-See the "Design contract" section of `../dinkster-registry-service/README.md`
-for the distribution design (execution-based indexing, doctor as the shared
-admission predicate). Focused coverage is in `tests/test_registry.py`,
+See the [registry repository](https://github.com/Kosinkadink/dinkster-registry)
+for hosted distribution and admission. Focused client model coverage is in `tests/test_registry.py`,
 `tests/test_registry_principals.py`, `tests/test_artifact.py`,
 `tests/test_install.py`, and `tests/test_installer.py`.

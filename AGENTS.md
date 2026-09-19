@@ -48,7 +48,7 @@ custom-sampling seam (noise / guider / sampler / sigmas / latent, the
 CustomSamplingRuntime contract in dinkster_inference/runtime.py). Every model
 family implements ONLY that seam. KSampler and every other sampler node are
 sugar - thin compositions of the seam (see run_ksampler_as_custom in
-dinkster_inference_torch/sampling_execution.py) - never a second execution
+dinkster_inference_torch/sampling_runtime.py) - never a second execution
 path. Do not add bespoke per-family assembly branches, KSampler-only
 sampling code, or family gates that make the decomposed path reject what the
 KSampler path accepts. Cross-cutting sampling behavior (distributed

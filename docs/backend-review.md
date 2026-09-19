@@ -206,7 +206,10 @@ No findings; the frozen v1 surface is pinned by `tests/test_api_v1.py`.
 - docs: versioning claims narrowed to operation/session envelopes
   (snapshot routes are unversioned by design).
 
-## dinkster-registry / dinkster-registry-service (needs work -> fixed)
+## Registry model and hosted registry (needs work -> fixed)
+
+The HTTP and storage implementation and its tests are maintained in the
+[registry repository](https://github.com/Kosinkadink/dinkster-registry).
 
 - fixed (security): POST /publish passed the artifact digest into
   `ArtifactVault.path_of()` unvalidated - `sha256:../outside`
