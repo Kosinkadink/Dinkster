@@ -732,6 +732,41 @@ def test_live_aimdo_probe_admits_visible_devices(
     assert calls == (["visible"] if armed else [])
 
 
+@pytest.mark.parametrize("loaded", [False, True])
+def test_aimdo_headroom_probe_requires_library(
+    monkeypatch: pytest.MonkeyPatch, loaded: bool
+) -> None:
+    import ctypes
+
+    from aimdo_live_nodes import AimdoHeadroomProbe
+
+    library = object() if loaded else None
+    calls: list[tuple[object, str]] = []
+
+    def in_dll(dll: object, name: str) -> SimpleNamespace:
+        calls.append((dll, name))
+        return SimpleNamespace(value=1234)
+
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(device=lambda value: value))
+    monkeypatch.setitem(
+        sys.modules, "dinkster_aimdo", SimpleNamespace(control=SimpleNamespace(lib=library))
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_compat_comfy.native_arm",
+        SimpleNamespace(_aimdo_mechanism_factory=lambda *_: (object(), None)),
+    )
+    monkeypatch.setattr(ctypes, "c_int64", SimpleNamespace(in_dll=in_dll))
+    monkeypatch.setenv("DINKSTER_AIMDO_HEADROOM_TARGET", "0")
+    if loaded:
+        assert AimdoHeadroomProbe.execute(7) == {"native_headroom": 1234, "pending": 1}
+        assert calls == [(library, "simple_vram_headroom")]
+    else:
+        with pytest.raises(RuntimeError, match="aimdo native library did not initialize"):
+            AimdoHeadroomProbe.execute(7)
+        assert calls == []
+
+
 def test_accelerator_runtime_preparation_is_optional_and_calls_runtime() -> None:
     calls: list[str] = []
     runtime = SimpleNamespace(

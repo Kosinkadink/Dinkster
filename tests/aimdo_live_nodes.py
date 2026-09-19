@@ -100,7 +100,10 @@ class AimdoHeadroomProbe(Node):
         mechanism, fallback_reason = _aimdo_mechanism_factory("on", torch.device("cuda:0"), torch)
         if mechanism is None:
             raise RuntimeError(f"aimdo mechanism did not activate: {fallback_reason}")
-        native_headroom = ctypes.c_int64.in_dll(control.lib, "simple_vram_headroom").value
+        library = control.lib
+        if library is None:
+            raise RuntimeError("aimdo native library did not initialize")
+        native_headroom = ctypes.c_int64.in_dll(library, "simple_vram_headroom").value
         pending = int("DINKSTER_AIMDO_HEADROOM_TARGET" in os.environ)
         return cls.outputs(native_headroom=native_headroom, pending=pending)
 
