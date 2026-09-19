@@ -57,7 +57,7 @@ scope, single-user mode is the reserved scope `"local"`.
 | `DELETE /api/sessions/{id}` | close; every registered subscriber gets `session_closed` before its socket closes (best-effort against transport failure only) |
 | `POST /api/sessions/{id}/ops` | append one op envelope |
 | `GET /api/sessions/{id}/ops?after=N` | catch-up; 410 `resync-required` past the retained log |
-| `GET /api/sessions/{id}/snapshot` | `{revision, document}` |
+| `GET /api/sessions/{id}/snapshot` | `{revision, document, documentKind}` |
 | `PUT /api/sessions/{id}/snapshot` | install checkpoint `{revision, document}`; prunes covered ops |
 | `GET /api/sessions/{id}/events` | WS: descriptor, then live `op` envelopes; inbound `presence` frames relayed to others |
 
@@ -101,12 +101,40 @@ server-ordered-optimistic contract later without a new surface.
 Ops mutate through HTTP POST only; the WS is delivery plus presence,
 never an ingestion path - ordering has exactly one door.
 
-`documentKind` is `workflow` or `image` and defaults to `workflow` for
-older clients and persisted sessions. Descriptors always include the kind.
-The host may inject a whole-snapshot validator into `SessionService`;
-`dinkster-serve` uses that seam to strictly validate ImageDocument snapshots
-and lineage at session creation and checkpoint installation. Patch ordering
-remains document-semantic-free.
+`documentKind` is an open namespaced string, such as `dinkster.workflow`,
+`dinkster.image`, or `extension.type`. Names consist of two or more dot-separated
+segments containing ASCII letters, digits, `_`, or `-`. The legacy spellings
+`workflow` and `image` normalize to the corresponding `dinkster.*` kind; omission
+defaults to `dinkster.workflow`, including sessions persisted without a kind.
+Explicit null and malformed names are rejected. Internal sessions and validator
+dispatch use canonical names.
+
+Descriptors and snapshot responses always include the kind. On both surfaces,
+built-ins use the legacy `workflow`/`image` spelling so existing v1 clients can
+still discover and join them. Extension names pass through unchanged. Clients
+must normalize aliases before comparing kinds and refuse unsupported editor
+kinds rather than treating them as workflows. `protocolVersion` remains 1;
+there is no kind-negotiation handshake.
+
+Hosts inject whole-snapshot validation through a `SnapshotValidatorRegistry`:
+
+```python
+from dinkster_collab import SessionService, SnapshotValidatorRegistry
+from dinkster_image_document import validate_collaboration_snapshot
+
+validators = SnapshotValidatorRegistry()
+validators.register("dinkster.image", validate_collaboration_snapshot)
+service = SessionService(snapshot_validator=validators)
+```
+
+Validators receive `(document_id, snapshot)` and return an error string or
+`None`. Registration and lookup normalize aliases; duplicate registration is
+an error. `dinkster-serve` registers the image-document package validator this way,
+enforcing ImageDocument structure and lineage at creation and checkpoint
+installation. Unregistered kinds (including workflows) remain opaque JSON.
+All snapshots still pass the service's JSON ownership copy and finite-number
+validation before kind-specific validation. Patch ordering, revisions, access
+control, and denial semantics are independent of document kind.
 
 ## Durability
 

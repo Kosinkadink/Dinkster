@@ -134,13 +134,16 @@ def test_service_checkpoint_prunes_and_forces_resync() -> None:
 
 def test_service_validates_kind_specific_snapshots_before_mutation() -> None:
     def validator(document_kind: str, document_id: str, snapshot: object) -> str | None:
-        if document_kind == "image" and snapshot != {"lineage": document_id, "valid": True}:
+        if document_kind == "dinkster.image" and snapshot != {
+            "lineage": document_id,
+            "valid": True,
+        }:
             return "invalid image snapshot"
         return None
 
     service = SessionService(snapshot_validator=validator)
     workflow = service.create(scope="local", document_id="workflow", snapshot=None)
-    assert workflow.document_kind == "workflow"
+    assert workflow.document_kind == "dinkster.workflow"
     with pytest.raises(InvalidSnapshotError):
         service.create(
             scope="local", document_id="image", document_kind="image", snapshot={"valid": False}
@@ -402,7 +405,7 @@ def test_session_lifecycle_over_http() -> None:
                 "snapshotRevision": 2,
             }
             snap = await (await client.get(f"/api/sessions/{sid}/snapshot")).json()
-            assert snap == {"revision": 2, "document": {"v": 2}}
+            assert snap == {"revision": 2, "document": {"v": 2}, "documentKind": "workflow"}
 
             # Close: descriptor 404s afterwards.
             assert (await client.delete(f"/api/sessions/{sid}")).status == 200
@@ -415,7 +418,7 @@ def test_session_lifecycle_over_http() -> None:
 
 def test_image_session_kind_and_snapshot_validation_over_http() -> None:
     def validator(document_kind: str, document_id: str, snapshot: object) -> str | None:
-        if document_kind == "image" and snapshot != {"lineage": document_id}:
+        if document_kind == "dinkster.image" and snapshot != {"lineage": document_id}:
             return "invalid image snapshot"
         return None
 
@@ -466,7 +469,11 @@ def test_image_session_kind_and_snapshot_validation_over_http() -> None:
             assert rejected.status == 400
             assert (await rejected.json())["error"] == "document-invalid"
             snapshot = await client.get(f"/api/sessions/{session_id}/snapshot")
-            assert await snapshot.json() == {"revision": 0, "document": {"lineage": "image"}}
+            assert await snapshot.json() == {
+                "revision": 0,
+                "document": {"lineage": "image"},
+                "documentKind": "image",
+            }
         finally:
             await client.close()
 

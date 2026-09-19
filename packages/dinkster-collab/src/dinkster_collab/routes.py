@@ -52,7 +52,7 @@ non-empty scope, single-user mode is the reserved scope "local"):
                                           {snapshotRevision} when N
                                           predates the retained log
 - GET    /api/sessions/{sessionId}/snapshot
-                                          {revision, document} checkpoint
+                                          {revision, document, documentKind} checkpoint
 - PUT    /api/sessions/{sessionId}/snapshot
                                           install a client-materialized
                                           checkpoint {revision, document};
@@ -98,7 +98,6 @@ from typing import Any, Protocol, cast
 from aiohttp import WSMsgType, web
 
 from .sessions import (
-    DOCUMENT_KINDS,
     PROTOCOL_VERSION,
     ActorLimitError,
     ActorPrincipalMismatchError,
@@ -114,6 +113,7 @@ from .sessions import (
     UnknownSessionError,
     validate_patch,
 )
+from .snapshots import normalize_document_kind
 
 SESSIONS_KEY = web.AppKey("dinkster_collab_sessions", SessionService)
 _SUBSCRIBER_QUEUE_SIZE = 256
@@ -262,13 +262,18 @@ async def _json_body(request: web.Request) -> dict[str, Any]:
     return cast(dict[str, Any], body)
 
 
+def _document_kind_wire(kind: str) -> str:
+    # Protocol v1 clients only recognize the legacy built-in spellings.
+    return {"dinkster.workflow": "workflow", "dinkster.image": "image"}.get(kind, kind)
+
+
 def _session_wire(session: DocumentSession) -> dict[str, object]:
     return {
         "protocolVersion": PROTOCOL_VERSION,
         "sessionId": session.session_id,
         "scope": session.scope,
         "documentId": session.document_id,
-        "documentKind": session.document_kind,
+        "documentKind": _document_kind_wire(session.document_kind),
         "revision": session.revision,
         "snapshotRevision": session.snapshot_revision,
         "createdAt": session.created_at,
@@ -392,9 +397,10 @@ async def handle_create_session(request: web.Request) -> web.Response:
     document_id = body.get("documentId")
     if not isinstance(document_id, str) or not document_id:
         raise _bad_request("'documentId' must be a non-empty string")
-    document_kind = body.get("documentKind", "workflow")
-    if not isinstance(document_kind, str) or document_kind not in DOCUMENT_KINDS:
-        raise _bad_request(f"'documentKind' must be one of {list(DOCUMENT_KINDS)}")
+    try:
+        document_kind = normalize_document_kind(body.get("documentKind", "workflow"))
+    except ValueError as exc:
+        raise _bad_request(str(exc)) from exc
     if "snapshot" not in body:
         raise _bad_request("'snapshot' is required (the document at revision 0)")
     try:
@@ -593,7 +599,13 @@ async def handle_ops_after(request: web.Request) -> web.Response:
 
 async def handle_get_snapshot(request: web.Request) -> web.Response:
     session = _get_session(request.app[SESSIONS_KEY], request, "sessions:read", "viewer")
-    return web.json_response({"revision": session.snapshot_revision, "document": session.snapshot})
+    return web.json_response(
+        {
+            "revision": session.snapshot_revision,
+            "document": session.snapshot,
+            "documentKind": _document_kind_wire(session.document_kind),
+        }
+    )
 
 
 async def handle_put_snapshot(request: web.Request) -> web.Response:
