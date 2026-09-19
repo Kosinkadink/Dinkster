@@ -224,7 +224,7 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
     (checkout,) = [step for step in preparation_steps if step.get("uses") == "actions/checkout@v4"]
     assert checkout["with"] == {
         "repository": "Kosinkadink/dinkster-evidence",
-        "ref": "324e580a983d7e51a1b10ee4fafd78ef2012915c",
+        "ref": "ef914dab9c8c2b959539f8e774bc35e6b4fe58b8",
         "path": ".evidence-source",
         "clean": True,
         "persist-credentials": False,
