@@ -57,8 +57,8 @@ the pinned reference while retaining raw alpha in the recorded adapter data.
   exact-original backup with rollback on failure.
 - `rounding.py` - `stochastic_rounding` + `string_to_seed`
   (comfy/float.py + comfy/utils.py CRC seed). Prefers the
-  comfy-kitchen accelerated fp8 kernel when the installed
-  comfy_kitchen exposes it (capability probe, never a version check)
+  dinkster-kitchen accelerated fp8 kernel when the installed
+  dinkster_kitchen exposes it (capability probe, never a version check)
   and falls back to the reference's manual torch path. Stochastic
   rounding is LOAD-BEARING for fp8/quantized storage: plain nearest
   rounding erases sub-ulp LoRA deltas; the stochastic path preserves
@@ -73,7 +73,7 @@ the pinned reference while retaining raw alpha in the recorded adapter data.
 - `quant.py` - `Fp8ScaledWeight` (fp8 qdata + float32 per-tensor
   scale + compute dtype) with `quantize_fp8_scaled` /
   `requantize_fp8_scaled`, transcribed bit-exact from
-  comfy/quant_ops.py `_TensorCoreFP8LayoutBase` + comfy-kitchen's
+  comfy/quant_ops.py `_TensorCoreFP8LayoutBase` + dinkster-kitchen's
   eager kernels. A plain frozen value type, not a torch wrapper
   subclass: storage form stays visible at every use site.
 - `ops.py` - `cast_weight`, the cast-at-use pipeline
@@ -377,7 +377,7 @@ the pinned reference while retaining raw alpha in the recorded adapter data.
   double_blocks.N.*, single_blocks.N.*, final_layer.*), built from a
   torch-free `FluxConfig` (dinkster_inference.flux detection) through
   the Operations seam (which gained LayerNorm-affine and RMSNorm
-  factories for it). `apply_rope` prefers the comfy-kitchen kernel
+  factories for it). `apply_rope` prefers the dinkster-kitchen kernel
   behind a capability probe, gated on autograd facts (the kernel has
   no autograd formula) and torch.compile (pure-torch math under
   compile; inductor fuses it), with a device-context pin fixing an
@@ -461,7 +461,7 @@ the pinned reference while retaining raw alpha in the recorded adapter data.
   `Nvfp4Linear` likewise uses ordinary module state: packed uint8
   weight, block and tensor scales, input scale, optional pre-quant
   scale, and bias. CPU/non-SM10 (and full-precision-pinned) execution
-  uses capability-probed comfy-kitchen dequantization followed by
+  uses capability-probed dinkster-kitchen dequantization followed by
   `F.linear`; SM10+ uses Kitchen input quantization and scaled NVFP4
   matmul only after the CUDA backend is proven capable, with missing
   APIs and unsupported capability falling back to Kitchen dequantize
@@ -548,7 +548,7 @@ the pinned reference while retaining raw alpha in the recorded adapter data.
   header parse and read raise `SourceReadError` instead of
   returning short tensors.
 - `aimdo.py`, `aimdo_activation.py`, `aimdo_residency.py` - the
-  comfy-aimdo capability probe, one-shot post-torch device activation,
+  dinkster-aimdo capability probe, one-shot post-torch device activation,
   and `AimdoWeights` demand-paged residency mechanism. The worker still
   owns `control.init()` before torch import; activation proves readiness
   with `get_devctx`, then lazily imports ModelVBAR. Native loading admits
@@ -636,26 +636,18 @@ recipes do not establish ROCm or XPU hardware support by themselves: a
 support claim requires the smoke report completing on the corresponding
 real GPU.
 
-### comfy-kitchen
+### dinkster-kitchen
 
-The torch extra installs the reviewed comfy-kitchen 0.2.32 provider. The
+The torch extra installs the reviewed dinkster-kitchen 0.2.35.post1 provider. The
 accelerated fp8 stochastic-rounding path activates when
-`comfy_kitchen.stochastic_rounding_fp8` is importable; without it the
+`dinkster_kitchen.stochastic_rounding_fp8` is importable; without it the
 manual torch path is used and the kitchen golden tests skip. A
-CPU-only wheel builds from the workspace checkout (`../comfy-kitchen`)
-with the supported `--no-cuda` flag. `scripts/setup_envs.sh` archives exact
-release commit `f0092e814e73c0e82e9bfa364d55bad8f84280b6`; when that object is absent
-from the sibling checkout, it fetches the `v0.2.32` tag into a temporary repo
-and verifies that the tag resolves to the same commit before building.
-That source build is the Linux path, where PyPI would deliver the CUDA
-wheel; on macOS no platform wheel exists, so the script installs the
-pinned version from PyPI and pip resolves the pure-Python wheel
-(eager/triton backends) - the same CPU flavor the source build makes. Windows
-installs that exact pure-Python wheel from its hash-pinned PyPI URL.
+CPU environments install its pure-Python wheel from a hash-pinned PyPI URL;
+GPU environments install the exact platform wheel from PyPI.
 
 ### Sol sparse attention
 
-The opt-in `sol` attention policy uses comfy-kitchen 0.2.32's approximate,
+The opt-in `sol` attention policy uses dinkster-kitchen 0.2.35.post1's approximate,
 training-free Sol CUDA kernel on NVIDIA SM80+ devices. It executes unmasked,
 noncausal BF16 self-attention with equal q/k/v shapes and 128-wide heads using
 `tau=1.0` and tail coverage. It trades output similarity and temporary workspace
@@ -732,7 +724,7 @@ uv pip install --python .venv-gpu/bin/python \
 # sentencepiece backs the Gemma tokenizer.
 uv pip install --python .venv-gpu/bin/python \
     pytest numpy scipy torchsde tqdm pillow packaging safetensors sentencepiece \
-    comfy-kitchen==0.2.32 \
+    dinkster-kitchen==0.2.35.post1 dinkster-aimdo==0.5.5.post2 \
     -e packages/dinkster-api \
     -e packages/dinkster-schema \
     -e packages/dinkster-values \
@@ -743,8 +735,6 @@ uv pip install --python .venv-gpu/bin/python \
     -e packages/dinkster-model-ipadapter \
     -e packages/dinkster-model-triposplat \
     -e packages/dinkster-model-wan
-.venv-gpu/bin/python scripts/install_dinkster_aimdo.py
-
 # setup_envs.sh checks the shared Python 3.12 base interpreter once and, when
 # needed, extracts matching headers for both CPU and CUDA compilation.
 DINKSTER_ENABLE_GPU_TESTS=1 DINKSTER_VALIDATE_REFERENCE_GOLDENS=1 \
@@ -790,19 +780,15 @@ FP8 diffusion and Whisper Large v3 files to enable their real loading,
 residency, audio-encoding, and conditioned-forward proofs.
 
 The aimdo GPU proofs each run in a fresh subprocess so
-`comfy_aimdo.control.init()` precedes torch import. They skip cleanly
+`dinkster_aimdo.control.init()` precedes torch import. They skip cleanly
 when the package or its native shared library cannot initialize; all
 other CUDA tests continue normally.
 
-The Aimdo installer authenticates to the private `Kosinkadink/dinkster-aimdo`
-release API using `DINKSTER_AIMDO_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, or the
-authenticated `gh` CLI. It selects one compatible native wheel from the
-hash-pinned release manifest and rejects absent, ambiguous, or invalid assets.
-Credentials are sent only as request headers. A source install from the sibling
-checkout is not equivalent because it does not build the native libraries.
+The setup scripts install the exact native `dinkster-aimdo==0.5.5.post2` wheel
+from PyPI.
 
 (A borrowed CUDA-torch interpreter - e.g. an existing ComfyUI venv
-plus `pip install --target .venv-gpu-extras comfy-kitchen==0.2.32
+plus `pip install --target .venv-gpu-extras dinkster-kitchen==0.2.35.post1
 pytest` and the source trees on PYTHONPATH - still works for a
 one-off check on a machine where building a venv is not an option,
 but it is no longer the supported flow and may sit below the
@@ -851,7 +837,7 @@ these modules; the opt-in for the heavy real-weight test is the model
 root itself.
 
 `tests/test_mps_ops.py` needs no artifacts: it pins MPS-vs-CPU parity
-for the comfy-kitchen eager operations Dinkster dispatches during
+for the dinkster-kitchen eager operations Dinkster dispatches during
 inference (apply_rope, rms_rope, rms_rope_split_half_, adaln,
 rms_adaln, ConvRot INT8 dequantization) and proves Int8Linear executes
 on MPS through the dequant route (kitchen `int8_linear` bottoms out in
@@ -901,7 +887,7 @@ BASELINE commit (b78cec87 for the generators below; the media and
 latent-op generators - gen_audio_io, gen_image_geometry,
 gen_image_mask, gen_text_io, gen_latent_ops - pin e20d433a); each
 generator refuses to run on any other commit. gen_patch_goldens.py additionally
-needs comfy_kitchen importable (its kitchen-path rounding and quant
+needs dinkster_kitchen importable (its kitchen-path rounding and quant
 cases run the real kernels):
 
 ```bash

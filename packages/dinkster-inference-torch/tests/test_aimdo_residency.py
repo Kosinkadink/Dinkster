@@ -5764,7 +5764,7 @@ def test_simple_headroom_returns_false_when_unimportable_or_not_ready(
     _reset_activation(monkeypatch)
 
     def missing() -> object:
-        raise ImportError("missing comfy-aimdo")
+        raise ImportError("missing dinkster-aimdo")
 
     monkeypatch.setattr(activation, "_native_ready", True)
     monkeypatch.setattr(activation, "_load_control", missing)
@@ -5799,7 +5799,7 @@ def test_aimdo_resident_bytes_returns_zero_when_aimdo_unimportable(
     monkeypatch.setattr(activation, "_load_control", lambda: control)
 
     def missing_model_vbar(_name: str) -> object:
-        raise ImportError("missing comfy-aimdo")
+        raise ImportError("missing dinkster-aimdo")
 
     monkeypatch.setattr(activation.importlib, "import_module", missing_model_vbar)
     assert activation.aimdo_resident_bytes(CUDA0) == 0
@@ -5820,7 +5820,7 @@ def test_aimdo_memory_status_returns_zero_when_unavailable_or_uninitialized(
     assert activation.aimdo_memory_status(CUDA0) == AimdoMemoryStatus(0, 0)
 
     def missing() -> object:
-        raise ImportError("missing comfy-aimdo")
+        raise ImportError("missing dinkster-aimdo")
 
     monkeypatch.setattr(activation, "_load_control", missing)
     assert activation.aimdo_memory_status(CUDA0) == AimdoMemoryStatus(0, 0)

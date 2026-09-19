@@ -22,7 +22,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
-import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 import pytest
 import torch
 from dinkster_inference import (
@@ -392,8 +392,8 @@ def test_split_rope_uses_paired_and_single_kitchen_operations(
             value, table, True
         )
 
-    monkeypatch.setattr(comfy_kitchen, "apply_rope_split_half", paired)
-    monkeypatch.setattr(comfy_kitchen, "apply_rope_split_half1", single)
+    monkeypatch.setattr(dinkster_kitchen, "apply_rope_split_half", paired)
+    monkeypatch.setattr(dinkster_kitchen, "apply_rope_split_half1", single)
     with torch.no_grad():
         ltxav_model_module._apply_split_rope_qk(  # pyright: ignore[reportPrivateUsage]
             q, same_k, (q_matrix, True), None

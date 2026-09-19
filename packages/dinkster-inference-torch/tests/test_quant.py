@@ -20,7 +20,7 @@ def _patch_kitchen(
     monkeypatch: pytest.MonkeyPatch,
     result: torch.Tensor,
 ) -> list[bool]:
-    importlib.import_module("comfy_kitchen")
+    importlib.import_module("dinkster_kitchen")
     called: list[bool] = []
 
     def fake(qdata: torch.Tensor, scale: torch.Tensor, group_size: int) -> torch.Tensor:
@@ -28,7 +28,7 @@ def _patch_kitchen(
         return result
 
     monkeypatch.setattr(
-        torch.ops.comfy_kitchen,
+        torch.ops.dinkster_kitchen,
         "dequantize_int8_convrot_weight",
         fake,
     )

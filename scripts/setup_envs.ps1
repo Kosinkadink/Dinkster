@@ -22,37 +22,6 @@ function Invoke-Native {
     }
 }
 
-function Get-FirstCredential {
-    param([string[]]$Names)
-
-    foreach ($Name in $Names) {
-        $Value = [Environment]::GetEnvironmentVariable($Name, "Process")
-        if ($Value) {
-            return $Value
-        }
-    }
-    return $null
-}
-
-function Invoke-PrivateInstaller {
-    param(
-        [string]$Python,
-        [string[]]$Arguments,
-        [string]$CredentialName,
-        [AllowNull()][string]$Credential
-    )
-
-    try {
-        if ($Credential) {
-            [Environment]::SetEnvironmentVariable($CredentialName, $Credential, "Process")
-        }
-        Invoke-Native $Python $Arguments
-    }
-    finally {
-        [Environment]::SetEnvironmentVariable($CredentialName, $null, "Process")
-    }
-}
-
 function Get-EditableArguments {
     param([string[]]$Packages)
 
@@ -61,16 +30,6 @@ function Get-EditableArguments {
         $Arguments += @("-e", $Package)
     }
     return $Arguments
-}
-
-$CredentialNames = @("DINKSTER_AIMDO_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
-$CredentialEnvironment = @{}
-foreach ($Name in $CredentialNames) {
-    $CredentialEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, "Process")
-}
-$AimdoToken = Get-FirstCredential @("DINKSTER_AIMDO_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
-foreach ($Name in $CredentialNames) {
-    [Environment]::SetEnvironmentVariable($Name, $null, "Process")
 }
 
 $RootEnvironment = Join-Path $RepoRoot ".venv"
@@ -137,7 +96,7 @@ $GpuEditablePackages = @(
     "packages/dinkster-model-wan",
     "packages/dinkster-training-torch[torch]"
 )
-$KitchenWheel = "comfy-kitchen@https://files.pythonhosted.org/packages/a3/43/ceed9307bf92bccdc420703c3800ed46eafcafbfd764cbd93726f43db2b6/comfy_kitchen-0.2.32-py3-none-any.whl#sha256=6a5fba5224abbb7c9d8248bb7fe607bfab26ee623d311fcfae70066f1c7cfd9b"
+$KitchenCpuWheel = "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
 $PreviousProject = [Environment]::GetEnvironmentVariable("UV_PROJECT", "Process")
 $PreviousProjectEnvironment = [Environment]::GetEnvironmentVariable(
     "UV_PROJECT_ENVIRONMENT", "Process"
@@ -175,14 +134,13 @@ try {
         "pytest", "packaging", "numpy>=1.26", "scipy>=1.11",
         "simpleeval==1.0.3", "onnxruntime==1.29.0",
         "opencv-python-headless==5.0.0.93", "pillow==12.0.0",
-        "safetensors==0.8.0", "transformers==5.16.1", $KitchenWheel
+        "safetensors==0.8.0", "transformers==5.16.1", $KitchenCpuWheel,
+        "dinkster-aimdo==0.5.5.post2"
     ) + (Get-EditableArguments $CpuEditablePackages)
     Invoke-Native "uv" (@("pip", "install", "--python", $TorchPython) + $CpuDependencies)
-    Invoke-PrivateInstaller $TorchPython @("scripts\install_dinkster_aimdo.py") `
-        "DINKSTER_AIMDO_TOKEN" $AimdoToken
     Invoke-Native $TorchPython @(
         "-c",
-        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('comfy-kitchen') == '0.2.32'"
+        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'"
     )
 
     $PythonInclude = (& $TorchPython -c "import sysconfig; print(sysconfig.get_paths()['include'])")
@@ -213,12 +171,11 @@ try {
         )
         $GpuDependencies = @(
             "pytest", "numpy", "scipy", "torchsde", "tqdm", "pillow", "packaging",
-            "safetensors==0.8.0", "sentencepiece==0.2.1", $KitchenWheel,
+            "safetensors==0.8.0", "sentencepiece==0.2.1",
+            "dinkster-kitchen==0.2.35.post1", "dinkster-aimdo==0.5.5.post2",
             "triton-windows==3.7.1.post27"
         ) + (Get-EditableArguments $GpuEditablePackages)
         Invoke-Native "uv" (@("pip", "install", "--python", $GpuPython) + $GpuDependencies)
-        Invoke-PrivateInstaller $GpuPython @("scripts\install_dinkster_aimdo.py") `
-            "DINKSTER_AIMDO_TOKEN" $AimdoToken
         Invoke-Native $GpuPython @(
             "-c",
             "import torch, triton; assert torch.__version__ == '2.13.0+cu130'; assert triton.__version__ == '3.7.1'"
@@ -252,10 +209,5 @@ finally {
     [Environment]::SetEnvironmentVariable(
         "UV_PROJECT_ENVIRONMENT", $PreviousProjectEnvironment, "Process"
     )
-    foreach ($Name in $CredentialNames) {
-        [Environment]::SetEnvironmentVariable(
-            $Name, $CredentialEnvironment[$Name], "Process"
-        )
-    }
     Pop-Location
 }

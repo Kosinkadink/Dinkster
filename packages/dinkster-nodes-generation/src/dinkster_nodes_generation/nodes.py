@@ -1453,7 +1453,7 @@ class AttentionSchedule(_SchemaOnlyNode):
                     widget=ComboWidget(
                         options=tuple(
                             ComboOption(value=value)
-                            for value in ("sol", "sage", "comfy_kitchen_int8")
+                            for value in ("sol", "sage", "dinkster_kitchen_int8")
                         )
                     ),
                 ),

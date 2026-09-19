@@ -30,8 +30,8 @@ def _powershell_dependency_array(source: str, name: str) -> list[str]:
     match = re.search(rf"\${name} = @\((.*?)\n\s*\) \+", source, re.DOTALL)
     assert match is not None
     dependencies = re.findall(r'"([^\"]+)"', match.group(1))
-    if "$KitchenWheel" in match.group(1):
-        dependencies.append("$KitchenWheel")
+    if "$KitchenCpuWheel" in match.group(1):
+        dependencies.append("$KitchenCpuWheel")
     return dependencies
 
 
@@ -47,12 +47,12 @@ def test_powershell_setup_matches_posix_editable_package_closure() -> None:
     assert _powershell_package_array(powershell, "CpuEditablePackages") == _posix_editables(
         posix,
         "uv pip install --python .venv-torch/bin/python pytest packaging",
-        "# comfy-kitchen CPU wheel",
+        "# The direct PyPI URL forces",
     )
     assert _powershell_package_array(powershell, "GpuEditablePackages") == _posix_editables(
         posix,
         "uv pip install --python .venv-gpu/bin/python \\",
-        "install_dinkster_aimdo .venv-gpu/bin/python",
+        "\n\nelse",
     )
 
 
@@ -69,14 +69,14 @@ def test_gpu_setup_installs_model_packs_imported_by_gpu_tests() -> None:
         _posix_editables(
             posix,
             "uv pip install --python .venv-gpu/bin/python \\",
-            "install_dinkster_aimdo .venv-gpu/bin/python",
+            "\n\nelse",
         )
     )
     assert expected <= set(
         _posix_editables(
             documentation,
             "uv pip install --python .venv-gpu/bin/python \\",
-            ".venv-gpu/bin/python scripts/install_dinkster_aimdo.py",
+            "DINKSTER_ENABLE_GPU_TESTS=1",
         )
     )
 
@@ -95,7 +95,8 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "pillow==12.0.0",
         "safetensors==0.8.0",
         "transformers==5.16.1",
-        "$KitchenWheel",
+        "dinkster-aimdo==0.5.5.post2",
+        "$KitchenCpuWheel",
     ]
     assert _powershell_dependency_array(setup, "GpuDependencies") == [
         "pytest",
@@ -107,16 +108,17 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "packaging",
         "safetensors==0.8.0",
         "sentencepiece==0.2.1",
+        "dinkster-kitchen==0.2.35.post1",
+        "dinkster-aimdo==0.5.5.post2",
         "triton-windows==3.7.1.post27",
-        "$KitchenWheel",
     ]
     assert '"3.12"' in setup
     assert '"torch==2.13.0+cpu", "torchvision==0.28.0+cpu"' in setup
     assert '"torch==2.13.0+cu130"' in setup
     assert '"triton-windows==3.7.1.post27"' in setup
     assert (
-        "comfy_kitchen-0.2.32-py3-none-any.whl#sha256="
-        "6a5fba5224abbb7c9d8248bb7fe607bfab26ee623d311fcfae70066f1c7cfd9b"
+        "dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256="
+        "31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
     ) in setup
     assert "Test-Path (Join-Path" in setup
     assert '"Python.h"' in setup
@@ -124,7 +126,7 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
     assert "no NVIDIA GPU detected - skipping .venv-gpu" in setup
 
 
-def test_powershell_setup_limits_force_and_private_credentials() -> None:
+def test_powershell_setup_limits_force_and_has_no_private_installer() -> None:
     setup = POWERSHELL_SETUP.read_text()
     force_body = setup.split("if ($Force) {", 1)[1].split("Write-Host", 1)[0]
 
@@ -137,16 +139,8 @@ def test_powershell_setup_limits_force_and_private_credentials() -> None:
         assert f'${variable} = Join-Path $RepoRoot "{path}"' in setup
     assert force_body.count("Remove-Item -Recurse") == 1
     assert "$RootEnvironment, $TorchEnvironment, $GpuEnvironment, $SetupExtras" in force_body
-    credentials_captured = setup.index("$AimdoToken = Get-FirstCredential")
-    credentials_cleared = setup.index("foreach ($Name in $CredentialNames)", credentials_captured)
-    assert credentials_captured < credentials_cleared
-    assert setup.count('"DINKSTER_AIMDO_TOKEN" $AimdoToken') == 2
-    assert setup.count('"scripts\\install_dinkster_aimdo.py"') == 2
-    assert all(
-        "Token" not in line and "TOKEN" not in line
-        for line in setup.splitlines()
-        if "Write-Host" in line
-    )
+    assert "DINKSTER_AIMDO_TOKEN" not in setup
+    assert "install_dinkster_aimdo.py" not in setup
 
 
 def test_powershell_setup_isolates_root_sync_and_prints_runnable_gates() -> None:
@@ -162,7 +156,6 @@ def test_powershell_setup_isolates_root_sync_and_prints_runnable_gates() -> None
     cleanup = setup.rsplit("finally {", 1)[1]
     assert '"UV_PROJECT", $PreviousProject, "Process"' in cleanup
     assert '"UV_PROJECT_ENVIRONMENT", $PreviousProjectEnvironment, "Process"' in cleanup
-    assert "$Name, $CredentialEnvironment[$Name]" in cleanup
     for command in (
         ".venv\\Scripts\\ruff.exe check .",
         ".venv\\Scripts\\pyright.exe",
@@ -197,7 +190,6 @@ def test_powershell_setup_root_sync_ignores_cwd_and_ambient_uv_target(tmp_path: 
         "@echo off\r\n"
         '> "%SYNC_PROBE%" echo project=%UV_PROJECT%\r\n'
         '>> "%SYNC_PROBE%" echo environment=%UV_PROJECT_ENVIRONMENT%\r\n'
-        '>> "%SYNC_PROBE%" echo aimdo=%DINKSTER_AIMDO_TOKEN%\r\n'
         '>> "%SYNC_PROBE%" echo args=%*\r\n'
         "exit /b 73\r\n",
         newline="",
@@ -208,7 +200,6 @@ def test_powershell_setup_root_sync_ignores_cwd_and_ambient_uv_target(tmp_path: 
         "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
         "UV_PROJECT": str(tmp_path / "wrong-project"),
         "UV_PROJECT_ENVIRONMENT": str(tmp_path / "wrong-environment"),
-        "DINKSTER_AIMDO_TOKEN": "fake-aimdo-token",
         "SYNC_PROBE": str(probe),
         "RESTORE_PROBE": str(restore_probe),
         "SETUP_SCRIPT": str(POWERSHELL_SETUP),
@@ -222,7 +213,7 @@ def test_powershell_setup_root_sync_ignores_cwd_and_ambient_uv_target(tmp_path: 
             "-Command",
             "try { & $env:SETUP_SCRIPT } catch {} ; "
             "[IO.File]::WriteAllLines($env:RESTORE_PROBE, @($env:UV_PROJECT, "
-            "$env:UV_PROJECT_ENVIRONMENT, $env:DINKSTER_AIMDO_TOKEN)); exit 1",
+            "$env:UV_PROJECT_ENVIRONMENT)); exit 1",
         ),
         cwd=tmp_path,
         env=environment,
@@ -233,14 +224,12 @@ def test_powershell_setup_root_sync_ignores_cwd_and_ambient_uv_target(tmp_path: 
 
     assert result.returncode != 0
     lines = probe.read_text().splitlines()
-    assert lines[:3] == [
+    assert lines[:2] == [
         "project=",
         f"environment={REPO_ROOT / '.venv'}",
-        "aimdo=",
     ]
-    assert lines[3].startswith(f"args=sync --project {REPO_ROOT} --all-packages")
+    assert lines[2].startswith(f"args=sync --project {REPO_ROOT} --all-packages")
     assert restore_probe.read_text().splitlines() == [
         str(tmp_path / "wrong-project"),
         str(tmp_path / "wrong-environment"),
-        "fake-aimdo-token",
     ]

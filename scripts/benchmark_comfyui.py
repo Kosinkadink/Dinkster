@@ -208,7 +208,7 @@ _CHROMA_FAMILY = "chroma"
 _FLUX_FAMILY = "flux"
 _ATTENTION_FLAGS = {
     "sdpa": "--use-pytorch-cross-attention",
-    "comfy_kitchen_int8": "--use-ck-attention",
+    "dinkster_kitchen_int8": "--use-ck-attention",
     "sage": "--use-sage-attention",
 }
 _ATTENTION_POLICIES = ("auto", *_ATTENTION_FLAGS)

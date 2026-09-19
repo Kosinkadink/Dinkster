@@ -11,9 +11,6 @@ inputs:
   identity-deploy-key:
     description: Read-only dinkster-identity deploy key
     required: true
-  aimdo-release-token:
-    description: Read-only private dinkster-aimdo release token
-    required: true
 runs:
   using: composite
   steps:
@@ -35,8 +32,6 @@ runs:
         --no-emit-project --no-emit-workspace
         --output-file /tmp/torch-constraints.txt
     - shell: bash
-      env:
-        DINKSTER_AIMDO_TOKEN: ${{ inputs.aimdo-release-token }}
       run: UV_CONSTRAINT=/tmp/torch-constraints.txt ./scripts/setup_envs.sh
     - shell: bash
       run: >

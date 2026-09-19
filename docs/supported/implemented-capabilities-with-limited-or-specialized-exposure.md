@@ -276,11 +276,11 @@ compositions, optional workers, or compatibility boundaries described below.
   Diffusion Components with an explicit role. Compatible conditioner and
   video/audio VAE finetunes can likewise be loaded through Load CLIP and Load
   VAE. Generic H3 composition nodes execute these independently loaded
-  components. Setting `DINKSTER_ATTENTION_POLICY=comfy_kitchen_int8`
-  on the server makes comfy-kitchen INT8 the default for each job on capable
+  components. Setting `DINKSTER_ATTENTION_POLICY=dinkster_kitchen_int8`
+  on the server makes dinkster-kitchen INT8 the default for each job on capable
   workers. Job submissions can override that default globally or for individual
   model roles. Built-in SDPA serves causal and grouped-query invocations the INT8
-  kernel cannot execute. Comfy-kitchen INT8 remains explicit-only.
+  kernel cannot execute. Dinkster-kitchen INT8 remains explicit-only.
 - Named attention policies use SDPA with a diagnostic when their provider,
   kernel, or hardware support is unavailable. Authenticated routes preserve
   the requested policy and record the actual SDPA execution, including
@@ -297,7 +297,7 @@ compositions, optional workers, or compatibility boundaries described below.
   when this support is authenticated.
 - Approximate, training-free Sol sparse attention executes through the opt-in
   `sol` policy (server default `DINKSTER_ATTENTION_POLICY=sol` or per-job/per-role
-  override) with comfy-kitchen 0.2.32 on NVIDIA SM80+ workers. It serves
+  override) with dinkster-kitchen 0.2.35.post1 on NVIDIA SM80+ workers. It serves
   unmasked, noncausal BF16 self-attention with equal q/k/v shapes and 128-wide
   heads, trading output similarity and temporary workspace memory for speed;
   built-in SDPA preserves exact behavior for all other calls. Automatic routing
@@ -307,7 +307,7 @@ compositions, optional workers, or compatibility boundaries described below.
   attention directly. Other exceptions propagate without fallback, and explicit
   attention policies retain their selected behavior.
 - Attention Schedule switches between the model's authenticated Sol, Sage, or
-  comfy-kitchen INT8 provider and SDPA on one discrete sampling-step window.
+  dinkster-kitchen INT8 provider and SDPA on one discrete sampling-step window.
   An optional native `dinkster.curve` drives Sol tau on that same realized
   timeline. MiniMax H3 Sol schedules may keep the packed conditioning prefix
   exact as KV.

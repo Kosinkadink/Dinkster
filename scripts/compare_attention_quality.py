@@ -20,7 +20,7 @@ import numpy as np
 from dinkster_protocol import attention_route_token_from_wire
 from dinkster_workers.backend_env import validate_benchmark_report
 
-_CANDIDATE_POLICIES = ("comfy_kitchen_int8", "sage")
+_CANDIDATE_POLICIES = ("dinkster_kitchen_int8", "sage")
 _MEDIA = ("image", "audio")
 _QUALITY_FIELDS = ("dtype", "source_shape", "captured_shape", "spatial_stride")
 _MATCHED_REPORT_FIELDS = (
@@ -128,7 +128,7 @@ def _attention_authentication_problems(
         providers = dict(parsed_token.provider_versions)
         required_provider = {
             "sdpa": "torch",
-            "comfy_kitchen_int8": "comfy-kitchen",
+            "dinkster_kitchen_int8": "dinkster-kitchen",
             "sage": "sageattention",
         }[policy]
         if required_provider not in providers:
@@ -166,7 +166,7 @@ def _attention_authentication_problems(
     torch_version = _reported_torch_version(report)
     if not isinstance(torch_version, str) or providers.get("torch") != torch_version:
         problems.append(f"{label} provider torch runtime differs from the report")
-    if policy == "comfy_kitchen_int8" and "comfy-kitchen" not in providers:
+    if policy == "dinkster_kitchen_int8" and "comfy-kitchen" not in providers:
         problems.append(f"{label} comfy-kitchen provider version is missing")
     execution = attention.get("execution")
     if not isinstance(execution, Mapping) or execution.get("policy") != policy:

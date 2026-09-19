@@ -404,7 +404,7 @@ kitchen_available = (
 
 @pytest.mark.skipif(
     not kitchen_available,
-    reason="comfy-kitchen not installed in this venv (see README)",
+    reason="dinkster-kitchen not installed in this venv (see README)",
 )
 @pytest.mark.parametrize(
     "case",
@@ -429,7 +429,7 @@ def test_rounding_prefers_kitchen_kernel(
 ) -> None:
     """Capability probe honored: when the kernel attribute is set, fp8
     rounding routes through it (upstream prefers the accelerated path
-    whenever comfy_kitchen exposes it)."""
+    whenever dinkster_kitchen exposes it)."""
     calls: list[tuple[torch.Size, torch.dtype]] = []
 
     def spy(value: torch.Tensor, rng: torch.Tensor, dtype: torch.dtype):
@@ -454,7 +454,7 @@ def test_training_import_defers_kitchen_backends_until_fp8_use() -> None:
         capture_output=True,
         text=True,
     )
-    assert "comfy_kitchen" not in result.stderr
+    assert "dinkster_kitchen" not in result.stderr
 
 
 def test_kitchen_probe_runs_only_on_first_fp8_use(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -531,11 +531,11 @@ def test_rounding_manual_fallback_without_kitchen(
 
 def test_kitchen_probe_is_capability_based() -> None:
     """The probe keys off the kernel attribute existing, never a
-    version: a comfy_kitchen build predating the kernel selects the
+    version: a dinkster_kitchen build predating the kernel selects the
     manual path."""
-    fake = types.ModuleType("comfy_kitchen")
-    real = sys.modules.get("comfy_kitchen")
-    sys.modules["comfy_kitchen"] = fake
+    fake = types.ModuleType("dinkster_kitchen")
+    real = sys.modules.get("dinkster_kitchen")
+    sys.modules["dinkster_kitchen"] = fake
     try:
         assert (
             rounding_mod._probe_kitchen_fp8_kernel()  # pyright: ignore[reportPrivateUsage]
@@ -543,9 +543,9 @@ def test_kitchen_probe_is_capability_based() -> None:
         )
     finally:
         if real is not None:
-            sys.modules["comfy_kitchen"] = real
+            sys.modules["dinkster_kitchen"] = real
         else:
-            del sys.modules["comfy_kitchen"]
+            del sys.modules["dinkster_kitchen"]
 
 
 def test_golden_meta_pins_reference() -> None:
@@ -964,7 +964,7 @@ def nvfp4_store_key() -> tuple[str, Nvfp4PackedWeight]:
 
 
 def int8_store_key() -> tuple[str, Int8PackedWeight]:
-    from comfy_kitchen.tensor import (  # pyright: ignore[reportMissingTypeStubs]
+    from dinkster_kitchen.tensor import (  # pyright: ignore[reportMissingTypeStubs]
         TensorWiseINT8Layout,
     )
 

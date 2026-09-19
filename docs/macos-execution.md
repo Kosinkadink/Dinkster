@@ -120,8 +120,8 @@ does not claim a physical multi-machine or hosted cloud generation run.
 
 Execution-receipt warnings name combinations without separately minted
 determinism receipts; they do not prevent execution. FP16 MPS attention uses
-the existing FP32 attention workaround for macOS. AIMDO's CUDA-only residency
-path is unavailable; CPU and MPS use the existing eager residency path.
+the existing FP32 attention workaround for macOS. Dinkster-aimdo residency is
+Linux and Windows CUDA only; macOS CPU and MPS use eager residency without it.
 
 Commands, timings, numerical comparisons, install records, and test totals
 are recorded in the [verification evidence](https://github.com/Kosinkadink/Dinkster/issues/1243#issuecomment-5556179096).

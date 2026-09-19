@@ -1,9 +1,9 @@
-"""Process-wide post-torch comfy-aimdo device activation.
+"""Process-wide post-torch dinkster-aimdo device activation.
 
-The worker bootstrap owns ``comfy_aimdo.control.init()`` because that
+The worker bootstrap owns ``dinkster_aimdo.control.init()`` because that
 native-library load must happen before torch is imported. This module
 owns the single later ``init_devices`` attempt. Readiness is proven by
-``get_devctx`` for every requested index: comfy-aimdo 0.4.13 assigns
+``get_devctx`` for every requested index: dinkster-aimdo 0.4.13 assigns
 ``control.lib`` before all native symbols are bound, so ``lib is not
 None`` is not a valid activation test.
 """
@@ -32,7 +32,7 @@ _AimdoDeviceEntry = int | tuple[int, int]
 
 
 class AimdoUnavailableError(RuntimeError):
-    """comfy-aimdo cannot serve the requested CUDA device."""
+    """dinkster-aimdo cannot serve the requested CUDA device."""
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ _native_ready = False
 def _load_control() -> _AimdoControl:
     return cast(
         "_AimdoControl",
-        importlib.import_module("comfy_aimdo.control"),
+        importlib.import_module("dinkster_aimdo.control"),
     )
 
 
@@ -182,7 +182,7 @@ def aimdo_resident_bytes(device: torch.device) -> int:
     evictable pages. It is not a free-memory value; policy must use the
     classified Dinkster-owned status instead.
 
-    Returns zero for non-CUDA devices, unavailable comfy-aimdo, or a device
+    Returns zero for non-CUDA devices, unavailable dinkster-aimdo, or a device
     whose native aimdo context has not been initialized.
     """
     if device.type != "cuda":
@@ -196,7 +196,7 @@ def aimdo_resident_bytes(device: torch.device) -> int:
         control = _load_control()
         if not _ready(control, (index,)):
             return 0
-        model_vbar = importlib.import_module("comfy_aimdo.model_vbar")
+        model_vbar = importlib.import_module("dinkster_aimdo.model_vbar")
     except (ImportError, AttributeError):
         return 0
     return int(model_vbar.vbars_analyze(index))
@@ -268,7 +268,7 @@ def set_simple_vram_headroom(bytes: int) -> bool:
     devices. It is callable any time after successful aimdo activation. The
     pre-torch ``control.init(simple_vram_headroom=...)`` default remains
     backend-owned; this wrapper lets later reservation mirroring avoid
-    touching comfy-aimdo control state directly.
+    touching dinkster-aimdo control state directly.
     """
     value = int(bytes)
     if value < 0:

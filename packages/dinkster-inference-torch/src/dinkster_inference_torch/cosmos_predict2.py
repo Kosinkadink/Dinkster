@@ -150,13 +150,13 @@ def _fused_norm_rope(
             _apply_split_half_rope(query_norm(query), table),
             _apply_split_half_rope(key_norm(key), table),
         )
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
     with (
         materialized_rms_norm_weight(query_norm) as query_weight,
         materialized_rms_norm_weight(key_norm) as key_weight,
     ):
-        return comfy_kitchen.rms_rope_split_half_(
+        return dinkster_kitchen.rms_rope_split_half_(
             query,
             key,
             table,

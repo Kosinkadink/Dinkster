@@ -489,7 +489,7 @@ _CHROMA_ARTIFACT_PINS: dict[str, tuple[int, str, str]] = {
     ),
 }
 
-_ATTENTION_POLICIES = ("auto", "sdpa", "comfy_kitchen_int8", "sage")
+_ATTENTION_POLICIES = ("auto", "sdpa", "dinkster_kitchen_int8", "sage")
 
 
 @dataclasses.dataclass(frozen=True)

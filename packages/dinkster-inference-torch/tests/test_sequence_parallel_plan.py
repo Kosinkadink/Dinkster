@@ -212,7 +212,7 @@ def test_coupled_ring_compiles_without_enabling_tensor_executor(ulysses: int) ->
         builtin_sdpa_kernel(),
         _COMFY_KITCHEN_INT8,
         schedule_aware_attention_kernel("sdpa", builtin_sdpa_kernel()),
-        schedule_aware_attention_kernel("comfy_kitchen_int8", _COMFY_KITCHEN_INT8),
+        schedule_aware_attention_kernel("dinkster_kitchen_int8", _COMFY_KITCHEN_INT8),
     ),
 )
 def test_h3_ulysses_declaration_preserves_tensor_kernel_contract(kernel: Any) -> None:
@@ -244,9 +244,9 @@ def test_sdpa_declares_cpu_but_int8_declines_cpu(kernel: Any) -> None:
 
 
 def test_scheduled_declaration_tracks_the_active_kernel_before_compilation() -> None:
-    kernel: Any = schedule_aware_attention_kernel("comfy_kitchen_int8", _COMFY_KITCHEN_INT8)
+    kernel: Any = schedule_aware_attention_kernel("dinkster_kitchen_int8", _COMFY_KITCHEN_INT8)
     timeline = realize_sampling_timeline(
-        SamplingTimelineSchedule("comfy_kitchen_int8", 0.5, 1.0), (2.0, 1.0, 0.0)
+        SamplingTimelineSchedule("dinkster_kitchen_int8", 0.5, 1.0), (2.0, 1.0, 0.0)
     )
     with use_realized_sampling_timeline(timeline) as activate:
         activate(0)

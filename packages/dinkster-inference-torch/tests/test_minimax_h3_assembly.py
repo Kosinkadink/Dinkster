@@ -247,8 +247,10 @@ def test_split_plan_preserves_int8_convrot_dit_provider_contract(tmp_path: Path)
     assert quant.parameters == {"convrot": True, "convrot_groupsize": 256}
     assert plan.diffusion.dtypes[layer + ".weight"] is INT8
     assert layer + ".weight_scale" in plan.claims["fl2va-dit"]
-    assert "int8_provider=comfy-kitchen.int8_linear" in plan.diffusion.identity_facts
-    assert any(fact.startswith("comfy_kitchen_version=") for fact in plan.diffusion.identity_facts)
+    assert "int8_provider=dinkster-kitchen.int8_linear" in plan.diffusion.identity_facts
+    assert any(
+        fact.startswith("dinkster_kitchen_version=") for fact in plan.diffusion.identity_facts
+    )
 
 
 def test_split_plan_preserves_int8_convrot_video_vae_provider_contract(tmp_path: Path) -> None:
@@ -295,8 +297,10 @@ def test_split_plan_preserves_int8_convrot_video_vae_provider_contract(tmp_path:
     assert (
         "artifact_sha256=9bb2d96f218c76babd85e0611b85ca8fb330a90546c01a0005e8a58a59593410"
     ) in plan.video_vae.identity_facts
-    assert "int8_provider=comfy-kitchen.int8_linear" in plan.video_vae.identity_facts
-    assert any(fact.startswith("comfy_kitchen_version=") for fact in plan.video_vae.identity_facts)
+    assert "int8_provider=dinkster-kitchen.int8_linear" in plan.video_vae.identity_facts
+    assert any(
+        fact.startswith("dinkster_kitchen_version=") for fact in plan.video_vae.identity_facts
+    )
 
 
 def test_split_plan_claims_exact_selected_graph_and_is_immutable(tmp_path: Path) -> None:
@@ -312,13 +316,13 @@ def test_split_plan_claims_exact_selected_graph_and_is_immutable(tmp_path: Path)
     assert len(plan.claims["qwen3vl-32b-conditioner"]) == 902
     assert len(plan.claims["video-vae"]) == 562
     assert len(plan.claims["audio-vae"]) == 917
-    assert "int8_provider=comfy-kitchen.int8_linear" not in plan.diffusion.identity_facts
+    assert "int8_provider=dinkster-kitchen.int8_linear" not in plan.diffusion.identity_facts
     assert not any(
-        fact.startswith("comfy_kitchen_version=") for fact in plan.diffusion.identity_facts
+        fact.startswith("dinkster_kitchen_version=") for fact in plan.diffusion.identity_facts
     )
-    assert "int8_provider=comfy-kitchen.int8_linear" not in plan.video_vae.identity_facts
+    assert "int8_provider=dinkster-kitchen.int8_linear" not in plan.video_vae.identity_facts
     assert not any(
-        fact.startswith("comfy_kitchen_version=") for fact in plan.video_vae.identity_facts
+        fact.startswith("dinkster_kitchen_version=") for fact in plan.video_vae.identity_facts
     )
     assert "artifact_role=fl2va-dit" in plan.diffusion.identity_facts
     with pytest.raises(TypeError):
@@ -905,7 +909,7 @@ def test_standalone_component_load_refuses_wrong_structure(
         )
 
 
-@pytest.mark.parametrize("override_policy", ("comfy_kitchen_int8", "sol"))
+@pytest.mark.parametrize("override_policy", ("dinkster_kitchen_int8", "sol"))
 def test_single_model_load_threads_attention_selection_and_identity(
     override_policy: AttentionPolicy,
     tmp_path: Path,
@@ -980,7 +984,7 @@ def test_single_model_load_threads_attention_selection_and_identity(
 
     capabilities = AttentionCapabilityEvidence(
         version=1,
-        available_policies=("sdpa", "sol", "comfy_kitchen_int8"),
+        available_policies=("sdpa", "sol", "dinkster_kitchen_int8"),
         provider_versions=token.provider_versions,
         adapter_contract_revision=token.adapter_contract_revision,
         device_kind=token.device_kind,
@@ -1001,11 +1005,11 @@ def test_single_model_load_threads_attention_selection_and_identity(
     ).diffusion
     assert selected_plan.identity_facts != source_plan.identity_facts
     expected_provider = {
-        "comfy_kitchen_int8": "attention_provider=comfy-kitchen.int8_attention",
-        "sol": "attention_provider=comfy-kitchen.sol_attn",
+        "dinkster_kitchen_int8": "attention_provider=dinkster-kitchen.int8_attention",
+        "sol": "attention_provider=dinkster-kitchen.sol_attn",
     }[override_policy]
     assert expected_provider in selected_plan.identity_facts
-    assert "comfy_kitchen_version=0.2.32" in selected_plan.identity_facts
+    assert "dinkster_kitchen_version=0.2.35.post1" in selected_plan.identity_facts
     bound_identity = assembly.minimax_h3_dit_runtime_identity(
         asset_digest=asset_digest,
         asset_size=len(payload),

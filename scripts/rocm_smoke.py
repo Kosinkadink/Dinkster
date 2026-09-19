@@ -91,9 +91,9 @@ def _dequant_parity(cpu_value: torch.Tensor, device_value: torch.Tensor) -> dict
 
 
 def _kitchen_evidence(device: torch.device) -> dict[str, object] | None:
-    """comfy-kitchen per-backend authentication facts for this device.
+    """dinkster-kitchen per-backend authentication facts for this device.
 
-    None when comfy-kitchen is not installed (the environment recipe
+    None when dinkster-kitchen is not installed (the environment recipe
     pins it, so absence is itself a finding). Records
     which kitchen backends registered, which backend the registry
     selects for INT8 linear and ConvRot INT8 dequantization on this
@@ -101,19 +101,19 @@ def _kitchen_evidence(device: torch.device) -> dict[str, object] | None:
     are recorded as data, never raised.
     """
     try:
-        import comfy_kitchen
+        import dinkster_kitchen
     except ImportError:
         return None
     evidence: dict[str, object] = {}
     try:
-        _kitchen_attempts(comfy_kitchen, device, evidence)
+        _kitchen_attempts(dinkster_kitchen, device, evidence)
     except Exception as error:  # noqa: BLE001 - the failure text is the evidence
         evidence["error"] = str(error).split("\n")[0].strip()[:200]
     return evidence
 
 
 def _kitchen_attempts(
-    comfy_kitchen: Any, device: torch.device, evidence: dict[str, object]
+    dinkster_kitchen: Any, device: torch.device, evidence: dict[str, object]
 ) -> None:
     generator = torch.Generator().manual_seed(591)
     x = torch.randn(8, 256, generator=generator).to(device=device, dtype=torch.float16)
@@ -122,23 +122,23 @@ def _kitchen_attempts(
     row_scale = torch.full((16, 1), 0.02, dtype=torch.float32, device=device)
 
     def run_linear() -> None:
-        out = comfy_kitchen.int8_linear(x, weight, scalar_scale, None, out_dtype=torch.float16)
+        out = dinkster_kitchen.int8_linear(x, weight, scalar_scale, None, out_dtype=torch.float16)
         if not bool(torch.isfinite(out).all()):
             raise RuntimeError("int8_linear returned non-finite values")
 
     def run_convrot() -> None:
-        value = torch.ops.comfy_kitchen.dequantize_int8_convrot_weight(weight, row_scale, 256)
+        value = torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight(weight, row_scale, 256)
         if not bool(torch.isfinite(value).all()):
             raise RuntimeError("ConvRot dequantization returned non-finite values")
 
     try:
-        kitchen_version = importlib.metadata.version("comfy-kitchen")
+        kitchen_version = importlib.metadata.version("dinkster-kitchen")
     except importlib.metadata.PackageNotFoundError:
-        kitchen_version = str(getattr(comfy_kitchen, "__version__", "unknown"))
+        kitchen_version = str(getattr(dinkster_kitchen, "__version__", "unknown"))
     evidence["version"] = kitchen_version
     evidence["backends"] = {
         str(name): bool(status.get("available", False))
-        for name, status in comfy_kitchen.registry.list_backends().items()
+        for name, status in dinkster_kitchen.registry.list_backends().items()
     }
     attempts: tuple[tuple[str, dict[str, object], Callable[[], None]], ...] = (
         (
@@ -164,7 +164,7 @@ def _kitchen_attempts(
     for name, kwargs, run in attempts:
         entry: dict[str, object] = {}
         try:
-            entry["backend"] = str(comfy_kitchen.registry.get_capable_backend(name, kwargs))
+            entry["backend"] = str(dinkster_kitchen.registry.get_capable_backend(name, kwargs))
         except Exception as error:  # the refusal text is the evidence
             entry["backend"] = None
             entry["backend_error"] = str(error).split("\n")[0].strip()[:120]

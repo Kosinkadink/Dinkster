@@ -4407,7 +4407,7 @@ def test_attention_submit_validation_and_idempotency() -> None:
         finally:
             await client.close()
 
-        client = await paused_client(default="comfy_kitchen_int8")
+        client = await paused_client(default="dinkster_kitchen_int8")
         try:
             first = await client.post("/api/jobs", json=submit_body(graph, ["n"]))
             assert first.status == 202
@@ -4417,7 +4417,7 @@ def test_attention_submit_validation_and_idempotency() -> None:
                     graph,
                     ["n"],
                     attention={
-                        "requestedPolicy": "comfy_kitchen_int8",
+                        "requestedPolicy": "dinkster_kitchen_int8",
                         "requestedRolePolicies": [],
                     },
                 ),
@@ -4443,7 +4443,7 @@ def test_attention_submit_validation_and_idempotency() -> None:
         try:
             role_pairs = [
                 ["qwen", "flash"],
-                ["flux", "comfy_kitchen_int8"],
+                ["flux", "dinkster_kitchen_int8"],
             ]
             first = await client.post(
                 "/api/jobs",

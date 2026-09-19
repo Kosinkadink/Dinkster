@@ -60,29 +60,29 @@ def test_minimax_h3_dit_provider_facts_bind_behavior_versions() -> None:
         "ref2va-dit",
         quantized=True,
         torch_version="2.13.0+cu130",
-        comfy_kitchen_version="0.2.31",
+        dinkster_kitchen_version="0.2.31",
     )
 
-    assert "int8_provider=comfy-kitchen.int8_linear" not in plain
+    assert "int8_provider=dinkster-kitchen.int8_linear" not in plain
     assert "torch_version=2.13.0+cu130" in plain
-    assert "comfy_kitchen_version=0.2.31" in quantized
+    assert "dinkster_kitchen_version=0.2.31" in quantized
     assert quantized[-1] == "artifact_role=ref2va-dit"
     assert quantized != minimax_h3_dit_provider_facts(
         "ref2va-dit",
         quantized=True,
         torch_version="2.13.0+cu130",
-        comfy_kitchen_version="0.2.32",
+        dinkster_kitchen_version="0.2.32",
     )
     sol = minimax_h3_dit_provider_facts(
         "fl2va-dit",
         quantized=False,
         torch_version="2.13.0+cu130",
-        comfy_kitchen_version="0.2.32",
+        dinkster_kitchen_version="0.2.32",
         attention_policy="sol",
     )
-    assert "attention_provider=comfy-kitchen.sol_attn" in sol
-    assert "comfy_kitchen_version=0.2.32" in sol
-    with pytest.raises(ValueError, match="require a comfy-kitchen version"):
+    assert "attention_provider=dinkster-kitchen.sol_attn" in sol
+    assert "dinkster_kitchen_version=0.2.32" in sol
+    with pytest.raises(ValueError, match="require a dinkster-kitchen version"):
         minimax_h3_dit_provider_facts(
             "fl2va-dit",
             quantized=False,

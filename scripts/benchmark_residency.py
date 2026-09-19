@@ -446,13 +446,13 @@ def _synchronize(torch_module: Any, device: Any) -> None:
 
 
 def _bootstrap_aimdo() -> None:
-    """Run the comfy-aimdo native bootstrap, which must precede torch import."""
+    """Run the dinkster-aimdo native bootstrap, which must precede torch import."""
     if "torch" in sys.modules:
-        raise RuntimeError("comfy-aimdo control.init() must run before torch is imported")
-    from comfy_aimdo import control
+        raise RuntimeError("dinkster-aimdo control.init() must run before torch is imported")
+    from dinkster_aimdo import control
 
     if not control.init():
-        raise RuntimeError("comfy-aimdo native bootstrap init() failed")
+        raise RuntimeError("dinkster-aimdo native bootstrap init() failed")
 
 
 def measure(arguments: argparse.Namespace) -> dict[str, Any]:

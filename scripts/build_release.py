@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import hashlib
 import json
 import re
@@ -48,28 +47,23 @@ def desktop_windows_runtime(source: Path) -> dict[str, Any]:
         raise ValueError("Desktop Windows runtime must contain aimdo and cudaTorch objects")
     if not all(isinstance(value, dict) for value in profile.values()):
         raise ValueError("Desktop Windows runtime must contain aimdo and cudaTorch objects")
-    helper = ast.parse((source / "scripts/install_dinkster_aimdo.py").read_text("utf-8"))
-    pins = {
-        "repository": "REPOSITORY",
-        "commit": "RELEASE_COMMIT",
-        "releaseTag": "RELEASE_TAG",
-        "version": "PACKAGE_VERSION",
-    }
-    for field, name in pins.items():
-        values = [
-            node.value
-            for node in helper.body
-            if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == name for target in node.targets)
-        ]
-        if (
-            len(values) != 1
-            or not isinstance(values[0], ast.Constant)
-            or not isinstance(values[0].value, str)
-            or profile["aimdo"].get(field) != values[0].value
-        ):
-            raise ValueError(f"Desktop Windows runtime aimdo.{field} does not match literal {name}")
     lock = tomllib.loads((source / "uv.lock").read_text("utf-8"))
+    aimdo = profile["aimdo"]
+    locked_aimdo = next(entry for entry in lock["package"] if entry["name"] == "dinkster-aimdo")
+    if aimdo.get("version") != locked_aimdo["version"]:
+        raise ValueError("Desktop Windows runtime aimdo.version does not match uv.lock")
+    aimdo_wheels = [
+        wheel
+        for wheel in locked_aimdo["wheels"]
+        if wheel["url"].endswith(f"/{aimdo.get('archive')}")
+    ]
+    if len(aimdo_wheels) != 1:
+        raise ValueError("Desktop Windows runtime aimdo.archive does not match uv.lock")
+    aimdo_wheel = aimdo_wheels[0]
+    if aimdo.get("sha256") != aimdo_wheel["hash"].removeprefix("sha256:"):
+        raise ValueError("Desktop Windows runtime aimdo.sha256 does not match uv.lock")
+    if aimdo.get("size") != aimdo_wheel["size"]:
+        raise ValueError("Desktop Windows runtime aimdo.size does not match uv.lock")
     torch = profile["cudaTorch"]
     version = torch.get("version")
     locked = {entry["version"] for entry in lock["package"] if entry["name"] == "torch"}

@@ -388,7 +388,7 @@ def _apply_rope_split_half_one(x: torch.Tensor, table: torch.Tensor) -> torch.Te
 def apply_rope_split_half(
     query: torch.Tensor, key: torch.Tensor, table: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Apply the comfy-kitchen split-half RoPE layout to query and key."""
+    """Apply the dinkster-kitchen split-half RoPE layout to query and key."""
     return _apply_rope_split_half_one(query, table), _apply_rope_split_half_one(key, table)
 
 

@@ -1,6 +1,6 @@
-"""The aimdo seam: probing comfy-aimdo behind the residency protocol.
+"""The aimdo seam: probing dinkster-aimdo behind the residency protocol.
 
-comfy-aimdo ("AI Model Dynamic Offloader") is upstream's VMM-based
+dinkster-aimdo ("AI Model Dynamic Offloader") is upstream's VMM-based
 dynamic residency backend: per model it reserves a large virtual GPU
 address range (ModelVBAR via cuMemAddressReserve), assigns weights
 ranges inside it, explicitly faults pages in immediately before an
@@ -9,7 +9,7 @@ to a temporary tensor on OOM), and unpins after - with an implicit
 newest-model-first, watermark-limited eviction policy. It exposes NO
 model wrapper or policy callback; the host application owns weight
 ordering, fault timing, copies, fallbacks, and unpin sequencing
-(comfy-aimdo 0.4.13; ComfyUI @ b78cec87 integrates it by swapping
+(dinkster-aimdo 0.4.13; ComfyUI @ b78cec87 integrates it by swapping
 ModelPatcher for ModelPatcherDynamic and threading VBAR faults through
 comfy/ops.py cast_bias_weight).
 
@@ -24,13 +24,13 @@ the ROADMAP carries the implementation with that trigger.
 Two integration constraints pinned now so nothing has to be
 retrofitted:
 
-- ``comfy_aimdo.control.init()`` must run BEFORE torch is imported
+- ``dinkster_aimdo.control.init()`` must run BEFORE torch is imported
   into the process (upstream calls it at the top of main.py). This
   package imports torch, so init belongs to the worker process
   bootstrap, never to code here; this module only observes whether it
   happened (``initialized``).
-- comfy-aimdo is a namespace package with no root ``__init__``; probe
-  by importing ``comfy_aimdo.control``, never ``comfy_aimdo``.
+- dinkster-aimdo is a namespace package with no root ``__init__``; probe
+  by importing ``dinkster_aimdo.control``, never ``dinkster_aimdo``.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class AimdoStatus:
-    """What the probe observed: whether comfy_aimdo is importable,
+    """What the probe observed: whether dinkster_aimdo is importable,
     whether its native library was already initialized by the process
     bootstrap (control.init before torch), and the GPU vendor its
     detection reports ("cuda"/"rocm"/None)."""
@@ -51,11 +51,11 @@ class AimdoStatus:
 
 
 def probe_aimdo() -> AimdoStatus:
-    """Capability probe for comfy-aimdo (never a version check).
-    Importing comfy_aimdo.control is side-effect free - the native
+    """Capability probe for dinkster-aimdo (never a version check).
+    Importing dinkster_aimdo.control is side-effect free - the native
     library loads only through control.init()."""
     try:
-        from comfy_aimdo import (  # pyright: ignore[reportMissingTypeStubs]
+        from dinkster_aimdo import (  # pyright: ignore[reportMissingTypeStubs]
             control,
         )
     except ImportError:
