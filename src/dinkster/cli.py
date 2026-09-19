@@ -56,11 +56,6 @@ _COMMANDS: dict[str, _Command] = {
         passes_argv=False,
         summary="manage the station's install registry (alias: dinkster-installs)",
     ),
-    "registry": _Command(
-        "dinkster.registry_service",
-        passes_argv=False,
-        summary="run/bootstrap a registry service (alias: dinkster-registry)",
-    ),
     "port": _Command(
         "dinkster.port",
         passes_argv=True,

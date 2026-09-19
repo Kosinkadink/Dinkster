@@ -103,12 +103,15 @@ port for this installation; do not stop another application's process.
 ### Loopback registry for the included template
 
 This optional trial publishes only the release's own `templates/pack` code to
-a registry on your computer. It is not a public publication. Use a new
-`../registry` directory, then run:
+a registry on your computer. It is not a public publication. Install the
+SQLite CLI from the separate
+[registry repository](https://github.com/Kosinkadink/dinkster-registry#sqlite-registry)
+and put its `dinkster-registry-sqlite` command on PATH. The backend does not
+include a registry server. Use a new `../registry` directory, then run:
 
 ```sh
-uv run --no-sync dinkster-registry --data ../registry admin add-user local --operator
-uv run --no-sync dinkster-registry --data ../registry admin add-publisher local --owner local
+dinkster-registry-sqlite --data ../registry admin add-user local --operator
+dinkster-registry-sqlite --data ../registry admin add-publisher local --owner local
 ```
 
 Mint a short-lived publisher token into a terminal variable, not a file.
@@ -116,19 +119,19 @@ Use an expiry in the future. PowerShell:
 
 ```powershell
 $expires = (Get-Date).ToUniversalTime().AddHours(1).ToString('yyyy-MM-ddTHH:mm:ssZ')
-$env:DINKSTER_REGISTRY_TOKEN = uv run --no-sync dinkster-registry --data ../registry admin mint-token local --user local --expires $expires
+$env:DINKSTER_REGISTRY_TOKEN = dinkster-registry-sqlite --data ../registry admin mint-token local --user local --expires $expires
 ```
 
 POSIX shell:
 
 ```sh
-export DINKSTER_REGISTRY_TOKEN="$(uv run --no-sync dinkster-registry --data ../registry admin mint-token local --user local --expires "$(uv run --no-project --python 3.12 python -c 'from datetime import datetime,timedelta,timezone; print((datetime.now(timezone.utc)+timedelta(hours=1)).isoformat())')")"
+export DINKSTER_REGISTRY_TOKEN="$(dinkster-registry-sqlite --data ../registry admin mint-token local --user local --expires "$(uv run --no-project --python 3.12 python -c 'from datetime import datetime,timedelta,timezone; print((datetime.now(timezone.utc)+timedelta(hours=1)).isoformat())')")"
 ```
 
 In a second terminal in the application directory, start the registry:
 
 ```sh
-uv run --no-sync dinkster-registry --data ../registry serve --host 127.0.0.1 --port 8791 --probe-sandbox off
+dinkster-registry-sqlite --data ../registry serve --host 127.0.0.1 --port 8791 --probe-sandbox off
 ```
 
 `--probe-sandbox off` is only for this loopback trial of bundled trusted code.
@@ -259,7 +262,8 @@ revision. Only committed backend and identity source files enter the archive,
 plus the release-specific dependency metadata; uncommitted changes are excluded.
 Verify a downloaded published archive as
 well as local candidates. After installing, run
-`uv run --no-sync python scripts/verify_release_install.py .` to
+`uv run --no-sync python scripts/verify_release_install.py . --registry-command PATH`
+(PATH is the separately installed `dinkster-registry-sqlite` executable) to
 exercise a real loopback registry publication, isolated pack installation,
 backend catalog and installation registration. The verification uses temporary
 data and unused loopback ports, and stops only processes it starts. Pass
