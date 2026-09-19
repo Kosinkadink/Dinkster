@@ -59,7 +59,7 @@
   MiniMax H3 FL2VA and REF2VA support explicit sequence mode with compatible
   attention and rank geometry. Measurements cover BF16 guidance on Ada and Blackwell and
   BF16 Ulysses sequence execution on two Blackwell GPUs with SDPA and
-  comfy-kitchen INT8 attention. Unmeasured configurations are diagnosed,
+  dinkster-kitchen INT8 attention. Unmeasured configurations are diagnosed,
   not refused because they lack measurements. CUDA/NCCL transport, tensor
   dtype/shape consistency, and mode-specific geometry checks still apply.
   Flux packed-grid requests scatter multiple joint windows across ranks with

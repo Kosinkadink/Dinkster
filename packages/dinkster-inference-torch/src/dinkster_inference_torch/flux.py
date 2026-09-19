@@ -13,11 +13,11 @@ double_blocks.N.*, single_blocks.N.*, final_layer.*.
 
 Paired RoPE application capability-probes Dinkster's own fused ``apply_rope`` kernel
 (dinkster-kernels) first on CUDA inputs - bit-identical to the reference
-pure-torch math, so that route never moves a float - then comfy-kitchen's
+pure-torch math, so that route never moves a float - then dinkster-kitchen's
 combined operation (ComfyUI's pinned inference path, whose CUDA backends
 contract the pair rotation into fused multiply-adds one ulp from the
 reference), then the reference's pure-torch math. The single-input operation
-uses comfy-kitchen before the same fallback. These kernels do not register an
+uses dinkster-kitchen before the same fallback. These kernels do not register an
 autograd formula (the reference routes training through the pure-torch path via
 a global ``in_training`` flag); Dinkster gates on the autograd facts themselves:
 inputs that require grad under an enabled grad mode take the pure-torch path.
@@ -131,9 +131,9 @@ def _probe_kitchen_apply_rope() -> _RopeKernel | None:
     Missing or incompatible kitchen -> pure torch (same degrade-never-
     break contract as rounding._probe_kitchen_fp8_kernel)."""
     try:
-        import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+        import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
-        kernel: _RopeKernel = comfy_kitchen.apply_rope
+        kernel: _RopeKernel = dinkster_kitchen.apply_rope
         if not callable(kernel):
             return None
         return kernel
@@ -148,9 +148,9 @@ _ck_apply_rope_lock = Lock()
 
 def _probe_kitchen_apply_rope1() -> _Rope1Kernel | None:
     try:
-        import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+        import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
-        kernel: _Rope1Kernel = comfy_kitchen.apply_rope1
+        kernel: _Rope1Kernel = dinkster_kitchen.apply_rope1
         if not callable(kernel):
             return None
         return kernel

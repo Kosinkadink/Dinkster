@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 AttentionPolicy = Literal[
-    "auto", "sdpa", "flash", "xformers", "sage", "sage3", "sol", "comfy_kitchen_int8"
+    "auto", "sdpa", "flash", "xformers", "sage", "sage3", "sol", "dinkster_kitchen_int8"
 ]
 ATTENTION_ROLES = ("unet", "flux", "vae", "clip", "t5", "qwen")
 ATTENTION_POLICIES = (
@@ -19,7 +19,7 @@ ATTENTION_POLICIES = (
     "sage",
     "sage3",
     "sol",
-    "comfy_kitchen_int8",
+    "dinkster_kitchen_int8",
 )
 ATTENTION_CAPABILITY_EVIDENCE_VERSION = 1
 ATTENTION_ROUTE_TOKEN_VERSION = 1
@@ -163,11 +163,11 @@ class AttentionCapabilityEvidence:
         provider_names = tuple(name for name, _ in provider_pairs)
         if len(set(provider_names)) != len(provider_names):
             raise ValueError("provider version names must be unique")
-        kitchen_available = bool({"sol", "comfy_kitchen_int8"}.intersection(validated))
-        kitchen_versioned = any(name == "comfy-kitchen" for name, _ in provider_pairs)
+        kitchen_available = bool({"sol", "dinkster_kitchen_int8"}.intersection(validated))
+        kitchen_versioned = any(name == "dinkster-kitchen" for name, _ in provider_pairs)
         if kitchen_available != kitchen_versioned:
             raise ValueError(
-                "comfy-kitchen provider evidence must match kitchen attention availability"
+                "dinkster-kitchen provider evidence must match kitchen attention availability"
             )
         sage_available = "sage" in validated
         sage_versioned = any(name == "sageattention" for name, _ in provider_pairs)
@@ -249,7 +249,7 @@ class AttentionRouteToken:
                 expected_route = (selected.primary, selected.fallback)
             elif effective in ("auto", "sdpa"):
                 expected_route = ("sdpa", None)
-            elif effective in ("comfy_kitchen_int8", "sage", "sol"):
+            elif effective in ("dinkster_kitchen_int8", "sage", "sol"):
                 expected_route = (effective, "sdpa")
             else:
                 expected_route = (effective, None)
@@ -260,8 +260,8 @@ class AttentionRouteToken:
                 and (
                     (effective == "sage" and "sageattention" not in dict(self.provider_versions))
                     or (
-                        effective in ("sol", "comfy_kitchen_int8")
-                        and "comfy-kitchen" not in dict(self.provider_versions)
+                        effective in ("sol", "dinkster_kitchen_int8")
+                        and "dinkster-kitchen" not in dict(self.provider_versions)
                     )
                     or effective in ("flash", "xformers", "sage3")
                 )
@@ -387,19 +387,19 @@ def derive_attention_route_token(
             route = AttentionRoute(
                 role,
                 effective,
-                "sdpa" if effective in ("comfy_kitchen_int8", "sage", "sol") else None,
+                "sdpa" if effective in ("dinkster_kitchen_int8", "sage", "sol") else None,
             )
             if effective not in evidence.available_policies:
                 route = AttentionRoute(role, "sdpa")
                 portable_fallback = True
         routes.append(route)
 
-    kitchen_requested = any(route.primary in ("sol", "comfy_kitchen_int8") for route in routes)
+    kitchen_requested = any(route.primary in ("sol", "dinkster_kitchen_int8") for route in routes)
     sage_requested = any(route.primary == "sage" for route in routes)
     providers = tuple(
         pair
         for pair in evidence.provider_versions
-        if (pair[0] != "comfy-kitchen" or kitchen_requested)
+        if (pair[0] != "dinkster-kitchen" or kitchen_requested)
         and (pair[0] != "sageattention" or sage_requested)
     )
     return AttentionRouteToken(

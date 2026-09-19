@@ -91,10 +91,11 @@ class MiniMaxH3AttentionProviderEvidence:
             if self.provider_version is not None:
                 raise ValueError("the built-in SDPA provider carries no provider version")
         elif self.provider in (COMFY_KITCHEN_INT8_PROVIDER, SOL_ATTENTION_PROVIDER):
-            installed = _distribution_version("comfy-kitchen")
+            installed = _distribution_version("dinkster-kitchen")
             if self.provider_version != installed:
                 raise ValueError(
-                    f"provider_version must equal the installed comfy-kitchen version {installed!r}"
+                    "provider_version must equal the installed "
+                    f"dinkster-kitchen version {installed!r}"
                 )
         elif self.provider == SAGE2_PROVIDER:
             installed = sage2_distribution_version()
@@ -172,13 +173,13 @@ def _fused_h3_norm_rope(
             _apply_split_half_rope(query_norm(query), table, rotary_dim),
             _apply_split_half_rope(key_norm(key), table, rotary_dim),
         )
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
     with (
         materialized_rms_norm_weight(query_norm) as query_weight,
         materialized_rms_norm_weight(key_norm) as key_weight,
     ):
-        return comfy_kitchen.rms_rope_split_half_(
+        return dinkster_kitchen.rms_rope_split_half_(
             query,
             key,
             table,

@@ -433,17 +433,19 @@ def test_role_policy_overrides_split_kitchen_and_sdpa_across_roles(
         ("clip", "sdpa"),
         ("t5", "sdpa"),
     )
-    token = discover_attention_route_token("comfy_kitchen_int8", requested_role_policies=overrides)
+    token = discover_attention_route_token(
+        "dinkster_kitchen_int8", requested_role_policies=overrides
+    )
     assert token.version == 2
     assembled = assemble_flux(
         make_plan(standard),
-        attention_policy="comfy_kitchen_int8",
+        attention_policy="dinkster_kitchen_int8",
         attention_route_token=token,
     )
     statuses = assembled.attention_status
     for role in ("unet", "flux", "qwen"):
-        assert statuses[role].requested_policy == "comfy_kitchen_int8"
-        assert statuses[role].primary == "comfy_kitchen_int8"
+        assert statuses[role].requested_policy == "dinkster_kitchen_int8"
+        assert statuses[role].primary == "dinkster_kitchen_int8"
         assert statuses[role].fallback == "sdpa"
     for role in ("vae", "clip", "t5"):
         assert statuses[role].requested_policy == "sdpa"
@@ -1410,7 +1412,7 @@ def test_int8_embedding_assembles_and_executes_selected_rows(tmp_path: Path) -> 
 
     assert isinstance(module.embed_tokens, Int8Embedding)
     indices = torch.tensor([[1, 7, 4], [10, 0, 3]])
-    expected = torch.ops.comfy_kitchen.dequantize_int8_embedding(
+    expected = torch.ops.dinkster_kitchen.dequantize_int8_embedding(
         state["embed_tokens.weight"],
         state["embed_tokens.weight_scale"],
         indices,

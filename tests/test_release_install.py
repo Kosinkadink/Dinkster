@@ -49,13 +49,14 @@ def windows_runtime_source() -> dict[str, str]:
     }
     return {
         "scripts/desktop_windows_runtime.json": json.dumps(profile, indent=4) + "\n",
-        "scripts/install_dinkster_aimdo.py": (
-            'REPOSITORY = "Kosinkadink/dinkster-aimdo"\n'
-            f'RELEASE_COMMIT = "{"c" * 40}"\n'
-            'RELEASE_TAG = "v0.6.0"\nPACKAGE_VERSION = "0.6.0"\n'
-            'raise RuntimeError("selected source must not execute")\n'
+        "uv.lock": (
+            '[[package]]\nname = "dinkster-aimdo"\nversion = "0.6.0"\n'
+            'source = { registry = "https://pypi.org/simple" }\n'
+            'wheels = [\n  { url = "https://files.pythonhosted.org/packages/fixture/'
+            'dinkster_aimdo-0.6.0-cp39-abi3-win_amd64.whl", '
+            f'hash = "sha256:{"d" * 64}", size = 123 }}\n]\n\n'
+            '[[package]]\nname = "torch"\nversion = "2.14.0"\n'
         ),
-        "uv.lock": '[[package]]\nname = "torch"\nversion = "2.14.0"\n',
         "packages/dinkster-vision-birefnet/dinkster-pack.toml": (
             '[pack]\nrequires = ["torch==2.14.0", "torchvision==0.29.0"]\n'
         ),
@@ -203,24 +204,22 @@ def test_release_manifest_binds_archive_to_resolved_commit(
     ("path", "old", "new", "message"),
     [
         (
-            "scripts/install_dinkster_aimdo.py",
-            "Kosinkadink/dinkster-aimdo",
-            "other/repo",
-            "REPOSITORY",
-        ),
-        ("scripts/install_dinkster_aimdo.py", "c" * 40, "f" * 40, "RELEASE_COMMIT"),
-        ("scripts/install_dinkster_aimdo.py", "v0.6.0", "v0.7.0", "RELEASE_TAG"),
-        (
-            "scripts/install_dinkster_aimdo.py",
-            'PACKAGE_VERSION = "0.6.0"',
-            'PACKAGE_VERSION = "0.7.0"',
-            "PACKAGE_VERSION",
+            "scripts/desktop_windows_runtime.json",
+            '"version": "0.6.0"',
+            '"version": "0.7.0"',
+            "aimdo.version",
         ),
         (
-            "scripts/install_dinkster_aimdo.py",
-            'PACKAGE_VERSION = "0.6.0"',
-            "PACKAGE_VERSION = compute_version()",
-            "literal PACKAGE_VERSION",
+            "scripts/desktop_windows_runtime.json",
+            "dinkster_aimdo-0.6.0-cp39-abi3-win_amd64.whl",
+            "missing.whl",
+            "aimdo.archive",
+        ),
+        (
+            "scripts/desktop_windows_runtime.json",
+            "d" * 64,
+            "f" * 64,
+            "aimdo.sha256",
         ),
         ("uv.lock", 'version = "2.14.0"', 'version = "2.15.0"', "cudaTorch.version"),
         (

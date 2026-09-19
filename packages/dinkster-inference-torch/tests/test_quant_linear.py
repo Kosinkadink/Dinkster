@@ -67,14 +67,14 @@ def test_int8_convrot_embedding_matches_kitchen() -> None:
     )
     layer.load_state_dict({"weight": weight, "weight_scale": scale}, assign=True)
 
-    expected = torch.ops.comfy_kitchen.dequantize_int8_embedding(weight, scale, indices, 256, 0)
+    expected = torch.ops.dinkster_kitchen.dequantize_int8_embedding(weight, scale, indices, 256, 0)
     torch.testing.assert_close(layer(indices), expected, rtol=0, atol=0)
     assert set(layer.state_dict()) == {"weight", "weight_scale"}
 
 
 @pytest.mark.parametrize("rank", [2, 3])
 def test_int8_convrot_linear_matches_kitchen(rank: int) -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
     generator = torch.Generator().manual_seed(41)
     input_shape = (2, 3, 256) if rank == 3 else (6, 256)
@@ -92,7 +92,7 @@ def test_int8_convrot_linear_matches_kitchen(rank: int) -> None:
     )
     layer.load_state_dict({"weight": weight, "weight_scale": scale, "bias": bias}, assign=True)
 
-    expected = comfy_kitchen.int8_linear(
+    expected = dinkster_kitchen.int8_linear(
         input,
         weight,
         scale,
@@ -107,7 +107,7 @@ def test_int8_convrot_linear_matches_kitchen(rank: int) -> None:
 
 
 def test_int8_convrot_requantize_is_bit_exact_with_kitchen_wrapper() -> None:
-    from comfy_kitchen.tensor import (  # pyright: ignore[reportMissingTypeStubs]
+    from dinkster_kitchen.tensor import (  # pyright: ignore[reportMissingTypeStubs]
         QuantizedTensor,
         TensorWiseINT8Layout,
     )
@@ -173,7 +173,7 @@ def test_int8_unsupported_native_device_routes_through_dequant(
     """Devices without a native INT8 matmul (MPS) execute the dequant
     route even when the layer plans the native route, and never reach
     kitchen int8_linear."""
-    pytest.importorskip("comfy_kitchen")
+    pytest.importorskip("dinkster_kitchen")
     generator = torch.Generator().manual_seed(46)
     input = torch.randn((2, 256), generator=generator)
     weight = torch.randint(-100, 101, (5, 256), generator=generator, dtype=torch.int8)
@@ -239,7 +239,7 @@ def test_int8_unsupported_native_device_refuses_grad_enabled_input(
 def test_int8_supported_native_device_still_uses_kitchen(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.importorskip("comfy_kitchen")
+    pytest.importorskip("dinkster_kitchen")
     generator = torch.Generator().manual_seed(47)
     input = torch.randn((2, 256), generator=generator)
     weight = torch.randint(-100, 101, (5, 256), generator=generator, dtype=torch.int8)
@@ -273,7 +273,7 @@ def test_int8_supported_native_device_still_uses_kitchen(
 
 
 def test_int8_full_precision_convrot_dequantizes_before_matmul() -> None:
-    kitchen = pytest.importorskip("comfy_kitchen")
+    kitchen = pytest.importorskip("dinkster_kitchen")
     assert kitchen is not None
 
     generator = torch.Generator().manual_seed(42)
@@ -290,7 +290,7 @@ def test_int8_full_precision_convrot_dequantizes_before_matmul() -> None:
         full_precision_matmul=True,
     )
     layer.load_state_dict({"weight": weight, "weight_scale": scale}, assign=True)
-    expected_weight = torch.ops.comfy_kitchen.dequantize_int8_convrot_weight(weight, scale, 256)
+    expected_weight = torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight(weight, scale, 256)
 
     output = layer(input)
     torch.testing.assert_close(output, torch.nn.functional.linear(input, expected_weight))
@@ -444,7 +444,7 @@ def test_int8_full_precision_convrot_input_activation_supports_backward(
     input_act: Literal["gelu_tanh", "swiglu"],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pytest.importorskip("comfy_kitchen")
+    pytest.importorskip("dinkster_kitchen")
     generator = torch.Generator().manual_seed(44)
     width = 256
     input_width = width * 2 if input_act == "swiglu" else width
@@ -461,7 +461,7 @@ def test_int8_full_precision_convrot_input_activation_supports_backward(
         full_precision_matmul=True,
     )
     layer.load_state_dict({"weight": weight, "weight_scale": scale}, assign=True)
-    dequantized = torch.ops.comfy_kitchen.dequantize_int8_convrot_weight(weight, scale, 256)
+    dequantized = torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight(weight, scale, 256)
     if input_act == "swiglu":
         gate, up = input.chunk(2, dim=-1)
         activated = torch.nn.functional.silu(gate) * up
@@ -490,7 +490,7 @@ def test_int8_convrot_folds_input_activation_with_kitchen_by_default(
     input_act: Literal["gelu_tanh", "swiglu"],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
     generator = torch.Generator().manual_seed(43)
     width = 256
@@ -519,7 +519,7 @@ def test_int8_convrot_folds_input_activation_with_kitchen_by_default(
 
     monkeypatch.setattr(layer, "_forward", record_forward)
 
-    expected = comfy_kitchen.int8_linear(
+    expected = dinkster_kitchen.int8_linear(
         input,
         weight,
         scale,
@@ -949,7 +949,7 @@ def test_nvfp4_missing_kitchen_is_a_named_refusal(monkeypatch: pytest.MonkeyPatc
     layer = Nvfp4Linear(16, 16, bias=False, compute_dtype=torch.float32)
     monkeypatch.setattr(quant_linear_mod, "_nvfp4_kitchen_probed", True)
     monkeypatch.setattr(quant_linear_mod, "_nvfp4_kitchen", None)
-    with pytest.raises(Nvfp4ExecutionError, match="requires comfy-kitchen"):
+    with pytest.raises(Nvfp4ExecutionError, match="requires dinkster-kitchen"):
         layer(torch.randn(1, 16))
 
 

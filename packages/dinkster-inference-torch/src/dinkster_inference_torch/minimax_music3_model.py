@@ -125,10 +125,10 @@ class MiniMaxMusic3Attention(torch.nn.Module):
             query = torch.cat((rotated_query, query[..., rotary_width:]), dim=-1)
             key = torch.cat((rotated_key, key[..., rotary_width:]), dim=-1)
         else:
-            import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+            import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
-            comfy_kitchen.apply_rope_split_half1_(query[..., :rotary_width], table)
-            comfy_kitchen.apply_rope_split_half1_(key[..., :rotary_width], table)
+            dinkster_kitchen.apply_rope_split_half1_(query[..., :rotary_width], table)
+            dinkster_kitchen.apply_rope_split_half1_(key[..., :rotary_width], table)
         output = self._attention_kernel(query, key, value)
         return self.to_out(output.transpose(1, 2).reshape(batch, length, width))
 

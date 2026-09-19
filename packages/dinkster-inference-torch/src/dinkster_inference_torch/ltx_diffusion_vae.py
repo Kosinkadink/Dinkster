@@ -137,8 +137,8 @@ class NeighborhoodAttention3D(torch.nn.Module):
         pre: Callable[[torch.Tensor], torch.Tensor] | None = None,
         add_to: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
-        import comfy_kitchen.backends.eager.na as eager_na  # pyright: ignore[reportMissingTypeStubs]
+        import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
+        import dinkster_kitchen.backends.eager.na as eager_na  # pyright: ignore[reportMissingTypeStubs]
 
         b, t, h, w, _ = x.shape
         shape = (b, t, h, w, self.num_heads, self.head_dim)
@@ -176,7 +176,7 @@ class NeighborhoodAttention3D(torch.nn.Module):
                 materialized_rms_norm_weight(self.q_norm) as qw,
                 materialized_rms_norm_weight(self.k_norm) as kw,
             ):
-                comfy_kitchen.rms_rope_(
+                dinkster_kitchen.rms_rope_(
                     q[:, t0:t1].reshape(b, -1, self.num_heads, self.head_dim),
                     k[:, t0:t1].reshape(b, -1, self.num_heads, self.head_dim),
                     table,
@@ -188,7 +188,7 @@ class NeighborhoodAttention3D(torch.nn.Module):
             attended = eager_na.na3d(q, k, v, list(self.kernel_size), None, 1.0)
         else:
             assert q is not None and k is not None and v is not None
-            attended = comfy_kitchen.na3d(q, k, v, list(self.kernel_size), None, 1.0)
+            attended = dinkster_kitchen.na3d(q, k, v, list(self.kernel_size), None, 1.0)
         attended = attended.reshape(b, t, h, w, self.dim)
         del q, k, v
         if gradient_mode:

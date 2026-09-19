@@ -226,7 +226,6 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         "with": {
             "run-model-tests": "true",
             "identity-deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}",
-            "aimdo-release-token": "${{ secrets.DINKSTER_AIMDO_RELEASE_TOKEN }}",
         },
     }
     assert job["env"] == {

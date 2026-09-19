@@ -52,11 +52,11 @@ def test_binding_table_matches_static_imports_and_eager_baseline() -> None:
     # Pin the complete lazy public surface, including the solvers.euler alias.
     assert len(bindings) == 850
     assert hashlib.sha256(json.dumps(bindings, sort_keys=True).encode()).hexdigest() == (
-        "95de263f58cd0292597bacaa5409be1841762b4d995780712d66bc08ef334207"
+        "58263006cb49dba43166db2429c8fc9c7dfccfa657c4d0a33097519051559bca"
     )
     assert len(package.__all__) == 853
     assert hashlib.sha256(json.dumps(package.__all__).encode()).hexdigest() == (
-        "6fa6f2130017741dc91e12c187557950822c4581d7a96fcb70e2ff97992a4539"
+        "7b5bd7c89faa5c13d613fc7ae1715a7bf1dd42adb5b523e93c904bfef61cc589"
     )
     assert set(package.__all__) == set(bindings)
     modules = {
@@ -81,7 +81,7 @@ def test_cold_package_and_dir_do_not_import_execution_dependencies() -> None:
         class BlockExecution(importlib.abc.MetaPathFinder):
             def find_spec(self, fullname, path=None, target=None):
                 if fullname.split('.')[0] in {
-                    'torch', 'comfy_kitchen', 'tokenizers', 'sentencepiece'
+                    'torch', 'dinkster_kitchen', 'tokenizers', 'sentencepiece'
                 }:
                     raise AssertionError('eager import: ' + fullname)
 
@@ -115,7 +115,7 @@ def test_package_reload_refreshes_exports_without_loading_unrelated_dependencies
         import importlib.abc
         import sys
 
-        blocked = {'torch', 'comfy_aimdo', 'comfy_kitchen', 'tokenizers', 'sentencepiece'}
+        blocked = {'torch', 'dinkster_aimdo', 'dinkster_kitchen', 'tokenizers', 'sentencepiece'}
 
         class BlockExecution(importlib.abc.MetaPathFinder):
             def find_spec(self, fullname, path=None, target=None):
@@ -153,7 +153,7 @@ def test_leaf_helpers_run_without_unrelated_optional_dependencies(root_exports: 
         import importlib.abc
         import sys
 
-        blocked = {{'comfy_kitchen', 'tokenizers', 'sentencepiece'}}
+        blocked = {{'dinkster_kitchen', 'tokenizers', 'sentencepiece'}}
         assert blocked.isdisjoint(sys.modules)
 
         class MissingOptionalDependency(importlib.abc.MetaPathFinder):

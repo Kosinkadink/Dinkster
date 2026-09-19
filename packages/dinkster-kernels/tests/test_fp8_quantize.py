@@ -103,7 +103,7 @@ def test_bit_identical_to_eager_reference(
 
 @requires_cuda
 def test_thresholds_saturation_and_nonfinite_values_match_kitchen() -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
     _skip_unless_available()
     scale = torch.tensor(0.03, device="cuda", dtype=torch.float32)
@@ -132,7 +132,7 @@ def test_thresholds_saturation_and_nonfinite_values_match_kitchen() -> None:
             torch.nextafter(midpoint, torch.full_like(midpoint, float("-inf"))).reshape(1),
         )
     )
-    expected = comfy_kitchen.quantize_per_tensor_fp8(input, scale, torch.float8_e4m3fn)
+    expected = dinkster_kitchen.quantize_per_tensor_fp8(input, scale, torch.float8_e4m3fn)
     actual = quantize_per_tensor_fp8(input, scale, torch.float8_e4m3fn)
     assert torch.equal(actual.view(torch.uint8), expected.view(torch.uint8))
 

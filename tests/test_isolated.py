@@ -579,7 +579,7 @@ def test_aimdo_bootstrap_unavailable_warns_and_continues(
     monkeypatch.delitem(sys.modules, "torch", raising=False)
 
     def unavailable(name: str) -> object:
-        assert name == "comfy_aimdo.control"
+        assert name == "dinkster_aimdo.control"
         raise ImportError(name)
 
     monkeypatch.setattr(importlib, "import_module", unavailable)
@@ -674,7 +674,7 @@ def test_aimdo_bootstrap_old_aimdo_degrades_headroomless_and_disarms(
     assert calls == [{"simple_vram_headroom": 128 * 1024**2}, {}]
     assert "NOT applied" in caplog.text
     assert "older than 0.4.10" in caplog.text
-    assert "upgrade comfy-aimdo" in caplog.text
+    assert "upgrade dinkster-aimdo" in caplog.text
     assert "completed successfully with simple_vram_headroom" not in caplog.text
     assert host_module._aimdo_bootstrap_headroom_base is None
 

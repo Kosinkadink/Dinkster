@@ -3250,7 +3250,7 @@ def test_nvfp4_adapter_representative_uses_direct_kitchen_dequant_and_linear(
 
     monkeypatch.setitem(
         sys.modules,
-        "comfy_kitchen",
+        "dinkster_kitchen",
         SimpleNamespace(dequantize_nvfp4=dequantize),
     )
     torch = SimpleNamespace(

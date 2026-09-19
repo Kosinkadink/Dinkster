@@ -1458,7 +1458,7 @@ class TestArguments:
         assert arguments.attention_policy == "auto"
         assert arguments.quality_output_dir is None
 
-    @pytest.mark.parametrize("policy", ["sdpa", "comfy_kitchen_int8", "sage"])
+    @pytest.mark.parametrize("policy", ["sdpa", "dinkster_kitchen_int8", "sage"])
     def test_minimax_h3_cli_accepts_explicit_attention_evidence(
         self, tmp_path: Path, policy: str
     ) -> None:

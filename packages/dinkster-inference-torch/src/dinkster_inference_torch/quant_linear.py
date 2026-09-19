@@ -116,7 +116,7 @@ class Int8ExecutionError(RuntimeError):
 
 
 def _int8_native_matmul_supported(device: torch.device) -> bool:
-    """comfy-kitchen int8_linear bottoms out in torch._int_mm, which has
+    """dinkster-kitchen int8_linear bottoms out in torch._int_mm, which has
     no MPS kernel; there INT8 layers execute through the dequant route
     instead."""
     return device.type != "mps"
@@ -142,10 +142,10 @@ def _int8_linear(
     input_act: Literal["gelu_tanh", "swiglu"] | None = None,
 ) -> torch.Tensor:
     try:
-        kitchen = cast(Any, importlib.import_module("comfy_kitchen"))
+        kitchen = cast(Any, importlib.import_module("dinkster_kitchen"))
         operation = kitchen.int8_linear
     except (ImportError, AttributeError) as error:
-        raise Int8ExecutionError("INT8 execution requires comfy-kitchen int8_linear") from error
+        raise Int8ExecutionError("INT8 execution requires dinkster-kitchen int8_linear") from error
     try:
         return cast(
             torch.Tensor,
@@ -163,7 +163,7 @@ def _int8_linear(
     except torch.OutOfMemoryError:
         raise
     except Exception as error:
-        raise Int8ExecutionError(f"comfy-kitchen int8_linear failed: {error}") from error
+        raise Int8ExecutionError(f"dinkster-kitchen int8_linear failed: {error}") from error
 
 
 def _dequantize_int8(
@@ -177,15 +177,15 @@ def _dequantize_int8(
     if not convrot:
         return weight.to(dtype=dtype) * weight_scale.to(dtype=dtype)
     try:
-        importlib.import_module("comfy_kitchen")
-        dequantized = torch.ops.comfy_kitchen.dequantize_int8_convrot_weight(
+        importlib.import_module("dinkster_kitchen")
+        dequantized = torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight(
             weight, weight_scale, convrot_groupsize
         )
     except torch.OutOfMemoryError:
         raise
     except Exception as error:
         raise Int8ExecutionError(
-            f"comfy-kitchen ConvRot INT8 dequantization failed: {error}"
+            f"dinkster-kitchen ConvRot INT8 dequantization failed: {error}"
         ) from error
     return dequantized.to(dtype=dtype)
 
@@ -200,9 +200,9 @@ def _int8_embedding(
     convrot_groupsize: int,
 ) -> torch.Tensor:
     try:
-        importlib.import_module("comfy_kitchen")
+        importlib.import_module("dinkster_kitchen")
         dtype_code = _INT8_DEQUANT_DTYPE_CODES[out_dtype]
-        result = torch.ops.comfy_kitchen.dequantize_int8_embedding(
+        result = torch.ops.dinkster_kitchen.dequantize_int8_embedding(
             weight,
             weight_scale,
             indices,
@@ -213,7 +213,7 @@ def _int8_embedding(
         raise
     except Exception as error:
         raise Int8ExecutionError(
-            f"comfy-kitchen INT8 embedding dequantization failed: {error}"
+            f"dinkster-kitchen INT8 embedding dequantization failed: {error}"
         ) from error
     return result.to(dtype=out_dtype)
 
@@ -229,11 +229,11 @@ def _dequantize_int8_training_chunk(
     if not convrot:
         return weight.to(dtype=dtype) * weight_scale.to(dtype=dtype)
     try:
-        importlib.import_module("comfy_kitchen")
+        importlib.import_module("dinkster_kitchen")
         dtype_code = _INT8_DEQUANT_DTYPE_CODES[dtype]
         return cast(
             torch.Tensor,
-            torch.ops.comfy_kitchen.dequantize_int8_convrot_weight_dtype(
+            torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight_dtype(
                 weight,
                 weight_scale,
                 convrot_groupsize,
@@ -244,7 +244,7 @@ def _dequantize_int8_training_chunk(
         raise
     except Exception as error:
         raise Int8ExecutionError(
-            f"comfy-kitchen ConvRot INT8 training dequantization failed: {error}"
+            f"dinkster-kitchen ConvRot INT8 training dequantization failed: {error}"
         ) from error
 
 
@@ -682,7 +682,7 @@ def _probe_nvfp4_kitchen() -> _Nvfp4Kitchen | None:
         return _nvfp4_kitchen
     _nvfp4_kitchen_probed = True
     try:
-        module = cast(Any, importlib.import_module("comfy_kitchen"))
+        module = cast(Any, importlib.import_module("dinkster_kitchen"))
         quantize = module.quantize_nvfp4
         dequantize = module.dequantize_nvfp4
         scaled_mm = module.scaled_mm_nvfp4
@@ -705,7 +705,7 @@ def _require_nvfp4_kitchen() -> _Nvfp4Kitchen:
     kitchen = _probe_nvfp4_kitchen()
     if kitchen is None:
         raise Nvfp4ExecutionError(
-            "NVFP4 execution requires comfy-kitchen quantize_nvfp4,"
+            "NVFP4 execution requires dinkster-kitchen quantize_nvfp4,"
             " dequantize_nvfp4, scaled_mm_nvfp4, and backend capability probing"
         )
     return kitchen
@@ -821,7 +821,7 @@ def _probe_kitchen_scaled_mm_v2() -> ScaledMm | None:
         return _kitchen_scaled_mm_v2
     _kitchen_probed = True
     try:
-        module = cast(Any, importlib.import_module("comfy_kitchen.scaled_mm_v2"))
+        module = cast(Any, importlib.import_module("dinkster_kitchen.scaled_mm_v2"))
         has_scaled_mm_v2 = module.has_scaled_mm_v2
         scaled_mm_v2 = module.scaled_mm_v2
         if bool(has_scaled_mm_v2()) and callable(scaled_mm_v2):
@@ -865,7 +865,7 @@ def _probe_kitchen_quantize_per_tensor_fp8() -> QuantizeFp8 | None:
         return _kitchen_quantize_per_tensor_fp8
     _kitchen_quantize_probed = True
     try:
-        module = cast(Any, importlib.import_module("comfy_kitchen"))
+        module = cast(Any, importlib.import_module("dinkster_kitchen"))
         quantize = module.quantize_per_tensor_fp8
         if callable(quantize):
             _kitchen_quantize_per_tensor_fp8 = cast(QuantizeFp8, quantize)
@@ -955,7 +955,7 @@ def fp8_matmul_forward(
         scaled = _kitchen_scaled_mm_v2
     else:
         scaled = None
-    # comfy-kitchen's CUDA backend exports operands via __dlpack__ with
+    # dinkster-kitchen's CUDA backend exports operands via __dlpack__ with
     # no device guard, and torch refuses cross-device DLPack export, so
     # pin the CUDA context to the input's device for the kitchen calls
     # (kitchen also reads torch.cuda.current_device() capability state).
@@ -1348,7 +1348,9 @@ class Nvfp4Linear(torch.nn.Module):
         except Exception as error:
             if self._diagnostics is not None:
                 self._diagnostics.record("dequantize_error")
-            raise Nvfp4ExecutionError(f"comfy-kitchen dequantize_nvfp4 failed: {error}") from error
+            raise Nvfp4ExecutionError(
+                f"dinkster-kitchen dequantize_nvfp4 failed: {error}"
+            ) from error
         if self._diagnostics is not None:
             self._diagnostics.record("dequantize_success")
         dequantized = dequantized[: self.out_features, : self.in_features]
@@ -1369,7 +1371,7 @@ class Nvfp4Linear(torch.nn.Module):
             if type(error).__name__ == "NoCapableBackendError":
                 return False
             raise Nvfp4ExecutionError(
-                f"comfy-kitchen {operation} capability probe failed: {error}"
+                f"dinkster-kitchen {operation} capability probe failed: {error}"
             ) from error
         return backend == "cuda"
 
@@ -1413,7 +1415,7 @@ class Nvfp4Linear(torch.nn.Module):
         except Exception as error:
             if self._diagnostics is not None:
                 self._diagnostics.record("quantize_error")
-            raise Nvfp4ExecutionError(f"comfy-kitchen quantize_nvfp4 failed: {error}") from error
+            raise Nvfp4ExecutionError(f"dinkster-kitchen quantize_nvfp4 failed: {error}") from error
         if self._diagnostics is not None:
             self._diagnostics.record("quantize_success")
         cast_bias = None if bias is None else bias.to(dtype=self.compute_dtype)
@@ -1440,7 +1442,9 @@ class Nvfp4Linear(torch.nn.Module):
         except Exception as error:
             if self._diagnostics is not None:
                 self._diagnostics.record("scaled_mm_error")
-            raise Nvfp4ExecutionError(f"comfy-kitchen scaled_mm_nvfp4 failed: {error}") from error
+            raise Nvfp4ExecutionError(
+                f"dinkster-kitchen scaled_mm_nvfp4 failed: {error}"
+            ) from error
         if self._diagnostics is not None:
             self._diagnostics.record("scaled_mm_success")
         output = output[: x.shape[0], : self.out_features]

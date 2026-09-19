@@ -403,8 +403,8 @@ def _record(
         },
         "cold": _metrics(resource, seconds * 2),
         "device": {
-            "comfy_aimdo": "0.4.15",
-            "comfy_kitchen": "0.2.31",
+            "dinkster_aimdo": "0.4.15",
+            "dinkster_kitchen": "0.2.31",
             "cuda": "13.0",
             "driver": "595.84",
             "gpu_index": 3,
@@ -602,7 +602,7 @@ def test_verdict_rejects_process_source_and_device_drift(tmp_path: Path) -> None
         build_verdict(records, "candidate")
 
     records = _records(tmp_path)
-    records[3]["device"]["comfy_aimdo"] = "different"
+    records[3]["device"]["dinkster_aimdo"] = "different"
     with pytest.raises(GateError, match="runtime or device"):
         build_verdict(records, "candidate")
 

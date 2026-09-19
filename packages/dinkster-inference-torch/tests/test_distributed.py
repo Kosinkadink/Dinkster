@@ -491,7 +491,7 @@ _MINIMAX_H3_BF16_SDPA_U2_FACTS = (
 _MINIMAX_H3_INT8_ATTENTION_U2_FACTS = (
     "topology=sequence",
     "execution_provider=bf16-linear",
-    "attention_provider=comfy-kitchen-int8-attention-v1",
+    "attention_provider=dinkster-kitchen-int8-attention-v1",
     "attention_provider_version=0.2.31",
     "torch_version=2.13.0+cu130",
     "sequence_ulysses=2",
@@ -528,7 +528,7 @@ def test_distributed_identity_excludes_software_builds(mode: str) -> None:
     }[mode]
     facts = (
         f"topology={mode}",
-        "attention_provider=comfy-kitchen-int8-attention-v1",
+        "attention_provider=dinkster-kitchen-int8-attention-v1",
         "sequence_ulysses=2",
     )
     expected = build_identity("dinkster.synthetic", facts, torch.bfloat16, 2)

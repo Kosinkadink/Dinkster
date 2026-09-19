@@ -752,9 +752,9 @@ def _attention_capabilities(*, kitchen: bool = False) -> AttentionCapabilityEvid
         device_sm=None,
         sdpa_torch_runtime="2.13.0",
         adapter_contract_revision="dinkster.attention-kernel.v1",
-        available_policies=("sdpa", "comfy_kitchen_int8") if kitchen else ("sdpa",),
+        available_policies=("sdpa", "dinkster_kitchen_int8") if kitchen else ("sdpa",),
         provider_versions=(
-            (("comfy-kitchen", "0.2.31"), ("torch", "2.13.0"))
+            (("dinkster-kitchen", "0.2.31"), ("torch", "2.13.0"))
             if kitchen
             else (("torch", "2.13.0"),)
         ),
@@ -1883,7 +1883,7 @@ def test_composer_keeps_portable_attention_arms_and_respects_placement() -> None
         weak = arm("weak", kitchen=False)
         strong = arm("strong", kitchen=True)
         topology = {"nativepack.echo": (weak, strong)}
-        config = AttentionPolicyConfig("comfy_kitchen_int8")
+        config = AttentionPolicyConfig("dinkster_kitchen_int8")
         composer = ServingComposer()
 
         selected = await composer._plan_execution(
@@ -1896,9 +1896,9 @@ def test_composer_keeps_portable_attention_arms_and_respects_placement() -> None
         )
         assert selected is not None
         assert selected.target == "weak"
-        assert selected.attention_policy == "comfy_kitchen_int8"
+        assert selected.attention_policy == "dinkster_kitchen_int8"
         assert selected.attention_route_token is not None
-        assert selected.attention_route_token.requested_policy == "comfy_kitchen_int8"
+        assert selected.attention_route_token.requested_policy == "dinkster_kitchen_int8"
         assert selected.attention_route_token.version == 3
         assert all(route.primary == "sdpa" for route in selected.attention_route_token.routes)
 
@@ -2095,7 +2095,7 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
             cache=cache,
             plan_execution=plan,  # type: ignore[arg-type]
         )
-        for policy in ("comfy_kitchen_int8", "sdpa", "comfy_kitchen_int8"):
+        for policy in ("dinkster_kitchen_int8", "sdpa", "dinkster_kitchen_int8"):
             await engine.run(
                 Graph(nodes={"n": GraphNode(schema.node_type, {})}),
                 ["n"],
@@ -2105,7 +2105,7 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
         assert cache.get_calls == 3
         assert cache.put_calls == 2
         assert [token.requested_policy for token in execution_worker.tokens] == [
-            "comfy_kitchen_int8",
+            "dinkster_kitchen_int8",
             "sdpa",
         ]
         assert execution_worker.tokens[0].version == 3

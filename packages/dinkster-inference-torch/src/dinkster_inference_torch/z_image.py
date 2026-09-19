@@ -153,7 +153,7 @@ class ZImageAttention(torch.nn.Module):
         k = k.view(batch, length, self.kv_heads, self.head_dim)
         v = v.view(batch, length, self.kv_heads, self.head_dim).transpose(1, 2)
         if self.fused_qk_rope and not torch.is_grad_enabled():
-            import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+            import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
             with (
                 materialized_rms_norm_weight(self.q_norm) as q_scale,
@@ -161,7 +161,7 @@ class ZImageAttention(torch.nn.Module):
             ):
                 kitchen_rope = rope.movedim(1, 2)
                 if self.heads == self.kv_heads:
-                    q, k = comfy_kitchen.rms_rope(
+                    q, k = dinkster_kitchen.rms_rope(
                         q,
                         k,
                         kitchen_rope,
@@ -170,13 +170,13 @@ class ZImageAttention(torch.nn.Module):
                         epsilon=self.fused_qk_norm_eps,
                     )
                 else:
-                    q = comfy_kitchen.rms_rope1(
+                    q = dinkster_kitchen.rms_rope1(
                         q,
                         kitchen_rope,
                         q_scale.detach(),
                         epsilon=self.fused_qk_norm_eps,
                     )
-                    k = comfy_kitchen.rms_rope1(
+                    k = dinkster_kitchen.rms_rope1(
                         k,
                         kitchen_rope,
                         k_scale.detach(),
@@ -514,13 +514,13 @@ class ZImageSplitAttention(torch.nn.Module):
                 rope,
             )
         else:
-            import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+            import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
             with (
                 materialized_rms_norm_weight(self.norm_q) as q_scale,
                 materialized_rms_norm_weight(self.norm_k) as k_scale,
             ):
-                q, k = comfy_kitchen.rms_rope(
+                q, k = dinkster_kitchen.rms_rope(
                     q,
                     k,
                     rope.movedim(1, 2),

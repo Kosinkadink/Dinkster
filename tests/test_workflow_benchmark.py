@@ -1559,7 +1559,7 @@ def test_actual_cli_workflow_dispatch_precedes_torch_and_aimdo(script: str, equa
 import importlib.abc, runpy, sys
 class Refuse(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.startswith(('torch', 'comfy_aimdo', 'dinkster_workers.aimdo_bootstrap')):
+        if fullname.startswith(('torch', 'dinkster_aimdo', 'dinkster_workers.aimdo_bootstrap')):
             raise AssertionError('execution import during workflow parser: ' + fullname)
 sys.meta_path.insert(0, Refuse())
 script, *args = sys.argv[1:]

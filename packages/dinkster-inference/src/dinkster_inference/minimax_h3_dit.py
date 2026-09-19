@@ -65,7 +65,7 @@ def minimax_h3_dit_provider_facts(
     *,
     quantized: bool,
     torch_version: str,
-    comfy_kitchen_version: str | None = None,
+    dinkster_kitchen_version: str | None = None,
     attention_policy: AttentionPolicy = "auto",
 ) -> tuple[str, ...]:
     """Build behavior-bearing provider facts shared by dispatch and assembly."""
@@ -77,21 +77,22 @@ def minimax_h3_dit_provider_facts(
         raise ValueError("MiniMax H3 provider facts require a torch version")
     validate_attention_policy(attention_policy)
     kitchen_attention_provider = {
-        "comfy_kitchen_int8": "comfy-kitchen.int8_attention",
-        "sol": "comfy-kitchen.sol_attn",
+        "dinkster_kitchen_int8": "dinkster-kitchen.int8_attention",
+        "sol": "dinkster-kitchen.sol_attn",
     }.get(attention_policy)
     if (quantized or kitchen_attention_provider is not None) and (
-        type(comfy_kitchen_version) is not str or not comfy_kitchen_version
+        type(dinkster_kitchen_version) is not str or not dinkster_kitchen_version
     ):
         raise ValueError(
-            "MiniMax H3 provider facts require a comfy-kitchen version for comfy-kitchen providers"
+            "MiniMax H3 provider facts require a dinkster-kitchen version "
+            "for dinkster-kitchen providers"
         )
     return (
         f"provider_revision={MINIMAX_H3_DIT_PROVIDER_REVISION}",
         *(
             (
-                "int8_provider=comfy-kitchen.int8_linear",
-                f"comfy_kitchen_version={comfy_kitchen_version}",
+                "int8_provider=dinkster-kitchen.int8_linear",
+                f"dinkster_kitchen_version={dinkster_kitchen_version}",
             )
             if quantized
             else ()
@@ -99,7 +100,7 @@ def minimax_h3_dit_provider_facts(
         *(
             (
                 f"attention_provider={kitchen_attention_provider}",
-                *(() if quantized else (f"comfy_kitchen_version={comfy_kitchen_version}",)),
+                *(() if quantized else (f"dinkster_kitchen_version={dinkster_kitchen_version}",)),
             )
             if kitchen_attention_provider is not None
             else ("attention_provider=torch-sdpa",)
