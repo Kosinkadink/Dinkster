@@ -424,6 +424,18 @@ def test_z_image_is_admitted_by_native_probe_with_qwen3_4b_slot() -> None:
     assert plan.family is Z_IMAGE
 
 
+@pytest.fixture
+def z_image_split_paths(model_root: Path, qwen_name: str) -> tuple[Path, Path, Path]:
+    paths = (
+        model_root / "diffusion_models/z_image_turbo_bf16.safetensors",
+        model_root / "text_encoders" / qwen_name,
+        model_root / "vae/ae.safetensors",
+    )
+    if not all(path.exists() for path in paths):
+        pytest.skip("Z-Image split assets absent")
+    return paths
+
+
 @pytest.mark.parametrize(
     ("qwen_name", "quant_formats"),
     (
@@ -441,16 +453,9 @@ def test_z_image_is_admitted_by_native_probe_with_qwen3_4b_slot() -> None:
     ),
 )
 def test_real_z_image_split_assembly(
-    qwen_name: str, quant_formats: Mapping[str | None, int]
+    z_image_split_paths: tuple[Path, Path, Path], quant_formats: Mapping[str | None, int]
 ) -> None:
-    root = Path("C:/Users/kosin/Documents/ComfyUI/models")
-    paths = (
-        root / "diffusion_models/z_image_turbo_bf16.safetensors",
-        root / "text_encoders" / qwen_name,
-        root / "vae/ae.safetensors",
-    )
-    if not all(path.exists() for path in paths):
-        pytest.skip("Z-Image split assets absent")
+    paths = z_image_split_paths
     plan = plan_z_image_assembly(
         diffusion=load_safetensors_header(paths[0]),
         qwen3_4b=load_safetensors_header(paths[1]),
@@ -471,18 +476,24 @@ def test_real_z_image_split_assembly(
     assert Counter(item.format for item in plan.qwen3_4b.quant.values()) == quant_formats
 
 
-_REAL_Z_IMAGE_BASE = Path(
-    "C:/Users/kosin/ComfyUI-Shared/models/diffusion_models/z_image_bf16.safetensors"
-)
-_REAL_Z_IMAGE_PIXEL = Path(
-    "C:/Users/kosin/ComfyUI-Shared/models/diffusion_models/"
-    "zeta-chroma-base-x0-pixel-no-dino-1024.safetensors"
-)
+@pytest.fixture
+def real_z_image_base(model_root: Path) -> Path:
+    path = model_root / "diffusion_models/z_image_bf16.safetensors"
+    if not path.exists():
+        pytest.skip("Z-Image Base weights absent")
+    return path
 
 
-@pytest.mark.skipif(not _REAL_Z_IMAGE_BASE.exists(), reason="Z-Image Base weights absent")
-def test_real_z_image_base_uses_the_shared_latent_family_contract() -> None:
-    source = load_safetensors_header(_REAL_Z_IMAGE_BASE)
+@pytest.fixture
+def real_z_image_pixel(model_root: Path) -> Path:
+    path = model_root / "diffusion_models/zeta-chroma-base-x0-pixel-no-dino-1024.safetensors"
+    if not path.exists():
+        pytest.skip("Zeta-Chroma weights absent")
+    return path
+
+
+def test_real_z_image_base_uses_the_shared_latent_family_contract(real_z_image_base: Path) -> None:
+    source = load_safetensors_header(real_z_image_base)
     evidence = detect_z_image(source)
     assert evidence is not None
     assert evidence.config is Z_IMAGE_CONFIG
@@ -490,9 +501,8 @@ def test_real_z_image_base_uses_the_shared_latent_family_contract() -> None:
     assert len(evidence.matched_keys) == 453
 
 
-@pytest.mark.skipif(not _REAL_Z_IMAGE_PIXEL.exists(), reason="Zeta-Chroma weights absent")
-def test_real_z_image_pixel_header_matches_exact_native_profile() -> None:
-    source = load_safetensors_header(_REAL_Z_IMAGE_PIXEL)
+def test_real_z_image_pixel_header_matches_exact_native_profile(real_z_image_pixel: Path) -> None:
+    source = load_safetensors_header(real_z_image_pixel)
     evidence = detect_z_image(source)
     assert evidence is not None and evidence.config is Z_IMAGE_PIXEL_CONFIG
     assert evidence.key_prefix == ""

@@ -49,9 +49,6 @@ from dinkster_inference import (
 )
 
 GOLDENS = json.loads((Path(__file__).parent / "goldens" / "lora_goldens.json").read_text())
-REAL_Z_IMAGE_LORA = Path(
-    "C:/Users/kosin/ComfyUI-Shared/models/loras/pixel_art_style_z_image_turbo.safetensors"
-)
 
 EXPECTED_DIALECTS = {
     "bfl_flux_control": "bfl_flux_control",
@@ -332,9 +329,17 @@ class TestZImageDiffusersKeyMap:
         )
         assert isinstance(decoded.patches[q_target], LoRASpec)
 
-    @pytest.mark.skipif(not REAL_Z_IMAGE_LORA.exists(), reason="Z-Image LoRA absent")
-    def test_public_z_image_lora_header_decodes_without_unmatched_keys(self) -> None:
-        source = load_safetensors_header(REAL_Z_IMAGE_LORA)
+    @pytest.fixture
+    def real_z_image_lora(self, model_root: Path) -> Path:
+        path = model_root / "loras/pixel_art_style_z_image_turbo.safetensors"
+        if not path.exists():
+            pytest.skip("Z-Image LoRA absent")
+        return path
+
+    def test_public_z_image_lora_header_decodes_without_unmatched_keys(
+        self, real_z_image_lora: Path
+    ) -> None:
+        source = load_safetensors_header(real_z_image_lora)
         geometries = {key: source.entry(key).geometry for key in source.keys()}
         model_keys = tuple(f"diffusion_model.{key}" for key in z_image_layout())
         key_map: dict[str, str | PatchTarget] = {}

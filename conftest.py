@@ -1,8 +1,18 @@
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pytest
+
+
+@pytest.fixture
+def model_root() -> Path:
+    return Path(
+        os.environ.get(
+            "DINKSTER_PARITY_ARTIFACT_ROOT", str(Path.home() / "ComfyUI-Shared" / "models")
+        )
+    ).expanduser()
 
 
 @pytest.fixture
