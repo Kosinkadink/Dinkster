@@ -1,0 +1,14 @@
+name: Self-hosted billing probe
+
+on:
+  push:
+    branches: [self-hosted-probe-132]
+
+permissions: {}
+
+jobs:
+  echo:
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 2
+    steps:
+      - run: echo "Self-hosted jobs can start while hosted minutes are blocked."
