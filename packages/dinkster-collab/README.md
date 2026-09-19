@@ -141,13 +141,30 @@ remain authoritative on every session request. Toggle changes apply immediately,
 including to connected subscribers. `GET /api/principals` includes the current
 JWT or static principal; each human can edit their own agent toggles.
 
-Tokens are opaque random secrets, stored only as SHA-256 hashes in bounded
-server memory (32 per user, 4096 total). They expire after at most 600 seconds
-and never after the parent JWT. Restart revokes all delegations.
-`GET /api/auth/delegations` lists the caller's active delegations without secrets;
+Tokens are opaque random secrets, stored only as SHA-256 hashes in SQLite
+alongside principal permissions (`<library-root>/principals.sqlite`). Records
+retain the user and agent principal ids, scope, session restriction, creation
+time, optional expiry and revocation time. Permission toggles are normalized
+by owning principal, not copied at mint. Records survive restart. There is no
+default expiry or parent-JWT expiry cap; `expiresInSeconds` selects an optional
+expiry. Transactional caps of 32 per user and 4096 overall count the persisted
+unrevoked set, including expired records; revoke a record to free a slot.
+`GET /api/auth/delegations` lists the caller's unrevoked records without secrets;
 `DELETE /api/auth/delegations/{id}` revokes one. Agents cannot delegate or change
 permission toggles. The UI and CLI must never pass the user's full JWT to an agent.
 The identity verifier is verification-only; no identity signing key is required.
+
+Durability does not grant unattended access. A delegation is usable only while
+the server has recently verified a human JWT for its owner. Each successful
+JWT authentication updates that user's in-memory monotonic timestamp and role
+ceiling. The default freshness window is 600 seconds, configurable with
+`--user-session-freshness-seconds`. Agent requests and static credentials cannot
+refresh it. Freshness starts empty after restart: the same delegation works
+again when the user authenticates, without re-minting. Role grants come from
+the most recently verified JWT, never a mint-time snapshot. Identity changes
+become visible through subsequent JWTs or window expiry, not identity polling.
+Explicitly disabling persistence with `--library-root ''` also makes these
+records ephemeral, like session records. Auth-off local agents need no JWT.
 
 Send the token as HTTP Bearer authorization. Mint a fresh single-use
 `POST /api/auth/ws-ticket` for every WebSocket connection; the URL contains only
@@ -160,9 +177,13 @@ and durable run history retain principal/kind and the submitting `clientId`;
 agent job callers use their actor id as that client id.
 
 Both session sockets and `/api/events` recheck credential expiry, delegation
-revocation and permission toggles before sending and at one-second intervals
+revocation, user-session freshness and permission toggles before sending and at one-second intervals
 while idle. Withdrawal closes the socket with code 1008 and reason
 `authorization-expired`; queued events are not delivered with withdrawn rights.
+Missing user freshness instead closes with code 1008 and reason
+`user-session-required`. HTTP returns 403 `{"error":"user-session-required"}`.
+This suspension is transient: the next verified user JWT makes the same
+unrevoked delegation usable again.
 
 `POST /api/sessions/{id}/actors` binds `{actorId}` before editing. Another
 principal receives 409 `actor-principal-mismatch`; the browser generates one
@@ -180,8 +201,8 @@ The server keeps its existing HTTP error bodies (`error` plus route-specific
 fields), including op/bind 409, op 429 and authorization refusals on session,
 snapshot, ops and ticket routes. It does not emit `collab.denial` objects.
 The frontend `@dinkster/client` normalizes these responses into diagnostics with
-`version: 1`, `type: "collab.denial"`, HTTP status, code, message, sessionId,
-actorId, opId for submissions or operation for transport refusals, and optional
+`version: 1`, `type: "collab.denial"`, HTTP status, code, message, sessionId and
+actorId when known, opId for submissions or operation for transport refusals, and optional
 retryAfterMs. 403, actor ownership 409, and 429 terminate submission instead
 of retrying indefinitely; read/ticket 401/403 stop probes and reconnects too.
 The Problems panel shows the denial and agent `settle()` rejects with it.

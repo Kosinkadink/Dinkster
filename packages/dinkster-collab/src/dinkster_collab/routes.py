@@ -172,6 +172,7 @@ class _Subscriber:
     sender: asyncio.Task[None]
     principal_id: str
     authorized: Callable[[], bool]
+    authorization_reason: Callable[[], str] = lambda: "authorization-expired"
 
 
 _SUBSCRIBERS_KEY = web.AppKey("dinkster_collab_subscribers", dict[str, set[_Subscriber]])
@@ -353,7 +354,9 @@ async def _send_frames(subscriber: _Subscriber, subscribers: set[_Subscriber]) -
     try:
         while True:
             if not subscriber.authorized():
-                await subscriber.ws.close(code=1008, message=b"authorization-expired")
+                await subscriber.ws.close(
+                    code=1008, message=subscriber.authorization_reason().encode()
+                )
                 return
             try:
                 encoded = await asyncio.wait_for(subscriber.queue.get(), timeout=1)
@@ -361,7 +364,9 @@ async def _send_frames(subscriber: _Subscriber, subscribers: set[_Subscriber]) -
                 continue
             try:
                 if not subscriber.authorized():
-                    await subscriber.ws.close(code=1008, message=b"authorization-expired")
+                    await subscriber.ws.close(
+                        code=1008, message=subscriber.authorization_reason().encode()
+                    )
                     return
                 await subscriber.ws.send_str(encoded)
             finally:
@@ -653,6 +658,9 @@ async def handle_session_events(request: web.Request) -> web.WebSocketResponse:
         sender=placeholder,
         principal_id=principal_id,
         authorized=lambda: _principal(request).allows_in(session.scope, "sessions:read"),
+        authorization_reason=lambda: (
+            getattr(_principal(request), "authorization_error", None) or "authorization-expired"
+        ),
     )
     subscriber.sender = asyncio.create_task(_send_frames(subscriber, subscribers))
     subscribers.add(subscriber)

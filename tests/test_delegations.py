@@ -11,6 +11,7 @@ from dinkster_collab.routes import _TokenBucketLimiter
 from dinkster_collab.sessions import ActorLimitError
 from dinkster_server.auth import (
     CAPABILITIES,
+    CompositeAuthenticator,
     DelegationStore,
     Principal,
     PrincipalPermissionStore,
@@ -46,11 +47,16 @@ def test_delegate_ceiling_ownership_kind_revocation_and_durable_attribution(
         authenticator = (
             TokenAuthenticator(url, ISSUER, AUDIENCE)
             if jwt_auth
-            else StaticBearerAuthenticator(
-                {
-                    "user-credential": user,
-                    "readonly-user": Principal(PRINCIPAL_ID, {SCOPE: frozenset({"sessions:read"})}),
-                }
+            else CompositeAuthenticator(
+                StaticBearerAuthenticator(
+                    {
+                        "user-credential": user,
+                        "readonly-user": Principal(
+                            PRINCIPAL_ID, {SCOPE: frozenset({"sessions:read"})}
+                        ),
+                    }
+                ),
+                TokenAuthenticator(url, ISSUER, AUDIENCE),
             )
         )
         human_token = (
@@ -106,6 +112,15 @@ def test_delegate_ceiling_ownership_kind_revocation_and_durable_attribution(
             issued = await response.json()
             assert issued["token"] != human_token
             agent = {"Authorization": f"Bearer {issued['token']}"}
+            if not jwt_auth:
+                suspended = await client.get(path + "/snapshot", headers=agent)
+                assert suspended.status == 403
+                assert await suspended.json() == {"error": "user-session-required"}
+                signed_human = {
+                    "Authorization": "Bearer "
+                    + _sign(key, _claims(grants={SCOPE: sorted(user.grants[SCOPE])}))
+                }
+                assert (await client.get("/api/principals", headers=signed_human)).status == 200
             assert (await client.get(path + "/snapshot", headers=agent)).status == 200
             assert (await client.get("/api/sessions/another", headers=agent)).status == 403
             assert (
@@ -293,12 +308,15 @@ def test_job_event_stream_closes_when_delegate_authority_is_withdrawn(
             withdrawn_at = time.monotonic()
             expected_status = 403 if withdrawal == "read-toggle" else 401
             if withdrawal == "expiry":
-                async with asyncio.timeout(3):
+                deadline = time.monotonic() + 3
+                response = await client.get("/api/jobs", headers=agent)
+                while response.status == 200 and time.monotonic() < deadline:
+                    await asyncio.sleep(0.01)
                     response = await client.get("/api/jobs", headers=agent)
-                    while response.status == 200:
-                        await asyncio.sleep(0.01)
-                        response = await client.get("/api/jobs", headers=agent)
-                    assert response.status == expected_status
+                assert response.status == expected_status, (
+                    f"delegation expiry returned HTTP {response.status}; "
+                    f"expected HTTP {expected_status} within 3 seconds"
+                )
             else:
                 assert (await client.get("/api/jobs", headers=agent)).status == expected_status
             async with asyncio.timeout(5):
@@ -379,21 +397,24 @@ def test_job_event_stream_rechecks_authority_after_dequeue(
     asyncio.run(scenario())
 
 
-def test_delegation_expiry_and_capacity() -> None:
+def test_delegation_expiry_and_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
     store = DelegationStore()
     user = Principal("u", {"scope": CAPABILITIES}, expires_at=time.time() + 2)
     issued = store.mint(user, "scope", "agent", None, 600)
-    assert issued["expiresAt"] == user.expires_at
+    assert float(str(issued["expiresAt"])) > time.time() + 590
     principal = store.authenticate(str(issued["token"]))
     assert principal is not None and principal.kind == "agent"
     for _ in range(31):
         store.mint(user, "scope", "agent", None, 600)
     with pytest.raises(web.HTTPTooManyRequests):
         store.mint(user, "scope", "agent", None, 600)
-    expired = store.mint(
+    independent = store.mint(
         Principal("expired", {"scope": CAPABILITIES}, expires_at=1), "scope", "agent", None, 600
     )
-    assert store.authenticate(str(expired["token"])) is None
+    assert store.authenticate(str(independent["token"])) is not None
+    monkeypatch.setattr(time, "time", lambda: float(str(independent["expiresAt"])) + 1)
+    assert store.authenticate(str(independent["token"])) is None
+    store.close()
 
 
 def test_principal_kind_budgets_and_actor_storage_are_bounded() -> None:
@@ -448,13 +469,16 @@ def test_agent_run_attribution_and_local_mode(auth_enabled: bool, tmp_path: Path
     from test_server import SCHEMAS, echo_graph, make_engine, submit_body
 
     async def scenario() -> None:
-        authenticator = (
-            StaticBearerAuthenticator(
-                {"fixture-user": Principal("alice", {"shared": CAPABILITIES})}
-            )
+        key = OKPKey.generate_key("Ed25519")
+        jwks = _JwksService(key)
+        url = await jwks.start()
+        authenticator = TokenAuthenticator(url, ISSUER, AUDIENCE) if auth_enabled else None
+        human = (
+            {"Authorization": "Bearer " + _sign(key, _claims(grants={SCOPE: sorted(CAPABILITIES)}))}
             if auth_enabled
-            else None
+            else {}
         )
+        scope = SCOPE if auth_enabled else "shared"
         client = TestClient(
             TestServer(create_app(make_engine, SCHEMAS, authenticator=authenticator))
         )
@@ -462,7 +486,7 @@ def test_agent_run_attribution_and_local_mode(auth_enabled: bool, tmp_path: Path
         try:
             listed = await client.get(
                 "/api/principals",
-                headers={"Authorization": "Bearer fixture-user"} if auth_enabled else {},
+                headers=human,
             )
             assert listed.status == 200
             assert (await listed.json())[0]["local"] is not auth_enabled
@@ -470,24 +494,24 @@ def test_agent_run_attribution_and_local_mode(auth_enabled: bool, tmp_path: Path
             if auth_enabled:
                 response = await client.post(
                     "/api/auth/delegations",
-                    headers={"Authorization": "Bearer fixture-user"},
-                    json={"scope": "shared", "displayName": "Run agent"},
+                    headers=human,
+                    json={"scope": scope, "displayName": "Run agent"},
                 )
                 assert response.status == 201
                 headers["Authorization"] = "Bearer " + (await response.json())["token"]
             response = await client.post(
                 "/api/jobs",
                 headers=headers,
-                json=submit_body(echo_graph(), ["s"], clientId="agent-run", scope="shared"),
+                json=submit_body(echo_graph(), ["s"], clientId="agent-run", scope=scope),
             )
             assert response.status == 202
             wire = await response.json()
-            principal_id = "alice" if auth_enabled else "local"
+            principal_id = PRINCIPAL_ID if auth_enabled else "local"
             assert wire["submittedBy"] == {"principalId": principal_id, "kind": "agent"}
             assert wire["clientId"] == "agent-run"
             job = client.app[STATE_KEY].queue.get("agent-run", "j1")
             assert job is not None
-            assert job.scope == ("shared" if auth_enabled else "local")
+            assert job.scope == (SCOPE if auth_enabled else "local")
             for _ in range(200):
                 if job.state == "completed":
                     break
@@ -507,6 +531,7 @@ def test_agent_run_attribution_and_local_mode(auth_enabled: bool, tmp_path: Path
                 history.close()
         finally:
             await client.close()
+            await jwks.close()
 
     asyncio.run(scenario())
 

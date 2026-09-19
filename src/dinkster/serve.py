@@ -1192,6 +1192,12 @@ def main() -> None:
         help="identity-service JWKS endpoint (default: $DINKSTER_IDENTITY_JWKS_URL)",
     )
     parser.add_argument(
+        "--user-session-freshness-seconds",
+        type=parse_positive_float,
+        default=600,
+        help="how long a verified human JWT keeps delegations usable (default: 600 seconds)",
+    )
+    parser.add_argument(
         "--identity-issuer",
         default=os.environ.get(_IDENTITY_ISSUER_ENV, ""),
         metavar="URL",
@@ -2077,6 +2083,7 @@ def main() -> None:
                 allow_origins=args.allow_origin,
                 authenticator=authenticator,
                 principal_permissions=principal_permissions,
+                user_session_freshness_seconds=args.user_session_freshness_seconds,
                 library=library,
                 history=history,
                 training_sessions=training_sessions,

@@ -3829,8 +3829,12 @@ async def handle_events(request: web.Request) -> web.WebSocketResponse:
 
     async def pump() -> None:
         while True:
-            if not principal_for(request).allows("jobs:read"):
-                await ws.close(code=1008, message=b"authorization-expired")
+            principal = principal_for(request)
+            if not principal.allows("jobs:read"):
+                await ws.close(
+                    code=1008,
+                    message=(principal.authorization_error or "authorization-expired").encode(),
+                )
                 return
             try:
                 event = await asyncio.wait_for(sub.get(), timeout=1)
@@ -3838,8 +3842,12 @@ async def handle_events(request: web.Request) -> web.WebSocketResponse:
                 continue
             if event is None:
                 break
-            if not principal_for(request).allows("jobs:read"):
-                await ws.close(code=1008, message=b"authorization-expired")
+            principal = principal_for(request)
+            if not principal.allows("jobs:read"):
+                await ws.close(
+                    code=1008,
+                    message=(principal.authorization_error or "authorization-expired").encode(),
+                )
                 return
             if not visible(event):
                 continue
@@ -4277,6 +4285,7 @@ def create_app(
     allow_origins: Sequence[str] = (),
     authenticator: Authenticator | None = None,
     principal_permissions: PrincipalPermissionStore | None = None,
+    user_session_freshness_seconds: float = 600,
     library: ServerLibrary | None = None,
     history: HistoryStore | None = None,
     training_sessions: TrainingSessionStore | None = None,
@@ -4377,6 +4386,7 @@ def create_app(
         route_capabilities=route_capabilities,
         federated_asset_paths=federated_paths,
         permission_store=permission_store,
+        user_session_freshness_seconds=user_session_freshness_seconds,
     )
     app.router.add_get("/api/health", handle_health)
     app.router.add_post("/api/auth/ws-ticket", handle_ws_ticket)

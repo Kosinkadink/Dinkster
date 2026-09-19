@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import re
 import secrets
 import sqlite3
@@ -114,6 +115,8 @@ class Principal:
     session_id: str | None = None
     display_name: str | None = None
     local: bool = False
+    verified_jwt: bool = False
+    authorization_error: str | None = None
 
     def __post_init__(self) -> None:
         if not self.principal_id:
@@ -203,6 +206,7 @@ class TokenAuthenticator:
             grants=verified.grants,
             kind=verified.kind,
             expires_at=float(claims["exp"]),
+            verified_jwt=True,
         )
 
 
@@ -238,6 +242,7 @@ class PrincipalPermissionStore:
     """Explicit agent permission overrides, optionally persisted in SQLite."""
 
     def __init__(self, path: str | Path | None = None) -> None:
+        self.path = path
         self._lock = threading.Lock()
         self._values: dict[str, dict[str, bool]] = {}
         self._conn: sqlite3.Connection | None = None
@@ -333,6 +338,17 @@ def principal_for(request: web.Request) -> Principal:
         and not request.app[DELEGATIONS_KEY].active(principal.delegation_id)
     ):
         return replace(principal, grants={})
+    if principal.delegation_id is not None and not principal.local:
+        user = request.app[USER_SESSIONS_KEY].current(principal.principal_id)
+        if user is None:
+            return replace(principal, grants={}, authorization_error="user-session-required")
+        principal = replace(
+            principal,
+            grants={
+                scope: user.grants.get(scope, frozenset()) - {"principals:manage"}
+                for scope in principal.grants
+            },
+        )
     return request.app[PRINCIPAL_PERMISSIONS_KEY].apply(principal)
 
 
@@ -586,71 +602,177 @@ def add_principal_routes(
     )
 
 
+class VerifiedUserSessions:
+    """Recent human JWT authority; restarting intentionally clears freshness."""
+
+    def __init__(self, freshness_seconds: float = 600) -> None:
+        if not math.isfinite(freshness_seconds) or freshness_seconds <= 0:
+            raise ValueError("user session freshness must be positive and finite")
+        self.freshness_seconds = freshness_seconds
+        self._users: dict[str, tuple[Principal, float]] = {}
+        self._next_sweep = time.monotonic()
+
+    def verified(self, principal: Principal) -> None:
+        if (
+            principal.verified_jwt
+            and principal.kind == "human"
+            and principal.delegation_id is None
+            and principal.expires_at is not None
+            and principal.expires_at > time.time()
+        ):
+            now = time.monotonic()
+            if now >= self._next_sweep:
+                self._users = {
+                    owner: session
+                    for owner, session in self._users.items()
+                    if now - session[1] < self.freshness_seconds
+                }
+                self._next_sweep = now + self.freshness_seconds
+            self._users[principal.principal_id] = (principal, now)
+
+    def current(self, principal_id: str) -> Principal | None:
+        found = self._users.get(principal_id)
+        if found is None or time.monotonic() - found[1] >= self.freshness_seconds:
+            return None
+        return found[0]
+
+
+USER_SESSIONS_KEY: web.AppKey[VerifiedUserSessions] = web.AppKey("verified_user_sessions")
+
+
 class DelegationStore:
-    """Bounded, short-lived credentials; restart invalidates all delegations."""
+    """Durable hash-only credentials with owner permissions stored by principal."""
 
-    def __init__(self) -> None:
-        self._tokens: dict[str, Principal] = {}
+    def __init__(self, path: str | Path | None = None) -> None:
+        if path is not None:
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(
+            str(path) if path is not None else ":memory:", check_same_thread=False
+        )
+        self._conn.row_factory = sqlite3.Row
+        with self._conn:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS delegations (
+                    id TEXT PRIMARY KEY,
+                    principal_id TEXT NOT NULL,
+                    agent_principal_id TEXT NOT NULL UNIQUE,
+                    credential_hash TEXT NOT NULL UNIQUE,
+                    scope TEXT NOT NULL,
+                    session_id TEXT,
+                    display_name TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    expires_at REAL,
+                    revoked_at REAL
+                )"""
+            )
 
-    def _sweep(self) -> None:
-        now = time.time()
-        self._tokens = {
-            digest: principal
-            for digest, principal in self._tokens.items()
-            if principal.expires_at is not None and principal.expires_at > now
-        }
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
 
     def active(self, delegation_id: str) -> bool:
-        self._sweep()
-        return any(p.delegation_id == delegation_id for p in self._tokens.values())
+        with self._lock:
+            return (
+                self._conn.execute(
+                    "SELECT 1 FROM delegations WHERE id = ? AND revoked_at IS NULL"
+                    " AND (expires_at IS NULL OR expires_at > ?)",
+                    (delegation_id, time.time()),
+                ).fetchone()
+                is not None
+            )
 
     def authenticate(self, token: str) -> Principal | None:
-        self._sweep()
-        return self._tokens.get(hashlib.sha256(token.encode()).hexdigest())
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM delegations WHERE credential_hash = ? AND revoked_at IS NULL"
+                " AND (expires_at IS NULL OR expires_at > ?)",
+                (hashlib.sha256(token.encode()).hexdigest(), time.time()),
+            ).fetchone()
+        if row is None:
+            return None
+        return Principal(
+            row["principal_id"],
+            {row["scope"]: frozenset()},
+            kind="agent",
+            delegation_id=row["id"],
+            session_id=row["session_id"],
+            display_name=row["display_name"],
+            expires_at=row["expires_at"],
+        )
 
     def list(self, principal_id: str) -> list[dict[str, object]]:
-        self._sweep()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM delegations WHERE principal_id = ? AND revoked_at IS NULL"
+                " ORDER BY created_at, id",
+                (principal_id,),
+            ).fetchall()
         return [
             {
-                "id": p.delegation_id,
-                "displayName": p.display_name,
-                "scope": next(iter(p.grants)),
-                "sessionId": p.session_id,
-                "expiresAt": p.expires_at,
+                "id": row["id"],
+                "agentPrincipalId": row["agent_principal_id"],
+                "displayName": row["display_name"],
+                "scope": row["scope"],
+                "sessionId": row["session_id"],
+                "createdAt": row["created_at"],
                 "kind": "agent",
+                **({"expiresAt": row["expires_at"]} if row["expires_at"] is not None else {}),
             }
-            for p in self._tokens.values()
-            if p.principal_id == principal_id
+            for row in rows
         ]
 
     def revoke(self, principal_id: str, delegation_id: str) -> None:
-        self._tokens = {
-            digest: p
-            for digest, p in self._tokens.items()
-            if p.principal_id != principal_id or p.delegation_id != delegation_id
-        }
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE delegations SET revoked_at = ? WHERE principal_id = ? AND id = ?"
+                " AND revoked_at IS NULL",
+                (time.time(), principal_id, delegation_id),
+            )
 
     def mint(
-        self, principal: Principal, scope: str, name: str, session_id: str | None, lifetime: int
+        self,
+        principal: Principal,
+        scope: str,
+        name: str,
+        session_id: str | None,
+        lifetime: int | None = None,
     ) -> dict[str, object]:
-        self._sweep()
-        if len(self._tokens) >= 4096 or len(self.list(principal.principal_id)) >= 32:
-            raise web.HTTPTooManyRequests(
-                text='{"error":"delegation-limit"}', content_type="application/json"
-            )
         token = "dinkster_delegate_" + secrets.token_urlsafe(32)
-        expiry = min(time.time() + lifetime, principal.expires_at or float("inf"))
-        delegate = replace(
-            principal,
-            kind="agent",
-            expires_at=expiry,
-            delegation_id=secrets.token_urlsafe(16),
-            session_id=session_id,
-            display_name=name,
-            grants={scope: principal.grants[scope] - {"principals:manage"}},
-        )
-        self._tokens[hashlib.sha256(token.encode()).hexdigest()] = delegate
-        return {"token": token, "id": delegate.delegation_id, "expiresAt": expiry}
+        delegation_id = secrets.token_urlsafe(16)
+        now = time.time()
+        expiry = now + lifetime if lifetime is not None else None
+        with self._lock, self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            total, owned = self._conn.execute(
+                "SELECT count(*), coalesce(sum(principal_id = ?), 0) FROM delegations"
+                " WHERE revoked_at IS NULL",
+                (principal.principal_id,),
+            ).fetchone()
+            if total >= 4096 or owned >= 32:
+                raise web.HTTPTooManyRequests(
+                    text='{"error":"delegation-limit"}', content_type="application/json"
+                )
+            self._conn.execute(
+                "INSERT INTO delegations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+                (
+                    delegation_id,
+                    principal.principal_id,
+                    "agent:" + delegation_id,
+                    hashlib.sha256(token.encode()).hexdigest(),
+                    scope,
+                    session_id,
+                    name,
+                    now,
+                    expiry,
+                ),
+            )
+        return {
+            "token": token,
+            "id": delegation_id,
+            **({"expiresAt": expiry} if expiry is not None else {}),
+        }
 
 
 DELEGATIONS_KEY: web.AppKey[DelegationStore] = web.AppKey("delegations")
@@ -674,17 +796,22 @@ async def handle_delegations(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid-delegation"}, status=400)
     data = cast("dict[str, object]", body)
     scope, name = data.get("scope"), data.get("displayName")
-    session_id, lifetime = data.get("sessionId"), data.get("expiresInSeconds", 600)
+    session_id, lifetime = data.get("sessionId"), data.get("expiresInSeconds")
     if (
         not isinstance(scope, str)
         or scope not in principal.grants
         or not isinstance(name, str)
         or not 1 <= len(name.strip()) <= 64
         or (session_id is not None and (not isinstance(session_id, str) or not session_id))
-        or type(lifetime) is not int
-        or not 1 <= lifetime <= 600
+        or (lifetime is not None and (type(lifetime) is not int or lifetime < 1))
     ):
         return web.json_response({"error": "invalid-delegation"}, status=400)
+    if lifetime is not None:
+        try:
+            if not math.isfinite(time.time() + lifetime):
+                raise OverflowError
+        except OverflowError:
+            return web.json_response({"error": "invalid-delegation"}, status=400)
     return web.json_response(
         store.mint(principal, scope, name.strip(), session_id, lifetime),
         status=201,
@@ -775,13 +902,20 @@ def install_auth(
     route_capabilities: Mapping[tuple[str, str], str] | None = None,
     federated_asset_paths: frozenset[str] = frozenset(),
     permission_store: PrincipalPermissionStore | None = None,
+    user_session_freshness_seconds: float = 600,
 ) -> None:
     """Attach one principal per request and enforce route capabilities."""
     app[WS_TICKETS_KEY] = WebSocketTicketStore()
     store = permission_store or PrincipalPermissionStore()
     app[PRINCIPAL_PERMISSIONS_KEY] = store
     app[_KNOWN_PRINCIPALS_KEY] = {}
-    app[DELEGATIONS_KEY] = DelegationStore()
+    app[DELEGATIONS_KEY] = DelegationStore(store.path)
+    app[USER_SESSIONS_KEY] = VerifiedUserSessions(user_session_freshness_seconds)
+
+    async def close_delegations(app: web.Application) -> None:
+        app[DELEGATIONS_KEY].close()
+
+    app.on_cleanup.append(close_delegations)
     app.router.add_get("/api/auth/delegations", handle_delegations)
     app.router.add_post("/api/auth/delegations", handle_delegations)
     app.router.add_delete("/api/auth/delegations/{delegation_id}", handle_delegations)
@@ -812,6 +946,8 @@ def install_auth(
                 principal = request.app[DELEGATIONS_KEY].authenticate(token)
                 if principal is None:
                     principal = await authenticator.authenticate(token)
+                    if principal is not None:
+                        request.app[USER_SESSIONS_KEY].verified(principal)
             is_ws_route = request.method == "GET" and canonical in (
                 "/api/events",
                 "/api/sessions/{session_id}/events",
@@ -876,6 +1012,8 @@ def install_auth(
             (request.method, cast(str, canonical))
         ) or required_capability(request.method, request.path)
         principal = principal_for(request)
+        if principal.authorization_error is not None:
+            return web.json_response({"error": principal.authorization_error}, status=403)
         if (
             capability is None
             and authenticator is not None
