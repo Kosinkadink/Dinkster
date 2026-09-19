@@ -88,7 +88,7 @@ def provider_runtime(
             "else:\n"
             "    assert direct is None\n"
             "    assert pathlib.Path(spec.origin).is_relative_to(sys.prefix)\n"
-            "for name in ('dinkster_engine', 'comfy_kitchen', 'tokenizers', 'comfy'):\n"
+            "for name in ('dinkster_engine', 'dinkster_kitchen', 'tokenizers', 'comfy'):\n"
             "    assert u.find_spec(name) is None, name\n",
             str(request.param),
             str(ROOT / "packages" / "dinkster-inference-torch"),

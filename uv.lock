@@ -625,18 +625,6 @@ wheels = [
 ]
 
 [[package]]
-name = "comfy-kitchen"
-version = "0.2.32"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/6c/3ce80e717855d453601933ba8caca90d4a950567b39d89b345f42cdc917d/comfy_kitchen-0.2.32-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:4704aef5fffda62dad04f25f5cfb38746c4b0388de7643a44f5877bb28b32aaf", size = 48636231, upload-time = "2026-09-02T20:21:48.298Z" },
-    { url = "https://files.pythonhosted.org/packages/80/f9/83cd0892c30bde91665b267ce8ce5b9f43cf48185cac579abd9d5c831827/comfy_kitchen-0.2.32-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e60d87e2f63703dccf8ce76ce0b9118042306388b39a9605c0748e56c0bb85d4", size = 64897847, upload-time = "2026-09-02T20:21:59.36Z" },
-    { url = "https://files.pythonhosted.org/packages/9b/20/205c11c2d391c4599aa59a340f328b5df2ec24db09bfa8f34b3a03490eb8/comfy_kitchen-0.2.32-cp312-abi3-win_amd64.whl", hash = "sha256:85cc8b5f81956b9f5fc8fc03b3b8e193af8f0d1f145286368448c6477e4bbe42", size = 48781429, upload-time = "2026-09-02T20:22:03.055Z" },
-    { url = "https://files.pythonhosted.org/packages/b4/4f/aecfe8ad470bf94851ac679b259db74e92bd340d9d8a6b3308475e6f735e/comfy_kitchen-0.2.32-cp312-abi3-win_arm64.whl", hash = "sha256:dd7d79ac93b14e8f7b2de9edf05c76443f84b8aeb8d651909c7e3a1d3e1a5454", size = 9218571, upload-time = "2026-09-02T20:22:05.36Z" },
-    { url = "https://files.pythonhosted.org/packages/a3/43/ceed9307bf92bccdc420703c3800ed46eafcafbfd764cbd93726f43db2b6/comfy_kitchen-0.2.32-py3-none-any.whl", hash = "sha256:6a5fba5224abbb7c9d8248bb7fe607bfab26ee623d311fcfae70066f1c7cfd9b", size = 198506, upload-time = "2026-09-02T20:22:07.228Z" },
-]
-
-[[package]]
 name = "coverage"
 version = "7.15.2"
 source = { registry = "https://pypi.org/simple" }
@@ -983,13 +971,13 @@ provides-extras = ["cloud"]
 
 [[package]]
 name = "dinkster-aimdo"
-version = "0.5.5.post1"
+version = "0.5.5.post2"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/41/65f9100f1ac350c9689a7a66e56d9e4b5fab41b513b279aaad1ca5b0c309/dinkster_aimdo-0.5.5.post1-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:dc587467e98fee7e873741b605e763c73104980648db6be850b78d175ab9c3c5", size = 659794, upload-time = "2026-09-18T09:47:13.544Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/fd/5f9aeb5283eb5c4f26f19578b2f6c432128e12e2cda2b4e4016145e68e79/dinkster_aimdo-0.5.5.post1-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:afc7239ce5cc0439a5703a4e55b6892b0ff116feb5ad323e04008da76c5a7025", size = 433181, upload-time = "2026-09-18T09:47:14.949Z" },
-    { url = "https://files.pythonhosted.org/packages/f8/4f/b45cb1296d2a263d11a756a682d8b59b554d101aa91d185fb2e41c85d668/dinkster_aimdo-0.5.5.post1-cp39-abi3-win_amd64.whl", hash = "sha256:1f240d8b27002bbd9f5b6d30dce0f30591087fc34d12dcfafcb45d838822c993", size = 281260, upload-time = "2026-09-18T09:47:16.177Z" },
-    { url = "https://files.pythonhosted.org/packages/68/6d/9f3efe831d84824b56080c5b47300cfba823195a88fc5c45a5579e6a536f/dinkster_aimdo-0.5.5.post1-cp39-abi3-win_arm64.whl", hash = "sha256:ab4c7449b9e2ed82bab8640964557f4ee20d5374b1c5d203daba28e47d916a5d", size = 255477, upload-time = "2026-09-18T09:47:17.536Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/bc/ba7bdd8aab77f579faad3bbcdf3daa621290e9f00a2b0fbd1288c48006e9/dinkster_aimdo-0.5.5.post2-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:c2476b7d4478d103c46f3be1a1db6bbface07e55f8d91bc871fa67c35310a40b", size = 660010, upload-time = "2026-09-18T10:56:05.461Z" },
+    { url = "https://files.pythonhosted.org/packages/39/68/a1c8f47e77fef022422afb52b4873721b4f0fc5f95db27a4e684633d8eaa/dinkster_aimdo-0.5.5.post2-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:5e78077c9b04e33e62a404f201e467124d8224043dcfce1d8ea4d5c99bff001d", size = 433405, upload-time = "2026-09-18T10:56:07.066Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/13/e5eb80eeea037299df28564c0d95c60c9c1a1e28b1d90e72e5c6737938bc/dinkster_aimdo-0.5.5.post2-cp39-abi3-win_amd64.whl", hash = "sha256:22c3ae7dc902ebf67091cd2f4055ac9fbc9eab1713ad2f6b2d5a05072f9fe58f", size = 281463, upload-time = "2026-09-18T10:56:08.485Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/40/f4e02507ac2f12b93c2dac9150513dd96307d107e72ba9f6f419b179cee1/dinkster_aimdo-0.5.5.post2-cp39-abi3-win_arm64.whl", hash = "sha256:c346594cc384d1a814041fe7d574115dc18c26499e47112a80a6fe083fc6032c", size = 255666, upload-time = "2026-09-18T10:56:09.745Z" },
 ]
 
 [[package]]
@@ -1215,9 +1203,9 @@ dependencies = [
 
 [package.optional-dependencies]
 torch = [
-    { name = "comfy-kitchen" },
     { name = "dinkster-aimdo" },
     { name = "dinkster-kernels" },
+    { name = "dinkster-kitchen" },
     { name = "numpy" },
     { name = "packaging" },
     { name = "pillow" },
@@ -1232,11 +1220,11 @@ torch = [
 [package.metadata]
 requires-dist = [
     { name = "blake3", specifier = ">=0.4" },
-    { name = "comfy-kitchen", marker = "extra == 'torch'", specifier = "==0.2.32" },
-    { name = "dinkster-aimdo", marker = "extra == 'torch'", specifier = "==0.5.5.post1" },
+    { name = "dinkster-aimdo", marker = "extra == 'torch'", specifier = "==0.5.5.post2" },
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
     { name = "dinkster-inference", editable = "packages/dinkster-inference" },
     { name = "dinkster-kernels", marker = "extra == 'torch'", editable = "packages/dinkster-kernels" },
+    { name = "dinkster-kitchen", marker = "extra == 'torch'", specifier = "==0.2.35.post1" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "numpy", marker = "extra == 'torch'", specifier = ">=1.26" },
     { name = "packaging", marker = "extra == 'torch'" },
@@ -1264,6 +1252,18 @@ torch = [
 [package.metadata]
 requires-dist = [{ name = "torch", marker = "extra == 'torch'", specifier = ">=2.5" }]
 provides-extras = ["torch"]
+
+[[package]]
+name = "dinkster-kitchen"
+version = "0.2.35.post1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/b9/e962a4c84376b5594270bb24381a71a1a79a7179f59a0944e0559591d270/dinkster_kitchen-0.2.35.post1-cp312-abi3-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d1e7a71362ad01c0281114c94976ce7ececc8b6c9175064aa63774370fb3167f", size = 26791377, upload-time = "2026-09-18T14:51:15.977Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/e4/8321329b5a8158aedb8da2bdaec9b5eebd993e411ec233f2779def137f59/dinkster_kitchen-0.2.35.post1-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:308a46985de495ba7eecc26bea4c9d68ba25dcc6de482c4b6e79b753d8ed0b86", size = 47185577, upload-time = "2026-09-18T14:51:19.638Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/81/b3bb4bd73fe3678b0e15b3f07c491b9586f47932226285789ccf5f9350c8/dinkster_kitchen-0.2.35.post1-cp312-abi3-win_amd64.whl", hash = "sha256:9e88381b5ae40bb789f1eac4589da495bf733759e9ed0e80583ee03d40b7485a", size = 38543314, upload-time = "2026-09-18T14:51:23.092Z" },
+    { url = "https://files.pythonhosted.org/packages/be/07/93cdfc91005c41a2b18774424afd9b1c6808da5ece7fda6b3eeeb732ffd1/dinkster_kitchen-0.2.35.post1-cp312-abi3-win_arm64.whl", hash = "sha256:1a66fb2b56025071c0f2cda940c562336f2d890d69402ee5c5dd15864c290a40", size = 6171530, upload-time = "2026-09-18T14:51:25.628Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl", hash = "sha256:31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f", size = 214552, upload-time = "2026-09-18T14:51:27.413Z" },
+]
 
 [[package]]
 name = "dinkster-memory"

@@ -2,7 +2,7 @@
 
 Plans the exact official split graph (one or both DiTs, the INT8
 conditioner, and both codecs) from safetensors headers alone. Worker
-environment facts that enter runtime identity (torch and comfy-kitchen
+environment facts that enter runtime identity (torch and dinkster-kitchen
 versions) arrive through an explicit :class:`NativePlanningContext`;
 asset identity arrives on the sources themselves through the
 AssetIdentifiedSource seam. Payload reading, artifact verification
@@ -92,8 +92,8 @@ def minimax_h3_component_runtime_identity(
 
 def _int8_provider_facts(context: NativePlanningContext) -> tuple[str, ...]:
     return (
-        "int8_provider=comfy-kitchen.int8_linear",
-        f"comfy_kitchen_version={context.comfy_kitchen_version}",
+        "int8_provider=dinkster-kitchen.int8_linear",
+        f"dinkster_kitchen_version={context.dinkster_kitchen_version}",
     )
 
 
@@ -302,9 +302,9 @@ def plan_minimax_h3_diffusion_component(
                 role,
                 quantized=bool(quantized),
                 torch_version=context.torch_version,
-                comfy_kitchen_version=(
-                    context.comfy_kitchen_version
-                    if quantized or attention_policy in ("comfy_kitchen_int8", "sol")
+                dinkster_kitchen_version=(
+                    context.dinkster_kitchen_version
+                    if quantized or attention_policy in ("dinkster_kitchen_int8", "sol")
                     else None
                 ),
                 attention_policy=attention_policy,

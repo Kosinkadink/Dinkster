@@ -256,7 +256,7 @@ def _h3_attention_backend_identity(attention: MiniMaxH3Attention) -> str:
     evidence = attention.provider_evidence
     identity = f"{evidence.provider}:torch={evidence.torch_version}"
     if evidence.provider_version is not None:
-        identity = f"{identity}:comfy-kitchen={evidence.provider_version}"
+        identity = f"{identity}:dinkster-kitchen={evidence.provider_version}"
     return identity
 
 

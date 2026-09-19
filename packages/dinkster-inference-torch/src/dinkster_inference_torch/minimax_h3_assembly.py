@@ -92,7 +92,7 @@ def worker_planning_context() -> NativePlanningContext:
 
     return NativePlanningContext(
         torch_version=str(torch.__version__),
-        comfy_kitchen_version=version("comfy-kitchen"),
+        dinkster_kitchen_version=version("dinkster-kitchen"),
     )
 
 

@@ -173,7 +173,7 @@ class PoseBranchCache:
         params: Any | None = None
         corrections: _PoseCacheCorrections | None = None
         if self.dtype != "default":
-            from comfy_kitchen.tensor import (  # pyright: ignore[reportMissingTypeStubs]
+            from dinkster_kitchen.tensor import (  # pyright: ignore[reportMissingTypeStubs]
                 TensorCoreConvRotW4A4Layout,
                 TensorWiseINT8Layout,
             )
@@ -475,7 +475,7 @@ class PoseBranchCache:
         if stream is not None:
             torch.cuda.current_stream(device).wait_stream(stream)
         if entry.params is not None:
-            from comfy_kitchen.tensor import (  # pyright: ignore[reportMissingTypeStubs]
+            from dinkster_kitchen.tensor import (  # pyright: ignore[reportMissingTypeStubs]
                 TensorCoreConvRotW4A4Layout,
                 TensorWiseINT8Layout,
             )

@@ -50,16 +50,16 @@ _ROCM_TORCH_REQUIREMENT = "torch[device-all]==2.12.0+rocm7.14.0"
 _XPU_INDEX_URL = "https://download.pytorch.org/whl/xpu"
 _XPU_TORCH_REQUIREMENT = "torch==2.13.0+xpu"
 
-# dinkster_inference_torch imports comfy_kitchen unconditionally, so every
+# dinkster_inference_torch imports dinkster_kitchen unconditionally, so every
 # backend cell needs it. The pin must be the pure-Python wheel: PyPI's
 # platform wheels for win_amd64 and linux x86_64 carry CUDA-only compiled
 # kernels, while the pure wheel provides the device-agnostic eager backend
 # that ROCm and XPU cells run on. uv enforces the sha256 fragment.
 _KITCHEN_REQUIREMENT = (
-    "comfy-kitchen@https://files.pythonhosted.org/packages/a3/43/"
-    "ceed9307bf92bccdc420703c3800ed46eafcafbfd764cbd93726f43db2b6/"
-    "comfy_kitchen-0.2.32-py3-none-any.whl"
-    "#sha256=6a5fba5224abbb7c9d8248bb7fe607bfab26ee623d311fcfae70066f1c7cfd9b"
+    "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/"
+    "84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/"
+    "dinkster_kitchen-0.2.35.post1-py3-none-any.whl"
+    "#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
 )
 
 _SUPPORT_PACKAGES = (

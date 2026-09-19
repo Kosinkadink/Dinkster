@@ -648,12 +648,12 @@ def _representative(
 ) -> dict[str, Any]:
     if set(captured) != {"input", "output"}:
         _fail("representative NVFP4 layer did not capture one runtime invocation")
-    import comfy_kitchen  # pyright: ignore[reportMissingImports]
+    import dinkster_kitchen  # pyright: ignore[reportMissingImports]
 
     value = captured["input"]
     if layer.pre_quant_scale is not None:
         value = value * layer.pre_quant_scale.to(dtype=value.dtype)
-    dequantized = comfy_kitchen.dequantize_nvfp4(
+    dequantized = dinkster_kitchen.dequantize_nvfp4(
         layer.weight,
         layer.weight_scale_2,
         layer.weight_scale,

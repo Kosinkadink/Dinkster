@@ -2557,7 +2557,7 @@
         "BlockSparseAttention"
       ],
       "category": "comfy/advanced/model",
-      "description": "Block-sparse attention through comfy_kitchen: each query block attends a selected subset of key blocks exactly, reducing attention compute. The relative speed gain grows with sequence length since short sequences are usually faster dense. Outside the active schedule, dense_blocks and under min_tokens, the model uses the active dense model attention backend.",
+      "description": "Block-sparse attention through dinkster_kitchen: each query block attends a selected subset of key blocks exactly, reducing attention compute. The relative speed gain grows with sequence length since short sequences are usually faster dense. Outside the active schedule, dense_blocks and under min_tokens, the model uses the active dense model attention backend.",
       "displayName": "Block Sparse Attention",
       "idempotent": true,
       "interface": [
@@ -10658,6 +10658,14 @@
             "types": [
               "core.combo"
             ]
+          },
+          "widget": {
+            "options": [
+              "auto",
+              "8",
+              "10"
+            ],
+            "type": "COMBO"
           }
         },
         {
@@ -25721,7 +25729,9 @@
               "audio/wav",
               "audio/flac",
               "audio/mpeg",
-              "audio/ogg"
+              "audio/ogg",
+              "audio/webm",
+              "audio/mp4"
             ],
             "allowUpload": true,
             "kind": "media/audio",

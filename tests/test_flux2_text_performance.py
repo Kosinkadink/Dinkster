@@ -14,6 +14,7 @@ from tools.inference_parity.flux2_text_performance import (
     COMFYUI_COMMIT,
     COMFYUI_KITCHEN_VERSION,
     DEVICE_UUID,
+    DINKSTER_AIMDO_VERSION,
     DINKSTER_KITCHEN_VERSION,
     MEASURED_RUNS,
     TEXT_ENCODER_REVISION,
@@ -60,10 +61,6 @@ def _record(tmp_path: Path, engine: str, value: float, index: int) -> dict[str, 
             "sha256": TEXT_ENCODER_SHA256,
             "size_bytes": TEXT_ENCODER_SIZE,
         },
-        "comfy_aimdo": "0.4.13",
-        "comfy_kitchen": (
-            COMFYUI_KITCHEN_VERSION if engine == "comfyui" else DINKSTER_KITCHEN_VERSION
-        ),
         "commit": COMFYUI_COMMIT if engine == "comfyui" else "candidate",
         "cuda": "13.0",
         "device_uuid": DEVICE_UUID,
@@ -76,6 +73,8 @@ def _record(tmp_path: Path, engine: str, value: float, index: int) -> dict[str, 
     if engine == "comfyui":
         receipts.update(
             {
+                "comfy_aimdo": "0.4.13",
+                "comfy_kitchen": COMFYUI_KITCHEN_VERSION,
                 "patcher": "ModelPatcherDynamic",
                 "precision": {"activation": "float32", "storage": ["bfloat16"]},
             }
@@ -83,6 +82,8 @@ def _record(tmp_path: Path, engine: str, value: float, index: int) -> dict[str, 
     else:
         receipts.update(
             {
+                "dinkster_aimdo": DINKSTER_AIMDO_VERSION,
+                "dinkster_kitchen": DINKSTER_KITCHEN_VERSION,
                 "demand_control_sha256": output_digest,
                 "hybrid_equals_demand_control": True,
                 "precision": {"activation": "bfloat16", "storage": ["bfloat16"]},
@@ -133,7 +134,7 @@ def test_verdict_rejects_runtime_and_control_drift(tmp_path: Path) -> None:
         build_verdict(changed, dinkster_commit="candidate")
 
     changed = copy.deepcopy(records)
-    changed[1]["receipts"]["comfy_kitchen"] = COMFYUI_KITCHEN_VERSION
+    changed[1]["receipts"]["dinkster_kitchen"] = COMFYUI_KITCHEN_VERSION
     with pytest.raises(ComparisonError, match="Dinkster source"):
         build_verdict(changed, dinkster_commit="candidate")
 

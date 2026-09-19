@@ -31,7 +31,7 @@ torch = [
     "torch>=2.5",
     "torchvision>=0.20",
     # packaging and numpy compensate for undeclared runtime requirements
-    # of the runtime dependencies: comfy-kitchen 0.2.32 imports packaging,
+    # of the runtime dependencies: dinkster-kitchen imports packaging,
     # and dinkster-aimdo's torch bridge needs numpy (torch.as_tensor over a
     # __cuda_array_interface__ holder fails without it).
     "packaging",
@@ -39,10 +39,8 @@ torch = [
     "scipy>=1.11",
     "pillow>=10",
     "tqdm>=4.66",
-    "comfy-kitchen==0.2.32",
-    # This release retains the comfy_aimdo compatibility package used at runtime.
-    # scripts/setup_envs.sh installs the same release from its pinned wheel.
-    "dinkster-aimdo==0.5.5.post1",
+    "dinkster-kitchen==0.2.35.post1",
+    "dinkster-aimdo==0.5.5.post2",
     "sentencepiece==0.2.1",
     "tokenizers==0.23.1",
     "dinkster-kernels",

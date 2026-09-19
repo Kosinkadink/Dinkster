@@ -19,7 +19,7 @@ import math
 from pathlib import Path
 from typing import Any, cast
 
-import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 import pytest
 import torch
 from dinkster_inference import (
@@ -216,8 +216,8 @@ def test_rope_and_rms_adaln_use_kitchen_without_autograd(
         calls.append("rms_adaln")
         return ltx_model_module._rms(value) * (1 + scale) + shift  # pyright: ignore[reportPrivateUsage]
 
-    monkeypatch.setattr(comfy_kitchen, "apply_rope", apply_rope)
-    monkeypatch.setattr(comfy_kitchen, "rms_adaln", rms_adaln)
+    monkeypatch.setattr(dinkster_kitchen, "apply_rope", apply_rope)
+    monkeypatch.setattr(dinkster_kitchen, "rms_adaln", rms_adaln)
     with torch.no_grad():
         observed_q, observed_k = ltx_model_module._apply_rope_qk(  # pyright: ignore[reportPrivateUsage]
             q, k, (matrix, False)
@@ -243,8 +243,8 @@ def test_rope_and_rms_adaln_keep_autograd_fallback(
     def refuse(*_args: object) -> None:
         raise AssertionError("kitchen operation must not run under autograd")
 
-    monkeypatch.setattr(comfy_kitchen, "apply_rope", refuse)
-    monkeypatch.setattr(comfy_kitchen, "rms_adaln", refuse)
+    monkeypatch.setattr(dinkster_kitchen, "apply_rope", refuse)
+    monkeypatch.setattr(dinkster_kitchen, "rms_adaln", refuse)
     matrix = ltx_model_module._rope_matrix(  # pyright: ignore[reportPrivateUsage]
         torch.randn(1, 3, 4), 0, False, 2, torch.float32
     )

@@ -125,7 +125,7 @@ before runner allocation; no hosted job depends on it. To enable it, provide
 a runner with labels `[self-hosted, linux, x64, dinkster-model-tests]` and set
 that variable, with no source edits. It uses the same complete composite
 action with `run-model-tests: "true"` and the existing read-only
-`DINKSTER_IDENTITY_DEPLOY_KEY` and `DINKSTER_AIMDO_RELEASE_TOKEN` secrets.
+`DINKSTER_IDENTITY_DEPLOY_KEY` secret.
 
 The runner must have an AuthenticAMD CPU with AVX2 and **without AVX-512**,
 `MKL_CBWR` unset, and sufficient disk/RAM for the pinned CPU workloads.

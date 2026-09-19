@@ -94,7 +94,7 @@ class AimdoHeadroomProbe(Node):
         import ctypes
 
         import torch  # pyright: ignore[reportMissingImports]
-        from comfy_aimdo import control  # pyright: ignore[reportMissingImports]
+        from dinkster_aimdo import control  # pyright: ignore[reportMissingImports]
         from dinkster_compat_comfy.native_arm import _aimdo_mechanism_factory
 
         mechanism, fallback_reason = _aimdo_mechanism_factory("on", torch.device("cuda:0"), torch)

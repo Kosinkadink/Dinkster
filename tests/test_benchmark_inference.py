@@ -2405,7 +2405,7 @@ def test_minimax_h3_cli_defaults_are_the_pinned_workload(tmp_path: Path) -> None
     assert arguments.quality_spatial_stride == 4
 
 
-@pytest.mark.parametrize("policy", ["sdpa", "comfy_kitchen_int8", "sage"])
+@pytest.mark.parametrize("policy", ["sdpa", "dinkster_kitchen_int8", "sage"])
 def test_minimax_h3_cli_accepts_explicit_attention_evidence(tmp_path: Path, policy: str) -> None:
     output = tmp_path / "quality"
     arguments = benchmark_inference._parse_arguments(

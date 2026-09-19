@@ -30,7 +30,7 @@ from dinkster_inference.weights import AssetIdentifiedSource, TensorGeometry, We
 
 _CONTEXT = NativePlanningContext(
     torch_version="2.99.0-test",
-    comfy_kitchen_version="9.9.9-test",
+    dinkster_kitchen_version="9.9.9-test",
 )
 _TEST_IDENTITIES = {
     role: (index, "blake3:" + f"{index:x}" * 64)
@@ -149,9 +149,9 @@ def test_standalone_common_component_plan_binds_asset_identity(
 
 def test_planning_context_requires_non_empty_versions() -> None:
     with pytest.raises(ValueError, match="torch_version"):
-        NativePlanningContext(torch_version="", comfy_kitchen_version="1.0")
-    with pytest.raises(ValueError, match="comfy_kitchen_version"):
-        NativePlanningContext(torch_version="2.13.0", comfy_kitchen_version="")
+        NativePlanningContext(torch_version="", dinkster_kitchen_version="1.0")
+    with pytest.raises(ValueError, match="dinkster_kitchen_version"):
+        NativePlanningContext(torch_version="2.13.0", dinkster_kitchen_version="")
 
 
 def test_video_and_audio_vae_layouts_are_pinned() -> None:

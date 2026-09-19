@@ -97,7 +97,7 @@ def comfy_python() -> str:
 
 
 def aimdo_python() -> str:
-    """The Dinkster GPU venv carrying the current comfy-aimdo API."""
+    """The Dinkster GPU venv carrying the current dinkster-aimdo API."""
     return str(REPO_ROOT / ".venv-gpu" / "bin" / "python")
 
 

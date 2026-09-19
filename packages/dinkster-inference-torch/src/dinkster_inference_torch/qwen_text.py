@@ -253,11 +253,11 @@ class QwenAttention(torch.nn.Module):
             transposed_key = key.transpose(1, 2)
             transposed_value = value.transpose(1, 2)
             if length == 1 and cache_position > 0 and mask is None:
-                comfy_kitchen = importlib.import_module("comfy_kitchen")
+                dinkster_kitchen = importlib.import_module("dinkster_kitchen")
                 position = cache.position.view(batch, 1, 1, 1).expand_as(transposed_key)
                 cache.key.scatter_(1, position, transposed_key)
                 cache.value.scatter_(1, position, transposed_value)
-                output = comfy_kitchen.flash_attention_decode(
+                output = dinkster_kitchen.flash_attention_decode(
                     query.transpose(1, 2), cache.key, cache.value, cache.seqlen
                 )
                 projected = self.o_proj(output.reshape(batch, length, -1))
@@ -701,11 +701,11 @@ class QwenTextModel(torch.nn.Module):
         devices = tuple(
             _execution_device(cast(QwenBlock, layer).input_layernorm) for layer in self.layers
         )
-        comfy_kitchen = importlib.import_module("comfy_kitchen") if fixed else None
-        use_fixed = comfy_kitchen is not None and all(
+        dinkster_kitchen = importlib.import_module("dinkster_kitchen") if fixed else None
+        use_fixed = dinkster_kitchen is not None and all(
             dtype is torch.bfloat16
             and device.type == "cuda"
-            and comfy_kitchen.flash_attention_decode_is_available(device)
+            and dinkster_kitchen.flash_attention_decode_is_available(device)
             for device in devices
         )
         shape = (

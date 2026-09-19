@@ -234,7 +234,7 @@ def test_generic_loader_selects_native_h3_component_with_plan_identity(
     policy = NativeDispatchPolicy(
         lambda _digest: None,
         _ignore_diagnostic,
-        minimax_h3_runtime_versions=lambda: {"torch": "2.13.0", "comfy-kitchen": "0.1.0"},
+        minimax_h3_runtime_versions=lambda: {"torch": "2.13.0", "dinkster-kitchen": "0.1.0"},
     )
     monkeypatch.setattr(
         minimax_h3_component_descriptor,
@@ -3693,7 +3693,7 @@ def test_load_diffusion_components_selects_structurally_valid_h3_with_arbitrary_
         "load_safetensors_header",
         lambda _path, **_identity: header,
     )
-    runtime_versions = {"torch": "2.13.0+cu130", "comfy-kitchen": "0.2.31"}
+    runtime_versions = {"torch": "2.13.0+cu130", "dinkster-kitchen": "0.2.31"}
     policy = NativeDispatchPolicy(
         lambda found: path if found == digest else None,
         _ignore_diagnostic,
@@ -3715,7 +3715,7 @@ def test_load_diffusion_components_selects_structurally_valid_h3_with_arbitrary_
             role,
             quantized=False,
             torch_version=runtime_versions["torch"],
-            comfy_kitchen_version=None,
+            dinkster_kitchen_version=None,
         ),
     )
 
@@ -3747,7 +3747,7 @@ def test_h3_component_dispatch_binds_cache_identity_to_the_selected_lane(
         _ignore_diagnostic,
         minimax_h3_runtime_versions=lambda: {
             "torch": "2.13.0+cu130",
-            "comfy-kitchen": "0.2.31",
+            "dinkster-kitchen": "0.2.31",
         },
     )
     arms = (
@@ -3774,7 +3774,7 @@ def test_h3_component_dispatch_binds_cache_identity_to_the_selected_lane(
                 role,
                 quantized=False,
                 torch_version="2.13.0+cu130",
-                comfy_kitchen_version=None,
+                dinkster_kitchen_version=None,
             ),
         )
 
@@ -3829,7 +3829,7 @@ def test_load_diffusion_components_rejects_wrong_h3_geometry(
         _ignore_diagnostic,
         minimax_h3_runtime_versions=lambda: {
             "torch": "2.13.0+cu130",
-            "comfy-kitchen": "0.2.31",
+            "dinkster-kitchen": "0.2.31",
         },
     )
 

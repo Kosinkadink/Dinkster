@@ -54,20 +54,19 @@ def write_process(
     process = root / "proc" / str(pid)
     task = process / "task" / str(pid)
     task.mkdir(parents=True)
-    (task / "children").write_text(children, encoding="ascii")
+    (task / "children").write_bytes(children.encode("ascii"))
     stat_prefix = " ".join(str(value) for value in range(1, 19))
-    (process / "stat").write_text(
-        f"{pid} (worker with spaces) S {stat_prefix} {pid * 100} 0\n",
-        encoding="ascii",
+    (process / "stat").write_bytes(
+        f"{pid} (worker with spaces) S {stat_prefix} {pid * 100} 0\n".encode("ascii")
     )
-    (process / "smaps").write_text(smaps, encoding="ascii")
-    (process / "smaps_rollup").write_text(rollup, encoding="ascii")
-    (process / "cgroup").write_text(f"0::{cgroup_path}\n", encoding="ascii")
+    (process / "smaps").write_bytes(smaps.encode("ascii"))
+    (process / "smaps_rollup").write_bytes(rollup.encode("ascii"))
+    (process / "cgroup").write_bytes(f"0::{cgroup_path}\n".encode("ascii"))
     cgroup = root / "cgroup" / cgroup_path.lstrip("/")
     cgroup.mkdir(parents=True, exist_ok=True)
-    (cgroup / "memory.current").write_text("8192\n", encoding="ascii")
-    (cgroup / "memory.stat").write_text("anon 4096\nfile 2048\n", encoding="ascii")
-    (cgroup / "memory.events").write_text("low 1\noom 0\noom_kill 0\n", encoding="ascii")
+    (cgroup / "memory.current").write_bytes(b"8192\n")
+    (cgroup / "memory.stat").write_bytes(b"anon 4096\nfile 2048\n")
+    (cgroup / "memory.events").write_bytes(b"low 1\noom 0\noom_kill 0\n")
 
 
 def pinned_storage_log(pid: int, phase: str, first: int = 3072, second: int = 1024) -> str:

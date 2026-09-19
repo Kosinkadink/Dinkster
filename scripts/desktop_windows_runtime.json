@@ -1,12 +1,12 @@
 {
   "aimdo": {
     "repository": "Kosinkadink/dinkster-aimdo",
-    "commit": "6ae5b951e333a52dba825487587d674bd0be410e",
-    "releaseTag": "v0.5.5.post1",
-    "version": "0.5.5.post1",
-    "archive": "dinkster_aimdo-0.5.5.post1-cp39-abi3-win_amd64.whl",
-    "sha256": "1f240d8b27002bbd9f5b6d30dce0f30591087fc34d12dcfafcb45d838822c993",
-    "size": 281260
+    "commit": "60a8862dde1f278222dad4129e3f0ab171ed7207",
+    "releaseTag": "v0.5.5.post2",
+    "version": "0.5.5.post2",
+    "archive": "dinkster_aimdo-0.5.5.post2-cp39-abi3-win_amd64.whl",
+    "sha256": "22c3ae7dc902ebf67091cd2f4055ac9fbc9eab1713ad2f6b2d5a05072f9fe58f",
+    "size": 281463
   },
   "cudaTorch": {
     "version": "2.13.0+cu130",

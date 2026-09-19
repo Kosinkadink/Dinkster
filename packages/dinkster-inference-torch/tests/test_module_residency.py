@@ -2632,7 +2632,7 @@ def test_int8_convrot_accepts_lora_weight_and_bias_patches() -> None:
 def test_offloaded_patched_int8_requantizes_and_keeps_packed_weight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
     layer = _int8_layer()
     before = ModuleStateStore(layer)["weight"]
@@ -2676,7 +2676,7 @@ def test_offloaded_patched_int8_requantizes_and_keeps_packed_weight(
     assert isinstance(stored, Int8PackedWeight)
     assert torch.equal(before.qdata, stored.qdata)
     input = torch.randn(5, 256)
-    expected_output = comfy_kitchen.int8_linear(
+    expected_output = dinkster_kitchen.int8_linear(
         input,
         actual.qdata,
         actual.scale,

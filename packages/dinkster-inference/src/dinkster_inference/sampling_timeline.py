@@ -25,13 +25,13 @@ AttentionModifier = Literal[
     "skip_softmax",
     "sol_conditioning_exact_kv",
 ]
-AttentionPlanProvider = Literal["sdpa", "comfy_kitchen_int8", "sage", "sol"]
-AttentionScheduleProvider = Literal["comfy_kitchen_int8", "sage", "sol"]
+AttentionPlanProvider = Literal["sdpa", "dinkster_kitchen_int8", "sage", "sol"]
+AttentionScheduleProvider = Literal["dinkster_kitchen_int8", "sage", "sol"]
 CurveInterpolation = Literal["linear", "monotone_cubic"]
 
 _SCHEDULE_DOMAIN = "dinkster.sampling-timeline.schedule.v1"
 _TIMELINE_DOMAIN = "dinkster.sampling-timeline.realized.v1"
-_PROVIDERS = frozenset(("comfy_kitchen_int8", "sage", "sol"))
+_PROVIDERS = frozenset(("dinkster_kitchen_int8", "sage", "sol"))
 _SOL_CONDITIONING_MODIFIERS = frozenset(("sol_conditioning_exact_kv",))
 _MODIFIERS = frozenset(("skip_softmax",)) | _SOL_CONDITIONING_MODIFIERS
 

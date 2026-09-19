@@ -341,7 +341,7 @@ def detect_native_runtime_versions(interpreter: str) -> Mapping[str, str]:
 import json
 from importlib.metadata import PackageNotFoundError, version
 result = {}
-for name in ("torch", "comfy-kitchen"):
+for name in ("torch", "dinkster-kitchen"):
     try:
         result[name] = version(name)
     except PackageNotFoundError:
@@ -947,8 +947,8 @@ def main() -> None:
         choices=("auto", "on", "off"),
         default=None,
         help="weight residency mechanism for native execution: auto enables "
-        "comfy-aimdo where upstream ComfyUI would (NVIDIA CUDA, non-WSL), "
-        "on enables comfy-aimdo wherever the capability chain passes, "
+        "dinkster-aimdo where upstream ComfyUI would (NVIDIA CUDA, non-WSL), "
+        "on enables dinkster-aimdo wherever the capability chain passes, "
         "off disables dynamic residency (default: auto)",
     )
     parser.add_argument(

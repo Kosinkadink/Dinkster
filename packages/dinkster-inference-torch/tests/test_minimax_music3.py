@@ -5,7 +5,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
 
-import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 import pytest
 import torch
 from dinkster_inference import (
@@ -272,7 +272,7 @@ def test_diffusion_attention_uses_fused_split_rope_during_inference(
         value.copy_(rotate(value))
         return value
 
-    monkeypatch.setattr(comfy_kitchen, "apply_rope_split_half1_", fused)
+    monkeypatch.setattr(dinkster_kitchen, "apply_rope_split_half1_", fused)
     hidden = torch.randn(1, 3, 8)
     table = torch.eye(2).reshape(1, 1, 1, 1, 2, 2).expand(1, 1, 3, 1, 2, 2)
     with torch.inference_mode():

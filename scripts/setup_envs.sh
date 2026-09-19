@@ -16,12 +16,9 @@
 # installs re-asserted (cheap no-ops when already satisfied); pass
 # --force to delete and rebuild all venvs.
 #
-# The comfy-kitchen 0.2.32 CPU wheel builds from the immutable release commit,
-# fetched into a temporary repo when the workspace sibling lacks that tag.
-#
 # On macOS (Darwin) the torch env installs the native arm64 PyPI wheels
 # instead: torch's mac build ships MPS support in the one default wheel,
-# and comfy-kitchen's only mac-compatible distribution is its pure-Python
+# and dinkster-kitchen's mac-compatible distribution is its pure-Python
 # PyPI wheel (eager/triton backends - the CPU flavor this env wants).
 # The setup finishes with scripts/mps_smoke.py, which reports what the
 # machine's MPS device can actually do.
@@ -31,17 +28,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 os=$(uname -s)
-aimdo_token=${DINKSTER_AIMDO_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}
-export -n aimdo_token
-unset DINKSTER_AIMDO_TOKEN GH_TOKEN GITHUB_TOKEN
-
-install_dinkster_aimdo() {
-    if [ -n "$aimdo_token" ]; then
-        DINKSTER_AIMDO_TOKEN="$aimdo_token" "$1" scripts/install_dinkster_aimdo.py
-    else
-        "$1" scripts/install_dinkster_aimdo.py
-    fi
-}
 
 FORCE=0
 for arg in "$@"; do
@@ -119,50 +105,14 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     -e packages/dinkster-workers \
     -e 'packages/dinkster-training-torch[torch]'
 
-# comfy-kitchen CPU wheel (required by INT8 ConvRot). On Linux, build only
-# from an immutable archive of the release commit, never the sibling
-# working tree - PyPI would deliver the CUDA wheel there. On macOS no
-# platform wheel exists, so PyPI resolves the pure-Python wheel
-# (eager/triton backends), which is already the wanted CPU flavor.
-if [ "$os" = "Darwin" ]; then
-    echo "==> comfy-kitchen 0.2.32 (PyPI pure-Python wheel)"
-    uv pip install --python .venv-torch/bin/python "comfy-kitchen==0.2.32"
-else
-    kitchen_commit=f0092e814e73c0e82e9bfa364d55bad8f84280b6
-    kitchen_source=../comfy-kitchen
-    kitchen_temp=${RUNNER_TEMP:-/tmp}
-    sibling_tag=$(git -C "$kitchen_source" rev-parse v0.2.32^{commit} 2>/dev/null || true)
-    if ! git -C "$kitchen_source" cat-file -e "$kitchen_commit^{commit}" 2>/dev/null || \
-        [ "$sibling_tag" != "$kitchen_commit" ]; then
-        kitchen_source="$kitchen_temp/ck-source"
-        rm -rf "$kitchen_source"
-        git init -q "$kitchen_source"
-        git -C "$kitchen_source" remote add origin https://github.com/Comfy-Org/comfy-kitchen.git
-        git -C "$kitchen_source" fetch -q --depth=1 origin tag v0.2.32
-    fi
-    if [ "$(git -C "$kitchen_source" rev-parse v0.2.32^{commit})" != "$kitchen_commit" ]; then
-        echo "error: comfy-kitchen v0.2.32 does not resolve to $kitchen_commit" >&2
-        exit 1
-    fi
-    echo "==> comfy-kitchen CPU wheel (release $kitchen_commit)"
-    rm -rf "$kitchen_temp/ck-build" "$kitchen_temp/ck-venv"
-    mkdir "$kitchen_temp/ck-build"
-    git -C "$kitchen_source" archive "$kitchen_commit" | tar -x -C "$kitchen_temp/ck-build"
-    uv venv "$kitchen_temp/ck-venv" -q
-    uv pip install --python "$kitchen_temp/ck-venv/bin/python" -q setuptools wheel
-    (cd "$kitchen_temp/ck-build" && "$kitchen_temp/ck-venv/bin/python" setup.py bdist_wheel --no-cuda)
-    kitchen_wheel=$(find "$kitchen_temp/ck-build/dist" -maxdepth 1 -type f \
-        -name 'comfy_kitchen-0.2.32-*.whl' -print -quit)
-    if [ -z "$kitchen_wheel" ]; then
-        echo "error: comfy-kitchen did not build the pinned 0.2.32 wheel" >&2
-        exit 1
-    fi
-    uv pip install --python .venv-torch/bin/python --reinstall "$kitchen_wheel"
-fi
+# The direct PyPI URL forces the device-agnostic wheel in the CPU environment;
+# the platform wheels contain accelerator-specific native extensions.
+kitchen_cpu_wheel="dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
+uv pip install --python .venv-torch/bin/python "$kitchen_cpu_wheel"
 if [ "$os" != "Darwin" ]; then
-    install_dinkster_aimdo .venv-torch/bin/python
+    uv pip install --python .venv-torch/bin/python "dinkster-aimdo==0.5.5.post2"
 fi
-.venv-torch/bin/python -c "from importlib.metadata import version; assert version('comfy-kitchen') == '0.2.32'"
+.venv-torch/bin/python -c "from importlib.metadata import version; assert version('dinkster-kitchen') == '0.2.35.post1'"
 
 # ------------------------------------------------ shared Python headers
 # Torch inductor CPU and CUDA compilation both include Python.h. The CPU and
@@ -227,7 +177,7 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
     uv pip install --python .venv-gpu/bin/python \
         pytest numpy scipy torchsde tqdm pillow packaging \
         "safetensors==0.8.0" "sentencepiece==0.2.1" \
-        comfy-kitchen==0.2.32 \
+        dinkster-kitchen==0.2.35.post1 dinkster-aimdo==0.5.5.post2 \
         -e packages/dinkster-api \
         -e packages/dinkster-schema \
         -e packages/dinkster-values \
@@ -251,7 +201,6 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         -e packages/dinkster-model-wan \
         -e 'packages/dinkster-training-torch[torch]'
 
-    install_dinkster_aimdo .venv-gpu/bin/python
 else
     echo "==> no NVIDIA GPU detected - skipping .venv-gpu (the GPU gate"
     echo "    applies only on GPU machines, AGENTS.md 'Validation gate')"

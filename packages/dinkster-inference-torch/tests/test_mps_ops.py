@@ -7,7 +7,7 @@ unaffected. No model artifacts are needed; inputs are small seeded
 tensors.
 
 Tolerances are pinned to measured behavior on real hardware (M4 Mac
-mini, torch 2.13.0, comfy-kitchen 0.2.31 eager backend): apply_rope,
+mini, torch 2.13.0, dinkster-kitchen 0.2.31 eager backend): apply_rope,
 adaln, rms_adaln, ConvRot INT8 dequantization, and the Int8Linear
 dequant route are exact against the same computation on CPU (rtol=0,
 atol=0). The fused rms_rope variants normalize in fp16 and then rotate
@@ -46,7 +46,7 @@ def _seeded(shape: tuple[int, ...], seed: int, dtype: torch.dtype) -> torch.Tens
 
 
 def test_apply_rope_matches_torch_reference_and_cpu_exactly() -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
     from dinkster_inference_torch.flux import (
         _apply_rope_torch,  # pyright: ignore[reportPrivateUsage]
         rope,
@@ -59,12 +59,12 @@ def test_apply_rope_matches_torch_reference_and_cpu_exactly() -> None:
     assert freqs.device.type == "mps"
 
     with torch.no_grad():
-        got_q, got_k = comfy_kitchen.apply_rope(xq, xk, freqs)
+        got_q, got_k = dinkster_kitchen.apply_rope(xq, xk, freqs)
     want_q, want_k = _apply_rope_torch(xq, xk, freqs)
     torch.testing.assert_close(got_q, want_q, rtol=0, atol=0)
     torch.testing.assert_close(got_k, want_k, rtol=0, atol=0)
 
-    cpu_q, cpu_k = comfy_kitchen.apply_rope(xq.cpu(), xk.cpu(), freqs.cpu())
+    cpu_q, cpu_k = dinkster_kitchen.apply_rope(xq.cpu(), xk.cpu(), freqs.cpu())
     torch.testing.assert_close(got_q.cpu(), cpu_q, rtol=0, atol=0)
     torch.testing.assert_close(got_k.cpu(), cpu_k, rtol=0, atol=0)
 
@@ -85,7 +85,7 @@ def _rms_scale(seed: int) -> torch.Tensor:
 
 
 def test_rms_rope_matches_cpu_within_fp16_rounding_tolerance() -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
     q = _seeded((2, 4, 8, 16), 103, torch.float16)
     k = _seeded((2, 4, 8, 16), 104, torch.float16)
@@ -94,7 +94,7 @@ def test_rms_rope_matches_cpu_within_fp16_rounding_tolerance() -> None:
     k_scale = _rms_scale(107)
 
     with torch.no_grad():
-        got_q, got_k = comfy_kitchen.rms_rope(
+        got_q, got_k = dinkster_kitchen.rms_rope(
             q.to("mps"),
             k.to("mps"),
             freqs.to("mps"),
@@ -102,14 +102,14 @@ def test_rms_rope_matches_cpu_within_fp16_rounding_tolerance() -> None:
             k_scale.to("mps"),
             epsilon=1e-6,
         )
-        want_q, want_k = comfy_kitchen.rms_rope(q, k, freqs, q_scale, k_scale, epsilon=1e-6)
+        want_q, want_k = dinkster_kitchen.rms_rope(q, k, freqs, q_scale, k_scale, epsilon=1e-6)
     assert got_q.dtype == want_q.dtype == torch.float16
     torch.testing.assert_close(got_q.cpu(), want_q, rtol=0, atol=RMS_ROPE_ATOL)
     torch.testing.assert_close(got_k.cpu(), want_k, rtol=0, atol=RMS_ROPE_ATOL)
 
 
 def test_rms_rope_split_half_matches_cpu_within_fp16_rounding_tolerance() -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
     q = _seeded((2, 4, 8, 16), 108, torch.float16)
     k = _seeded((2, 4, 8, 16), 109, torch.float16)
@@ -119,7 +119,7 @@ def test_rms_rope_split_half_matches_cpu_within_fp16_rounding_tolerance() -> Non
 
     def run(device: str) -> tuple[torch.Tensor, torch.Tensor]:
         with torch.no_grad():
-            return comfy_kitchen.rms_rope_split_half_(
+            return dinkster_kitchen.rms_rope_split_half_(
                 q.clone().to(device),
                 k.clone().to(device),
                 freqs.to(device),
@@ -137,9 +137,9 @@ def test_rms_rope_split_half_matches_cpu_within_fp16_rounding_tolerance() -> Non
 
 @pytest.mark.parametrize("operation", ["adaln", "rms_adaln"])
 def test_adaln_matches_cpu_exactly(operation: str) -> None:
-    import comfy_kitchen  # pyright: ignore[reportMissingTypeStubs]
+    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 
-    kernel = getattr(comfy_kitchen, operation)
+    kernel = getattr(dinkster_kitchen, operation)
     x = _seeded((2, 5, 16), 113, torch.float16)
     scale = _seeded((2, 1, 16), 114, torch.float16)
     shift = _seeded((2, 1, 16), 115, torch.float16)
@@ -152,19 +152,21 @@ def test_adaln_matches_cpu_exactly(operation: str) -> None:
 
 
 def test_convrot_int8_dequantization_matches_cpu_exactly() -> None:
-    pytest.importorskip("comfy_kitchen")
+    pytest.importorskip("dinkster_kitchen")
     generator = torch.Generator().manual_seed(116)
     q = torch.randint(-128, 128, (512, 512), generator=generator, dtype=torch.int8)
     scale = torch.rand((512, 1), generator=generator, dtype=torch.float32) / 100
 
-    got = torch.ops.comfy_kitchen.dequantize_int8_convrot_weight(q.to("mps"), scale.to("mps"), 256)
-    want = torch.ops.comfy_kitchen.dequantize_int8_convrot_weight(q, scale, 256)
+    got = torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight(
+        q.to("mps"), scale.to("mps"), 256
+    )
+    want = torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight(q, scale, 256)
     torch.testing.assert_close(got.cpu(), want, rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("convrot", [False, True])
 def test_int8_linear_executes_on_mps_through_the_dequant_route(convrot: bool) -> None:
-    pytest.importorskip("comfy_kitchen")
+    pytest.importorskip("dinkster_kitchen")
     from dinkster_inference_torch import Int8Linear
     from dinkster_inference_torch.quant_linear import (
         _dequantize_int8,  # pyright: ignore[reportPrivateUsage]
@@ -203,7 +205,7 @@ def test_int8_linear_executes_on_mps_through_the_dequant_route(convrot: bool) ->
 
 
 @pytest.mark.parametrize(
-    "policy", ["auto", "sdpa", "flash", "xformers", "sage", "sage3", "sol", "comfy_kitchen_int8"]
+    "policy", ["auto", "sdpa", "flash", "xformers", "sage", "sage3", "sol", "dinkster_kitchen_int8"]
 )
 def test_authenticated_attention_fallback_matches_mps_sdpa(
     policy: str, caplog: pytest.LogCaptureFixture

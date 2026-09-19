@@ -67,7 +67,7 @@ def main() -> int:
     print(f"platform: {platform.platform()} ({platform.machine()})")
     print(f"python:   {platform.python_version()}")
     print(f"torch:    {torch.__version__}")
-    print(f"comfy-kitchen: {_installed('comfy-kitchen')}")
+    print(f"dinkster-kitchen: {_installed('dinkster-kitchen')}")
     print(f"dinkster-aimdo: {_installed('dinkster-aimdo')}")
     print(f"psutil:        {_installed('psutil')}")
 
