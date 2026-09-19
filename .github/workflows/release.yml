@@ -79,7 +79,8 @@ jobs:
           path: ${{ runner.temp }}/dist
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.12'
+          version: latest
+          ignore-empty-workdir: true
       - name: Install from the archive without a checkout
         shell: bash
         working-directory: ${{ runner.temp }}

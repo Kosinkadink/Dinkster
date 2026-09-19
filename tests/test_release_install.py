@@ -13,6 +13,7 @@ from unittest.mock import Mock
 
 import psutil
 import pytest
+import yaml
 
 from scripts.build_release import (
     build,
@@ -23,6 +24,21 @@ from scripts.build_release import (
 )
 from scripts.install import install
 from scripts.verify_release_install import stop
+
+
+def test_artifact_install_does_not_activate_a_workspace_environment() -> None:
+    root = Path(__file__).resolve().parent.parent
+    workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
+    steps = workflow["jobs"]["install"]["steps"]
+    (setup,) = [step for step in steps if step.get("uses") == "astral-sh/setup-uv@v5"]
+    assert "python-version" not in setup["with"]
+    assert setup["with"]["version"] == "latest"
+    assert not any(step.get("uses", "").startswith("actions/checkout@") for step in steps)
+    (install_step,) = [step for step in steps if "run" in step]
+    assert install_step["working-directory"] == "${{ runner.temp }}"
+    bootstrap = install_step["run"].splitlines()[:2]
+    assert len(bootstrap) == 2
+    assert all(command.startswith("uv run --no-project --python 3.12 ") for command in bootstrap)
 
 
 @pytest.fixture
