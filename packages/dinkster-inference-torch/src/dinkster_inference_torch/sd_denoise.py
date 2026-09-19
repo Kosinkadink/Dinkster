@@ -891,9 +891,9 @@ class SDDenoiser:
         self,
         batch: ConditioningBatch[SDCondition],
         output: torch.Tensor,
-        model_input: torch.Tensor,
+        flow_input: torch.Tensor,
     ) -> torch.Tensor:
-        return _calculate_denoised(self.parameterization, batch.sigma, output, model_input)
+        return _calculate_denoised(self.parameterization, batch.sigma, output, flow_input)
 
     def evaluate_conditioning_batch_attention(
         self,

@@ -19,7 +19,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast, overload
+from types import MappingProxyType
+from typing import Any, Literal, Protocol, cast, overload
 
 import torch
 from dinkster_inference import (
@@ -54,11 +55,12 @@ from dinkster_inference import (
     StepCallback,
     cfg_needs_uncond,
     offset_first_sigma_for_snr,
+    sampling_execution_context,
     sampling_sigmas,
 )
 
 from .brownian import BrownianTreeNoise
-from .denoise import latent_process_out, prepare_multistream_noise, prepare_noise
+from .denoise import latent_process_out, prepare_multistream_noise, prepare_noise, run_denoise
 from .guidance import (
     ConditioningEvaluation,
     GuidanceExecutor,
@@ -510,6 +512,151 @@ SingleStreamCustomSamplingCfg = (
 """The guidance shapes a perp-neg-admitting single-stream family narrows to."""
 
 
+@dataclass(frozen=True)
+class SamplingExecutionInputs:
+    latent: torch.Tensor
+    noise: torch.Tensor
+    cond: object
+    cfg: SamplingGuidance[Any] | DualSamplingGuidance[Any] | PerpNegSamplingGuidance[Any] | None
+    denoise_mask: torch.Tensor | None
+    latent_context: object | None = None
+
+
+@dataclass(frozen=True)
+class SamplingAdapterContext:
+    guidance: float | None
+    inpaint: object | None
+    context_windows: ContextWindowsSpec | None
+    options: Mapping[str, object]
+
+
+class SamplingLatentAdapter(Protocol):
+    def prepare(
+        self,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs: ...
+
+    def finish(
+        self,
+        inputs: SamplingExecutionInputs,
+        output: torch.Tensor,
+        denoised: torch.Tensor | None,
+    ) -> CustomSamplingResult[Any]: ...
+
+
+@dataclass(frozen=True)
+class SingleStreamLatentAdapter:
+    validate: Callable[[torch.Tensor], None]
+    admit_perp_neg: bool = False
+
+    def prepare(
+        self,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs:
+        del context
+        if self.admit_perp_neg:
+            latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
+                family.id,
+                latent=latent,
+                noise=noise,
+                cond=cond,
+                cfg=cfg,
+                denoise_mask=denoise_mask,
+                error=error,
+                admit_perp_neg=True,
+            )
+        else:
+            latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
+                family.id,
+                latent=latent,
+                noise=noise,
+                cond=cond,
+                cfg=cfg,
+                denoise_mask=denoise_mask,
+                error=error,
+            )
+        self.validate(latent)
+        return SamplingExecutionInputs(latent, noise, cond, cfg, denoise_mask)
+
+    def finish(
+        self,
+        inputs: SamplingExecutionInputs,
+        output: torch.Tensor,
+        denoised: torch.Tensor | None,
+    ) -> CustomSamplingResult[torch.Tensor]:
+        del inputs
+        return CustomSamplingResult(output, denoised)
+
+
+class SamplingDenoiserAdapter(Protocol):
+    evaluator_identity: str
+
+    def prepare_conditioning(self, value: object, role: GuidanceRole) -> object: ...
+
+    def evaluate_conditioning(
+        self,
+        x: torch.Tensor,
+        sigma: float,
+        condition: object,
+    ) -> torch.Tensor: ...
+
+    def batchable(self, conditions: tuple[object, ...]) -> bool: ...
+
+    def evaluate_conditioning_batch(
+        self,
+        x: torch.Tensor,
+        sigma: float,
+        conditions: tuple[object, ...],
+        context: object | None = None,
+    ) -> tuple[torch.Tensor, ...]: ...
+
+
+@dataclass(frozen=True)
+class SamplingExecutionRegistration:
+    latent: SamplingLatentAdapter
+    denoiser: Callable[[object, torch.dtype, SamplingAdapterContext], SamplingDenoiserAdapter]
+    device: Callable[[object], torch.device | str | None]
+    compute_dtype: Callable[[object], torch.dtype]
+    flow: bool
+    capture_denoised: bool = True
+
+
+class SamplingExecutionRuntime(Protocol):
+    family: ModelFamily
+    sampling_error: type[Exception]
+    sampling_execution_registration: SamplingExecutionRegistration
+    _samplers: Registry[SamplerDescriptor[Any]]
+    _guidance: GuidanceExecutor | None
+
+    def check_custom_sampling(
+        self,
+        request: CustomSamplingRequest[torch.Tensor],
+        *,
+        has_denoise_mask: bool,
+        has_inpaint: bool,
+        has_context_windows: bool,
+        guidance: float | None = None,
+    ) -> None: ...
+
+    def sampling_sigma_space(self, sampling_shift: float | None = None) -> SigmaSpace: ...
+
+
 @overload
 def narrow_single_stream_custom_sampling(
     family_id: str,
@@ -616,6 +763,126 @@ def narrow_single_stream_custom_sampling(
         cast("SingleStreamCustomSamplingCfg", cfg),
         cast("torch.Tensor | None", denoise_mask),
     )
+
+
+def sampling_execution(
+    runtime: object,
+    latent: CustomSamplingLatentValue,
+    *,
+    noise: CustomSamplingLatentValue,
+    cond: CustomSamplingCondValue,
+    cfg: CustomSamplingCfgValue = None,
+    request: CustomSamplingRequest[torch.Tensor],
+    seed: int = 0,
+    guidance: float | None = None,
+    denoise_mask: CustomSamplingLatentValue | None = None,
+    inpaint: object | None = None,
+    context_windows: ContextWindowsSpec | None = None,
+    on_step: StepCallback | None = None,
+    on_state: SamplingStateCallback | None = None,
+    sampling_shift: float | None = None,
+    compute_dtype: torch.dtype | None = None,
+    device: torch.device | str | None = None,
+    capture_denoised: bool = True,
+    **adapter_options: object,
+) -> CustomSamplingResult[Any]:
+    """Execute one custom-sampling request from registered family adapters."""
+
+    owner = cast("SamplingExecutionRuntime", runtime)
+    registration = owner.sampling_execution_registration
+    adapter_context = SamplingAdapterContext(
+        guidance,
+        inpaint,
+        context_windows,
+        MappingProxyType(dict(adapter_options)),
+    )
+    inputs = registration.latent.prepare(
+        owner.family,
+        latent=latent,
+        noise=noise,
+        cond=cond,
+        cfg=cfg,
+        denoise_mask=denoise_mask,
+        context=adapter_context,
+        error=owner.sampling_error,
+    )
+    owner.check_custom_sampling(
+        request,
+        has_denoise_mask=inputs.denoise_mask is not None,
+        has_inpaint=inpaint is not None,
+        has_context_windows=context_windows is not None,
+        guidance=guidance,
+    )
+    sampler, request = resolve_custom_sampling_request(
+        owner._samplers,  # pyright: ignore[reportPrivateUsage]
+        request,
+        error=owner.sampling_error,
+    )
+    space = owner.sampling_sigma_space(sampling_shift)
+    schedule = build_custom_sampling_schedule(
+        request.sigmas,
+        space,
+        sampler,
+        flow=registration.flow,
+    )
+    if compute_dtype is None:
+        compute_dtype = registration.compute_dtype(owner)
+    if device is None:
+        device = registration.device(owner)
+    noise_sampler = brownian_step_noise(
+        sampler,
+        schedule,
+        inputs.latent,
+        seed=seed,
+        device=device,
+    )
+    executor = owner._guidance  # pyright: ignore[reportPrivateUsage]
+    plan = compile_guidance_plan(inputs.cond, inputs.cfg, sampler, executor)
+    adapter = registration.denoiser(owner, compute_dtype, adapter_context)
+    evaluation = ConditioningEvaluation(
+        adapter.prepare_conditioning,
+        adapter.evaluate_conditioning,
+        adapter.batchable,
+        adapter.evaluate_conditioning_batch,
+        evaluator_identity=lambda _role: adapter.evaluator_identity,
+        standard_activation_memory_factor=owner.family.memory_factor,
+    )
+    report_state: SamplingStateCallback | None
+    captured: list[torch.Tensor]
+    if capture_denoised and registration.capture_denoised:
+        report_state, captured = custom_denoised_callback(owner.family, on_state)
+    else:
+        report_state, captured = on_state, []
+    denoiser = guided_denoiser(
+        evaluation,
+        input=inputs.latent,
+        executor=executor,
+        plan=plan,
+        execution=sampling_execution_context(
+            sigmas=schedule.sigmas,
+            seed=seed,
+            on_step=on_step,
+            on_state=report_state,
+        ),
+    )
+    output = run_denoise(
+        denoiser,
+        request.build_solver(),
+        latent=inputs.latent,
+        noise=inputs.noise,
+        sigmas=schedule.sigmas,
+        initial_sigma=schedule.initial_sigma,
+        family=owner.family,
+        seed=seed,
+        noise_kind=sampler.noise,
+        noise_sampler=noise_sampler,
+        percent_to_sigma=space.percent_to_sigma,
+        device=device,
+        on_step=on_step,
+        on_state=report_state,
+        denoise_mask=inputs.denoise_mask,
+    )
+    return registration.latent.finish(inputs, output, captured[-1] if captured else None)
 
 
 def run_ksampler_as_custom(
@@ -771,4 +1038,5 @@ __all__ = [
     "resolve_custom_sampling_request",
     "resolve_sampling",
     "run_ksampler_as_custom",
+    "sampling_execution",
 ]

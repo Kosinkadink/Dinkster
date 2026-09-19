@@ -32,7 +32,8 @@ from dinkster_inference_torch import (
     krea2_language_model,
 )
 from dinkster_inference_torch import krea2_runtime as runtime_mod
-from dinkster_inference_torch.sampling_execution import run_ksampler_as_custom
+from dinkster_inference_torch.denoise import prepare_noise
+from dinkster_inference_torch.sampling_execution import build_sampling_schedule
 from dinkster_inference_torch.schedules import (
     custom_beta_sigmas,
     custom_percent_to_sigma,
@@ -258,22 +259,31 @@ def test_ksampler_surface_is_bit_equal_sugar_over_sample_custom(
         segment=segment,
         compute_dtype=torch.float32,
     )
-    result = run_ksampler_as_custom(
-        runtime,
-        latent,
-        samplers=cast("Any", runtime)._samplers,
-        schedulers=cast("Any", runtime)._schedulers,
-        space=KREA2_SIGMAS,
-        flow=True,
-        sampler_id=sampler_id,
-        scheduler_id=scheduler_id,
-        steps=steps,
+    sampler = torch_sampler_registry().get(sampler_id)
+    scheduler = torch_scheduler_registry().get(scheduler_id)
+    assert sampler is not None and scheduler is not None
+    schedule = build_sampling_schedule(
+        scheduler,
+        KREA2_SIGMAS,
+        sampler,
+        steps,
         denoise=1.0,
-        seed=185,
+        flow=True,
+        segment=segment,
+    )
+    noise = (
+        prepare_noise(latent, 185)
+        if segment is None or segment.add_noise
+        else torch.zeros_like(latent)
+    )
+    result = runtime.sample_custom(
+        latent,
+        noise=noise,
         cond=positive,
         cfg=SamplingGuidance(negative, 1.0 if cfg_scale is None else cfg_scale),
-        segment=segment,
-        error=Krea2RuntimeError,
+        request=CustomSamplingRequest(sampler, (), schedule.pre_offset),
+        seed=185,
+        compute_dtype=torch.float32,
     )
 
     output = result.output

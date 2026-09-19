@@ -54,6 +54,7 @@ from dinkster_inference import (
     cfg_combine,
     offset_first_sigma_for_snr,
     sampling_sigmas,
+    use_sampling_environment,
 )
 from dinkster_inference.solvers import (
     DINKSTER_DPM_2,
@@ -80,7 +81,11 @@ from dinkster_inference_torch.guidance import (
     GuidedDenoiser,
 )
 from dinkster_inference_torch.sampling_execution import (
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingExecutionRegistration,
     SamplingSchedule,
+    SingleStreamLatentAdapter,
     brownian_step_noise,
     build_custom_sampling_schedule,
     build_sampling_schedule,
@@ -89,6 +94,7 @@ from dinkster_inference_torch.sampling_execution import (
     narrow_single_stream_custom_sampling,
     resolve_sampling,
     run_ksampler_as_custom,
+    sampling_execution,
     slice_sampling_schedule,
 )
 from dinkster_inference_torch.schedules import (
@@ -1878,15 +1884,14 @@ class TestAttentionGuidance:
 @pytest.mark.parametrize("distributed_mode", (None, "auto", "guidance", "sequence", "window"))
 @pytest.mark.parametrize("world_size", (2, 3))
 @pytest.mark.parametrize("cfg_scale", (1.0, 2.0))
-def test_new_family_seam_inherits_ksampler_masks_previews_and_distributed_admission(
+def test_sampling_execution_owns_masks_denoise_range_cancellation_previews_and_distribution(
     monkeypatch: pytest.MonkeyPatch,
     distributed_mode: str | None,
     world_size: int,
     cfg_scale: float,
 ) -> None:
-    from dinkster_inference import CustomSamplingRequest, SigmaSpace, sampling_execution_context
+    from dinkster_inference import SamplingCancelled, SigmaSpace
     from dinkster_inference_torch import distributed
-    from dinkster_inference_torch.denoise import run_denoise
     from dinkster_inference_torch.sampling_runtime import SingleStreamSamplingRuntime
 
     initialized: list[object] = []
@@ -1915,10 +1920,53 @@ def test_new_family_seam_inherits_ksampler_masks_previews_and_distributed_admiss
     monkeypatch.setattr(distributed, "ensure_process_group", process_group)
     monkeypatch.setattr(distributed.DistributedGuidanceEvaluator, "evaluate_request", transport)
 
+    class DenoiserAdapter:
+        evaluator_identity = "test.synthetic.conditioning.v1"
+
+        @staticmethod
+        def prepare_conditioning(value: object, _role: GuidanceRole) -> object:
+            return value
+
+        @staticmethod
+        def evaluate_conditioning(
+            value: torch.Tensor, _sigma: float, context: object
+        ) -> torch.Tensor:
+            condition = cast("Conditioning[torch.Tensor]", context)
+            return value * 0.5 + condition.embeddings.mean()
+
+        @staticmethod
+        def batchable(_conditions: tuple[object, ...]) -> bool:
+            return True
+
+        def evaluate_conditioning_batch(
+            self,
+            value: torch.Tensor,
+            sigma: float,
+            conditions: tuple[object, ...],
+            _context: object | None = None,
+        ) -> tuple[torch.Tensor, ...]:
+            return tuple(self.evaluate_conditioning(value, sigma, item) for item in conditions)
+
+    def denoiser(
+        _runtime: object,
+        _dtype: torch.dtype,
+        _context: SamplingAdapterContext,
+    ) -> SamplingDenoiserAdapter:
+        return cast("SamplingDenoiserAdapter", DenoiserAdapter())
+
     class SeamRuntime(SingleStreamSamplingRuntime):
+        sampling_execution_registration = SamplingExecutionRegistration(
+            latent=SingleStreamLatentAdapter(lambda _latent: None),
+            denoiser=denoiser,
+            device=lambda _runtime: torch.device("cpu"),
+            compute_dtype=lambda _runtime: torch.float32,
+            flow=True,
+        )
+
         def __init__(self) -> None:
             self._samplers = torch_sampler_registry()
             self._schedulers = torch_scheduler_registry()
+            self._guidance = None
 
         @property
         def family(self) -> Any:
@@ -1931,46 +1979,7 @@ def test_new_family_seam_inherits_ksampler_masks_previews_and_distributed_admiss
         def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
             return FlowSigmas()
 
-        def sample_custom(
-            self,
-            latent: torch.Tensor,
-            *,
-            noise: torch.Tensor,
-            cond: Any,
-            cfg: Any,
-            request: CustomSamplingRequest[torch.Tensor],
-            seed: int = 0,
-            denoise_mask: torch.Tensor | None = None,
-            on_step: Any = None,
-            on_state: Any = None,
-            **kwargs: Any,
-        ) -> CustomSamplingResult[torch.Tensor]:
-            evaluation = ConditioningEvaluation(
-                lambda value, _role: value,
-                lambda value, sigma, context: (
-                    value * 0.5 + cast("Conditioning[torch.Tensor]", context).embeddings.mean()
-                ),
-            )
-            denoiser = guided_denoiser(
-                evaluation,
-                input=latent,
-                executor=None,
-                plan=compile_guidance_plan(cond, cfg, request.sampler, None),
-                execution=sampling_execution_context(request.sigmas, seed, on_step, on_state),
-            )
-            output = run_denoise(
-                denoiser,
-                request.build_solver(),
-                latent=latent,
-                noise=noise,
-                sigmas=request.sigmas,
-                family=self.family,
-                seed=seed,
-                denoise_mask=denoise_mask,
-                on_step=on_step,
-                on_state=on_state,
-            )
-            return CustomSamplingResult(output, None)
+        sample_custom = sampling_execution
 
     runtime = SeamRuntime()
     steps: list[object] = []
@@ -1997,6 +2006,37 @@ def test_new_family_seam_inherits_ksampler_masks_previews_and_distributed_admiss
     assert torch.count_nonzero(output[..., 1])
     assert len(steps) == 2
     assert len(states) == 2
+    full_denoise = output
+    partial_denoise = runtime.sample(
+        latent,
+        cond=Conditioning(torch.ones((1, 2, 8)), None),
+        cfg=SamplingGuidance(Conditioning(torch.zeros((1, 2, 8)), None), cfg_scale),
+        sampler_id="dinkster.euler",
+        scheduler_id="dinkster.simple",
+        steps=2,
+        denoise=0.5,
+    )
+    assert not torch.equal(partial_denoise, full_denoise)
+
+    cancelled = False
+
+    def cancellation_requested() -> bool:
+        return cancelled
+
+    def cancel_after_first_step(_event: object) -> None:
+        nonlocal cancelled
+        cancelled = True
+
+    with use_sampling_environment((), cancellation_requested):
+        with pytest.raises(SamplingCancelled, match="cancelled"):
+            runtime.sample(
+                latent,
+                cond=Conditioning(torch.ones((1, 2, 8)), None),
+                sampler_id="dinkster.euler",
+                scheduler_id="dinkster.simple",
+                steps=2,
+                on_step=cancel_after_first_step,
+            )
     if distributed_mode is None:
         assert not initialized and not transported
     else:

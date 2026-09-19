@@ -12,29 +12,19 @@ from dinkster_inference import (
     KREA2,
     KREA2_SIGMAS,
     Conditioning,
-    ContextWindowsSpec,
-    CustomSamplingRequest,
-    CustomSamplingResult,
     GuidanceRole,
-    InpaintConditioning,
     ModelFamily,
     Registry,
     SamplerDescriptor,
-    SamplingStateCallback,
     SchedulerDescriptor,
     SigmaSpace,
-    StepCallback,
-    sampling_execution_context,
 )
 
 if TYPE_CHECKING:
     from .checkpoint_runtime import ComponentAssembly
 
-from .brownian import BrownianTreeNoise
-from .denoise import run_denoise
 from .guidance import (
     ConditioningBatch,
-    ConditioningEvaluation,
     GuidanceExecutor,
 )
 from .guidance import (
@@ -45,16 +35,11 @@ from .krea2_dit import Krea2DiT
 from .operations import module_compute_device
 from .qwen_image_text import QwenImageLanguageModel
 from .sampling_execution import (
-    CustomSamplingCfgValue,
-    CustomSamplingCondValue,
-    CustomSamplingLatentValue,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    custom_denoised_callback,
-    guided_denoiser,
-    narrow_single_stream_custom_sampling,
-    resolve_custom_sampling_request,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingExecutionRegistration,
+    SingleStreamLatentAdapter,
+    sampling_execution,
 )
 from .sampling_runtime import SingleStreamSamplingRuntime
 from .schedules import (
@@ -70,6 +55,8 @@ class Krea2RuntimeError(ValueError):
 class _Krea2Denoiser:
     """Single-conditioning FLOW evaluator over the native Krea 2 DiT."""
 
+    evaluator_identity = "dinkster.krea2.conditioning.v1"
+
     def __init__(
         self,
         model: Krea2DiT,
@@ -79,7 +66,11 @@ class _Krea2Denoiser:
         self.model = model
         self.compute_dtype = compute_dtype
 
-    def prepare_conditioning(self, value: object) -> torch.Tensor:
+    def prepare_conditioning(
+        self,
+        value: object,
+        _role: GuidanceRole = GuidanceRole.CONDITIONAL,
+    ) -> torch.Tensor:
         if not isinstance(value, Conditioning):
             raise Krea2RuntimeError("Krea 2 conditioning must be a Conditioning value")
         if value.pooled is not None:
@@ -127,6 +118,37 @@ class _Krea2Denoiser:
             dim=0,
         )
         return self.model(batch.model_input, batch.timestep, context).float()
+
+
+def _validate_krea2_latent(latent: torch.Tensor) -> None:
+    channels = KREA2.single_stream_latent().channels
+    if latent.ndim != 5 or latent.shape[1] != channels or latent.shape[2] != 1:
+        raise Krea2RuntimeError(f"Krea 2 latent must have shape [batch,{channels},1,height,width]")
+
+
+def _krea2_denoiser(
+    runtime: object,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserAdapter:
+    owner = cast("Krea2DiffusionRuntime", runtime)
+    if context.options:
+        names = ", ".join(sorted(context.options))
+        raise Krea2RuntimeError(f"Krea 2 sampling does not accept adapter options: {names}")
+    return cast(
+        "SamplingDenoiserAdapter",
+        _Krea2Denoiser(owner.assembled.diffusion, compute_dtype=compute_dtype),
+    )
+
+
+def _krea2_device(runtime: object) -> torch.device:
+    owner = cast("Krea2DiffusionRuntime", runtime)
+    return module_compute_device(owner.assembled.diffusion)
+
+
+def _krea2_compute_dtype(runtime: object) -> torch.dtype:
+    owner = cast("Krea2DiffusionRuntime", runtime)
+    return owner.assembled.compute_dtype("diffusion") or torch.bfloat16
 
 
 def _exact_scheduler_registry(
@@ -178,6 +200,13 @@ class Krea2DiffusionRuntime(SingleStreamSamplingRuntime):
     sampling_error = Krea2RuntimeError
     sampling_compute_dtype = torch.bfloat16
     supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=SingleStreamLatentAdapter(_validate_krea2_latent),
+        denoiser=_krea2_denoiser,
+        device=_krea2_device,
+        compute_dtype=_krea2_compute_dtype,
+        flow=True,
+    )
 
     def __init__(
         self,
@@ -207,104 +236,7 @@ class Krea2DiffusionRuntime(SingleStreamSamplingRuntime):
     def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
         return KREA2_SIGMAS
 
-    def sample_custom(
-        self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue = None,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: float | None = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        compute_dtype: torch.dtype | None = None,
-        device: torch.device | str | None = None,
-        capture_denoised: bool = True,
-    ) -> CustomSamplingResult[torch.Tensor]:
-        latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
-            self.family.id,
-            latent=latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            denoise_mask=denoise_mask,
-            error=Krea2RuntimeError,
-        )
-        channels = self.family.single_stream_latent().channels
-        if latent.ndim != 5 or latent.shape[1] != channels or latent.shape[2] != 1:
-            raise Krea2RuntimeError(
-                f"Krea 2 latent must have shape [batch,{channels},1,height,width]"
-            )
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=Krea2RuntimeError
-        )
-        if compute_dtype is None:
-            compute_dtype = self.assembled.compute_dtype("diffusion") or torch.bfloat16
-        if device is None:
-            device = module_compute_device(self.assembled.diffusion)
-        space = KREA2_SIGMAS
-        schedule = build_custom_sampling_schedule(request.sigmas, space, sampler, flow=True)
-        noise_sampler: BrownianTreeNoise | None = brownian_step_noise(
-            sampler, schedule, latent, seed=seed, device=device
-        )
-        plan = compile_guidance_plan(cond, cfg, sampler, self._guidance)
-        evaluator = _Krea2Denoiser(self.assembled.diffusion, compute_dtype=compute_dtype)
-
-        def prepare(value: object, _role: GuidanceRole) -> torch.Tensor:
-            return evaluator.prepare_conditioning(value)
-
-        report_state: SamplingStateCallback | None
-        captured: list[torch.Tensor]
-        if capture_denoised:
-            report_state, captured = custom_denoised_callback(self.family, on_state)
-        else:
-            report_state, captured = on_state, []
-        denoiser = guided_denoiser(
-            ConditioningEvaluation(
-                prepare,
-                evaluator.evaluate_conditioning,
-                evaluator.batchable,
-                evaluator.evaluate_conditioning_batch,
-                evaluator_identity=lambda _role: "dinkster.krea2.conditioning.v1",
-                standard_activation_memory_factor=self.family.memory_factor,
-            ),
-            input=latent,
-            executor=self._guidance,
-            plan=plan,
-            execution=sampling_execution_context(
-                sigmas=schedule.sigmas, seed=seed, on_step=on_step, on_state=report_state
-            ),
-        )
-        output = run_denoise(
-            denoiser,
-            request.build_solver(),
-            latent=latent,
-            noise=noise,
-            sigmas=schedule.sigmas,
-            initial_sigma=schedule.initial_sigma,
-            family=self.family,
-            seed=seed,
-            noise_kind=sampler.noise,
-            noise_sampler=noise_sampler,
-            percent_to_sigma=space.percent_to_sigma,
-            device=device,
-            on_step=on_step,
-            on_state=report_state,
-            denoise_mask=denoise_mask,
-        )
-        return CustomSamplingResult(output, captured[-1] if captured else None)
+    sample_custom = sampling_execution
 
     def encode_text(self, text: str) -> Conditioning[torch.Tensor]:
         raise Krea2RuntimeError("Krea 2 diffusion component carries no text encoder")

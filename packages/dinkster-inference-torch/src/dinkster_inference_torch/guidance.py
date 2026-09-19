@@ -251,6 +251,15 @@ class ConditioningBatch(Generic[PreparedCondition]):
 
 @runtime_checkable
 class ConditioningBatchAdapter(Protocol[PreparedCondition]):
+    """Required hooks for conditioning evaluation.
+
+    Optional stage hooks are ``_conditioning_model_input``,
+    ``_stack_conditioning_model_input``, ``_conditioning_timestep_tensor``,
+    ``_conditioning_timestep``, ``_conditioning_model_output``, and
+    ``_conditioning_denoised``. Without an input hook, an adapter declares
+    ``compute_dtype`` or ``_compute_dtype``.
+    """
+
     def _validate_conditioning_batch(
         self,
         x: torch.Tensor,
@@ -272,6 +281,9 @@ def evaluate_conditioning_batch(
 ) -> tuple[torch.Tensor, ...]:
     """Evaluate one compatible conditioning batch through a family adapter."""
 
+    # Specialized adapters are composition wrappers only: they must delegate inward to
+    # this evaluator for casting, stacking, timesteps, and denoising. Context is adapter
+    # data for the standard hook path and cannot cross this composition boundary.
     specialized = getattr(evaluator, "_evaluate_conditioning_batch", None)
     if specialized is not None:
         if context is not None:
