@@ -257,6 +257,17 @@ def test_custom_sampling_refuses_wrong_shapes_and_unsupported_modes() -> None:
         sample(inpaint=cast("Any", object()))
     with pytest.raises(ChromaRuntimeError, match="context windows"):
         sample(context_windows=cast("Any", object()))
+    with pytest.raises(ChromaRuntimeError, match="adapter options: bogus_option"):
+        sample(bogus_option=True)
+    with pytest.raises(ChromaRuntimeError, match="adapter options: bogus_option"):
+        runtime.sample(
+            latent,
+            cond=condition(),
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=1,
+            bogus_option=True,
+        )
 
 
 @pytest.mark.parametrize("guidance", (True, [1.0], {"scale": 1.0}, float("nan"), float("inf")))

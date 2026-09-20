@@ -163,11 +163,6 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_nodes_image": {"dinkster_api", "dinkster_image_document"},
     "dinkster_nodes_remote": {"dinkster_api", "dinkster_workers"},
     "dinkster_nodes_generation": {"dinkster_api"},
-    "dinkster_nodes_generation_openai": {
-        "dinkster_inference",
-        "dinkster_nodes_generation",
-        "dinkster_workers",
-    },
     "dinkster_model_wan": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     "dinkster_model_qwen_image": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     "dinkster_model_triposplat": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
@@ -188,9 +183,6 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_vision_upscale": set(),
     # Dev scaffolding is a pack like any other: the same door, nothing more.
     "dinkster_nodes_dev": {"dinkster_api"},
-    # Partner/API providers keep their descriptor interpreter and transport
-    # inside the independently movable pack, authored through the same door.
-    "dinkster_nodes_partner": {"dinkster_api"},
     # Training nodes are thin adapters over a host-bound service protocol;
     # the session handle and its digest grammar arrive through the door.
     "dinkster_nodes_training": {"dinkster_api"},
