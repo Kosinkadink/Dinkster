@@ -142,7 +142,6 @@ from .compose import (
     ServingComposer,
     default_pack_ids,
     default_pack_spec,
-    openai_generation_pack_spec,
     resolve_manifest_path,
     training_pack_specs,
 )
@@ -388,10 +387,6 @@ _COMFY_MOUNTS: tuple[tuple[str, str, str], ...] = (
     ("comfy-output", "output", "readwrite"),
 )
 
-_PARTNER_PACK = "dinkster-nodes-partner"
-_COMFY_API_KEY_ENV = "DINKSTER_COMFY_API_KEY"
-_COMFY_API_BASE_ENV = "DINKSTER_COMFY_API_BASE"
-_DEFAULT_COMFY_API_BASE = "https://api.comfy.org"
 _OPENAI_API_KEY_ENV = "DINKSTER_OPENAI_API_KEY"
 _OPENAI_BASE_URL_ENV = "DINKSTER_OPENAI_BASE_URL"
 _OPENAI_MODEL_ENV = "DINKSTER_OPENAI_MODEL"
@@ -405,7 +400,7 @@ _REMOTE_CATALOG_POLL_INTERVAL_ENV = "DINKSTER_REMOTE_CATALOG_POLL_INTERVAL"
 _IDENTITY_JWKS_URL_ENV = "DINKSTER_IDENTITY_JWKS_URL"
 _IDENTITY_ISSUER_ENV = "DINKSTER_IDENTITY_ISSUER"
 _IDENTITY_AUDIENCE_ENV = "DINKSTER_IDENTITY_AUDIENCE"
-_DEFAULT_REMOTE_GATEWAY_BASE = "https://api.comfy.org"
+_DEFAULT_REMOTE_GATEWAY_BASE = ""
 _FEDERATED_ASSET_PATHS = {
     "catalog": "/api/catalog",
     "candidates": "/api/catalog/candidates",
@@ -503,30 +498,6 @@ def _load_federated_asset_config(
     if len(cursor_key) < 32:
         raise ValueError("federated asset cursor key must contain at least 32 bytes")
     return Path(store_path), policy, cursor_key
-
-
-def _with_partner_auth(entry: PackSpec | str, *, api_key: str, api_base: str) -> PackSpec | str:
-    """Attach host-side comfy.org config only to the partner worker.
-
-    PackSpec.env is the existing per-worker launch boundary. Keeping the
-    credential out of the parent environment prevents unrelated pack workers
-    from inheriting it through the ordinary subprocess launcher.
-    """
-    spec = entry if isinstance(entry, PackSpec) else PackSpec(manifest=entry)
-    try:
-        manifest = load_manifest(resolve_manifest_path(spec.manifest))
-    except Exception:
-        return entry  # composition owns the normal malformed-pack diagnostic
-    if manifest.name != _PARTNER_PACK:
-        return entry
-    return replace(
-        spec,
-        env={
-            **spec.env,
-            _COMFY_API_KEY_ENV: api_key,
-            _COMFY_API_BASE_ENV: api_base,
-        },
-    )
 
 
 def _native_asset_locator(vault: AssetVault, mounts: MountTable) -> Callable[[str], Path | None]:
@@ -841,19 +812,6 @@ def main(argv: list[str] | None = None) -> None:
         "(default: $DINKSTER_COMFYUI_PYTHON, the optional ComfyUI venv, or current Python)",
     )
     parser.add_argument(
-        "--comfy-api-key",
-        default=os.environ.get(_COMFY_API_KEY_ENV, ""),
-        metavar="KEY",
-        help="comfy.org API key for partner nodes (default: $DINKSTER_COMFY_API_KEY)",
-    )
-    parser.add_argument(
-        "--comfy-api-base",
-        default=os.environ.get(_COMFY_API_BASE_ENV, _DEFAULT_COMFY_API_BASE),
-        metavar="URL",
-        help="comfy.org proxy base for partner nodes "
-        "(default: $DINKSTER_COMFY_API_BASE, else https://api.comfy.org)",
-    )
-    parser.add_argument(
         "--openai-base-url",
         default=os.environ.get(_OPENAI_BASE_URL_ENV, ""),
         metavar="URL",
@@ -863,8 +821,10 @@ def main(argv: list[str] | None = None) -> None:
         "--remote-catalog-base",
         default=os.environ.get(_REMOTE_CATALOG_BASE_ENV, _DEFAULT_REMOTE_GATEWAY_BASE),
         metavar="URL",
-        help="remote node catalog base URL "
-        "(default: $DINKSTER_REMOTE_CATALOG_BASE, else https://api.comfy.org)",
+        help=(
+            "remote node catalog base URL "
+            "(default: $DINKSTER_REMOTE_CATALOG_BASE; disabled when unset)"
+        ),
     )
     parser.add_argument(
         "--remote-gateway-base",
@@ -1039,26 +999,13 @@ def main(argv: list[str] | None = None) -> None:
         help="concurrent jobs (engine admission keeps hardware safe either way)",
     )
     parser.add_argument(
-        "--dev",
-        action="store_true",
-        help="dev-mode diagnostics and affordances: cache_miss events "
-        "explaining why a node recomputed (first-seen / inputs-changed / "
-        "schema-changed / evicted / never-cacheable), per-invocation "
-        "boundary cost logging (execute vs transfer time, per-edge "
-        "transport/size/codec, fallback-codec markers) on "
-        "'dinkster.dev.boundary', and pack hot reload/removal "
-        "(POST /api/packs/{packId}/reload restarts that pack's worker and "
-        "swaps its nodes on the live surface; DELETE /api/packs/{packId} "
-        "retracts them and stops the worker)",
-    )
-    parser.add_argument(
         "--watch-packs",
         action="store_true",
         help="hot-reload node packs on source changes: poll every composed "
         "pack's source directory and, when its files change and settle, "
         "restart that pack's worker and swap its nodes on the live surface "
-        "- dev sugar over POST /api/packs/{packId}/reload, same swap, same "
-        "failure semantics (requires --dev)",
+        "- enables development diagnostics and the same swap and failure "
+        "semantics as POST /api/packs/{packId}/reload",
     )
     parser.add_argument(
         "--benchmark",
@@ -1297,8 +1244,6 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(f"DINKSTER_ATTENTION_POLICY: {exc}")
     # The plain launcher inherits the host environment. Capture service
     # settings through argparse, then give them only to their owning PackSpec.
-    os.environ.pop(_COMFY_API_KEY_ENV, None)
-    os.environ.pop(_COMFY_API_BASE_ENV, None)
     for name in (
         _OPENAI_API_KEY_ENV,
         _OPENAI_BASE_URL_ENV,
@@ -1572,8 +1517,6 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.legacy_pack and not args.comfy_root:
         parser.error("--legacy-pack requires --comfy-root (or $DINKSTER_COMFYUI_ROOT)")
-    if args.watch_packs and not args.dev:
-        parser.error("--watch-packs requires --dev (hot reload is a dev affordance)")
     if args.allow_mount_changes and not args.library_root:
         parser.error(
             "--allow-mount-changes requires a library root "
@@ -1750,29 +1693,8 @@ def main(argv: list[str] | None = None) -> None:
     specs.extend(args.pack)
     if args.comfy_root:
         specs.extend(compat_specs)
-    if args.openai_base_url:
-        if args.no_default_packs and not args.comfy_root:
-            specs.append(default_pack_spec("dinkster-nodes-generation"))
-        specs.append(
-            openai_generation_pack_spec(
-                base_url=args.openai_base_url,
-                model=args.openai_model,
-                api_key=args.openai_api_key,
-                compatibility=args.openai_compatibility,
-                stream=args.openai_response_mode == "stream",
-                timeout_s=args.openai_timeout,
-            )
-        )
     default_pack_venv_root = _default_pack_venv_root(args.library_root)
     default_pack_accelerator = resolve_accelerator()
-    specs = [
-        _with_partner_auth(
-            spec,
-            api_key=cast("str", args.comfy_api_key),
-            api_base=cast("str", args.comfy_api_base),
-        )
-        for spec in specs
-    ]
 
     assembler = None
     sampler = None
@@ -1891,7 +1813,7 @@ def main(argv: list[str] | None = None) -> None:
             pack_scratch_root=(
                 Path(args.library_root).resolve() / "scratch" if args.library_root else None
             ),
-            dev=args.dev,
+            dev=args.watch_packs,
             on_diagnostic=(assembler.on_boundary_diagnostic if assembler is not None else None),
             explain_misses=args.benchmark,
             governor=governor,
@@ -1920,7 +1842,7 @@ def main(argv: list[str] | None = None) -> None:
             cache_memory_entries=args.execution_cache_memory_entries,
             cache_dir=cache_dir,
             cache_disk_budget=args.execution_cache_disk_budget,
-            composition_mode="development" if args.dev else "production",
+            composition_mode="development" if args.watch_packs else "production",
         )
         try:
             ordered_defaults = composer.order_pack_entries(specs[:resolved_default_pack_count])
@@ -2219,7 +2141,7 @@ def main(argv: list[str] | None = None) -> None:
             # apply time; this endpoint only delivers it.
             add_activation_routes(app, composer, installer)
         watcher: PackWatcher | None = None
-        if args.dev:
+        if args.watch_packs:
             # Pack hot reload is a dev affordance: production installs
             # change packs through the manager's plan/apply flow, never a
             # live mutation endpoint. Not registered = 404, no half-open

@@ -109,9 +109,6 @@ runs:
     # so these are the only hosted runs that see them (#981). They resolve
     # against the .venv-torch built above. The vision provider packages
     # are checked further down next to their suites.
-    # dinkster-kernels stays a local GPU-machine gate: its project resolves
-    # against .venv-gpu (CUDA torch + triton), which CPU-only hosted
-    # runners cannot build.
     - if: env.DINKSTER_MODEL_TEST_GROUP == ''
       shell: bash
       run: .venv/bin/pyright -p .evidence-source/packages/dinkster-acceptance --pythonpath .venv-torch/bin/python

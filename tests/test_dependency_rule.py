@@ -53,11 +53,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_inference",
         "dinkster_assets",
         "dinkster_memory",
-        "dinkster_kernels",
     },
-    # Fused GPU kernels are a leaf: torch/triton only, no dinkster imports,
-    # so consumers can probe for them without pulling anything upward.
-    "dinkster_kernels": set(),
     # The execution boundary itself (hazard H3): Worker/CacheStore protocols
     # plus the frozen data they exchange. A leaf on purpose - both the engine
     # (consumer) and workers/caches (implementations) depend on it, so a
@@ -167,11 +163,6 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_nodes_image": {"dinkster_api", "dinkster_image_document"},
     "dinkster_nodes_remote": {"dinkster_api", "dinkster_workers"},
     "dinkster_nodes_generation": {"dinkster_api"},
-    "dinkster_nodes_generation_openai": {
-        "dinkster_inference",
-        "dinkster_nodes_generation",
-        "dinkster_workers",
-    },
     "dinkster_model_wan": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     "dinkster_model_qwen_image": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     "dinkster_model_triposplat": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
@@ -179,12 +170,8 @@ ALLOWED: dict[str, set[str]] = {
     # Model-backed vision providers execute stable owner schemas through the
     # pack-author door and stay independent of the host scheduler.
     "dinkster_nodes_vision": {"dinkster_api", "dinkster_inference_torch"},
-    # Dev scaffolding is a pack like any other: the same door, nothing
-    # more. Separation from std is compositional (--dev), not structural.
+    # Dev scaffolding is a pack like any other: the same door, nothing more.
     "dinkster_nodes_dev": {"dinkster_api"},
-    # Partner/API providers keep their descriptor interpreter and transport
-    # inside the independently movable pack, authored through the same door.
-    "dinkster_nodes_partner": {"dinkster_api"},
     # Training nodes are thin adapters over a host-bound service protocol;
     # the session handle and its digest grammar arrive through the door.
     "dinkster_nodes_training": {"dinkster_api"},
@@ -349,7 +336,6 @@ def test_torch_runtime_backends_are_constrained_behind_torch_extra() -> None:
         "dinkster-aimdo==0.5.5.post2",
         "sentencepiece==0.2.1",
         "tokenizers==0.23.1",
-        "dinkster-kernels",
     ]
 
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
@@ -357,7 +343,6 @@ def test_torch_runtime_backends_are_constrained_behind_torch_extra() -> None:
     torch_runtime = packages["dinkster-inference-torch"]
     assert torch_runtime["optional-dependencies"]["torch"] == [
         {"name": "dinkster-aimdo"},
-        {"name": "dinkster-kernels"},
         {"name": "dinkster-kitchen"},
         {"name": "numpy"},
         {"name": "packaging"},
@@ -369,7 +354,6 @@ def test_torch_runtime_backends_are_constrained_behind_torch_extra() -> None:
         {"name": "torchvision"},
         {"name": "tqdm"},
     ]
-    assert packages["dinkster-kernels"]["source"] == {"editable": "packages/dinkster-kernels"}
     assert packages["dinkster-kitchen"]["version"] == "0.2.35.post1"
     assert packages["dinkster-aimdo"]["version"] == "0.5.5.post2"
     assert packages["sentencepiece"]["version"] == "0.2.1"

@@ -166,7 +166,7 @@ contracts and never import the engine; node packs see only the extension API.
   `dinkster-nodes-generation` (provider-independent loading, conditioning,
   sampling, and codec schemas), model-family packs such as `dinkster-model-wan`,
   `dinkster-compat-comfy` (the quarantined ComfyUI surface and an execution
-  provider for generation schemas), and `dinkster-nodes-partner` (3.7).
+  provider for generation schemas), and catalog-driven `dinkster-nodes-remote`.
   `dinkster-nodes-std` is the metadata-only install suite for the foundation and
   media packs.
 
@@ -429,7 +429,7 @@ developers can *see* what the defaults cost them. Tooling is first-class, and it
 is the carrot that replaces ComfyUI's stick (where the only feedback is users
 reporting breakage):
 
-- **Dev mode (`--dev`)** turns the boundary's natural observability into
+- **Pack watch mode (`--watch-packs`)** turns the boundary's natural observability into
   per-invocation diagnostics: execute vs serialization vs transfer time,
   transport per edge, payload sizes, fallback-codec hits, fingerprinting cost,
   cache-miss explanations - everything the engine already knows, surfaced as

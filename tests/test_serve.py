@@ -53,24 +53,6 @@ async def _default_pack_names() -> tuple[str, ...]:
         await composer.close()
 
 
-def test_partner_auth_is_injected_only_into_partner_worker_environment() -> None:
-    from dinkster.compose import PackSpec
-    from dinkster.serve import _with_partner_auth
-
-    partner_root = TESTS_DIR.parent / "packages" / "dinkster-nodes-partner"
-    partner = _with_partner_auth(str(partner_root), api_key="secret", api_base="https://proxy.test")
-    assert isinstance(partner, PackSpec)
-    assert partner.env == {
-        "DINKSTER_COMFY_API_KEY": "secret",
-        "DINKSTER_COMFY_API_BASE": "https://proxy.test",
-    }
-    foundation = str(TESTS_DIR.parent / "packages" / "dinkster-nodes-foundation")
-    assert (
-        _with_partner_auth(foundation, api_key="secret", api_base="https://proxy.test")
-        == foundation
-    )
-
-
 def test_parse_memory_budget() -> None:
     from dinkster.serve import parse_memory_budget
 
@@ -691,50 +673,6 @@ def test_settings_gate_unknown_is_startup_parser_error(
     error = capsys.readouterr().err
     assert "comfy-args" in error
     assert "memory-budgets" in error
-
-
-def test_openai_generation_cli_scopes_environment_to_its_pack(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster import serve
-
-    captured: list[dict[str, object]] = []
-    real_spec = serve.openai_generation_pack_spec
-
-    def record_spec(**kwargs: object) -> object:
-        captured.append(dict(kwargs))
-        return real_spec(**kwargs)  # type: ignore[arg-type]
-
-    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
-        awaitable.close()  # type: ignore[attr-defined]
-
-    configured = {
-        "DINKSTER_OPENAI_BASE_URL": "https://api.example.test/v1",
-        "DINKSTER_OPENAI_MODEL": "test-model",
-        "DINKSTER_OPENAI_API_KEY": "test-secret",
-        "DINKSTER_OPENAI_COMPATIBILITY": "llama.cpp",
-        "DINKSTER_OPENAI_STREAM": "false",
-        "DINKSTER_OPENAI_TIMEOUT": "45",
-    }
-    for name, value in configured.items():
-        monkeypatch.setenv(name, value)
-    monkeypatch.setattr(serve, "openai_generation_pack_spec", record_spec)
-    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
-    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--library-root", ""])
-
-    serve.main()
-
-    assert captured == [
-        {
-            "base_url": "https://api.example.test/v1",
-            "model": "test-model",
-            "api_key": "test-secret",
-            "compatibility": "llama.cpp",
-            "stream": False,
-            "timeout_s": 45.0,
-        }
-    ]
-    assert all(name not in os.environ for name in configured)
 
 
 def test_openai_generation_routes_mount_and_lazy_provider_closes(
@@ -1748,6 +1686,15 @@ def test_serve_rejects_removed_single_job_model_mode(monkeypatch: pytest.MonkeyP
         serve.main()
 
 
+def test_serve_rejects_removed_dev_argument(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dinkster import serve
+
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--dev"])
+    with pytest.raises(SystemExit) as exc:
+        serve.main()
+    assert exc.value.code == 2
+
+
 def test_serve_single_job_and_replica_multi_gpu_are_mutually_exclusive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2681,7 +2628,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
             # fetch; they are still ordinary first-party packs, not core.
             async with session.get(base + "/api/nodes?wire=43") as resp:
                 data = await resp.json()
-            # A normal (non --dev) server never serves dev scaffolding.
+            # A server without the development manifest never serves its scaffolding.
             assert not any(t.startswith("dev.") for t in data["nodes"])
             # All packs land as live announcements after the epoch-1 core.
             async with asyncio.timeout(60):
@@ -3281,8 +3228,13 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
             "--library-root",
             str(library_root),
             "--allow-mount-changes",
-            # save_pgm is dev scaffolding: only --dev serves it.
-            "--dev",
+            "--pack",
+            str(
+                Path(__file__).parent.parent
+                / "packages"
+                / "dinkster-nodes-dev"
+                / "dinkster-pack.toml"
+            ),
             "--event-loop-stall-threshold",
             "4",
         ],
@@ -3322,6 +3274,14 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
                                 break
                     except aiohttp.ClientError:
                         pass
+                    await asyncio.sleep(0.05)
+
+            async with asyncio.timeout(60):
+                while True:
+                    async with session.get(base + "/api/nodes?wire=43") as resp:
+                        nodes = (await resp.json())["nodes"]
+                    if "dev.image.save_pgm" in nodes:
+                        break
                     await asyncio.sleep(0.05)
 
             # Before any grant: the save refuses with the mount's name in

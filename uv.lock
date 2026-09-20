@@ -23,7 +23,6 @@ members = [
     "dinkster-image-document",
     "dinkster-inference",
     "dinkster-inference-torch",
-    "dinkster-kernels",
     "dinkster-memory",
     "dinkster-model-ipadapter",
     "dinkster-model-qwen-image",
@@ -33,10 +32,8 @@ members = [
     "dinkster-nodes-dev",
     "dinkster-nodes-foundation",
     "dinkster-nodes-generation",
-    "dinkster-nodes-generation-openai",
     "dinkster-nodes-image",
     "dinkster-nodes-media-io",
-    "dinkster-nodes-partner",
     "dinkster-nodes-remote",
     "dinkster-nodes-std",
     "dinkster-nodes-training",
@@ -831,7 +828,6 @@ dependencies = [
     { name = "dinkster-native" },
     { name = "dinkster-nodes-dev" },
     { name = "dinkster-nodes-generation" },
-    { name = "dinkster-nodes-generation-openai" },
     { name = "dinkster-nodes-image" },
     { name = "dinkster-nodes-remote" },
     { name = "dinkster-nodes-std" },
@@ -886,7 +882,6 @@ requires-dist = [
     { name = "dinkster-native", editable = "packages/dinkster-native" },
     { name = "dinkster-nodes-dev", editable = "packages/dinkster-nodes-dev" },
     { name = "dinkster-nodes-generation", editable = "packages/dinkster-nodes-generation" },
-    { name = "dinkster-nodes-generation-openai", editable = "packages/dinkster-nodes-generation-openai" },
     { name = "dinkster-nodes-image", editable = "packages/dinkster-nodes-image" },
     { name = "dinkster-nodes-remote", editable = "packages/dinkster-nodes-remote" },
     { name = "dinkster-nodes-std", editable = "packages/dinkster-nodes-std" },
@@ -1155,7 +1150,6 @@ dependencies = [
 [package.optional-dependencies]
 torch = [
     { name = "dinkster-aimdo" },
-    { name = "dinkster-kernels" },
     { name = "dinkster-kitchen" },
     { name = "numpy" },
     { name = "packaging" },
@@ -1174,7 +1168,6 @@ requires-dist = [
     { name = "dinkster-aimdo", marker = "extra == 'torch'", specifier = "==0.5.5.post2" },
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
     { name = "dinkster-inference", editable = "packages/dinkster-inference" },
-    { name = "dinkster-kernels", marker = "extra == 'torch'", editable = "packages/dinkster-kernels" },
     { name = "dinkster-kitchen", marker = "extra == 'torch'", specifier = "==0.2.35.post1" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "numpy", marker = "extra == 'torch'", specifier = ">=1.26" },
@@ -1188,20 +1181,6 @@ requires-dist = [
     { name = "torchvision", marker = "extra == 'torch'", specifier = ">=0.20" },
     { name = "tqdm", marker = "extra == 'torch'", specifier = ">=4.66" },
 ]
-provides-extras = ["torch"]
-
-[[package]]
-name = "dinkster-kernels"
-version = "0.0.1"
-source = { editable = "packages/dinkster-kernels" }
-
-[package.optional-dependencies]
-torch = [
-    { name = "torch" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "torch", marker = "extra == 'torch'", specifier = ">=2.5" }]
 provides-extras = ["torch"]
 
 [[package]]
@@ -1388,23 +1367,6 @@ dependencies = [
 requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
 
 [[package]]
-name = "dinkster-nodes-generation-openai"
-version = "0.0.1"
-source = { editable = "packages/dinkster-nodes-generation-openai" }
-dependencies = [
-    { name = "dinkster-inference" },
-    { name = "dinkster-nodes-generation" },
-    { name = "dinkster-workers" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-inference", editable = "packages/dinkster-inference" },
-    { name = "dinkster-nodes-generation", editable = "packages/dinkster-nodes-generation" },
-    { name = "dinkster-workers", editable = "packages/dinkster-workers" },
-]
-
-[[package]]
 name = "dinkster-nodes-image"
 version = "0.0.1"
 source = { editable = "packages/dinkster-nodes-image" }
@@ -1452,27 +1414,6 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "pillow", specifier = ">=10" },
     { name = "scipy", specifier = ">=1.11" },
-]
-
-[[package]]
-name = "dinkster-nodes-partner"
-version = "0.0.1"
-source = { editable = "packages/dinkster-nodes-partner" }
-dependencies = [
-    { name = "av" },
-    { name = "dinkster-api" },
-    { name = "httpcore" },
-    { name = "httpx" },
-    { name = "pillow" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "av", specifier = "==16.0.1" },
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "httpcore", specifier = "==1.0.9" },
-    { name = "httpx", specifier = "==0.28.1" },
-    { name = "pillow", specifier = "==12.0.0" },
 ]
 
 [[package]]

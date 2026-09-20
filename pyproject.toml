@@ -24,7 +24,6 @@ dependencies = [
     "dinkster-nodes-std",
     "dinkster-nodes-remote",
     "dinkster-nodes-generation",
-    "dinkster-nodes-generation-openai",
     "dinkster-nodes-image",
     "dinkster-model-wan",
     "dinkster-model-qwen-image",
@@ -94,7 +93,6 @@ dinkster-compat-comfy = { workspace = true }
 dinkster-nodes-std = { workspace = true }
 dinkster-nodes-remote = { workspace = true }
 dinkster-nodes-generation = { workspace = true }
-dinkster-nodes-generation-openai = { workspace = true }
 dinkster-nodes-image = { workspace = true }
 dinkster-model-wan = { workspace = true }
 dinkster-model-qwen-image = { workspace = true }
@@ -126,7 +124,6 @@ ignore = ["UP040", "UP046", "UP047"]
 [tool.pytest.ini_options]
 testpaths = [
     "tests",
-    "packages/dinkster-nodes-partner/tests",
     "packages/dinkster-nodes-remote/tests",
 ]
 # Tests import helpers as `tests.*` / `tools.*`, which requires the repo
@@ -144,15 +141,12 @@ extraPaths = ["src", "../dinkster-evidence", ".evidence-source"]
 # venv; each has its own [tool.pyright] gate against .venv-torch:
 #   .venv/bin/pyright -p packages/dinkster-inference-torch
 #   .venv/bin/pyright -p packages/dinkster-training-torch
-# dinkster-kernels additionally needs triton, so its gate resolves against
-# .venv-gpu (GPU machines): .venv/bin/pyright -p packages/dinkster-kernels
 # The vision provider package imports execution dependencies absent from the
 # root environment, so its gate also resolves against .venv-torch.
 # Hosted CI enforces every .venv-torch pyright project in the torch-cpu
-# suite (#981); only the .venv-gpu dinkster-kernels gate stays local-only.
+# suite (#981).
 exclude = [
     "packages/dinkster-inference-torch",
-    "packages/dinkster-kernels",
     "packages/dinkster-nodes-vision",
     "packages/dinkster-training-torch",
     "packages/dinkster-model-wan/src/dinkster_model_wan/provider.py",
@@ -162,7 +156,6 @@ exclude = [
     "packages/dinkster-model-ipadapter/tests",
     "packages/dinkster-model-triposplat/src/dinkster_model_triposplat/provider.py",
     "packages/dinkster-model-triposplat/tests",
-    "packages/dinkster-nodes-partner/tests",
 ]
 # The packages are the load-bearing code: strict there. Tests and the demo
 # CLI stay on standard - useful checking without annotation ceremony.

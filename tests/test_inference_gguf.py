@@ -793,7 +793,6 @@ _MEMORY_ROUTE_FACTS = (
     "gguf.route.device_capability=generic",
     "gguf.route.compute_dtype=float32",
     "gguf.route.accumulation_dtype=float32",
-    "gguf.route.fused_matmul=auto",
 )
 _BALANCED_ROUTE_FACTS = (
     "gguf.route.provider_key=dinkster-gguf-torch-onuse",
@@ -944,7 +943,6 @@ def test_memory_residency_admits_text_maps_and_refuses_unregistered_layouts(
         "gguf.route.device_capability=generic",
         "gguf.route.compute_dtype=float32",
         "gguf.route.accumulation_dtype=float32",
-        "gguf.route.fused_matmul=auto",
     )
 
 
@@ -1259,7 +1257,6 @@ def test_gguf_route_rotates_runtime_identity() -> None:
         {"device_capability": "sm89"},
         {"compute_dtype": "float16"},
         {"accumulation_dtype": "bfloat16"},
-        {"fused_matmul": "auto"},
     )
     for change in route_changes:
         changed_facts = gguf_runtime_identity_facts(artifact, _gguf_route(**change))
@@ -1286,8 +1283,6 @@ def test_gguf_identity_values_refuse_malformed_facts() -> None:
         artifact.file_sha256 = "3" * 64  # type: ignore[misc]
     with pytest.raises(ValueError, match="canonical lowercase token"):
         _gguf_route(device_capability="SM 89")
-    with pytest.raises(ValueError, match="canonical lowercase token"):
-        _gguf_route(fused_matmul="AUTO !")
     with pytest.raises(ValueError, match="invalid id"):
         _gguf_route(provider_id="reference")
     with pytest.raises(TypeError, match="GGUFExecutionKind"):

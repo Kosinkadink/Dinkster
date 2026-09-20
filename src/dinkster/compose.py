@@ -79,8 +79,6 @@ from dinkster_inference import (
     INFERENCE_SAMPLERS_SURFACE,
     INFERENCE_SCHEDULERS_SURFACE,
     SAMPLER_CATALOG_ENV,
-    OpenAICompatibility,
-    OpenAIGenerationProvider,
     Registry,
     RegistryError,
     SamplerExtensionEntry,
@@ -272,7 +270,6 @@ __all__ = [
     "default_pack_ids",
     "default_pack_spec",
     "default_pack_specs",
-    "openai_generation_pack_spec",
     "resolve_manifest_path",
     "training_pack_specs",
 ]
@@ -306,7 +303,6 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
         "dinkster-nodes-image": "dinkster_nodes_image",
         "dinkster-nodes-remote": "dinkster_nodes_remote",
         "dinkster-nodes-generation": "dinkster_nodes_generation",
-        "dinkster-nodes-generation-openai": "dinkster_nodes_generation_openai",
         "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
         "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
         "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
@@ -1376,59 +1372,6 @@ def default_pack_spec(pack_id: str) -> PackSpec:
     )
 
 
-def openai_generation_pack_spec(
-    *,
-    base_url: str,
-    model: str,
-    api_key: str,
-    compatibility: str,
-    stream: bool,
-    timeout_s: float,
-) -> PackSpec:
-    """Resolve the optional external generation worker with scoped authority."""
-    if not base_url or not model:
-        raise ValueError("OpenAI base URL and model must both be non-empty")
-    if type(api_key) is not str:
-        raise ValueError("OpenAI API key must be a string")
-    try:
-        probe = OpenAIGenerationProvider(
-            base_url,
-            model,
-            api_key=api_key or None,
-            compatibility=OpenAICompatibility(compatibility),
-            stream=stream,
-            timeout_s=timeout_s,
-        )
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"invalid OpenAI generation configuration: {exc}") from exc
-    probe.close()
-    spec = _installed_pack_spec(
-        "dinkster-nodes-generation-openai",
-        "dinkster_nodes_generation_openai",
-        in_process=False,
-    )
-    env = {
-        "DINKSTER_OPENAI_BASE_URL": base_url,
-        "DINKSTER_OPENAI_MODEL": model,
-        "DINKSTER_OPENAI_COMPATIBILITY": compatibility,
-        "DINKSTER_OPENAI_STREAM": "true" if stream else "false",
-        "DINKSTER_OPENAI_TIMEOUT": format(timeout_s, ".17g"),
-    }
-    if api_key:
-        env["DINKSTER_OPENAI_API_KEY"] = api_key
-    return replace(
-        spec,
-        env=env,
-        execution_config={
-            "base_url": base_url,
-            "model": model,
-            "compatibility": compatibility,
-            "stream": env["DINKSTER_OPENAI_STREAM"],
-            "timeout_s": env["DINKSTER_OPENAI_TIMEOUT"],
-        },
-    )
-
-
 @lru_cache(maxsize=1)
 def default_pack_specs() -> tuple[PackSpec, ...]:
     """Resolve the complete installed first-party pack set in dependency order."""
@@ -1651,38 +1594,6 @@ class Composition:
         ]
         if errors:
             raise errors[0]
-
-
-def _dev_core_pack_info() -> PackInfo:
-    """The core packs-table entry for dev mode: the in-process dev pack's
-    shipped gallery template rides the reserved "core" entry, because the
-    dev scaffolding IS part of the core surface under --dev (there is no
-    isolated worker whose manifest could carry it)."""
-    import hashlib
-
-    from dinkster_nodes_dev.gallery import (
-        GALLERY_TEMPLATE_DESCRIPTION,
-        GALLERY_TEMPLATE_ID,
-        GALLERY_TEMPLATE_NAME,
-        GALLERY_TEMPLATE_TAGS,
-        gallery_template_bytes,
-    )
-    from dinkster_server import PackTemplateAsset
-
-    data = gallery_template_bytes()
-    return PackInfo(
-        display_name="Dinkster Core",
-        templates=(
-            PackTemplateAsset(
-                id=GALLERY_TEMPLATE_ID,
-                name=GALLERY_TEMPLATE_NAME,
-                digest="sha256:" + hashlib.sha256(data).hexdigest(),
-                description=GALLERY_TEMPLATE_DESCRIPTION,
-                tags=GALLERY_TEMPLATE_TAGS,
-                data=data,
-            ),
-        ),
-    )
 
 
 def _merge_pack_entry(
@@ -2566,8 +2477,7 @@ class ServingComposer:
         if not registry_was_supplied:
             register_core_types(registry)
         register_inference_types(registry)
-        # Dev scaffolding joins the host kernel only in dev mode. Production
-        # starts with no nodes; user-facing nodes arrive through manifests.
+        # The host kernel starts with no nodes; nodes arrive through manifests.
         core_nodes: list[type[Node]] = []
         # The native inference registries are core vocabulary on every
         # surface: /api/choices/dinkster.samplers and .schedulers serve the
@@ -2579,20 +2489,7 @@ class ServingComposer:
             "dinkster.samplers": tuple(d.id for d in builtin_sampler_view.samplers),
             "dinkster.schedulers": tuple(d.id for d in builtin_registries().schedulers),
         }
-        # The dev scaffolding composes in-process, so its choice lists and
-        # shipped gallery template ride the core surface directly (an
-        # isolated pack's would arrive over the hello / manifest instead).
         self._core_packs: dict[str, PackInfo] = {}
-        if dev:
-            from dinkster_nodes_dev import DEV_NODES, combo_choices, register_dev_types
-
-            if not registry_was_supplied:
-                register_dev_types(registry)
-            core_nodes.extend(DEV_NODES)
-            self._core_choices.update(
-                (choice_id, tuple(values)) for choice_id, values in combo_choices().items()
-            )
-            self._core_packs = {CORE_PACK_ID: _dev_core_pack_info()}
         self._base_registry = registry.copy()
         schemas: dict[str, NodeSchema] = dict(build_schemas(core_nodes))
         _validate_remote_authority(CORE_PACK_ID, schemas, self._core_choices)
@@ -2867,7 +2764,6 @@ class ServingComposer:
         implicit_egress_list: list[str] = []
         if network_requesters:
             for name in (
-                "DINKSTER_COMFY_API_BASE",
                 "DINKSTER_OPENAI_BASE_URL",
                 "DINKSTER_REMOTE_CATALOG_BASE",
                 "DINKSTER_REMOTE_GATEWAY_BASE",
@@ -7916,7 +7812,7 @@ class ServingComposer:
 
     def _rebuild_registries(self) -> None:
         """Recompute the composed surface and the ownership registries from
-        the host kernel (plus scaffolding under --dev), every live pack
+        the host kernel, every live pack
         record, and every composed remote. Reload uses this instead
         of incremental removal because shared state (the compat workers'
         one "comfy" table entry and claim) has no per-pack decrement - the

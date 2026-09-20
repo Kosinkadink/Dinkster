@@ -57,11 +57,11 @@ from dinkster.compose import (
     compose_serving,
     default_pack_spec,
     default_pack_specs,
-    openai_generation_pack_spec,
     resolve_manifest_path,
 )
 
 TESTS_DIR = Path(__file__).parent
+DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
 DEFAULT_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES, *IMAGE_NODES]
@@ -381,6 +381,39 @@ def test_comfy_requirements_probe_executes_imports(tmp_path: Path) -> None:
     assert "definitely_missing_comfy_requirement" in str(caught.value)
     assert sys.executable in str(caught.value)
     assert "current Python" in str(caught.value)
+
+
+def test_comfy_requirements_probe_preserves_backslashes_in_interpreter_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    (root / "requirements.txt").write_text("einops\n")
+    interpreter = r"C:\actions-runners\Dinkster\_work\Dinkster\.venv\Scripts\python.exe"
+    monkeypatch.setattr(
+        comfy_compose.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout=json.dumps({"missing": "einops"}),
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(CompositionError) as caught:
+        comfy_compose._probe_comfy_requirements(
+            root,
+            comfy_compose._ComfyPythonSelection(interpreter, "current Python"),
+        )
+
+    assert str(caught.value) == (
+        "ComfyUI requirement module 'einops' is unavailable in interpreter "
+        f"'{interpreter}' selected by current Python"
+    )
+    assert r"\\" not in str(caught.value)
 
 
 @pytest.mark.parametrize("stderr", ["No module named 'blake3'", "broken native extension"])
@@ -1272,7 +1305,7 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
         ),
         (
             "dinkster-nodes-remote",
-            "sha256:90d9f773f7711972cbb8d0465013d86470bf963ab2a94da2566a0863f31f09cd",
+            "sha256:21e7bf193ff9c19c964b8f1897864da8fc309398ee4f7d1ab77ba9d644faf15e",
         ),
     ],
 )
@@ -1720,15 +1753,14 @@ def test_default_suite_package_matches_managed_lock() -> None:
     }
 
 
-def test_compose_dev_adds_scaffold_nodes() -> None:
-    """dev=True composes the dev pack's scaffolding in-process alongside
-    the default packs - and ONLY dev mode does. Both surfaces attribute to core."""
-    from dinkster_nodes_dev import DEV_NODES
+def test_compose_dev_pack_adds_scaffold_nodes() -> None:
+    """The development manifest composes its complete node surface."""
+    from dinkster_nodes_dev import PACK_NODES
 
     async def scenario() -> None:
-        composition = await compose_serving(dev=True)
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
-            expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(DEV_NODES))
+            expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(PACK_NODES))
             assert set(composition.schemas) == expected
             engine = composition.make_engine(lambda event: None)
             graph = Graph(nodes={"g": GraphNode("dev.image.gradient", {"width": 8, "height": 4})})
@@ -1740,11 +1772,11 @@ def test_compose_dev_adds_scaffold_nodes() -> None:
     asyncio.run(scenario())
 
 
-def test_conformance_proof_nodes_are_dev_only_and_absent_from_production_catalogs() -> None:
-    """The canonical recorder's executable probes never become user nodes."""
+def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
+    """Conformance probes appear only when the development pack is composed."""
 
     async def scenario() -> None:
-        dev = await compose_serving(dev=True)
+        dev = await compose_serving([DEV_PACK_MANIFEST])
         try:
             assert "dev.conformance.preview" in dev.schemas
             assert "dev.conformance.cancellable" in dev.schemas
@@ -1762,16 +1794,10 @@ def test_conformance_proof_nodes_are_dev_only_and_absent_from_production_catalog
         finally:
             await production.close()
 
-        manifest = (
-            Path(__file__).parent.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
-        )
-        manifest_composition = await compose_serving([manifest])
+        manifest_composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             assert "dev.image.gradient" in manifest_composition.schemas
-            assert not any(
-                node_type.startswith("dev.conformance.")
-                for node_type in manifest_composition.schemas
-            )
+            assert "dev.conformance.preview" in manifest_composition.schemas
         finally:
             await manifest_composition.close()
 
@@ -1783,7 +1809,7 @@ def test_compose_dev_mode(caplog: pytest.LogCaptureFixture) -> None:
     render as one structured log line per crossing."""
 
     async def scenario() -> None:
-        composition = await compose_serving(dev=True)
+        composition = await compose_serving([DEV_PACK_MANIFEST], dev=True)
         try:
             events: list[object] = []
             engine = composition.make_engine(events.append)
@@ -1825,6 +1851,7 @@ def test_composed_layered_cache_reuses_disk_then_promotes_to_memory(tmp_path: Pa
 
         async def compose():
             return await compose_serving(
+                [DEV_PACK_MANIFEST],
                 include_default_packs=False,
                 dev=True,
                 cache_mode="layered",
@@ -1874,6 +1901,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             cache_disk_budget=1024**2,
         )
         try:
+            await composer.add_pack(DEV_PACK_MANIFEST)
             events: list[EngineEvent] = []
             engine = composer.composition.make_engine(events.append)
             graph = Graph(nodes={"g": GraphNode("dev.image.gradient", {"width": 8, "height": 4})})
@@ -1882,6 +1910,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             events.clear()
 
             staged = composer.spawn_empty()
+            await staged.add_pack(DEV_PACK_MANIFEST)
             old = composer.adopt(staged)
             await old.close()
             assert isinstance(engine.cache, LayeredCache)
@@ -1889,7 +1918,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             assert isinstance(memory, MemoryLRUCache)
             assert len(memory) == 1
 
-            (local,) = await composer.full_free("maintenance-cache")
+            local = (await composer.full_free("maintenance-cache"))[0]
             assert local["status"] == "complete"
             consumers = cast("list[dict[str, object]]", local["consumers"])
             assert consumers[0] == {
@@ -2308,66 +2337,6 @@ def test_pack_spec_validates_aimdo_mode(tmp_path: Path) -> None:
         PackSpec(manifest, execution_config={"": "value"})
 
 
-def test_openai_pack_scopes_secrets_and_hashes_only_execution_behavior() -> None:
-    secret = "not-for-diagnostics"
-    first = openai_generation_pack_spec(
-        base_url="https://api.example.test/v1",
-        model="model-a",
-        api_key=secret,
-        compatibility="openai",
-        stream=True,
-        timeout_s=30.0,
-    )
-    other_key = openai_generation_pack_spec(
-        base_url="https://api.example.test/v1",
-        model="model-a",
-        api_key="other-secret",
-        compatibility="openai",
-        stream=True,
-        timeout_s=30.0,
-    )
-    other_model = openai_generation_pack_spec(
-        base_url="https://api.example.test/v1",
-        model="model-b",
-        api_key=secret,
-        compatibility="openai",
-        stream=True,
-        timeout_s=30.0,
-    )
-    assert first.env["DINKSTER_OPENAI_API_KEY"] == secret
-    assert secret not in repr(first)
-    assert secret not in repr(first.execution_config)
-    manifest = load_manifest(first.manifest)
-    composer = ServingComposer()
-    assert first.packs is not None
-    assert other_key.packs is not None
-    assert other_model.packs is not None
-    first_identity = composer._execution_identity(manifest, first.packs, first)
-    assert first_identity == composer._execution_identity(manifest, other_key.packs, other_key)
-    assert first_identity != composer._execution_identity(manifest, other_model.packs, other_model)
-
-
-def test_openai_pack_refuses_invalid_configuration_before_launch() -> None:
-    with pytest.raises(ValueError, match="must not contain credentials"):
-        openai_generation_pack_spec(
-            base_url="https://user:secret@example.test/v1",
-            model="model",
-            api_key="",
-            compatibility="openai",
-            stream=True,
-            timeout_s=30.0,
-        )
-    with pytest.raises(ValueError, match="API key must be a string"):
-        openai_generation_pack_spec(
-            base_url="https://example.test/v1",
-            model="model",
-            api_key=None,  # type: ignore[arg-type]
-            compatibility="openai",
-            stream=True,
-            timeout_s=30.0,
-        )
-
-
 def test_pack_spec_validates_single_job_mode(tmp_path: Path) -> None:
     from dinkster.compose import PackSpec
 
@@ -2772,7 +2741,6 @@ def test_serving_composer_starts_ordered_cuda_replica_workers(
 @pytest.mark.usefixtures("unrestricted_cuda_devices")
 def test_serving_composer_sets_pure_ulysses_sequence_geometry(tmp_path: Path) -> None:
     from dinkster_values import TypeRegistry
-    from dinkster_workers import load_manifest
 
     from dinkster.compose import PackSpec, ServingComposer, _SingleJobWorkerPool
 
@@ -3336,6 +3304,7 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
             cache_dir=tmp_path / "execution-cache",
         )
         try:
+            await composer.add_pack(DEV_PACK_MANIFEST)
             await composer.add_pack(manifest)
             events: list[EngineEvent] = []
             engine = composer.composition.make_engine(events.append)
@@ -3354,7 +3323,9 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
             await engine.run(graph, ["load"])
             await asyncio.sleep(0.05)
 
-            local, worker = await composer.full_free("maintenance-composed")
+            results = await composer.full_free("maintenance-composed")
+            local = results[0]
+            worker = next(row for row in results[1:] if row["worker"] == "memorypack")
             assert local["status"] == "complete"
             assert worker["worker"] == "memorypack"
             assert worker["status"] == "complete"
@@ -3380,7 +3351,9 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
 
             live_worker = composer._records["memorypack"].worker
             await live_worker.close()
-            local, missing = await composer.full_free("maintenance-missing")
+            results = await composer.full_free("maintenance-missing")
+            local = results[0]
+            missing = next(row for row in results[1:] if row["worker"] == "memorypack")
             assert local["status"] == "complete"
             assert missing == {
                 "worker": "memorypack",
