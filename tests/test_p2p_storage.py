@@ -727,7 +727,7 @@ def test_windows_local_mapping_poll_uses_fingerprint_without_rehashing(
 ) -> None:
     data = _safetensors(b"local model")
     digest = digest_bytes(data)
-    local = tmp_path / (digest if canonical_name else "model.safetensors")
+    local = tmp_path / (digest.split(":", 1)[1] if canonical_name else "model.safetensors")
     local.write_bytes(data)
     vault = AssetVault(tmp_path / "vault")
     mapping = vault.verify_p2p_local_file(
