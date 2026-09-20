@@ -696,7 +696,8 @@ presentation icons (`presentation.icon-invalid`), invalid blueprints
 `blueprints.budget-exceeded`). Warnings (drift):
 unpinned requirements, import-time side effects (stdout output, thread
 spawns), raw import-time logging, slow imports (> 2 s), codec-less types
-that your own schemas put on edges, foreign-origin logging.
+that your own schemas put on edges, foreign-origin logging, and extension
+contribution kinds or capabilities that no runtime consumer implements.
 
 The rules exist because ComfyUI's ecosystem grew the opposite habits and
 every host change became a breaking change. A pack that only uses
