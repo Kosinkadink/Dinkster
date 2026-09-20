@@ -1113,15 +1113,11 @@ def _swap_in_gguf_encoded_linears(
     *,
     compute_dtype: torch.dtype,
     decoded_cache: GgufDecodedCache | None = None,
-    fused_default: bool = False,
 ) -> None:
     """Replace candidate Linear layers with encoded-resident modules,
     filling ``state`` with their block payloads. A candidate whose
     module is not a matching Linear (a convolution port or reshaped
-    consumer) falls back to the eager reference decode. With
-    ``fused_default`` (memory residency, whose decode route pays a
-    full weight decode on every forward), each replacement binds the
-    fused matmul route when the layer and host support it."""
+    consumer) falls back to the eager reference decode."""
 
     for model_key, (source_key, logical_shape, ggml_type) in candidates.items():
         layer = model_key[: -len(".weight")]
@@ -1147,8 +1143,6 @@ def _swap_in_gguf_encoded_linears(
             decoded_cache=decoded_cache,
             cache_key=layer,
         )
-        if fused_default:
-            replacement.bind_default_fused_matmul()
         parent_name, _, attr = layer.rpartition(".")
         parent = module.get_submodule(parent_name) if parent_name else module
         setattr(parent, attr, replacement)
@@ -1490,7 +1484,6 @@ def _load_component(
             gguf_encoded,
             compute_dtype=compute_dtype,
             decoded_cache=decoded_cache,
-            fused_default=gguf_authority.residency_mode == "memory",
         )
     if plan.quant:
         # Quantized biases use the component dtype.
@@ -1572,9 +1565,8 @@ def assemble_flux(
     (T5-XXL MUST NOT compute at fp16 - its RMS variance overflows;
     fp32 is the supported text-encode shape over any storage).
     ``fp8_matmul`` opts scaled and plain e4m3fn Linear storage into the
-    Kitchen input-quantization and owned ``dinkster_kernels.scaled_mm``
-    routes, with owned quantization and eager torch as capability
-    fallbacks; enable it only where
+    Kitchen input-quantization and scaled-mm routes, with eager torch as a
+    capability fallback; enable it only where
     :func:`~.quant_linear.supports_fp8_matmul` holds (dequant is the
     universal default).
     """

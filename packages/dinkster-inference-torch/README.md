@@ -439,11 +439,8 @@ the pinned reference while retaining raw alpha in the recorded adapter data.
   forward routes fixed BEFORE the first forward (compile
   discipline): dequant-then-F.linear (default, every device,
   autograd to the input) and `bind_fp8_matmul(True)` ->
-  Kitchen input quantization + the owned `dinkster_kernels.scaled_mm`
-  route. The quantizer falls back to the owned
-  `dinkster_kernels.quantize_per_tensor_fp8` route and then eager torch;
-  scaled matmul falls back to Kitchen
-  `scaled_mm_v2` and then eager `torch._scaled_mm`
+  Kitchen input quantization and scaled matmul. Input quantization falls
+  back to eager torch; scaled matmul falls back to eager `torch._scaled_mm`
   when the preferred capability is absent
   (e4m3fn only, refused for full_precision_matmul-pinned layers;
   rank!=2/3 falls back like

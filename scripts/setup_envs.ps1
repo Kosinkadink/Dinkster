@@ -53,7 +53,6 @@ $CpuEditablePackages = @(
     "packages/dinkster-assets",
     "packages/dinkster-caches",
     "packages/dinkster-inference",
-    "packages/dinkster-kernels",
     "packages/dinkster-memory",
     "packages/dinkster-graph",
     "packages/dinkster-engine",
@@ -79,7 +78,6 @@ $GpuEditablePackages = @(
     "packages/dinkster-inference",
     "packages/dinkster-graph",
     "packages/dinkster-engine",
-    "packages/dinkster-kernels",
     "packages/dinkster-memory",
     "packages/dinkster-native",
     "packages/dinkster-inference-torch",
@@ -199,8 +197,6 @@ try {
     if ($HasNvidiaGpu) {
         Write-Host '  $env:DINKSTER_ENABLE_GPU_TESTS = "1"'
         Write-Host '  $env:DINKSTER_VALIDATE_REFERENCE_GOLDENS = "1"'
-        Write-Host "  .venv\Scripts\pyright.exe -p packages\dinkster-kernels"
-        Write-Host "  .venv-gpu\Scripts\python.exe -m pytest -q packages\dinkster-kernels\tests"
         Write-Host "  .venv-gpu\Scripts\python.exe -m pytest -q packages\dinkster-inference-torch\tests"
         Write-Host "  .venv-gpu\Scripts\python.exe -m pytest -q packages\dinkster-training-torch\tests"
         Write-Host "  Remove-Item Env:\DINKSTER_ENABLE_GPU_TESTS"

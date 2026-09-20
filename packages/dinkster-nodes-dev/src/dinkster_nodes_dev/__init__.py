@@ -1,10 +1,9 @@
-"""dinkster-nodes-dev: test/demo scaffolding, deliberately not user-facing.
+"""dinkster-nodes-dev: test and demo scaffolding as an ordinary node pack.
 
 Everything here exists so demos, engine tests, and the real-process E2E
 can exercise core machinery (values, renditions, lists, scheduling, the
-mounted write gate) without torch or PIL. dinkster-serve composes this set
-in-process only under --dev; a user's node surface never contains dev.*
-nodes. The default first-party packs are the user-facing counterpart.
+mounted write gate) without torch or PIL. Compose its manifest explicitly
+with ``--pack`` when these nodes are needed.
 """
 
 from dinkster_api.v1 import TypeRegistry
@@ -45,12 +44,9 @@ PACK_NODES = [
     ImageListToBatch,
     SaveImagePGM,
     *GALLERY_NODES,
+    *CONFORMANCE_NODES,
 ]
-"""Manifest-loadable dev examples. Conformance probes are excluded because
-manifests can be explicitly composed outside ``--dev``."""
-
-DEV_NODES = [*PACK_NODES, *CONFORMANCE_NODES]
-"""Explicit ``--dev`` composition, including internal conformance probes."""
+"""Manifest-loadable development and conformance nodes."""
 
 
 def register_dev_types(registry: TypeRegistry) -> None:
@@ -62,7 +58,6 @@ def register_dev_types(registry: TypeRegistry) -> None:
 
 __all__ = [
     "DEV_IMAGE",
-    "DEV_NODES",
     "CONFORMANCE_NODES",
     "GALLERY_NODES",
     "PACK_NODES",

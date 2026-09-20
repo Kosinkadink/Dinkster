@@ -23,7 +23,6 @@ members = [
     "dinkster-image-document",
     "dinkster-inference",
     "dinkster-inference-torch",
-    "dinkster-kernels",
     "dinkster-memory",
     "dinkster-model-ipadapter",
     "dinkster-model-qwen-image",
@@ -1155,7 +1154,6 @@ dependencies = [
 [package.optional-dependencies]
 torch = [
     { name = "dinkster-aimdo" },
-    { name = "dinkster-kernels" },
     { name = "dinkster-kitchen" },
     { name = "numpy" },
     { name = "packaging" },
@@ -1174,7 +1172,6 @@ requires-dist = [
     { name = "dinkster-aimdo", marker = "extra == 'torch'", specifier = "==0.5.5.post2" },
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
     { name = "dinkster-inference", editable = "packages/dinkster-inference" },
-    { name = "dinkster-kernels", marker = "extra == 'torch'", editable = "packages/dinkster-kernels" },
     { name = "dinkster-kitchen", marker = "extra == 'torch'", specifier = "==0.2.35.post1" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "numpy", marker = "extra == 'torch'", specifier = ">=1.26" },
@@ -1188,20 +1185,6 @@ requires-dist = [
     { name = "torchvision", marker = "extra == 'torch'", specifier = ">=0.20" },
     { name = "tqdm", marker = "extra == 'torch'", specifier = ">=4.66" },
 ]
-provides-extras = ["torch"]
-
-[[package]]
-name = "dinkster-kernels"
-version = "0.0.1"
-source = { editable = "packages/dinkster-kernels" }
-
-[package.optional-dependencies]
-torch = [
-    { name = "torch" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "torch", marker = "extra == 'torch'", specifier = ">=2.5" }]
 provides-extras = ["torch"]
 
 [[package]]
