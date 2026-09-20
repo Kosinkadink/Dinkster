@@ -89,7 +89,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-native/src/dinkster_native/native_arm.py",
-      "line": 15909,
+      "line": 15908,
       "column": 26,
       "issue": 120
     },
@@ -97,7 +97,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-native/src/dinkster_native/native_arm.py",
-      "line": 18058,
+      "line": 18057,
       "column": 30,
       "issue": 120
     },
