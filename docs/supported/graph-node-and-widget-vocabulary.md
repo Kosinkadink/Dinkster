@@ -9,6 +9,7 @@
   family members with stable stored IDs and separately editable labels;
   boolean; number (number/slider/knob/gradientslider displays), string, color,
   curve editor and graph-native image compositor,
+  pack-declared custom widget types with JSON parameters for frontend extensions;
   representations with schema defaults and optional user switching;
   schema-declared static and dynamic-family text completions; conditional
   visibility groups for top-level widgets;

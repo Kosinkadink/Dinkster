@@ -60,7 +60,7 @@ from dinkster_protocol import (
 )
 from dinkster_protocol.pack_surfaces import PackRoute
 from dinkster_schema import NodeSchema
-from dinkster_values import TypeRegistry
+from dinkster_values import Rendition, TypeRegistry, Value
 
 from .boundary import DEFAULT_SHM_THRESHOLD, ValueCodec
 from .devices import DeviceMap
@@ -71,7 +71,7 @@ from .launch import Launcher, LaunchSpec, SubprocessLauncher
 from .manifest import load_manifest
 from .relay import ReleaseGuard, WorkerFullReleaseResult
 from .saved_artifacts import SavedArtifactAuthority
-from .session import BoundarySession
+from .session import BoundarySession, RenditionDeclaration
 from .transport import BoundaryListener, TransportChoice
 from .workgroup import ReplicaEndpoint
 
@@ -237,6 +237,29 @@ class IsolatedWorker:
         announced by the hello handshake; empty when the pack declares
         none. Feed these to the composed surface's /api/choices routes."""
         return self._session.combo_choices
+
+    @property
+    def renditions(self) -> tuple[RenditionDeclaration, ...]:
+        return self._session.renditions
+
+    async def resolve_rendition(
+        self,
+        type_id: str,
+        kind: str,
+        metadata: Mapping[str, object],
+        parameters: Mapping[str, str],
+    ) -> tuple[str, Mapping[str, str]]:
+        return await self._session.resolve_rendition(type_id, kind, metadata, parameters)
+
+    async def resolve_rendition_mime(
+        self, type_id: str, kind: str, metadata: Mapping[str, object]
+    ) -> str:
+        return await self._session.resolve_rendition_mime(type_id, kind, metadata)
+
+    async def render_rendition(
+        self, value: Value, kind: str, parameters: Mapping[str, str]
+    ) -> Rendition:
+        return await self._session.render_rendition(value, kind, parameters)
 
     @property
     def lazy_choice_ids(self) -> tuple[str, ...]:
@@ -527,6 +550,29 @@ class GroupMemberWorker:
     @property
     def combo_choices(self):
         return self._session.combo_choices
+
+    @property
+    def renditions(self):
+        return self._session.renditions
+
+    async def resolve_rendition(
+        self,
+        type_id: str,
+        kind: str,
+        metadata: Mapping[str, object],
+        parameters: Mapping[str, str],
+    ) -> tuple[str, Mapping[str, str]]:
+        return await self._session.resolve_rendition(type_id, kind, metadata, parameters)
+
+    async def resolve_rendition_mime(
+        self, type_id: str, kind: str, metadata: Mapping[str, object]
+    ) -> str:
+        return await self._session.resolve_rendition_mime(type_id, kind, metadata)
+
+    async def render_rendition(
+        self, value: Value, kind: str, parameters: Mapping[str, str]
+    ) -> Rendition:
+        return await self._session.render_rendition(value, kind, parameters)
 
     @property
     def lazy_choice_ids(self):

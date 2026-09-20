@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import pickle
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 from urllib.parse import urlencode
@@ -39,6 +39,11 @@ InlineFn = Callable[[object], object]
 RenderFn = Callable[[object], bytes] | Callable[[object, Mapping[str, str]], bytes]
 RenditionMimeFn = Callable[[Mapping[str, object]], str]
 RenditionNormalizeFn = Callable[[Mapping[str, str], Mapping[str, object]], Mapping[str, str]]
+RenditionResolveAsyncFn = Callable[
+    [Mapping[str, object], Mapping[str, str]], Awaitable[tuple[str, Mapping[str, str]]]
+]
+RenditionMimeAsyncFn = Callable[[Mapping[str, object]], Awaitable[str]]
+RenditionRenderAsyncFn = Callable[[Value, Mapping[str, str]], Awaitable["Rendition"]]
 ValidateEncodedFn = Callable[[bytes, Mapping[str, object]], None]
 ValidateEncodedBufferFn = Callable[[memoryview, Mapping[str, object]], None]
 BufferWriter = Callable[[memoryview], int]
@@ -173,6 +178,10 @@ class RenditionSpec:
     defaults: Mapping[str, str] | None = None
     limits: Mapping[str, object] | None = None
     normalize: RenditionNormalizeFn | None = None
+    resolve_async: RenditionResolveAsyncFn | None = None
+    mime_async: RenditionMimeAsyncFn | None = None
+    render_async: RenditionRenderAsyncFn | None = None
+    relay_owner: str | None = None
 
     def mime_for(self, metadata: Mapping[str, object]) -> str:
         """Resolve the truthful MIME without loading the value payload."""
@@ -360,6 +369,64 @@ class TypeRegistry:
         if parameters and version is None:
             raise ValueError(f"{type_id}: parameterized renditions require a version")
         existing = self._renditions.setdefault(type_id, [])
+        replaced_default = any(
+            spec.kind == kind and spec.relay_owner is not None and spec.default for spec in existing
+        )
+        retained = [spec for spec in existing if spec.kind != kind or spec.relay_owner is None]
+        if any(spec.kind == kind for spec in retained):
+            raise ValueError(f"{type_id}: rendition kind already registered: {kind}")
+        if default and any(spec.default for spec in retained):
+            raise ValueError(f"{type_id}: a default rendition already exists")
+        spec = RenditionSpec(
+            type_id=type_id,
+            kind=kind,
+            mime=mime,
+            render=render,
+            default=default or replaced_default or not retained,
+            version=version,
+            parameters=parameters,
+            defaults=None if defaults is None else dict(defaults),
+            limits=None if limits is None else dict(limits),
+            normalize=normalize,
+        )
+        for registered in retained:
+            collisions = {spec.kind, spec.selector} & {registered.kind, registered.selector}
+            if collisions:
+                collision = min(collisions)
+                raise ValueError(f"{type_id}: rendition selector already registered: {collision}")
+        self._renditions[type_id] = [*retained, spec]
+        return spec
+
+    def register_relayed_rendition(
+        self,
+        type_id: TypeId,
+        kind: str,
+        *,
+        mime: str,
+        default: bool,
+        version: str | None,
+        parameters: tuple[str, ...],
+        defaults: Mapping[str, str] | None,
+        limits: Mapping[str, object] | None,
+        owner: str,
+        resolve_mime: RenditionMimeAsyncFn,
+        resolve: RenditionResolveAsyncFn,
+        render: RenditionRenderAsyncFn,
+    ) -> RenditionSpec:
+        """Register metadata and RPC callbacks for a worker-owned renderer."""
+        if not owner:
+            raise ValueError("relayed rendition owner must be non-empty")
+        if not kind:
+            raise ValueError(f"{type_id}: rendition kind must be non-empty")
+        if version == "":
+            raise ValueError(f"{type_id}: rendition version must be non-empty")
+        if len(set(parameters)) != len(parameters) or any(not name for name in parameters):
+            raise ValueError(f"{type_id}: rendition parameters must be unique and non-empty")
+        if set(defaults or ()) - set(parameters):
+            raise ValueError(f"{type_id}: rendition defaults must name declared parameters")
+        if parameters and version is None:
+            raise ValueError(f"{type_id}: parameterized renditions require a version")
+        existing = self._renditions.setdefault(type_id, [])
         if any(spec.kind == kind for spec in existing):
             raise ValueError(f"{type_id}: rendition kind already registered: {kind}")
         if default and any(spec.default for spec in existing):
@@ -368,13 +435,16 @@ class TypeRegistry:
             type_id=type_id,
             kind=kind,
             mime=mime,
-            render=render,
+            render=lambda _value: b"",
             default=default or not existing,
             version=version,
             parameters=parameters,
             defaults=None if defaults is None else dict(defaults),
             limits=None if limits is None else dict(limits),
-            normalize=normalize,
+            resolve_async=resolve,
+            mime_async=resolve_mime,
+            render_async=render,
+            relay_owner=owner,
         )
         for registered in existing:
             collisions = {spec.kind, spec.selector} & {registered.kind, registered.selector}
@@ -384,8 +454,36 @@ class TypeRegistry:
         existing.append(spec)
         return spec
 
+    def remove_relayed_renditions(self, owner: str) -> None:
+        """Remove renderer proxies belonging to one worker generation."""
+        for type_id in tuple(self._renditions):
+            remaining = [spec for spec in self._renditions[type_id] if spec.relay_owner != owner]
+            if remaining:
+                self._renditions[type_id] = remaining
+            else:
+                del self._renditions[type_id]
+
     def renditions_of(self, type_id: TypeId) -> tuple[RenditionSpec, ...]:
         return tuple(self._renditions.get(type_id, ()))
+
+    def registered_renditions(self) -> tuple[RenditionSpec, ...]:
+        """Return every renderer in registration order by value type."""
+        return tuple(spec for specs in self._renditions.values() for spec in specs)
+
+    async def resolve_rendition(
+        self,
+        spec: RenditionSpec,
+        metadata: Mapping[str, object],
+        parameters: Mapping[str, str],
+    ) -> tuple[str, Mapping[str, str]]:
+        if spec.resolve_async is not None:
+            return await spec.resolve_async(metadata, parameters)
+        return spec.mime_for(metadata), spec.normalize_parameters(parameters, metadata)
+
+    async def rendition_mime(self, spec: RenditionSpec, metadata: Mapping[str, object]) -> str:
+        if spec.mime_async is not None:
+            return await spec.mime_async(metadata)
+        return spec.mime_for(metadata)
 
     def register_asset_decoder(
         self,
@@ -563,6 +661,21 @@ class TypeRegistry:
             mime=spec.mime_for(value.meta.entries),
             data=data,
         )
+
+    async def render_async(
+        self,
+        value: Value,
+        kind: str | None = None,
+        parameters: Mapping[str, str] | None = None,
+    ) -> Rendition:
+        specs = self._renditions.get(value.type_id, [])
+        if kind is None:
+            spec = next((item for item in specs if item.default), None)
+        else:
+            spec = next((item for item in specs if item.kind == kind), None)
+        if spec is not None and spec.render_async is not None:
+            return await spec.render_async(value, parameters or {})
+        return self.render(value, kind, parameters)
 
     def inline_of(self, value: Value) -> int | float | bool | str | None:
         """The value's inline scalar under the central policy, or None.

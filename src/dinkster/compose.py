@@ -195,6 +195,7 @@ from dinkster_values import (
     RESOURCE_ID_META_KEY,
     RESOURCES_META_KEY,
     ListPayload,
+    Rendition,
     ResourcePins,
     TypeRegistry,
     Value,
@@ -237,7 +238,12 @@ from dinkster_workers import (
     normalize_egress_origin,
     resident_devices,
 )
-from dinkster_workers.catalog import PackCatalog, read_catalog, source_digest, worker_declarations
+from dinkster_workers.catalog import (
+    PackCatalog,
+    read_catalog,
+    source_digest,
+    worker_declarations_match_catalog,
+)
 from dinkster_workers.host import load_pack as load_host_pack
 from dinkster_workers.session import WorkerDied
 
@@ -420,6 +426,10 @@ class _ReplicaWorkerPool:
         return self._first.extension_contributions
 
     @property
+    def renditions(self) -> object:
+        return getattr(self._first, "renditions", ())
+
+    @property
     def can_convert_legacy_checkpoint(self) -> bool:
         return self._first.can_convert_legacy_checkpoint
 
@@ -441,6 +451,7 @@ class _ReplicaWorkerPool:
                 or dict(worker.compat_skips) != dict(first.compat_skips)
                 or worker.body_arms != first.body_arms
                 or worker.extension_contributions != first.extension_contributions
+                or getattr(worker, "renditions", ()) != getattr(first, "renditions", ())
                 or worker.attention_capabilities != first.attention_capabilities
                 or worker.attention_route_token != first.attention_route_token
             ):
@@ -5422,7 +5433,7 @@ class ServingComposer:
                 loaded.append(loaded_worker)
                 self._validate_body_arms(manifest, loaded_worker)
                 assert catalog is not None
-                if worker_declarations(loaded_worker) != worker_declarations(catalog):
+                if not worker_declarations_match_catalog(loaded_worker, catalog):
                     raise CompositionError(f"{manifest.name}: declarations changed; rerun doctor")
                 composition._registry.replace_from(current_registry)
                 loaded_worker.bind_registry(composition._registry)
@@ -5646,6 +5657,9 @@ class ServingComposer:
             derived_choices = self._validated_derived_choices(
                 sampler_registry, staged_records, topology
             )
+            staged_registry.remove_relayed_renditions(manifest.name)
+            if not spec.in_process:
+                self._register_worker_renditions(staged_registry, manifest.name, worker)
             if spec.host_types is not None:
                 spec.host_types(staged_registry)
         except BaseException:
@@ -5870,6 +5884,9 @@ class ServingComposer:
             derived_choices = self._validated_derived_choices(
                 sampler_registry, self._records, topology
             )
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(spec.name)
+            self._register_worker_renditions(staged_registry, spec.name, worker)
         except BaseException:
             if snapshot is not None and topology is not None:
                 await self._rollback_unpublished_generation(snapshot, topology)
@@ -5880,6 +5897,7 @@ class ServingComposer:
         # Commit point: every validation passed, the connection is up -
         # now merge everything at once (mirrors add_pack).
         self._seen_names[canonical] = spec.name
+        composition._registry.replace_from(staged_registry)
         composition.packs.update(staged_packs)
         for node_type, schema in surface.schemas.items():
             composition.schemas[node_type] = schema
@@ -6361,6 +6379,9 @@ class ServingComposer:
             derived_choices = self._validated_derived_choices(
                 sampler_registry, self._records, topology
             )
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(spec.name)
+            self._register_worker_renditions(staged_registry, spec.name, worker)
             # Reap the old session before the first published mutation:
             # everything from the route swap to the return is then free
             # of suspension points, so the caller publishes the surface
@@ -6391,6 +6412,7 @@ class ServingComposer:
         added_routes = tuple(node_type for node_type in candidates if topology.get(node_type))
         self._routing.swap_routes(removed_routes, self._dispatch_routes(topology, added_routes))
         self._remotes[spec.name] = new_record
+        composition._registry.replace_from(staged_registry)
         self._topology = topology
         composition._isolated.append(worker)
         if old_worker in composition._isolated:
@@ -6743,6 +6765,10 @@ class ServingComposer:
                 raise
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(name)
+            if not spec.in_process:
+                self._register_worker_renditions(staged_registry, manifest.name, worker)
             removed_routes = tuple(
                 node_type
                 for node_type in dict.fromkeys((*old_types, *record.executes, *manifest.executes))
@@ -6766,6 +6792,7 @@ class ServingComposer:
             )
             del self._records[name]
             self._records[manifest.name] = new_record
+            composition._registry.replace_from(staged_registry)
             composition.generation = staged_generation
             self._topology = topology
             composition._isolated.append(worker)
@@ -7166,9 +7193,12 @@ class ServingComposer:
                 topology,
                 tuple(node_type for node_type in route_candidates if topology.get(node_type)),
             )
-            for member_spec in specs.values():
+            staged_registry = self.composition._registry.copy()
+            for pack, member_spec in specs.items():
+                staged_registry.remove_relayed_renditions(pack)
+                self._register_worker_renditions(staged_registry, pack, members[pack])
                 if member_spec.host_types is not None:
-                    member_spec.host_types(self.composition._registry)
+                    member_spec.host_types(staged_registry)
         except BaseException:
             if snapshot is not None and topology is not None:
                 await self._rollback_unpublished_generation(snapshot, topology)
@@ -7190,6 +7220,7 @@ class ServingComposer:
         old_inference_worker = self._sampling_worker(self._topology)
         new_inference_worker = self._sampling_worker(topology)
         self._records = staged_records
+        self.composition._registry.replace_from(staged_registry)
         self.composition.generation = staged_generation
         self._topology = topology
         self._group_owners[group_name] = owner
@@ -7340,6 +7371,8 @@ class ServingComposer:
             assert snapshot is not None
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(name)
             route_candidates = tuple(dict.fromkeys((*old_types, *record.executes)))
             removed_routes = tuple(
                 node_type for node_type in route_candidates if self._routing.has_route(node_type)
@@ -7363,6 +7396,7 @@ class ServingComposer:
                 else None
             )
             del self._records[name]
+            composition._registry.replace_from(staged_registry)
             composition.generation = staged_generation
             self._topology = topology
             self._rebuild_registries()
@@ -7830,6 +7864,74 @@ class ServingComposer:
                 tuple(dict.fromkeys(arm.execution_arm for arm in arms))
                 if arms is not None
                 else ("native",)
+            )
+
+    @staticmethod
+    def _register_worker_renditions(registry: TypeRegistry, owner: str, worker: Any) -> None:
+        for declaration in worker.renditions:
+            existing = next(
+                (
+                    item
+                    for item in registry.renditions_of(declaration.type_id)
+                    if item.kind == declaration.kind
+                ),
+                None,
+            )
+            if existing is not None:
+                if existing.relay_owner is None:
+                    continue
+                if (
+                    existing.mime != declaration.mime
+                    or existing.default != declaration.default
+                    or existing.version != declaration.version
+                    or existing.parameters != declaration.parameters
+                    or dict(existing.defaults or {}) != dict(declaration.defaults or {})
+                    or dict(existing.limits or {}) != dict(declaration.limits or {})
+                ):
+                    raise ValueError(
+                        f"{declaration.type_id}: conflicting rendition declaration "
+                        f"for {declaration.kind!r}"
+                    )
+                continue
+
+            async def resolve(
+                metadata: Mapping[str, object],
+                parameters: Mapping[str, str],
+                *,
+                type_id: str = declaration.type_id,
+                kind: str = declaration.kind,
+            ) -> tuple[str, Mapping[str, str]]:
+                return await worker.resolve_rendition(type_id, kind, metadata, parameters)
+
+            async def resolve_mime(
+                metadata: Mapping[str, object],
+                *,
+                type_id: str = declaration.type_id,
+                kind: str = declaration.kind,
+            ) -> str:
+                return await worker.resolve_rendition_mime(type_id, kind, metadata)
+
+            async def render(
+                value: Value,
+                parameters: Mapping[str, str],
+                *,
+                kind: str = declaration.kind,
+            ) -> Rendition:
+                return await worker.render_rendition(value, kind, parameters)
+
+            registry.register_relayed_rendition(
+                declaration.type_id,
+                declaration.kind,
+                mime=declaration.mime,
+                default=declaration.default,
+                version=declaration.version,
+                parameters=declaration.parameters,
+                defaults=declaration.defaults,
+                limits=declaration.limits,
+                owner=owner,
+                resolve_mime=resolve_mime,
+                resolve=resolve,
+                render=render,
             )
 
     def _rebuild_asset_catalog(self) -> None:

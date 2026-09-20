@@ -16,6 +16,8 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, Literal, cast
 
+from dinkster_values import CustomWidgetDescriptor, JsonValue
+
 from .model import (
     CONTROL_AFTER_GENERATE,
     AbsentPolicy,
@@ -314,6 +316,8 @@ def _combo_option_to_wire(option: str | ComboOption, wire_version: int) -> objec
 def _widget_descriptor_to_wire(
     widget: WidgetDescriptor, wire_version: int
 ) -> dict[str, object] | None:
+    if isinstance(widget, CustomWidgetDescriptor):
+        return {"type": widget.widget_type, **dict(widget.params)}
     if isinstance(widget, AssetWidget):
         asset_wire: dict[str, object] = {"type": "ASSET", "accept": list(widget.accept)}
         if widget.kind:
@@ -439,10 +443,13 @@ def _widget_descriptor_to_wire(
         if wire_version < 37:
             raise SchemaWireVersionRequirement("COMPOSITOR widget", 37)
         return {"type": "COMPOSITOR"}
-    wire: dict[str, object] = {"type": "SAVE_TARGET"}
-    if widget.suffix:
-        wire["suffix"] = widget.suffix
-    return wire
+    remaining = cast("object", widget)
+    if isinstance(remaining, SaveTargetWidget):
+        wire: dict[str, object] = {"type": "SAVE_TARGET"}
+        if remaining.suffix:
+            wire["suffix"] = remaining.suffix
+        return wire
+    raise TypeError(f"unsupported widget descriptor {widget!r}")
 
 
 def _widget_to_wire(widget: Widget, wire_version: int) -> dict[str, object] | None:
@@ -896,7 +903,15 @@ def _widget_descriptor_from_wire(
         if strict:
             _reject_unknown_fields(widget_data, frozenset({"type"}), "COMPOSITOR widget")
         return CompositorWidget()
-    raise ValueError(f"unsupported input widget: {widget_data!r}")
+    if not isinstance(kind, str) or not kind:
+        raise ValueError("custom widget type must be a non-empty string")
+    return CustomWidgetDescriptor(
+        kind,
+        cast(
+            "Mapping[str, JsonValue]",
+            {key: value for key, value in widget_data.items() if key != "type"},
+        ),
+    )
 
 
 def _widget_from_wire(widget_wire: object, wire_version: int) -> Widget:
@@ -1022,7 +1037,10 @@ def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object
         and spec.type == TypeExpr.list_of(TypeExpr.concrete("dinkster.asset"))
     )
     if spec.widget is not None and not omit_list_source_widget:
-        widget_wire = _widget_to_wire(spec.widget, wire_version)
+        try:
+            widget_wire = _widget_to_wire(spec.widget, wire_version)
+        except TypeError as exc:
+            raise ValueError(f"input {spec.id!r}: {exc}") from exc
         if widget_wire is not None:
             entry["widget"] = widget_wire
     if spec.doc:
@@ -1156,7 +1174,12 @@ def schema_to_wire(
         raise ValueError(f"unsupported schemaVersion: {wire_version!r}")
     interface: list[dict[str, object]] = []
     for spec in schema.inputs:
-        interface.append(_dynamic_entry_to_wire(spec, wire_version))
+        try:
+            interface.append(_dynamic_entry_to_wire(spec, wire_version))
+        except SchemaWireVersionRequirement:
+            raise
+        except ValueError as exc:
+            raise ValueError(f"node {schema.node_type!r}, {exc}") from exc
     for fam in schema.input_families:
         interface.append(_dynamic_entry_to_wire(fam, wire_version))
     for combo in schema.combos:

@@ -282,6 +282,7 @@ def probe(manifest_path: str) -> dict[str, Any]:
                     compat_skips=load_skips(manifest),
                     body_arms=dict(manifest.arms),
                     extension_contributions=load_extension_contributions(manifest),
+                    renditions=registry.registered_renditions(),
                 )
             )
             report["catalog"]["types"] = {
