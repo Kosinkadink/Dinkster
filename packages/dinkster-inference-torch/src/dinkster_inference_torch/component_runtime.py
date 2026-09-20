@@ -16,6 +16,7 @@ from dinkster_inference.component_checkpoint import ComponentCheckpointPlan
 from dinkster_inference.component_registry import execution_symbol
 from dinkster_inference.minimax_h3_assembly import MiniMaxH3CommonComponentRole
 
+from .attention import AttentionRole
 from .chroma_runtime import ChromaDiffusionRuntime
 from .minimax_h3_assembly import (
     MiniMaxH3Model,
@@ -46,6 +47,7 @@ def load_h3_component(
     artifact_role: str | None = None,
     attention_policy: AttentionPolicy = "auto",
     attention_route_token: AttentionRouteToken | None = None,
+    attention_backend: AttentionRole | None = None,
 ) -> Any:
     if expected_role != "diffusion":
         return load_minimax_h3_component(
@@ -57,6 +59,8 @@ def load_h3_component(
         )
     if artifact_role not in ("fl2va-dit", "ref2va-dit"):
         raise ValueError("MiniMax H3 diffusion loading requires an explicit DiT role")
+    if attention_backend is None:
+        raise ValueError("MiniMax H3 diffusion loading requires an attention backend")
     runtime = load_minimax_h3_model(
         path,
         asset=asset,
@@ -65,6 +69,7 @@ def load_h3_component(
         diffusion_dtype=compute_dtype,
         attention_policy=attention_policy if attention_route_token is not None else "auto",
         attention_route_token=attention_route_token,
+        attention_backend=attention_backend,
     )
     return SimpleNamespace(role="diffusion", module=runtime.assembled.diffusion, runtime=runtime)
 

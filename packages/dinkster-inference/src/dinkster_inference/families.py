@@ -99,12 +99,28 @@ class EngineProperties:
     preview_decoder: PreviewDecoderProperties | None = None
     compatibility_latent_formats: tuple[str, ...] = ()
     gguf_architecture: str | None = None
+    supports_context_windows: bool = False
+    quantized_component_load_device: bool = False
+    attention_backends: tuple[
+        tuple[str, Literal["unet", "flux", "vae", "clip", "t5", "qwen"]], ...
+    ] = ()
+    attention_requires_route: bool = False
 
     def __post_init__(self) -> None:
         if not self.vae_dtypes:
             raise ValueError("vae_dtypes must not be empty")
         if self.regional_memory_factor is not None and self.regional_memory_factor <= 0:
             raise ValueError("regional_memory_factor must be positive")
+        attention_roles = tuple(role for role, _backend in self.attention_backends)
+        if len(attention_roles) != len(set(attention_roles)):
+            raise ValueError("attention backend component roles must be unique")
+        if any(not role for role in attention_roles):
+            raise ValueError("attention backend component roles must not be empty")
+        if self.attention_requires_route and not self.attention_backends:
+            raise ValueError("required attention routes need at least one attention backend")
+
+    def attention_backend(self, component_role: str) -> str | None:
+        return dict(self.attention_backends).get(component_role)
 
 
 @dataclass(frozen=True)
