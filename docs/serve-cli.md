@@ -595,20 +595,7 @@ Default: `1`.
 Concurrent jobs. Engine admission keeps hardware safe regardless of
 this value; the limit controls how many jobs run at once.
 
-## Dev and benchmark
-
-### --dev
-
-Default: off (flag).
-
-Dev-mode diagnostics and affordances: `cache_miss` events explaining
-why a node recomputed, per-invocation boundary cost logging on
-`dinkster.dev.boundary`, and pack hot reload/removal:
-
-- `POST /api/packs/{packId}/reload` -- restart that pack's worker and
-  swap its nodes on the live surface.
-- `DELETE /api/packs/{packId}` -- retract the pack's nodes and stop its
-  worker.
+## Development and benchmark
 
 ### --watch-packs
 
@@ -616,8 +603,8 @@ Default: off (flag).
 
 Hot-reload node packs on source changes. Polls each composed pack's
 source directory; when files change and settle, restarts that pack's
-worker and swaps its nodes. Requires `--dev` (same swap and failure
-semantics as `POST /api/packs/{packId}/reload`).
+worker and swaps its nodes. Also enables cache-miss events, boundary-cost
+logging, and the pack reload/removal API.
 
 ### --benchmark
 

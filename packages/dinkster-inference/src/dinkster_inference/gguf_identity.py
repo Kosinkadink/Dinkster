@@ -222,7 +222,6 @@ class GGUFExecutionKind(StrEnum):
     REFERENCE_DECODE = "reference-decode"
     BOUNDED_DECODE = "bounded-decode"
     CACHED_DECODE = "cached-decode"
-    FUSED = "fused"
 
 
 @dataclass(frozen=True)
@@ -235,7 +234,6 @@ class GGUFExecutionRoute:
     compute_dtype: str
     accumulation_dtype: str
     decoded_cache: str | None = None
-    fused_matmul: str | None = None
 
     def __post_init__(self) -> None:
         validate_registry_id(self.provider_id)
@@ -251,8 +249,6 @@ class GGUFExecutionRoute:
             raise TypeError("GGUF execution kind must be GGUFExecutionKind")
         if self.decoded_cache is not None:
             _require_token("decoded_cache", self.decoded_cache)
-        if self.fused_matmul is not None:
-            _require_token("fused_matmul", self.fused_matmul)
 
     @property
     def facts(self) -> tuple[str, ...]:
@@ -267,8 +263,6 @@ class GGUFExecutionRoute:
         )
         if self.decoded_cache is not None:
             facts = (*facts, f"gguf.route.decoded_cache={self.decoded_cache}")
-        if self.fused_matmul is not None:
-            facts = (*facts, f"gguf.route.fused_matmul={self.fused_matmul}")
         return facts
 
 

@@ -108,7 +108,6 @@ from dinkster_inference_torch import (
 )
 from dinkster_inference_torch import assemble as assemble_mod
 from dinkster_inference_torch import attention as attention_mod
-from dinkster_inference_torch import gguf_linear as gguf_linear_mod
 from dinkster_inference_torch import quant_linear as quant_linear_mod
 from dinkster_inference_torch._nvfp4_diagnostics import (
     Nvfp4DiagnosticsRecorder,
@@ -2527,27 +2526,12 @@ def test_flux_text_gguf_encoded_residency_matches_speed_bit_exactly(
     assert pinched_cache.used_bytes == 0
 
 
-def test_memory_residency_binds_the_fused_matmul_route_by_default(
+def test_gguf_residency_modes_use_decode_routes(
     standard: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Memory-residency assembly default-binds the fused matmul on
-    every swapped linear the layer and host support, and fails open
-    (decode route, no raise) on the rest; balanced assembly keeps its
-    decode+cache route on every swap."""
-
-    def stub_op(
-        input: torch.Tensor,
-        blocks: torch.Tensor,
-        bias: torch.Tensor | None,
-        out_features: int,
-    ) -> torch.Tensor:
-        raise AssertionError("assembly binds the fused op without executing it")
-
-    # A stubbed probe isolates the bind decision from the host's
-    # actual CUDA/triton capability.
-    monkeypatch.setattr(gguf_linear_mod, "_fused_linear_ops", {"Q8_0": stub_op})
+    """Both GGUF residency modes assemble encoded decode-route linears."""
 
     t5_plan, t5_state = standard["t5xxl"]
     path = _write_and_map_tiny_t5_gguf(t5_state, monkeypatch, tmp_path, Q8_0)
@@ -2575,13 +2559,3 @@ def test_memory_residency_binds_the_fused_matmul_route_by_default(
             if isinstance(module, GgufEncodedLinear)
         }
         assert len(encoded[mode]) == 14
-
-    # Only the d_ff-wide wo projections split their rows into whole
-    # 32-element Q8_0 blocks; the d_model-wide projections fail open.
-    bound = {name for name, module in encoded["memory"].items() if module.fused_matmul}
-    assert bound == {
-        name for name, module in encoded["memory"].items() if module.in_features % 32 == 0
-    }
-    assert len(bound) == 2
-    assert all(name.endswith(".wo") for name in bound)
-    assert not any(module.fused_matmul for module in encoded["balanced"].values())

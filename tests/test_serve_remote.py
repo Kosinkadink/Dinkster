@@ -1202,7 +1202,7 @@ def test_computationally_divergent_matching_type_is_refused(tmp_path: Path) -> N
     asyncio.run(scenario())
 
 
-def test_remote_over_core_scaffolding_updates_arms_without_reannouncing_schema(
+def test_remote_over_local_pack_updates_arms(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
@@ -1210,13 +1210,12 @@ def test_remote_over_core_scaffolding_updates_arms_without_reannouncing_schema(
         try:
             composer = ServingComposer(dev=True)
             try:
-                delta = await composer.add_remote(
+                await composer.add_pack(DEV_MANIFEST)
+                await composer.add_remote(
                     remote_spec(host, port, tmp_path, nodes=("dev.gallery.widgets",))
                 )
-                assert delta.schemas == {}
-                assert delta.node_packs == {}
                 assert [arm.name for arm in composer._topology["dev.gallery.widgets"]] == [
-                    "local",
+                    "dinkster-nodes-dev",
                     "box1",
                 ]
             finally:

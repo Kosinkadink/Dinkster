@@ -27,17 +27,13 @@ attribute, never on per-call Python policy):
   quantize the input per-tensor against ``input_scale`` (checkpoint
   value, or the neutral 1.0 - the reference drops stored 1.0 scales
   at load and uses ones at runtime; clamp-to-fp8-range + cast is
-  bit-identical either way) through Kitchen's CUDA route, then the owned
-  ``dinkster_kernels.quantize_per_tensor_fp8`` fallback when eligible, then
-  eager torch. Run tensor-wise scaled-mm with both scales, accumulating
-  at compute dtype. The
-  matmul backend is the owned ``dinkster_kernels.scaled_mm`` when its host
-  probe passes, then kitchen ``scaled_mm_v2`` when that capability is
-  importable, otherwise eager ``torch._scaled_mm``. All three call the same underlying
+  bit-identical either way) through Kitchen's CUDA route, then eager torch.
+  Run tensor-wise scaled-mm with both scales, accumulating at compute dtype.
+  The matmul backend is Kitchen ``scaled_mm_v2`` when that capability is
+  importable, otherwise eager ``torch._scaled_mm``. Both call the same underlying
   operation on CUDA (``torch._scaled_mm`` below torch 2.10,
   ``torch.nn.functional.scaled_mm`` from 2.10 onward; kitchen 0.2.31
-  and dinkster-kernels dispatch identically), and on HIP the owned probe
-  declines so kitchen keeps serving its WMMA kernel. Native proofs
+  operation on CUDA, and on HIP Kitchen serves its WMMA kernel. Native proofs
   pin all backends bit-for-bit on the installed torch. Inputs of rank
   other than 2/3 fall back to dequant, like the reference.
 
@@ -95,16 +91,9 @@ __all__ = [
 ]
 
 
-Fp8MatmulBackend = Literal["dinkster", "kitchen", "torch"]
+Fp8MatmulBackend = Literal["kitchen", "torch"]
 ScaledMm = Callable[..., torch.Tensor]
 QuantizeFp8 = Callable[[torch.Tensor, torch.Tensor, torch.dtype], torch.Tensor]
-QuantizeFp8Supported = Callable[[torch.Tensor, torch.Tensor, torch.dtype], bool]
-
-_dinkster_probed = False
-_dinkster_scaled_mm: ScaledMm | None = None
-_dinkster_quantize_probed = False
-_dinkster_quantize_per_tensor_fp8: QuantizeFp8 | None = None
-_dinkster_quantize_per_tensor_fp8_supported: QuantizeFp8Supported | None = None
 _kitchen_probed = False
 _kitchen_scaled_mm_v2: ScaledMm | None = None
 _kitchen_quantize_probed = False
@@ -796,24 +785,6 @@ def default_fp8_matmul(
     )
 
 
-def _probe_dinkster_scaled_mm() -> ScaledMm | None:
-    """Lazily resolve dinkster-kernels' owned scaled-mm route. Missing
-    package or host capability -> kitchen or eager torch (same
-    degrade-never-break contract as flux._probe_dinkster_apply_rope)."""
-    global _dinkster_probed, _dinkster_scaled_mm
-    if _dinkster_probed:
-        return _dinkster_scaled_mm
-    _dinkster_probed = True
-    try:
-        module = cast(Any, importlib.import_module("dinkster_kernels"))
-        scaled = module.scaled_mm
-        if bool(module.scaled_mm_available()) and callable(scaled):
-            _dinkster_scaled_mm = cast(ScaledMm, scaled)
-    except Exception:  # noqa: BLE001 - an optional accelerator probe is best-effort
-        _dinkster_scaled_mm = None
-    return _dinkster_scaled_mm
-
-
 def _probe_kitchen_scaled_mm_v2() -> ScaledMm | None:
     """Lazily resolve kitchen's torch-2.10+ scaled-mm surface."""
     global _kitchen_probed, _kitchen_scaled_mm_v2
@@ -829,33 +800,6 @@ def _probe_kitchen_scaled_mm_v2() -> ScaledMm | None:
     except Exception:  # noqa: BLE001 - an optional accelerator probe is best-effort
         _kitchen_scaled_mm_v2 = None
     return _kitchen_scaled_mm_v2
-
-
-def _probe_dinkster_quantize_per_tensor_fp8() -> QuantizeFp8 | None:
-    """Lazily resolve the owned FP8 input quantizer. Missing package,
-    failed capability probe, or missing eligibility predicate falls
-    back to Kitchen or eager torch."""
-    global _dinkster_quantize_probed
-    global _dinkster_quantize_per_tensor_fp8
-    global _dinkster_quantize_per_tensor_fp8_supported
-    if _dinkster_quantize_probed:
-        return _dinkster_quantize_per_tensor_fp8
-    _dinkster_quantize_probed = True
-    try:
-        module = cast(Any, importlib.import_module("dinkster_kernels"))
-        quantize = module.quantize_per_tensor_fp8
-        supported = module.quantize_per_tensor_fp8_supported
-        if (
-            bool(module.quantize_per_tensor_fp8_available())
-            and callable(quantize)
-            and callable(supported)
-        ):
-            _dinkster_quantize_per_tensor_fp8 = cast(QuantizeFp8, quantize)
-            _dinkster_quantize_per_tensor_fp8_supported = cast(QuantizeFp8Supported, supported)
-    except Exception:  # noqa: BLE001 - an optional accelerator probe is best-effort
-        _dinkster_quantize_per_tensor_fp8 = None
-        _dinkster_quantize_per_tensor_fp8_supported = None
-    return _dinkster_quantize_per_tensor_fp8
 
 
 def _probe_kitchen_quantize_per_tensor_fp8() -> QuantizeFp8 | None:
@@ -875,18 +819,14 @@ def _probe_kitchen_quantize_per_tensor_fp8() -> QuantizeFp8 | None:
 
 
 def select_fp8_matmul_backend() -> Fp8MatmulBackend:
-    """The owned dinkster-kernels route when its host probe passes, then
-    kitchen when its v2 API exists, otherwise eager torch."""
-    if _probe_dinkster_scaled_mm() is not None:
-        return "dinkster"
+    """Kitchen when its v2 API exists, otherwise eager torch."""
     return "kitchen" if _probe_kitchen_scaled_mm_v2() is not None else "torch"
 
 
 def prepare_fp8_matmul_runtime() -> Fp8MatmulBackend:
     """Resolve FP8 accelerator operations before accepting inference work."""
     backend = select_fp8_matmul_backend()
-    if _probe_kitchen_quantize_per_tensor_fp8() is None:
-        _probe_dinkster_quantize_per_tensor_fp8()
+    _probe_kitchen_quantize_per_tensor_fp8()
     return backend
 
 
@@ -944,14 +884,7 @@ def fp8_matmul_forward(
     shape = input.shape
     x = input.reshape(-1, shape[-1]) if input.ndim == 3 else input
     kitchen_quantize = _probe_kitchen_quantize_per_tensor_fp8()
-    dinkster_quantize = None
-    dinkster_supported = None
-    if kitchen_quantize is None:
-        dinkster_quantize = _probe_dinkster_quantize_per_tensor_fp8()
-        dinkster_supported = _dinkster_quantize_per_tensor_fp8_supported
-    if backend == "dinkster":
-        scaled = _dinkster_scaled_mm
-    elif backend == "kitchen":
+    if backend == "kitchen":
         scaled = _kitchen_scaled_mm_v2
     else:
         scaled = None
@@ -963,12 +896,6 @@ def fp8_matmul_forward(
     with device_guard:
         if kitchen_quantize is not None:
             qdata = kitchen_quantize(x, input_scale, torch.float8_e4m3fn)
-        elif (
-            dinkster_quantize is not None
-            and dinkster_supported is not None
-            and dinkster_supported(x, input_scale, torch.float8_e4m3fn)
-        ):
-            qdata = dinkster_quantize(x, input_scale, torch.float8_e4m3fn)
         else:
             qdata = _quantize_per_tensor_fp8_eager(x, input_scale, torch.float8_e4m3fn)
         cast_bias = None if bias is None else bias.to(dtype=out_dtype)

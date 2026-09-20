@@ -315,15 +315,7 @@ def test_int8_fused_training_refuses_off_cuda_before_mps_fallback(
     def unexpected_predicate(device: torch.device) -> bool:
         raise AssertionError("fused-training refusal must precede the native-device predicate")
 
-    def unexpected_quantizer_probe() -> None:
-        raise AssertionError("INT8 fused-training refusal must not enter the FP8 quantizer route")
-
     monkeypatch.setattr(quant_linear_mod, "_int8_native_matmul_supported", unexpected_predicate)
-    monkeypatch.setattr(
-        quant_linear_mod,
-        "_probe_dinkster_quantize_per_tensor_fp8",
-        unexpected_quantizer_probe,
-    )
 
     with pytest.raises(Int8ExecutionError, match="requires CUDA input"):
         layer(input)
@@ -1389,37 +1381,12 @@ def test_prepare_fp8_runtime_resolves_matmul_and_quantizer_backends(
     )
     monkeypatch.setattr(
         quant_linear_mod,
-        "_probe_dinkster_quantize_per_tensor_fp8",
-        lambda: calls.append("dinkster-quantizer"),
-    )
-    monkeypatch.setattr(
-        quant_linear_mod,
         "_probe_kitchen_quantize_per_tensor_fp8",
         lambda: calls.append("kitchen-quantizer") or object(),
     )
 
     assert quant_linear_mod.prepare_fp8_matmul_runtime() == "kitchen"
     assert calls == ["matmul", "kitchen-quantizer"]
-
-
-def test_prepare_fp8_runtime_resolves_owned_quantizer_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[str] = []
-    monkeypatch.setattr(quant_linear_mod, "select_fp8_matmul_backend", lambda: "torch")
-    monkeypatch.setattr(
-        quant_linear_mod,
-        "_probe_kitchen_quantize_per_tensor_fp8",
-        lambda: calls.append("kitchen-quantizer"),
-    )
-    monkeypatch.setattr(
-        quant_linear_mod,
-        "_probe_dinkster_quantize_per_tensor_fp8",
-        lambda: calls.append("dinkster-quantizer"),
-    )
-
-    assert quant_linear_mod.prepare_fp8_matmul_runtime() == "torch"
-    assert calls == ["kitchen-quantizer", "dinkster-quantizer"]
 
 
 def test_high_rank_input_falls_back_to_dequant() -> None:
@@ -1441,22 +1408,17 @@ def test_fp8_matmul_route_refuses_gradient_input_before_quantizer_probes(
     # matmul, so the refusal is provable off-CUDA too.
     layer = make_layer()
     layer.bind_fp8_matmul(True)
-    dinkster_probe = quant_linear_mod._probe_dinkster_quantize_per_tensor_fp8  # pyright: ignore[reportPrivateUsage]
     kitchen_probe = quant_linear_mod._probe_kitchen_quantize_per_tensor_fp8  # pyright: ignore[reportPrivateUsage]
 
     def unexpected_probe() -> None:
         raise AssertionError("gradient refusal must precede quantizer probes")
 
     monkeypatch.setattr(
-        quant_linear_mod, "_probe_dinkster_quantize_per_tensor_fp8", unexpected_probe
-    )
-    monkeypatch.setattr(
         quant_linear_mod, "_probe_kitchen_quantize_per_tensor_fp8", unexpected_probe
     )
     x = torch.randn(2, 4, requires_grad=True)
     with pytest.raises(RuntimeError, match="inference-only"):
         layer(x)
-    monkeypatch.setattr(quant_linear_mod, "_probe_dinkster_quantize_per_tensor_fp8", dinkster_probe)
     monkeypatch.setattr(quant_linear_mod, "_probe_kitchen_quantize_per_tensor_fp8", kitchen_probe)
     # Under no_grad the same input is not a gradient consumer: the
     # refusal must not fire (whether the backend then supports the
@@ -1525,8 +1487,6 @@ def test_fp8_support_override_matches_upstream_hook(monkeypatch: pytest.MonkeyPa
 def test_kitchen_unavailable_uses_eager_scaled_mm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_probed", True)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_scaled_mm", None)
     monkeypatch.setattr(quant_linear_mod, "_kitchen_probed", False)
     monkeypatch.setattr(quant_linear_mod, "_kitchen_scaled_mm_v2", None)
 
@@ -1577,9 +1537,6 @@ def test_fp8_matmul_uses_kitchen_input_quantizer(
     def eager(input: torch.Tensor, weight: torch.Tensor, **_kwargs: object) -> torch.Tensor:
         return torch.zeros((input.shape[0], weight.shape[1]), dtype=torch.float32)
 
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_probed", True)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_per_tensor_fp8", None)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_per_tensor_fp8_supported", None)
     monkeypatch.setattr(quant_linear_mod, "_kitchen_quantize_probed", True)
     monkeypatch.setattr(quant_linear_mod, "_kitchen_quantize_per_tensor_fp8", quantize)
     monkeypatch.setattr(torch, "_scaled_mm", eager)
@@ -1594,105 +1551,9 @@ def test_fp8_matmul_uses_kitchen_input_quantizer(
     assert quantize_calls == [(input, layer.input_scale, torch.float8_e4m3fn)]
 
 
-def test_fp8_matmul_prefers_kitchen_input_quantizer_over_owned_route(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    kitchen_calls: list[tuple[torch.Tensor, torch.Tensor, torch.dtype]] = []
-
-    def kitchen(input: torch.Tensor, scale: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
-        kitchen_calls.append((input, scale, dtype))
-        return input.to(dtype)
-
-    def forbidden_owned(
-        input: torch.Tensor, scale: torch.Tensor, dtype: torch.dtype
-    ) -> torch.Tensor:
-        del input, scale, dtype
-        raise AssertionError("owned quantizer must not run when Kitchen is available")
-
-    def supported(input: torch.Tensor, scale: torch.Tensor, dtype: torch.dtype) -> bool:
-        return input.numel() == 8 and scale.numel() == 1 and dtype is torch.float8_e4m3fn
-
-    def eager(input: torch.Tensor, weight: torch.Tensor, **_kwargs: object) -> torch.Tensor:
-        return torch.zeros((input.shape[0], weight.shape[1]), dtype=torch.float32)
-
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_probed", True)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_per_tensor_fp8", forbidden_owned)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_per_tensor_fp8_supported", supported)
-    monkeypatch.setattr(quant_linear_mod, "_kitchen_quantize_probed", True)
-    monkeypatch.setattr(quant_linear_mod, "_kitchen_quantize_per_tensor_fp8", kitchen)
-    monkeypatch.setattr(torch, "_scaled_mm", eager)
-    layer = make_layer(bias=False)
-    layer.bind_fp8_matmul(True)
-    input = torch.randn(2, 4)
-
-    with torch.no_grad():
-        result = layer(input)
-
-    assert result.shape == (2, 3)
-    assert kitchen_calls == [(input, layer.input_scale, torch.float8_e4m3fn)]
-
-
-def test_fp8_matmul_uses_owned_input_quantizer_when_kitchen_is_unavailable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    owned_calls: list[torch.Tensor] = []
-
-    def supported(input: torch.Tensor, scale: torch.Tensor, dtype: torch.dtype) -> bool:
-        return input.numel() == 8 and scale.numel() == 1 and dtype is torch.float8_e4m3fn
-
-    def owned(input: torch.Tensor, scale: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
-        del scale
-        owned_calls.append(input)
-        return input.to(dtype)
-
-    def eager(input: torch.Tensor, weight: torch.Tensor, **_kwargs: object) -> torch.Tensor:
-        return torch.zeros((input.shape[0], weight.shape[1]), dtype=torch.float32)
-
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_probed", True)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_per_tensor_fp8", owned)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_per_tensor_fp8_supported", supported)
-    monkeypatch.setattr(quant_linear_mod, "_kitchen_quantize_probed", True)
-    monkeypatch.setattr(quant_linear_mod, "_kitchen_quantize_per_tensor_fp8", None)
-    monkeypatch.setattr(torch, "_scaled_mm", eager)
-    layer = make_layer(bias=False)
-    layer.bind_fp8_matmul(True)
-    input = torch.randn(2, 4)
-
-    with torch.no_grad():
-        result = layer(input)
-
-    assert result.shape == (2, 3)
-    assert owned_calls == [input]
-
-
-def test_fp8_matmul_selected_owned_quantizer_failure_is_loud(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fail(input: torch.Tensor, scale: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
-        del input, scale, dtype
-        raise RuntimeError("owned quantizer exploded")
-
-    def supported(input: torch.Tensor, scale: torch.Tensor, dtype: torch.dtype) -> bool:
-        del input, scale, dtype
-        return True
-
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_probed", True)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_per_tensor_fp8", fail)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_per_tensor_fp8_supported", supported)
-    monkeypatch.setattr(quant_linear_mod, "_kitchen_quantize_probed", True)
-    monkeypatch.setattr(quant_linear_mod, "_kitchen_quantize_per_tensor_fp8", None)
-    layer = make_layer(bias=False)
-    layer.bind_fp8_matmul(True)
-
-    with torch.no_grad(), pytest.raises(RuntimeError, match="owned quantizer exploded"):
-        layer(torch.randn(2, 4))
-
-
 def test_kitchen_probe_failure_is_an_eager_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_probed", False)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_scaled_mm", None)
     monkeypatch.setattr(quant_linear_mod, "_kitchen_probed", False)
     monkeypatch.setattr(quant_linear_mod, "_kitchen_scaled_mm_v2", None)
 
@@ -1703,99 +1564,6 @@ def test_kitchen_probe_failure_is_an_eager_fallback(
     layer = make_layer(bias=False)
     layer.bind_fp8_matmul(True)
     assert layer._fp8_matmul_backend == "torch"  # pyright: ignore[reportPrivateUsage]
-
-
-def test_dinkster_scaled_mm_is_preferred_and_routed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    dinkster_calls: list[dict[str, object]] = []
-    kitchen_calls: list[dict[str, object]] = []
-
-    def dinkster(input: torch.Tensor, weight: torch.Tensor, **kwargs: object) -> torch.Tensor:
-        dinkster_calls.append({"input": input, "weight": weight, **kwargs})
-        return torch.zeros((input.shape[0], weight.shape[1]), dtype=torch.float32)
-
-    def kitchen(input: torch.Tensor, weight: torch.Tensor, **kwargs: object) -> torch.Tensor:
-        kitchen_calls.append({"input": input, "weight": weight, **kwargs})
-        return torch.zeros((input.shape[0], weight.shape[1]), dtype=torch.float32)
-
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_probed", True)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_scaled_mm", dinkster)
-    monkeypatch.setattr(quant_linear_mod, "_kitchen_probed", True)
-    monkeypatch.setattr(quant_linear_mod, "_kitchen_scaled_mm_v2", kitchen)
-    layer = make_layer(bias=False, scale=0.5)
-    layer.bind_fp8_matmul(True)
-    assert layer._fp8_matmul_backend == "dinkster"  # pyright: ignore[reportPrivateUsage]
-    with torch.no_grad():
-        result = layer(torch.randn(2, 4))
-    assert result.shape == (2, 3)
-    assert kitchen_calls == []
-    assert len(dinkster_calls) == 1
-    assert dinkster_calls[0]["scale_a"] is layer.input_scale
-    assert dinkster_calls[0]["scale_b"] is layer.weight_scale
-
-
-def test_dinkster_unavailable_falls_back_to_kitchen(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_probed", False)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_scaled_mm", None)
-    monkeypatch.setattr(quant_linear_mod, "_kitchen_probed", False)
-    monkeypatch.setattr(quant_linear_mod, "_kitchen_scaled_mm_v2", None)
-
-    def fake_scaled_mm(*_args: object, **_kwargs: object) -> None:
-        return None
-
-    def fake_scaled_mm_v2(*_args: object, **_kwargs: object) -> torch.Tensor:
-        return torch.zeros(())
-
-    def modules(name: str) -> SimpleNamespace:
-        if name == "dinkster_kernels":
-            return SimpleNamespace(
-                scaled_mm=fake_scaled_mm,
-                scaled_mm_available=lambda: False,
-            )
-        return SimpleNamespace(
-            has_scaled_mm_v2=lambda: True,
-            scaled_mm_v2=fake_scaled_mm_v2,
-        )
-
-    monkeypatch.setattr(quant_linear_mod.importlib, "import_module", modules)
-    assert quant_linear_mod.select_fp8_matmul_backend() == "kitchen"
-
-
-def test_dinkster_probe_failure_is_best_effort(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_probed", False)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_scaled_mm", None)
-    monkeypatch.setattr(quant_linear_mod, "_kitchen_probed", False)
-    monkeypatch.setattr(quant_linear_mod, "_kitchen_scaled_mm_v2", None)
-
-    def unavailable(_name: str) -> object:
-        raise RuntimeError("broken optional install")
-
-    monkeypatch.setattr(quant_linear_mod.importlib, "import_module", unavailable)
-    assert quant_linear_mod.select_fp8_matmul_backend() == "torch"
-    assert quant_linear_mod._probe_dinkster_scaled_mm() is None  # pyright: ignore[reportPrivateUsage]
-
-
-def test_dinkster_input_quantizer_probe_failure_is_best_effort(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_probed", False)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_per_tensor_fp8", None)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_per_tensor_fp8_supported", None)
-
-    def unavailable(_name: str) -> object:
-        raise RuntimeError("broken optional install")
-
-    monkeypatch.setattr(quant_linear_mod.importlib, "import_module", unavailable)
-    assert (
-        quant_linear_mod._probe_dinkster_quantize_per_tensor_fp8()  # pyright: ignore[reportPrivateUsage]
-        is None
-    )
-    assert quant_linear_mod._dinkster_quantize_per_tensor_fp8_supported is None  # pyright: ignore[reportPrivateUsage]
 
 
 # --------------------------------------------------- storage bridge
