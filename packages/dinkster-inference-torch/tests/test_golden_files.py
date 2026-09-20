@@ -15,6 +15,7 @@ from golden_files import (
     assert_reference_values,
     cpu_identity,
     load_platform_golden,
+    platform_digest,
     platform_golden_path,
     reference_validation_enabled,
 )
@@ -141,6 +142,33 @@ def test_reference_cpu_used_when_meta_lacks_it(
     monkeypatch.setattr(golden_files, "cpu_identity", lambda: "Live Host CPU")
     with pytest.raises(pytest.skip.Exception):
         load_platform_golden(fixture)
+
+
+def test_platform_digest_selects_exact_cpu_and_runtime_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(golden_files, "cpu_identity", lambda: "Intel(R) Core(TM) Ultra 7 270K Plus")
+    assert platform_digest("sd15_cfg_one") == (
+        "c6ba833bdd54fd01e09749cf35385c91213c2611eb0c69c128eb0e289872a6eb"
+    )
+
+    provenance = golden_files.runtime_provenance()
+    monkeypatch.setattr(golden_files, "cpu_identity", lambda: "AMD Ryzen 9 5950X 16-Core Processor")
+    monkeypatch.setattr(
+        golden_files,
+        "runtime_provenance",
+        lambda: {**provenance, "python": "Python 3.12.13"},
+    )
+    assert platform_digest("sd15_cfg_one") == (
+        "cf162ee434116de5e1f4a9c7b399d1cabb8629bb4f88d1addb61c80263a681e1"
+    )
+    assert platform_digest("sd15_inpaint") == (
+        "8b3530802ec03a272a16537c7c10c74131c6c179ebe20a7e4409cec1e470ba0a"
+    )
+
+    monkeypatch.setattr(golden_files, "cpu_identity", lambda: "Unminted CPU")
+    with pytest.raises(pytest.skip.Exception, match="no wiring digest minted"):
+        platform_digest("sd15_cfg_one")
 
 
 def test_reference_validation_defaults_to_portable_checks(
