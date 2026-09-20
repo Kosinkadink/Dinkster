@@ -540,7 +540,7 @@ def test_native_text_node_binds_conditioning_to_the_text_component(
         def encode_text(self, *_args: object, **_kwargs: object) -> Conditioning[torch.Tensor]:
             return Conditioning(torch.ones((1, 2, 8 * 4096)), None)
 
-    def component_handle(*_args: object) -> Any:
+    def component_handle(*_args: object, **_kwargs: object) -> Any:
         return handle
 
     monkeypatch.setattr(native_arm, "_torch", lambda: torch)
