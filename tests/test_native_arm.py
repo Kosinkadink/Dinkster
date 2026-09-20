@@ -1470,6 +1470,69 @@ def test_native_load_dual_clip_forwards_ordered_sources_and_context(
     ]
 
 
+def test_build_text_recipe_handle_forwards_registered_attention_backends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arm = _native_arm()
+    component_registry = importlib.import_module("dinkster_inference.component_registry")
+    text_recipes = importlib.import_module("dinkster_inference.text_recipes")
+    asset = _asset(_safetensors(tmp_path / "text.safetensors"))
+    attention_backends = (("gemma3_12b", "qwen"), ("connectors", "flux"))
+    recipe = SimpleNamespace(runtime_identity="text-identity", overlays=())
+    binding = SimpleNamespace(
+        id="ltxv",
+        family_id="dinkster.ltxav",
+        components=(),
+        loader="test:loader",
+        runtime_class="test:runtime",
+        recipe=lambda *args, **kwargs: recipe,
+    )
+    registry = SimpleNamespace(
+        detect=lambda source, path: (),
+        get=lambda family_id: SimpleNamespace(
+            family=SimpleNamespace(engine=SimpleNamespace(attention_backends=attention_backends))
+        ),
+    )
+    load_calls: list[dict[str, object]] = []
+    loaded = SimpleNamespace(module={})
+    runtime = object()
+    handle = object()
+
+    def load(_binding: object, **kwargs: object) -> object:
+        load_calls.append(kwargs)
+        return loaded
+
+    def execution_symbol(reference: str) -> object:
+        if reference == "test:loader":
+            return load
+        if reference == "test:runtime":
+            return lambda loaded_value, **kwargs: runtime
+        raise AssertionError(reference)
+
+    monkeypatch.setattr(
+        arm,
+        "_active_inference_registries",
+        lambda: SimpleNamespace(components=registry),
+    )
+    monkeypatch.setattr(arm, "_torch", lambda: FakeTorch(cuda=False))
+    monkeypatch.setattr(arm, "_weight_source_ref", lambda *args: object())
+    monkeypatch.setattr(arm, "_materialize_patch_sets", lambda *args: {})
+    monkeypatch.setattr(arm, "_enroll_component_handle", lambda *args, **kwargs: handle)
+    monkeypatch.setattr(component_registry, "execution_symbol", execution_symbol)
+    monkeypatch.setattr(text_recipes, "resolve_text_recipe", lambda *args: binding)
+
+    assert (
+        arm.build_text_recipe_handle(
+            (asset,),
+            "ltxv",
+            "text-identity",
+            compute_dtype="bfloat16",
+        )
+        is handle
+    )
+    assert load_calls[0]["attention_backends"] == attention_backends
+
+
 @pytest.mark.parametrize("same_asset", (False, True))
 def test_compat_load_dual_clip_preserves_sources_and_refuses_unknown_type(
     tmp_path: Path,
@@ -1815,8 +1878,12 @@ def test_native_controlnet_loader_uses_descriptor_with_provenance(
         loader="test.new_control:load",
         hint_channels=3,
         default_diffusion_dtype=SimpleNamespace(name=dtype_name),
-        attention_roles=("controlnet",),
-        attention_requires_route=True,
+        family=SimpleNamespace(
+            engine=SimpleNamespace(
+                attention_backend=lambda role: "unet" if role == "controlnet" else None,
+                attention_requires_route=True,
+            )
+        ),
     )
     source = object()
     mechanism = FakeMechanism(model, load_device="cuda:0", offload_device="cpu")
@@ -1902,6 +1969,7 @@ def test_native_controlnet_loader_uses_descriptor_with_provenance(
         "dtype": getattr(torch, dtype_name),
         "attention_policy": "sdpa",
         "attention_route_token": route_token,
+        "attention_backend": "unet",
         "model": model,
         "load_device": torch.device("cuda:0"),
         "offload_device": torch.device("cpu"),
@@ -1929,8 +1997,12 @@ def test_native_controlnet_loader_refuses_missing_required_attention_route(
         id="test.routed_control",
         loader="test.routed_control:load",
         default_diffusion_dtype=SimpleNamespace(name="float16"),
-        attention_roles=("controlnet",),
-        attention_requires_route=True,
+        family=SimpleNamespace(
+            engine=SimpleNamespace(
+                attention_backend=lambda role: "unet" if role == "controlnet" else None,
+                attention_requires_route=True,
+            )
+        ),
     )
     plan = SimpleNamespace(component=SimpleNamespace(config=object()))
     registry = SimpleNamespace(
@@ -29576,6 +29648,7 @@ def test_chroma_builders_select_device_before_component_loading(
         ("diffusion", selected),
         ("diffusion", selected),
     ]
+    assert [call["attention_backend"] for call in load_calls] == ["t5", "flux", "flux"]
     assert enrollment_calls[0]["load_device"] == selected
     if outcome != "gate-fallback":
         assert all(

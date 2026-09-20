@@ -422,6 +422,7 @@ def test_single_model_load_reads_only_one_role_artifact(
             asset=_asset(path, asset_digest, len(payload)),
             role="fl2va-dit",
             expected_identity="wrong",
+            attention_backend="flux",
         )
     assert loaded == []
     model = assembly.load_minimax_h3_model(
@@ -429,6 +430,7 @@ def test_single_model_load_reads_only_one_role_artifact(
         asset=_asset(path, asset_digest, len(payload)),
         role="fl2va-dit",
         expected_identity=expected_identity,
+        attention_backend="flux",
     )
 
     assert model.model_role == "fl2va-dit"
@@ -458,6 +460,7 @@ def test_single_model_load_rejects_unverified_asset_protocol(tmp_path: Path) -> 
             asset=cast("AssetRef", UnverifiedAsset()),
             role="fl2va-dit",
             expected_identity="identity",
+            attention_backend="flux",
         )
 
 
@@ -1036,6 +1039,7 @@ def test_single_model_load_threads_attention_selection_and_identity(
             expected_identity=unbound_identity,
             attention_policy="sdpa",
             attention_route_token=token,
+            attention_backend="flux",
         )
     model = assembly.load_minimax_h3_model(
         path,
@@ -1044,6 +1048,7 @@ def test_single_model_load_threads_attention_selection_and_identity(
         expected_identity=bound_identity,
         attention_policy="sdpa",
         attention_route_token=token,
+        attention_backend="flux",
     )
     assert model.runtime_identity == bound_identity
     assert len(selections) == 1

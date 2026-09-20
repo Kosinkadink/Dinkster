@@ -2400,6 +2400,7 @@ def assemble_sdxl_controlnet_union(
     controlnet_dtype: torch.dtype = torch.float16,
     attention_policy: AttentionPolicy = "auto",
     attention_route_token: AttentionRouteToken | None = None,
+    attention_backend: AttentionRole,
 ) -> AssembledSDXLControlNetUnion:
     """Strict-load one planned xinsir SDXL ControlNet Union on CPU."""
     if not controlnet_dtype.is_floating_point:
@@ -2407,7 +2408,7 @@ def assemble_sdxl_controlnet_union(
     attention_kernels, _ = _select_attention_runtime(attention_policy, attention_route_token)
     model = _load_component(
         plan.controlnet_union,
-        partial(SDXLControlNetUnion, attention_kernel=attention_kernels["unet"]),
+        partial(SDXLControlNetUnion, attention_kernel=attention_kernels[attention_backend]),
         compute_dtype=controlnet_dtype,
         fp8_matmul=False,
     )

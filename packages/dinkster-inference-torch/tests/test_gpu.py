@@ -6532,7 +6532,7 @@ def test_real_sdxl_controlnet_union_matches_acceptance_golden_on_cuda() -> None:
     plan = plan_sdxl_controlnet_union(
         load_safetensors_header(_REAL_SDXL_CONTROLNET_UNION), asset_digest=digest
     )
-    assembled = assemble_sdxl_controlnet_union(plan)
+    assembled = assemble_sdxl_controlnet_union(plan, attention_backend="unet")
     device = torch.device("cuda:0")
     assembled.controlnet_union.to(device)
     generator = torch.Generator(device=device).manual_seed(golden["workload"]["seed"])

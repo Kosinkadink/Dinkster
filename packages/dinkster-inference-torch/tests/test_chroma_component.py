@@ -107,6 +107,10 @@ def test_component_loader_preserves_identity_and_pinned_configuration(
         expected_role=cast("object", role),  # pyright: ignore[reportArgumentType]
         expected_identity=expected_identity,
         compute_dtype=torch.bfloat16,
+        attention_backend=cast(
+            "object",
+            {"diffusion": "flux", "t5xxl": "t5", "vae": "vae"}[role],
+        ),  # pyright: ignore[reportArgumentType]
     )
 
     assert loaded.role == role
@@ -218,6 +222,10 @@ def test_component_loader_binds_only_checkpoint_declared_diffusion_fp8(
         expected_identity=expected_identity,
         compute_dtype=torch.bfloat16,
         load_device=load_device,
+        attention_backend=cast(
+            "object",
+            {"diffusion": "flux", "t5xxl": "t5", "vae": "vae"}[role],
+        ),  # pyright: ignore[reportArgumentType]
     )
 
     assert loaded.module is module
@@ -275,4 +283,5 @@ def test_component_loader_refuses_identity_mismatch_before_payload_load(
             expected_role="diffusion",
             expected_identity="native:dinkster.chroma:" + "c" * 64,
             compute_dtype=torch.bfloat16,
+            attention_backend="flux",
         )
