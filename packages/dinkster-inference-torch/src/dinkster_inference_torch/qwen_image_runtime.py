@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -17,35 +17,26 @@ from dinkster_inference import (
     ConditioningChannel,
     ConditioningRecord,
     ConditioningSet,
-    ContextWindowsSpec,
-    CustomSamplingRequest,
     CustomSamplingResult,
     FlowSigmas,
     FluxFlowSigmas,
-    InpaintConditioning,
     ModelFamily,
-    Parameterization,
     PayloadDescriptor,
     PayloadReference,
     PercentRange,
     Registry,
     SamplerDescriptor,
     SamplingCancelled,
-    SamplingStateCallback,
     SchedulerDescriptor,
-    StepCallback,
     encode_conditioning_carrier,
     load_qwen_bpe,
     make_conditioning_carrier,
     require_realized_sampling_step,
-    sampling_execution_context,
 )
 from dinkster_inference.qwen_image_text import format_qwen_image_prompt
 
-from .denoise import prepare_denoise_mask, run_sampler_engine
 from .guidance import (
     ConditioningBatch,
-    ConditioningEvaluation,
 )
 from .guidance import (
     evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
@@ -71,13 +62,13 @@ from .sampling_execution import (
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    custom_denoised_callback,
-    guided_denoiser,
-    narrow_single_stream_custom_sampling,
-    resolve_custom_sampling_request,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
+    SamplingExecutionInputs,
+    SamplingExecutionRegistration,
+    SingleStreamLatentAdapter,
+    sampling_execution,
 )
 from .sampling_runtime import FlowSamplingRuntime
 from .schedules import (
@@ -269,6 +260,7 @@ class _QwenImageDenoiser:
         )
         self._control_strength = 0.0
         self._diffsynth = tuple(diffsynth)
+        self.evaluator_identity = "dinkster.qwen-image.conditioning.v1"
 
     def set_control_strength(self, strength: float) -> None:
         if not math.isfinite(strength) or strength < 0.0:
@@ -280,6 +272,7 @@ class _QwenImageDenoiser:
     @staticmethod
     def prepare_conditioning(
         conditioning: object,
+        _role: object = None,
     ) -> QwenImageConditioning:
         if type(conditioning) is QwenImageConditioning:
             return conditioning
@@ -457,11 +450,201 @@ class _QwenImageDenoiser:
         return flow_input - output.to(torch.float32) * batch.sigma
 
 
+@dataclass(frozen=True)
+class _QwenImageLatentAdapter:
+    _single_stream: SingleStreamLatentAdapter = SingleStreamLatentAdapter(lambda _latent: None)
+
+    def prepare(
+        self,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs:
+        inputs = self._single_stream.prepare(
+            family,
+            latent=latent,
+            noise=noise,
+            cond=cond,
+            cfg=cfg,
+            denoise_mask=denoise_mask,
+            context=context,
+            error=error,
+        )
+        if type(inputs.cond) is not QwenImageConditioning:
+            raise QwenImageRuntimeError("Qwen Image requires exact QwenImageConditioning")
+        return inputs
+
+    def finish(
+        self,
+        inputs: SamplingExecutionInputs,
+        output: torch.Tensor,
+        denoised: torch.Tensor | None,
+    ) -> CustomSamplingResult[torch.Tensor]:
+        return CustomSamplingResult(output, denoised)
+
+
+def _qwen_image_device(runtime: object) -> torch.device:
+    return cast("QwenImageRuntime", runtime)._diffusion_device()  # pyright: ignore[reportPrivateUsage]
+
+
+def _qwen_image_compute_dtype(runtime: object) -> torch.dtype:
+    owner = cast("QwenImageRuntime", runtime)
+    return owner.assembled.compute_dtype("diffusion") or torch.bfloat16
+
+
+def _qwen_image_denoiser(
+    runtime: object,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserExecution:
+    owner = cast("QwenImageRuntime", runtime)
+    inputs = context.inputs
+    sampler = context.sampler
+    schedule = context.schedule
+    if inputs is None or sampler is None or schedule is None:
+        raise AssertionError("Qwen Image sampling adapter requires resolved execution context")
+    config = owner.assembled.diffusion.config
+    latent = inputs.latent
+    if (
+        latent.ndim != 5
+        or latent.shape[1] != 16
+        or latent.shape[2] < 1
+        or (not config.use_additional_t_cond and latent.shape[2] != 1)
+    ):
+        raise QwenImageRuntimeError(
+            "Qwen Image latent must have shape [batch,16,1,height,width], except that "
+            "the Layered profile accepts a positive layer extent"
+        )
+    options = dict(context.options)
+    control = options.pop("control", None)
+    diffsynth = options.pop("diffsynth", ())
+    if options:
+        names = ", ".join(sorted(options))
+        raise QwenImageRuntimeError(f"Qwen Image sampling does not accept adapter options: {names}")
+    if control is not None and type(control) is not QwenImageControlConditioning:
+        raise TypeError("control must be an exact QwenImageControlConditioning or None")
+    if not isinstance(diffsynth, Sequence):
+        raise TypeError("diffsynth must be a sequence")
+    admitted_control = (
+        None if control is None else snapshot_qwen_image_control_conditioning(control)
+    )
+    control_strengths: tuple[float, ...] | None = None
+    space = owner.sampling_sigma_space()
+    if admitted_control is not None and len(schedule.sigmas) > 1:
+        start_sigma = space.percent_to_sigma(admitted_control.application.window.start_percent)
+        end_sigma = space.percent_to_sigma(admitted_control.application.window.end_percent)
+        control_strengths = tuple(
+            admitted_control.application.strength if end_sigma <= sigma <= start_sigma else 0.0
+            for sigma in schedule.sigmas[:-1]
+        )
+        if not sampler.supports_step_begin and any(
+            value != control_strengths[0] for value in control_strengths[1:]
+        ):
+            raise QwenImageRuntimeError(
+                f"sampler {sampler.id} requires constant Qwen Image control strength"
+            )
+    target = latent.to(_qwen_image_device(owner))
+    prepared_diffsynth: list[QwenImageDiffSynthExecution] = []
+    identity_lines: list[str] = []
+    for index, value in enumerate(diffsynth):
+        if type(value) is QwenImageDiffSynthConditioning:
+            admitted = snapshot_qwen_image_diffsynth_conditioning(value)
+            prepared_diffsynth.append(
+                owner._prepare_diffsynth(  # pyright: ignore[reportPrivateUsage]
+                    target, admitted, compute_dtype
+                )
+            )
+            identity_lines.append(
+                f"{index}:kind={admitted.kind}:model={admitted.model_digest}:"
+                f"content={admitted.content_digest}:mask={admitted.mask_digest}:"
+                f"strength={admitted.strength.hex()}"
+            )
+        elif type(value) is QwenImageDiffSynthExecution:
+            if value.condition.shape[0] != latent.shape[0]:
+                raise QwenImageRuntimeError(
+                    "Qwen Image DiffSynth condition batch must match the latent"
+                )
+            prepared = QwenImageDiffSynthExecution(
+                value.model,
+                value.condition.detach().clone(),
+                value.strength,
+                value.model_digest,
+            )
+            prepared_diffsynth.append(prepared)
+            identity_lines.append(
+                f"{index}:kind=prepared:model={prepared.model_digest}:"
+                f"condition={qwen_image_control_hint_digest(prepared.condition)}:"
+                f"strength={prepared.strength.hex()}"
+            )
+        else:
+            raise TypeError("Qwen Image DiffSynth input must be exact conditioning or execution")
+    evaluator = _QwenImageDenoiser(
+        owner.assembled.diffusion,
+        _not_cancelled,
+        compute_dtype,
+        control=admitted_control,
+        diffsynth=tuple(prepared_diffsynth),
+    )
+    if control_strengths is not None and not sampler.supports_step_begin:
+        evaluator.set_control_strength(control_strengths[0])
+    identity = "dinkster.qwen-image.conditioning.v1"
+    if admitted_control is not None:
+        control_identity = "\n".join(
+            (
+                f"kind={admitted_control.kind}",
+                f"model={admitted_control.model_digest}",
+                f"hint={admitted_control.hint_digest}",
+                f"strength={admitted_control.application.strength.hex()}",
+                f"start={admitted_control.application.window.start_percent.hex()}",
+                f"end={admitted_control.application.window.end_percent.hex()}",
+                "",
+            )
+        )
+        identity += ":control=" + hashlib.sha256(control_identity.encode()).hexdigest()
+    if prepared_diffsynth:
+        identity += ":diffsynth=" + hashlib.sha256("\n".join(identity_lines).encode()).hexdigest()
+    evaluator.evaluator_identity = identity
+    on_step_begin = None
+    if control_strengths is not None and sampler.supports_step_begin:
+
+        def apply_control_step(index: int) -> None:
+            require_realized_sampling_step(
+                index,
+                float(schedule.sigmas[index]),
+                index / (len(schedule.sigmas) - 2) if len(schedule.sigmas) > 2 else 0.0,
+            )
+            evaluator.set_control_strength(control_strengths[index])
+
+        on_step_begin = apply_control_step
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", evaluator),
+        sampling=replace(
+            owner.family.sampling,
+            sigma_min=space.sigma_min,
+            sigma_max=space.sigma_max,
+        ),
+        on_step_begin=on_step_begin,
+    )
+
+
 class QwenImageRuntime(FlowSamplingRuntime):
     """Native Qwen Image family runtime over generic assembly plans."""
 
     sampling_error = QwenImageRuntimeError
     supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=_QwenImageLatentAdapter(),
+        denoiser=_qwen_image_denoiser,
+        device=_qwen_image_device,
+        compute_dtype=_qwen_image_compute_dtype,
+        flow=True,
+    )
 
     def __init__(
         self,
@@ -476,6 +659,7 @@ class QwenImageRuntime(FlowSamplingRuntime):
         self.assembled = assembled
         self._runtime_identity = runtime_identity
         self._samplers = torch_sampler_registry(sampler_registry)
+        self._guidance = None
         if scheduler_registry is None:
             self._schedulers = torch_scheduler_registry()
         else:
@@ -555,216 +739,7 @@ class QwenImageRuntime(FlowSamplingRuntime):
     def _sampling_sigma_space(self, sampling_shift: float | None) -> FlowSigmas | FluxFlowSigmas:
         return self._sigma_space()
 
-    def sample_custom(
-        self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue = None,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: float | None = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        control: QwenImageControlConditioning | None = None,
-        diffsynth: Sequence[QwenImageDiffSynthConditioning | QwenImageDiffSynthExecution] = (),
-        compute_dtype: torch.dtype | None = None,
-        capture_denoised: bool = True,
-    ) -> CustomSamplingResult[torch.Tensor]:
-        latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
-            self.family.id,
-            latent=latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            denoise_mask=denoise_mask,
-            error=QwenImageRuntimeError,
-        )
-        if type(cond) is not QwenImageConditioning:
-            raise QwenImageRuntimeError("Qwen Image requires exact QwenImageConditioning")
-        typed_cond = cond
-        config = self.assembled.diffusion.config
-        if (
-            latent.ndim != 5
-            or latent.shape[1] != 16
-            or latent.shape[2] < 1
-            or (not config.use_additional_t_cond and latent.shape[2] != 1)
-        ):
-            raise QwenImageRuntimeError(
-                "Qwen Image latent must have shape [batch,16,1,height,width], except that "
-                "the Layered profile accepts a positive layer extent"
-            )
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=QwenImageRuntimeError
-        )
-        latent = latent.to(self._diffusion_device())
-        space = self._sigma_space()
-        schedule = build_custom_sampling_schedule(request.sigmas, space, sampler, flow=True)
-        step_noise = brownian_step_noise(sampler, schedule, latent, seed=seed)
-        if compute_dtype is None:
-            compute_dtype = self.assembled.compute_dtype("diffusion") or torch.bfloat16
-        admitted_control = None
-        control_strengths: tuple[float, ...] | None = None
-        if control is not None:
-            admitted_control = snapshot_qwen_image_control_conditioning(control)
-            if len(schedule.sigmas) > 1:
-                start_sigma = space.percent_to_sigma(
-                    admitted_control.application.window.start_percent
-                )
-                end_sigma = space.percent_to_sigma(admitted_control.application.window.end_percent)
-                control_strengths = tuple(
-                    admitted_control.application.strength
-                    if end_sigma <= sigma <= start_sigma
-                    else 0.0
-                    for sigma in schedule.sigmas[:-1]
-                )
-                if sampler.id in {"dinkster.dpm_fast", "dinkster.dpm_adaptive"} and any(
-                    value != control_strengths[0] for value in control_strengths[1:]
-                ):
-                    raise QwenImageRuntimeError(
-                        f"sampler {sampler.id} requires constant Qwen Image control strength"
-                    )
-        prepared_diffsynth: list[QwenImageDiffSynthExecution] = []
-        diffsynth_identity_lines: list[str] = []
-        for index, value in enumerate(diffsynth):
-            if type(value) is QwenImageDiffSynthConditioning:
-                admitted = snapshot_qwen_image_diffsynth_conditioning(value)
-                prepared_diffsynth.append(self._prepare_diffsynth(latent, admitted, compute_dtype))
-                diffsynth_identity_lines.append(
-                    f"{index}:kind={admitted.kind}:model={admitted.model_digest}:"
-                    f"content={admitted.content_digest}:mask={admitted.mask_digest}:"
-                    f"strength={admitted.strength.hex()}"
-                )
-                continue
-            if type(value) is not QwenImageDiffSynthExecution:
-                raise TypeError(
-                    "Qwen Image DiffSynth input must be exact conditioning or execution"
-                )
-            if value.condition.shape[0] != latent.shape[0]:
-                raise QwenImageRuntimeError(
-                    "Qwen Image DiffSynth condition batch must match the latent"
-                )
-            prepared = QwenImageDiffSynthExecution(
-                value.model,
-                value.condition.detach().clone(),
-                value.strength,
-                value.model_digest,
-            )
-            prepared_diffsynth.append(prepared)
-            diffsynth_identity_lines.append(
-                f"{index}:kind=prepared:model={prepared.model_digest}:"
-                f"condition={qwen_image_control_hint_digest(prepared.condition)}:"
-                f"strength={prepared.strength.hex()}"
-            )
-        admitted_diffsynth = tuple(prepared_diffsynth)
-        evaluator = _QwenImageDenoiser(
-            self.assembled.diffusion,
-            _not_cancelled,
-            compute_dtype,
-            control=admitted_control,
-            diffsynth=admitted_diffsynth,
-        )
-        if control_strengths is not None and sampler.id in {
-            "dinkster.dpm_fast",
-            "dinkster.dpm_adaptive",
-        }:
-            evaluator.set_control_strength(control_strengths[0])
-        plan = compile_guidance_plan(typed_cond, cfg, sampler, None)
-        evaluator_identity = "dinkster.qwen-image.conditioning.v1"
-        if admitted_control is not None:
-            control_identity = "\n".join(
-                (
-                    f"kind={admitted_control.kind}",
-                    f"model={admitted_control.model_digest}",
-                    f"hint={admitted_control.hint_digest}",
-                    f"strength={admitted_control.application.strength.hex()}",
-                    f"start={admitted_control.application.window.start_percent.hex()}",
-                    f"end={admitted_control.application.window.end_percent.hex()}",
-                    "",
-                )
-            )
-            evaluator_identity += (
-                ":control=" + hashlib.sha256(control_identity.encode()).hexdigest()
-            )
-        if admitted_diffsynth:
-            diffsynth_identity = "\n".join(diffsynth_identity_lines)
-            evaluator_identity += (
-                ":diffsynth=" + hashlib.sha256(diffsynth_identity.encode()).hexdigest()
-            )
-
-        def prepare(value: object, _role: object) -> QwenImageConditioning:
-            if type(value) is not QwenImageConditioning:
-                raise QwenImageRuntimeError("Qwen Image guidance lane identity changed")
-            return evaluator.prepare_conditioning(value)
-
-        report_state: SamplingStateCallback | None
-        captured: list[torch.Tensor]
-        if capture_denoised:
-            report_state, captured = custom_denoised_callback(self.family, on_state)
-        else:
-            report_state, captured = on_state, []
-        denoiser = guided_denoiser(
-            ConditioningEvaluation(
-                prepare,
-                evaluator.evaluate_conditioning,
-                evaluator.batchable,
-                evaluator.evaluate_conditioning_batch,
-                evaluator_identity=lambda _role: evaluator_identity,
-                standard_activation_memory_factor=self.family.memory_factor,
-            ),
-            input=latent,
-            executor=None,
-            plan=plan,
-            execution=sampling_execution_context(schedule.sigmas, seed, on_step, report_state),
-        )
-
-        def apply_control_step(index: int) -> None:
-            assert control_strengths is not None
-            require_realized_sampling_step(
-                index,
-                float(schedule.sigmas[index]),
-                index / (len(schedule.sigmas) - 2) if len(schedule.sigmas) > 2 else 0.0,
-            )
-            evaluator.set_control_strength(control_strengths[index])
-
-        output = run_sampler_engine(
-            denoiser,
-            request.build_solver(),
-            latent=latent,
-            noise=noise,
-            sigmas=schedule.sigmas,
-            initial_sigma=schedule.initial_sigma,
-            parameterization=Parameterization.FLOW,
-            sigma_min=space.sigma_min,
-            sigma_max=space.sigma_max,
-            process_in=lambda value: value,
-            process_out=lambda value: value,
-            seed=seed,
-            noise_kind=sampler.noise,
-            noise_sampler=step_noise,
-            percent_to_sigma=space.percent_to_sigma,
-            on_step=on_step,
-            on_step_begin=(
-                None
-                if control_strengths is None
-                or sampler.id in {"dinkster.dpm_fast", "dinkster.dpm_adaptive"}
-                else apply_control_step
-            ),
-            on_state=report_state,
-            denoise_mask=prepare_denoise_mask(denoise_mask, latent),
-        )
-        return CustomSamplingResult(output, captured[-1] if captured else None)
+    sample_custom = sampling_execution
 
     def _prepare_diffsynth(
         self,
@@ -938,6 +913,7 @@ class QwenImageDiffusionRuntime(FlowSamplingRuntime):
 
     sampling_error = QwenImageRuntimeError
     supports_denoised_capture = True
+    sampling_execution_registration = QwenImageRuntime.sampling_execution_registration
 
     def __init__(
         self,
@@ -952,6 +928,7 @@ class QwenImageDiffusionRuntime(FlowSamplingRuntime):
         self.assembled = _QwenImageDiffusionAssembly(diffusion, family, vae)
         self._runtime_identity = runtime_identity
         self._samplers = torch_sampler_registry(sampler_registry)
+        self._guidance = None
         if scheduler_registry is None:
             self._schedulers = torch_scheduler_registry()
         else:
