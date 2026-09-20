@@ -1213,7 +1213,10 @@ def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
                 shutil.copytree(module_root, namespace / module_root.name)
                 for sidecar in manifest.parent.iterdir():
                     if sidecar.is_file() and sidecar != manifest:
-                        shutil.copy2(sidecar, root / sidecar.name)
+                        target = root / sidecar.name
+                        shutil.copy2(sidecar, target)
+                        if sidecar.name.endswith("_LICENSE"):
+                            target.write_bytes(target.read_bytes().replace(b"\r\n", b"\n"))
             else:
                 shutil.copytree(module_root, root / module_root.name)
             for filename in _PACK_ARTIFACT_SIDECARS:
