@@ -29,9 +29,9 @@ from typing import Any
 import torch
 
 if __package__:
-    from .golden_platform import platform_variant_output_path
+    from .golden_platform import runtime_variant_output_path
 else:
-    from golden_platform import platform_variant_output_path
+    from golden_platform import runtime_variant_output_path
 
 COMFY_COMMIT = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
 ARTIFACT_REPOSITORY = "Comfy-Org/Wan_2.1_ComfyUI_repackaged"
@@ -420,8 +420,7 @@ def main() -> None:
         / "wan21_pipeline_goldens.json"
     )
     runtime = f"py{platform.python_version()}-torch{torch.__version__}"
-    key = runtime if sys.platform.startswith("linux") else f"{sys.platform}-{runtime}"
-    output = platform_variant_output_path(base_output, key)
+    output = runtime_variant_output_path(base_output, runtime)
     output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(output)
 

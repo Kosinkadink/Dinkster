@@ -37,10 +37,12 @@ checkout and defaults to the sibling `dinkster-evidence` directory.
 
 Golden generators write Linux baselines to Dinkster. On other platforms they
 route variant output to the evidence layout instead of creating a sidecar in
-Dinkster. Generators that deliberately produce a platform variant on Linux do
-the same. After generating a variant, add or update its unique path/platform
-manifest entry and SHA-256 in the evidence repository. Generation fails if the
-evidence checkout or its `platform-goldens/files` layout is absent.
+Dinkster. Linux runtime-specific baselines without a platform key remain beside
+their portable baseline in Dinkster. Generators that deliberately produce a
+platform-keyed variant on Linux route it to evidence. After generating a
+variant, add or update its unique path/platform manifest entry and SHA-256 in
+the evidence repository. Generation fails if the evidence checkout or its
+`platform-goldens/files` layout is absent.
 
 ## Pull requests and full validation
 

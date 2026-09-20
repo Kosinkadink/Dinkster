@@ -141,6 +141,23 @@ def platform_variant_output_path(
     return files_root / _relative_variant_path(path, key, dinkster_root)
 
 
+def runtime_variant_output_path(
+    path: Path,
+    runtime: str,
+    *,
+    dinkster_root: Path = DINKSTER_ROOT,
+    evidence_root: Path = EVIDENCE_ROOT,
+) -> Path:
+    if sys.platform.startswith("linux"):
+        return dinkster_root / _relative_variant_path(path, runtime, dinkster_root)
+    return platform_variant_output_path(
+        path,
+        f"{sys.platform}-{runtime}",
+        dinkster_root=dinkster_root,
+        evidence_root=evidence_root,
+    )
+
+
 def platform_golden_path(
     path: Path,
     torch_version: str,

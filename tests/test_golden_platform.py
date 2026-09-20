@@ -14,6 +14,7 @@ from tools.golden_platform import (
     fetch_platform_golden,
     platform_golden_path,
     platform_variant_output_path,
+    runtime_variant_output_path,
 )
 
 
@@ -114,6 +115,43 @@ def test_generator_uses_baseline_on_linux_and_evidence_on_other_platforms(
         dinkster_root=dinkster_root,
         evidence_root=evidence_root,
     ).is_relative_to(evidence_root / "platform-goldens" / "files")
+
+
+def test_runtime_generator_keeps_linux_runtime_baseline_in_dinkster(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dinkster_root = tmp_path / "Dinkster"
+    baseline = dinkster_root / "tests" / "goldens" / "sample.json"
+    monkeypatch.setattr("tools.golden_platform.sys.platform", "linux")
+    assert runtime_variant_output_path(
+        baseline,
+        "py3.12.3-torch2.13.0+cpu",
+        dinkster_root=dinkster_root,
+        evidence_root=tmp_path / "missing-evidence",
+    ) == baseline.with_name("sample.py3.12.3-torch2.13.0+cpu.json")
+
+
+def test_runtime_generator_writes_non_linux_variant_to_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dinkster_root = tmp_path / "Dinkster"
+    baseline = dinkster_root / "tests" / "goldens" / "sample.json"
+    evidence_root = tmp_path / "dinkster-evidence"
+    (evidence_root / "platform-goldens" / "files").mkdir(parents=True)
+    monkeypatch.setattr("tools.golden_platform.sys.platform", "win32")
+    assert runtime_variant_output_path(
+        baseline,
+        "py3.12.14-torch2.13.0+cpu",
+        dinkster_root=dinkster_root,
+        evidence_root=evidence_root,
+    ) == (
+        evidence_root
+        / "platform-goldens"
+        / "files"
+        / "tests"
+        / "goldens"
+        / "sample.win32-py3.12.14-torch2.13.0+cpu.json"
+    )
 
 
 def test_fetches_verified_variant_and_reuses_cache(tmp_path: Path) -> None:
