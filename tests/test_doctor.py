@@ -113,6 +113,49 @@ def test_healthy_pack_is_healthy(tmp_path: Path) -> None:
     assert codes(report) <= {"import.slow"}, render_text(report)
 
 
+def test_doctor_warns_for_extension_declarations_without_runtime_consumers(
+    tmp_path: Path,
+) -> None:
+    manifest_text = (
+        HEALTHY_MANIFEST
+        + """\
+
+[pack.extension]
+privileges = ["frontend"]
+capabilities = ["filesystem"]
+
+[[pack.extension.frontend-modules]]
+id = "healthy-pack.frontend"
+module = "./frontend.js"
+privileges = ["app-workflow"]
+contributions = [
+  { id = "healthy-pack.editor", kind = "editor" },
+  { id = "healthy-pack.binding", kind = "editorBinding" },
+  { id = "healthy-pack.panel", kind = "panel" },
+  { id = "healthy-pack.observer", kind = "workflowObserver" },
+]
+"""
+    )
+    manifest_path = write_pack(
+        tmp_path / "unconsumed", manifest_text, "healthy_nodes", HEALTHY_NODES
+    )
+
+    report = diagnose_static(manifest_path.parent, load_manifest(manifest_path))
+
+    by_code = {finding.code: finding for finding in report.findings}
+    contribution = by_code["extension.contribution-unconsumed"]
+    assert contribution.severity == "warning"
+    assert "pack 'healthy-pack'" in contribution.message
+    assert "'workflowObserver'" in contribution.message
+    assert (
+        sum(finding.code == "extension.contribution-unconsumed" for finding in report.findings) == 1
+    )
+    capability = by_code["extension.capability-unconsumed"]
+    assert capability.severity == "warning"
+    assert "pack 'healthy-pack'" in capability.message
+    assert "'filesystem'" in capability.message
+
+
 def test_pack_nested_in_distribution_uses_shared_source_root(tmp_path: Path) -> None:
     distribution = tmp_path / "distribution"
     manifest = distribution / "healthy_pack" / "dinkster-pack.toml"

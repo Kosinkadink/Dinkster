@@ -56,6 +56,9 @@ def test_frontend_contribution_vocabulary_is_the_supported_set() -> None:
         "workflowObserver",
         "eventConsumer",
         "workflowImporter",
+        "editor",
+        "editorBinding",
+        "panel",
     )
 
 
