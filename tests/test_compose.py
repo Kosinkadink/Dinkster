@@ -384,6 +384,39 @@ def test_comfy_requirements_probe_executes_imports(tmp_path: Path) -> None:
     assert "current Python" in str(caught.value)
 
 
+def test_comfy_requirements_probe_preserves_backslashes_in_interpreter_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    (root / "requirements.txt").write_text("einops\n")
+    interpreter = r"C:\actions-runners\Dinkster\_work\Dinkster\.venv\Scripts\python.exe"
+    monkeypatch.setattr(
+        comfy_compose.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout=json.dumps({"missing": "einops"}),
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(CompositionError) as caught:
+        comfy_compose._probe_comfy_requirements(
+            root,
+            comfy_compose._ComfyPythonSelection(interpreter, "current Python"),
+        )
+
+    assert str(caught.value) == (
+        "ComfyUI requirement module 'einops' is unavailable in interpreter "
+        f"'{interpreter}' selected by current Python"
+    )
+    assert r"\\" not in str(caught.value)
+
+
 @pytest.mark.parametrize("stderr", ["No module named 'blake3'", "broken native extension"])
 def test_comfy_blake3_preflight_refuses_missing_or_broken_import(
     stderr: str,
