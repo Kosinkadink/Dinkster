@@ -331,7 +331,7 @@ class GlobalTransferController:
                 )
                 local_path = mapping.require_current()
                 derived = derive_p2p_descriptor(local_path)
-            except AssetError as error:
+            except (AssetError, OSError) as error:
                 raise GlobalTransferError(
                     f"seed mapping is not safe and current: {error}"
                 ) from error
@@ -365,7 +365,7 @@ class GlobalTransferController:
         if mapping is not None:
             try:
                 mapping.require_current()
-            except AssetError as error:
+            except (AssetError, OSError) as error:
                 raise GlobalTransferError(
                     f"seed mapping is not safe and current: {error}"
                 ) from error

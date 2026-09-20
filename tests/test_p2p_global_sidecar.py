@@ -385,6 +385,61 @@ def test_global_seed_rechecks_mapping_at_final_session_admission(
         runtime.close()
 
 
+def test_global_seed_surfaces_unavailable_change_token_at_final_admission(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    lease = _seed_lease(tmp_path)
+    calls = 0
+    original_require_current = P2PLocalFileMapping.require_current
+
+    def unavailable_at_final_admission(mapping: P2PLocalFileMapping) -> Path:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise OSError("USN change token unavailable")
+        return original_require_current(mapping)
+
+    monkeypatch.setattr(P2PLocalFileMapping, "require_current", unavailable_at_final_admission)
+    runtime = SidecarRuntime(
+        state_root=tmp_path / "state",
+        vault_root=tmp_path / "vault",
+        installation_root=None,
+        settings=_global_settings(),
+    )
+    try:
+        with pytest.raises(
+            SidecarError,
+            match="seed mapping is not safe and current: USN change token unavailable",
+        ):
+            _grant_global(runtime, lease)
+        recovery = cast(dict[str, object], runtime.status()["recovery"])
+        assert recovery["state"] == "global-session-closed"
+        assert recovery["error"] == (
+            "seed mapping is not safe and current: USN change token unavailable"
+        )
+    finally:
+        runtime.close()
+
+
+def test_global_seed_manager_surfaces_unavailable_change_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    lease = _seed_lease(tmp_path)
+    manager = P2PSidecarManager(vault_root=tmp_path / "vault")
+
+    def fail_mapping(*_args: object, **_kwargs: object) -> P2PLocalFileMapping:
+        raise OSError("USN change token unavailable")
+
+    monkeypatch.setattr(AssetVault, "verify_p2p_local_file", fail_mapping)
+    with pytest.raises(
+        P2PManagerError,
+        match="global seed mapping is not safe and current: USN change token unavailable",
+    ):
+        cast(Any, manager)._verify_global_seed(lease)
+
+
 def test_six_hour_limit_and_durable_ratio_budget_stop_global_announcement(tmp_path: Path) -> None:
     overlong = _seed_lease(tmp_path, expires_at=time.time() + MAX_GLOBAL_LEASE_SECONDS + 60)
     rejecting = SidecarRuntime(
