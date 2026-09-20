@@ -723,15 +723,17 @@ def run_denoise(
     if process_in is None:
         assert latent_descriptor is not None
 
-        def process_in(value: torch.Tensor) -> torch.Tensor:
+        def default_process_in(value: torch.Tensor) -> torch.Tensor:
             return latent_process_in(value, latent_descriptor)
 
+        process_in = default_process_in
     if process_out is None:
         assert latent_descriptor is not None
 
-        def process_out(value: torch.Tensor) -> torch.Tensor:
+        def default_process_out(value: torch.Tensor) -> torch.Tensor:
             return latent_process_out(value, latent_descriptor)
 
+        process_out = default_process_out
     if unpack_state is None:
         unpack_state = process_out
     return run_sampler_engine(
