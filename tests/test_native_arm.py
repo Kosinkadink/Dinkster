@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
 import importlib
@@ -16893,7 +16894,7 @@ def test_generation_text_node_maps_ordered_sampling_and_cancellation(
             fake_torch_inference if name == "dinkster_inference_torch" else real_import(name)
         ),
     )
-    monkeypatch.setattr(arm, "_anima_component_handle", lambda value, *_args: Handle())
+    monkeypatch.setattr(arm, "load_registered_component", lambda value, *_args: Handle())
     inference = real_import("dinkster_inference")
     monkeypatch.setattr(inference, "load_qwen_bpe", lambda: tokenizer)
 
@@ -17012,7 +17013,14 @@ def test_generation_clip_text_encode_binds_qwen_component_identity(
 
     class Handle:
         resource_identity = identity
-        recipe = None
+        recipe = SimpleNamespace(
+            family_id="dinkster.qwen_image",
+            sources=(SimpleNamespace(role="qwen2_5_vl_7b"),),
+            runtime_identity=identity,
+        )
+
+        def require_active(self) -> None:
+            pass
 
         @property
         def component(self) -> object:
@@ -17047,7 +17055,6 @@ def test_generation_clip_text_encode_binds_qwen_component_identity(
         ),
     )
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_qwen_image_component_handle", lambda value, *_args: value)
     monkeypatch.setattr(arm, "_torch", FakeTorch)
 
     result = arm.GenerationClipTextEncode.execute(text="a lighthouse", clip=Handle())
@@ -17335,7 +17342,7 @@ def test_generation_qwen_vae_uses_image_semantics_and_decodes_layers(
             return FakeTensor((latent.shape[0], 3, latent.shape[2], 16, 16), "layers")
 
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_QwenImageComponentCodec", Codec)
+    monkeypatch.setattr(arm, "_native_component_codec", lambda value: Codec(value))
     monkeypatch.setattr(arm, "_torch", lambda: torch)
     handle = Handle()
 
@@ -17449,7 +17456,7 @@ def test_generation_vae_decode_preserves_descriptor_owned_mask_channel(
             return FakeTensor((latent.shape[0], 1, latent.shape[2], 16, 16), "mask")
 
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_QwenImageComponentCodec", Codec)
+    monkeypatch.setattr(arm, "_native_component_codec", lambda value: Codec(value))
     monkeypatch.setattr(arm, "_torch", FakeTorch)
 
     output = arm.GenerationVAEDecode.execute(
@@ -17487,7 +17494,7 @@ def test_generation_vae_decode_unwraps_only_one_video_stream(
             return FakeTensor((1, 3, 1, 16, 16), "decoded")
 
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_QwenImageComponentCodec", Codec)
+    monkeypatch.setattr(arm, "_native_component_codec", lambda value: Codec(value))
     monkeypatch.setattr(arm, "_torch", FakeTorch)
     video = FakeTensor((1, 16, 1, 2, 2), "video")
 
@@ -17559,7 +17566,7 @@ def test_generation_tiled_vae_decode_matches_comfy_video_tile_conversion(
             return content
 
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_LTXComponentCodec", Codec)
+    monkeypatch.setattr(arm, "_native_component_codec", lambda value: Codec(value))
     monkeypatch.setattr(arm, "_torch", FakeTorch)
     latent = FakeTensor((1, 128, 16, 22, 40), "latent")
 
@@ -18102,6 +18109,7 @@ def test_flux2_component_handle_validates_role_binding_and_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     arm = _native_arm()
+    load_component = importlib.import_module("dinkster_native.families.flux2").load_component
 
     class Handle:
         def __init__(
@@ -18129,27 +18137,26 @@ def test_flux2_component_handle_validates_role_binding_and_identity(
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
 
     text = Handle("dinkster.flux2_klein_4b", "qwen3_4b")
-    assert arm._flux2_component_handle(text, "clip", None) is text
+    assert load_component(text, "clip") is text
     vae = Handle("dinkster.flux2", "vae")
-    assert arm._flux2_component_handle(vae, "vae", "vae") is vae
-    with pytest.raises(TypeError, match="must be a native Flux2 text component"):
-        arm._flux2_component_handle(Handle("dinkster.flux2_klein_4b", "qwen3_8b"), "clip", None)
-    with pytest.raises(TypeError, match="must be a native Flux2 vae component"):
-        arm._flux2_component_handle(Handle("dinkster.flux2_klein_4b", "vae"), "vae", "vae")
-    with pytest.raises(TypeError, match="must be a native Flux2 text component"):
-        arm._flux2_component_handle(Handle("dinkster.flux2", "vae"), "clip", None)
-    with pytest.raises(TypeError, match="must be a native Flux2 text component"):
-        arm._flux2_component_handle(
+    assert load_component(vae, "vae", "vae") is vae
+    with pytest.raises(TypeError, match="must be a native"):
+        load_component(Handle("dinkster.flux2_klein_4b", "qwen3_8b"), "clip")
+    with pytest.raises(TypeError, match="must be a native"):
+        load_component(Handle("dinkster.flux2_klein_4b", "vae"), "vae", "vae")
+    with pytest.raises(TypeError, match="must be a native"):
+        load_component(Handle("dinkster.flux2", "vae"), "clip", "qwen3_4b")
+    with pytest.raises(TypeError, match="must be a native"):
+        load_component(
             Handle(
                 "dinkster.flux2_klein_4b",
                 "qwen3_4b",
                 recipe_identity="native:dinkster.flux2_klein_4b:" + "9" * 64,
             ),
             "clip",
-            None,
         )
-    with pytest.raises(TypeError, match="must be a native Flux2 text component"):
-        arm._flux2_component_handle(object(), "clip", None)
+    with pytest.raises(TypeError, match="must be a native component"):
+        load_component(object(), "clip")
 
 
 def test_generation_sampler_preserves_bound_flux2_conditioning_for_sampler_composition(
@@ -18621,7 +18628,11 @@ def test_ltx_components_validate_binding_before_access(
                 max_seconds=4.0,
             )
     else:
-        consume = arm._LTXComponentCodec if role == "vae" else arm._ltxav_audio_codec
+        consume = (
+            importlib.import_module("dinkster_native.families.ltx").CodecAdapter
+            if role == "vae"
+            else arm._ltxav_audio_codec
+        )
     with pytest.raises((TypeError, ValueError), match="source|identity|digest"):
         consume(handle)
 
@@ -19776,7 +19787,14 @@ def test_generation_clip_text_encode_binds_ltxv_component_identity(
 
     class Handle:
         resource_identity = identity
-        recipe = SimpleNamespace(family_id="dinkster.ltxv")
+        recipe = SimpleNamespace(
+            family_id="dinkster.ltxv",
+            sources=(SimpleNamespace(role="t5xxl"),),
+            runtime_identity=identity,
+        )
+
+        def require_active(self) -> None:
+            pass
 
         @property
         def component(self) -> object:
@@ -19817,7 +19835,6 @@ def test_generation_clip_text_encode_binds_ltxv_component_identity(
         ),
     )
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_ltxv_component_handle", lambda value, *_args: value)
     monkeypatch.setattr(arm, "_torch", FakeTorch)
 
     selected = arm.GenerationT5TokenizerOptions.execute(
@@ -19860,8 +19877,15 @@ def test_lumina2_prompt_node_encodes_and_binds_component_identity(
 
     class Handle:
         resource_identity = identity
-        recipe = SimpleNamespace(family_id=LUMINA2_CONFIG.family_id)
+        recipe = SimpleNamespace(
+            family_id=LUMINA2_CONFIG.family_id,
+            runtime_identity=identity,
+            sources=(SimpleNamespace(role="gemma2_2b"),),
+        )
         component = object()
+
+        def require_active(self) -> None:
+            pass
 
         @contextmanager
         def stage(self):  # noqa: ANN201
@@ -19888,7 +19912,6 @@ def test_lumina2_prompt_node_encodes_and_binds_component_identity(
         ),
     )
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_lumina2_component_handle", lambda value, *_args: value)
     monkeypatch.setattr(arm, "_torch", FakeTorch)
 
     result = arm.GenerationClipTextEncodeLumina2.execute(
@@ -21851,7 +21874,11 @@ def test_generation_clip_text_encode_binds_flux2_component_identity(
         recipe = SimpleNamespace(
             family_id="dinkster.flux2_klein_4b",
             sources=(SimpleNamespace(role="qwen3_4b"),),
+            runtime_identity=identity,
         )
+
+        def require_active(self) -> None:
+            pass
 
         @property
         def component(self) -> object:
@@ -21886,7 +21913,6 @@ def test_generation_clip_text_encode_binds_flux2_component_identity(
         ),
     )
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_flux2_component_handle", lambda value, *_args: value)
     monkeypatch.setattr(arm, "_torch", FakeTorch)
 
     result = arm.GenerationClipTextEncode.execute(text="a lighthouse", clip=Handle())
@@ -21916,7 +21942,11 @@ def test_generation_clip_text_encode_binds_anima_component_identity(
         recipe = SimpleNamespace(
             family_id="dinkster.anima",
             sources=(SimpleNamespace(role="qwen3_06b"),),
+            runtime_identity=identity,
         )
+
+        def require_active(self) -> None:
+            pass
 
         @property
         def component(self) -> object:
@@ -21951,7 +21981,6 @@ def test_generation_clip_text_encode_binds_anima_component_identity(
         ),
     )
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_anima_component_handle", lambda value, *_args: value)
     monkeypatch.setattr(arm, "_torch", FakeTorch)
 
     result = arm.GenerationClipTextEncode.execute(text="a lighthouse", clip=Handle())
@@ -22066,7 +22095,11 @@ def test_generation_clip_text_encode_binds_krea2_component_identity(
         recipe = SimpleNamespace(
             family_id="dinkster.krea2",
             sources=(SimpleNamespace(role="qwen3vl_4b"),),
+            runtime_identity=identity,
         )
+
+        def require_active(self) -> None:
+            pass
 
         @property
         def component(self) -> object:
@@ -22101,7 +22134,6 @@ def test_generation_clip_text_encode_binds_krea2_component_identity(
         ),
     )
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_krea2_component_handle", lambda value, *_args: value)
     monkeypatch.setattr(arm, "_torch", FakeTorch)
 
     result = arm.GenerationClipTextEncode.execute(text="a lighthouse", clip=Handle())
@@ -22216,7 +22248,11 @@ def test_generation_clip_text_encode_binds_ideogram4_component_identity(
         recipe = SimpleNamespace(
             family_id="dinkster.ideogram4",
             sources=(SimpleNamespace(role="qwen3vl_8b"),),
+            runtime_identity=identity,
         )
+
+        def require_active(self) -> None:
+            pass
 
         @property
         def component(self) -> object:
@@ -22251,7 +22287,6 @@ def test_generation_clip_text_encode_binds_ideogram4_component_identity(
         ),
     )
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_ideogram4_component_handle", lambda value, *_args: value)
     monkeypatch.setattr(arm, "_torch", FakeTorch)
 
     result = arm.GenerationClipTextEncode.execute(text="an enamel sign", clip=Handle())
@@ -23549,6 +23584,7 @@ def test_flux2_component_codec_pins_module_dtype_and_requires_image_batches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     arm = _native_arm()
+    family = importlib.import_module("dinkster_native.families.flux2")
     torch = FakeTorch()
 
     @dataclass
@@ -23571,7 +23607,7 @@ def test_flux2_component_codec_pins_module_dtype_and_requires_image_batches(
         require_active=lambda: None,
         stage=lambda: None,
     )
-    monkeypatch.setattr(arm, "_flux2_component_handle", lambda _value, _name, _role: handle)
+    monkeypatch.setattr(family, "load_component", lambda _value, _name, _role: handle)
     fake_torch_inference = SimpleNamespace(
         kl_codec_plugin=lambda candidate: FakePlugin(descriptor) if candidate is module else None
     )
@@ -23585,7 +23621,7 @@ def test_flux2_component_codec_pins_module_dtype_and_requires_image_batches(
     )
     monkeypatch.setattr(arm, "_torch", lambda: torch)
 
-    codec = arm._Flux2ComponentCodec(object())
+    codec = family.CodecAdapter(object())
 
     assert codec.descriptor is descriptor
     assert codec.resource_identity == handle.resource_identity
@@ -23603,6 +23639,7 @@ def test_chroma_component_codec_batches_decode_and_returns_images_on_cpu(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     arm = _native_arm()
+    family = importlib.import_module("dinkster_native.families.chroma")
     torch = FakeTorch()
     decode_batches: list[int] = []
 
@@ -23638,7 +23675,7 @@ def test_chroma_component_codec_batches_decode_and_returns_images_on_cpu(
         require_active=lambda: None,
         stage=stage,
     )
-    monkeypatch.setattr(arm, "_chroma_component_handle", lambda _value, _name, _role: handle)
+    monkeypatch.setattr(family, "load_component", lambda _value, _name, _role: handle)
     fake_torch_inference = SimpleNamespace(
         kl_codec_plugin=lambda candidate: FakePlugin(descriptor) if candidate is module else None,
         get_free_memory=lambda _device: SimpleNamespace(free_total=250),
@@ -23654,7 +23691,7 @@ def test_chroma_component_codec_batches_decode_and_returns_images_on_cpu(
     )
     monkeypatch.setattr(arm, "_torch", lambda: torch)
 
-    codec = arm._ChromaComponentCodec(object())
+    codec = family.CodecAdapter(object())
 
     decoded = codec.decode_latent(FakeTensor((5, 4, 2, 3), "latent", device="cuda:0"))
 
@@ -23669,6 +23706,7 @@ def test_kl_component_codec_retries_cuda_oom_with_its_tiled_plugin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     arm = _native_arm()
+    codec_type = importlib.import_module("dinkster_native.families.kl").CodecAdapter
     torch = FakeTorch()
     module = SimpleNamespace(parameters=lambda: iter([SimpleNamespace(dtype="bfloat16")]))
     handle = SimpleNamespace(
@@ -23704,7 +23742,7 @@ def test_kl_component_codec_retries_cuda_oom_with_its_tiled_plugin(
         lambda **kwargs: retries.append(kwargs) or "tiled",
     )
 
-    codec = arm._KLComponentCodec(handle, "Flux2")
+    codec = codec_type(handle, "Flux2")
 
     latent = FakeTensor((1, 4, 2, 3), "latent", device="cuda:0")
     assert codec.decode_latent(latent) == "tiled"
@@ -23718,6 +23756,7 @@ def test_kl_component_codec_batches_direct_calls_from_live_memory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     arm = _native_arm()
+    codec_type = importlib.import_module("dinkster_native.families.kl").CodecAdapter
     torch = FakeTorch()
     module = SimpleNamespace(parameters=lambda: iter([SimpleNamespace(dtype="float32")]))
     handle = SimpleNamespace(
@@ -23770,7 +23809,7 @@ def test_kl_component_codec_batches_direct_calls_from_live_memory(
 
     monkeypatch.setattr(arm.importlib, "import_module", import_module)
     monkeypatch.setattr(arm, "_torch", lambda: torch)
-    codec = arm._KLComponentCodec(handle, "Flux2")
+    codec = codec_type(handle, "Flux2")
 
     decoded = codec.decode_latent(FakeTensor((5, 4, 2, 3), device="cuda:0"))
     encoded = codec.encode_content(FakeTensor((5, 3, 16, 24), device="cuda:0"))
@@ -23789,6 +23828,7 @@ def test_generation_kl_component_codec_stages_with_estimated_working_memory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     arm = _native_arm()
+    codec_type = importlib.import_module("dinkster_native.families.kl").CodecAdapter
     inference = importlib.import_module("dinkster_inference")
     torch = FakeTorch()
     stages: list[tuple[int, bool]] = []
@@ -23811,7 +23851,7 @@ def test_generation_kl_component_codec_stages_with_estimated_working_memory(
         stages.append((memory_required, clear_cache_after))
         yield
 
-    codec = object.__new__(arm._KLComponentCodec)
+    codec = object.__new__(codec_type)
     codec._handle = SimpleNamespace(stage=stage)
     codec._plugin = SimpleNamespace(memory=Estimator(), compute_dtype="bfloat16")
     codec.descriptor = SimpleNamespace(kind="image", content_channels=3)
@@ -23851,6 +23891,7 @@ def test_ltxv_component_codec_uses_selected_compute_dtype_and_video_semantics(
     )
 
     arm = _native_arm()
+    codec_type = importlib.import_module("dinkster_native.families.ltx").CodecAdapter
     descriptor = LTXV_CODEC if family_id == "dinkster.ltxv" else LTXAV_VIDEO_CODEC
     registration = component_catalog.default_component_registry().get(family_id)
     assert registration is not None
@@ -23914,33 +23955,154 @@ def test_ltxv_component_codec_uses_selected_compute_dtype_and_video_semantics(
 
     module.config.spatial_ratio = 16
     with pytest.raises(TypeError, match="config.spatial_ratio"):
-        arm._LTXComponentCodec(handle)
+        codec_type(handle)
     module.config.spatial_ratio = 32
     module.decode = None
     with pytest.raises(TypeError, match="callable decode"):
-        arm._LTXComponentCodec(handle)
+        codec_type(handle)
     module.decode = lambda value: value
     descriptor = replace(descriptor, latent=replace(descriptor.latent, spatial_downscale=16))
     with pytest.raises(TypeError, match="matching declared latent.spatial_downscale"):
-        arm._LTXComponentCodec(handle)
+        codec_type(handle)
 
 
 def test_native_component_codec_dispatches_by_recipe_family(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from dinkster_inference import component_registry
+
     arm = _native_arm()
-    monkeypatch.setattr(arm, "_Flux2ComponentCodec", lambda value: ("flux2", value))
-    monkeypatch.setattr(arm, "_LTXComponentCodec", lambda value: ("ltx", value))
-    monkeypatch.setattr(arm, "_QwenImageComponentCodec", lambda value: ("qwen", value))
+    monkeypatch.setattr(
+        component_registry,
+        "execution_symbol",
+        lambda reference: lambda value: (reference, value),
+    )
+    monkeypatch.setattr(arm, "_RegisteredComponentCodec", lambda _value, codec: codec)
     flux2 = SimpleNamespace(recipe=SimpleNamespace(family_id="dinkster.flux2"))
     ltxv = SimpleNamespace(recipe=SimpleNamespace(family_id="dinkster.ltxv"))
     ltxav = SimpleNamespace(recipe=SimpleNamespace(family_id="dinkster.ltxav"))
     qwen = SimpleNamespace(recipe=SimpleNamespace(family_id="dinkster.qwen_image"))
 
-    assert arm._native_component_codec(flux2) == ("flux2", flux2)
-    assert arm._native_component_codec(ltxv) == ("ltx", ltxv)
-    assert arm._native_component_codec(ltxav) == ("ltx", ltxav)
-    assert arm._native_component_codec(qwen) == ("qwen", qwen)
+    assert arm._native_component_codec(flux2) == (
+        "dinkster_native.families.flux2:CodecAdapter",
+        flux2,
+    )
+    assert arm._native_component_codec(ltxv) == (
+        "dinkster_native.families.ltx:CodecAdapter",
+        ltxv,
+    )
+    assert arm._native_component_codec(ltxav) == (
+        "dinkster_native.families.ltx:CodecAdapter",
+        ltxav,
+    )
+    assert arm._native_component_codec(qwen) == (
+        "dinkster_native.families.qwen_image:CodecAdapter",
+        qwen,
+    )
+
+
+def test_native_arm_family_dispatch_is_registry_driven() -> None:
+    from dinkster_inference.component_catalog import default_component_registry
+
+    tree = ast.parse(
+        (REPO_ROOT / "packages/dinkster-native/src/dinkster_native/native_arm.py").read_text()
+    )
+    definitions = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    retired_codecs = {
+        "_Wan21ComponentCodec",
+        "_SeedVR2ComponentCodec",
+        "_LTXComponentCodec",
+        "_QwenImageComponentCodec",
+        "_KLComponentCodec",
+        "_MiniMaxMusic3ComponentCodec",
+        "_Flux2ComponentCodec",
+        "_Lumina2ComponentCodec",
+        "_ChromaComponentCodec",
+    }
+    retired_loaders = {
+        "_minimax_h3_component_handle",
+        "_anima_component_handle",
+        "_minimax_music3_component_handle",
+        "_lumina2_component_handle",
+        "_chroma_component_handle",
+        "_krea2_component_handle",
+        "_ideogram4_component_handle",
+        "_seedvr2_component_handle",
+        "_wan21_component_handle",
+        "_ltxv_component_handle",
+        "_ltxav_component_handle",
+        "_qwen_image_component_handle",
+        "_flux2_component_handle",
+    }
+    assert definitions.isdisjoint(retired_codecs | retired_loaders)
+
+    family_ids = {
+        family_id
+        for descriptor in default_component_registry()
+        for family_id in (descriptor.id, *descriptor.family.aliases)
+    }
+    family_gates = {
+        (node.lineno, literal.value)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Compare, ast.Dict, ast.IfExp, ast.Set))
+        for literal in ast.walk(node)
+        if isinstance(literal, ast.Constant) and literal.value in family_ids
+    }
+    assert family_gates == set()
+
+
+def test_native_family_callables_are_registered_and_resolvable() -> None:
+    from dinkster_inference.component_catalog import default_component_registry
+    from dinkster_inference.component_registry import execution_symbol
+
+    registry = default_component_registry()
+    text_families = {
+        "dinkster.anima",
+        "dinkster.chroma",
+        "dinkster.flux2_dev",
+        "dinkster.flux2_klein_4b",
+        "dinkster.flux2_klein_9b",
+        "dinkster.ideogram4",
+        "dinkster.krea2",
+        "dinkster.ltxv",
+        "dinkster.lumina2",
+        "dinkster.qwen_image",
+        "dinkster.wan21",
+    }
+    codec_families = {
+        "dinkster.chroma",
+        "dinkster.flux2",
+        "dinkster.flux2_dev",
+        "dinkster.flux2_klein_4b",
+        "dinkster.flux2_klein_9b",
+        "dinkster.ltxav",
+        "dinkster.ltxv",
+        "dinkster.lumina2",
+        "dinkster.minimax_music3",
+        "dinkster.qwen_image",
+        "dinkster.seedvr2",
+        "dinkster.wan21",
+    }
+    for family_id in text_families:
+        descriptor = registry.get(family_id)
+        assert descriptor is not None and descriptor.native_encode_text is not None
+        assert callable(execution_symbol(descriptor.native_encode_text))
+        assert descriptor.native_load is not None
+        assert callable(execution_symbol(descriptor.native_load))
+    for family_id in codec_families:
+        descriptor = registry.get(family_id)
+        assert descriptor is not None and descriptor.codec_adapter is not None
+        for reference in (
+            descriptor.codec_adapter,
+            descriptor.native_decode,
+            descriptor.native_encode,
+            descriptor.native_load,
+        ):
+            assert reference is not None and callable(execution_symbol(reference))
 
 
 @pytest.mark.parametrize("family_id", [None, "test.unknown", "test.synthetic"])
@@ -23975,6 +24137,8 @@ def test_native_component_codec_uses_new_descriptor_without_dispatch_edits(
     descriptor = replace(
         synthetic_descriptor(),
         codec_adapter="dinkster_compat_comfy.native_arm:_SyntheticComponentCodec",
+        native_decode="dinkster_native.family_registry:decode_component",
+        native_encode="dinkster_native.family_registry:encode_component",
     )
     registry = ComponentRegistry()
     registry.register(descriptor)
@@ -23983,7 +24147,7 @@ def test_native_component_codec_uses_new_descriptor_without_dispatch_edits(
         arm, "_SyntheticComponentCodec", lambda value: ("synthetic", value), raising=False
     )
     value = SimpleNamespace(recipe=SimpleNamespace(family_id=descriptor.id))
-    assert arm._native_component_codec(value) == ("synthetic", value)
+    assert arm._native_component_codec(value)._codec == ("synthetic", value)
 
 
 def test_ltxv_media_codec_accepts_component_codec_and_full_runtime(
@@ -24110,7 +24274,7 @@ def test_generation_flux2_vae_uses_image_semantics(
             return FakeTensor((latent.shape[0], 3, 16, 16), "decoded")
 
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_Flux2ComponentCodec", Codec)
+    monkeypatch.setattr(arm, "_native_component_codec", lambda value: Codec(value))
     monkeypatch.setattr(arm, "_torch", lambda: torch)
     handle = Handle()
 
@@ -26223,7 +26387,14 @@ def test_generation_clip_text_encode_binds_wan21_component_identity(
 
     class Handle:
         resource_identity = identity
-        recipe = SimpleNamespace(family_id="dinkster.wan21")
+        recipe = SimpleNamespace(
+            family_id="dinkster.wan21",
+            sources=(SimpleNamespace(role="umt5xxl"),),
+            runtime_identity=identity,
+        )
+
+        def require_active(self) -> None:
+            pass
 
         @property
         def component(self) -> object:
@@ -26264,7 +26435,6 @@ def test_generation_clip_text_encode_binds_wan21_component_identity(
         ),
     )
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_wan21_component_handle", lambda value, *_args: value)
     monkeypatch.setattr(arm, "_torch", FakeTorch)
 
     selected = arm.GenerationT5TokenizerOptions.execute(
@@ -26930,6 +27100,7 @@ def test_wan21_component_codecs_keep_distinct_vae_identity_and_ownership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     arm = _native_arm()
+    codec_type = importlib.import_module("dinkster_native.families.wan21").CodecAdapter
 
     class Handle:
         def __init__(self, digit: str) -> None:
@@ -26959,8 +27130,8 @@ def test_wan21_component_codecs_keep_distinct_vae_identity_and_ownership(
     rgb_handle = Handle("3")
     alpha_handle = Handle("4")
 
-    rgb = arm._Wan21ComponentCodec(rgb_handle)
-    alpha = arm._Wan21ComponentCodec(alpha_handle)
+    rgb = codec_type(rgb_handle)
+    alpha = codec_type(alpha_handle)
 
     assert rgb.resource_identity != alpha.resource_identity
     assert rgb._dinkster_resident_owner is rgb_handle
@@ -26973,6 +27144,7 @@ def test_wan21_component_codec_keeps_latents_raw_and_owns_content_normalization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     arm = _native_arm()
+    codec_type = importlib.import_module("dinkster_native.families.wan21").CodecAdapter
 
     class Tensor:
         def __init__(self, shape: tuple[int, ...], expression: str) -> None:
@@ -27056,7 +27228,7 @@ def test_wan21_component_codec_keeps_latents_raw_and_owns_content_normalization(
         "_torch",
         lambda: SimpleNamespace(float16="float16", bfloat16="bfloat16", float32="float32"),
     )
-    codec = arm._Wan21ComponentCodec(handle)
+    codec = codec_type(handle)
     content = Tensor((1, 3, 5, 24, 32), "content")
     latent = Tensor((1, 16, 2, 3, 4), "raw-latent")
 
@@ -27107,7 +27279,7 @@ def test_generation_wan21_component_vae_decodes_same_video_latent_independently(
             return FakeTensor((1, 3, 5, 16, 24), self.name + "-decoded")
 
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_Wan21ComponentCodec", Codec)
+    monkeypatch.setattr(arm, "_native_component_codec", lambda value: Codec(value))
     monkeypatch.setattr(arm, "_torch", lambda: torch)
     rgb = Handle("rgb")
     alpha = Handle("alpha")
@@ -29613,7 +29785,11 @@ def test_generation_clip_text_encode_binds_chroma_component_and_forwards_t5_opti
         recipe = SimpleNamespace(
             family_id="dinkster.chroma",
             sources=(SimpleNamespace(role="t5xxl"),),
+            runtime_identity=identity,
         )
+
+        def require_active(self) -> None:
+            pass
 
         @property
         def component(self) -> object:
@@ -29657,7 +29833,6 @@ def test_generation_clip_text_encode_binds_chroma_component_and_forwards_t5_opti
         ),
     )
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_chroma_component_handle", lambda value, *_args: value)
     monkeypatch.setattr(arm, "_torch", FakeTorch)
 
     selected = arm.GenerationT5TokenizerOptions.execute(

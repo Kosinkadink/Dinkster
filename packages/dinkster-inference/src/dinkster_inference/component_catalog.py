@@ -123,6 +123,10 @@ def _descriptor(
     **behavior: Any,
 ) -> ComponentDescriptor:
     roles = (behavior.get("model_role", "diffusion"), *text, *codecs, *additional_roles)
+    behavior.setdefault("native_load", _NATIVE_COMPONENT_LOAD)
+    if codecs:
+        behavior.setdefault("native_decode", _NATIVE_COMPONENT_DECODE)
+        behavior.setdefault("native_encode", _NATIVE_COMPONENT_ENCODE)
     return ComponentDescriptor(
         family=family,
         detector=_split_detector(planner, roles, family),
@@ -133,6 +137,11 @@ def _descriptor(
         runtime_class=runtime,
         **behavior,
     )
+
+
+_NATIVE_COMPONENT_LOAD = "dinkster_native.family_registry:load_component"
+_NATIVE_COMPONENT_DECODE = "dinkster_native.family_registry:decode_component"
+_NATIVE_COMPONENT_ENCODE = "dinkster_native.family_registry:encode_component"
 
 
 @cache
@@ -246,6 +255,7 @@ def default_component_registry() -> ComponentRegistry:
             runtime_factory="dinkster_inference_torch.component_runtime:h3_runtime",
             conditioning_format="carrier",
             execution_resolver="dinkster_native.native_arm:resolve_minimax_h3_component_execution",
+            native_load="dinkster_native.families.minimax_h3:load_component",
         ),
         _descriptor(
             catalog.ANIMA,
@@ -259,6 +269,7 @@ def default_component_registry() -> ComponentRegistry:
             checkpoint_loader="dinkster_inference_torch.checkpoint_runtime:assemble_component_checkpoint",
             component_realizer="dinkster_inference_torch.anima_component:realize_anima_component",
             checkpoint_text_factory="dinkster_inference_torch.anima_runtime:checkpoint_text_runtime",
+            native_encode_text="dinkster_native.families.anima:encode_text",
         ),
         ComponentDescriptor(
             catalog.LUMINA2,
@@ -271,7 +282,11 @@ def default_component_registry() -> ComponentRegistry:
             default_text_dtype=FLOAT32,
             checkpoint_loader="dinkster_inference_torch.wiring:_load_lumina2",
             checkpoint_validator=lumina2_checkpoint_assembly,
-            codec_adapter="dinkster_native.native_arm:_Lumina2ComponentCodec",
+            codec_adapter="dinkster_native.families.lumina2:CodecAdapter",
+            native_encode_text="dinkster_native.families.lumina2:encode_text",
+            native_decode=_NATIVE_COMPONENT_DECODE,
+            native_encode=_NATIVE_COMPONENT_ENCODE,
+            native_load=_NATIVE_COMPONENT_LOAD,
         ),
         _descriptor(
             catalog.KREA2,
@@ -284,6 +299,7 @@ def default_component_registry() -> ComponentRegistry:
             checkpoint_loader="dinkster_inference_torch.checkpoint_runtime:assemble_component_checkpoint",
             component_realizer="dinkster_inference_torch.krea2_component:realize_krea2_component",
             checkpoint_text_factory="dinkster_inference_torch.krea2_runtime:checkpoint_text_runtime",
+            native_encode_text="dinkster_native.families.krea2:encode_text",
         ),
         _descriptor(
             catalog.IDEOGRAM4,
@@ -294,6 +310,7 @@ def default_component_registry() -> ComponentRegistry:
             default_text_dtype=FLOAT32,
             fp8_matmul=ideogram4_component_uses_fp8_matmul,
             execution_resolver="dinkster_native.native_arm:resolve_ideogram4_component_execution",
+            native_encode_text="dinkster_native.families.ideogram4:encode_text",
         ),
         _descriptor(
             catalog.SEEDVR2,
@@ -306,7 +323,8 @@ def default_component_registry() -> ComponentRegistry:
             checkpoint_loader="dinkster_inference_torch.checkpoint_runtime:assemble_component_checkpoint",
             component_realizer="dinkster_inference_torch.seedvr2_component:realize_seedvr2_component",
             checkpoint_codec_factory="dinkster_inference_torch.seedvr2_runtime:checkpoint_codec",
-            codec_adapter="dinkster_native.native_arm:_SeedVR2ComponentCodec",
+            codec_adapter="dinkster_native.families.seedvr2:CodecAdapter",
+            native_load="dinkster_native.families.seedvr2:load_component",
         ),
         _descriptor(
             catalog.CHROMA,
@@ -328,11 +346,12 @@ def default_component_registry() -> ComponentRegistry:
             shared_conditioning_families=(catalog.CHROMA.id,),
             prepare_conditioning="prepare_single_stream_conditioning",
             release_conditioning=True,
-            codec_adapter="dinkster_native.native_arm:_ChromaComponentCodec",
+            codec_adapter="dinkster_native.families.chroma:CodecAdapter",
             checkpoint_loader="dinkster_inference_torch.checkpoint_runtime:assemble_component_checkpoint",
             component_realizer="dinkster_inference_torch.chroma_component:realize_chroma_component",
             checkpoint_text_factory="dinkster_inference_torch.chroma_component:checkpoint_text_runtime",
             checkpoint_codec_factory="dinkster_inference_torch.chroma_component:checkpoint_codec",
+            native_encode_text="dinkster_native.families.chroma:encode_text",
         ),
         _descriptor(
             catalog.MINIMAX_MUSIC3,
@@ -347,6 +366,7 @@ def default_component_registry() -> ComponentRegistry:
             attention_requires_route=True,
             tokenizer_attribute="_dinkster_minimax_music3_tokenizer",
             prepare_conditioning="materialize_minimax_music3_conditioning",
+            codec_adapter="dinkster_native.families.minimax_music3:CodecAdapter",
         ),
         _descriptor(
             catalog.QWEN_IMAGE,
@@ -360,7 +380,8 @@ def default_component_registry() -> ComponentRegistry:
             prepare_conditioning="prepare_single_stream_conditioning",
             checkpoint_loader="dinkster_inference_torch.wiring:_load_qwen_image",
             checkpoint_validator=qwen_image_checkpoint_assembly,
-            codec_adapter="dinkster_native.native_arm:_QwenImageComponentCodec",
+            codec_adapter="dinkster_native.families.qwen_image:CodecAdapter",
+            native_encode_text="dinkster_native.families.qwen_image:encode_text",
         ),
         ComponentDescriptor(
             catalog.WAN21,
@@ -381,7 +402,11 @@ def default_component_registry() -> ComponentRegistry:
             checkpoint_loader="dinkster_inference_torch.wiring:_load_wan",
             checkpoint_validator=wan_checkpoint_assembly,
             checkpoint_source_aliases=(("t5xxl", "umt5xxl"),),
-            codec_adapter="dinkster_native.native_arm:_Wan21ComponentCodec",
+            codec_adapter="dinkster_native.families.wan21:CodecAdapter",
+            native_encode_text="dinkster_native.families.wan21:encode_text",
+            native_decode=_NATIVE_COMPONENT_DECODE,
+            native_encode=_NATIVE_COMPONENT_ENCODE,
+            native_load=_NATIVE_COMPONENT_LOAD,
         ),
         _descriptor(
             catalog.LTXV,
@@ -394,11 +419,12 @@ def default_component_registry() -> ComponentRegistry:
             conditioning_format="multistream",
             frame_rate_conditioning=True,
             allow_unbound_conditioning=True,
-            codec_adapter="dinkster_native.native_arm:_LTXComponentCodec",
+            codec_adapter="dinkster_native.families.ltx:CodecAdapter",
             checkpoint_loader="dinkster_inference_torch.checkpoint_runtime:assemble_component_checkpoint",
             component_realizer="dinkster_inference_torch.ltx_component:realize_ltxv_component",
             checkpoint_text_factory="dinkster_inference_torch.ltx_component:checkpoint_text_runtime",
             checkpoint_codec_factory="dinkster_inference_torch.ltxv_runtime:checkpoint_codec",
+            native_encode_text="dinkster_native.families.ltxv:encode_text",
         ),
         _descriptor(
             catalog.LTXAV,
@@ -415,7 +441,7 @@ def default_component_registry() -> ComponentRegistry:
             conditioning_format="multistream",
             frame_rate_conditioning=True,
             allow_unbound_conditioning=True,
-            codec_adapter="dinkster_native.native_arm:_LTXComponentCodec",
+            codec_adapter="dinkster_native.families.ltx:CodecAdapter",
         ),
         _descriptor(
             catalog.TRIPOSPLAT,
@@ -474,7 +500,13 @@ def default_component_registry() -> ComponentRegistry:
                 if text_roles
                 else None,
                 checkpoint_validator=flux2_checkpoint_assembly,
-                codec_adapter="dinkster_native.native_arm:_Flux2ComponentCodec",
+                codec_adapter="dinkster_native.families.flux2:CodecAdapter",
+                native_encode_text=(
+                    "dinkster_native.families.flux2:encode_text" if text_roles else None
+                ),
+                native_decode=_NATIVE_COMPONENT_DECODE,
+                native_encode=_NATIVE_COMPONENT_ENCODE,
+                native_load="dinkster_native.families.flux2:load_component",
             )
         )
     return registry
