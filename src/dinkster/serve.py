@@ -759,6 +759,11 @@ def _install_event_loop_stall_diagnostics(
     app.on_cleanup.append(stop)
 
 
+def _resolve_pack_argument(value: str) -> Path:
+    """Freeze a --pack path before any worker or asynchronous startup work."""
+    return Path(value).resolve()
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Run a Dinkster server from its installed defaults plus configured packs"
@@ -784,9 +789,11 @@ def main(argv: list[str] | None = None) -> None:
         "--pack",
         action="append",
         default=[],
+        type=_resolve_pack_argument,
         metavar="PATH",
         help="pack to serve: a dinkster-pack.toml or its directory, repeatable; "
-        "each pack runs isolated in its own process",
+        "relative paths resolve from the launch directory; each pack runs "
+        "isolated in its own process",
     )
     parser.add_argument(
         "--install-root",
@@ -960,10 +967,12 @@ def main(argv: list[str] | None = None) -> None:
         "--legacy-pack",
         action="append",
         default=[],
+        type=_resolve_pack_argument,
         metavar="PATH",
         help="unmodified ComfyUI custom node pack (directory or single .py), "
-        "repeatable; loads in the legacy quarantine worker and attributes "
-        "as 'comfy.<pack>' (requires --comfy-root)",
+        "repeatable; relative paths resolve from the launch directory; loads "
+        "in the legacy quarantine worker and attributes as 'comfy.<pack>' "
+        "(requires --comfy-root)",
     )
     parser.add_argument(
         "--strict-packs",
