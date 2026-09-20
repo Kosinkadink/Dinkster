@@ -1,4 +1,5 @@
 name: ci
+run-name: ci with private training access
 
 on:
   pull_request:
