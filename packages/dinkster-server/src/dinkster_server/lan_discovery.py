@@ -114,6 +114,7 @@ class LanMdnsDiscovery:
             server=f"{self._instance_id}.local.",
         )
         assert self._zeroconf is not None
+        self._evict_cached_service_pointer(info)
         announcement = cast(
             "Awaitable[object]",
             await self._zeroconf.async_register_service(info),  # pyright: ignore[reportUnknownMemberType]
@@ -131,18 +132,22 @@ class LanMdnsDiscovery:
         if info is None:
             return
         assert self._zeroconf is not None
-        zeroconf = self._zeroconf.zeroconf
         goodbye = cast(
             "Awaitable[object]",
             await self._zeroconf.async_unregister_service(info),  # pyright: ignore[reportUnknownMemberType]
         )
         await goodbye
+        self._evict_cached_service_pointer(info)
+        if self._advertisement is info:
+            self._advertisement = None
+
+    def _evict_cached_service_pointer(self, info: ServiceInfo) -> None:
+        assert self._zeroconf is not None
         # Goodbye completion only sends packets; zeroconf can retain its received PTR locally.
+        zeroconf = self._zeroconf.zeroconf
         pointer = zeroconf.cache.current_entry_with_name_and_alias(info.type, info.name)
         if pointer is not None:
             zeroconf.cache.async_remove_records((pointer,))
-        if self._advertisement is info:
-            self._advertisement = None
 
     def _service_changed(
         self,

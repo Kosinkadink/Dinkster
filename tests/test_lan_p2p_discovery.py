@@ -112,14 +112,17 @@ def test_lan_mdns_readvertises_after_its_withdrawn_record_remains_cached() -> No
     class StaleCache:
         def __init__(self, events: list[str]) -> None:
             self.pointer: object | None = None
+            self.removed_pointer: object | None = None
             self.events = events
 
-        def current_entry_with_name_and_alias(self, _name: str, _alias: str) -> object | None:
+        def current_entry_with_name_and_alias(self, name: str, alias: str) -> object | None:
+            assert name == LAN_P2P_SERVICE_TYPE
+            assert alias == f"same-instance.{LAN_P2P_SERVICE_TYPE}"
             return self.pointer
 
         def async_remove_records(self, records: tuple[object, ...]) -> None:
             assert records == (self.pointer,)
-            assert self.events[-1] == "goodbye"
+            self.removed_pointer = self.pointer
             self.events.append("evict")
             self.pointer = None
 
@@ -149,11 +152,15 @@ def test_lan_mdns_readvertises_after_its_withdrawn_record_remains_cached() -> No
 
         await discovery.advertise(41001)
         await discovery.withdraw()
+        stale_zeroconf.cache.pointer = stale_zeroconf.cache.removed_pointer
+        stale_zeroconf.events.append("late-cache")
         await discovery.advertise(41002)
         await discovery.withdraw()
         assert stale_zeroconf.events == [
             "register",
             "goodbye",
+            "evict",
+            "late-cache",
             "evict",
             "register",
             "goodbye",
