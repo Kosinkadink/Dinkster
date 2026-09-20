@@ -1653,38 +1653,6 @@ class Composition:
             raise errors[0]
 
 
-def _dev_core_pack_info() -> PackInfo:
-    """The core packs-table entry for dev mode: the in-process dev pack's
-    shipped gallery template rides the reserved "core" entry, because the
-    dev scaffolding IS part of the core surface under --dev (there is no
-    isolated worker whose manifest could carry it)."""
-    import hashlib
-
-    from dinkster_nodes_dev.gallery import (
-        GALLERY_TEMPLATE_DESCRIPTION,
-        GALLERY_TEMPLATE_ID,
-        GALLERY_TEMPLATE_NAME,
-        GALLERY_TEMPLATE_TAGS,
-        gallery_template_bytes,
-    )
-    from dinkster_server import PackTemplateAsset
-
-    data = gallery_template_bytes()
-    return PackInfo(
-        display_name="Dinkster Core",
-        templates=(
-            PackTemplateAsset(
-                id=GALLERY_TEMPLATE_ID,
-                name=GALLERY_TEMPLATE_NAME,
-                digest="sha256:" + hashlib.sha256(data).hexdigest(),
-                description=GALLERY_TEMPLATE_DESCRIPTION,
-                tags=GALLERY_TEMPLATE_TAGS,
-                data=data,
-            ),
-        ),
-    )
-
-
 def _merge_pack_entry(
     packs: dict[str, PackInfo], pack_id: str, info: PackInfo, source: str
 ) -> None:
@@ -2566,8 +2534,7 @@ class ServingComposer:
         if not registry_was_supplied:
             register_core_types(registry)
         register_inference_types(registry)
-        # Dev scaffolding joins the host kernel only in dev mode. Production
-        # starts with no nodes; user-facing nodes arrive through manifests.
+        # The host kernel starts with no nodes; nodes arrive through manifests.
         core_nodes: list[type[Node]] = []
         # The native inference registries are core vocabulary on every
         # surface: /api/choices/dinkster.samplers and .schedulers serve the
@@ -2579,20 +2546,7 @@ class ServingComposer:
             "dinkster.samplers": tuple(d.id for d in builtin_sampler_view.samplers),
             "dinkster.schedulers": tuple(d.id for d in builtin_registries().schedulers),
         }
-        # The dev scaffolding composes in-process, so its choice lists and
-        # shipped gallery template ride the core surface directly (an
-        # isolated pack's would arrive over the hello / manifest instead).
         self._core_packs: dict[str, PackInfo] = {}
-        if dev:
-            from dinkster_nodes_dev import DEV_NODES, combo_choices, register_dev_types
-
-            if not registry_was_supplied:
-                register_dev_types(registry)
-            core_nodes.extend(DEV_NODES)
-            self._core_choices.update(
-                (choice_id, tuple(values)) for choice_id, values in combo_choices().items()
-            )
-            self._core_packs = {CORE_PACK_ID: _dev_core_pack_info()}
         self._base_registry = registry.copy()
         schemas: dict[str, NodeSchema] = dict(build_schemas(core_nodes))
         _validate_remote_authority(CORE_PACK_ID, schemas, self._core_choices)
@@ -7916,7 +7870,7 @@ class ServingComposer:
 
     def _rebuild_registries(self) -> None:
         """Recompute the composed surface and the ownership registries from
-        the host kernel (plus scaffolding under --dev), every live pack
+        the host kernel, every live pack
         record, and every composed remote. Reload uses this instead
         of incremental removal because shared state (the compat workers'
         one "comfy" table entry and claim) has no per-pack decrement - the

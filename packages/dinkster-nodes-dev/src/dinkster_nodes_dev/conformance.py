@@ -1,6 +1,6 @@
 """Deterministic nodes for the backend conformance recorder.
 
-These nodes are composed only through ``DEV_NODES`` under explicit dev
+These nodes are composed only through the development pack manifest under explicit
 composition. They expose orthogonal execution behavior without counters or
 other process-global proof state; the recorder derives every claim from real
 engine results and events.

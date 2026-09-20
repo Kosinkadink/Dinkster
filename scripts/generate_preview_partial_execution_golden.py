@@ -19,7 +19,7 @@ from dinkster_graph import (
     RegionOutput,
     graph_to_wire,
 )
-from dinkster_nodes_dev import DEV_NODES, register_dev_types
+from dinkster_nodes_dev import PACK_NODES, register_dev_types
 from dinkster_schema import TypeExpr, build_node_types, build_schemas
 from dinkster_server import value_descriptor
 from dinkster_values import TypeRegistry, list_children, register_core_types
@@ -44,9 +44,9 @@ def _engine(events: list[EngineEvent], *, cache_entries: int = 128) -> Engine:
     register_core_types(registry)
     register_dev_types(registry)
     return Engine(
-        schemas=build_schemas(DEV_NODES),
+        schemas=build_schemas(PACK_NODES),
         registry=registry,
-        worker=InProcessWorker(build_node_types(DEV_NODES), registry),
+        worker=InProcessWorker(build_node_types(PACK_NODES), registry),
         cache=MemoryLRUCache(cache_entries),
         on_event=events.append,
         resource_capacities={"conformance-resource": 1},

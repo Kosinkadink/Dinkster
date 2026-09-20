@@ -10,7 +10,7 @@ and stop its worker, no replacement - same seam, empty delta.
 
 Umbrella-owned wiring, like compat_api: the composer lives in dinkster-serve,
 dinkster-server knows nothing about workers, and this module is the seam
-between them. The HTTP mutation routes are registered only under --dev.
+between them. The HTTP mutation routes are registered only with --watch-packs.
 Production uses the same internal coordinator for install activation and
 pack-owned schema source changes without exposing those routes.
 
