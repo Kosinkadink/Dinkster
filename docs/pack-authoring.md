@@ -291,6 +291,19 @@ a static PNG or WebP (sniffed from the bytes - the extension is ignored),
 at most 64 KiB, and inside the pack directory. It is served to frontends
 by digest with immutable caching; change the image, ship new bytes.
 
+## Frontend modules
+
+`[[pack.extension.frontend-modules]]` publishes a package-relative JavaScript
+module with declared privileges and contribution ids. Contribution kinds use
+this closed vocabulary: `widgetKind`, `widgetView`, `previewRenderer`,
+`textEditorExtension`, `menu`, `command`, `keybinding`, `setting`,
+`canvasLayer`, `nodeDecoration`, `hostUi`, `searchProvider`,
+`workflowObserver`, `eventConsumer`, `workflowImporter`, `editor`,
+`editorBinding`, `panel`, and `virtualNode`. A `virtualNode` contribution needs
+the `graph-editor-canvas` privilege and lets a compatible frontend register a
+frontend-owned document node that never enters backend execution requests.
+Unknown kinds are rejected when the manifest is loaded.
+
 ## Blueprints
 
 `[[pack.blueprints]]` entries ship starter workflows with your pack: plain

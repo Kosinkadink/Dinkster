@@ -356,12 +356,12 @@ def _probe_comfy_requirements(comfy_root: Path, selection: _ComfyPythonSelection
     except OSError as exc:
         raise CompositionError(
             f"ComfyUI requirements probe could not start interpreter "
-            f"{selection.interpreter!r} selected by {selection.step}: {str(exc)[:400]}"
+            f"'{selection.interpreter}' selected by {selection.step}: {str(exc)[:400]}"
         ) from exc
     except subprocess.TimeoutExpired as exc:
         raise CompositionError(
             f"ComfyUI requirements probe timed out in interpreter "
-            f"{selection.interpreter!r} selected by {selection.step}"
+            f"'{selection.interpreter}' selected by {selection.step}"
         ) from exc
     if completed.returncode == 0:
         return
@@ -373,12 +373,12 @@ def _probe_comfy_requirements(comfy_root: Path, selection: _ComfyPythonSelection
     if isinstance(missing, str) and missing:
         raise CompositionError(
             f"ComfyUI requirement module {missing!r} is unavailable in interpreter "
-            f"{selection.interpreter!r} selected by {selection.step}"
+            f"'{selection.interpreter}' selected by {selection.step}"
         )
     detail = (completed.stderr.strip() or completed.stdout.strip()).replace("\n", " ")
     detail = detail[:400] or f"exit status {completed.returncode}"
     raise CompositionError(
-        f"ComfyUI requirements probe failed in interpreter {selection.interpreter!r} "
+        f"ComfyUI requirements probe failed in interpreter '{selection.interpreter}' "
         f"selected by {selection.step}: {detail}"
     )
 
