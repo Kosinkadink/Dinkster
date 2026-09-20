@@ -27,6 +27,21 @@ makes, and these rules keep it that way as the codebase grows.
   state the contract in their docstring and would still make sense if the
   implementation were rewritten.
 
+## Platform golden evidence
+
+Portable golden baselines remain in Dinkster. Platform-specific variants live
+only in the sibling `dinkster-evidence` checkout under
+`platform-goldens/files/<Dinkster-relative-path>`; its manifest records each
+path, platform key, and SHA-256 digest. `DINKSTER_EVIDENCE_ROOT` selects that
+checkout and defaults to the sibling `dinkster-evidence` directory.
+
+Golden generators write Linux baselines to Dinkster. On other platforms they
+route variant output to the evidence layout instead of creating a sidecar in
+Dinkster. Generators that deliberately produce a platform variant on Linux do
+the same. After generating a variant, add or update its unique path/platform
+manifest entry and SHA-256 in the evidence repository. Generation fails if the
+evidence checkout or its `platform-goldens/files` layout is absent.
+
 ## Pull requests and full validation
 
 `.github/workflows/ci.yml` runs one job with a five-minute limit. After

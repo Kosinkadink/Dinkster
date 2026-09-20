@@ -128,11 +128,32 @@ def fetch_platform_golden(
     return cached
 
 
-def platform_golden_path(path: Path, torch_version: str) -> Path:
+def platform_variant_output_path(
+    path: Path,
+    key: str,
+    *,
+    dinkster_root: Path = DINKSTER_ROOT,
+    evidence_root: Path = EVIDENCE_ROOT,
+) -> Path:
+    files_root = evidence_root / _EVIDENCE_FILES
+    if not files_root.is_dir():
+        raise RuntimeError(f"dinkster-evidence platform-goldens checkout not found: {files_root}")
+    return files_root / _relative_variant_path(path, key, dinkster_root)
+
+
+def platform_golden_path(
+    path: Path,
+    torch_version: str,
+    *,
+    dinkster_root: Path = DINKSTER_ROOT,
+    evidence_root: Path = EVIDENCE_ROOT,
+) -> Path:
     if sys.platform.startswith("linux"):
         return path
     key = f"{sys.platform}-py{platform.python_version()}-torch{torch_version}"
-    return path.with_name(f"{path.stem}.{key}{path.suffix}")
+    return platform_variant_output_path(
+        path, key, dinkster_root=dinkster_root, evidence_root=evidence_root
+    )
 
 
 def cpu_identity() -> str:

@@ -12,6 +12,8 @@ from tools.golden_platform import (
     GoldenUnavailableError,
     GoldenVariantNotFoundError,
     fetch_platform_golden,
+    platform_golden_path,
+    platform_variant_output_path,
 )
 
 
@@ -52,6 +54,66 @@ def _fixture_paths(tmp_path: Path, key: str) -> tuple[Path, Path, Path, Path]:
     baseline.write_text("baseline", encoding="utf-8")
     relative = Path("tests/goldens") / f"sample.{key}.json"
     return dinkster_root, baseline, tmp_path / "evidence", relative
+
+
+def test_generators_write_platform_variants_to_evidence(tmp_path: Path) -> None:
+    dinkster_root = tmp_path / "Dinkster"
+    baseline = dinkster_root / "tests" / "goldens" / "sample.json"
+    evidence_root = tmp_path / "dinkster-evidence"
+    (evidence_root / "platform-goldens" / "files").mkdir(parents=True)
+    output = platform_variant_output_path(
+        baseline,
+        "win32-py3.12-torch2.13",
+        dinkster_root=dinkster_root,
+        evidence_root=evidence_root,
+    )
+    assert output == (
+        evidence_root
+        / "platform-goldens"
+        / "files"
+        / "tests"
+        / "goldens"
+        / "sample.win32-py3.12-torch2.13.json"
+    )
+    assert not any(dinkster_root.rglob("sample.*.json"))
+
+
+def test_generator_requires_evidence_layout(tmp_path: Path) -> None:
+    dinkster_root = tmp_path / "Dinkster"
+    baseline = dinkster_root / "tests" / "goldens" / "sample.json"
+    with pytest.raises(RuntimeError, match="platform-goldens checkout not found"):
+        platform_variant_output_path(
+            baseline,
+            "darwin-py3.12-torch2.13",
+            dinkster_root=dinkster_root,
+            evidence_root=tmp_path / "missing-evidence",
+        )
+
+
+def test_generator_uses_baseline_on_linux_and_evidence_on_other_platforms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dinkster_root = tmp_path / "Dinkster"
+    baseline = dinkster_root / "tests" / "goldens" / "sample.json"
+    evidence_root = tmp_path / "dinkster-evidence"
+    (evidence_root / "platform-goldens" / "files").mkdir(parents=True)
+    monkeypatch.setattr("tools.golden_platform.sys.platform", "linux")
+    assert (
+        platform_golden_path(
+            baseline,
+            "2.13.0",
+            dinkster_root=dinkster_root,
+            evidence_root=evidence_root,
+        )
+        == baseline
+    )
+    monkeypatch.setattr("tools.golden_platform.sys.platform", "win32")
+    assert platform_golden_path(
+        baseline,
+        "2.13.0",
+        dinkster_root=dinkster_root,
+        evidence_root=evidence_root,
+    ).is_relative_to(evidence_root / "platform-goldens" / "files")
 
 
 def test_fetches_verified_variant_and_reuses_cache(tmp_path: Path) -> None:
