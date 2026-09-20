@@ -1079,19 +1079,19 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "sha256:85dd36f2bb7ccbd94a7d8ce769a72dd8974b83183a9db31fa68cb91f98f3fc8f",
+            "sha256:a77107ea1863d2f414819c88116fc6c82bcf147d038afb2a047cee7fd3632d65",
         ),
         (
             "dinkster-nodes-media-io",
-            "sha256:6fe365fabc7a5b853b66b4d67f77e575ae918b6cedd903a6c461f74c591a31d0",
+            "sha256:3aa82d98f846359378cc6bb045b50c39026e98feb8389b289910d4273588346a",
         ),
         (
             "dinkster-nodes-image",
-            "sha256:3d126cbf7fb4daa775c517885b96a93f0dff10aafed69facd48c834189405039",
+            "sha256:cbf2b73dd6e454bbea3c3266a51486817a9cbbf55e9d3ed61fbedd29573ce688",
         ),
         (
             "dinkster-nodes-remote",
-            "sha256:90d9f773f7711972cbb8d0465013d86470bf963ab2a94da2566a0863f31f09cd",
+            "sha256:95039ffaaee021f374388a7cc87aa1cf7ab810908c0a134202bd1061bad202b4",
         ),
     ],
 )

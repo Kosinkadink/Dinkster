@@ -25,6 +25,7 @@ from unittest.mock import Mock
 
 import aiohttp
 import pytest
+from dinkster_schema import SCHEMA_WIRE_VERSION
 from packaging.requirements import Requirement
 from test_compose import write_iso_manifest
 
@@ -2663,7 +2664,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
             assert data["nodes"]["dinkster.image.resize"]["pack"] == "dinkster-nodes-image"
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
             named_route = data["nodes"]["dinkster.route.switch_by_name"]
-            assert named_route["schemaVersion"] == 43
+            assert named_route["schemaVersion"] == SCHEMA_WIRE_VERSION
             assert named_route["interface"][0]["widget"] == {
                 "type": "COMBO",
                 "optionSource": {"inputFamily": "values"},

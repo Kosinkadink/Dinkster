@@ -11,6 +11,7 @@ from typing import Any, cast
 
 from dinkster_nodes_image import IMAGE_NODES
 from dinkster_schema import (
+    SCHEMA_WIRE_VERSION,
     ComboWidget,
     DynamicComboSpec,
     DynamicEntry,
@@ -223,6 +224,8 @@ def _fixture_bytes() -> bytes:
 @cache
 def _v1_schemas() -> dict[str, NodeSchema]:
     wires = json.loads(_fixture_bytes())
+    for wire in wires:
+        wire["schemaVersion"] = SCHEMA_WIRE_VERSION
     return {schema.node_type: schema for schema in map(schema_from_wire, wires)}
 
 

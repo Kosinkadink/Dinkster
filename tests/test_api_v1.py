@@ -124,6 +124,7 @@ GOLDEN_V1_SURFACE = (
     "ComboOption",
     "ComboWidget",
     "ControlAfterGenerate",
+    "CustomWidgetDescriptor",
     "Deprecation",
     "DynamicComboOption",
     "DynamicComboSpec",

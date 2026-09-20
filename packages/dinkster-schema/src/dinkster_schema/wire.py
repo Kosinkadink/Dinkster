@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, Literal, cast
 
+from dinkster_values import CustomWidgetDescriptor, JsonValue
+
 from .model import (
     CONTROL_AFTER_GENERATE,
     AbsentPolicy,
@@ -227,10 +229,23 @@ def _widget_descriptor_to_wire(
         return {"type": "CURVE"}
     if isinstance(widget, CompositorWidget):
         return {"type": "COMPOSITOR"}
+    if isinstance(widget, CustomWidgetDescriptor):
+        return {
+            "type": widget.widget_type,
+            **{key: _json_value_to_wire(value) for key, value in widget.params.items()},
+        }
     wire: dict[str, object] = {"type": "SAVE_TARGET"}
     if widget.suffix:
         wire["suffix"] = widget.suffix
     return wire
+
+
+def _json_value_to_wire(value: JsonValue) -> object:
+    if isinstance(value, Mapping):
+        return {key: _json_value_to_wire(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value_to_wire(item) for item in value]
+    return value
 
 
 def _widget_to_wire(widget: Widget, wire_version: int) -> dict[str, object] | None:
@@ -629,7 +644,15 @@ def _widget_descriptor_from_wire(
         if strict:
             _reject_unknown_fields(widget_data, frozenset({"type"}), "COMPOSITOR widget")
         return CompositorWidget()
-    raise ValueError(f"unsupported input widget: {widget_data!r}")
+    if not isinstance(kind, str) or not kind:
+        raise ValueError(f"unsupported input widget: {widget_data!r}")
+    return CustomWidgetDescriptor(
+        kind,
+        cast(
+            "Mapping[str, JsonValue]",
+            {key: value for key, value in widget_data.items() if key != "type"},
+        ),
+    )
 
 
 def _widget_from_wire(widget_wire: object, wire_version: int) -> Widget:
@@ -944,6 +967,8 @@ def schema_to_wire(
         "idempotent": schema.idempotent,
         "interface": interface,
     }
+    if schema.editor_role is not None:
+        wire["editorRole"] = schema.editor_role
     if schema.slot_choices:
         wire["slotChoices"] = [[slot_id, key] for slot_id, key in schema.slot_choices]
     if schema.occupies:
@@ -1146,6 +1171,7 @@ def schema_signature(schema: NodeSchema) -> str:
     wire.pop("widgetGroups", None)
     wire.pop("mirror", None)
     wire.pop("displayName", None)
+    wire.pop("editorRole", None)
     wire.pop("category", None)
     wire.pop("description", None)
 
@@ -1638,6 +1664,9 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         display_name=_expect_str(wire.get("displayName", ""), "displayName"),
         category=_expect_str(wire.get("category", ""), "category"),
         description=_expect_str(wire.get("description", ""), "description"),
+        editor_role=(
+            _expect_str(wire["editorRole"], "editorRole") if "editorRole" in wire else None
+        ),
         inputs=tuple(inputs),
         outputs=tuple(outputs),
         input_families=tuple(input_families),

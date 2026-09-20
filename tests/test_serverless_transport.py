@@ -21,6 +21,7 @@ from dinkster_protocol import (
     SavedArtifactCandidate,
 )
 from dinkster_schema import (
+    SCHEMA_WIRE_VERSION,
     InputSpec,
     Node,
     NodeSchema,
@@ -170,8 +171,8 @@ def harness(tmp_path: Path) -> Harness:
 def test_schema_transfer_uses_latest_served_wire(harness: Harness) -> None:
     async def scenario() -> None:
         request = await harness.request()
-        assert request["schemaVersion"] == 45
-        assert request["frame"]["effectiveSchema"]["schemaVersion"] == 45
+        assert request["schemaVersion"] == SCHEMA_WIRE_VERSION
+        assert request["frame"]["effectiveSchema"]["schemaVersion"] == SCHEMA_WIRE_VERSION
 
     asyncio.run(scenario())
 

@@ -9,14 +9,88 @@ accessed through a transport.
 from __future__ import annotations
 
 import hashlib
+import math
 import threading
 from collections.abc import Callable, Generator, Iterable, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import ClassVar, Protocol, cast, runtime_checkable
 
 TypeId = str
 Fingerprint = str
+type JsonValue = (
+    None
+    | bool
+    | int
+    | float
+    | str
+    | list["JsonValue"]
+    | tuple["JsonValue", ...]
+    | Mapping[str, "JsonValue"]
+)
+
+
+def _freeze_json_value(value: JsonValue) -> JsonValue:
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("JSON numbers must be finite")
+        return value
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json_value(item) for item in value)
+    if not isinstance(cast("object", value), Mapping):
+        raise TypeError(f"unsupported JSON value: {type(value).__name__}")
+    return _freeze_json_mapping(value)
+
+
+def _freeze_json_mapping(value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
+    frozen: dict[str, JsonValue] = {}
+    for key, item in value.items():
+        if not isinstance(cast("object", key), str):
+            raise TypeError("JSON object keys must be strings")
+        frozen[key] = _freeze_json_value(item)
+    return MappingProxyType(frozen)
+
+
+@dataclass(frozen=True)
+class CustomWidgetDescriptor:
+    """Pack-defined input presentation transported as inert JSON data."""
+
+    widget_type: str
+    params: Mapping[str, JsonValue] = field(
+        default_factory=lambda: cast("Mapping[str, JsonValue]", {})
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(cast("object", self.widget_type), str) or not self.widget_type:
+            raise ValueError("custom widget type must be a non-empty string")
+        reserved = {
+            "ASSET",
+            "BOOLEAN",
+            "COLOR",
+            "COMBO",
+            "COMPOSITOR",
+            "CURVE",
+            "MULTI_COMBO",
+            "NUMBER",
+            "REPRESENTATIONS",
+            "SAVE_TARGET",
+            "STRING",
+        }
+        if self.widget_type in reserved:
+            raise ValueError(f"custom widget type {self.widget_type!r} is reserved")
+        if not isinstance(cast("object", self.params), Mapping):
+            raise ValueError("custom widget params must be a mapping")
+        if "type" in self.params:
+            raise ValueError("custom widget params must not contain type")
+        try:
+            frozen = _freeze_json_mapping(self.params)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("custom widget params must be JSON-safe") from exc
+        object.__setattr__(self, "params", frozen)
+
 
 RESOURCES_META_KEY = "resources"
 """Well-known ValueMeta entry: a mapping of resource kind -> concrete

@@ -131,7 +131,7 @@ def test_static_frontend_preserves_api_routes_and_spa_fallback(tmp_path: Path) -
             assert await (await client.get("/api/health")).json() == {"ok": True}
             assert await (await client.get("/workflow/one")).text() == "<main>editor</main>"
             asset = await client.get("/assets/app.js")
-            assert asset.content_type == "text/javascript"
+            assert asset.content_type == "application/javascript"
             assert await asset.text() == "console.log('app')"
             assert (await client.post("/unknown")).status == 404
         finally:

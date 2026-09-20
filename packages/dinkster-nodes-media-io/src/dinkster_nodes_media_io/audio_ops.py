@@ -707,6 +707,7 @@ class ExtractAudioEnvelope(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.audio.envelope",
+            editor_role="audio-envelope",
             display_name="Extract Audio Envelope",
             category="audio",
             inputs=(

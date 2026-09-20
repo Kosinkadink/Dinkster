@@ -31,6 +31,7 @@ from typing import Literal, cast
 # reaches sideways in the bottom layer, so expression-level types and
 # runtime type ids can never drift apart.
 from dinkster_values import (
+    CustomWidgetDescriptor,
     asset_type_id,
     list_type_id,
     parse_asset_type_id,
@@ -848,8 +849,9 @@ WidgetDescriptor = (
     | ColorWidget
     | CurveWidget
     | CompositorWidget
+    | CustomWidgetDescriptor
 )
-"""One closed input presentation descriptor."""
+"""One input presentation descriptor."""
 
 
 def _widget_value_domain(widget: WidgetDescriptor) -> str:
@@ -877,6 +879,8 @@ def _widget_value_domain(widget: WidgetDescriptor) -> str:
         return "curve"
     if isinstance(widget, CompositorWidget):
         return "compositor"
+    if isinstance(widget, CustomWidgetDescriptor):
+        return f"custom:{widget.widget_type}"
     return "string"
 
 
@@ -904,6 +908,7 @@ class WidgetRepresentation:
                 ColorWidget,
                 CurveWidget,
                 CompositorWidget,
+                CustomWidgetDescriptor,
             ),
         ):
             raise ValueError("widget representation must contain one widget descriptor")
@@ -2048,6 +2053,8 @@ class NodeSchema:
     display_name: str = ""
     category: str = ""
     description: str = ""
+    editor_role: str | None = None
+    """Frontend capability role. Presentation metadata only."""
     inputs: tuple[InputSpec, ...] = ()
     outputs: tuple[OutputSpec, ...] = ()
     input_families: tuple[InputFamilySpec, ...] = ()
@@ -2153,6 +2160,10 @@ class NodeSchema:
     def __post_init__(self) -> None:
         if not self.node_type:
             raise ValueError("node_type is required")
+        if self.editor_role is not None and (
+            not isinstance(cast("object", self.editor_role), str) or not self.editor_role
+        ):
+            raise ValueError(f"{self.node_type}: editor_role must be a non-empty string")
         if self.chunk_safe is not None:
             inputs, outputs = self.chunk_safe
             inputs, outputs = tuple(inputs), tuple(outputs)

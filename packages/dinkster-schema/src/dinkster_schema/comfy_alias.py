@@ -153,7 +153,10 @@ class ComfyAliasSourceSchema:
 
     def __post_init__(self) -> None:
         if self.wire_version != SCHEMA_WIRE_VERSION:
-            raise ValueError(f"unsupported schemaVersion: {self.wire_version!r}")
+            raise ValueError(
+                f"comfy alias source schema must use a decodable wire version: "
+                f"unsupported schemaVersion: {self.wire_version!r}"
+            )
         wire = schema_to_wire(self.schema)
         try:
             decoded = schema_from_wire(cast("dict[str, Any]", wire))

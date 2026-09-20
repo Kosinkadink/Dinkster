@@ -40,7 +40,7 @@ from typing import Any, Protocol, cast
 from dinkster_assets import digest_bytes, require_digest
 from dinkster_caches import DiskCAS
 from dinkster_protocol import Invocation, InvocationEvent, InvocationResult, OnInvocationEvent
-from dinkster_schema import SCHEMA_WIRE_SERVE_VERSIONS, NodeSchema, schema_to_wire
+from dinkster_schema import SCHEMA_WIRE_VERSION, NodeSchema, schema_to_wire
 from dinkster_values import TypeRegistry, Value, default_decode, list_children, parse_list_type_id
 from dinkster_workers import InProcessWorker
 from dinkster_workers.boundary import (
@@ -57,7 +57,7 @@ from dinkster_workers.boundary import (
 Envelope = dict[str, Any]
 Dispatch = Callable[[Envelope], Awaitable[Envelope]]
 _VERSION = 1
-_SCHEMA_TRANSFER_VERSION = max(SCHEMA_WIRE_SERVE_VERSIONS)
+_SCHEMA_TRANSFER_VERSION = SCHEMA_WIRE_VERSION
 _DATA_TYPES = frozenset(
     {
         "core.int",
