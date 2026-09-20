@@ -26,8 +26,11 @@ from dinkster_workers import (
     PACK_INFERENCE_CONTRACT,
     GenerationProvider,
     ManifestError,
+    PackProvides,
+    PackRegistryProvider,
     VisionProvider,
     load_manifest,
+    unmatched_registry_providers,
 )
 from dinkster_workers.manifest import (
     COMFY_ALIASES_MAX_BYTES,
@@ -226,6 +229,7 @@ def test_pack_contracts_dependencies_and_registry_requirements_are_data_only(
         '[pack.dependencies]\nprovider = ">=1.2,<2"\n'
         '[pack.requirements.registry]\n"dinkster.model-families" = ["dinkster.wan21"]\n'
         '[pack.requirements.capabilities]\n"dinkster.video-generation" = ">=2,<3"\n'
+        '[pack.provides.registry]\n"dinkster.samplers" = ["consumer.sampler"]\n'
         '[pack.capabilities]\n"consumer.graph-import" = "1.0.0"\n'
         '[pack.entry]\nnodes = "manifest_purity_probe:NODES"\n',
         encoding="utf-8",
@@ -245,6 +249,9 @@ def test_pack_contracts_dependencies_and_registry_requirements_are_data_only(
     ]
     assert [(item.id, item.version) for item in manifest.requirements.capabilities] == [
         ("dinkster.video-generation", "<3,>=2")
+    ]
+    assert [(item.registry, item.id) for item in manifest.provides.registry] == [
+        ("dinkster.samplers", "consumer.sampler")
     ]
     assert [(item.id, item.version) for item in manifest.capabilities] == [
         ("consumer.graph-import", "1.0.0")
@@ -521,6 +528,20 @@ def test_pack_sandbox_needs_reject_ambiguous_shapes(
             '[pack.requirements.capabilities]\n"video-generation" = ">=1"\n',
             "must be namespaced",
         ),
+        (
+            '[pack.provides.registry]\n"families" = ["consumer.family"]\n',
+            "must be namespaced",
+        ),
+        (
+            '[pack.provides.registry]\n"dinkster.model-families" = ["consumer.one"]\n'
+            '"dinkster.model_families" = ["consumer.one"]\n',
+            "repeats registry provider",
+        ),
+        (
+            '[pack.requirements.registry]\n"dinkster.some-registry" = ["consumer.one"]\n'
+            '"dinkster.some_registry" = ["consumer.one"]\n',
+            "repeats registry requirement",
+        ),
         ('[pack.capabilities]\n"consumer.video" = "1.0"\n', "major.minor.patch"),
     ],
 )
@@ -534,6 +555,15 @@ def test_pack_contract_metadata_rejects_ambiguous_shapes(
     )
     with pytest.raises(ManifestError, match=message):
         load_manifest(path)
+
+
+def test_registry_provider_agreement_uses_canonical_registry_identity() -> None:
+    provides = PackProvides(
+        registry=(PackRegistryProvider("dinkster.model_families", "consumer.family"),)
+    )
+    assert (
+        unmatched_registry_providers(provides, (("inference.families", "consumer.family"),)) == ()
+    )
 
 
 def test_same_session_arms_may_implement_cross_pack_executes_claims(tmp_path: Path) -> None:

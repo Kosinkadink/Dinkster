@@ -21,7 +21,7 @@ from dinkster_inference.sources import SafetensorsSource
 from dinkster_inference.text_recipes import TextRecipeBinding
 
 from .assemble import _load_component  # pyright: ignore[reportPrivateUsage]
-from .attention import AttentionStatus, resolve_role_attention
+from .attention import AttentionRole, AttentionStatus, resolve_role_attention
 from .clip_text import EmbeddingLookup
 from .gemma_text import GemmaTextModel, LtxDualTextProjection, LtxGemmaTextEncoder
 from .gemma_tokenizer import GemmaJsonTokenizer, GemmaSentencePieceTokenizer
@@ -45,6 +45,7 @@ def assemble_ltx_text_recipe(
     source_files: tuple[BinaryIO, ...],
     attention_policy: AttentionPolicy = "auto",
     attention_route_token: AttentionRouteToken | None = None,
+    attention_backends: tuple[tuple[str, AttentionRole], ...],
 ) -> LoadedLtxTextRecipe:
     """Strict-load every bound component using the caller's already verified open files."""
     if len(sources) != len(source_files) or {
@@ -62,15 +63,20 @@ def assemble_ltx_text_recipe(
     )
     modules: dict[str, torch.nn.Module] = {}
     statuses: list[AttentionStatus] = []
+    backends = dict(attention_backends)
     for part in binding.components:
         source = sources[part.source_index]
         builder: Callable[..., torch.nn.Module]
         if part.role == gemma_role:
-            attention = resolve_role_attention("qwen", attention_policy, attention_route_token)
+            attention = resolve_role_attention(
+                backends[part.role], attention_policy, attention_route_token
+            )
             builder = partial(GemmaTextModel, attention_kernel=attention.kernel)
             statuses.append(attention.status)
         elif part.role == "connectors":
-            attention = resolve_role_attention("flux", attention_policy, attention_route_token)
+            attention = resolve_role_attention(
+                backends[part.role], attention_policy, attention_route_token
+            )
             builder = partial(LtxTextConnectors, attention_kernel=attention.kernel)
             statuses.append(attention.status)
         elif part.role == "text_projection":
