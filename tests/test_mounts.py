@@ -11,6 +11,7 @@ without a restart or a control-channel message.
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -21,9 +22,12 @@ from threading import Event
 from typing import cast
 
 import pytest
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
     AssetError,
+    AssetScanProgress,
+    LocalAssetLibrary,
     MountDef,
     MountsError,
     MountSnapshotResolver,
@@ -33,6 +37,7 @@ from dinkster_assets import (
     load_mounts,
     parse_mounts,
 )
+from dinkster_assets.integrity import digest_file_with_record as real_digest_file_with_record
 from dinkster_assets.model import AssetRef
 from dinkster_assets.resolution import MountMaterialization, ResolutionStore
 from dinkster_caches import MemoryLRUCache
@@ -180,6 +185,126 @@ def test_scan_catalogs_under_mount_namespace(tmp_path: Path) -> None:
     assert row["priority"] == 0
 
 
+def test_scan_publishes_cached_assets_and_progress_before_changed_file_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "models"
+    seed(root, {"cached.bin": b"cached"})
+    snapshot = tmp_path / "library" / "worker-state" / "mounts.json"
+    index_root = tmp_path / "library" / "asset-indexes"
+    table = MountTable(snapshot, index_root=index_root)
+    table.add(MountDef(id="models", path=root))
+    table.scan("models")
+    cached_digest = digest_bytes(b"cached")
+
+    slow = root / "slow.bin"
+    slow.write_bytes(b"slow payload")
+    import dinkster_assets.library as library_module
+
+    hashing = Event()
+    release = Event()
+
+    def held_digest(path: Path):
+        if path == slow:
+            hashing.set()
+            assert release.wait(5)
+        return real_digest_file_with_record(path)
+
+    monkeypatch.setattr(library_module, "digest_file_with_record", held_digest)
+    persist_calls = 0
+    real_persist_index = library_module.LocalAssetLibrary.persist_index
+
+    def counted_persist_index(library: LocalAssetLibrary) -> None:
+        nonlocal persist_calls
+        persist_calls += 1
+        real_persist_index(library)
+
+    monkeypatch.setattr(library_module.LocalAssetLibrary, "persist_index", counted_persist_index)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(table.scan, "models", progress_interval=0)
+        assert hashing.wait(5)
+
+        assert table.ref("mounts/models/cached.bin").digest == cached_digest
+        persists_before_refs = persist_calls
+        assert table.ref("mounts/models/cached.bin").digest == cached_digest
+        assert persist_calls == persists_before_refs
+        assert MountSnapshotResolver(snapshot).resolve(cached_digest) == root / "cached.bin"
+        with pytest.raises(AssetError, match="mounts/models/slow.bin.*not indexed"):
+            table.ref("mounts/models/slow.bin")
+        (descriptor,) = table.descriptors()
+        progress = cast("dict[str, object]", descriptor["scanProgress"])
+        assert descriptor["state"] == "scanning"
+        assert descriptor["entryCount"] == 1
+        assert progress["filesDone"] == 1
+        assert progress["filesTotal"] == 2
+        assert progress["bytesDone"] == len(b"cached")
+        assert progress["bytesTotal"] == len(b"cached") + len(b"slow payload")
+        assert isinstance(progress["elapsedSeconds"], float)
+
+        release.set()
+        assert future.result(timeout=5) == 2
+
+
+def test_rescan_keeps_verified_assets_available_before_cache_rebuild(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    seed(root, {"cached.bin": b"cached"})
+    snapshot = tmp_path / "library" / "worker-state" / "mounts.json"
+    table = MountTable(snapshot, index_root=tmp_path / "library" / "asset-indexes")
+    table.add(MountDef(id="models", path=root))
+    table.scan("models")
+    digest = digest_bytes(b"cached")
+    initial_progress = Event()
+    release = Event()
+
+    def hold_initial_progress(progress: AssetScanProgress) -> None:
+        if progress.files_done == 0:
+            initial_progress.set()
+            assert release.wait(5)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(table.scan, "models", on_progress=hold_initial_progress)
+        assert initial_progress.wait(5)
+        assert table.ref("mounts/models/cached.bin").digest == digest
+        assert MountSnapshotResolver(snapshot).resolve(digest) == root / "cached.bin"
+        release.set()
+        assert future.result(timeout=5) == 1
+
+
+def test_mount_indexes_live_under_library_root_and_migrate_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "models"
+    seed(root, {"model.bin": b"weights"})
+    legacy = root / ".dinkster-asset-index.json"
+    legacy_table = MountTable()
+    legacy_table.add(MountDef(id="models", path=root))
+    legacy_table.scan("models")
+    legacy_bytes = legacy.read_bytes()
+
+    import dinkster_assets.library as library_module
+
+    def reject_hash(path: Path) -> tuple[str, None]:
+        raise AssertionError(f"migration rehashed unchanged file: {path}")
+
+    monkeypatch.setattr(library_module, "digest_file_with_record", reject_hash)
+    library_root = tmp_path / "library"
+    index_root = library_root / "asset-indexes"
+    table = MountTable(library_root / "mounts.json", index_root=index_root)
+    table.add(MountDef(id="models", path=root))
+    assert table.scan("models") == 1
+    central = index_root / "models.json"
+    assert central.is_file()
+    assert legacy.read_bytes() == legacy_bytes
+
+    legacy.write_text("{}", "utf-8")
+    restarted = MountTable(library_root / "restart.json", index_root=index_root)
+    restarted.add(MountDef(id="models", path=root))
+    assert restarted.scan("models") == 1
+    assert restarted.ref("mounts/models/model.bin").digest == digest_bytes(b"weights")
+
+
 def test_mount_kind_is_validated_and_published_to_snapshot(tmp_path: Path) -> None:
     root = tmp_path / "checkpoints"
     seed(root, {"model.safetensors": b"weights"})
@@ -269,7 +394,7 @@ def test_add_remove_refusals(tmp_path: Path) -> None:
         table.remove("nope")
     with pytest.raises(MountsError, match="unknown mount"):
         table.scan("nope")
-    with pytest.raises(AssetError, match="no ready mount"):
+    with pytest.raises(AssetError, match="mounts/a/x.png.*not ready"):
         table.ref("mounts/a/x.png")  # registered but never scanned
     with pytest.raises(AssetError, match="not a mount virtual path"):
         table.ref("models/x.png")
@@ -575,6 +700,150 @@ def test_mounts_read_surface(tmp_path: Path) -> None:
         assert resp.status == 403
         assert (await resp.json())["error"] == "mount-changes-disabled"
         await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_mounts_api_exposes_scan_progress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "models"
+    seed(root, {"model.bin": b"model bytes"})
+    table = MountTable(tmp_path / "library" / "mounts.json")
+    table.add(MountDef(id="models", path=root))
+    import dinkster_assets.library as library_module
+
+    hashing = Event()
+    release = Event()
+
+    def held_digest(path: Path):
+        hashing.set()
+        assert release.wait(5)
+        return real_digest_file_with_record(path)
+
+    monkeypatch.setattr(library_module, "digest_file_with_record", held_digest)
+
+    async def scenario() -> None:
+        client = await make_client(MountService(table))
+        try:
+            scan = asyncio.create_task(asyncio.to_thread(table.scan, "models"))
+            assert await asyncio.to_thread(hashing.wait, 5)
+            response = await client.get("/api/mounts")
+            assert response.status == 200
+            (row,) = (await response.json())["mounts"]
+            assert row["state"] == "scanning"
+            assert row["scanProgress"]["filesDone"] == 0
+            assert row["scanProgress"]["filesTotal"] == 1
+            assert row["scanProgress"]["bytesDone"] == 0
+            assert row["scanProgress"]["bytesTotal"] == len(b"model bytes")
+            assert row["scanProgress"]["elapsedSeconds"] >= 0
+            release.set()
+            assert await scan == 1
+        finally:
+            release.set()
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_mount_service_does_not_republish_unchanged_elapsed_progress(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "models"
+    seed(root, {"model.bin": b"model bytes"})
+    table = MountTable(tmp_path / "library" / "mounts.json")
+    table.add(MountDef(id="models", path=root))
+    import dinkster_assets.library as library_module
+
+    import dinkster.mounts_api as mounts_api_module
+
+    hashing = Event()
+    release = Event()
+
+    def held_digest(path: Path):
+        hashing.set()
+        assert release.wait(5)
+        return real_digest_file_with_record(path)
+
+    monkeypatch.setattr(library_module, "digest_file_with_record", held_digest)
+    monkeypatch.setattr(mounts_api_module, "_SCAN_PROGRESS_INTERVAL", 0.01)
+    service = MountService(table)
+    refreshes: list[None] = []
+    publishes: list[None] = []
+    monkeypatch.setattr(service, "refresh_resolution_store", lambda: refreshes.append(None))
+    monkeypatch.setattr(
+        service,
+        "publish",
+        lambda _app: publishes.append(None),
+    )
+
+    async def scenario() -> None:
+        scan = asyncio.create_task(service.scan(cast("web.Application", {}), "models"))
+        assert await asyncio.to_thread(hashing.wait, 5)
+        await asyncio.sleep(0.05)
+        assert refreshes == []
+        assert publishes == []
+        release.set()
+        await scan
+        assert len(refreshes) == 2
+        assert len(publishes) == 2
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        release.set()
+
+
+def test_mount_service_cancelled_scan_consumes_background_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "models"
+    seed(root, {"model.bin": b"model bytes"})
+    table = MountTable(tmp_path / "library" / "mounts.json")
+    table.add(MountDef(id="models", path=root))
+    import dinkster_assets.library as library_module
+
+    import dinkster.mounts_api as mounts_api_module
+
+    hashing = Event()
+    release = Event()
+    completed = Event()
+
+    def held_digest(_path: Path):
+        hashing.set()
+        assert release.wait(5)
+        completed.set()
+        raise AssetError("late scan failure")
+
+    monkeypatch.setattr(library_module, "digest_file_with_record", held_digest)
+    monkeypatch.setattr(mounts_api_module, "_SCAN_PROGRESS_INTERVAL", 0.01)
+    service = MountService(table)
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        loop_errors: list[dict[str, object]] = []
+        previous_handler = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _loop, context: loop_errors.append(context))
+        try:
+            service.scan_soon(cast("web.Application", {}), "models")
+            (scan,) = service._tasks
+            assert await asyncio.to_thread(hashing.wait, 5)
+            scan.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await scan
+            await asyncio.sleep(0)
+            assert service._tasks == set()
+
+            release.set()
+            assert await asyncio.to_thread(completed.wait, 5)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            gc.collect()
+            await asyncio.sleep(0)
+            assert loop_errors == []
+        finally:
+            release.set()
+            loop.set_exception_handler(previous_handler)
 
     asyncio.run(scenario())
 
