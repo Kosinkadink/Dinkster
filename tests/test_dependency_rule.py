@@ -240,6 +240,8 @@ ALLOWED: dict[str, set[str]] = {
     },
 }
 
+OPTIONAL_CORE_PACKAGES = frozenset({"dinkster_collab", "dinkster_supervisor"})
+
 
 def dinkster_imports(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -286,6 +288,25 @@ def test_one_way_dependencies() -> None:
                     violations.append(f"{module.relative_to(root)} imports {imported}")
     assert checked > 0
     assert not violations, "one-way dependency rule violated:\n" + "\n".join(violations)
+
+
+def test_core_paths_do_not_import_optional_packages_at_module_scope() -> None:
+    sources = [REPO_ROOT / "src/dinkster"]
+    sources.extend(
+        REPO_ROOT / "packages" / package.replace("_", "-") / "src" / package
+        for package in ALLOWED
+        if package not in OPTIONAL_CORE_PACKAGES and package != "dinkster_acceptance"
+    )
+    violations = [
+        f"{module.relative_to(REPO_ROOT)} imports {imported}"
+        for source in sources
+        if source.is_dir()
+        for module in source.rglob("*.py")
+        for imported in sorted(dinkster_imports(module) & OPTIONAL_CORE_PACKAGES)
+    ]
+    assert not violations, "core imports optional packages at module scope:\n" + "\n".join(
+        violations
+    )
 
 
 def test_bundled_video_preview_imports_only_the_pack_api() -> None:

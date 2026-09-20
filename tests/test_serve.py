@@ -18,7 +18,6 @@ import signal
 import socket
 import subprocess
 import sys
-import textwrap
 import time
 import tomllib
 from pathlib import Path
@@ -72,61 +71,103 @@ def test_partner_auth_is_injected_only_into_partner_worker_environment() -> None
     )
 
 
-def test_core_server_serves_nodes_without_collab_or_supervisor_importable() -> None:
-    script = textwrap.dedent(
-        """
-        import asyncio
-        import importlib.abc
-
-        from aiohttp.test_utils import TestClient, TestServer
-        from dinkster_caches import MemoryLRUCache
-        from dinkster_engine import Engine
-        from dinkster_values import TypeRegistry, register_core_types
-        from dinkster_workers import InProcessWorker
-
-
-        class MissingOptionalPackages(importlib.abc.MetaPathFinder):
-            def find_spec(self, fullname, path=None, target=None):
-                if fullname.split('.')[0] in {'dinkster_collab', 'dinkster_supervisor'}:
-                    raise ModuleNotFoundError(name=fullname)
-                return None
-
-
-        async def main():
-            import sys
-
-            sys.meta_path.insert(0, MissingOptionalPackages())
-            from dinkster import serve
-            from dinkster_server import create_app
-
-            registry = TypeRegistry()
-            register_core_types(registry)
-
-            def make_engine(on_event):
-                return Engine(
-                    schemas={},
-                    registry=registry,
-                    worker=InProcessWorker({}, registry),
-                    cache=MemoryLRUCache(),
-                    on_event=on_event,
-                )
-
-            app = create_app(make_engine, {})
-            assert serve._add_collaboration_routes(app, None) is False
-            client = TestClient(TestServer(app))
-            await client.start_server()
-            try:
-                response = await client.get('/api/nodes')
-                assert response.status == 200
-                assert (await response.json())['nodes'] == {}
-            finally:
-                await client.close()
-
-
-        asyncio.run(main())
-        """
+def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Path) -> None:
+    environment = tmp_path / "core-environment"
+    sync_environment = {
+        **os.environ,
+        "UV_PROJECT_ENVIRONMENT": str(environment),
+    }
+    subprocess.run(
+        [
+            "uv",
+            "sync",
+            "--locked",
+            "--no-dev",
+            "--no-install-package",
+            "dinkster-collab",
+            "--no-install-package",
+            "dinkster-supervisor",
+        ],
+        cwd=TESTS_DIR.parent,
+        env=sync_environment,
+        check=True,
     )
-    subprocess.run([sys.executable, "-c", script], check=True)
+    python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    subprocess.run(
+        [
+            str(python),
+            "-c",
+            "import importlib.metadata as m, importlib.util as u; "
+            "assert all(u.find_spec(n) is None for n in "
+            "('dinkster_collab', 'dinkster_supervisor')); "
+            "assert all(not any(d.metadata['Name'] == n for d in m.distributions()) for n in "
+            "('dinkster-collab', 'dinkster-supervisor'))",
+        ],
+        check=True,
+    )
+
+    port = free_port()
+    process_environment = {
+        **os.environ,
+        "DINKSTER_REMOTE_CATALOG_BASE": "",
+        "DINKSTER_REMOTE_GATEWAY_BASE": "",
+        "DINKSTER_SERVING_PYTHON": str(python),
+    }
+    process = subprocess.Popen(
+        [
+            str(python),
+            "-m",
+            "dinkster.serve",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--library-root",
+            "",
+            "--disable-p2p",
+        ],
+        cwd=tmp_path,
+        env=process_environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    async def scenario() -> None:
+        base = f"http://127.0.0.1:{port}"
+        timeout = aiohttp.ClientTimeout(total=5)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with asyncio.timeout(120):
+                while True:
+                    assert process.poll() is None, "core-only server died"
+                    try:
+                        async with session.get(base + "/api/nodes") as response:
+                            if response.status == 200:
+                                payload = await response.json()
+                                if "composing" not in payload:
+                                    break
+                    except aiohttp.ClientError:
+                        pass
+                    await asyncio.sleep(0.05)
+            nodes = payload["nodes"]
+            assert isinstance(nodes, dict)
+            assert len(nodes) >= 100
+            assert all(
+                isinstance(node_id, str) and isinstance(schema, dict)
+                for node_id, schema in nodes.items()
+            )
+            assert any(node_id.startswith("std.") for node_id in nodes)
+            async with session.get(base + "/api/sessions") as response:
+                assert response.status == 404
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=30)
 
 
 def test_installed_collaboration_package_registers_session_routes() -> None:
