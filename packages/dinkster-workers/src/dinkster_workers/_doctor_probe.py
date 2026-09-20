@@ -152,6 +152,11 @@ def probe(manifest_path: str) -> dict[str, Any]:
 
     manifest = load_manifest(manifest_path)
     sys.path.insert(0, str(manifest.root))
+    distribution_root = manifest.root.parent
+    if (distribution_root / "pyproject.toml").is_file():
+        source_root = distribution_root / "src"
+        if source_root.is_dir():
+            sys.path.insert(0, str(source_root))
 
     report: dict[str, Any] = {
         "entry_error": None,

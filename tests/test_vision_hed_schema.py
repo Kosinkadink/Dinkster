@@ -13,8 +13,7 @@ from dinkster_nodes_image import (
 from dinkster_nodes_image import (
     ModelEdgePreprocessor as OwnerModelEdgePreprocessor,
 )
-from dinkster_schema import ComboWidget, schema_signature
-from dinkster_vision_hed import (
+from dinkster_nodes_vision.hed import (
     AnimeLineartPreprocessor,
     AnyLinePreprocessor,
     MangaLineartPreprocessor,
@@ -22,16 +21,17 @@ from dinkster_vision_hed import (
     RealisticLineartPreprocessor,
     TEEDPreprocessor,
 )
-from dinkster_vision_hed import (
+from dinkster_nodes_vision.hed import (
     ModelEdgePreprocessor as HedModelEdgePreprocessor,
 )
+from dinkster_schema import ComboWidget, schema_signature
 from dinkster_workers import load_manifest
 
 from dinkster.compose import compose_serving
 
 ROOT = Path(__file__).parent.parent
-PACKAGE = ROOT / "packages" / "dinkster-vision-hed"
-MANIFEST = PACKAGE / "dinkster-pack.toml"
+PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
+MANIFEST = PACKAGE / "dinkster_vision_hed_pack" / "dinkster-pack.toml"
 MODEL_DIGEST = "blake3:36ea9a81b5e5f69c9f98b81eacce0c70b7bb444af4d821201b8a910e05792da9"
 
 
@@ -87,11 +87,11 @@ def test_hed_pack_declares_isolated_cpu_cuda_providers_and_pinned_models() -> No
 def test_hed_wheel_contains_pack_runtime_and_manifest() -> None:
     project = tomllib.loads((PACKAGE / "pyproject.toml").read_text(encoding="utf-8"))
     included = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert included["dinkster-pack.toml"] == "dinkster_vision_hed_pack/dinkster-pack.toml"
-    assert included["src/dinkster_vision_hed"] == "dinkster_vision_hed_pack/dinkster_vision_hed"
-    for license_name in ("LINEART_LICENSE", "MANGA_LICENSE", "MLSD_LICENSE", "TEED_LICENSE"):
-        assert included[license_name] == f"dinkster_vision_hed_pack/{license_name}"
-    assert included["WEIGHT_LICENSES.md"] == "dinkster_vision_hed_pack/WEIGHT_LICENSES.md"
+    assert included["dinkster_vision_hed_pack"] == "dinkster_vision_hed_pack"
+    assert (
+        included["src/dinkster_nodes_vision/hed"]
+        == "dinkster_vision_hed_pack/dinkster_nodes_vision/hed"
+    )
 
 
 def test_hed_provider_populates_owner_choice_and_scopes_its_model() -> None:

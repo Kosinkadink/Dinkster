@@ -170,7 +170,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     if pack_name == "dinkster-vision-birefnet":
         assert "dinkster-inference-torch==0.0.1" in manifest.requires
         assert TESTS_DIR.parent / "packages" / "dinkster-inference-torch" in workspace
-    assert str(manifest.root / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
+    assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 
 def test_configured_serving_python_skips_standard_pack_provisioning(

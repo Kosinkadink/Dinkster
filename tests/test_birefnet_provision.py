@@ -17,14 +17,15 @@ from dinkster_assets import AssetVault
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, TypedLiteral
+from dinkster_nodes_vision.birefnet import register_types
 from dinkster_values import TypeRegistry, register_core_types
-from dinkster_vision_birefnet import register_types
 from dinkster_workers import IsolatedWorker, ensure_pack_venv, load_manifest
 
 from dinkster.serve import _pack_runtime_sources
 
 ROOT = Path(__file__).parents[1]
-MANIFEST = ROOT / "packages" / "dinkster-vision-birefnet" / "dinkster-pack.toml"
+PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
+MANIFEST = PACKAGE / "dinkster_vision_birefnet_pack" / "dinkster-pack.toml"
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("DINKSTER_BIREFNET_TEST_WHEELHOUSE")
@@ -43,7 +44,7 @@ def provider_runtime(
     wheelhouse = Path(os.environ["DINKSTER_BIREFNET_TEST_WHEELHOUSE"]).resolve()
     manifest_path = MANIFEST
     if request.param == "bundled":
-        wheels = tuple(wheelhouse.glob("dinkster_vision_birefnet-*.whl"))
+        wheels = tuple(wheelhouse.glob("dinkster_nodes_vision-*.whl"))
         assert len(wheels) == 1
         with ZipFile(wheels[0]) as wheel:
             wheel.extractall(tmp_path / "installed")

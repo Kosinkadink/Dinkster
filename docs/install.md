@@ -243,7 +243,7 @@ Desktop environment. Desktop's mirrored pins must match the embedded data
 before packaging, so frontend-only pin edits cannot redefine that environment.
 The builder checks the selected source's Aimdo helper constants, Torch base
 version in `uv.lock`, and exact torchvision requirement in the
-[BiRefNet pack declaration](../packages/dinkster-vision-birefnet/dinkster-pack.toml).
+[BiRefNet pack declaration](../packages/dinkster-nodes-vision/dinkster_vision_birefnet_pack/dinkster-pack.toml).
 That pack declaration owns the isolated worker's torchvision dependency;
 torchvision is not added to the root lock or CPU host environment.
 

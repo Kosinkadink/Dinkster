@@ -12,15 +12,15 @@ from dinkster_nodes_image import (
 from dinkster_nodes_image import (
     DetectObjects as OwnerDetectObjects,
 )
+from dinkster_nodes_vision.detr import DetectObjects as DetrDetectObjects
 from dinkster_schema import ComboWidget, schema_signature
-from dinkster_vision_detr import DetectObjects as DetrDetectObjects
 from dinkster_workers import load_manifest
 
 from dinkster.compose import compose_serving
 
 ROOT = Path(__file__).parent.parent
-PACKAGE = ROOT / "packages" / "dinkster-vision-detr"
-MANIFEST = PACKAGE / "dinkster-pack.toml"
+PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
+MANIFEST = PACKAGE / "dinkster_vision_detr_pack" / "dinkster-pack.toml"
 MODEL_DIGEST = "blake3:2bb221c9ab83ea68d6a66bdc4cfe7bce4c49a1784287f5923521d34d23d150a2"
 
 
@@ -63,8 +63,11 @@ def test_detr_pack_declares_isolated_cpu_provider_and_pinned_model() -> None:
 def test_detr_wheel_contains_pack_runtime_and_manifest() -> None:
     project = tomllib.loads((PACKAGE / "pyproject.toml").read_text(encoding="utf-8"))
     included = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert included["dinkster-pack.toml"] == "dinkster_vision_detr_pack/dinkster-pack.toml"
-    assert included["src/dinkster_vision_detr"] == "dinkster_vision_detr_pack/dinkster_vision_detr"
+    assert included["dinkster_vision_detr_pack"] == "dinkster_vision_detr_pack"
+    assert (
+        included["src/dinkster_nodes_vision/detr"]
+        == "dinkster_vision_detr_pack/dinkster_nodes_vision/detr"
+    )
 
 
 def test_detr_provider_populates_owner_choice_and_scopes_its_model() -> None:

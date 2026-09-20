@@ -133,11 +133,9 @@ tests, and all eleven Torch/vision pyright projects remain in this job. The
 nine vision package suites also run without their artifact
 environment variables, so their weight-dependent cases skip while synthetic
 input validation, preprocessing, batching, cache, fallback, tiling, and
-architecture tests still run. The packages are `dinkster-vision-hed`,
-`dinkster-vision-upscale`, `dinkster-vision-depth-anything-v2`,
-`dinkster-vision-detr`, `dinkster-vision-rtdetr`, `dinkster-vision-efficient-sam`,
-`dinkster-vision-birefnet`, `dinkster-vision-depth-anything-v3`, and
-`dinkster-vision-sam31`.
+architecture tests still run. The `dinkster-nodes-vision` distribution contains
+the HED, upscale, Depth Anything V2, DETR, RT-DETR, EfficientSAM, BiRefNet,
+Depth Anything V3, and SAM 3.1 model packs.
 
 The CPU job excludes all pinned model-weight acquisitions, the combined
 `dinkster-inference-torch` and `dinkster-model-ipadapter` test lane, each vision
