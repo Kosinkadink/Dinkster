@@ -11,6 +11,7 @@ without a restart or a control-channel message.
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -790,6 +791,61 @@ def test_mount_service_does_not_republish_unchanged_elapsed_progress(
         asyncio.run(scenario())
     finally:
         release.set()
+
+
+def test_mount_service_cancelled_scan_consumes_background_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "models"
+    seed(root, {"model.bin": b"model bytes"})
+    table = MountTable(tmp_path / "library" / "mounts.json")
+    table.add(MountDef(id="models", path=root))
+    import dinkster_assets.library as library_module
+
+    import dinkster.mounts_api as mounts_api_module
+
+    hashing = Event()
+    release = Event()
+    completed = Event()
+
+    def held_digest(_path: Path):
+        hashing.set()
+        assert release.wait(5)
+        completed.set()
+        raise AssetError("late scan failure")
+
+    monkeypatch.setattr(library_module, "digest_file_with_record", held_digest)
+    monkeypatch.setattr(mounts_api_module, "_SCAN_PROGRESS_INTERVAL", 0.01)
+    service = MountService(table)
+
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        loop_errors: list[dict[str, object]] = []
+        previous_handler = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _loop, context: loop_errors.append(context))
+        try:
+            service.scan_soon(cast("web.Application", {}), "models")
+            (scan,) = service._tasks
+            assert await asyncio.to_thread(hashing.wait, 5)
+            scan.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await scan
+            await asyncio.sleep(0)
+            assert service._tasks == set()
+
+            release.set()
+            assert await asyncio.to_thread(completed.wait, 5)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            gc.collect()
+            await asyncio.sleep(0)
+            assert loop_errors == []
+        finally:
+            release.set()
+            loop.set_exception_handler(previous_handler)
+
+    asyncio.run(scenario())
 
 
 def test_mount_entries_emit_and_filter_semantic_model_kind(tmp_path: Path) -> None:
