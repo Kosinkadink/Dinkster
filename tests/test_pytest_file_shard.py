@@ -60,9 +60,12 @@ def test_parse_file_shard_accepts_two_shards(value: str, expected: int) -> None:
     assert parse_file_shard(value) == expected
 
 
-def test_pytest_plugin_selects_complete_disjoint_whole_files(tmp_path: Path) -> None:
+def test_pytest_plugin_selects_whole_files_and_explicit_shared_tests(tmp_path: Path) -> None:
     (tmp_path / "test_alpha.py").write_text(
-        "def test_alpha_one(): pass\ndef test_alpha_two(): pass\n",
+        "import pytest\n"
+        "def test_alpha_one(): pass\n"
+        "@pytest.mark.all_file_shards\n"
+        "def test_alpha_two(): pass\n",
         encoding="utf-8",
     )
     (tmp_path / "test_beta.py").write_text("def test_beta(): pass\n", encoding="utf-8")
@@ -85,11 +88,14 @@ def test_pytest_plugin_selects_complete_disjoint_whole_files(tmp_path: Path) -> 
         "test_alpha.py::test_alpha_one",
         "test_alpha.py::test_alpha_two",
     }
-    assert _passed_node_ids(second) == {"test_beta.py::test_beta"}
-    assert _passed_node_ids(first).isdisjoint(_passed_node_ids(second))
+    assert _passed_node_ids(second) == {
+        "test_alpha.py::test_alpha_two",
+        "test_beta.py::test_beta",
+    }
+    assert _passed_node_ids(first) & _passed_node_ids(second) == {"test_alpha.py::test_alpha_two"}
     assert _passed_node_ids(first) | _passed_node_ids(second) == all_nodes
     assert "1 deselected" in first.stdout
-    assert "2 deselected" in second.stdout
+    assert "1 deselected" in second.stdout
 
     malformed = _run_pytest(tmp_path, "--file-shard", "3/2")
     assert malformed.returncode == pytest.ExitCode.USAGE_ERROR
