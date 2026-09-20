@@ -456,14 +456,20 @@ class LanP2PController:
             await self._reconcile_locked()
 
     async def _monitor_state(self) -> None:
+        last_error: str | None = None
         while True:
             try:
                 async with self._state_lock:
                     await self._refresh_network_policy()
                     await self._reconcile_locked()
                     await self._refresh_seed_mappings()
-            except (AssetError, OSError, P2PManagerError):
-                pass
+            except (AssetError, OSError, P2PManagerError) as error:
+                reason = str(error)
+                if reason != last_error:
+                    _LOG.warning("P2P monitor reconciliation failed: %s", reason)
+                last_error = reason
+            else:
+                last_error = None
             await asyncio.sleep(_MONITOR_INTERVAL_SECONDS)
 
     async def _refresh_network_policy(self) -> None:
@@ -674,7 +680,8 @@ class LanP2PController:
                         path,
                         P2P_FORMAT_POLICY_VERSION,
                     )
-                except (AssetError, OSError):
+                except (AssetError, OSError) as error:
+                    _LOG.warning("P2P seed mapping rejected for %s: %s", digest, error)
                     continue
                 desired[digest] = SeedLease(
                     version=1,

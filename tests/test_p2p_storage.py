@@ -8,6 +8,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from dinkster_assets import (
@@ -22,6 +23,7 @@ from dinkster_assets import (
     digest_bytes,
 )
 from dinkster_assets import p2p_storage as storage_module
+from dinkster_assets.p2p_usn import usn_from_record
 
 from tests.platform_support import symlink_or_skip
 
@@ -718,6 +720,77 @@ def test_no_copy_local_mapping_revokes_on_mutation_deletion_and_symlink(tmp_path
             local.absolute(),
             P2P_FORMAT_POLICY_VERSION,
         )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="exercises the Windows file fingerprint")
+@pytest.mark.parametrize("canonical_name", [False, True], ids=["short-name", "vault-name"])
+def test_windows_local_mapping_poll_uses_fingerprint_without_rehashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, canonical_name: bool
+) -> None:
+    data = _safetensors(b"local model")
+    digest = digest_bytes(data)
+    local = tmp_path / (digest.split(":", 1)[1] if canonical_name else "model.safetensors")
+    local.write_bytes(data)
+    vault = AssetVault(tmp_path / "vault")
+    mapping = vault.verify_p2p_local_file(
+        digest,
+        len(data),
+        local.resolve(),
+        P2P_FORMAT_POLICY_VERSION,
+    )
+    full_reads = 0
+
+    def count_full_read(_handle: object) -> str:
+        nonlocal full_reads
+        full_reads += 1
+        return digest
+
+    monkeypatch.setattr(storage_module, "_hash_handle", count_full_read)
+    unchanged = mapping.is_current()
+    assert unchanged
+    assert full_reads == 0
+
+    verified = local.stat()
+    local.write_bytes(data[:-1] + b"X")
+    os.utime(local, ns=(verified.st_atime_ns, verified.st_mtime_ns))
+    changed = mapping.is_current()
+    assert not changed
+    assert full_reads == 0
+
+
+def test_windows_local_fingerprint_preserves_creation_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local = tmp_path / "model.safetensors"
+    local.write_bytes(_safetensors())
+    change_token = 1 << 96
+    monkeypatch.setattr(
+        storage_module,
+        "_p2p_windows",
+        SimpleNamespace(change_token=lambda _descriptor: change_token),
+    )
+
+    with local.open("rb") as handle:
+        item = os.fstat(handle.fileno())
+        fingerprint = storage_module._local_file_fingerprint(handle, item)
+
+    assert fingerprint == (*storage_module._stable_fingerprint(item), change_token)
+
+
+@pytest.mark.parametrize(("major_version", "usn_offset"), [(2, 24), (3, 40)])
+def test_windows_usn_parser_accepts_only_known_record_layouts(
+    major_version: int,
+    usn_offset: int,
+) -> None:
+    record = bytearray(64)
+    record[4:6] = major_version.to_bytes(2, "little")
+    record[usn_offset : usn_offset + 8] = (42).to_bytes(8, "little", signed=True)
+    assert usn_from_record(bytes(record), usn_offset + 8) == 42
+
+    record[4:6] = (4).to_bytes(2, "little")
+    with pytest.raises(OSError, match="unsupported USN record version 4"):
+        usn_from_record(bytes(record), len(record))
 
 
 def test_corrupt_resume_state_fails_closed_without_truncating_partial(tmp_path: Path) -> None:
