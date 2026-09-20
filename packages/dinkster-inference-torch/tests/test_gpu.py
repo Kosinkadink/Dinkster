@@ -6727,7 +6727,7 @@ def test_real_flux_denoise_runs_on_cuda() -> None:
         sampling_sigmas,
     )
     from dinkster_inference.schedules import DINKSTER_NORMAL
-    from dinkster_inference.solvers import DINKSTER_EULER
+    from dinkster_inference_torch.solvers import torch_sampler_registry
 
     plan = _real_flux_plan(**_REAL_SPLIT_SCALED)
     assembled = assemble_flux(plan)
@@ -6744,10 +6744,12 @@ def test_real_flux_denoise_runs_on_cuda() -> None:
     sigmas = sampling_sigmas(DINKSTER_NORMAL, FluxFlowSigmas(), 2)
     assert len(sigmas) == 3 and sigmas[-1] == 0.0
     latent = torch.zeros(1, 16, 8, 8)
+    descriptor = torch_sampler_registry().get("dinkster.euler")
+    assert descriptor is not None
     with torch.no_grad():
         out = run_denoise(
             denoiser,
-            DINKSTER_EULER.build(),
+            descriptor.build(),
             latent=latent,
             noise=prepare_noise(latent, 7),
             sigmas=sigmas,
@@ -7119,7 +7121,7 @@ def test_real_sdxl_controlnet_union_matches_acceptance_golden_on_cuda() -> None:
     plan = plan_sdxl_controlnet_union(
         load_safetensors_header(_REAL_SDXL_CONTROLNET_UNION), asset_digest=digest
     )
-    assembled = assemble_sdxl_controlnet_union(plan)
+    assembled = assemble_sdxl_controlnet_union(plan, attention_backend="unet")
     device = torch.device("cuda:0")
     assembled.controlnet_union.to(device)
     generator = torch.Generator(device=device).manual_seed(golden["workload"]["seed"])
@@ -7232,11 +7234,10 @@ def test_real_sd1_single_device_fused_split_signature_on_cuda(size: int, steps: 
     from dinkster_inference import (
         DiscreteSigmas,
         SamplingGuidance,
-        cfg_combine,
         load_safetensors_header,
         sampling_sigmas,
     )
-    from dinkster_inference_torch import SDRuntime, load_runtime
+    from dinkster_inference_torch import SDRuntime, cfg_combine, load_runtime
     from dinkster_inference_torch.denoise import prepare_noise, run_denoise
     from dinkster_inference_torch.schedules import torch_scheduler_registry
     from dinkster_inference_torch.sd_denoise import SDDenoiser

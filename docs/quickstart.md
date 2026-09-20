@@ -49,7 +49,24 @@ open the printed URL from a browser on that machine.
 
 The launcher does not download model weights. Install the supported execution
 runtime and SD 1.5 checkpoint described in [installation](install.md#browser-frontend-and-native-generation),
-then use the standard SD 1.5 text-to-image workflow:
+then point the native worker at that PyTorch environment when launching. POSIX
+shells can set the interpreter for the command:
+
+```sh
+DINKSTER_COMFYUI_PYTHON=/absolute/path/to/pytorch-venv/bin/python uv run dinkster
+```
+
+In PowerShell, set the environment variable before launching:
+
+```powershell
+$env:DINKSTER_COMFYUI_PYTHON = 'C:\absolute\path\to\pytorch-venv\Scripts\python.exe'
+uv run dinkster
+```
+
+Keep this interpreter setting when the launcher refreshes pack catalogs. The
+selected Python must contain PyTorch and the native inference packages. No
+ComfyUI checkout or server is required. Then use the standard SD 1.5
+text-to-image workflow:
 
 1. Load the checkpoint with `Load Checkpoint`.
 2. Enter positive and negative text in the two `CLIP Text Encode` nodes.

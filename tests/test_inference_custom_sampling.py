@@ -232,7 +232,8 @@ def test_custom_sampling_request_normalizes_options_and_sigmas() -> None:
 
     assert request.options == (("eta", 0.5), ("s_noise", 1.0))
     assert request.sigmas == (1.0, 0.25, 0.0)
-    assert callable(request.build_solver())
+    with pytest.raises(RuntimeError, match="requires an execution backend"):
+        request.build_solver()
 
 
 @pytest.mark.parametrize("sigmas", [(float("nan"),), (-1.0,), (True,)])

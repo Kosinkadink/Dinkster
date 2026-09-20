@@ -353,6 +353,7 @@ def test_assembly_consumes_role_sources_and_hardens_quantized_qwen(
         compute_dtype=torch.float16,
         sources=cast(Any, (conditioner_source, lm_source)),
         source_files=cast(Any, (conditioner_file, lm_file)),
+        attention_backends=tuple((role, "qwen") for role in planning.ACE15_TEXT_ROLES),
     )
     assert loaded == [
         (planning.ACE15_TEXT_ROLES[0], conditioner_source, conditioner_file),

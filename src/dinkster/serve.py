@@ -788,6 +788,11 @@ def _install_event_loop_stall_diagnostics(
     app.on_cleanup.append(stop)
 
 
+def _resolve_pack_argument(value: str) -> Path:
+    """Freeze a --pack path before any worker or asynchronous startup work."""
+    return Path(value).resolve()
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Run a Dinkster server from its installed defaults plus configured packs"
@@ -813,9 +818,11 @@ def main(argv: list[str] | None = None) -> None:
         "--pack",
         action="append",
         default=[],
+        type=_resolve_pack_argument,
         metavar="PATH",
         help="pack to serve: a dinkster-pack.toml or its directory, repeatable; "
-        "each pack runs isolated in its own process",
+        "relative paths resolve from the launch directory; each pack runs "
+        "isolated in its own process",
     )
     parser.add_argument(
         "--install-root",
@@ -1617,6 +1624,7 @@ def main(argv: list[str] | None = None) -> None:
         redaction_roots.append(("<library>", Path(args.library_root)))
 
     model_roots = ()
+    comfy_requirements_checked = False
     if args.library_root and args.comfy_root:
         try:
             model_roots = comfy_model_roots(
@@ -1624,6 +1632,7 @@ def main(argv: list[str] | None = None) -> None:
                 python=args.comfy_python or None,
                 comfy_args=effective_comfy_args,
             )
+            comfy_requirements_checked = True
         except CompositionError as exc:
             raise SystemExit(str(exc)) from exc
 
@@ -1707,23 +1716,27 @@ def main(argv: list[str] | None = None) -> None:
             # failure. Resolve defaults independently so one broken pack
             # cannot hide another pack's nodes.
             default_pack_failures[pack_id] = exc
-    compat_specs = (
-        comfy_compat_specs(
-            args.comfy_root or None,
-            python=args.comfy_python or None,
-            legacy_packs=args.legacy_pack,
-            asset_vault=(Path(args.library_root) / "vault" if args.library_root else None),
-            mounts_snapshot=mounts_snapshot,
-            aimdo=aimdo,
-            memory_budgets=memory_budgets,
-            reserve_vram=reserve_vram,
-            comfy_args=effective_comfy_args,
-            multi_device_cuda_indices=args.multi_gpu_devices,
-            single_job_multi_gpu=single_job_multi_gpu,
+    try:
+        compat_specs = (
+            comfy_compat_specs(
+                args.comfy_root or None,
+                python=args.comfy_python or None,
+                _requirements_checked=comfy_requirements_checked,
+                legacy_packs=args.legacy_pack,
+                asset_vault=(Path(args.library_root) / "vault" if args.library_root else None),
+                mounts_snapshot=mounts_snapshot,
+                aimdo=aimdo,
+                memory_budgets=memory_budgets,
+                reserve_vram=reserve_vram,
+                comfy_args=effective_comfy_args,
+                multi_device_cuda_indices=args.multi_gpu_devices,
+                single_job_multi_gpu=single_job_multi_gpu,
+            )
+            if args.comfy_root or not args.no_default_packs
+            else []
         )
-        if args.comfy_root or not args.no_default_packs
-        else []
-    )
+    except CompositionError as exc:
+        raise SystemExit(str(exc)) from exc
     if not args.comfy_root:
         specs.extend(replace(spec, require_catalog=True) for spec in compat_specs)
     resolved_default_pack_count = len(specs)

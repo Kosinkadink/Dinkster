@@ -51,14 +51,6 @@ from dinkster_inference import (
     StepCallback,
     StepEvent,
     UncondDenoiser,
-    calculate_denoised,
-    cfg_combine,
-    noise_scaling,
-)
-from dinkster_inference.solvers import (
-    DINKSTER_DDIM,
-    DINKSTER_DPMPP_2M_SDE,
-    DINKSTER_EULER,
 )
 from dinkster_inference_torch import (
     FLUX_GUIDANCE_DEFAULT,
@@ -79,6 +71,12 @@ from dinkster_inference_torch import (
     run_sampler_engine,
 )
 from dinkster_inference_torch import distributed as distributed_module
+from dinkster_inference_torch._portable_solvers import (
+    DINKSTER_DDIM,
+    DINKSTER_DPMPP_2M_SDE,
+    DINKSTER_EULER,
+)
+from dinkster_inference_torch.cfg import cfg_combine
 from dinkster_inference_torch.denoise import (
     _InpaintDenoiser,
     _noise_scaling,
@@ -86,6 +84,7 @@ from dinkster_inference_torch.denoise import (
     to_batch,
 )
 from dinkster_inference_torch.guidance import ConditioningEvaluation, GuidedDenoiser
+from dinkster_inference_torch.parameterizations import calculate_denoised, noise_scaling
 from dinkster_protocol import GuidancePhaseParticipation
 from unet_fill import fill_state_dict, hashed_input
 

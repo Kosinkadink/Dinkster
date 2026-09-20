@@ -185,11 +185,8 @@ def test_ordinary_isolated_worker_keeps_workgroup_capability_absent(tmp_path: Pa
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("relative_manifest", [False, True])
 def test_isolated_worker_imports_pack_from_a_different_working_directory(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    relative_manifest: bool,
 ) -> None:
     pack_root = tmp_path / "pack"
     pack_root.mkdir()
@@ -197,13 +194,57 @@ def test_isolated_worker_imports_pack_from_a_different_working_directory(
     shutil.copy(TESTS_DIR / "isopack_nodes.py", pack_root / "isopack_nodes.py")
     working_directory = tmp_path / "working"
     working_directory.mkdir()
-    monkeypatch.chdir(working_directory)
-    selected_manifest: Path | str = manifest
-    if relative_manifest:
-        selected_manifest = os.path.relpath(manifest, working_directory)
+
+    class DifferentWorkingDirectoryLauncher(Launcher):
+        async def launch(self, spec: LaunchSpec) -> asyncio.subprocess.Process:
+            assert spec.pack_root == pack_root.resolve()
+            manifest_index = spec.command.index("--manifest") + 1
+            assert Path(spec.command[manifest_index]).is_absolute()
+            environment = {**os.environ, **spec.env}
+            return await asyncio.create_subprocess_exec(
+                *spec.command,
+                env=environment,
+                cwd=working_directory,
+            )
 
     async def scenario() -> None:
-        worker = IsolatedWorker(selected_manifest, core_registry())
+        worker = IsolatedWorker(
+            manifest.resolve(),
+            core_registry(),
+            launcher=DifferentWorkingDirectoryLauncher(),
+        )
+        await worker.start()
+        try:
+            assert "iso.sleepy" in worker.schemas
+        finally:
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_isolated_worker_uses_interpreter_entry_for_split_package(tmp_path: Path) -> None:
+    pack_root = tmp_path / "pack"
+    pack_root.mkdir()
+    (pack_root / "isopack_nodes").mkdir()
+    (pack_root / "isopack_nodes" / "__init__.py").write_text("\n")
+    manifest = pack_root / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "isopack"\n\n[pack.entry]\n'
+        'nodes = "isopack_nodes.entries:NODES"\n'
+        'types = "isopack_nodes.entries:register_types"\n'
+    )
+    interpreter_root = tmp_path / "interpreter"
+    installed_package = interpreter_root / "isopack_nodes"
+    installed_package.mkdir(parents=True)
+    (installed_package / "__init__.py").write_text("\n")
+    shutil.copy(TESTS_DIR / "isopack_nodes.py", installed_package / "entries.py")
+
+    async def scenario() -> None:
+        worker = IsolatedWorker(
+            manifest,
+            core_registry(),
+            extra_env={"PYTHONPATH": str(interpreter_root)},
+        )
         await worker.start()
         try:
             assert "iso.sleepy" in worker.schemas

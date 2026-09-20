@@ -27,7 +27,7 @@ from dinkster_inference.weights import WeightEntry
 from tokenizers import Tokenizer
 
 from .assemble import _load_component  # pyright: ignore[reportPrivateUsage]
-from .attention import resolve_role_attention
+from .attention import AttentionRole, resolve_role_attention
 from .minimax_music3_dav import MiniMaxMusic3Dav
 from .minimax_music3_model import MiniMaxMusic3DiT
 from .minimax_music3_text import MiniMaxMusic3TextModel
@@ -100,6 +100,7 @@ def load_minimax_music3_component(
     compute_dtype: torch.dtype,
     attention_policy: AttentionPolicy = "auto",
     attention_route_token: AttentionRouteToken | None = None,
+    attention_backend: AttentionRole | None = None,
 ) -> MiniMaxMusic3LoadedComponent:
     if type(asset) is not AssetRef:
         raise TypeError("MiniMax Music 3 component asset must be an AssetRef")
@@ -146,13 +147,17 @@ def load_minimax_music3_component(
             )
         tokenizer = _load_tokenizer(handle, source) if expected_role == "text" else None
         if expected_role == "diffusion":
+            if attention_backend is None:
+                raise ValueError("MiniMax Music 3 diffusion requires an attention backend")
             attention = resolve_role_attention(
-                "flux", attention_policy, attention_route_token
+                attention_backend, attention_policy, attention_route_token
             ).kernel
             builder = partial(MiniMaxMusic3DiT, attention_kernel=attention)
         elif expected_role == "text":
+            if attention_backend is None:
+                raise ValueError("MiniMax Music 3 text requires an attention backend")
             attention = resolve_role_attention(
-                "qwen", attention_policy, attention_route_token
+                attention_backend, attention_policy, attention_route_token
             ).kernel
             builder = partial(MiniMaxMusic3TextModel, attention_kernel=attention)
         else:

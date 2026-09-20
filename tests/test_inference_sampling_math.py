@@ -22,7 +22,6 @@ import pytest
 from dinkster_inference import (
     SD15,
     SIGMA_PERCENT_ZERO,
-    CfgDenoiser,
     ContinuousEDMSigmas,
     DiscreteSigmas,
     FlowSigmas,
@@ -32,18 +31,13 @@ from dinkster_inference import (
     beta57_schedule,
     beta_schedule,
     bong_tangent_schedule,
-    calculate_denoised,
-    calculate_input,
-    cfg_combine,
     cfg_needs_uncond,
     ddim_uniform_schedule,
     exponential_schedule,
     flux_time_shift,
-    inverse_noise_scaling,
     karras_schedule,
     kl_optimal_schedule,
     linear_quadratic_schedule,
-    noise_scaling,
     normal_schedule,
     sgm_uniform_schedule,
     simple_schedule,
@@ -54,6 +48,13 @@ from dinkster_inference.schedules import (
     _regularized_incomplete_beta,
 )
 from dinkster_inference.spaces import linear_beta_sigmas
+from dinkster_inference_torch.cfg import CfgDenoiser, cfg_combine
+from dinkster_inference_torch.parameterizations import (
+    calculate_denoised,
+    calculate_input,
+    inverse_noise_scaling,
+    noise_scaling,
+)
 
 GOLDENS = json.loads((Path(__file__).parent / "goldens" / "sampling_goldens.json").read_text())
 VPRED_GOLDENS = json.loads(

@@ -133,6 +133,11 @@ class ComfyModelRoot(NamedTuple):
     path: Path
 
 
+class _ComfyPythonSelection(NamedTuple):
+    interpreter: str
+    step: str
+
+
 def register_comfy_host_types(registry: TypeRegistry) -> None:
     """The torch-free host halves of compat value contracts.
 
@@ -265,18 +270,117 @@ def find_native_manifest() -> Path:
     return manifest
 
 
-def comfy_python(comfy_root: Path, explicit: str | None = None) -> str:
-    """The interpreter legacy/compat children run under: explicit flag, then
-    $DINKSTER_COMFYUI_PYTHON, then the install's own venv, then this python."""
+def _comfy_python_selection(comfy_root: Path, explicit: str | None = None) -> _ComfyPythonSelection:
+    """Resolve the compat interpreter and retain the selecting configuration step."""
     if explicit:
-        return explicit
+        return _ComfyPythonSelection(explicit, "--comfy-python")
     env = os.environ.get("DINKSTER_COMFYUI_PYTHON", "")
     if env:
-        return env
+        return _ComfyPythonSelection(env, "DINKSTER_COMFYUI_PYTHON")
     venv_python = comfy_root / "venv" / "bin" / "python"
     if venv_python.exists():
-        return str(venv_python)
-    return sys.executable
+        return _ComfyPythonSelection(str(venv_python), "<comfy-root>/venv/bin/python")
+    return _ComfyPythonSelection(sys.executable, "current Python")
+
+
+def comfy_python(comfy_root: Path, explicit: str | None = None) -> str:
+    """The interpreter used by legacy and compatibility children."""
+    return _comfy_python_selection(comfy_root, explicit).interpreter
+
+
+_COMFY_REQUIREMENTS_SCRIPT = r"""
+import importlib
+import importlib.metadata
+import json
+import re
+import sys
+
+canonical = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+requirements = []
+for raw in open(sys.argv[1], encoding="utf-8"):
+    line = raw.partition("#")[0].strip()
+    if not line:
+        continue
+    match = re.match(r"([A-Za-z0-9][A-Za-z0-9._-]*)", line)
+    if match is None:
+        print(json.dumps({"invalid": line}, separators=(",", ":")))
+        raise SystemExit(2)
+    requirements.append(match.group(1))
+
+by_distribution = {}
+for module, distributions in importlib.metadata.packages_distributions().items():
+    if module.startswith("_"):
+        continue
+    for distribution in distributions:
+        by_distribution.setdefault(canonical(distribution), []).append(module)
+
+for requirement in requirements:
+    key = canonical(requirement)
+    candidates = sorted(
+        set(by_distribution.get(key, ())),
+        key=lambda module: (canonical(module) != key, len(module), module),
+    )
+    module = candidates[0] if candidates else requirement.replace("-", "_").replace(".", "_")
+    try:
+        importlib.import_module(module)
+    except ModuleNotFoundError as exc:
+        print(json.dumps({"missing": exc.name or module}, separators=(",", ":")))
+        raise SystemExit(1) from None
+    except Exception:
+        print(json.dumps({"missing": module}, separators=(",", ":")))
+        raise SystemExit(1) from None
+print("{}")
+"""
+
+
+def _probe_comfy_requirements(comfy_root: Path, selection: _ComfyPythonSelection) -> None:
+    requirements = comfy_root / "requirements.txt"
+    if not requirements.is_file():
+        return
+    command = (
+        selection.interpreter,
+        "-I",
+        "-c",
+        _COMFY_REQUIREMENTS_SCRIPT,
+        str(requirements),
+    )
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+            shell=False,
+        )
+    except OSError as exc:
+        raise CompositionError(
+            f"ComfyUI requirements probe could not start interpreter "
+            f"{selection.interpreter!r} selected by {selection.step}: {str(exc)[:400]}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CompositionError(
+            f"ComfyUI requirements probe timed out in interpreter "
+            f"{selection.interpreter!r} selected by {selection.step}"
+        ) from exc
+    if completed.returncode == 0:
+        return
+    try:
+        payload = json.loads(completed.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        payload = {}
+    missing = payload.get("missing") if isinstance(payload, dict) else None
+    if isinstance(missing, str) and missing:
+        raise CompositionError(
+            f"ComfyUI requirement module {missing!r} is unavailable in interpreter "
+            f"{selection.interpreter!r} selected by {selection.step}"
+        )
+    detail = (completed.stderr.strip() or completed.stdout.strip()).replace("\n", " ")
+    detail = detail[:400] or f"exit status {completed.returncode}"
+    raise CompositionError(
+        f"ComfyUI requirements probe failed in interpreter {selection.interpreter!r} "
+        f"selected by {selection.step}: {detail}"
+    )
 
 
 def _probe_comfy_blake3(interpreter: str) -> None:
@@ -376,11 +480,13 @@ def comfy_model_roots(
     """
     root = Path(comfy_root).resolve()
     manifest = find_compat_manifest("dinkster-pack.toml")
-    interpreter = comfy_python(root, python)
+    selection = _comfy_python_selection(root, python)
+    interpreter = selection.interpreter
     try:
         preflight_interpreter(interpreter)
     except InterpreterPreflightError as exc:
         raise CompositionError(f"ComfyUI model-root probe refused: {exc}") from exc
+    _probe_comfy_requirements(root, selection)
     env = dict(os.environ)
     env["DINKSTER_COMFYUI_ROOT"] = str(root)
     pythonpath = dinkster_pythonpath(manifest)
@@ -467,6 +573,7 @@ def comfy_compat_specs(
     comfy_root: Path | str | None = None,
     *,
     python: str | None = None,
+    _requirements_checked: bool = False,
     legacy_packs: Sequence[Path | str] = (),
     comfy_nodes: Sequence[str] | None = None,
     asset_vault: Path | str | None = None,
@@ -504,15 +611,27 @@ def comfy_compat_specs(
                 if node_type not in native_executes
             ),
         )
-    interpreter = (
-        comfy_python(root, python)
+    selection = (
+        _comfy_python_selection(root, python)
         if root is not None
-        else python or os.environ.get("DINKSTER_COMFYUI_PYTHON") or sys.executable
+        else _ComfyPythonSelection(
+            python or os.environ.get("DINKSTER_COMFYUI_PYTHON") or sys.executable,
+            (
+                "--comfy-python"
+                if python
+                else "DINKSTER_COMFYUI_PYTHON"
+                if os.environ.get("DINKSTER_COMFYUI_PYTHON")
+                else "current Python"
+            ),
+        )
     )
+    interpreter = selection.interpreter
     try:
         preflight_interpreter(interpreter)
     except InterpreterPreflightError as exc:
         raise CompositionError(f"ComfyUI compat interpreter refused: {exc}") from exc
+    if root is not None and not _requirements_checked:
+        _probe_comfy_requirements(root, selection)
     _probe_comfy_blake3(interpreter)
     base_env = (
         {"DINKSTER_COMFYUI_ROOT": str(root), "DINKSTER_COMFY_NATIVE_ONLY": "0"}

@@ -50,8 +50,6 @@ from dinkster_inference import (
     StepCallback,
     StepEvent,
     TripoSplatConfig,
-    calculate_denoised,
-    calculate_input,
     encode_conditioning_carrier,
     make_conditioning_carrier,
     sampling_environment_cancellation,
@@ -62,6 +60,7 @@ from .denoise import run_sampler_engine, to_batch
 from .guidance import ConditioningEvaluation
 from .latent_streams import pack_latent_mask, pack_latent_streams, unpack_latent_streams
 from .operations import bound_compute_device
+from .parameterizations import calculate_denoised, calculate_input
 from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
 from .sampling_execution import (
     CustomSamplingCfgValue,
@@ -281,7 +280,7 @@ class TripoSplatDiffusionRuntime(MultiStreamSamplingRuntime):
         self._config: TripoSplatConfig = TRIPOSPLAT_CONFIG
         self._runtime_identity = runtime_identity
         self._compute_dtype = compute_dtype
-        self._samplers = torch_sampler_registry() if sampler_registry is None else sampler_registry
+        self._samplers = torch_sampler_registry(sampler_registry)
         self._schedulers = (
             torch_scheduler_registry() if scheduler_registry is None else scheduler_registry
         )

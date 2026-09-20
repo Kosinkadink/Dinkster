@@ -152,7 +152,13 @@ def probe(manifest_path: str) -> dict[str, Any]:
     from dinkster_workers.manifest import load_manifest, resolve_entry
 
     manifest = load_manifest(manifest_path)
-    sys.path.insert(0, str(manifest.root))
+    root = str(manifest.root.resolve())
+    module = manifest.nodes_entry.partition(":")[0]
+    source = manifest.root.joinpath(*module.split("."))
+    if source.with_suffix(".py").is_file() or source.is_dir():
+        sys.path.insert(0, root)
+    else:
+        sys.path.append(root)
     distribution_root = manifest.root.parent
     if (distribution_root / "pyproject.toml").is_file():
         source_root = distribution_root / "src"

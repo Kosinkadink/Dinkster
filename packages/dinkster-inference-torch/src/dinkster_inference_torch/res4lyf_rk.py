@@ -43,7 +43,7 @@ from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal, localcontext
 from typing import Any, Protocol, cast, runtime_checkable
 
-from .sampling import (
+from dinkster_inference.sampling import (
     Denoiser,
     DivTensor,
     NoiseKind,
