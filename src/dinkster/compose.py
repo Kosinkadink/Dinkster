@@ -87,6 +87,7 @@ from dinkster_inference import (
     builtin_registries,
     builtin_sampler_snapshot,
     register_inference_types,
+    registry_choice_values,
     remove_sampler_catalog_record,
     sampler_choice_values,
     scheduler_declaration,
@@ -7734,9 +7735,7 @@ class ServingComposer:
     ) -> dict[str, tuple[str, ...]]:
         choices = self._validated_sampler_choices(sampler_registry)
         canonical_schedulers = tuple(item.id for item in scheduler_registry)
-        compat_schedulers = tuple(
-            item.aliases[0] if item.aliases else item.id for item in scheduler_registry
-        )
+        compat_schedulers = registry_choice_values(scheduler_registry)
         try:
             combo_choices_json_bytes(
                 canonical_schedulers, subject="derived choice 'dinkster.schedulers'"

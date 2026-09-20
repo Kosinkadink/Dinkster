@@ -89,4 +89,7 @@ ARM_NODES = {"native": [KSamplerHost]}
 
 
 def choices() -> dict[str, tuple[str, ...]]:
-    return {"comfy.samplers": ("euler",)}
+    return {
+        "comfy.samplers": ("euler",),
+        "comfy.schedulers": ("normal",),
+    }

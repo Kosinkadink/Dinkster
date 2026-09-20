@@ -701,12 +701,17 @@ def compile_inference_graph(
     )
 
 
-def sampler_choice_values(snapshot: SamplerRegistrySnapshot) -> tuple[str, ...]:
-    """Native dropdown values, derived solely from the effective registry."""
+def registry_choice_values(declarations: Sequence[KeyedContribution]) -> tuple[str, ...]:
+    """Compatibility dropdown values for keyed registry declarations."""
     return tuple(
         declaration.aliases[0] if declaration.aliases else declaration.id
-        for declaration in snapshot.samplers
+        for declaration in declarations
     )
+
+
+def sampler_choice_values(snapshot: SamplerRegistrySnapshot) -> tuple[str, ...]:
+    """Native dropdown values, derived solely from the effective registry."""
+    return registry_choice_values(snapshot.samplers)
 
 
 __all__ = [
@@ -726,6 +731,7 @@ __all__ = [
     "guidance_declarations",
     "graph_compiler_declaration",
     "compile_inference_graph",
+    "registry_choice_values",
     "remove_sampler_catalog_record",
     "sampler_choice_values",
     "sampler_declaration",

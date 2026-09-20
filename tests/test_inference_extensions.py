@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -86,6 +87,19 @@ def _write_collision_module(root: Path, module: str, descriptor: str) -> None:
         "make=make, noise=NoiseKind.NONE)\n"
         "def register():\n"
         "    return SamplerContribution((SAMPLER,))\n",
+        encoding="utf-8",
+    )
+
+
+def _write_scheduler_module(root: Path, module: str, descriptor: str) -> None:
+    (root / f"{module}.py").write_text(
+        "from dinkster_api.v1 import InferenceContribution, SchedulerDescriptor\n"
+        "def make_sigmas(steps, _space):\n"
+        "    return (float(steps), 0.0)\n"
+        f"SCHEDULER = SchedulerDescriptor({descriptor}, display_name='collision', "
+        "make_sigmas=make_sigmas)\n"
+        "def register():\n"
+        "    return InferenceContribution(schedulers=(SCHEDULER,))\n",
         encoding="utf-8",
     )
 
@@ -191,6 +205,7 @@ def test_two_out_of_tree_packs_compose_in_sampling_worker_and_unload_exactly(
                 "s1_context_probe",
             )
             assert composer.composition.choices["dinkster.schedulers"][-1] == ("proof_a.scheduler")
+            assert composer.composition.choices["comfy.schedulers"][-1] == "s1_scheduler"
             assert [extension.id for extension in runtime.extension_snapshot.extensions] == [
                 "proof_a",
                 "proof_b",
@@ -295,6 +310,7 @@ def test_live_sampler_choices_publish_add_reload_remove_and_rollback(
                 "dinkster.samplers",
                 "dinkster.schedulers",
                 "comfy.samplers",
+                "comfy.schedulers",
             }
             state.replace(
                 (),
@@ -413,6 +429,71 @@ def test_sampler_collision_and_activation_failure_roll_back_staged_generation(
             assert composer._runtime_seat.pin() is before
             assert composer.composition.choices == before_choices
             assert composer.pack_specs() == before_specs
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+def test_scheduler_collision_from_two_extensions_fails_host_composition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        _write_scheduler_module(
+            tmp_path,
+            "s1_scheduler_collision_a",
+            "id='scheduler_a.value', aliases=('shared_scheduler',)",
+        )
+        _write_scheduler_module(
+            tmp_path,
+            "s1_scheduler_collision_b",
+            "id='scheduler_b.value', aliases=('second_scheduler',)",
+        )
+        composer = ServingComposer(worker_env=_worker_env(tmp_path))
+        try:
+            await composer.add_pack(
+                PackSpec(_host_manifest(tmp_path / "host"), trust_reserved=True)
+            )
+            await composer.add_pack(
+                _extension_manifest(
+                    tmp_path / "scheduler_a",
+                    "scheduler_a",
+                    "s1_scheduler_collision_a",
+                )
+            )
+            await composer.add_pack(
+                _extension_manifest(
+                    tmp_path / "scheduler_b",
+                    "scheduler_b",
+                    "s1_scheduler_collision_b",
+                )
+            )
+            entries, contributions = await composer._materialize_inference_contributions(
+                composer._records, composer._topology
+            )
+            scheduler_b = contributions["scheduler_b"][0]
+            contributions["scheduler_b"] = (
+                replace(
+                    scheduler_b,
+                    aliases=("shared_scheduler",),
+                ),
+            )
+
+            async def colliding_contributions(_records, _topology):
+                return entries, contributions
+
+            monkeypatch.setattr(
+                composer,
+                "_materialize_inference_contributions",
+                colliding_contributions,
+            )
+            with pytest.raises(
+                CompositionError,
+                match="extension 'scheduler_b' scheduler registry collision: "
+                "'shared_scheduler' already registered",
+            ):
+                await composer._build_extension_snapshot(composer._records, composer._topology)
         finally:
             await composer.close()
 
