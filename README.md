@@ -68,6 +68,13 @@ generated report, and remains tracked. Generated translation/capability JSON
 is ignored; CI regenerates it and verifies the tracked Markdown separately.
 CI's input action requires the read-only `DINKSTER_EVIDENCE_READ_KEY` secret.
 
+The release installer includes the separately versioned training node and
+worker packages from one immutable `Kosinkadink/dinkster-training` revision.
+Dependency updates are sequential: training advances its pinned Dinkster
+revision when it needs a newer public API, then Dinkster advances its training
+revision after that pack commit is validated. Dinkster never depends on a
+sibling training checkout, and ordinary Dinkster sync and CI do not fetch it.
+
 For cloud acceptance archives, pass both `--commit` and `--evidence-commit` to
 `scripts/prepare_cloud_acceptance.py`. It assembles the pinned external acceptance
 package with core in a disposable workspace, updates that workspace's lockfile,

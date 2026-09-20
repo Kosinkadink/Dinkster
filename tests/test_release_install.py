@@ -22,7 +22,7 @@ from scripts.build_release import (
     vendor_identity,
     worker_protocol,
 )
-from scripts.install import install
+from scripts.install import TRAINING_PACKAGES, TRAINING_REVISION, install
 from scripts.verify_release_install import stop
 
 
@@ -231,8 +231,8 @@ def test_installer_pins_its_environment(tmp_path: Path, monkeypatch: pytest.Monk
     run = Mock()
     monkeypatch.setattr("scripts.install.subprocess.run", run)
     result = install(tmp_path, "uv")
-    command = run.call_args.args[0]
-    assert command == [
+    sync, training = run.call_args_list
+    assert sync.args[0] == [
         "uv",
         "sync",
         "--project",
@@ -241,8 +241,21 @@ def test_installer_pins_its_environment(tmp_path: Path, monkeypatch: pytest.Monk
         "--no-dev",
         "--all-packages",
     ]
-    assert run.call_args.kwargs["env"]["UV_PROJECT_ENVIRONMENT"] == str(tmp_path / ".venv")
-    assert run.call_args.kwargs["check"] is True
+    scripts = tmp_path / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+    python = scripts / ("python.exe" if os.name == "nt" else "python")
+    assert training.args[0] == [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        str(python),
+        *TRAINING_PACKAGES,
+    ]
+    assert len(TRAINING_REVISION) == 40
+    assert all(TRAINING_REVISION in package for package in TRAINING_PACKAGES)
+    for call in (sync, training):
+        assert call.kwargs["env"]["UV_PROJECT_ENVIRONMENT"] == str(tmp_path / ".venv")
+        assert call.kwargs["check"] is True
     assert result == tmp_path / ".venv" / ("Scripts" if os.name == "nt" else "bin")
 
 

@@ -8,6 +8,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
+TRAINING_REVISION = "5d332635c6bde7c4540783c1b01ec46f10108101"
+TRAINING_REPOSITORY = "git+https://github.com/Kosinkadink/dinkster-training.git"
+TRAINING_PACKAGES = tuple(
+    f"{name} @ {TRAINING_REPOSITORY}@{TRAINING_REVISION}#subdirectory=packages/{name}"
+    for name in ("dinkster-nodes-training", "dinkster-training-worker")
+)
+
 
 def install(root: Path, uv: str) -> Path:
     root = root.resolve()
@@ -20,7 +27,14 @@ def install(root: Path, uv: str) -> Path:
         env=environment,
         check=True,
     )
-    return root / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+    scripts = root / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+    python = scripts / ("python.exe" if os.name == "nt" else "python")
+    subprocess.run(
+        [uv, "pip", "install", "--python", str(python), *TRAINING_PACKAGES],
+        env=environment,
+        check=True,
+    )
+    return scripts
 
 
 def main() -> None:

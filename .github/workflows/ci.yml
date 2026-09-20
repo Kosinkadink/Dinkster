@@ -37,3 +37,61 @@ jobs:
           python-version: "3.12"
       - run: uv sync --locked --all-packages
       - run: bash scripts/ci-fast.sh
+
+  default-training-pack:
+    name: default install exposes training nodes
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON(vars.DINKSTER_PR_RUNNER || '["self-hosted", "linux", "x64"]') }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+      - uses: ./.github/actions/configure-dinkster-identity
+        with:
+          repository: Kosinkadink/dinkster-training
+          deploy-key: ${{ secrets.DINKSTER_TRAINING_READ_KEY }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install the default backend and training pack
+        run: uv run --no-project --python 3.12 scripts/install.py
+      - name: Verify the default node catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          library="$RUNNER_TEMP/default-training-library"
+          mkdir -p "$library"
+          port="$(.venv/bin/python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+          .venv/bin/dinkster-serve --host 127.0.0.1 --port "$port" --library-root "$library" --prepare-stale-catalogs --disable-p2p > "$RUNNER_TEMP/default-training.log" 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true; wait "$server" 2>/dev/null || true' EXIT
+          .venv/bin/python - "$port" <<'PY'
+          import json
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+
+          url = f"http://127.0.0.1:{sys.argv[1]}/api/nodes"
+          expected = {
+              "training.advance",
+              "training.complete_session",
+              "training.create_session",
+              "training.dry_run",
+              "training.export_lora",
+          }
+          deadline = time.monotonic() + 180
+          while time.monotonic() < deadline:
+              try:
+                  with urllib.request.urlopen(url, timeout=2) as response:
+                      nodes = set(json.load(response)["nodes"])
+                  if expected <= nodes:
+                      break
+              except (OSError, urllib.error.URLError):
+                  pass
+              time.sleep(0.25)
+          else:
+              raise SystemExit(f"training nodes absent from {url}")
+          PY

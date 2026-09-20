@@ -552,9 +552,9 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         assert JOBS[name]["if"] == "needs.validation-plan.outputs.run-heavy == 'true'"
 
 
-def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
+def test_pr_workflow_keeps_fast_validation_bounded_and_training_isolated() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-    assert set(workflow["jobs"]) == {"fast"}
+    assert set(workflow["jobs"]) == {"fast", "default-training-pack"}
     assert set(workflow[True]) == {"pull_request", "workflow_dispatch"}
     assert WORKFLOW[True] == {
         "push": {"branches": ["main"]},
@@ -575,6 +575,28 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
     ]
     assert len(preparation) == 1
     assert preparation[0]["with"]["coverage"] == "false"
+    training = workflow["jobs"]["default-training-pack"]
+    assert training["name"] == "default install exposes training nodes"
+    assert training["if"] == (
+        "github.event_name == 'workflow_dispatch' || "
+        "github.event.pull_request.head.repo.full_name == github.repository"
+    )
+    access = [
+        step
+        for step in training["steps"]
+        if step.get("uses") == "./.github/actions/configure-dinkster-identity"
+    ]
+    assert access == [
+        {
+            "uses": "./.github/actions/configure-dinkster-identity",
+            "with": {
+                "repository": "Kosinkadink/dinkster-training",
+                "deploy-key": "${{ secrets.DINKSTER_TRAINING_READ_KEY }}",
+            },
+        }
+    ]
+    assert "dinkster-training" not in str(job)
+    assert "dinkster-training" in str(training)
     script = (ROOT / "scripts/ci-fast.sh").read_text(encoding="utf-8")
     assert "ruff format --check ." in script
     assert "ruff check ." in script
