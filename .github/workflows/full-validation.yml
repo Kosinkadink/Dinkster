@@ -142,6 +142,7 @@ jobs:
         if: matrix.os == 'linux' && matrix.python-version == '3.12'
         with:
           version: 10.31.0
+          dest: ${{ runner.tool_cache }}/setup-pnpm
       - uses: actions/setup-node@v4
         if: matrix.os == 'linux' && matrix.python-version == '3.12'
         with:
