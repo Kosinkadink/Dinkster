@@ -29,6 +29,7 @@ from dinkster_inference import (
     ConditioningRange,
     ExtensionInputValue,
     GuidanceRole,
+    ModelFamily,
     PatchSet,
     PayloadBinding,
     PercentRange,
@@ -1137,7 +1138,7 @@ def _validated_free_total(measured: object) -> int:
 
 def _select_subgroup(
     pending: list[_GroupedItem],
-    family_id: str,
+    family: ModelFamily,
     dtype: torch.dtype,
     free_memory: Callable[[torch.device], DeviceMemory],
 ) -> list[_GroupedItem]:
@@ -1154,7 +1155,7 @@ def _select_subgroup(
         selected = [pending[index] for index in candidate_indexes]
         batch = sum(item.prepared.crop.shape[0] for item in selected)
         required = regional_working_memory(
-            family_id,
+            family,
             batch=batch,
             height=selected[0].prepared.crop.shape[2],
             width=selected[0].prepared.crop.shape[3],
@@ -1323,7 +1324,7 @@ def evaluate_grouped_regions(
     x: torch.Tensor,
     sigma: float,
     space: SigmaSpace,
-    family_id: str,
+    family: ModelFamily,
     model: torch.nn.Module,
     evaluate: GroupedRegionEvaluator,
     patch_sets: Mapping[str, PatchSet[torch.Tensor]] | PreparedGroupedPatches,
@@ -1339,6 +1340,9 @@ def evaluate_grouped_regions(
     carrier digests are lookup keys only and never load or construct patches.
     """
 
+    if not isinstance(family, ModelFamily):  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise _refuse("unsupported-family", repr(family))
+    family_id = family.id
     if not callable(evaluate) or not callable(cancel) or not callable(free_memory):
         raise _refuse("callback")
     if type(sigma) is not float or not math.isfinite(sigma):
@@ -1401,7 +1405,7 @@ def evaluate_grouped_regions(
                     )
         while pending:
             _check_cancel(cancel)
-            subgroup = _select_subgroup(pending, family_id, compute_dtype, free_memory)
+            subgroup = _select_subgroup(pending, family, compute_dtype, free_memory)
             prepared = [item.prepared for item in subgroup]
             _check_cancel(cancel)
             conditioning = _repeat_group_conditioning(prepared)

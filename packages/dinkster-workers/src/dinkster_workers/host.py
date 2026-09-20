@@ -154,6 +154,7 @@ from .manifest import (
     ManifestError,
     PackManifest,
     VisionProvider,
+    add_pack_root_to_import_path,
     generation_provider_to_wire,
     load_manifest,
     resolve_entry,
@@ -836,6 +837,7 @@ def load_extension_contributions(
 
 async def serve(endpoint: str, manifest_path: str, *, shm_threshold: int, use_shm: bool) -> None:
     manifest = load_manifest(Path(manifest_path))
+    add_pack_root_to_import_path(manifest, sys.path)
     worker, registry, node_classes, arm_workers = load_pack(manifest)
     with use_declared_asset_pack(manifest.name):
         planner = load_planner(manifest)
@@ -890,6 +892,7 @@ async def serve_many(
     loaded: list[tuple[Any, ...]] = []
     for path in manifest_paths:
         manifest = load_manifest(Path(path))
+        add_pack_root_to_import_path(manifest, sys.path)
         pack_load = load_pack(manifest)
         with use_declared_asset_pack(manifest.name):
             loaded.append(

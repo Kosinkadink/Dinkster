@@ -53,24 +53,6 @@ async def _default_pack_names() -> tuple[str, ...]:
         await composer.close()
 
 
-def test_partner_auth_is_injected_only_into_partner_worker_environment() -> None:
-    from dinkster.compose import PackSpec
-    from dinkster.serve import _with_partner_auth
-
-    partner_root = TESTS_DIR.parent / "packages" / "dinkster-nodes-partner"
-    partner = _with_partner_auth(str(partner_root), api_key="secret", api_base="https://proxy.test")
-    assert isinstance(partner, PackSpec)
-    assert partner.env == {
-        "DINKSTER_COMFY_API_KEY": "secret",
-        "DINKSTER_COMFY_API_BASE": "https://proxy.test",
-    }
-    foundation = str(TESTS_DIR.parent / "packages" / "dinkster-nodes-foundation")
-    assert (
-        _with_partner_auth(foundation, api_key="secret", api_base="https://proxy.test")
-        == foundation
-    )
-
-
 def test_parse_memory_budget() -> None:
     from dinkster.serve import parse_memory_budget
 
@@ -691,50 +673,6 @@ def test_settings_gate_unknown_is_startup_parser_error(
     error = capsys.readouterr().err
     assert "comfy-args" in error
     assert "memory-budgets" in error
-
-
-def test_openai_generation_cli_scopes_environment_to_its_pack(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from dinkster import serve
-
-    captured: list[dict[str, object]] = []
-    real_spec = serve.openai_generation_pack_spec
-
-    def record_spec(**kwargs: object) -> object:
-        captured.append(dict(kwargs))
-        return real_spec(**kwargs)  # type: ignore[arg-type]
-
-    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
-        awaitable.close()  # type: ignore[attr-defined]
-
-    configured = {
-        "DINKSTER_OPENAI_BASE_URL": "https://api.example.test/v1",
-        "DINKSTER_OPENAI_MODEL": "test-model",
-        "DINKSTER_OPENAI_API_KEY": "test-secret",
-        "DINKSTER_OPENAI_COMPATIBILITY": "llama.cpp",
-        "DINKSTER_OPENAI_STREAM": "false",
-        "DINKSTER_OPENAI_TIMEOUT": "45",
-    }
-    for name, value in configured.items():
-        monkeypatch.setenv(name, value)
-    monkeypatch.setattr(serve, "openai_generation_pack_spec", record_spec)
-    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
-    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--library-root", ""])
-
-    serve.main()
-
-    assert captured == [
-        {
-            "base_url": "https://api.example.test/v1",
-            "model": "test-model",
-            "api_key": "test-secret",
-            "compatibility": "llama.cpp",
-            "stream": False,
-            "timeout_s": 45.0,
-        }
-    ]
-    assert all(name not in os.environ for name in configured)
 
 
 def test_openai_generation_routes_mount_and_lazy_provider_closes(
@@ -1603,6 +1541,48 @@ def test_serve_without_comfy_mounts_native_provider(
         assert config.cuda_indices == (0, 1)
     else:
         assert options["single_job_multi_gpu"] is None
+
+
+def test_serve_resolves_legacy_pack_from_launch_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import serve
+
+    launch_directory = tmp_path / "launch"
+    legacy_pack = launch_directory / "packs" / "legacy"
+    legacy_pack.mkdir(parents=True)
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
+    captured: list[Path] = []
+
+    def capture_specs(_root: str, **kwargs: object) -> list[object]:
+        captured.extend(kwargs["legacy_packs"])  # type: ignore[arg-type]
+        return []
+
+    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        awaitable.close()  # type: ignore[attr-defined]
+
+    monkeypatch.chdir(launch_directory)
+    monkeypatch.setattr(serve, "comfy_compat_specs", capture_specs)
+    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dinkster-serve",
+            "--library-root",
+            "",
+            "--comfy-root",
+            str(comfy_root),
+            "--legacy-pack",
+            str(legacy_pack.relative_to(launch_directory)),
+        ],
+    )
+
+    serve.main()
+
+    assert captured == [legacy_pack.resolve()]
 
 
 @pytest.mark.parametrize("mode", [None, "auto", "on", "off"])
@@ -2663,7 +2643,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
         serve_command(
             port,
             "--pack",
-            str(manifest),
+            str(manifest.relative_to(tmp_path)),
             "--event-loop-stall-threshold",
             "4",
         ),

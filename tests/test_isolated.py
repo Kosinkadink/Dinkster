@@ -105,8 +105,9 @@ from dinkster_workers.boundary import (
     read_frame,
     write_frame,
 )
+from dinkster_workers.doctor import diagnose
 from dinkster_workers.isolated import GroupMemberWorker
-from dinkster_workers.launch import Launcher, LaunchSpec
+from dinkster_workers.launch import HOST_OWNED_ENVIRONMENT, Launcher, LaunchSpec
 from dinkster_workers.session import BoundarySession, WorkerDied
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 
@@ -148,11 +149,16 @@ def attention_capabilities(*, torch_version: str = "2.13.0") -> AttentionCapabil
     )
 
 
-def write_iso_manifest(tmp_path: Path, *, name: str = "isopack") -> Path:
+def write_iso_manifest(
+    tmp_path: Path,
+    *,
+    name: str = "isopack",
+    module_name: str = "isopack_nodes",
+) -> Path:
     manifest = tmp_path / "dinkster-pack.toml"
     manifest.write_text(
         f'[pack]\nname = "{name}"\n\n[pack.entry]\n'
-        'nodes = "isopack_nodes:NODES"\ntypes = "isopack_nodes:register_types"\n'
+        f'nodes = "{module_name}:NODES"\ntypes = "{module_name}:register_types"\n'
     )
     return manifest
 
@@ -173,12 +179,147 @@ def iso_worker(tmp_path: Path, registry: TypeRegistry, **kwargs: object) -> Isol
     )
 
 
+class DifferentWorkingDirectoryLauncher(Launcher):
+    def __init__(self, working_directory: Path, manifests: tuple[Path, ...]) -> None:
+        self._working_directory = working_directory
+        self._manifests = tuple(path.resolve() for path in manifests)
+
+    async def launch(self, spec: LaunchSpec) -> asyncio.subprocess.Process:
+        assert spec.pack_root == self._manifests[0].parent
+        manifest_arguments = tuple(
+            Path(spec.command[index + 1])
+            for index, value in enumerate(spec.command)
+            if value == "--manifest"
+        )
+        assert manifest_arguments == self._manifests
+        environment = {
+            name: value for name, value in os.environ.items() if name not in HOST_OWNED_ENVIRONMENT
+        }
+        environment.update(spec.env)
+        return await asyncio.create_subprocess_exec(
+            *spec.command,
+            env=environment,
+            cwd=self._working_directory,
+        )
+
+
 def test_ordinary_isolated_worker_keeps_workgroup_capability_absent(tmp_path: Path) -> None:
     async def scenario() -> None:
         worker = iso_worker(tmp_path, core_registry())
         await worker.start()
         try:
             assert worker.workgroup_capabilities == frozenset()
+        finally:
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_isolated_worker_imports_pack_from_a_different_working_directory(
+    tmp_path: Path,
+) -> None:
+    pack_root = tmp_path / "pack"
+    pack_root.mkdir()
+    manifest = write_iso_manifest(pack_root)
+    shutil.copy(TESTS_DIR / "isopack_nodes.py", pack_root / "isopack_nodes.py")
+    working_directory = tmp_path / "working"
+    working_directory.mkdir()
+
+    async def scenario() -> None:
+        worker = IsolatedWorker(
+            manifest.resolve(),
+            core_registry(),
+            launcher=DifferentWorkingDirectoryLauncher(working_directory, (manifest,)),
+        )
+        await worker.start()
+        try:
+            assert "iso.sleepy" in worker.schemas
+        finally:
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_group_isolated_worker_imports_packs_from_a_different_working_directory(
+    tmp_path: Path,
+) -> None:
+    manifests: list[Path] = []
+    for name in ("first", "second"):
+        pack_root = tmp_path / name
+        pack_root.mkdir()
+        module_name = f"{name}_nodes"
+        manifest = write_iso_manifest(pack_root, name=name, module_name=module_name)
+        shutil.copy(TESTS_DIR / "isopack_nodes.py", pack_root / f"{module_name}.py")
+        manifests.append(manifest)
+    working_directory = tmp_path / "working"
+    working_directory.mkdir()
+
+    async def scenario() -> None:
+        group = GroupIsolatedWorker(
+            "cwd-test",
+            manifests,
+            core_registry(),
+            launcher=DifferentWorkingDirectoryLauncher(working_directory, tuple(manifests)),
+        )
+        await group.start()
+        try:
+            assert "iso.sleepy" in group.members["first"].schemas
+            assert "iso.sleepy" in group.members["second"].schemas
+        finally:
+            await group.close()
+
+    asyncio.run(scenario())
+
+
+def test_worker_and_doctor_reject_implicit_distribution_source_root(tmp_path: Path) -> None:
+    distribution = tmp_path / "distribution"
+    pack_root = distribution / "pack"
+    pack_root.mkdir(parents=True)
+    manifest = write_iso_manifest(pack_root)
+    (distribution / "pyproject.toml").write_text("[project]\nname = 'isopack'\nversion = '1'\n")
+    source_root = distribution / "src"
+    source_root.mkdir()
+    shutil.copy(TESTS_DIR / "isopack_nodes.py", source_root / "isopack_nodes.py")
+
+    report = diagnose(manifest)
+    assert not report.ok
+    assert any(finding.code == "entry.unresolvable" for finding in report.findings)
+
+    async def scenario() -> None:
+        worker = IsolatedWorker(manifest, core_registry())
+        with pytest.raises(RuntimeError, match="failed to start: exited with code 1"):
+            await worker.start()
+        await worker.close()
+
+    asyncio.run(scenario())
+
+
+def test_isolated_worker_uses_interpreter_entry_for_split_package(tmp_path: Path) -> None:
+    pack_root = tmp_path / "pack"
+    pack_root.mkdir()
+    (pack_root / "isopack_nodes").mkdir()
+    (pack_root / "isopack_nodes" / "__init__.py").write_text("\n")
+    manifest = pack_root / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "isopack"\n\n[pack.entry]\n'
+        'nodes = "isopack_nodes.entries:NODES"\n'
+        'types = "isopack_nodes.entries:register_types"\n'
+    )
+    interpreter_root = tmp_path / "interpreter"
+    installed_package = interpreter_root / "isopack_nodes"
+    installed_package.mkdir(parents=True)
+    (installed_package / "__init__.py").write_text("\n")
+    shutil.copy(TESTS_DIR / "isopack_nodes.py", installed_package / "entries.py")
+
+    async def scenario() -> None:
+        worker = IsolatedWorker(
+            manifest,
+            core_registry(),
+            extra_env={"PYTHONPATH": str(interpreter_root)},
+        )
+        await worker.start()
+        try:
+            assert "iso.sleepy" in worker.schemas
         finally:
             await worker.close()
 

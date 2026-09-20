@@ -142,7 +142,6 @@ from .compose import (
     ServingComposer,
     default_pack_ids,
     default_pack_spec,
-    openai_generation_pack_spec,
     resolve_manifest_path,
     training_pack_specs,
 )
@@ -388,10 +387,6 @@ _COMFY_MOUNTS: tuple[tuple[str, str, str], ...] = (
     ("comfy-output", "output", "readwrite"),
 )
 
-_PARTNER_PACK = "dinkster-nodes-partner"
-_COMFY_API_KEY_ENV = "DINKSTER_COMFY_API_KEY"
-_COMFY_API_BASE_ENV = "DINKSTER_COMFY_API_BASE"
-_DEFAULT_COMFY_API_BASE = "https://api.comfy.org"
 _OPENAI_API_KEY_ENV = "DINKSTER_OPENAI_API_KEY"
 _OPENAI_BASE_URL_ENV = "DINKSTER_OPENAI_BASE_URL"
 _OPENAI_MODEL_ENV = "DINKSTER_OPENAI_MODEL"
@@ -405,7 +400,7 @@ _REMOTE_CATALOG_POLL_INTERVAL_ENV = "DINKSTER_REMOTE_CATALOG_POLL_INTERVAL"
 _IDENTITY_JWKS_URL_ENV = "DINKSTER_IDENTITY_JWKS_URL"
 _IDENTITY_ISSUER_ENV = "DINKSTER_IDENTITY_ISSUER"
 _IDENTITY_AUDIENCE_ENV = "DINKSTER_IDENTITY_AUDIENCE"
-_DEFAULT_REMOTE_GATEWAY_BASE = "https://api.comfy.org"
+_DEFAULT_REMOTE_GATEWAY_BASE = ""
 _FEDERATED_ASSET_PATHS = {
     "catalog": "/api/catalog",
     "candidates": "/api/catalog/candidates",
@@ -503,30 +498,6 @@ def _load_federated_asset_config(
     if len(cursor_key) < 32:
         raise ValueError("federated asset cursor key must contain at least 32 bytes")
     return Path(store_path), policy, cursor_key
-
-
-def _with_partner_auth(entry: PackSpec | str, *, api_key: str, api_base: str) -> PackSpec | str:
-    """Attach host-side comfy.org config only to the partner worker.
-
-    PackSpec.env is the existing per-worker launch boundary. Keeping the
-    credential out of the parent environment prevents unrelated pack workers
-    from inheriting it through the ordinary subprocess launcher.
-    """
-    spec = entry if isinstance(entry, PackSpec) else PackSpec(manifest=entry)
-    try:
-        manifest = load_manifest(resolve_manifest_path(spec.manifest))
-    except Exception:
-        return entry  # composition owns the normal malformed-pack diagnostic
-    if manifest.name != _PARTNER_PACK:
-        return entry
-    return replace(
-        spec,
-        env={
-            **spec.env,
-            _COMFY_API_KEY_ENV: api_key,
-            _COMFY_API_BASE_ENV: api_base,
-        },
-    )
 
 
 def _native_asset_locator(vault: AssetVault, mounts: MountTable) -> Callable[[str], Path | None]:
@@ -788,6 +759,11 @@ def _install_event_loop_stall_diagnostics(
     app.on_cleanup.append(stop)
 
 
+def _resolve_pack_argument(value: str) -> Path:
+    """Freeze a --pack path before any worker or asynchronous startup work."""
+    return Path(value).resolve()
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Run a Dinkster server from its installed defaults plus configured packs"
@@ -813,9 +789,11 @@ def main(argv: list[str] | None = None) -> None:
         "--pack",
         action="append",
         default=[],
+        type=_resolve_pack_argument,
         metavar="PATH",
         help="pack to serve: a dinkster-pack.toml or its directory, repeatable; "
-        "each pack runs isolated in its own process",
+        "relative paths resolve from the launch directory; each pack runs "
+        "isolated in its own process",
     )
     parser.add_argument(
         "--install-root",
@@ -841,19 +819,6 @@ def main(argv: list[str] | None = None) -> None:
         "(default: $DINKSTER_COMFYUI_PYTHON, the optional ComfyUI venv, or current Python)",
     )
     parser.add_argument(
-        "--comfy-api-key",
-        default=os.environ.get(_COMFY_API_KEY_ENV, ""),
-        metavar="KEY",
-        help="comfy.org API key for partner nodes (default: $DINKSTER_COMFY_API_KEY)",
-    )
-    parser.add_argument(
-        "--comfy-api-base",
-        default=os.environ.get(_COMFY_API_BASE_ENV, _DEFAULT_COMFY_API_BASE),
-        metavar="URL",
-        help="comfy.org proxy base for partner nodes "
-        "(default: $DINKSTER_COMFY_API_BASE, else https://api.comfy.org)",
-    )
-    parser.add_argument(
         "--openai-base-url",
         default=os.environ.get(_OPENAI_BASE_URL_ENV, ""),
         metavar="URL",
@@ -863,8 +828,10 @@ def main(argv: list[str] | None = None) -> None:
         "--remote-catalog-base",
         default=os.environ.get(_REMOTE_CATALOG_BASE_ENV, _DEFAULT_REMOTE_GATEWAY_BASE),
         metavar="URL",
-        help="remote node catalog base URL "
-        "(default: $DINKSTER_REMOTE_CATALOG_BASE, else https://api.comfy.org)",
+        help=(
+            "remote node catalog base URL "
+            "(default: $DINKSTER_REMOTE_CATALOG_BASE; disabled when unset)"
+        ),
     )
     parser.add_argument(
         "--remote-gateway-base",
@@ -1000,10 +967,12 @@ def main(argv: list[str] | None = None) -> None:
         "--legacy-pack",
         action="append",
         default=[],
+        type=_resolve_pack_argument,
         metavar="PATH",
         help="unmodified ComfyUI custom node pack (directory or single .py), "
-        "repeatable; loads in the legacy quarantine worker and attributes "
-        "as 'comfy.<pack>' (requires --comfy-root)",
+        "repeatable; relative paths resolve from the launch directory; loads "
+        "in the legacy quarantine worker and attributes as 'comfy.<pack>' "
+        "(requires --comfy-root)",
     )
     parser.add_argument(
         "--strict-packs",
@@ -1284,8 +1253,6 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(f"DINKSTER_ATTENTION_POLICY: {exc}")
     # The plain launcher inherits the host environment. Capture service
     # settings through argparse, then give them only to their owning PackSpec.
-    os.environ.pop(_COMFY_API_KEY_ENV, None)
-    os.environ.pop(_COMFY_API_BASE_ENV, None)
     for name in (
         _OPENAI_API_KEY_ENV,
         _OPENAI_BASE_URL_ENV,
@@ -1735,29 +1702,8 @@ def main(argv: list[str] | None = None) -> None:
     specs.extend(args.pack)
     if args.comfy_root:
         specs.extend(compat_specs)
-    if args.openai_base_url:
-        if args.no_default_packs and not args.comfy_root:
-            specs.append(default_pack_spec("dinkster-nodes-generation"))
-        specs.append(
-            openai_generation_pack_spec(
-                base_url=args.openai_base_url,
-                model=args.openai_model,
-                api_key=args.openai_api_key,
-                compatibility=args.openai_compatibility,
-                stream=args.openai_response_mode == "stream",
-                timeout_s=args.openai_timeout,
-            )
-        )
     default_pack_venv_root = _default_pack_venv_root(args.library_root)
     default_pack_accelerator = resolve_accelerator()
-    specs = [
-        _with_partner_auth(
-            spec,
-            api_key=cast("str", args.comfy_api_key),
-            api_base=cast("str", args.comfy_api_base),
-        )
-        for spec in specs
-    ]
 
     assembler = None
     sampler = None

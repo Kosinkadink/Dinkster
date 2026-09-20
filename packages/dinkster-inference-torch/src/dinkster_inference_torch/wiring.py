@@ -90,6 +90,7 @@ from dinkster_inference import (
     realize_sampling_timeline,
     require_realized_sampling_step,
     sampling_execution_context,
+    wired_runtime_family_ids,
 )
 from dinkster_inference.assembly import (
     Flux2AssemblyPlan,
@@ -105,7 +106,6 @@ from dinkster_inference.runtime import (
     FamilyRuntime,
     NativeAssemblyPlan,
     resolve_native_assembly,
-    wired_runtime_family_ids,
 )
 
 from ._conditioning_layout import (
@@ -2280,6 +2280,7 @@ def load_runtime(
     attention_route_token: AttentionRouteToken | None = None,
     pose_cache_settings: Wan21PoseBlockCacheSettings | None = None,
     assembly_registry: Registry[AssemblyRegistration] | None = None,
+    family_registry: Registry[ModelFamily] | None = None,
 ) -> FamilyRuntime[torch.Tensor] | Wan21Runtime: ...
 
 
@@ -2319,6 +2320,7 @@ def load_runtime(
     attention_route_token: Any = None,
     pose_cache_settings: Any = None,
     assembly_registry: Any = None,
+    family_registry: Any = None,
 ) -> FamilyRuntime[torch.Tensor] | Wan21Runtime: ...
 
 
@@ -2357,6 +2359,7 @@ def load_runtime(
     attention_route_token: AttentionRouteToken | None = None,
     pose_cache_settings: Wan21PoseBlockCacheSettings | None = None,
     assembly_registry: Registry[AssemblyRegistration] | None = None,
+    family_registry: Registry[ModelFamily] | None = None,
 ) -> FamilyRuntime[torch.Tensor] | Wan21Runtime:
     """Plan component geometry, assemble, and bind the shared runtime.
 
@@ -2385,6 +2388,8 @@ def load_runtime(
     swap without a rotated token would serve stale native cache
     entries). The builtin registries need no token; passing a token
     without a custom registry is refused as a likely mistake.
+    ``family_registry`` replaces the planned family with the active aggregate's
+    registration so engine properties come from the worker-owned snapshot.
     Animate2 pose-cache settings are accepted only by its Wan 2.1 profile;
     lossy cache storage modes fold into runtime identity while default storage
     preserves the uncached identity.
@@ -2435,6 +2440,10 @@ def load_runtime(
             "cannot assemble checkpoint components: " + "; ".join(error.reasons)
         ) from error
     plan = resolution.plan
+    if family_registry is not None:
+        registered_family = family_registry.get(plan.family.id)
+        if registered_family is not None:
+            plan = cast(NativeAssemblyPlan, replace(cast(Any, plan), family=registered_family))
     loader = _resolve_assembly_loader(resolution.registration)
     if diffusion_dtype is None:
         diffusion_dtype = _torch_dtype(default_diffusion_dtype(plan.family.id))

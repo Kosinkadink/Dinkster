@@ -79,8 +79,6 @@ from dinkster_inference import (
     INFERENCE_SAMPLERS_SURFACE,
     INFERENCE_SCHEDULERS_SURFACE,
     SAMPLER_CATALOG_ENV,
-    OpenAICompatibility,
-    OpenAIGenerationProvider,
     Registry,
     RegistryError,
     SamplerExtensionEntry,
@@ -272,7 +270,6 @@ __all__ = [
     "default_pack_ids",
     "default_pack_spec",
     "default_pack_specs",
-    "openai_generation_pack_spec",
     "resolve_manifest_path",
     "training_pack_specs",
 ]
@@ -306,7 +303,6 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
         "dinkster-nodes-image": "dinkster_nodes_image",
         "dinkster-nodes-remote": "dinkster_nodes_remote",
         "dinkster-nodes-generation": "dinkster_nodes_generation",
-        "dinkster-nodes-generation-openai": "dinkster_nodes_generation_openai",
         "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
         "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
         "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
@@ -1373,59 +1369,6 @@ def default_pack_spec(pack_id: str) -> PackSpec:
         ),
         locked=_default_pack_lock().get(pack_id),
         asset_vault_write=pack_id == "dinkster-nodes-remote",
-    )
-
-
-def openai_generation_pack_spec(
-    *,
-    base_url: str,
-    model: str,
-    api_key: str,
-    compatibility: str,
-    stream: bool,
-    timeout_s: float,
-) -> PackSpec:
-    """Resolve the optional external generation worker with scoped authority."""
-    if not base_url or not model:
-        raise ValueError("OpenAI base URL and model must both be non-empty")
-    if type(api_key) is not str:
-        raise ValueError("OpenAI API key must be a string")
-    try:
-        probe = OpenAIGenerationProvider(
-            base_url,
-            model,
-            api_key=api_key or None,
-            compatibility=OpenAICompatibility(compatibility),
-            stream=stream,
-            timeout_s=timeout_s,
-        )
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"invalid OpenAI generation configuration: {exc}") from exc
-    probe.close()
-    spec = _installed_pack_spec(
-        "dinkster-nodes-generation-openai",
-        "dinkster_nodes_generation_openai",
-        in_process=False,
-    )
-    env = {
-        "DINKSTER_OPENAI_BASE_URL": base_url,
-        "DINKSTER_OPENAI_MODEL": model,
-        "DINKSTER_OPENAI_COMPATIBILITY": compatibility,
-        "DINKSTER_OPENAI_STREAM": "true" if stream else "false",
-        "DINKSTER_OPENAI_TIMEOUT": format(timeout_s, ".17g"),
-    }
-    if api_key:
-        env["DINKSTER_OPENAI_API_KEY"] = api_key
-    return replace(
-        spec,
-        env=env,
-        execution_config={
-            "base_url": base_url,
-            "model": model,
-            "compatibility": compatibility,
-            "stream": env["DINKSTER_OPENAI_STREAM"],
-            "timeout_s": env["DINKSTER_OPENAI_TIMEOUT"],
-        },
     )
 
 
@@ -2821,7 +2764,6 @@ class ServingComposer:
         implicit_egress_list: list[str] = []
         if network_requesters:
             for name in (
-                "DINKSTER_COMFY_API_BASE",
                 "DINKSTER_OPENAI_BASE_URL",
                 "DINKSTER_REMOTE_CATALOG_BASE",
                 "DINKSTER_REMOTE_GATEWAY_BASE",
