@@ -845,6 +845,14 @@ dependencies = [
     { name = "pillow" },
 ]
 
+[package.optional-dependencies]
+collab = [
+    { name = "dinkster-collab" },
+]
+supervisor = [
+    { name = "dinkster-supervisor" },
+]
+
 [package.dev-dependencies]
 angle = [
     { name = "comfy-angle" },
@@ -869,6 +877,7 @@ requires-dist = [
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
     { name = "dinkster-caches", editable = "packages/dinkster-caches" },
     { name = "dinkster-collab", editable = "packages/dinkster-collab" },
+    { name = "dinkster-collab", marker = "extra == 'collab'", editable = "packages/dinkster-collab" },
     { name = "dinkster-compat-comfy", editable = "packages/dinkster-compat-comfy" },
     { name = "dinkster-engine", editable = "packages/dinkster-engine" },
     { name = "dinkster-graph", editable = "packages/dinkster-graph" },
@@ -892,12 +901,14 @@ requires-dist = [
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
     { name = "dinkster-server", editable = "packages/dinkster-server" },
     { name = "dinkster-supervisor", editable = "packages/dinkster-supervisor" },
+    { name = "dinkster-supervisor", marker = "extra == 'supervisor'", editable = "packages/dinkster-supervisor" },
     { name = "dinkster-training-worker", editable = "packages/dinkster-training-worker" },
     { name = "dinkster-values", editable = "packages/dinkster-values" },
     { name = "dinkster-workers", editable = "packages/dinkster-workers" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pillow", specifier = ">=10" },
 ]
+provides-extras = ["collab", "supervisor"]
 
 [package.metadata.requires-dev]
 angle = [

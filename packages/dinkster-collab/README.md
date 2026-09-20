@@ -34,9 +34,10 @@ document snapshots via `/api/jobs`.
 
 ## Setup
 
-The package rides the workspace: `uv sync --all-packages` from the repo
-root. `dinkster-serve` mounts the surface automatically; to mount it on
-any aiohttp app:
+Install the package directly or with the `dinkster[collab]` extra. A default
+Dinkster install includes it. `dinkster-serve` asks the package to register its
+server extension when installed and otherwise serves without collaboration.
+To mount the lower-level routes on any aiohttp app:
 
 ```python
 from dinkster_collab import SessionService, add_session_routes
