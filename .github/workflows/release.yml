@@ -10,7 +10,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: dinkster-backend-release
@@ -33,14 +32,14 @@ jobs:
             if (context.ref !== 'refs/heads/main') {
               throw new Error('Refusing publication from a non-main branch');
             }
-            const runs = await github.rest.actions.listWorkflowRuns({
-              ...context.repo, workflow_id: 'full-validation.yml', head_sha: context.sha, event: 'push',
-            });
-            if (runs.data.workflow_runs[0]?.conclusion !== 'success') {
-              throw new Error('The exact main commit must have successful CI before release');
-            }
-  build:
+
+  validation:
     needs: authorize
+    uses: ./.github/workflows/full-validation.yml
+    secrets: inherit
+
+  build:
+    needs: validation
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4

@@ -1,0 +1,59 @@
+[project]
+name = "dinkster-nodes-vision"
+version = "0.0.1"
+description = "Dinkster model-backed vision node providers"
+requires-python = ">=3.12"
+license-files = [
+    "dinkster_vision_hed_pack/LINEART_LICENSE",
+    "dinkster_vision_hed_pack/MANGA_LICENSE",
+    "dinkster_vision_hed_pack/MLSD_LICENSE",
+    "dinkster_vision_hed_pack/TEED_LICENSE",
+    "dinkster_vision_hed_pack/WEIGHT_LICENSES.md",
+    "dinkster_vision_sam31_pack/SAM_LICENSE",
+    "dinkster_vision_sam31_pack/CLIP_LICENSE",
+]
+dependencies = [
+    "dinkster-api",
+    "dinkster-inference-torch",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.10",
+    "pillow>=10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dinkster_nodes_vision"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"dinkster_vision_birefnet_pack" = "dinkster_vision_birefnet_pack"
+"src/dinkster_nodes_vision/birefnet" = "dinkster_vision_birefnet_pack/dinkster_nodes_vision/birefnet"
+"dinkster_vision_depth_anything_v2_pack" = "dinkster_vision_depth_anything_v2_pack"
+"src/dinkster_nodes_vision/depth_anything_v2" = "dinkster_vision_depth_anything_v2_pack/dinkster_nodes_vision/depth_anything_v2"
+"dinkster_vision_depth_anything_v3_pack" = "dinkster_vision_depth_anything_v3_pack"
+"src/dinkster_nodes_vision/depth_anything_v3" = "dinkster_vision_depth_anything_v3_pack/dinkster_nodes_vision/depth_anything_v3"
+"dinkster_vision_detr_pack" = "dinkster_vision_detr_pack"
+"src/dinkster_nodes_vision/detr" = "dinkster_vision_detr_pack/dinkster_nodes_vision/detr"
+"dinkster_vision_efficient_sam_pack" = "dinkster_vision_efficient_sam_pack"
+"src/dinkster_nodes_vision/efficient_sam" = "dinkster_vision_efficient_sam_pack/dinkster_nodes_vision/efficient_sam"
+"dinkster_vision_hed_pack" = "dinkster_vision_hed_pack"
+"src/dinkster_nodes_vision/hed" = "dinkster_vision_hed_pack/dinkster_nodes_vision/hed"
+"dinkster_vision_rtdetr_pack" = "dinkster_vision_rtdetr_pack"
+"src/dinkster_nodes_vision/rtdetr" = "dinkster_vision_rtdetr_pack/dinkster_nodes_vision/rtdetr"
+"dinkster_vision_sam31_pack" = "dinkster_vision_sam31_pack"
+"src/dinkster_nodes_vision/sam31" = "dinkster_vision_sam31_pack/dinkster_nodes_vision/sam31"
+"dinkster_vision_upscale_pack" = "dinkster_vision_upscale_pack"
+"src/dinkster_nodes_vision/upscale" = "dinkster_vision_upscale_pack/dinkster_nodes_vision/upscale"
+
+[tool.uv.sources]
+dinkster-api = { workspace = true }
+dinkster-inference-torch = { workspace = true }
+
+[tool.pyright]
+pythonVersion = "3.12"
+venvPath = "../.."
+venv = ".venv-torch"
+include = ["src", "tests"]
+typeCheckingMode = "standard"

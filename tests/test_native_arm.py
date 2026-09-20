@@ -46,6 +46,7 @@ from dinkster_inference import (
     InferenceRuntimeHandle,
     LatentDescriptor,
     PreparedMultiStreamConditioning,
+    Registry,
     SamplingCancelled,
     SamplingSegment,
     extend_runtime_identity,
@@ -82,8 +83,7 @@ def _fake_torch_sampler_registry(registry: Iterable[Any] | None = None) -> Any:
     if registry is None:
         return portable.builtin_sampler_registry()
     factories = {descriptor.id: descriptor.make for descriptor in portable.builtin_samplers()}
-    inference = importlib.import_module("dinkster_inference")
-    bound = inference.Registry()
+    bound = Registry()
     for descriptor in registry:
         factory = factories.get(descriptor.id)
         bound.register(replace(descriptor, make=factory) if factory is not None else descriptor)
@@ -1860,6 +1860,11 @@ def test_native_controlnet_loader_uses_descriptor_with_provenance(
         )
     )
     monkeypatch.setattr(component_catalog, "default_component_registry", lambda: registry)
+    monkeypatch.setattr(
+        arm,
+        "_builtin_inference_registries",
+        lambda: SimpleNamespace(components=registry),
+    )
 
     def resolve_loader(reference: str):
         assert reference == descriptor.loader
@@ -1956,6 +1961,11 @@ def test_native_controlnet_loader_refuses_missing_required_attention_route(
         return real_import_module(name)
 
     monkeypatch.setattr(component_catalog, "default_component_registry", lambda: registry)
+    monkeypatch.setattr(
+        arm,
+        "_builtin_inference_registries",
+        lambda: SimpleNamespace(components=registry),
+    )
     monkeypatch.setattr(
         component_registry,
         "execution_symbol",
@@ -7860,6 +7870,43 @@ def test_registry_runtime_threads_identity_and_enables_compute_following_storage
         "registry_token": digest,
         "extension_behavior_hash": "a" * 64,
     }
+
+
+def test_sampler_registry_binds_aggregate_builtin_and_extension_generations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arm = _native_arm()
+    builtin_samplers = object()
+    extension_samplers = object()
+    builtin = SimpleNamespace(samplers=builtin_samplers)
+    generation = SimpleNamespace(
+        registries=SimpleNamespace(samplers=extension_samplers),
+        extensions=(("proof_a", object()), ("proof_b", object())),
+    )
+    bound: list[object] = []
+    inference_torch = SimpleNamespace(
+        torch_sampler_registry=lambda registry: bound.append(registry) or ("bound", registry)
+    )
+    inference = SimpleNamespace(materialize_inference_generation=lambda _key: generation)
+    real_import = importlib.import_module
+
+    def fake_import(name: str) -> object:
+        if name == "dinkster_inference_torch":
+            return inference_torch
+        return real_import(name)
+
+    monkeypatch.setattr(arm.importlib, "import_module", fake_import)
+    monkeypatch.setattr(arm, "_builtin_inference_registries", lambda: builtin)
+    monkeypatch.setattr(arm, "current_execution_context", lambda: None)
+
+    assert arm._sampler_registry(inference, None) == (("bound", builtin_samplers), (), None)
+    digest = "sha256:" + "a" * 64
+    assert arm._sampler_registry(inference, digest) == (
+        ("bound", extension_samplers),
+        ("proof_a", "proof_b"),
+        digest,
+    )
+    assert bound == [builtin_samplers, extension_samplers]
 
 
 def test_load_runtime_passes_exact_sorted_split_source_kwargs(

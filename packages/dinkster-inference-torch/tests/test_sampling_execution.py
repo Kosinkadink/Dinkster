@@ -313,9 +313,11 @@ class _CaptureSparseRuntime:
 
 def test_torch_registry_binds_every_backend_agnostic_sampler() -> None:
     registry = torch_sampler_registry()
+    descriptors = builtin_samplers()
 
-    assert registry.ids() == tuple(descriptor.id for descriptor in builtin_samplers())
+    assert registry.ids() == tuple(descriptor.id for descriptor in descriptors)
     assert all(descriptor.make is not None for descriptor in registry)
+    assert tuple(replace(descriptor, make=None) for descriptor in registry) == descriptors
 
 
 def test_ksampler_sparse_noise_samples_only_features_and_preserves_support() -> None:

@@ -7,15 +7,15 @@ from pathlib import Path
 from dinkster_assets import RemoteSource
 from dinkster_nodes_image import IMAGE_NODES, MATTE_PROVIDER_CHOICE, vision_choices
 from dinkster_nodes_image import ImageMatte as OwnerImageMatte
+from dinkster_nodes_vision.birefnet import ImageMatte as BiRefNetImageMatte
 from dinkster_schema import ComboWidget, schema_signature, schema_to_wire
-from dinkster_vision_birefnet import ImageMatte as BiRefNetImageMatte
 from dinkster_workers import load_manifest
 
 from dinkster.compose import compose_serving
 
 ROOT = Path(__file__).parent.parent
-PACKAGE = ROOT / "packages" / "dinkster-vision-birefnet"
-MANIFEST = PACKAGE / "dinkster-pack.toml"
+PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
+MANIFEST = PACKAGE / "dinkster_vision_birefnet_pack" / "dinkster-pack.toml"
 MODEL_DIGEST = "blake3:03f8793ff101fb10981ee700fe276a6f481af00cb607dfafcfee46aeb8e638db"
 
 
@@ -72,10 +72,10 @@ def test_birefnet_pack_declares_cpu_provider_and_pinned_model() -> None:
 def test_birefnet_wheel_contains_pack_runtime_and_manifest() -> None:
     project = tomllib.loads((PACKAGE / "pyproject.toml").read_text(encoding="utf-8"))
     included = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert included["dinkster-pack.toml"] == "dinkster_vision_birefnet_pack/dinkster-pack.toml"
+    assert included["dinkster_vision_birefnet_pack"] == "dinkster_vision_birefnet_pack"
     assert (
-        included["src/dinkster_vision_birefnet"]
-        == "dinkster_vision_birefnet_pack/dinkster_vision_birefnet"
+        included["src/dinkster_nodes_vision/birefnet"]
+        == "dinkster_vision_birefnet_pack/dinkster_nodes_vision/birefnet"
     )
 
 

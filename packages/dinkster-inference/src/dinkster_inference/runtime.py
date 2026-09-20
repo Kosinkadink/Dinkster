@@ -22,9 +22,9 @@ from .assembly import (
     plan_wan22_assembly,
     plan_z_image_assembly,
 )
-from .catalog import builtin_family_registry
 from .cfg import DualSamplingGuidance, PerpNegSamplingGuidance, SamplingGuidance
 from .clip_text import ClipTextConfig
+from .component_registry import ComponentRegistry
 from .conditioning_wire import ConditioningCarrier
 from .context_windows import ContextWindowsSpec
 from .devices import FLOAT8_E5M2
@@ -581,8 +581,9 @@ _ASSEMBLIES = (
 )
 
 
-def builtin_assembly_registry() -> Registry[AssemblyRegistration]:
-    from .component_catalog import default_component_registry
+def build_builtin_assembly_registry(
+    component_registry: ComponentRegistry,
+) -> Registry[AssemblyRegistration]:
     from .component_checkpoint import plan_component_checkpoint
 
     registry: Registry[AssemblyRegistration] = Registry()
@@ -595,7 +596,7 @@ def builtin_assembly_registry() -> Registry[AssemblyRegistration]:
             "dinkster_inference_torch.component_runtime:load_component_checkpoint",
             aliases=tuple(
                 descriptor.id
-                for descriptor in default_component_registry()
+                for descriptor in component_registry
                 if descriptor.checkpoint_loader is not None
             ),
         )
@@ -603,18 +604,24 @@ def builtin_assembly_registry() -> Registry[AssemblyRegistration]:
     return registry
 
 
+def builtin_assembly_registry() -> Registry[AssemblyRegistration]:
+    """Build the builtin assembly registry through the aggregate factory."""
+    from .registries import builtin_registries
+
+    return builtin_registries().assemblies
+
+
 def wired_runtime_family_ids() -> tuple[str, ...]:
     """Registered runtime labels for diagnostics, never an admission predicate."""
+    from .registries import builtin_registries
+
     return tuple(
         sorted(
             name
-            for assembly in builtin_assembly_registry()
+            for assembly in builtin_registries().assemblies
             for name in (assembly.aliases or (assembly.id,))
         )
     )
-
-
-NATIVE_WIRED_FAMILY_IDS = wired_runtime_family_ids()
 
 
 def _require_refusal_category(category: object) -> NativeRefusalCategory:
@@ -712,13 +719,19 @@ def resolve_native_assembly(
         raise ValueError(
             "probe_native needs a diffusion or checkpoint source to detect a family from"
         )
-    families = registry if registry is not None else builtin_family_registry()
-    result = families.detect(detect_source)
+    if registry is None or assembly_registry is None:
+        from .registries import builtin_registries
+
+        registries = builtin_registries()
+        if registry is None:
+            registry = registries.families
+        if assembly_registry is None:
+            assembly_registry = registries.assemblies
+    result = registry.detect(detect_source)
     family_id = result.best.family_id if result.best is not None else None
-    assemblies = assembly_registry if assembly_registry is not None else builtin_assembly_registry()
     plans: list[NativeAssemblyResolution] = []
     problems: list[str] = []
-    for assembly in assemblies:
+    for assembly in assembly_registry:
         try:
             plan = assembly.plan(
                 checkpoint=checkpoint,
@@ -1057,13 +1070,13 @@ __all__ = [
     "NativeAssemblyPlan",
     "NativeAssemblyResolution",
     "NativeCapability",
-    "NATIVE_WIRED_FAMILY_IDS",
     "NativeRefusalCategory",
     "NativeRefusalError",
     "PreparedMultiStreamConditioning",
     "RuntimeTensor",
     "SamplingSpaceOverrideRuntime",
     "builtin_assembly_registry",
+    "build_builtin_assembly_registry",
     "plan_native",
     "probe_native",
     "resolve_native_assembly",

@@ -17,7 +17,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import BinaryIO, Literal, TypeAlias, cast
 
-from .catalog import builtin_family_registry
+from .catalog import builtin_families
 from .devices import BFLOAT16, FLOAT16, FLOAT32, DType
 from .registry import Registry
 from .t5_text import T5_XXL_CONFIG, T5TextDetectError, detect_t5_config
@@ -835,24 +835,21 @@ class _GeometrySource:
         return {}
 
 
-_ARCHITECTURE_FAMILIES: Mapping[str, frozenset[str]] = MappingProxyType(
-    {
-        "sd1": frozenset({"dinkster.sd15"}),
-        "sdxl": frozenset({"dinkster.sdxl", "dinkster.sdxl_refiner"}),
-        "flux": frozenset({"dinkster.flux_dev", "dinkster.flux_schnell"}),
-    }
-)
-
-
 def map_gguf_diffusion_component(source: GGUFSource) -> GGUFComponentMap:
     """Map one admitted diffusion profile without treating parse success as admission."""
 
     architecture = _required_string(source, "general.architecture")
-    admitted_families = _ARCHITECTURE_FAMILIES.get(architecture)
-    if admitted_families is None:
+    admitted_families = frozenset(
+        family.id
+        for family in builtin_families()
+        if family.engine.gguf_architecture == architecture
+    )
+    if not admitted_families:
         raise GGUFMappingError(f"unsupported diffusion GGUF architecture {architecture!r}")
     shapes = _logical_shapes(source)
-    detection = builtin_family_registry().detect(_GeometrySource(shapes))
+    from .registries import builtin_registries
+
+    detection = builtin_registries().families.detect(_GeometrySource(shapes))
     detected_families = tuple(dict.fromkeys(item.family_id for item in detection.candidates))
     if len(detected_families) > 1:
         names = ", ".join(detected_families)
@@ -984,11 +981,16 @@ def map_gguf_component(source: GGUFSource) -> GGUFComponentMap:
     """Map one admitted GGUF onto its Dinkster component by declared architecture."""
 
     architecture = _required_string(source, "general.architecture")
-    if architecture in _ARCHITECTURE_FAMILIES:
+    diffusion_architectures = frozenset(
+        family.engine.gguf_architecture
+        for family in builtin_families()
+        if family.engine.gguf_architecture is not None
+    )
+    if architecture in diffusion_architectures:
         return map_gguf_diffusion_component(source)
     if architecture in _TEXT_ARCHITECTURES:
         return map_gguf_text_component(source)
-    supported = ", ".join(sorted((*_ARCHITECTURE_FAMILIES, *_TEXT_ARCHITECTURES)))
+    supported = ", ".join(sorted((*diffusion_architectures, *_TEXT_ARCHITECTURES)))
     raise GGUFMappingError(
         f"unsupported GGUF architecture {architecture!r} (supported: {supported})"
     )

@@ -178,15 +178,7 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_model_ipadapter": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     # Model-backed vision providers execute stable owner schemas through the
     # pack-author door and stay independent of the host scheduler.
-    "dinkster_vision_birefnet": {"dinkster_api", "dinkster_inference_torch"},
-    "dinkster_vision_depth_anything_v2": {"dinkster_api"},
-    "dinkster_vision_depth_anything_v3": {"dinkster_api"},
-    "dinkster_vision_detr": {"dinkster_api"},
-    "dinkster_vision_efficient_sam": {"dinkster_api"},
-    "dinkster_vision_hed": {"dinkster_api"},
-    "dinkster_vision_rtdetr": {"dinkster_api"},
-    "dinkster_vision_sam31": {"dinkster_api"},
-    "dinkster_vision_upscale": {"dinkster_api"},
+    "dinkster_nodes_vision": {"dinkster_api", "dinkster_inference_torch"},
     # Dev scaffolding is a pack like any other: the same door, nothing
     # more. Separation from std is compositional (--dev), not structural.
     "dinkster_nodes_dev": {"dinkster_api"},

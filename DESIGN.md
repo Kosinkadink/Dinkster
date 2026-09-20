@@ -6,8 +6,7 @@ boundary*, never something we build the core around. This document holds the
 architecture rationale: what is wrong with the current backend, the design that
 fixes it, and what we reuse. What is supported today is linked from the
 [SUPPORTED.md index](SUPPORTED.md); implementation detail lives in the code and package
-READMEs; work history and deferred design questions live in GitHub issues
-(deferred questions: [#70](https://github.com/Kosinkadink/Dinkster/issues/70)).
+READMEs; work history and deferred design questions live in GitHub issues.
 
 **Mission.** Dinkster is the successor to ComfyUI, not an orchestrator of it. The fact
 that ComfyUI runs *inside* Dinkster (isolated compat workers, translated schemas,

@@ -36,11 +36,13 @@ from .graph_compilers import (
     graph_compiler_declaration_metadata,
 )
 from .guidance import GuidanceContractError, GuidanceContribution
+from .registries import InferenceRegistries, builtin_registries
+from .registries import merge as merge_registries
 from .registry import Registry
-from .sampling import OptionSpec, SamplerDescriptor
-from .solvers import builtin_sampler_registry
+from .sampling import OptionSpec, SamplerDescriptor, SchedulerDescriptor
 
 INFERENCE_SAMPLERS_SURFACE = "inference.samplers"
+INFERENCE_SCHEDULERS_SURFACE = "inference.schedulers"
 SAMPLER_CATALOG_ENV = "DINKSTER_INFERENCE_CATALOG"
 _CATALOG_FORMAT = "dinkster.sampler-catalog-v1"
 
@@ -67,17 +69,28 @@ class InferenceContribution:
     """Additive result of one pack's single inference entry point."""
 
     samplers: tuple[SamplerDescriptor[Any], ...] = ()
+    schedulers: tuple[SchedulerDescriptor, ...] = ()
     guidance: GuidanceContribution[Any] | None = None
     graph_compilers: tuple[GraphCompilerDescriptor, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.samplers and self.guidance is None and not self.graph_compilers:
+        if (
+            not self.samplers
+            and not self.schedulers
+            and self.guidance is None
+            and not self.graph_compilers
+        ):
             raise ValueError("inference contribution must be nonempty")
         samplers = cast("object", self.samplers)
         if not isinstance(samplers, tuple) or not all(
             isinstance(item, SamplerDescriptor) for item in cast("tuple[object, ...]", samplers)
         ):
             raise TypeError("samplers must contain SamplerDescriptor values")
+        schedulers = cast("object", self.schedulers)
+        if not isinstance(schedulers, tuple) or not all(
+            isinstance(item, SchedulerDescriptor) for item in cast("tuple[object, ...]", schedulers)
+        ):
+            raise TypeError("schedulers must contain SchedulerDescriptor values")
         compilers = cast("object", self.graph_compilers)
         if not isinstance(compilers, tuple) or not all(
             isinstance(item, GraphCompilerDescriptor)
@@ -91,7 +104,7 @@ class InferenceContribution:
 
 @dataclass(frozen=True)
 class MaterializedInferenceGeneration:
-    registry: Registry[SamplerDescriptor[Any]]
+    registries: InferenceRegistries
     sampler_snapshot: SamplerRegistrySnapshot
     guidance_snapshot: GuidanceRegistrySnapshot
     extensions: tuple[tuple[str, tuple[KeyedContribution, ...]], ...]
@@ -268,10 +281,20 @@ def sampler_declaration(descriptor: SamplerDescriptor[Any]) -> KeyedContribution
     )
 
 
+def scheduler_declaration(descriptor: SchedulerDescriptor) -> KeyedContribution:
+    """Project a callable scheduler onto its pack-owned identity."""
+    return KeyedContribution(
+        surface_id=INFERENCE_SCHEDULERS_SURFACE,
+        id=descriptor.id,
+        aliases=descriptor.aliases,
+        behavior_metadata=(("displayName", descriptor.display_name),),
+    )
+
+
 def builtin_sampler_snapshot() -> SamplerRegistrySnapshot:
     """The RPC-clean builtin baseline in registry insertion order."""
     return SamplerRegistrySnapshot(
-        tuple(sampler_declaration(descriptor) for descriptor in builtin_sampler_registry())
+        tuple(sampler_declaration(descriptor) for descriptor in builtin_registries().samplers)
     )
 
 
@@ -460,7 +483,7 @@ def materialize_sampler_registry(
     """Build and bidirectionally validate one worker-local callable registry."""
     generation = materialize_inference_generation(key, catalog_path=catalog_path)
     return MaterializedSamplerRegistry(
-        registry=generation.registry,
+        registry=generation.registries.samplers,
         snapshot=generation.sampler_snapshot,
         extensions=tuple(
             (
@@ -490,7 +513,7 @@ def _materialize_inference_generation(
                 raise RuntimeError(f"${SAMPLER_CATALOG_ENV} is not configured")
             catalog_path = Path(raw_path)
         entries, expected_raw, expected_extensions_raw = _read_record(key, catalog_path)
-        registry = builtin_sampler_registry()
+        contributions: list[InferenceContribution] = []
         extension_declarations: list[tuple[str, tuple[KeyedContribution, ...]]] = []
         guidance: list[KeyedContribution] = []
         prefixes: list[str] = []
@@ -498,8 +521,12 @@ def _materialize_inference_generation(
         graph_compilers: list[GraphCompilerDescriptor] = []
         for entry in entries:
             contribution = _resolve_contribution(entry)
+            contributions.append(contribution)
             sampler_declarations = tuple(
                 sampler_declaration(descriptor) for descriptor in contribution.samplers
+            )
+            scheduler_declarations = tuple(
+                scheduler_declaration(descriptor) for descriptor in contribution.schedulers
             )
             produced_guidance = (
                 ()
@@ -512,15 +539,19 @@ def _materialize_inference_generation(
                     contribution.graph_compilers, key=lambda item: (item.order, item.id)
                 )
             )
-            declarations = sampler_declarations + produced_guidance + produced_compilers
+            declarations = (
+                sampler_declarations
+                + scheduler_declarations
+                + produced_guidance
+                + produced_compilers
+            )
             guidance.extend(produced_guidance)
             graph_compilers.extend(contribution.graph_compilers)
             if contribution.guidance is not None:
                 materialized_guidance.append((entry.extension_id, contribution.guidance))
             prefixes.append(entry.entry_point.split(":", 1)[0])
-            for descriptor in contribution.samplers:
-                registry.register(descriptor)
             extension_declarations.append((entry.extension_id, declarations))
+        registries = merge_registries(builtin_registries(), contributions)
         strategies = tuple(
             (extension, contribution.strategy.id)
             for extension, contribution in materialized_guidance
@@ -533,7 +564,7 @@ def _materialize_inference_generation(
             )
             raise RuntimeError(f"multiple guidance strategies were materialized: {owners}")
         snapshot = SamplerRegistrySnapshot(
-            tuple(sampler_declaration(descriptor) for descriptor in registry)
+            tuple(sampler_declaration(descriptor) for descriptor in registries.samplers)
         )
         if expected_raw is not None:
             if not isinstance(expected_raw, list):
@@ -572,7 +603,7 @@ def _materialize_inference_generation(
                     "inference extension declarations changed during materialization"
                 )
         materialized = MaterializedInferenceGeneration(
-            registry=registry,
+            registries=registries,
             sampler_snapshot=snapshot,
             guidance_snapshot=GuidanceRegistrySnapshot(
                 tuple(
@@ -670,16 +701,22 @@ def compile_inference_graph(
     )
 
 
-def sampler_choice_values(snapshot: SamplerRegistrySnapshot) -> tuple[str, ...]:
-    """Native dropdown values, derived solely from the effective registry."""
+def registry_choice_values(declarations: Sequence[KeyedContribution]) -> tuple[str, ...]:
+    """Compatibility dropdown values for keyed registry declarations."""
     return tuple(
         declaration.aliases[0] if declaration.aliases else declaration.id
-        for declaration in snapshot.samplers
+        for declaration in declarations
     )
+
+
+def sampler_choice_values(snapshot: SamplerRegistrySnapshot) -> tuple[str, ...]:
+    """Native dropdown values, derived solely from the effective registry."""
+    return registry_choice_values(snapshot.samplers)
 
 
 __all__ = [
     "INFERENCE_SAMPLERS_SURFACE",
+    "INFERENCE_SCHEDULERS_SURFACE",
     "KeyedContribution",
     "SAMPLER_CATALOG_ENV",
     "MaterializedSamplerRegistry",
@@ -694,8 +731,10 @@ __all__ = [
     "guidance_declarations",
     "graph_compiler_declaration",
     "compile_inference_graph",
+    "registry_choice_values",
     "remove_sampler_catalog_record",
     "sampler_choice_values",
     "sampler_declaration",
+    "scheduler_declaration",
     "write_sampler_catalog",
 ]

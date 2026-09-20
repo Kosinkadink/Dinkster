@@ -274,6 +274,14 @@ class InProcessWorker:
         """Bind a staged worker to the host registry before publication."""
         self._registry = registry
 
+    @property
+    def registry(self) -> TypeRegistry:
+        return self._registry
+
+    @property
+    def renditions(self) -> tuple[object, ...]:
+        return self._registry.registered_renditions()
+
     async def start(self) -> None:
         # Node stdout/stderr becomes attributed execution log events while
         # still reaching the terminal (idempotent, process-global).
@@ -397,6 +405,9 @@ class InProcessWorker:
             attention_policy=invocation.attention_policy,
             attention_route_token=invocation.attention_route_token,
             extension_snapshot_digest=invocation.extension_snapshot_digest,
+            inference_registries=(
+                outer_context.inference_registries if outer_context is not None else None
+            ),
             node_id=invocation.node_id,
             cancelled=(outer_context.cancelled if outer_context is not None else lambda: False),
         )
@@ -502,6 +513,7 @@ class InProcessWorker:
                     arm=invocation.arm,
                     expected_execution_identity=invocation.expected_execution_identity,
                     extension_snapshot_digest=invocation.extension_snapshot_digest,
+                    inference_registries=None,
                     fp8_matmul=invocation.fp8_matmul,
                     diffusion_dtype=invocation.diffusion_dtype,
                     text_dtype=invocation.text_dtype,
@@ -520,6 +532,7 @@ class InProcessWorker:
                     arm=invocation.arm,
                     expected_execution_identity=invocation.expected_execution_identity,
                     extension_snapshot_digest=invocation.extension_snapshot_digest,
+                    inference_registries=outer_context.inference_registries,
                     fp8_matmul=invocation.fp8_matmul,
                     diffusion_dtype=invocation.diffusion_dtype,
                     text_dtype=invocation.text_dtype,

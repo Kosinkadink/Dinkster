@@ -19924,7 +19924,7 @@
       "confidence": {
         "tier": "exact",
         "evidence": [
-          "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors",
+          "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors",
           "tests/test_vision_line_edge_schema.py::test_line_edge_aliases_preserve_parameters_and_refuse_excluded_models"
         ]
       }
@@ -19967,7 +19967,7 @@
       "confidence": {
         "tier": "exact",
         "evidence": [
-          "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
+          "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
         ]
       }
     },
@@ -20009,7 +20009,7 @@
       "confidence": {
         "tier": "exact",
         "evidence": [
-          "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
+          "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
         ]
       }
     },
@@ -20071,7 +20071,7 @@
       "confidence": {
         "tier": "exact",
         "evidence": [
-          "packages/dinkster-vision-hed/tests/test_provider.py::test_anyline_merge_arms_match_pinned_controlnet_aux_vectors"
+          "packages/dinkster-nodes-vision/tests/test_hed.py::test_anyline_merge_arms_match_pinned_controlnet_aux_vectors"
         ]
       }
     },
@@ -20154,7 +20154,7 @@
       "confidence": {
         "tier": "exact",
         "evidence": [
-          "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors",
+          "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors",
           "tests/test_vision_line_edge_schema.py::test_line_edge_aliases_preserve_parameters_and_refuse_excluded_models"
         ]
       }
@@ -20238,7 +20238,7 @@
       "confidence": {
         "tier": "exact",
         "evidence": [
-          "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors",
+          "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors",
           "tests/test_vision_line_edge_schema.py::test_line_edge_aliases_preserve_parameters_and_refuse_excluded_models"
         ]
       }
@@ -20285,7 +20285,7 @@
       "confidence": {
         "tier": "exact",
         "evidence": [
-          "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
+          "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
         ]
       }
     },
@@ -20335,7 +20335,7 @@
       "confidence": {
         "tier": "exact",
         "evidence": [
-          "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
+          "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
         ]
       }
     },

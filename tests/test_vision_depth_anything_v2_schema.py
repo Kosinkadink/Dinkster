@@ -15,23 +15,23 @@ from dinkster_nodes_image import (
 from dinkster_nodes_image import (
     ModelDepthPreprocessor as OwnerModelDepthPreprocessor,
 )
+from dinkster_nodes_vision.depth_anything_v2 import (
+    ModelDepthPreprocessor as ProviderModelDepthPreprocessor,
+)
 from dinkster_schema import (
     ComboWidget,
     comfy_alias_registry_from_wire,
     schema_signature,
     validate_replacement_references,
 )
-from dinkster_vision_depth_anything_v2 import (
-    ModelDepthPreprocessor as ProviderModelDepthPreprocessor,
-)
 from dinkster_workers import load_manifest
 
 from dinkster.compose import compose_serving
 
 ROOT = Path(__file__).parent.parent
-PACKAGE = ROOT / "packages" / "dinkster-vision-depth-anything-v2"
-MANIFEST = PACKAGE / "dinkster-pack.toml"
-INACTIVE_ALIASES = PACKAGE / "comfy-aliases.inactive.json"
+PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
+MANIFEST = PACKAGE / "dinkster_vision_depth_anything_v2_pack" / "dinkster-pack.toml"
+INACTIVE_ALIASES = PACKAGE / "dinkster_vision_depth_anything_v2_pack/comfy-aliases.inactive.json"
 CORE_IMAGE_ALIASES = ROOT / "packages" / "dinkster-nodes-image" / "comfy-aliases.json"
 MODEL_DIGEST = "blake3:e577785fc18ba89b5ae681d69574f975e6f61b329aa14b4a58d68f12dda00c29"
 
@@ -161,14 +161,11 @@ def test_depth_aliases_are_provider_local_and_inactive() -> None:
 def test_depth_provider_wheel_contains_pack_runtime_and_manifest() -> None:
     project = tomllib.loads((PACKAGE / "pyproject.toml").read_text(encoding="utf-8"))
     included = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert included["dinkster-pack.toml"] == (
-        "dinkster_vision_depth_anything_v2_pack/dinkster-pack.toml"
+    assert included["dinkster_vision_depth_anything_v2_pack"] == (
+        "dinkster_vision_depth_anything_v2_pack"
     )
-    assert included["comfy-aliases.inactive.json"] == (
-        "dinkster_vision_depth_anything_v2_pack/comfy-aliases.inactive.json"
-    )
-    assert included["src/dinkster_vision_depth_anything_v2"] == (
-        "dinkster_vision_depth_anything_v2_pack/dinkster_vision_depth_anything_v2"
+    assert included["src/dinkster_nodes_vision/depth_anything_v2"] == (
+        "dinkster_vision_depth_anything_v2_pack/dinkster_nodes_vision/depth_anything_v2"
     )
 
 
