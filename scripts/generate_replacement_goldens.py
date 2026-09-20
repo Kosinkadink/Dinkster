@@ -10,8 +10,8 @@ The fixture content is the coverage set agreed with Dinkster-Frontend: every
 predicate/mapping/transform union member, deep predicate nesting,
 multi-successor fan-out, deprecation + searchVisibility + replacements on
 one schema, a two-hop replacement chain with per-hop transforms, and the
-wire-v14 core.combo socket contract with the unchanged ComboWidget shape. A
-wire-v28 fixture selects nested dynamic target constructs and maps their
+core.combo socket contract with the unchanged ComboWidget shape. The dynamic
+fixture selects nested target constructs and maps their
 materialized input paths.
 """
 
