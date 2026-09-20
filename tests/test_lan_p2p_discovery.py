@@ -112,7 +112,6 @@ def test_lan_mdns_readvertises_after_its_withdrawn_record_remains_cached() -> No
     class StaleCache:
         def __init__(self, events: list[str]) -> None:
             self.pointer: object | None = None
-            self.removed_pointer: object | None = None
             self.events = events
 
         def current_entry_with_name_and_alias(self, name: str, alias: str) -> object | None:
@@ -122,7 +121,6 @@ def test_lan_mdns_readvertises_after_its_withdrawn_record_remains_cached() -> No
 
         def async_remove_records(self, records: tuple[object, ...]) -> None:
             assert records == (self.pointer,)
-            self.removed_pointer = self.pointer
             self.events.append("evict")
             self.pointer = None
 
@@ -131,11 +129,18 @@ def test_lan_mdns_readvertises_after_its_withdrawn_record_remains_cached() -> No
             self.zeroconf = self
             self.events: list[str] = []
             self.cache = StaleCache(self.events)
+            self.own_pointer: object | None = None
+            self.registration_attempts = 0
 
         async def async_register_service(self, info: ServiceInfo) -> Awaitable[None]:
+            self.registration_attempts += 1
+            if self.registration_attempts == 2:
+                self.cache.pointer = self.own_pointer
+                self.events.append("probe-cache")
             if self.cache.current_entry_with_name_and_alias(info.type, info.name) is not None:
                 raise NonUniqueNameException
             self.cache.pointer = info.dns_pointer()
+            self.own_pointer = self.cache.pointer
             self.events.append("register")
             return asyncio.sleep(0)
 
@@ -152,7 +157,7 @@ def test_lan_mdns_readvertises_after_its_withdrawn_record_remains_cached() -> No
 
         await discovery.advertise(41001)
         await discovery.withdraw()
-        stale_zeroconf.cache.pointer = stale_zeroconf.cache.removed_pointer
+        stale_zeroconf.cache.pointer = stale_zeroconf.own_pointer
         stale_zeroconf.events.append("late-cache")
         await discovery.advertise(41002)
         await discovery.withdraw()
@@ -162,10 +167,40 @@ def test_lan_mdns_readvertises_after_its_withdrawn_record_remains_cached() -> No
             "evict",
             "late-cache",
             "evict",
+            "probe-cache",
+            "evict",
             "register",
             "goodbye",
             "evict",
         ]
+
+    asyncio.run(scenario())
+
+
+def test_lan_mdns_readvertisement_preserves_real_name_conflicts() -> None:
+    class EmptyCache:
+        @staticmethod
+        def current_entry_with_name_and_alias(_name: str, _alias: str) -> None:
+            return None
+
+    class ConflictingZeroconf:
+        def __init__(self) -> None:
+            self.zeroconf = self
+            self.cache = EmptyCache()
+            self.registration_attempts = 0
+
+        async def async_register_service(self, _info: ServiceInfo) -> Awaitable[None]:
+            self.registration_attempts += 1
+            raise NonUniqueNameException
+
+    async def scenario() -> None:
+        discovery = LanMdnsDiscovery("conflicting-instance", LanNetworkPolicy((_interface(),)))
+        conflicting_zeroconf = ConflictingZeroconf()
+        discovery._zeroconf = cast("object", conflicting_zeroconf)  # type: ignore[assignment]
+
+        with pytest.raises(NonUniqueNameException):
+            await discovery.advertise(41001)
+        assert conflicting_zeroconf.registration_attempts == 2
 
     asyncio.run(scenario())
 

@@ -12,7 +12,7 @@ from types import TracebackType
 from typing import cast
 
 from dinkster_p2p import LanInterface, LanNetworkPolicy, lan_interfaces
-from zeroconf import IPVersion, ServiceInfo, ServiceStateChange, Zeroconf
+from zeroconf import IPVersion, NonUniqueNameException, ServiceInfo, ServiceStateChange, Zeroconf
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
 
 __all__ = [
@@ -115,10 +115,18 @@ class LanMdnsDiscovery:
         )
         assert self._zeroconf is not None
         self._evict_cached_service_pointer(info)
-        announcement = cast(
-            "Awaitable[object]",
-            await self._zeroconf.async_register_service(info),  # pyright: ignore[reportUnknownMemberType]
-        )
+        try:
+            announcement = cast(
+                "Awaitable[object]",
+                await self._zeroconf.async_register_service(info),  # pyright: ignore[reportUnknownMemberType]
+            )
+        except NonUniqueNameException:
+            # A looped-back PTR can arrive during zeroconf's randomized probe delay.
+            self._evict_cached_service_pointer(info)
+            announcement = cast(
+                "Awaitable[object]",
+                await self._zeroconf.async_register_service(info),  # pyright: ignore[reportUnknownMemberType]
+            )
         self._advertisement = info
         try:
             await announcement
