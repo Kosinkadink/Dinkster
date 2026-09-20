@@ -839,7 +839,8 @@ class CompositorWidget:
 
 
 WidgetDescriptor = (
-    AssetWidget
+    CustomWidgetDescriptor
+    | AssetWidget
     | SaveTargetWidget
     | ComboWidget
     | MultiComboWidget
@@ -849,7 +850,6 @@ WidgetDescriptor = (
     | ColorWidget
     | CurveWidget
     | CompositorWidget
-    | CustomWidgetDescriptor
 )
 """One input presentation descriptor."""
 
@@ -861,6 +861,8 @@ def _widget_value_domain(widget: WidgetDescriptor) -> str:
     between editors that construct different canonical value shapes.
     """
 
+    if isinstance(widget, CustomWidgetDescriptor):
+        return widget.widget_type
     if isinstance(widget, AssetWidget):
         return "asset"
     if isinstance(widget, SaveTargetWidget):
@@ -879,8 +881,6 @@ def _widget_value_domain(widget: WidgetDescriptor) -> str:
         return "curve"
     if isinstance(widget, CompositorWidget):
         return "compositor"
-    if isinstance(widget, CustomWidgetDescriptor):
-        return f"custom:{widget.widget_type}"
     return "string"
 
 
@@ -898,6 +898,7 @@ class WidgetRepresentation:
         if not isinstance(
             raw_widget,
             (
+                CustomWidgetDescriptor,
                 AssetWidget,
                 SaveTargetWidget,
                 ComboWidget,
@@ -908,7 +909,6 @@ class WidgetRepresentation:
                 ColorWidget,
                 CurveWidget,
                 CompositorWidget,
-                CustomWidgetDescriptor,
             ),
         ):
             raise ValueError("widget representation must contain one widget descriptor")

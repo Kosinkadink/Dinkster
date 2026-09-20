@@ -3,14 +3,15 @@
 from collections.abc import Callable, Mapping, Sequence
 
 from dinkster_api.v1 import (
+    InferenceContribution,
     NoiseKind,
     NoiseSampler,
     OptionKind,
     OptionSpec,
     OptionValue,
-    SamplerContribution,
     SamplerDescriptor,
     SamplerInfo,
+    SchedulerDescriptor,
     StepCallback,
 )
 
@@ -57,5 +58,20 @@ SCALED_EULER = SamplerDescriptor(
 )
 
 
-def register() -> SamplerContribution:
-    return SamplerContribution((SCALED_EULER,))
+def _proof_schedule(steps: int, _space: object) -> tuple[float, ...]:
+    return (float(steps * 2), float(steps), 0.0)
+
+
+PROOF_SCHEDULER = SchedulerDescriptor(
+    id="proof_a.scheduler",
+    display_name="Proof scheduler",
+    make_sigmas=_proof_schedule,
+    aliases=("s1_scheduler",),
+)
+
+
+def register() -> InferenceContribution:
+    return InferenceContribution(
+        samplers=(SCALED_EULER,),
+        schedulers=(PROOF_SCHEDULER,),
+    )

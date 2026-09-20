@@ -116,6 +116,11 @@ def _combo_option_to_wire(option: str | ComboOption, wire_version: int) -> objec
 def _widget_descriptor_to_wire(
     widget: WidgetDescriptor, wire_version: int
 ) -> dict[str, object] | None:
+    if isinstance(widget, CustomWidgetDescriptor):
+        return {
+            "type": widget.widget_type,
+            **{key: _json_value_to_wire(value) for key, value in widget.params.items()},
+        }
     if isinstance(widget, AssetWidget):
         asset_wire: dict[str, object] = {"type": "ASSET", "accept": list(widget.accept)}
         if widget.kind:
@@ -229,15 +234,13 @@ def _widget_descriptor_to_wire(
         return {"type": "CURVE"}
     if isinstance(widget, CompositorWidget):
         return {"type": "COMPOSITOR"}
-    if isinstance(widget, CustomWidgetDescriptor):
-        return {
-            "type": widget.widget_type,
-            **{key: _json_value_to_wire(value) for key, value in widget.params.items()},
-        }
-    wire: dict[str, object] = {"type": "SAVE_TARGET"}
-    if widget.suffix:
-        wire["suffix"] = widget.suffix
-    return wire
+    remaining = cast("object", widget)
+    if isinstance(remaining, SaveTargetWidget):
+        wire: dict[str, object] = {"type": "SAVE_TARGET"}
+        if remaining.suffix:
+            wire["suffix"] = remaining.suffix
+        return wire
+    raise TypeError(f"unsupported widget descriptor {widget!r}")
 
 
 def _json_value_to_wire(value: JsonValue) -> object:
@@ -645,7 +648,7 @@ def _widget_descriptor_from_wire(
             _reject_unknown_fields(widget_data, frozenset({"type"}), "COMPOSITOR widget")
         return CompositorWidget()
     if not isinstance(kind, str) or not kind:
-        raise ValueError(f"unsupported input widget: {widget_data!r}")
+        raise ValueError("custom widget type must be a non-empty string")
     return CustomWidgetDescriptor(
         kind,
         cast(
@@ -758,9 +761,11 @@ def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object
         entry["default"] = spec.default
     if spec.on_absent is not None:
         entry["onAbsent"] = spec.on_absent
-    omit_list_source_widget = False
-    if spec.widget is not None and (not omit_list_source_widget):
-        widget_wire = _widget_to_wire(spec.widget, wire_version)
+    if spec.widget is not None:
+        try:
+            widget_wire = _widget_to_wire(spec.widget, wire_version)
+        except TypeError as exc:
+            raise ValueError(f"input {spec.id!r}: {exc}") from exc
         if widget_wire is not None:
             entry["widget"] = widget_wire
     if spec.doc:
@@ -878,7 +883,10 @@ def schema_to_wire(
         raise ValueError(f"unsupported schemaVersion: {wire_version!r}")
     interface: list[dict[str, object]] = []
     for spec in schema.inputs:
-        interface.append(_dynamic_entry_to_wire(spec, wire_version))
+        try:
+            interface.append(_dynamic_entry_to_wire(spec, wire_version))
+        except ValueError as exc:
+            raise ValueError(f"node {schema.node_type!r}, {exc}") from exc
     for fam in schema.input_families:
         interface.append(_dynamic_entry_to_wire(fam, wire_version))
     for combo in schema.combos:

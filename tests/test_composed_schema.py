@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from dinkster_schema import (
@@ -20,9 +20,74 @@ from dinkster_schema import (
     schema_signature,
     schema_to_wire,
 )
+from dinkster_values import CustomWidgetDescriptor, JsonValue
 
 STRING = TypeExpr.concrete("core.string")
 INT = TypeExpr.concrete("core.int")
+
+
+def test_custom_widget_descriptor_roundtrips_verbatim() -> None:
+    schema = NodeSchema(
+        "test.custom_widget",
+        inputs=(
+            InputSpec(
+                "value",
+                STRING,
+                widget=CustomWidgetDescriptor(
+                    "example.gradient",
+                    {"stops": ["#112233", "#abcdef"], "vertical": True},
+                ),
+            ),
+        ),
+        outputs=(OutputSpec("value", STRING),),
+    )
+
+    wire = schema_to_wire(schema)
+    interface = cast("list[dict[str, object]]", wire["interface"])
+    assert interface[0]["widget"] == {
+        "type": "example.gradient",
+        "stops": ["#112233", "#abcdef"],
+        "vertical": True,
+    }
+    assert schema_from_wire(wire).inputs[0].widget == CustomWidgetDescriptor(
+        "example.gradient",
+        {"stops": ["#112233", "#abcdef"], "vertical": True},
+    )
+
+
+def test_custom_widget_descriptor_reserves_wire_type_field() -> None:
+    with pytest.raises(ValueError, match="params must not contain 'type'"):
+        CustomWidgetDescriptor("example.gradient", {"type": "other.widget"})
+
+
+def test_custom_widget_descriptor_copies_nested_json_and_rejects_nonfinite_numbers() -> None:
+    stops: list[JsonValue] = ["#112233"]
+    descriptor = CustomWidgetDescriptor("example.gradient", {"stops": stops})
+    stops.append("#abcdef")
+    assert descriptor.params == {"stops": ("#112233",)}
+
+    with pytest.raises(ValueError, match="must be JSON-safe"):
+        CustomWidgetDescriptor("example.gradient", {"minimum": float("nan")})
+
+
+def test_schema_to_wire_names_unknown_widget_descriptor() -> None:
+    descriptor = object()
+    input_spec = InputSpec("value", STRING)
+    object.__setattr__(input_spec, "widget", descriptor)
+    schema = NodeSchema(
+        "test.unknown_widget",
+        inputs=(input_spec,),
+        outputs=(OutputSpec("value", STRING),),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"node 'test\.unknown_widget', input 'value': unsupported widget descriptor "
+            r"<object object"
+        ),
+    ):
+        schema_to_wire(schema)
 
 
 @pytest.fixture

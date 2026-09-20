@@ -84,7 +84,7 @@ class CustomWidgetDescriptor:
         if not isinstance(cast("object", self.params), Mapping):
             raise ValueError("custom widget params must be a mapping")
         if "type" in self.params:
-            raise ValueError("custom widget params must not contain type")
+            raise ValueError("custom widget params must not contain 'type'")
         try:
             frozen = _freeze_json_mapping(self.params)
         except (TypeError, ValueError) as exc:

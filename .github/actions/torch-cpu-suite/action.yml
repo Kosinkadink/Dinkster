@@ -47,6 +47,7 @@ runs:
         --index-url https://download.pytorch.org/whl/cpu
         torch==2.13.0+cpu
     - name: Checkout pinned ComfyUI source
+      if: env.DINKSTER_MODEL_TEST_GROUP == ''
       shell: bash
       run: |
         git init --quiet "$RUNNER_TEMP/comfyui-source"
@@ -58,6 +59,7 @@ runs:
           8a33128f2f8c5585c57486c07de481241e70a39c
         git -C "$RUNNER_TEMP/comfyui-source" checkout --quiet --detach b78cec879b9460d5cb25228a83a942fb78d2cd24
     - name: Checkout pinned workflow templates
+      if: env.DINKSTER_MODEL_TEST_GROUP == ''
       shell: bash
       run: |
         git init --quiet "$RUNNER_TEMP/workflow-templates-source"
@@ -65,6 +67,7 @@ runs:
         git -C "$RUNNER_TEMP/workflow-templates-source" fetch --quiet --depth=1 --filter=blob:none origin d3b4a9e89573162b005961865164c18c8ae2206b
         git -C "$RUNNER_TEMP/workflow-templates-source" checkout --quiet --detach FETCH_HEAD
     - name: Acquire pinned Impact Pack source
+      if: env.DINKSTER_MODEL_TEST_GROUP == ''
       shell: bash
       run: |
         curl --fail --location --retry 3 \
@@ -80,6 +83,7 @@ runs:
         echo "7989de178999904cacf440bd6c9fd6d250ff5f8df8a4a2dad7abe33d2dfacdd5  $RUNNER_TEMP/impact-core.py" | sha256sum --check
         echo "153c5cbf334ca67176569625d10feac924bb289a8c18321bcaee0d9a99d18c51  $RUNNER_TEMP/inspire-sampler-nodes.py" | sha256sum --check
     - name: Verify source-generated parity receipts
+      if: env.DINKSTER_MODEL_TEST_GROUP == ''
       shell: bash
       env:
         DINKSTER_INFERENCE_PARITY_RECORDS: ${{ github.workspace }}/.evidence-source/inference-parity/records
@@ -90,6 +94,7 @@ runs:
         INSPIRE_PACK_SOURCE: ${{ runner.temp }}/inspire-sampler-nodes.py
       run: .venv-torch/bin/python tools/gen_comfy_source_parity_receipts.py --check
     - name: Test source-parity receipt generation
+      if: env.DINKSTER_MODEL_TEST_GROUP == ''
       shell: bash
       env:
         DINKSTER_INFERENCE_PARITY_RECORDS: ${{ github.workspace }}/.evidence-source/inference-parity/records
@@ -107,15 +112,19 @@ runs:
     # dinkster-kernels stays a local GPU-machine gate: its project resolves
     # against .venv-gpu (CUDA torch + triton), which CPU-only hosted
     # runners cannot build.
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv/bin/pyright -p .evidence-source/packages/dinkster-acceptance --pythonpath .venv-torch/bin/python
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: >
         .venv-torch/bin/python -m pytest -q
         .evidence-source/packages/dinkster-acceptance/tests/test_acceptance_closure.py
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv/bin/pyright -p packages/dinkster-inference-torch
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv/bin/pyright -p packages/dinkster-training-torch
     - name: Assert pinned CPU dispatch
       shell: bash
@@ -143,13 +152,14 @@ runs:
         MKL_VERBOSE=1 .venv-torch/bin/python -c "import torch; a = torch.randn(512, 512); b = a @ a" > "$RUNNER_TEMP/mkl-verbose.log" 2>&1
         grep -m1 -o 'CNR:[A-Z0-9_,]*' "$RUNNER_TEMP/mkl-verbose.log" || echo 'no MKL verbose GEMM line'
     - name: Test training runtime
+      if: env.DINKSTER_MODEL_TEST_GROUP == ''
       shell: bash
       env:
         OMP_NUM_THREADS: "4"
         MKL_NUM_THREADS: "4"
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-training-torch/tests
     - name: Test inference and IPAdapter
-      if: inputs.run-model-tests == 'true'
+      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'inference'
       shell: bash
       run: >
         "$HOME/comfy-vibe-station/run_counted_suite.sh"
@@ -157,13 +167,13 @@ runs:
         packages/dinkster-inference-torch/tests
         packages/dinkster-model-ipadapter/tests
     - name: Test acceptance sampling
-      if: inputs.run-model-tests == 'true'
+      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'acceptance'
       shell: bash
       run: >
         .venv-torch/bin/python -m pytest -q
         .evidence-source/packages/dinkster-acceptance/tests/test_acceptance_sampling.py
     - name: Acquire pinned line and edge parity artifacts
-      if: inputs.run-model-tests == 'true'
+      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
       shell: bash
       run: |
         curl --fail --location --retry 3 \
@@ -200,11 +210,13 @@ runs:
         b9037964149c55156c6adbffdfbd7e8ca7d2ef2a4d90573520efa7f3a1aacf06  $RUNNER_TEMP/7_model.pth
         a3c2d8a8ce9422555c787160bd46362d761325a565333c0e3f6a53e0bae2abdb  $RUNNER_TEMP/MTEED.pth
         EOF
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv/bin/pyright -p packages/dinkster-nodes-vision
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_hed.py
-    - if: inputs.run-model-tests == 'true'
+    - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
       shell: bash
       env:
         DINKSTER_HED_TEST_MODEL: ${{ runner.temp }}/ControlNetHED.pth
@@ -217,7 +229,7 @@ runs:
         DINKSTER_MTEED_TEST_MODEL: ${{ runner.temp }}/MTEED.pth
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_hed.py
     - name: Acquire pinned upscale parity artifacts
-      if: inputs.run-model-tests == 'true'
+      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
       shell: bash
       run: |
         curl --fail --location --retry 3 \
@@ -230,61 +242,65 @@ runs:
         f872d837d3c90ed2e05227bed711af5671a6fd1c9f7d7e91c911a61f155e99da  $RUNNER_TEMP/RealESRGAN_x4plus_anime_6B.pth
         8dc7edb9ac80ccdc30c3a5dca6616509367f05fbc184ad95b731f05bece96292  $RUNNER_TEMP/realesr-general-x4v3.pth
         EOF
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_upscale.py
-    - if: inputs.run-model-tests == 'true'
+    - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
       shell: bash
       env:
         DINKSTER_UPSCALE_TEST_ANIME6B: ${{ runner.temp }}/RealESRGAN_x4plus_anime_6B.pth
         DINKSTER_UPSCALE_TEST_GENERAL: ${{ runner.temp }}/realesr-general-x4v3.pth
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_upscale.py
     - name: Acquire pinned Depth Anything V2 parity artifact
-      if: inputs.run-model-tests == 'true'
+      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
       shell: bash
       run: |
         curl --fail --location --retry 3 \
           --output "$RUNNER_TEMP/depth-anything-v2-large.safetensors" \
           https://huggingface.co/depth-anything/Depth-Anything-V2-Large-hf/resolve/7581137eff8d4e94f6e796d3baea0e9fa79b22d2/model.safetensors
         echo "4e01e34ed5549b529b70b92d53226bc370f03041977b390d3dde45d47f516cf9  $RUNNER_TEMP/depth-anything-v2-large.safetensors" | sha256sum --check
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_depth_anything_v2.py
-    - if: inputs.run-model-tests == 'true'
+    - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
       shell: bash
       env:
         DINKSTER_DEPTH_ANYTHING_V2_TEST_MODEL: ${{ runner.temp }}/depth-anything-v2-large.safetensors
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_depth_anything_v2.py
     - name: Acquire pinned DETR parity artifact
-      if: inputs.run-model-tests == 'true'
+      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
       shell: bash
       run: |
         curl --fail --location --retry 3 \
           --output "$RUNNER_TEMP/detr-r50-e632da11.pth" \
           https://dl.fbaipublicfiles.com/detr/detr-r50-e632da11.pth
         echo "e632da11ec76ae67bac2f8579fbed3724e08dead7d200ca13e019b197784eadc  $RUNNER_TEMP/detr-r50-e632da11.pth" | sha256sum --check
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_detr.py
-    - if: inputs.run-model-tests == 'true'
+    - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
       shell: bash
       env:
         DINKSTER_DETR_TEST_MODEL: ${{ runner.temp }}/detr-r50-e632da11.pth
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_detr.py
     - name: Acquire pinned RT-DETR parity artifact
-      if: inputs.run-model-tests == 'true'
+      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
       shell: bash
       run: |
         curl --fail --location --retry 3 \
           --output "$RUNNER_TEMP/rt_detr_v4-x-hgnet_fp16.safetensors" \
           https://huggingface.co/Comfy-Org/SDPose/resolve/f122ac7976997885e3bfeab2bb3a537a6bc250bc/diffusion_models/rt_detr_v4-x-hgnet_fp16.safetensors
         echo "581f9af9bbabb664d1891cbccd823308b176ecd409146f954dfa39af3bec2476  $RUNNER_TEMP/rt_detr_v4-x-hgnet_fp16.safetensors" | sha256sum --check
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_rtdetr.py
-    - if: inputs.run-model-tests == 'true'
+    - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
       shell: bash
       env:
         DINKSTER_RTDETR_TEST_MODEL: ${{ runner.temp }}/rt_detr_v4-x-hgnet_fp16.safetensors
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_rtdetr.py
     - name: Acquire pinned EfficientSAM parity artifacts
-      if: inputs.run-model-tests == 'true'
+      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
       shell: bash
       run: |
         curl --fail --location --retry 3 \
@@ -297,62 +313,66 @@ runs:
         84ed466ffcc5c1f8d08409bc34a23bb364ab2c15e402cb12d4335a42be0e0951  $RUNNER_TEMP/efficient-sam-vitt-encoder-d525f622.onnx
         a62f8fa5ea080447c0689418d69e58f1e83e0b7adf9c142e2bd9bcc8045c0b11  $RUNNER_TEMP/efficient-sam-vitt-decoder-d525f622.onnx
         EOF
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_efficient_sam.py
-    - if: inputs.run-model-tests == 'true'
+    - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
       shell: bash
       env:
         DINKSTER_EFFICIENT_SAM_TEST_ENCODER: ${{ runner.temp }}/efficient-sam-vitt-encoder-d525f622.onnx
         DINKSTER_EFFICIENT_SAM_TEST_DECODER: ${{ runner.temp }}/efficient-sam-vitt-decoder-d525f622.onnx
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_efficient_sam.py
     - name: Acquire pinned BiRefNet parity artifact
-      if: inputs.run-model-tests == 'true'
+      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-large'
       shell: bash
       run: |
         curl --fail --location --retry 3 \
           --output "$RUNNER_TEMP/birefnet.safetensors" \
           https://huggingface.co/Comfy-Org/BiRefNet/resolve/35767b272f2846752a3aee1259abdd4586f735c8/background_removal/birefnet.safetensors
         echo "9ab37426bf4de0567af6b5d21b16151357149139362e6e8992021b8ce356a154  $RUNNER_TEMP/birefnet.safetensors" | sha256sum --check
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_birefnet.py
-    - if: inputs.run-model-tests == 'true'
+    - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-large'
       shell: bash
       env:
         DINKSTER_BIREFNET_TEST_MODEL: ${{ runner.temp }}/birefnet.safetensors
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_birefnet.py
     - name: Acquire pinned Depth Anything 3 Mono Large parity artifact
-      if: inputs.run-model-tests == 'true'
+      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-large'
       shell: bash
       run: |
         curl --fail --location --retry 3 \
           --output "$RUNNER_TEMP/depth-anything-3-mono-large.safetensors" \
           https://huggingface.co/Comfy-Org/Depth-Anything-3/resolve/913d1a7ab58ddbfbf94a33bf536c4fc2ff25465d/geometry_estimation/depth_anything_3_mono_large.safetensors
         echo "9b44eda5bedba5b4e125686fdb79d1db309c1b9785277576eb930f885b008f96  $RUNNER_TEMP/depth-anything-3-mono-large.safetensors" | sha256sum --check
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_depth_anything_v3.py
-    - if: inputs.run-model-tests == 'true'
+    - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-large'
       shell: bash
       env:
         DINKSTER_DEPTH_ANYTHING_V3_TEST_MODEL: ${{ runner.temp }}/depth-anything-3-mono-large.safetensors
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_depth_anything_v3.py
     - name: Acquire pinned SAM 3.1 parity artifact
-      if: inputs.run-model-tests == 'true'
+      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-sam'
       shell: bash
       run: |
         curl --fail --location --retry 3 \
           --output "$RUNNER_TEMP/sam3.1_multiplex_fp16.safetensors" \
           https://huggingface.co/Comfy-Org/sam3.1/resolve/f38cd62b71494b53ac2b56ca36e24f3c8d565581/checkpoints/sam3.1_multiplex_fp16.safetensors
         echo "9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03  $RUNNER_TEMP/sam3.1_multiplex_fp16.safetensors" | sha256sum --check
-    - shell: bash
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_sam31.py
-    - if: inputs.run-model-tests == 'true'
+    - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-sam'
       shell: bash
       env:
         DINKSTER_SAM31_TEST_MODEL: ${{ runner.temp }}/sam3.1_multiplex_fp16.safetensors
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_sam31.py
     # Torch-dependent benchmark-harness tests skip in the torch-free
     # root suite; this is the lane that actually executes them.
-    - if: inputs.run-model-tests == 'true'
+    - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'acceptance'
       shell: bash
       run: >
         .venv-torch/bin/python -m pytest -q

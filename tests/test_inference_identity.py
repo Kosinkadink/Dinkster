@@ -6,6 +6,8 @@ import re
 from dataclasses import replace
 from pathlib import Path
 
+import dinkster_inference.identity as identity_module
+import dinkster_inference.registries as registry_module
 import pytest
 from dinkster_inference import (
     BFLOAT16,
@@ -393,6 +395,32 @@ def test_component_order_comes_from_the_plan_property() -> None:
 )
 def test_default_diffusion_dtype(family_id: str, expected: object) -> None:
     assert default_diffusion_dtype(family_id) is expected
+
+
+def test_default_registry_set_is_built_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    identity_module._cached_default_inference_registries.cache_clear()
+    original = registry_module.component_catalog.default_component_registry
+    calls = 0
+
+    def counted_default_component_registry():
+        nonlocal calls
+        calls += 1
+        return original()
+
+    monkeypatch.setattr(
+        registry_module.component_catalog,
+        "default_component_registry",
+        counted_default_component_registry,
+    )
+    try:
+        registries = identity_module._default_inference_registries()
+        assert default_diffusion_dtype("dinkster.sd15") is FLOAT16
+        assert default_text_dtype("dinkster.flux_dev") is BFLOAT16
+        assert default_vae_dtype("dinkster.sdxl") is BFLOAT16
+        assert identity_module._default_inference_registries() is registries
+        assert calls == 1
+    finally:
+        identity_module._cached_default_inference_registries.cache_clear()
 
 
 def test_default_diffusion_dtype_reports_unknown_label_default(
