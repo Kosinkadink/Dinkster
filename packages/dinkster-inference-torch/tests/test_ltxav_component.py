@@ -219,6 +219,15 @@ def test_component_loader_preserves_role_identity_and_one_open_descriptor(
         compute_dtype=torch.bfloat16,
         attention_policy="sdpa",
         attention_route_token=attention_token,
+        attention_backend=cast(
+            "Any",
+            {
+                "diffusion": "flux",
+                "gemma3_12b": "qwen",
+                "gemma4_12b": "qwen",
+                "connectors": "flux",
+            }.get(role),
+        ),
     )
 
     assert loaded.role == role
@@ -322,6 +331,7 @@ def test_component_loader_refuses_identity_mismatch_before_payload_load(
             expected_role="diffusion",
             expected_identity="native:dinkster.ltxav:" + "3" * 64,
             compute_dtype=torch.bfloat16,
+            attention_backend="flux",
         )
 
 

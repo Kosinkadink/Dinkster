@@ -1815,8 +1815,12 @@ def test_native_controlnet_loader_uses_descriptor_with_provenance(
         loader="test.new_control:load",
         hint_channels=3,
         default_diffusion_dtype=SimpleNamespace(name=dtype_name),
-        attention_roles=("controlnet",),
-        attention_requires_route=True,
+        family=SimpleNamespace(
+            engine=SimpleNamespace(
+                attention_backend=lambda role: "unet" if role == "controlnet" else None,
+                attention_requires_route=True,
+            )
+        ),
     )
     source = object()
     mechanism = FakeMechanism(model, load_device="cuda:0", offload_device="cpu")
@@ -1902,6 +1906,7 @@ def test_native_controlnet_loader_uses_descriptor_with_provenance(
         "dtype": getattr(torch, dtype_name),
         "attention_policy": "sdpa",
         "attention_route_token": route_token,
+        "attention_backend": "unet",
         "model": model,
         "load_device": torch.device("cuda:0"),
         "offload_device": torch.device("cpu"),
@@ -1929,8 +1934,12 @@ def test_native_controlnet_loader_refuses_missing_required_attention_route(
         id="test.routed_control",
         loader="test.routed_control:load",
         default_diffusion_dtype=SimpleNamespace(name="float16"),
-        attention_roles=("controlnet",),
-        attention_requires_route=True,
+        family=SimpleNamespace(
+            engine=SimpleNamespace(
+                attention_backend=lambda role: "unet" if role == "controlnet" else None,
+                attention_requires_route=True,
+            )
+        ),
     )
     plan = SimpleNamespace(component=SimpleNamespace(config=object()))
     registry = SimpleNamespace(
@@ -29576,6 +29585,7 @@ def test_chroma_builders_select_device_before_component_loading(
         ("diffusion", selected),
         ("diffusion", selected),
     ]
+    assert [call["attention_backend"] for call in load_calls] == ["t5", "flux", "flux"]
     assert enrollment_calls[0]["load_device"] == selected
     if outcome != "gate-fallback":
         assert all(

@@ -24,6 +24,7 @@ from .assemble import (
     assemble_sdxl_controlnet,
     assemble_sdxl_controlnet_union,
 )
+from .attention import AttentionRole
 from .controlnet import SD15ControlNet, SDXLControlLoRA, SDXLControlNet, SDXLControlNetUnion
 from .t2i_adapter import SD15T2IAdapter
 
@@ -72,6 +73,7 @@ def load_sdxl_controlnet_union(
     *,
     attention_policy: AttentionPolicy = "auto",
     attention_route_token: AttentionRouteToken | None = None,
+    attention_backend: AttentionRole,
 ) -> SDXLControlNetUnion:
     return assemble_sdxl_controlnet_union(
         SDXLControlNetUnionAssemblyPlan(
@@ -80,6 +82,7 @@ def load_sdxl_controlnet_union(
         controlnet_dtype=dtype,
         attention_policy=attention_policy,
         attention_route_token=attention_route_token,
+        attention_backend=attention_backend,
     ).controlnet_union
 
 
