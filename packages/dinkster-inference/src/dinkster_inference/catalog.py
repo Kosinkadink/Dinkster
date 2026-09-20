@@ -39,7 +39,14 @@ from .chroma import (
     detect_chroma,
 )
 from .devices import BFLOAT16, FLOAT16, FLOAT32
-from .families import ComponentWiring, DetectionEvidence, FamilyRegistry, ModelFamily
+from .families import (
+    ComponentWiring,
+    DetectionEvidence,
+    EngineProperties,
+    FamilyRegistry,
+    ModelFamily,
+    PreviewDecoderProperties,
+)
 from .flux import FluxConfig, detect_flux_config
 from .flux2 import (
     FLUX2_DEV_CONFIG,
@@ -259,6 +266,17 @@ SD15 = ModelFamily(
     wiring=ComponentWiring(text_encoders=("dinkster.clip_l",)),
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=1.0,
+    engine=EngineProperties(
+        diffusion_dtype=FLOAT16,
+        text_dtype=FLOAT32,
+        regional_memory_factor=1.0,
+        clip_text_profile="sd1",
+        ipadapter_profile="sd15",
+        controlnet_profile="sd15",
+        preview_decoder=PreviewDecoderProperties("taesd", "sd15"),
+        compatibility_latent_formats=("SD15",),
+        gguf_architecture="sd1",
+    ),
 )
 
 _SDXL_LATENT = LatentDescriptor(
@@ -316,6 +334,17 @@ SDXL = ModelFamily(
     wiring=ComponentWiring(text_encoders=("dinkster.clip_l", "dinkster.clip_g")),
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=0.8,
+    engine=EngineProperties(
+        diffusion_dtype=FLOAT16,
+        text_dtype=FLOAT32,
+        regional_memory_factor=0.8,
+        clip_text_profile="sdxl",
+        adm_profile="sdxl",
+        controlnet_profile="sdxl",
+        preview_decoder=PreviewDecoderProperties("taesd", "sdxl"),
+        compatibility_latent_formats=("SDXL",),
+        gguf_architecture="sdxl",
+    ),
 )
 
 SDXL_REFINER = ModelFamily(
@@ -348,6 +377,15 @@ SDXL_REFINER = ModelFamily(
     wiring=ComponentWiring(text_encoders=("dinkster.clip_g",)),
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=1.0,
+    engine=EngineProperties(
+        diffusion_dtype=FLOAT16,
+        text_dtype=FLOAT32,
+        regional_memory_factor=1.0,
+        clip_text_profile="sdxl",
+        adm_profile="sdxl_refiner",
+        preview_decoder=PreviewDecoderProperties("taesd", "sdxl"),
+        gguf_architecture="sdxl",
+    ),
 )
 
 # Flux checkpoints ship bare (BFL layout) or combined; RMSNorm params
@@ -523,6 +561,9 @@ FLUX_DEV = ModelFamily(
     wiring=_FLUX_WIRING,
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=3.1,
+    engine=EngineProperties(
+        sigma_space="flux", regional_memory_factor=3.1, gguf_architecture="flux"
+    ),
 )
 
 FLUX_SCHNELL = ModelFamily(
@@ -580,6 +621,7 @@ FLUX_SCHNELL = ModelFamily(
     wiring=_FLUX_WIRING,
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=3.1,
+    engine=EngineProperties(regional_memory_factor=3.1, gguf_architecture="flux"),
 )
 
 
@@ -687,6 +729,10 @@ WAN21 = ModelFamily(
     wiring=ComponentWiring(text_encoders=("dinkster.umt5xxl",)),
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=1536 / 2222,
+    engine=EngineProperties(
+        preview_decoder=PreviewDecoderProperties("taehv"),
+        compatibility_latent_formats=("Wan21",),
+    ),
 )
 
 WAN22 = ModelFamily(
@@ -699,6 +745,12 @@ WAN22 = ModelFamily(
     wiring=ComponentWiring(text_encoders=("dinkster.umt5xxl",)),
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=3072 / 2222,
+    engine=EngineProperties(
+        text_dtype=FLOAT32,
+        vae_dtypes=(BFLOAT16, FLOAT16, FLOAT32),
+        preview_decoder=PreviewDecoderProperties("taehv"),
+        compatibility_latent_formats=("Wan22",),
+    ),
 )
 
 LTXV = ModelFamily(
@@ -769,6 +821,7 @@ Z_IMAGE = ModelFamily(
     ),
     supported_dtypes=frozenset(Z_IMAGE_CONFIG.inference_dtypes),
     memory_factor=Z_IMAGE_CONFIG.memory_factor,
+    engine=EngineProperties(text_dtype=FLOAT32),
 )
 
 
@@ -824,6 +877,7 @@ Z_IMAGE_PIXEL_SPACE = ModelFamily(
     ),
     supported_dtypes=frozenset(Z_IMAGE_PIXEL_CONFIG.inference_dtypes),
     memory_factor=Z_IMAGE_PIXEL_CONFIG.memory_factor,
+    engine=EngineProperties(text_dtype=FLOAT32),
 )
 
 
@@ -952,6 +1006,7 @@ KREA2 = ModelFamily(
     ),
     supported_dtypes=frozenset(KREA2_CONFIG.inference_dtypes),
     memory_factor=KREA2_CONFIG.memory_factor,
+    engine=EngineProperties(preview_decoder=PreviewDecoderProperties("taehv")),
 )
 
 
@@ -1062,6 +1117,7 @@ ANIMA = ModelFamily(
     ),
     supported_dtypes=frozenset(ANIMA_CONFIG.inference_dtypes),
     memory_factor=ANIMA_CONFIG.memory_factor,
+    engine=EngineProperties(preview_decoder=PreviewDecoderProperties("taehv")),
 )
 
 
@@ -1117,6 +1173,9 @@ TRIPOSPLAT = ModelFamily(
     supported_dtypes=frozenset(TRIPOSPLAT_CONFIG.inference_dtypes),
     memory_factor=TRIPOSPLAT_CONFIG.memory_factor,
     aliases=TRIPOSPLAT_FAMILY.aliases,
+    engine=EngineProperties(
+        preview_decoder=PreviewDecoderProperties("asset", "triposplat_vae_decoder")
+    ),
 )
 
 
