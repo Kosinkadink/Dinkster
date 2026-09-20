@@ -254,7 +254,11 @@ class LocalAssetLibrary:
 
     @property
     def catalog(self) -> AssetCatalog:
-        return self._catalog
+        snapshot = AssetCatalog()
+        with self._lock:
+            for entry in self._catalog.entries():
+                snapshot.add(entry)
+        return snapshot
 
     @property
     def index_path(self) -> Path:
@@ -295,11 +299,9 @@ class LocalAssetLibrary:
             candidates.append((path, relative, stat))
 
         fresh_index: dict[str, dict[str, object]] = {}
-        with self._lock:
-            self._catalog = AssetCatalog()
-            self._paths_by_digest = {}
-            self._resolutions_by_digest = {}
-            self._current_index = fresh_index
+        fresh_catalog = AssetCatalog()
+        fresh_paths_by_digest: dict[str, Path] = {}
+        fresh_resolutions_by_digest: dict[str, AssetResolution] = {}
         files_total = len(candidates)
         bytes_total = sum(stat.st_size for _, _, stat in candidates)
         files_done = 0
@@ -353,10 +355,24 @@ class LocalAssetLibrary:
                     "digest": digest,
                     **({"verification": record.to_json()} if record is not None else {}),
                 }
-            self._publish_entry(path, relative, stat.st_size, digest, record)
+            fresh_catalog.add(
+                AssetEntry(
+                    virtual_path=f"{self._namespace}/{relative}",
+                    digest=digest,
+                    size=stat.st_size,
+                    media_type=_guess_media_type(path),
+                )
+            )
+            fresh_paths_by_digest.setdefault(digest, path)
+            fresh_resolutions_by_digest.setdefault(digest, AssetResolution(path, record))
             files_done += 1
             bytes_done += stat.st_size
 
+        with self._lock:
+            self._catalog = fresh_catalog
+            self._paths_by_digest = fresh_paths_by_digest
+            self._resolutions_by_digest = fresh_resolutions_by_digest
+            self._current_index = fresh_index
         report(force=True)
         for path, relative, stat in pending:
             digest, record = digest_file_with_record(path)

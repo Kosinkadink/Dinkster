@@ -573,9 +573,11 @@ class MountTable:
                 with self._lock:
                     if self._rows.get(mount_id) is not row:
                         return
+                    previous_files_done = row.progress.files_done if row.progress is not None else 0
                     row.progress = update
-                    row.entry_count = update.files_done
-                self.write_snapshot()
+                    row.entry_count = len(library.entries())
+                if update.files_done > previous_files_done:
+                    self.write_snapshot()
                 if on_progress is not None:
                     on_progress(update)
 
@@ -717,8 +719,14 @@ class MountTable:
         except AssetError as exc:
             raise AssetError(f"asset {virtual_path!r} is not indexed yet") from exc
         if row is not None and row.state == "scanning":
-            library.persist_index()
-            self.write_snapshot()
+            available = len(library.entries())
+            with self._lock:
+                publish = self._rows.get(parts[1]) is row and available > (row.entry_count or 0)
+                if publish:
+                    row.entry_count = available
+            if publish:
+                library.persist_index()
+                self.write_snapshot()
         return ref
 
     def write_snapshot(self) -> None:

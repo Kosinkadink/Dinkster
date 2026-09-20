@@ -136,6 +136,7 @@ class MountService:
         the scan lane."""
         async with self._scan_lock:
             loop = asyncio.get_running_loop()
+            announced_files_done = 0
 
             def publish_progress(progress: AssetScanProgress) -> None:
                 _log.info(
@@ -149,6 +150,10 @@ class MountService:
                 )
 
                 def announce() -> None:
+                    nonlocal announced_files_done
+                    if progress.files_done == announced_files_done:
+                        return
+                    announced_files_done = progress.files_done
                     self.refresh_resolution_store()
                     self.publish(app)
 
@@ -157,6 +162,7 @@ class MountService:
                 except RuntimeError:
                     pass  # the hashing thread may outlive server shutdown
 
+            scan_task: asyncio.Task[int] | None = None
             try:
                 scan_task = asyncio.create_task(
                     asyncio.to_thread(
@@ -177,6 +183,12 @@ class MountService:
                         if progress is not None:
                             publish_progress(progress)
                 count = await scan_task
+            except asyncio.CancelledError:
+                if scan_task is not None:
+                    scan_task.add_done_callback(
+                        lambda task: None if task.cancelled() else task.exception()
+                    )
+                raise
             except MountsError:
                 return  # removed while queued: nothing to narrate
             except Exception as exc:  # noqa: BLE001 - recorded on the row
