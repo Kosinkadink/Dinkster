@@ -1918,9 +1918,6 @@ def test_prefetch_queue_streams_offloaded_gguf_weights_to_cuda() -> None:
     prefetch_queue_pop(queue, None)
 
 
-# -------------------------------------------- fused GGUF matmul route
-
-
 # --------------------------------------------- patches on the device
 
 
@@ -5254,17 +5251,11 @@ def _rope_case(device: str, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Ten
 
 
 @requires_kitchen_rope
-def test_flux_kitchen_rope_tier_matches_direct_backend(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With the owned kernel unavailable, Dinkster dispatches the same
-    combined operation as pinned ComfyUI."""
+def test_flux_kitchen_rope_tier_matches_direct_backend() -> None:
+    """Dinkster dispatches the same combined operation as pinned ComfyUI."""
     import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
-    from dinkster_inference_torch import flux as flux_module
     from dinkster_inference_torch.flux import apply_rope
 
-    monkeypatch.setattr(flux_module, "_dk_rope", None)
-    monkeypatch.setattr(flux_module, "_dk_rope_probed", True)
     for device in CUDA_DEVICES:
         q, k, freqs = _rope_case(device, torch.bfloat16)
         with torch.cuda.device(q.device), torch.no_grad():
