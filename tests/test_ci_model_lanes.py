@@ -622,7 +622,7 @@ def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path
     assert refresh == {
         "name": "Refresh tracked files with current attributes",
         "if": "matrix.os == 'windows'",
-        "shell": "bash",
+        "shell": "pwsh",
         "run": "git rm -r --cached -q .\ngit reset --hard -q HEAD\n",
     }
 
