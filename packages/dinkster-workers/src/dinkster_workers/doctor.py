@@ -54,6 +54,7 @@ from .manifest import (
     ManifestError,
     PackManifest,
     load_manifest,
+    unmatched_registry_providers,
     validate_pack_asset,
     validate_pack_blueprint,
     validate_pack_icon,
@@ -913,7 +914,7 @@ def _excerpt(text: str, *, limit: int = _OUTPUT_EXCERPT) -> str:
     return flat[:limit] + ("..." if len(flat) > limit else "")
 
 
-def _probe_findings(report: dict[str, Any], pack_name: str) -> list[Finding]:
+def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Finding]:
     findings: list[Finding] = []
     if report["entry_error"] is not None:
         findings.append(
@@ -926,6 +927,31 @@ def _probe_findings(report: dict[str, Any], pack_name: str) -> list[Finding]:
             )
         )
         return findings
+    catalog = report.get("catalog")
+    contributions: list[tuple[str, str]] = []
+    if isinstance(catalog, dict):
+        raw_contributions = cast("dict[str, object]", catalog).get("inferenceContributions", [])
+        if isinstance(raw_contributions, list):
+            for raw in cast("list[object]", raw_contributions):
+                if not isinstance(raw, dict):
+                    continue
+                declaration = cast("dict[str, object]", raw)
+                surface_id = declaration.get("surface_id")
+                descriptor_id = declaration.get("id")
+                if isinstance(surface_id, str) and isinstance(descriptor_id, str):
+                    contributions.append((surface_id, descriptor_id))
+    for provider in unmatched_registry_providers(manifest.provides, contributions):
+        findings.append(
+            Finding(
+                severity="error",
+                code="registry.provider-unregistered",
+                message=f"pack {manifest.name!r} declares registry provider "
+                f"{provider.registry}:{provider.id}, but its inference contribution "
+                "does not register it",
+                fix="return the declared descriptor from [pack.extension] inference, "
+                "or remove the provider declaration",
+            )
+        )
     if report["nodes_entry_problem"] is not None:
         findings.append(
             Finding(
@@ -1013,7 +1039,7 @@ def _probe_findings(report: dict[str, Any], pack_name: str) -> list[Finding]:
             record["logger"]
             for record in import_logs
             if record["logger"].startswith(pack_prefix)
-            and record["logger"].removeprefix(pack_prefix).split(".", 1)[0] != pack_name
+            and record["logger"].removeprefix(pack_prefix).split(".", 1)[0] != manifest.name
         }
     )
     if foreign_origins:
@@ -1021,10 +1047,10 @@ def _probe_findings(report: dict[str, Any], pack_name: str) -> list[Finding]:
             Finding(
                 severity="warning",
                 code="import.log-foreign-origin",
-                message=f"pack '{pack_name}' logged under other packs' "
+                message=f"pack '{manifest.name}' logged under other packs' "
                 f"origins: {', '.join(foreign_origins)}",
                 fix=f"pack_logger() must be called with this pack's manifest "
-                f"name ('{pack_name}') so operators can attribute and "
+                f"name ('{manifest.name}') so operators can attribute and "
                 "silence output per pack",
             )
         )
@@ -1238,7 +1264,7 @@ def _check_pack(
     if isinstance(probed, Finding):
         findings.append(probed)
     else:
-        declaration_findings.extend(_probe_findings(probed, manifest.name))
+        declaration_findings.extend(_probe_findings(probed, manifest))
         probed_nodes = tuple(cast("dict[str, Any]", node) for node in probed["nodes"])
         node_types = tuple(cast("str", node["node_type"]) for node in probed_nodes)
         declaration_findings.extend(_check_namespace_coverage(manifest, node_types))
