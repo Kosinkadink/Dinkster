@@ -343,7 +343,9 @@ compositions, optional workers, or compatibility boundaries described below.
 - Regional/grouped conditioning channels beyond text/pooled - not reachable
   from nodes
 - Collaboration service (sessions, operations, snapshots, session
-  WebSockets) - mountable but not mounted by `create_app`
+  WebSockets) - open namespaced document kinds with legacy workflow/image
+  compatibility, kind metadata in descriptors and snapshots, and
+  host-registered snapshot validators; mountable but not mounted by `create_app`
 - Ovis/Qwen3-2B text encoder path for Flux Schnell - server source roles
   do not expose it
 <!-- capability:dinkster.ltxv -->

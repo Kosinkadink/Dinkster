@@ -63,7 +63,13 @@ from dinkster_assets import (
 )
 from dinkster_assets.resolution import ResolutionStore
 from dinkster_caches import DEFAULT_DISK_CACHE_BYTES, BudgetedDiskCAS
-from dinkster_collab import SessionService, SessionStore, add_session_routes
+from dinkster_collab import (
+    SessionService,
+    SessionStore,
+    SnapshotValidatorRegistry,
+    add_session_routes,
+)
+from dinkster_image_document import validate_collaboration_snapshot
 from dinkster_inference import (
     OpenAICompatibility,
     OpenAIGenerationProvider,
@@ -112,7 +118,6 @@ from dinkster_server import (
     resolve_scope,
     validate_comfy_args,
 )
-from dinkster_server.image_document import InvalidDocument, validate_document
 from dinkster_workers import (
     PackManifest,
     SandboxPolicy,
@@ -180,18 +185,10 @@ _PACK_HOST_WORKSPACE_PACKAGES = (
 )
 
 
-def _validate_collaboration_snapshot(
-    document_kind: str, document_id: str, snapshot: object
-) -> str | None:
-    if document_kind == "workflow":
-        return None
-    try:
-        validate_document(snapshot)
-    except InvalidDocument as error:
-        return f"snapshot is not a valid ImageDocument: {error}"
-    if not isinstance(snapshot, dict) or snapshot.get("lineage") != document_id:
-        return "ImageDocument lineage must match documentId"
-    return None
+def _collaboration_snapshot_validators() -> SnapshotValidatorRegistry:
+    validators = SnapshotValidatorRegistry()
+    validators.register("dinkster.image", validate_collaboration_snapshot)
+    return validators
 
 
 def _default_pack_venv_root(library_root: str) -> Path:
@@ -2081,7 +2078,7 @@ def main(argv: list[str] | None = None) -> None:
         try:
             session_service = SessionService(
                 store=session_store,
-                snapshot_validator=_validate_collaboration_snapshot,
+                snapshot_validator=_collaboration_snapshot_validators(),
             )
             generation_service = None
             if args.openai_base_url:

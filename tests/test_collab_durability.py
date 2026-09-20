@@ -29,14 +29,15 @@ def append_ops(service: SessionService, session_id: str, count: int) -> None:
         )
 
 
-def test_sessions_survive_restart(tmp_path: Path) -> None:
+@pytest.mark.parametrize("kind", ["workflow", "image", "dinkster.image", "extension.type"])
+def test_sessions_survive_restart(tmp_path: Path, kind: str) -> None:
     path = tmp_path / "sessions.sqlite"
     first_store = SessionStore(path)
     first = SessionService(store=first_store)
     surviving = first.create(
         scope="team",
         document_id="document",
-        document_kind="image",
+        document_kind=kind,
         snapshot={"value": 0},
     )
     closed = first.create(scope="team", document_id="closed", snapshot=None)
@@ -109,7 +110,7 @@ def test_existing_database_adds_workflow_document_kind(tmp_path: Path) -> None:
     store = SessionStore(path)
     try:
         session = SessionService(store=store).get("legacy")
-        assert session.document_kind == "workflow"
+        assert session.document_kind == "dinkster.workflow"
         with sqlite3.connect(path) as connection:
             column = next(
                 row
