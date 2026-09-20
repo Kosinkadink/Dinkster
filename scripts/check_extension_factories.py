@@ -60,13 +60,6 @@ def call_kind(call: str) -> str | None:
     return SPECIAL_CALL_KINDS.get(call)
 
 
-def owning_issue(root: Path, path: Path) -> int:
-    relative = path.relative_to(root).as_posix()
-    if relative == "packages/dinkster-inference-torch/src/dinkster_inference_torch/memory.py":
-        return 179
-    return 120
-
-
 def scan(root: Path) -> list[Site]:
     sites: list[Site] = []
     for path in source_files(root):
@@ -85,7 +78,7 @@ def scan(root: Path) -> list[Site]:
                     "path": path.relative_to(root).as_posix(),
                     "line": node.lineno,
                     "column": node.col_offset + 1,
-                    "issue": owning_issue(root, path),
+                    "issue": 120,
                 }
             )
     return sorted(
