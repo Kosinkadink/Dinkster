@@ -19,6 +19,7 @@ FRONTEND_CONTRIBUTION_KINDS = (
     "editor",
     "editorBinding",
     "panel",
+    "virtualNode",
 )
 
 IMPLEMENTED_FRONTEND_CONTRIBUTION_KINDS = (
@@ -36,4 +37,5 @@ IMPLEMENTED_FRONTEND_CONTRIBUTION_KINDS = (
     "editor",
     "editorBinding",
     "panel",
+    "virtualNode",
 )
