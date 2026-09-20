@@ -569,6 +569,10 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     assert set(workflow["jobs"]) == {"fast"}
     assert set(workflow[True]) == {"pull_request", "workflow_dispatch"}
+    assert workflow["concurrency"] == {
+        "group": "${{ github.workflow }}-${{ github.ref }}",
+        "cancel-in-progress": True,
+    }
     assert WORKFLOW[True] == {
         "push": {"branches": ["main"]},
         "schedule": [
@@ -605,14 +609,14 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
     assert "torch-cpu-suite" not in str(job)
 
 
-def test_full_validation_schedule_and_concurrency_keep_durable_runs_alive() -> None:
+def test_full_validation_batches_pushes_without_cancelling_active_runs() -> None:
     assert WORKFLOW["permissions"] == {"actions": "read", "contents": "read"}
     assert WORKFLOW["concurrency"] == {
         "group": (
             "${{ github.workflow }}-${{ github.ref }}-"
             "${{ github.event_name == 'push' && 'push' || 'durable' }}"
         ),
-        "cancel-in-progress": "${{ github.event_name == 'push' }}",
+        "cancel-in-progress": False,
     }
     plan = JOBS["validation-plan"]
     assert plan["outputs"] == {"run-heavy": "${{ steps.plan.outputs.run-heavy }}"}
@@ -635,6 +639,8 @@ def test_full_validation_schedule_and_concurrency_keep_durable_runs_alive() -> N
 
     docs = (ROOT / "docs/testing.md").read_text(encoding="utf-8").replace("\n", " ")
     assert "`on.schedule` cron list in that file is the single schedule definition" in docs
+    assert "one active push run and only the newest pending push run" in docs
+    assert "git merge-base --is-ancestor" in docs
 
 
 @pytest.mark.parametrize("environment", ["github-hosted", "self-hosted"])

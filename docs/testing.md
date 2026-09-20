@@ -93,8 +93,14 @@ dispatch, and when called by the release workflow. The `on.schedule` cron
 list in that file is the single schedule definition; change its first cron
 line to change the two-hour cadence. A scheduled run skips the heavy jobs
 when the latest successful main run already validated the same commit.
-Push runs cancel superseded push runs, while scheduled and called runs use a
-separate non-cancelling concurrency group. Full validation retains the
+Main pushes use one non-cancelling concurrency group. GitHub keeps one active
+push run and only the newest pending push run, replacing older pending runs as
+new commits arrive. A merge whose pending run is replaced is covered by the
+next completed run at a descendant head. Find candidate runs in the Actions
+`full-validation` history, then confirm coverage from a local clone with
+`git merge-base --is-ancestor <merge-sha> <run-head-sha>`. Scheduled,
+dispatched and release-called runs use a separate non-cancelling durable group,
+so push traffic neither queues nor replaces them. Full validation retains the
 Python 3.12 Linux suite, both Python 3.12 Windows shards, branch coverage
 with the 80% floor, model tests, one torch CPU job, translation coverage,
 artifact smoke checks and the macOS descriptor test. Select a branch in Actions'
