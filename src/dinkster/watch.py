@@ -3,7 +3,7 @@
 Watches every composed pack's source directory and, when files change,
 drives the SAME reload coordinator as ``POST /api/packs/{packId}/reload``
 (:func:`dinkster.reload_api.apply_reload`) - one reload implementation, two
-triggers. Registered only under ``dinkster-serve --dev --watch-packs``;
+triggers. Registered only under ``dinkster-serve --watch-packs``;
 production installs change packs through the manager's plan/apply flow,
 never a live file watcher.
 

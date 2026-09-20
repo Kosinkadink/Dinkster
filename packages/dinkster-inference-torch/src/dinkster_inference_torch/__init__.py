@@ -143,6 +143,7 @@ if _TYPE_CHECKING:
         process_output,
     )
     from .brownian import BrownianNoiseError, BrownianTreeNoise
+    from .cfg import CfgDenoiser, ConditionedEvaluator, cfg_combine
     from .chroma import (
         Approximator,
         Chroma,
@@ -1761,6 +1762,9 @@ _EXPORTS: dict[str, tuple[str, str | None]] = {
     "SequenceAttentionKernelFactory": ("sequence_sharding", "SequenceAttentionKernelFactory"),
     "SequenceGather": ("sequence_sharding", "SequenceGather"),
     "SequenceSharding": ("sequence_sharding", "SequenceSharding"),
+    "CfgDenoiser": ("cfg", "CfgDenoiser"),
+    "ConditionedEvaluator": ("cfg", "ConditionedEvaluator"),
+    "cfg_combine": ("cfg", "cfg_combine"),
     "torch_euler": ("solvers", "euler"),
     "torch_sampler_registry": ("solvers", "torch_sampler_registry"),
     "SourceReadError": ("sources", "SourceReadError"),
@@ -2885,6 +2889,9 @@ __all__ = [
     "tensor_to_payload_binding",
     "timestep_embedding",
     "torch_scheduler_registry",
+    "CfgDenoiser",
+    "ConditionedEvaluator",
+    "cfg_combine",
     "torch_euler",
     "torch_sampler_registry",
     "tokenize_music_prompt",

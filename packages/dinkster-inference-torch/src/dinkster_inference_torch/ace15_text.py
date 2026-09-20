@@ -37,7 +37,7 @@ from dinkster_inference.sources import SafetensorsSource
 from dinkster_inference.text_recipes import TextRecipeBinding
 
 from .assemble import _load_component  # pyright: ignore[reportPrivateUsage]
-from .attention import resolve_role_attention
+from .attention import AttentionRole, resolve_role_attention
 from .clip_text import EmbeddingLookup
 from .operations import bound_compute_device, bound_compute_dtype, materialized_embedding_weight
 from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
@@ -361,16 +361,26 @@ def assemble_ace15_text_recipe(
     source_files: tuple[BinaryIO, ...],
     attention_policy: AttentionPolicy = "auto",
     attention_route_token: AttentionRouteToken | None = None,
+    attention_backends: tuple[tuple[str, AttentionRole], ...],
 ) -> LoadedTextRecipe:
     if len(sources) != len(source_files) or {
         part.source_index for part in binding.components
     } != set(range(len(sources))):
         raise ValueError("ACE assembly requires every ordered source and open file")
-    attention = resolve_role_attention("qwen", attention_policy, attention_route_token)
+    backends = dict(attention_backends)
     modules: dict[str, torch.nn.Module] = {}
+    attention_status = []
     for part in binding.components:
         if not isinstance(part.plan.config, QwenTextConfig):
             raise ValueError("ACE text assembly requires Qwen text components")
+        try:
+            attention_backend = backends[part.role]
+        except KeyError as error:
+            raise ValueError(f"ACE text role {part.role!r} has no attention backend") from error
+        attention = resolve_role_attention(
+            attention_backend, attention_policy, attention_route_token
+        )
+        attention_status.append(attention.status)
         modules[part.role] = _load_component(
             part.plan,
             partial(QwenTextModel, attention_kernel=attention.kernel),
@@ -383,9 +393,7 @@ def assemble_ace15_text_recipe(
             if isinstance(layer, Fp8Linear | Int8Linear | Nvfp4Linear):
                 layer.compute_dtype = torch.float32
                 layer.full_precision_matmul = True
-    return LoadedTextRecipe(
-        binding, torch.nn.ModuleDict(modules), (attention.status,) * len(binding.components)
-    )
+    return LoadedTextRecipe(binding, torch.nn.ModuleDict(modules), tuple(attention_status))
 
 
 class ACE15TextRuntime:

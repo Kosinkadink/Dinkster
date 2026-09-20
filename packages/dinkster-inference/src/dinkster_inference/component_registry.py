@@ -59,9 +59,6 @@ class ComponentDescriptor:
     requires_runtime_versions: bool = False
     pool_model: bool = False
     runtime_with_family: bool = False
-    attention_roles: tuple[str, ...] = ()
-    attention_requires_route: bool = False
-    loader_uses_device: bool = False
     tokenizer_attribute: str | None = None
     aimdo_roles: tuple[str, ...] = ()
     fixed_promotion_roles: tuple[str, ...] = ()
@@ -112,8 +109,9 @@ class ComponentDescriptor:
         attention_policy: AttentionPolicy = "auto",
         attention_route_token: AttentionRouteToken | None = None,
     ) -> RuntimeKnobs:
-        has_attention = role in self.attention_roles and (
-            attention_route_token is not None or not self.attention_requires_route
+        engine = self.family.engine
+        has_attention = engine.attention_backend(role) is not None and (
+            attention_route_token is not None or not engine.attention_requires_route
         )
         return RuntimeKnobs(
             diffusion_dtype=compute_dtype if role == self.model_role else "unloaded",
@@ -192,10 +190,6 @@ class ComponentDescriptor:
             raise ValueError("component roles must be unique")
         if not set((*self.text_encoder_roles, *self.codec_roles)) <= set(self.roles):
             raise ValueError("text and codec roles must be component roles")
-        if not set(self.attention_roles) <= set(self.roles):
-            raise ValueError("attention roles must be component roles")
-        if self.attention_requires_route and not self.attention_roles:
-            raise ValueError("required attention routes need at least one attention role")
 
 
 @dataclass(frozen=True)

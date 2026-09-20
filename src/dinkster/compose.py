@@ -239,6 +239,7 @@ from dinkster_workers import (
     load_manifest,
     normalize_egress_origin,
     resident_devices,
+    unmatched_registry_providers,
 )
 from dinkster_workers.catalog import (
     PackCatalog,
@@ -1213,7 +1214,10 @@ def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
                 shutil.copytree(module_root, namespace / module_root.name)
                 for sidecar in manifest.parent.iterdir():
                     if sidecar.is_file() and sidecar != manifest:
-                        shutil.copy2(sidecar, root / sidecar.name)
+                        target = root / sidecar.name
+                        shutil.copy2(sidecar, target)
+                        if sidecar.name.endswith("_LICENSE"):
+                            target.write_bytes(target.read_bytes().replace(b"\r\n", b"\n"))
             else:
                 shutil.copytree(module_root, root / module_root.name)
             for filename in _PACK_ARTIFACT_SIDECARS:
@@ -1649,38 +1653,6 @@ class Composition:
             raise errors[0]
 
 
-def _dev_core_pack_info() -> PackInfo:
-    """The core packs-table entry for dev mode: the in-process dev pack's
-    shipped gallery template rides the reserved "core" entry, because the
-    dev scaffolding IS part of the core surface under --dev (there is no
-    isolated worker whose manifest could carry it)."""
-    import hashlib
-
-    from dinkster_nodes_dev.gallery import (
-        GALLERY_TEMPLATE_DESCRIPTION,
-        GALLERY_TEMPLATE_ID,
-        GALLERY_TEMPLATE_NAME,
-        GALLERY_TEMPLATE_TAGS,
-        gallery_template_bytes,
-    )
-    from dinkster_server import PackTemplateAsset
-
-    data = gallery_template_bytes()
-    return PackInfo(
-        display_name="Dinkster Core",
-        templates=(
-            PackTemplateAsset(
-                id=GALLERY_TEMPLATE_ID,
-                name=GALLERY_TEMPLATE_NAME,
-                digest="sha256:" + hashlib.sha256(data).hexdigest(),
-                description=GALLERY_TEMPLATE_DESCRIPTION,
-                tags=GALLERY_TEMPLATE_TAGS,
-                data=data,
-            ),
-        ),
-    )
-
-
 def _merge_pack_entry(
     packs: dict[str, PackInfo], pack_id: str, info: PackInfo, source: str
 ) -> None:
@@ -2027,9 +1999,11 @@ def _resolve_pack_contracts(
     capabilities: dict[str, tuple[str, str]] = {}
     dependencies: dict[str, set[str]] = {}
     receipts: dict[str, list[ResolvedRequirement]] = {name: [] for name in entries}
+    providers = {registry: dict(items) for registry, items in registry_providers.items()}
+    provider_packs: dict[tuple[str, str], str] = {}
 
     for name in sorted(entries):
-        manifest, _spec = entries[name]
+        manifest, spec = entries[name]
         contracts = manifest.contracts
         if contracts is not None:
             expected: dict[RequirementKind, str] = {
@@ -2052,6 +2026,18 @@ def _resolve_pack_contracts(
                     )
                 receipts[name].append(ResolvedRequirement(name, kind, value, expected[kind]))
         dependencies[name] = {dependency.pack for dependency in manifest.dependencies}
+        for provider in manifest.provides.registry:
+            registry_id = canonical_name(provider.registry)
+            descriptor_id = canonical_name(provider.id)
+            registry = providers.setdefault(registry_id, {})
+            previous = registry.get(descriptor_id)
+            if previous is not None:
+                raise CompositionError(
+                    f"registry descriptor {provider.registry}:{provider.id} is provided by both "
+                    f"{previous!r} and {manifest.name!r}"
+                )
+            registry[descriptor_id] = _pack_provider_identity(manifest, spec)
+            provider_packs[(registry_id, descriptor_id)] = name
         for capability in manifest.capabilities:
             key = canonical_name(capability.id)
             previous = capabilities.get(key)
@@ -2094,10 +2080,10 @@ def _resolve_pack_contracts(
             )
 
         for requirement in manifest.requirements.registry:
-            registry = registry_providers.get(canonical_name(requirement.registry))
-            provider = (
-                registry.get(canonical_name(requirement.id)) if registry is not None else None
-            )
+            registry_id = canonical_name(requirement.registry)
+            descriptor_id = canonical_name(requirement.id)
+            registry = providers.get(registry_id)
+            provider = registry.get(descriptor_id) if registry is not None else None
             if provider is None:
                 raise CompositionError(
                     f"pack {manifest.name!r} requires registry descriptor "
@@ -2111,6 +2097,9 @@ def _resolve_pack_contracts(
                     provider,
                 )
             )
+            provider_pack = provider_packs.get((registry_id, descriptor_id))
+            if provider_pack is not None and provider_pack != name:
+                dependencies[name].add(provider_pack)
 
         for requirement in manifest.requirements.capabilities:
             provider = capabilities.get(canonical_name(requirement.id))
@@ -2142,7 +2131,10 @@ def _resolve_pack_contracts(
     while remaining:
         ready = sorted(name for name, required in remaining.items() if not required)
         if not ready:
-            cycle = ", ".join(sorted(remaining))
+            cycle = ", ".join(
+                f"{name} -> {', '.join(sorted(required))}"
+                for name, required in sorted(remaining.items())
+            )
             raise CompositionError(f"pack dependency cycle: {cycle}")
         for name in ready:
             order.append(name)
@@ -2542,8 +2534,7 @@ class ServingComposer:
         if not registry_was_supplied:
             register_core_types(registry)
         register_inference_types(registry)
-        # Dev scaffolding joins the host kernel only in dev mode. Production
-        # starts with no nodes; user-facing nodes arrive through manifests.
+        # The host kernel starts with no nodes; nodes arrive through manifests.
         core_nodes: list[type[Node]] = []
         # The native inference registries are core vocabulary on every
         # surface: /api/choices/dinkster.samplers and .schedulers serve the
@@ -2555,20 +2546,7 @@ class ServingComposer:
             "dinkster.samplers": tuple(d.id for d in builtin_sampler_view.samplers),
             "dinkster.schedulers": tuple(d.id for d in builtin_registries().schedulers),
         }
-        # The dev scaffolding composes in-process, so its choice lists and
-        # shipped gallery template ride the core surface directly (an
-        # isolated pack's would arrive over the hello / manifest instead).
         self._core_packs: dict[str, PackInfo] = {}
-        if dev:
-            from dinkster_nodes_dev import DEV_NODES, combo_choices, register_dev_types
-
-            if not registry_was_supplied:
-                register_dev_types(registry)
-            core_nodes.extend(DEV_NODES)
-            self._core_choices.update(
-                (choice_id, tuple(values)) for choice_id, values in combo_choices().items()
-            )
-            self._core_packs = {CORE_PACK_ID: _dev_core_pack_info()}
         self._base_registry = registry.copy()
         schemas: dict[str, NodeSchema] = dict(build_schemas(core_nodes))
         _validate_remote_authority(CORE_PACK_ID, schemas, self._core_choices)
@@ -4521,6 +4499,18 @@ class ServingComposer:
         ] = {}
         active: list[ActiveExtension] = []
         for name, record in sorted(records.items()):
+            keyed_contributions = inference_contributions.get(name, ())
+            unmatched_providers = unmatched_registry_providers(
+                record.manifest.provides,
+                ((item.surface_id, item.id) for item in keyed_contributions),
+            )
+            if unmatched_providers:
+                provider = unmatched_providers[0]
+                raise CompositionError(
+                    f"pack {record.manifest.name!r} declares registry provider "
+                    f"{provider.registry}:{provider.id}, but its inference contribution "
+                    "does not register it"
+                )
             declaration = record.extension
             if declaration is None:
                 if record.extension_contributions:
@@ -4580,7 +4570,6 @@ class ServingComposer:
                             f"{descriptor.mode.value!r}"
                         )
                     owners.append(name)
-            keyed_contributions = inference_contributions.get(name, ())
             inference_entry = declaration.entries.inference
             if inference_entry is not None:
                 if not keyed_contributions:
@@ -7881,7 +7870,7 @@ class ServingComposer:
 
     def _rebuild_registries(self) -> None:
         """Recompute the composed surface and the ownership registries from
-        the host kernel (plus scaffolding under --dev), every live pack
+        the host kernel, every live pack
         record, and every composed remote. Reload uses this instead
         of incremental removal because shared state (the compat workers'
         one "comfy" table entry and claim) has no per-pack decrement - the

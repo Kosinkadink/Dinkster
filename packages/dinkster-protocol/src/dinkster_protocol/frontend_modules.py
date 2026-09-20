@@ -7,6 +7,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
+from .extension_contribution_kinds import (
+    FRONTEND_CONTRIBUTION_KINDS as FRONTEND_CONTRIBUTION_KINDS,
+)
 from .pack_surfaces import validate_pack_event_name
 
 FRONTEND_PRIVILEGES = (
@@ -14,23 +17,6 @@ FRONTEND_PRIVILEGES = (
     "graph-editor-canvas",
     "app-workflow",
     "event-consumer",
-)
-FRONTEND_CONTRIBUTION_KINDS = (
-    "widgetKind",
-    "widgetView",
-    "previewRenderer",
-    "textEditorExtension",
-    "menu",
-    "command",
-    "keybinding",
-    "setting",
-    "canvasLayer",
-    "nodeDecoration",
-    "hostUi",
-    "searchProvider",
-    "workflowObserver",
-    "eventConsumer",
-    "workflowImporter",
 )
 FRONTEND_ASSET_PATH = "/api/extension-assets/{pack_id}/{digest}/{entry_id}.js"
 

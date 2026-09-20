@@ -78,7 +78,6 @@ _EXPECTED_MEMORY_GGUF_RUNTIME_FACTS = (
     "gguf.route.device_capability=generic",
     "gguf.route.compute_dtype=float32",
     "gguf.route.accumulation_dtype=float32",
-    "gguf.route.fused_matmul=auto",
 )
 _EXPECTED_BALANCED_GGUF_RUNTIME_FACTS = (
     *_EXPECTED_GGUF_RUNTIME_FACTS[:6],

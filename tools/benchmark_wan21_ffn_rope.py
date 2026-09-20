@@ -226,10 +226,6 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         ),
         latent,
     )
-    owned_rope = flux._probe_dinkster_apply_rope()
-    owned_rope_eligible = owned_rope is not None and owned_rope.supported(
-        rope_input, rope_input, rope_frequencies
-    )
     kitchen_rope_available = flux._kitchen_apply_rope() is not None
     with torch.set_grad_enabled(False):
         optimized_q, optimized_k = wan21_model.apply_rope(
@@ -299,7 +295,6 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             "optimized": {
                 "ffn": "production WanFeedForward.forward using linear_input_act gelu_tanh",
                 "rope": "production wan21_model.apply_rope using its fastest eligible paired route",
-                "owned_rope_eligible": owned_rope_eligible,
                 "kitchen_rope_available": kitchen_rope_available,
             },
             "reference": {

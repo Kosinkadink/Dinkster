@@ -429,7 +429,7 @@ developers can *see* what the defaults cost them. Tooling is first-class, and it
 is the carrot that replaces ComfyUI's stick (where the only feedback is users
 reporting breakage):
 
-- **Dev mode (`--dev`)** turns the boundary's natural observability into
+- **Pack watch mode (`--watch-packs`)** turns the boundary's natural observability into
   per-invocation diagnostics: execute vs serialization vs transfer time,
   transport per edge, payload sizes, fallback-codec hits, fingerprinting cost,
   cache-miss explanations - everything the engine already knows, surfaced as
@@ -830,6 +830,14 @@ A diffusion-only runtime can inherit the same KSampler composition as an
 assembled checkpoint. Family-specific sigma spaces and conditioning adapters
 provide model semantics; shared sampling checks and numerical receipts govern
 cross-cutting features on every entry point.
+
+The core inference package owns backend-agnostic descriptors, option schemas,
+assembly plans, checkpoint inspection, and family detection. It does not own
+executing numerical mirrors. `dinkster-inference-torch` binds the shared
+sampler descriptors and model contracts to torch kernels; a sibling backend
+that does not use torch can bind the same declarations to its own kernels.
+Only the documented float64 `schedules.py` pair remains because those functions
+are part of schedule declaration rather than backend execution.
 
 ### 3.14 Model interposition: patch programs as values, not mutation
 

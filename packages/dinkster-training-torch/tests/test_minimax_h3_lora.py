@@ -1459,7 +1459,7 @@ def test_loading_accepts_only_selected_int8_sources(
         assembled=SimpleNamespace(diffusion=model),
     )
     planned_format = "int8_tensorwise"
-    loads: list[tuple[Path, str, torch.dtype]] = []
+    loads: list[tuple[Path, str, torch.dtype, str]] = []
 
     def load_model(
         path: Path,
@@ -1468,16 +1468,17 @@ def test_loading_accepts_only_selected_int8_sources(
         role: str,
         expected_identity: str,
         diffusion_dtype: torch.dtype,
+        attention_backend: str,
     ) -> object:
         assert role == "fl2va-dit"
         del asset
-        loads.append((path, expected_identity, diffusion_dtype))
+        loads.append((path, expected_identity, diffusion_dtype, attention_backend))
         return loaded
 
     monkeypatch.setattr(training_trainer, "load_minimax_h3_model", load_model)
     result = default_minimax_h3_model_factory(config)
     assert result is model
-    assert loads == [(source.resolve(), _DIT_IDENTITY, torch.bfloat16)]
+    assert loads == [(source.resolve(), _DIT_IDENTITY, torch.bfloat16, "flux")]
     assert all(
         not module.fused_training and module.full_precision_matmul
         for module in result.modules()

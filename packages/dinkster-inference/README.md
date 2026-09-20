@@ -1,27 +1,22 @@
 # dinkster-inference
 
-`dinkster-inference` is the torch-free half of the native inference
-program (docs/native-inference-plan.md): the typed contracts that
-later stages implement and that nodes/engine code consumes (stage 1),
-native checkpoint inspection and evidence-based family detection
-behind those contracts (stage 2), the sampling math - sigma spaces,
-the nine sigma schedules, prediction parameterizations, CFG - as pure
-functions (stage 3a), the solver/scheduler catalog: 13 k_diffusion
-solver ports with typed option schemas behind `SamplerDescriptor`,
-plus `SchedulerDescriptor`s for the nine schedules, both in
-namespaced registries with legacy-ComfyUI-name aliases (stage 3b),
-and the torch-free parts of stage 5's native components: tile/codec
+`dinkster-inference` is the backend-agnostic half of the native inference
+program (docs/native-inference-plan.md): typed descriptors and schemas that
+execution backends implement, native checkpoint inspection, evidence-based
+family detection, immutable assembly plans, sigma spaces, the documented
+float64 `schedules.py` pair, and sampler and scheduler catalogs. The catalogs carry
+ids, aliases, option schemas, and capability flags without executable numerical
+factories. `dinkster-inference-torch` binds those declarations to torch
+execution. A sibling backend that does not use torch can bind the same
+descriptors without inheriting torch's numerical implementation.
+
+The package also contains the backend-agnostic parts of native components: tile/codec
 planning, AutoencoderKL detection, SD1/SDXL CLIP tokenization +
 prompt weighting, CLIP text-model configuration/detection, and the
 diffusion-core configuration/layout/detection for the SD1/SDXL UNet
 the classic Flux dev/schnell transformer, and Chroma/Chroma Radiance.
-It contains
-protocols, frozen data models, header-only file
-inspection, and pure float/tensor-arithmetic math - no torch, no
-execution, no global state. The structural demands placed on tensors
-are `SizedTensor` (has a `.shape`) and `ArithTensor` (supports
-elementwise `+ - * /`), which `torch.Tensor` satisfies without this
-package importing torch.
+It contains protocols, frozen data models, and header-only file inspection -
+no torch, no backend execution, and no global state.
 
 Every contract that reimplements or replaces a ComfyUI mechanism cites
 its source module and the audited baseline commit (`b78cec87`) in its
@@ -61,11 +56,10 @@ to a framework dtype is the executing backend's job (stage 4+).
 | `sampling` | `Denoiser`, `SolverFn`, `SamplerInfo`, `StepEvent`, `SigmaScheduleFn`, `ArithTensor`, `SamplingDescriptor`, `SamplerDescriptor`/`SchedulerDescriptor`, `Parameterization` | comfy/samplers.py + comfy/k_diffusion/sampling.py solver boundary and wrapper probing |
 | `spaces` | `SigmaSpace`, `DiscreteSigmas`, `FlowSigmas`, `FluxFlowSigmas`, `ContinuousEDMSigmas`, `linear_beta_sigmas`, `time_snr_shift`/`flux_time_shift` | comfy/model_sampling.py schedule classes (the sigma<->timestep half), untangled from prediction mixins |
 | `schedules` | `normal`/`sgm_uniform`/`simple`/`ddim_uniform`/`karras`/`exponential`/`beta`/`linear_quadratic`/`kl_optimal` `_schedule` fns; `SchedulerDescriptor` catalog + `builtin_scheduler_registry`; `offset_first_sigma_for_snr` | comfy/samplers.py SCHEDULER_HANDLERS + k_diffusion get_sigmas_*, as pure (steps, space) functions; the beta quantile is implemented privately (schedule-domain accuracy only) so scipy stays out |
-| `solvers` | 13 `sample_*` ports (euler through lcm, RF/flow variants included) as `SolverFn` factories; `OptionSpec`/`resolve_options` typed option schemas; `SamplerDescriptor` catalog + `builtin_sampler_registry` (legacy names as aliases) | comfy/k_diffusion/sampling.py solver bodies (injected `NoiseSampler` instead of default-constructed noise, `SamplerInfo` instead of model probing); comfy/samplers.py KSAMPLER extra_options untyped dict |
+| `solvers` | `OptionSpec`/`resolve_options` typed option schemas; backend-unbound `SamplerDescriptor` catalog + `builtin_sampler_registry` (legacy names as aliases) | comfy/samplers.py sampler vocabulary and KSAMPLER extra_options untyped dict; executable solver bodies live in `dinkster-inference-torch` |
 | `steps` | `sampling_sigmas` (denoise-fraction tail trim, discard-penultimate correction, 0.9999 full-denoise threshold), `max_denoise` | comfy/samplers.py KSampler.set_steps/calculate_sigmas + Sampler.max_denoise, as pure functions over scheduler descriptors; the hardcoded DISCARD_PENULTIMATE_SIGMA_SAMPLERS name set becomes `SamplerDescriptor.discard_penultimate` data |
-| `parameterizations` | `calculate_input`, `calculate_denoised`, `noise_scaling`, `inverse_noise_scaling` over `Parameterization` | comfy/model_sampling.py EPS/V_PREDICTION/EDM/CONST/X0 prediction mixins, as explicit dispatch instead of dynamic multiple inheritance |
 | `lora` | `normalize_lora_keys`/`NormalizedLora` (dialect detection), `decode_lora`/`LoraDecodeResult` (adapter classification into `LoRASpec`/`LoHaSpec`/`LoKrSpec`/`GLoRASpec`/`OFTSpec`/`BOFTSpec`/`DiffPatchRef`/`SetPatchRef` against `PatchTarget`), `native_unet_key_map`/`clip_lora_key_map`/`flux_linear1_qkv_key_map` | comfy/lora_convert.py convert_lora, comfy/lora.py load_lora + model_lora_keys_clip, comfy/weight_adapter/*.load - key-string decisions only; every spec field references a SOURCE key, tensor reads deferred to the stage-4 torch layer |
-| `cfg` | `cfg_combine`, `cfg_needs_uncond` | comfy/samplers.py cfg_function core + the cfg==1 uncond skip |
+| `cfg` | Guidance declarations and `cfg_needs_uncond` policy | comfy/samplers.py cfg==1 uncond skip; executable guidance combination lives in `dinkster-inference-torch` |
 | `families` | `ModelFamily`, `FamilyDetector`, `DetectionEvidence`, `DetectionResult`, `FamilyRegistry`, `ComponentWiring` | comfy/model_detection.py ordered if-chain; comfy/supported_models.py ordered class list |
 | `sources` | `SafetensorsSource`, `load_safetensors_header`, `MalformedSafetensors` | whole-dict loading via the safetensors library (comfy/utils.py load_torch_file) - here the header is validated strictly up front against the reference format rules (full dtype table, sub-byte alignment, exact payload tiling), payload bytes untouched |
 | `signatures` | `KeySignature`, `ShapeIs`, `RankIs`, `DimField` | comfy/model_detection.py detect_unet_config's imperative key/shape walking, lifted into declarative signature data |
@@ -123,9 +117,9 @@ See docs/native-inference-plan.md for the stage map, the upstream watch
 map, and what each later stage adds. Proving tests:
 `tests/test_inference_contracts.py` (stage-1 contracts),
 `tests/test_inference_inspection.py` (stage-2 inspection/detection),
-`tests/test_inference_sampling_math.py` (stage-3a sampling math), and
-`tests/test_inference_solvers.py` (stage-3b solvers/registries) - the
-stage-3 tests are pinned against goldens generated by RUNNING the
+`tests/test_inference_sampling_math.py` (schedule and sigma-space math), and
+`tests/test_inference_solvers.py` (sampler schemas plus sibling-backend solver
+implementations) - the numerical tests are pinned against goldens generated by running the
 ComfyUI reference implementations (`tests/goldens/sampling_goldens.json`,
 regenerated with `tools/gen_sampling_goldens.py` and a torch+scipy
 interpreter). The stage-5 torch-free pieces are proven by

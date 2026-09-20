@@ -195,7 +195,7 @@ def test_sdxl_controlnet_union_assembly_forwards_central_unet_kernel(
 
     plan = SimpleNamespace(controlnet_union=object())
     with pytest.raises(RuntimeError, match="captured builder"):
-        assemble_sdxl_controlnet_union(cast(Any, plan))
+        assemble_sdxl_controlnet_union(cast(Any, plan), attention_backend="unet")
     builder = cast(Any, captured[0])
     assert builder.keywords["attention_kernel"] is kernel
 

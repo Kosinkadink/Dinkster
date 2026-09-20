@@ -4,9 +4,9 @@ The typed port of ComfyUI's model_sampling *schedule* classes
 (comfy/model_sampling.py ModelSamplingDiscrete / DiscreteFlow / Flux /
 ContinuousEDM @ b78cec87) - the half of model_sampling that answers
 "what sigma is timestep t?" and "what timestep is sigma s?". The
-*prediction* half (what the model output means) lives in
-parameterizations.py; ComfyUI fuses both by dynamic multiple
-inheritance, which the plan explicitly rejects.
+executing backend owns the *prediction* half (what the model output
+means); ComfyUI fuses both by dynamic multiple inheritance, which the
+plan explicitly rejects.
 
 Everything here is pure float math - no torch, no tensors. Values are
 float64 where the reference stores float32 tables; conformance tests

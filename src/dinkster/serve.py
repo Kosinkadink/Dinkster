@@ -1039,26 +1039,13 @@ def main(argv: list[str] | None = None) -> None:
         help="concurrent jobs (engine admission keeps hardware safe either way)",
     )
     parser.add_argument(
-        "--dev",
-        action="store_true",
-        help="dev-mode diagnostics and affordances: cache_miss events "
-        "explaining why a node recomputed (first-seen / inputs-changed / "
-        "schema-changed / evicted / never-cacheable), per-invocation "
-        "boundary cost logging (execute vs transfer time, per-edge "
-        "transport/size/codec, fallback-codec markers) on "
-        "'dinkster.dev.boundary', and pack hot reload/removal "
-        "(POST /api/packs/{packId}/reload restarts that pack's worker and "
-        "swaps its nodes on the live surface; DELETE /api/packs/{packId} "
-        "retracts them and stops the worker)",
-    )
-    parser.add_argument(
         "--watch-packs",
         action="store_true",
         help="hot-reload node packs on source changes: poll every composed "
         "pack's source directory and, when its files change and settle, "
         "restart that pack's worker and swap its nodes on the live surface "
-        "- dev sugar over POST /api/packs/{packId}/reload, same swap, same "
-        "failure semantics (requires --dev)",
+        "- enables development diagnostics and the same swap and failure "
+        "semantics as POST /api/packs/{packId}/reload",
     )
     parser.add_argument(
         "--benchmark",
@@ -1572,8 +1559,6 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.legacy_pack and not args.comfy_root:
         parser.error("--legacy-pack requires --comfy-root (or $DINKSTER_COMFYUI_ROOT)")
-    if args.watch_packs and not args.dev:
-        parser.error("--watch-packs requires --dev (hot reload is a dev affordance)")
     if args.allow_mount_changes and not args.library_root:
         parser.error(
             "--allow-mount-changes requires a library root "
@@ -1617,6 +1602,7 @@ def main(argv: list[str] | None = None) -> None:
         redaction_roots.append(("<library>", Path(args.library_root)))
 
     model_roots = ()
+    comfy_requirements_checked = False
     if args.library_root and args.comfy_root:
         try:
             model_roots = comfy_model_roots(
@@ -1624,6 +1610,7 @@ def main(argv: list[str] | None = None) -> None:
                 python=args.comfy_python or None,
                 comfy_args=effective_comfy_args,
             )
+            comfy_requirements_checked = True
         except CompositionError as exc:
             raise SystemExit(str(exc)) from exc
 
@@ -1707,23 +1694,27 @@ def main(argv: list[str] | None = None) -> None:
             # failure. Resolve defaults independently so one broken pack
             # cannot hide another pack's nodes.
             default_pack_failures[pack_id] = exc
-    compat_specs = (
-        comfy_compat_specs(
-            args.comfy_root or None,
-            python=args.comfy_python or None,
-            legacy_packs=args.legacy_pack,
-            asset_vault=(Path(args.library_root) / "vault" if args.library_root else None),
-            mounts_snapshot=mounts_snapshot,
-            aimdo=aimdo,
-            memory_budgets=memory_budgets,
-            reserve_vram=reserve_vram,
-            comfy_args=effective_comfy_args,
-            multi_device_cuda_indices=args.multi_gpu_devices,
-            single_job_multi_gpu=single_job_multi_gpu,
+    try:
+        compat_specs = (
+            comfy_compat_specs(
+                args.comfy_root or None,
+                python=args.comfy_python or None,
+                _requirements_checked=comfy_requirements_checked,
+                legacy_packs=args.legacy_pack,
+                asset_vault=(Path(args.library_root) / "vault" if args.library_root else None),
+                mounts_snapshot=mounts_snapshot,
+                aimdo=aimdo,
+                memory_budgets=memory_budgets,
+                reserve_vram=reserve_vram,
+                comfy_args=effective_comfy_args,
+                multi_device_cuda_indices=args.multi_gpu_devices,
+                single_job_multi_gpu=single_job_multi_gpu,
+            )
+            if args.comfy_root or not args.no_default_packs
+            else []
         )
-        if args.comfy_root or not args.no_default_packs
-        else []
-    )
+    except CompositionError as exc:
+        raise SystemExit(str(exc)) from exc
     if not args.comfy_root:
         specs.extend(replace(spec, require_catalog=True) for spec in compat_specs)
     resolved_default_pack_count = len(specs)
@@ -1885,7 +1876,7 @@ def main(argv: list[str] | None = None) -> None:
             pack_scratch_root=(
                 Path(args.library_root).resolve() / "scratch" if args.library_root else None
             ),
-            dev=args.dev,
+            dev=args.watch_packs,
             on_diagnostic=(assembler.on_boundary_diagnostic if assembler is not None else None),
             explain_misses=args.benchmark,
             governor=governor,
@@ -1914,7 +1905,7 @@ def main(argv: list[str] | None = None) -> None:
             cache_memory_entries=args.execution_cache_memory_entries,
             cache_dir=cache_dir,
             cache_disk_budget=args.execution_cache_disk_budget,
-            composition_mode="development" if args.dev else "production",
+            composition_mode="development" if args.watch_packs else "production",
         )
         try:
             ordered_defaults = composer.order_pack_entries(specs[:resolved_default_pack_count])
@@ -2213,7 +2204,7 @@ def main(argv: list[str] | None = None) -> None:
             # apply time; this endpoint only delivers it.
             add_activation_routes(app, composer, installer)
         watcher: PackWatcher | None = None
-        if args.dev:
+        if args.watch_packs:
             # Pack hot reload is a dev affordance: production installs
             # change packs through the manager's plan/apply flow, never a
             # live mutation endpoint. Not registered = 404, no half-open
