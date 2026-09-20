@@ -16904,7 +16904,7 @@ def test_generation_text_node_maps_ordered_sampling_and_cancellation(
             fake_torch_inference if name == "dinkster_inference_torch" else real_import(name)
         ),
     )
-    monkeypatch.setattr(arm, "load_registered_component", lambda value, *_args: Handle())
+    monkeypatch.setattr(arm, "load_registered_component", lambda value, *_args, **_kwargs: Handle())
     inference = real_import("dinkster_inference")
     monkeypatch.setattr(inference, "load_qwen_bpe", lambda: tokenizer)
 
@@ -18150,13 +18150,13 @@ def test_flux2_component_handle_validates_role_binding_and_identity(
     assert load_component(text, "clip") is text
     vae = Handle("dinkster.flux2", "vae")
     assert load_component(vae, "vae", "vae") is vae
-    with pytest.raises(TypeError, match="must be a native"):
+    with pytest.raises(TypeError, match="must be a native Flux2 text component"):
         load_component(Handle("dinkster.flux2_klein_4b", "qwen3_8b"), "clip")
-    with pytest.raises(TypeError, match="must be a native"):
+    with pytest.raises(TypeError, match="must be a native Flux2 vae component"):
         load_component(Handle("dinkster.flux2_klein_4b", "vae"), "vae", "vae")
-    with pytest.raises(TypeError, match="must be a native"):
+    with pytest.raises(TypeError, match="must be a native Flux2 qwen3_4b component"):
         load_component(Handle("dinkster.flux2", "vae"), "clip", "qwen3_4b")
-    with pytest.raises(TypeError, match="must be a native"):
+    with pytest.raises(TypeError, match="must be a native Flux2 text component"):
         load_component(
             Handle(
                 "dinkster.flux2_klein_4b",
@@ -18165,7 +18165,7 @@ def test_flux2_component_handle_validates_role_binding_and_identity(
             ),
             "clip",
         )
-    with pytest.raises(TypeError, match="must be a native component"):
+    with pytest.raises(TypeError, match="must be a native Flux2 text component"):
         load_component(object(), "clip")
 
 
@@ -24113,6 +24113,34 @@ def test_native_family_callables_are_registered_and_resolvable() -> None:
             descriptor.native_load,
         ):
             assert reference is not None and callable(execution_symbol(reference))
+
+
+@pytest.mark.parametrize(
+    ("module_name", "expected_family", "message"),
+    [
+        ("anima", "dinkster.anima", "native Anima text component"),
+        (
+            "minimax_music3",
+            "dinkster.minimax_music3",
+            "native MiniMax Music 3 text component",
+        ),
+    ],
+)
+def test_family_loaders_preserve_family_validation(
+    module_name: str,
+    expected_family: str,
+    message: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = importlib.import_module(f"dinkster_native.families.{module_name}")
+    wrong_family = SimpleNamespace(recipe=SimpleNamespace(family_id="test.other"))
+    monkeypatch.setattr(module, "load_registered_component", lambda *_args: wrong_family)
+
+    with pytest.raises(TypeError, match=message):
+        module.load_component(object(), "clip", "text")
+
+    wrong_family.recipe.family_id = expected_family
+    assert module.load_component(object(), "clip", "text") is wrong_family
 
 
 @pytest.mark.parametrize("family_id", [None, "test.unknown", "test.synthetic"])

@@ -270,6 +270,7 @@ def default_component_registry() -> ComponentRegistry:
             component_realizer="dinkster_inference_torch.anima_component:realize_anima_component",
             checkpoint_text_factory="dinkster_inference_torch.anima_runtime:checkpoint_text_runtime",
             native_encode_text="dinkster_native.families.anima:encode_text",
+            native_load="dinkster_native.families.anima:load_component",
         ),
         ComponentDescriptor(
             catalog.LUMINA2,
@@ -367,6 +368,7 @@ def default_component_registry() -> ComponentRegistry:
             tokenizer_attribute="_dinkster_minimax_music3_tokenizer",
             prepare_conditioning="materialize_minimax_music3_conditioning",
             codec_adapter="dinkster_native.families.minimax_music3:CodecAdapter",
+            native_load="dinkster_native.families.minimax_music3:load_component",
         ),
         _descriptor(
             catalog.QWEN_IMAGE,

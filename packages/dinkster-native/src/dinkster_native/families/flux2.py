@@ -10,7 +10,11 @@ from .kl import CodecAdapter as KLCodecAdapter
 
 
 def load_component(value: object, name: str, role: str | None = None) -> NativeComponentHandle:
-    handle = load_registered_component(value, name, role)
+    expected = role or "text"
+    try:
+        handle = load_registered_component(value, name, role)
+    except TypeError as error:
+        raise TypeError(f"{name} must be a native Flux2 {expected} component") from error
     recipe = handle.recipe
     assert recipe is not None
     inference = importlib.import_module("dinkster_inference")
@@ -21,7 +25,7 @@ def load_component(value: object, name: str, role: str | None = None) -> NativeC
         else inference.FLUX2_TEXT_ROLE_BY_FAMILY.get(recipe.family_id) == bound_role
     )
     if not valid:
-        raise TypeError(f"{name} must be a native Flux2 {role or 'text'} component")
+        raise TypeError(f"{name} must be a native Flux2 {expected} component")
     return handle
 
 

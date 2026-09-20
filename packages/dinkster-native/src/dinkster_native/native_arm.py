@@ -15398,7 +15398,12 @@ def _run_qwen_text_generation(inputs: Mapping[str, object], prompt: str) -> str:
     max_length = _generation_input_int(inputs, "max_length", 1, 32_768)
     inference = importlib.import_module("dinkster_inference")
     sampler, seed = _generation_sampler(inputs, inference)
-    handle = load_registered_component(inputs.get("clip"), "clip", "qwen3_06b")
+    handle = load_registered_component(
+        inputs.get("clip"),
+        "clip",
+        "qwen3_06b",
+        family_id=inference.ANIMA_CONFIG.family_id,
+    )
     context = current_execution_context()
     cancelled = _not_cancelled if context is None else context.cancelled
 
@@ -15507,9 +15512,14 @@ class NativeMiniMaxMusic3TextEncode(MiniMaxMusic3TextEncode):
             raise ValueError("cfg_scale must be in [0.0, 100.0]")
         if type(top_k) is not int or not 1 <= top_k <= 16384:
             raise ValueError("top_k must be an integer in [1, 16384]")
-        handle = load_registered_component(clip, "clip", "text")
-        tokenizer = getattr(handle.component, "_dinkster_minimax_music3_tokenizer", None)
         inference = importlib.import_module("dinkster_inference")
+        handle = load_registered_component(
+            clip,
+            "clip",
+            "text",
+            family_id=inference.MINIMAX_MUSIC3_CONFIG.family_id,
+        )
+        tokenizer = getattr(handle.component, "_dinkster_minimax_music3_tokenizer", None)
         inference_torch = importlib.import_module("dinkster_inference_torch")
         max_audio_frames = min(
             inference.MAX_AUDIO_FRAMES,
@@ -20672,12 +20682,10 @@ class GenerationVAEDecode(NativeVAEDecode):
                 "samples['samples'] must be NCHW or NCTHW rank 4/5, "
                 f"got shape {tuple(latent_tensor.shape)}"
             )
+        memory_required = getattr(codec, "decode_memory_required", None)
         stage = (
-            codec.stage(memory_required=codec.decode_memory_required(latent_tensor))
-            if isinstance(
-                getattr(codec, "_codec", codec),
-                importlib.import_module("dinkster_native.families.kl").CodecAdapter,
-            )
+            codec.stage(memory_required=memory_required(latent_tensor))
+            if callable(memory_required)
             else codec.stage()
         )
         with stage:
@@ -20841,12 +20849,10 @@ class GenerationVAEEncode(NativeVAEEncode):
             and (not component_codec or getattr(codec, "sequence_content", False))
         ):
             content = content.permute(1, 0, 2, 3).unsqueeze(0)
+        memory_required = getattr(codec, "encode_memory_required", None)
         stage = (
-            codec.stage(memory_required=codec.encode_memory_required(content))
-            if isinstance(
-                getattr(codec, "_codec", codec),
-                importlib.import_module("dinkster_native.families.kl").CodecAdapter,
-            )
+            codec.stage(memory_required=memory_required(content))
+            if callable(memory_required)
             else codec.stage()
         )
         with stage:
