@@ -91,15 +91,9 @@ __all__ = [
 ]
 
 
-Fp8MatmulBackend = Literal["dinkster", "kitchen", "torch"]
+Fp8MatmulBackend = Literal["kitchen", "torch"]
 ScaledMm = Callable[..., torch.Tensor]
 QuantizeFp8 = Callable[[torch.Tensor, torch.Tensor, torch.dtype], torch.Tensor]
-QuantizeFp8Supported = Callable[[torch.Tensor, torch.Tensor, torch.dtype], bool]
-_dinkster_probed = True
-_dinkster_scaled_mm: ScaledMm | None = None
-_dinkster_quantize_probed = True
-_dinkster_quantize_per_tensor_fp8: QuantizeFp8 | None = None
-_dinkster_quantize_per_tensor_fp8_supported: QuantizeFp8Supported | None = None
 _kitchen_probed = False
 _kitchen_scaled_mm_v2: ScaledMm | None = None
 _kitchen_quantize_probed = False
@@ -808,14 +802,6 @@ def _probe_kitchen_scaled_mm_v2() -> ScaledMm | None:
     return _kitchen_scaled_mm_v2
 
 
-def _probe_dinkster_scaled_mm() -> ScaledMm | None:
-    return _dinkster_scaled_mm
-
-
-def _probe_dinkster_quantize_per_tensor_fp8() -> QuantizeFp8 | None:
-    return _dinkster_quantize_per_tensor_fp8
-
-
 def _probe_kitchen_quantize_per_tensor_fp8() -> QuantizeFp8 | None:
     """Lazily resolve Kitchen's fused tensorwise FP8 quantizer."""
     global _kitchen_quantize_probed, _kitchen_quantize_per_tensor_fp8
@@ -834,16 +820,13 @@ def _probe_kitchen_quantize_per_tensor_fp8() -> QuantizeFp8 | None:
 
 def select_fp8_matmul_backend() -> Fp8MatmulBackend:
     """Kitchen when its v2 API exists, otherwise eager torch."""
-    if _probe_dinkster_scaled_mm() is not None:
-        return "dinkster"
     return "kitchen" if _probe_kitchen_scaled_mm_v2() is not None else "torch"
 
 
 def prepare_fp8_matmul_runtime() -> Fp8MatmulBackend:
     """Resolve FP8 accelerator operations before accepting inference work."""
     backend = select_fp8_matmul_backend()
-    if _probe_kitchen_quantize_per_tensor_fp8() is None:
-        _probe_dinkster_quantize_per_tensor_fp8()
+    _probe_kitchen_quantize_per_tensor_fp8()
     return backend
 
 
@@ -901,10 +884,7 @@ def fp8_matmul_forward(
     shape = input.shape
     x = input.reshape(-1, shape[-1]) if input.ndim == 3 else input
     kitchen_quantize = _probe_kitchen_quantize_per_tensor_fp8()
-    dinkster_quantize = _probe_dinkster_quantize_per_tensor_fp8()
-    if backend == "dinkster":
-        scaled = _dinkster_scaled_mm
-    elif backend == "kitchen":
+    if backend == "kitchen":
         scaled = _kitchen_scaled_mm_v2
     else:
         scaled = None
@@ -916,12 +896,6 @@ def fp8_matmul_forward(
     with device_guard:
         if kitchen_quantize is not None:
             qdata = kitchen_quantize(x, input_scale, torch.float8_e4m3fn)
-        elif (
-            dinkster_quantize is not None
-            and _dinkster_quantize_per_tensor_fp8_supported is not None
-            and _dinkster_quantize_per_tensor_fp8_supported(x, input_scale, torch.float8_e4m3fn)
-        ):
-            qdata = dinkster_quantize(x, input_scale, torch.float8_e4m3fn)
         else:
             qdata = _quantize_per_tensor_fp8_eager(x, input_scale, torch.float8_e4m3fn)
         cast_bias = None if bias is None else bias.to(dtype=out_dtype)

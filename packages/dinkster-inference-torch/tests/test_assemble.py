@@ -2559,7 +2559,3 @@ def test_gguf_residency_modes_use_decode_routes(
             if isinstance(module, GgufEncodedLinear)
         }
         assert len(encoded[mode]) == 14
-
-    assert not any(
-        module.fused_matmul for modules in encoded.values() for module in modules.values()
-    )

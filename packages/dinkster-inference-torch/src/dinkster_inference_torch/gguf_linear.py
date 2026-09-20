@@ -22,7 +22,7 @@ import threading
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, Self
+from typing import TYPE_CHECKING, Self
 
 import torch
 from dinkster_inference import builtin_gguf_storage_registry
@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from .module_residency import ResidencyBinding
 
 __all__ = [
-    "FUSED_MATMUL_MAX_TOKENS",
     "GGUF_BLOCK_DECODERS",
     "GGUF_BLOCK_SHAPES",
     "GgufDecodedCache",
@@ -61,25 +60,6 @@ GGUF_BLOCK_SHAPES: Mapping[str, tuple[int, int]] = MappingProxyType(
 )
 
 Q8_0_BLOCK_ELEMENTS, Q8_0_BLOCK_BYTES = GGUF_BLOCK_SHAPES["Q8_0"]
-
-
-class _FusedGgufLinear(Protocol):
-    def __call__(
-        self,
-        input: torch.Tensor,
-        blocks: torch.Tensor,
-        bias: torch.Tensor | None,
-        out_features: int,
-    ) -> torch.Tensor: ...
-
-
-_FUSED_OP_NAMES: Mapping[str, tuple[str, str]] = MappingProxyType(
-    {name: ("", "") for name in ("Q4_0", "Q4_K", "Q5_K", "Q6_K", "Q8_0")}
-)
-FUSED_MATMUL_MAX_TOKENS: Mapping[str, int] = MappingProxyType(
-    {"Q4_0": 1024, "Q4_K": 128, "Q5_K": 16, "Q6_K": 512, "Q8_0": 1024}
-)
-_fused_linear_ops: dict[str, _FusedGgufLinear | None] = {}
 
 
 def _fp16_column(blocks: torch.Tensor, offset: int) -> torch.Tensor:
@@ -359,7 +339,6 @@ class GgufEncodedLinear(torch.nn.Module):
 
     weight_blocks: torch.Tensor
     _residency: ResidencyBinding | None = None
-    _fused_op: _FusedGgufLinear | None = None
 
     def __init__(
         self,
@@ -395,8 +374,6 @@ class GgufEncodedLinear(torch.nn.Module):
         self.compute_dtype = compute_dtype
         self.decoded_cache = decoded_cache
         self.cache_key = cache_key
-        self.fused_matmul = False
-        self._fused_max_tokens = FUSED_MATMUL_MAX_TOKENS.get(ggml_type, 0)
         self.register_buffer(
             "weight_blocks",
             torch.empty((elements // block_elements, block_bytes), dtype=torch.uint8),
@@ -415,35 +392,6 @@ class GgufEncodedLinear(torch.nn.Module):
         if self.decoded_cache is not None:
             self.decoded_cache.clear()
         return super()._apply(fn, recurse)
-
-    def bind_fused_matmul(self, enabled: bool) -> None:
-        if enabled:
-            block_elements, _ = GGUF_BLOCK_SHAPES[self.ggml_type]
-            enabled = (
-                self.ggml_type in _FUSED_OP_NAMES
-                and self.in_features % block_elements == 0
-                and self.compute_dtype in (torch.float16, torch.bfloat16)
-            )
-        op = _fused_linear_ops.get(self.ggml_type) if enabled else None
-        self._fused_op = op
-        self.fused_matmul = op is not None
-
-    def bind_default_fused_matmul(self) -> bool:
-        self.bind_fused_matmul(True)
-        return self.fused_matmul
-
-    def _fused_route_admits(self, input: torch.Tensor) -> bool:
-        return input.numel() <= self._fused_max_tokens * self.in_features
-
-    def _run_fused(
-        self,
-        input: torch.Tensor,
-        blocks: torch.Tensor,
-        bias: torch.Tensor | None,
-    ) -> torch.Tensor:
-        if self._fused_op is None:
-            raise RuntimeError("fused operation is not bound")
-        return self._fused_op(input, blocks, bias, self.out_features)
 
     def bind_residency(self, binding: ResidencyBinding) -> None:
         self._residency = binding
@@ -471,15 +419,6 @@ class GgufEncodedLinear(torch.nn.Module):
                 if not isinstance(stored, torch.Tensor):
                     raise TypeError("encoded GGUF residency storage is not a block tensor")
                 collector = lease.timing_collector()
-                if self.fused_matmul and stored.is_cuda and self._fused_route_admits(input):
-                    bias = (
-                        None if self.bias is None else lease.get("bias", dtype=self.compute_dtype)
-                    )
-                    if collector is None:
-                        return self._run_fused(input, stored, bias)
-                    collector.count_forward()
-                    with timed_phase(collector, COMPUTE, stored.device):
-                        return self._run_fused(input, stored, bias)
                 if collector is None:
                     weight = self._decode(stored, (self.out_features, self.in_features))
                     bias = (
@@ -494,8 +433,6 @@ class GgufEncodedLinear(torch.nn.Module):
                     weight = weight.to(self.compute_dtype)
                 with timed_phase(collector, COMPUTE, stored.device):
                     return torch.nn.functional.linear(input, weight, bias)
-        if self.fused_matmul and self.weight_blocks.is_cuda and self._fused_route_admits(input):
-            return self._run_fused(input, self.weight_blocks, self.bias)
         cache = self.decoded_cache
         if cache is not None:
             weight = cache.get(self.cache_key)

@@ -175,8 +175,7 @@ ALLOWED: dict[str, set[str]] = {
     # Model-backed vision providers execute stable owner schemas through the
     # pack-author door and stay independent of the host scheduler.
     "dinkster_nodes_vision": {"dinkster_api", "dinkster_inference_torch"},
-    # Dev scaffolding is a pack like any other: the same door, nothing
-    # more. Separation from std is compositional (--dev), not structural.
+    # Dev scaffolding is a pack like any other: the same door, nothing more.
     "dinkster_nodes_dev": {"dinkster_api"},
     # Partner/API providers keep their descriptor interpreter and transport
     # inside the independently movable pack, authored through the same door.

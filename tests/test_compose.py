@@ -1541,8 +1541,8 @@ def test_compose_dev_pack_adds_scaffold_nodes() -> None:
     asyncio.run(scenario())
 
 
-def test_conformance_proof_nodes_are_dev_only_and_absent_from_production_catalogs() -> None:
-    """The canonical recorder's executable probes never become user nodes."""
+def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
+    """Conformance probes appear only when the development pack is composed."""
 
     async def scenario() -> None:
         dev = await compose_serving([DEV_PACK_MANIFEST])
