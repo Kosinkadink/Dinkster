@@ -5,6 +5,15 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
+from tools.pytest_file_shard import ALL_FILE_SHARDS_MARKER
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        f"{ALL_FILE_SHARDS_MARKER}: run this test on every file shard",
+    )
+
 
 @pytest.fixture
 def model_root() -> Path:

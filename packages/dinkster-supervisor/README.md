@@ -12,11 +12,12 @@ From the repository root:
 
 ```sh
 uv sync --all-packages
+uv run dinkster-installs --help
 uv run dinkster-supervisor --help
 uv run dinkster-station --help
 ```
 
-Both console scripts are supplied directly by this package. The supervisor
+All three console scripts are supplied directly by this package. The supervisor
 defaults to `127.0.0.1:3639` (same default as a bare engine - the port a
 frontend points at means the same thing either way); the station's
 management port defaults to `127.0.0.1:3649`, and the station reads an
