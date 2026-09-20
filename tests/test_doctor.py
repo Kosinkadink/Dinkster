@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from dinkster_workers import detect_bubblewrap, load_manifest
+from dinkster_workers import ManifestError, detect_bubblewrap, load_manifest
 from dinkster_workers.doctor import (
     DOCTOR_REPORT_VERSION,
     diagnose,
@@ -188,6 +188,7 @@ contributions = [
   { id = "healthy-pack.editor", kind = "editor" },
   { id = "healthy-pack.binding", kind = "editorBinding" },
   { id = "healthy-pack.panel", kind = "panel" },
+  { id = "healthy-pack.note", kind = "virtualNode" },
   { id = "healthy-pack.observer", kind = "workflowObserver" },
 ]
 """
@@ -210,6 +211,29 @@ contributions = [
     assert capability.severity == "warning"
     assert "pack 'healthy-pack'" in capability.message
     assert "'filesystem'" in capability.message
+
+
+def test_doctor_rejects_an_unknown_frontend_contribution_kind(tmp_path: Path) -> None:
+    manifest = write_pack(
+        tmp_path / "unknown-frontend-kind",
+        HEALTHY_MANIFEST
+        + """\
+
+[pack.extension]
+privileges = ["frontend"]
+
+[[pack.extension.frontend-modules]]
+id = "healthy-pack.frontend"
+module = "./frontend.js"
+privileges = ["graph-editor-canvas"]
+contributions = [{ id = "healthy-pack.future", kind = "futureKind" }]
+""",
+        "healthy_nodes",
+        HEALTHY_NODES,
+    )
+
+    with pytest.raises(ManifestError, match="unknown frontend contribution kind"):
+        load_manifest(manifest)
 
 
 def test_pack_nested_in_distribution_does_not_add_undeclared_source_root(tmp_path: Path) -> None:
