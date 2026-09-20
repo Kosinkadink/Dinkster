@@ -342,7 +342,9 @@ issue. Their ceilings are non-increasing; raising one is an explicit reviewed
 decision, never an effect of regeneration. After merging main, run
 `uv run --locked python scripts/check_extension_factories.py --write`, review
 that only expected line or column coordinates changed and no ceiling changed,
-then run `bash scripts/ci-fast.sh`.
+then run `bash scripts/ci-fast.sh`. A ceiling lowered by `--write` is permanent;
+reverting a removal requires both the re-added allowlist entry and an explicit
+ceiling raise.
 
 - Packs declare: id, version, required host API version, capabilities (routes,
   filesystem, downloads, background jobs, model-family registration,
