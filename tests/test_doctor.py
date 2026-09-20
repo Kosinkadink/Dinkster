@@ -108,7 +108,15 @@ def test_healthy_pack_is_healthy(tmp_path: Path) -> None:
     report = diagnose(manifest)
     assert report.ok, render_text(report)
     assert report.pack_name == "healthy-pack"
+    assert report.entry_path == str((manifest.parent / "healthy_nodes.py").resolve())
+    assert report.interpreter == str(Path(sys.executable).absolute())
     assert report.node_types == ("healthy.doubler", "healthy.tagger")
+    payload = json.loads(report.to_json())
+    assert payload["entryPath"] == report.entry_path
+    assert payload["interpreter"] == report.interpreter
+    text = render_text(report)
+    assert f"  entry: {report.entry_path}" in text
+    assert f"  interpreter: {report.interpreter}" in text
     # Elapsed import time depends on host load, not just pack behavior.
     assert codes(report) <= {"import.slow"}, render_text(report)
 

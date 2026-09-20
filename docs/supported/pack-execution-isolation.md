@@ -2,7 +2,8 @@
 
 - All supported platforms can run packs in separate worker processes and
   virtual environments for dependency and crash isolation. That alone is not
-  a host security boundary.
+  a host security boundary. A pack's entry modules resolve from its manifest
+  directory regardless of the server's working directory.
 - Linux supports opt-in OS sandboxing for local isolated packs through
   `dinkster-serve --sandbox-packs`. Requested sandboxing fails closed unless full
   user, PID, mount, and network namespace isolation is available. Pack

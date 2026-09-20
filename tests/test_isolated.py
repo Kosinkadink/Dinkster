@@ -185,6 +185,34 @@ def test_ordinary_isolated_worker_keeps_workgroup_capability_absent(tmp_path: Pa
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("relative_manifest", [False, True])
+def test_isolated_worker_imports_pack_from_a_different_working_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    relative_manifest: bool,
+) -> None:
+    pack_root = tmp_path / "pack"
+    pack_root.mkdir()
+    manifest = write_iso_manifest(pack_root)
+    shutil.copy(TESTS_DIR / "isopack_nodes.py", pack_root / "isopack_nodes.py")
+    working_directory = tmp_path / "working"
+    working_directory.mkdir()
+    monkeypatch.chdir(working_directory)
+    selected_manifest: Path | str = manifest
+    if relative_manifest:
+        selected_manifest = os.path.relpath(manifest, working_directory)
+
+    async def scenario() -> None:
+        worker = IsolatedWorker(selected_manifest, core_registry())
+        await worker.start()
+        try:
+            assert "iso.sleepy" in worker.schemas
+        finally:
+            await worker.close()
+
+    asyncio.run(scenario())
+
+
 def test_launched_worker_announces_comfy_translation_registries(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = write_iso_manifest(tmp_path)
