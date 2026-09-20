@@ -53,6 +53,18 @@ jobs:
         with:
           repository: Kosinkadink/dinkster-training
           deploy-key: ${{ secrets.DINKSTER_TRAINING_READ_KEY }}
+      - name: Configure private identity access
+        shell: bash
+        env:
+          IDENTITY_DEPLOY_KEY: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$IDENTITY_DEPLOY_KEY" | ssh-add - >/dev/null
+          {
+            echo 'GIT_CONFIG_COUNT=3'
+            echo 'GIT_CONFIG_KEY_2=url.ssh://git@github.com/Kosinkadink/dinkster-identity.insteadOf'
+            echo 'GIT_CONFIG_VALUE_2=https://github.com/Kosinkadink/dinkster-identity'
+          } >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
