@@ -86,7 +86,6 @@ from dinkster_inference import (
     SamplerExtensionEntry,
     builtin_registries,
     builtin_sampler_snapshot,
-    builtin_schedulers,
     register_inference_types,
     remove_sampler_catalog_record,
     sampler_choice_values,
@@ -300,15 +299,22 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
         "dinkster-nodes-remote": "dinkster_nodes_remote",
         "dinkster-nodes-generation": "dinkster_nodes_generation",
         "dinkster-nodes-generation-openai": "dinkster_nodes_generation_openai",
-        "dinkster-vision-birefnet": "dinkster_vision_birefnet",
-        "dinkster-vision-depth-anything-v2": "dinkster_vision_depth_anything_v2",
-        "dinkster-vision-depth-anything-v3": "dinkster_vision_depth_anything_v3",
-        "dinkster-vision-detr": "dinkster_vision_detr",
-        "dinkster-vision-efficient-sam": "dinkster_vision_efficient_sam",
-        "dinkster-vision-hed": "dinkster_vision_hed",
-        "dinkster-vision-rtdetr": "dinkster_vision_rtdetr",
-        "dinkster-vision-sam31": "dinkster_vision_sam31",
-        "dinkster-vision-upscale": "dinkster_vision_upscale",
+        "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
+        "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
+        "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
+        "dinkster-vision-detr": "dinkster_nodes_vision.detr",
+        "dinkster-vision-efficient-sam": "dinkster_nodes_vision.efficient_sam",
+        "dinkster-vision-hed": "dinkster_nodes_vision.hed",
+        "dinkster-vision-rtdetr": "dinkster_nodes_vision.rtdetr",
+        "dinkster-vision-sam31": "dinkster_nodes_vision.sam31",
+        "dinkster-vision-upscale": "dinkster_nodes_vision.upscale",
+    }
+)
+_FIRST_PARTY_PACK_DISTRIBUTIONS = MappingProxyType(
+    {
+        pack_id: "dinkster-nodes-vision"
+        for pack_id in _FIRST_PARTY_PACK_MODULES
+        if pack_id.startswith("dinkster-vision-")
     }
 )
 _ISOLATED_FIRST_PARTY_PACKS = frozenset(
@@ -1187,7 +1193,17 @@ def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
             root = temporary / "artifact"
             root.mkdir()
             shutil.copy2(manifest, root / "dinkster-pack.toml")
-            shutil.copytree(module_root, root / module_root.name)
+            if module_root.parent.name == "dinkster_nodes_vision":
+                namespace = root / module_root.parent.name
+                namespace.mkdir()
+                bundled_namespace = manifest.parent / module_root.parent.name
+                shutil.copy2(bundled_namespace / "__init__.py", namespace / "__init__.py")
+                shutil.copytree(module_root, namespace / module_root.name)
+                for sidecar in manifest.parent.iterdir():
+                    if sidecar.is_file() and sidecar != manifest:
+                        shutil.copy2(sidecar, root / sidecar.name)
+            else:
+                shutil.copytree(module_root, root / module_root.name)
             for filename in _PACK_ARTIFACT_SIDECARS:
                 sidecar = manifest.parent / filename
                 if sidecar.is_file():
@@ -1231,11 +1247,15 @@ def _installed_pack_spec(
     asset_vault_write: bool = False,
 ) -> PackSpec:
     """Resolve one installed first-party pack and its exact provenance."""
+    distribution_id = _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
     try:
-        distribution = importlib.metadata.distribution(pack_id)
+        distribution = importlib.metadata.distribution(distribution_id)
     except importlib.metadata.PackageNotFoundError as exc:
-        raise CompositionError(f"installed pack {pack_id!r} is unavailable") from exc
-    bundled = Path(str(distribution.locate_file(f"{module_name}_pack/dinkster-pack.toml")))
+        raise CompositionError(
+            f"installed pack distribution {distribution_id!r} is unavailable"
+        ) from exc
+    sidecar = pack_id.replace("-", "_")
+    bundled = Path(str(distribution.locate_file(f"{sidecar}_pack/dinkster-pack.toml")))
     module = importlib.util.find_spec(module_name)
     if module is None or module.origin is None:
         raise CompositionError(f"installed {pack_id} package is not discoverable")
@@ -1247,13 +1267,23 @@ def _installed_pack_spec(
         ),
         None,
     )
+    if source_manifest is None:
+        source_manifest = next(
+            (
+                parent / f"{sidecar}_pack" / "dinkster-pack.toml"
+                for parent in Path(module.origin).resolve().parents
+                if (parent / "pyproject.toml").is_file()
+                and (parent / f"{sidecar}_pack" / "dinkster-pack.toml").is_file()
+            ),
+            None,
+        )
     if source_manifest is not None:
         manifest = source_manifest
         source = f"local:{manifest.parent.resolve()}"
         source_install = True
     elif bundled.is_file():
         manifest = bundled
-        source = f"python:{pack_id}=={distribution.version}"
+        source = f"python:{distribution_id}=={distribution.version}"
         source_install = False
     else:
         raise CompositionError(f"installed {pack_id} has no bundled artifact or source manifest")
@@ -2511,7 +2541,7 @@ class ServingComposer:
         builtin_sampler_view = builtin_sampler_snapshot()
         self._core_choices: dict[str, tuple[str, ...]] = {
             "dinkster.samplers": tuple(d.id for d in builtin_sampler_view.samplers),
-            "dinkster.schedulers": tuple(d.id for d in builtin_schedulers()),
+            "dinkster.schedulers": tuple(d.id for d in builtin_registries().schedulers),
         }
         # The dev scaffolding composes in-process, so its choice lists and
         # shipped gallery template ride the core surface directly (an
@@ -4458,6 +4488,7 @@ class ServingComposer:
     ) -> tuple[
         ExtensionSnapshot,
         SamplerRegistrySnapshot,
+        tuple[KeyedContribution, ...],
         GraphCompilerRegistrySnapshot,
         GraphCompileTransport | None,
     ]:
@@ -4470,7 +4501,7 @@ class ServingComposer:
         for declaration in builtin_sampler_snapshot().samplers:
             sampler_registry.register(declaration)
         scheduler_registry: Registry[KeyedContribution] = Registry()
-        for descriptor in builtin_schedulers():
+        for descriptor in builtin_registries().schedulers:
             scheduler_registry.register(scheduler_declaration(descriptor))
         surfaces: dict[
             tuple[ExtensionScope, str],
@@ -4655,6 +4686,7 @@ class ServingComposer:
                 )
         snapshot = ExtensionSnapshot(extensions=tuple(active), frontend_api=FRONTEND_API_VERSION)
         sampler_snapshot = SamplerRegistrySnapshot(tuple(sampler_registry))
+        scheduler_snapshot = tuple(scheduler_registry)
         try:
             GuidanceRegistrySnapshot(
                 tuple(
@@ -4758,6 +4790,7 @@ class ServingComposer:
         return (
             snapshot,
             sampler_snapshot,
+            scheduler_snapshot,
             graph_compiler_registry,
             graph_compile_transport,
         )
@@ -5654,11 +5687,12 @@ class ServingComposer:
             (
                 snapshot,
                 sampler_registry,
+                scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
             ) = await self._build_extension_snapshot(staged_records, topology)
             derived_choices = self._validated_derived_choices(
-                sampler_registry, snapshot, staged_records, topology
+                sampler_registry, scheduler_registry, staged_records, topology
             )
             if spec.host_types is not None:
                 spec.host_types(staged_registry)
@@ -5878,11 +5912,12 @@ class ServingComposer:
             (
                 snapshot,
                 sampler_registry,
+                scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
             ) = await self._build_extension_snapshot(self._records, topology)
             derived_choices = self._validated_derived_choices(
-                sampler_registry, snapshot, self._records, topology
+                sampler_registry, scheduler_registry, self._records, topology
             )
         except BaseException:
             if snapshot is not None and topology is not None:
@@ -6369,11 +6404,12 @@ class ServingComposer:
             (
                 snapshot,
                 sampler_registry,
+                scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
             ) = await self._build_extension_snapshot(self._records, topology)
             derived_choices = self._validated_derived_choices(
-                sampler_registry, snapshot, self._records, topology
+                sampler_registry, scheduler_registry, self._records, topology
             )
             # Reap the old session before the first published mutation:
             # everything from the route swap to the return is then free
@@ -6743,11 +6779,12 @@ class ServingComposer:
                 (
                     snapshot,
                     sampler_registry,
+                    scheduler_registry,
                     graph_compiler_registry,
                     graph_compile_transport,
                 ) = await self._build_extension_snapshot(staged_records, topology)
                 derived_choices = self._validated_derived_choices(
-                    sampler_registry, snapshot, staged_records, topology
+                    sampler_registry, scheduler_registry, staged_records, topology
                 )
             except BaseException:
                 if snapshot is not None and topology is not None:
@@ -7153,11 +7190,12 @@ class ServingComposer:
             (
                 snapshot,
                 sampler_registry,
+                scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
             ) = await self._build_extension_snapshot(staged_records, topology)
             derived_choices = self._validated_derived_choices(
-                sampler_registry, snapshot, staged_records, topology
+                sampler_registry, scheduler_registry, staged_records, topology
             )
             route_candidates = tuple(
                 dict.fromkeys(
@@ -7341,11 +7379,12 @@ class ServingComposer:
                 (
                     snapshot,
                     sampler_registry,
+                    scheduler_registry,
                     graph_compiler_registry,
                     graph_compile_transport,
                 ) = await self._build_extension_snapshot(staged_records, topology)
                 derived_choices = self._validated_derived_choices(
-                    sampler_registry, snapshot, staged_records, topology
+                    sampler_registry, scheduler_registry, staged_records, topology
                 )
             except BaseException:
                 if snapshot is not None:
@@ -7689,23 +7728,14 @@ class ServingComposer:
     def _validated_derived_choices(
         self,
         sampler_registry: SamplerRegistrySnapshot,
-        snapshot: ExtensionSnapshot,
+        scheduler_registry: tuple[KeyedContribution, ...],
         records: Mapping[str, _PackRecord],
         topology: Topology,
     ) -> dict[str, tuple[str, ...]]:
         choices = self._validated_sampler_choices(sampler_registry)
-        schedulers = (
-            *(scheduler_declaration(descriptor) for descriptor in builtin_schedulers()),
-            *(
-                contribution
-                for extension in snapshot.extensions
-                for contribution in extension.keyed_contributions
-                if contribution.surface_id == INFERENCE_SCHEDULERS_SURFACE
-            ),
-        )
-        canonical_schedulers = tuple(item.id for item in schedulers)
+        canonical_schedulers = tuple(item.id for item in scheduler_registry)
         compat_schedulers = tuple(
-            item.aliases[0] if item.aliases else item.id for item in schedulers
+            item.aliases[0] if item.aliases else item.id for item in scheduler_registry
         )
         try:
             combo_choices_json_bytes(

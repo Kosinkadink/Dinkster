@@ -61,6 +61,7 @@ from dinkster_assets import (
     register_save_target_type,
     resolver_from_env,
 )
+from dinkster_inference import register_inference_types
 from dinkster_inference.sampling_wire import register_sampling_type
 from dinkster_schema import (
     AssetWidget,
@@ -85,6 +86,7 @@ from dinkster_values import (
     CORE_INT,
     CORE_STRING,
     TypeRegistry,
+    register_curve_type,
     register_model3d_type,
 )
 from dinkster_workers import current_execution_context
@@ -4098,7 +4100,17 @@ def register_native_types(registry: TypeRegistry) -> None:
         (type_id,) = expr.types
         if type_id not in registry:
             registry.register(type_id)
-    for expr in (MODEL, CLIP, CLIP_VISION, VAE, CONTROL_NET):
+    for expr in (
+        MODEL,
+        CLIP,
+        CLIP_VISION,
+        VAE,
+        CONTROL_NET,
+        TypeExpr.concrete("dinkster.model"),
+        TypeExpr.concrete("dinkster.clip"),
+        TypeExpr.concrete("dinkster.clip-vision"),
+        TypeExpr.concrete("dinkster.vae"),
+    ):
         (type_id,) = expr.types
         if type_id not in registry:
             # Same pool the loader labels into: codec and label() must
@@ -4121,6 +4133,31 @@ def register_native_types(registry: TypeRegistry) -> None:
         register_sampling_type(registry, type_id, sampler_coerce=sampler_wire_value)
     if "dinkster.guider" not in registry:
         register_resident_type(registry, "dinkster.guider", table=default_pool())
+    register_inference_types(registry)
+    register_curve_type(registry)
+    for type_id in (
+        "comfy.BACKGROUND_REMOVAL",
+        "comfy.LATENT_UPSCALE_MODEL",
+        "comfy.MODEL_PATCH",
+        "comfy.MOGE_MODEL",
+    ):
+        if type_id not in registry:
+            register_resident_type(
+                registry, type_id, table=default_pool(), meta=comfy_resident_meta
+            )
+    for type_id in (
+        "comfy.BASIC_PIPE",
+        "comfy.HOOKS",
+        "comfy.HOOK_KEYFRAMES",
+        "comfy.MESH",
+        "comfy.MOGE_GEOMETRY",
+        "comfy.SHAPE_SUBDIVIDES",
+        "comfy.TIMESTEPS_RANGE",
+        "comfy.VOXEL",
+        "dinkster.latent-operation",
+    ):
+        if type_id not in registry:
+            registry.register(type_id)
     # IMAGE and MASK cross as npy bytes (image.py) so the torchless engine
     # can decode and render previews. Normally the v1 translation already
     # registered them; the guard covers filtered node sets (DINKSTER_COMFY_NODES)

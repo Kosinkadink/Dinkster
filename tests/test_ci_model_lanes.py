@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -27,15 +30,15 @@ ACCEPTANCE_SAMPLING_TEST = (
 )
 TRAINING_SUITE = "packages/dinkster-training-torch/tests"
 VISION_SUITES = (
-    "packages/dinkster-vision-hed/tests",
-    "packages/dinkster-vision-upscale/tests",
-    "packages/dinkster-vision-depth-anything-v2/tests",
-    "packages/dinkster-vision-detr/tests",
-    "packages/dinkster-vision-rtdetr/tests",
-    "packages/dinkster-vision-efficient-sam/tests",
-    "packages/dinkster-vision-birefnet/tests",
-    "packages/dinkster-vision-depth-anything-v3/tests",
-    "packages/dinkster-vision-sam31/tests",
+    "packages/dinkster-nodes-vision/tests/test_hed.py",
+    "packages/dinkster-nodes-vision/tests/test_upscale.py",
+    "packages/dinkster-nodes-vision/tests/test_depth_anything_v2.py",
+    "packages/dinkster-nodes-vision/tests/test_detr.py",
+    "packages/dinkster-nodes-vision/tests/test_rtdetr.py",
+    "packages/dinkster-nodes-vision/tests/test_efficient_sam.py",
+    "packages/dinkster-nodes-vision/tests/test_birefnet.py",
+    "packages/dinkster-nodes-vision/tests/test_depth_anything_v3.py",
+    "packages/dinkster-nodes-vision/tests/test_sam31.py",
 )
 
 
@@ -64,10 +67,87 @@ def test_every_cpu_composite_caller_explicitly_excludes_model_tests() -> None:
                     assert job["runs-on"] == ["self-hosted", "linux", "x64"]
     assert set(callers) == {
         ("full-validation.yml", "model-tests"),
-        *(("full-validation.yml", f"torch-cpu-try{number}") for number in range(1, 6)),
+        ("full-validation.yml", "torch-cpu"),
     }
-    assert len(callers) == 6
+    assert len(callers) == 2
     assert ACTION["inputs"]["run-model-tests"]["default"] == "false"
+
+
+def test_torch_cpu_has_one_contract_guard_and_an_unconditional_suite() -> None:
+    assert [name for name in JOBS if name.startswith("torch-cpu")] == ["torch-cpu"]
+    job = JOBS["torch-cpu"]
+    assert set(job) == {"needs", "if", "runs-on", "env", "steps"}
+    assert job["needs"] == "validation-plan"
+    assert job["if"] == "needs.validation-plan.outputs.run-heavy == 'true'"
+    assert job["runs-on"] == ["self-hosted", "linux", "x64"]
+    assert job["env"] == {"ATEN_CPU_CAPABILITY": "avx2", "ONEDNN_MAX_CPU_ISA": "AVX2"}
+    guard, checkout, suite = job["steps"]
+    assert set(guard) == {"name", "run"}
+    assert checkout == {
+        "uses": "actions/checkout@v4",
+        "with": {"clean": True, "persist-credentials": False},
+    }
+    assert suite == {
+        "uses": ACTION_PATH,
+        "with": {
+            "identity-deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}",
+            "evidence-deploy-key": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
+            "run-model-tests": "false",
+        },
+    }
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Linux CPU guard runs in Bash")
+@pytest.mark.parametrize(
+    ("vendor", "flags", "accepted"),
+    [
+        ("AuthenticAMD", "sse2 avx avx2", True),
+        ("GenuineIntel", "sse2 avx avx2", False),
+        ("AuthenticAMD", "sse2 avx", False),
+        ("AuthenticAMD", "sse2 avx avx2 avx512f", False),
+        ("AuthenticAMD", "sse2 avx avx20", False),
+    ],
+)
+def test_torch_cpu_guard_executes_the_golden_contract(
+    tmp_path: Path, vendor: str, flags: str, accepted: bool
+) -> None:
+    cpuinfo = tmp_path / "cpu info"
+    cpuinfo.write_text(
+        f"model name : Test CPU\nvendor_id : {vendor}\nflags : {flags}\n", encoding="utf-8"
+    )
+    script = JOBS["torch-cpu"]["steps"][0]["run"]
+    assert "/proc/cpuinfo" in script
+    result = subprocess.run(
+        [
+            "bash",
+            "-e",
+            "-o",
+            "pipefail",
+            "-c",
+            script.replace("/proc/cpuinfo", shlex.quote(str(cpuinfo))),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == (0 if accepted else 1), result.stderr
+    if not accepted:
+        assert (
+            "CPU golden contract requires AuthenticAMD with AVX2 and without AVX-512"
+            in result.stderr
+        )
+
+
+def test_artifact_smoke_uses_only_available_self_hosted_platforms() -> None:
+    assert JOBS["p2p-artifact-smoke"]["strategy"]["matrix"] == {
+        "os": ["linux", "windows", "macos"],
+        "python-version": ["3.12"],
+        "include": [
+            {"os": "linux", "labels": ["self-hosted", "linux", "x64"]},
+            {"os": "windows", "labels": ["self-hosted", "windows", "x64"]},
+            {"os": "macos", "labels": ["self-hosted", "macos", "arm64"]},
+        ],
+    }
 
 
 @pytest.mark.parametrize("enabled", ["", "false", "true"])
@@ -143,7 +223,7 @@ def test_model_lane_commands_artifact_pins_and_environments_match_reviewed_contr
         if step.get("if") == MODEL_CONDITION
     ]
     assert hashlib.sha256(json.dumps(steps, sort_keys=True).encode()).hexdigest() == (
-        "bc5228fa3f12c1340acab8aacb04db1f5a2394399cfb6077bccc0dc4d08f9fda"
+        "5583341b0b7a3877b63970114606a11f5c6f3dd426cea7c592eee8f4a285dc1d"
     )
 
 
@@ -163,7 +243,7 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
         )
         if 'venv = ".venv-torch"' in path.read_text(encoding="utf-8")
     }
-    assert len(projects) == 12
+    assert len(projects) == 4
     assert {command for command in commands if "pyright -p" in command} == {
         (
             ".venv/bin/pyright -p .evidence-source/packages/dinkster-acceptance "
@@ -227,7 +307,7 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
     (checkout,) = [step for step in preparation_steps if step.get("uses") == "actions/checkout@v4"]
     assert checkout["with"] == {
         "repository": "Kosinkadink/dinkster-evidence",
-        "ref": "ef914dab9c8c2b959539f8e774bc35e6b4fe58b8",
+        "ref": "983b5dc3b45e74410b55908a833e7769abe63dea",
         "path": ".evidence-source",
         "clean": True,
         "persist-credentials": False,
@@ -320,14 +400,7 @@ def test_model_job_runs_only_in_trusted_full_validation(
     # PyYAML reads the YAML 1.1 spelling "on" as True.
     triggers = WORKFLOW[True]
     triggered = event in triggers and (event != "push" or ref == "refs/heads/main")
-    allocated = triggered and _condition_matches(
-        job["if"],
-        {
-            "github.event_name": event,
-            "github.ref": ref,
-            "github.repository": repository,
-        },
-    )
+    allocated = triggered and repository == "Kosinkadink/Dinkster"
     assert allocated == (
         (
             event in {"schedule", "workflow_dispatch"}
@@ -336,14 +409,17 @@ def test_model_job_runs_only_in_trusted_full_validation(
         and repository == "Kosinkadink/Dinkster"
     )
     assert job["runs-on"] == ["self-hosted", "linux", "x64"]
-    assert "needs" not in job
+    assert job["needs"] == "validation-plan"
     for name, hosted in JOBS.items():
-        if name != "model-tests":
+        if name not in {"model-tests", "validation-plan"}:
             assert "model-tests" not in hosted.get("needs", [])
 
 
 def test_model_job_has_no_pull_request_label_path() -> None:
-    assert JOBS["model-tests"]["if"] == "github.repository == 'Kosinkadink/Dinkster'"
+    assert JOBS["model-tests"]["if"] == (
+        "needs.validation-plan.outputs.run-heavy == 'true' && "
+        "github.repository == 'Kosinkadink/Dinkster'"
+    )
     assert "pull_request" not in WORKFLOW[True]
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     assert workflow[True]["pull_request"] is None
@@ -371,7 +447,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         "MKL_NUM_THREADS": "4",
     }
     for name in ("p2p-descriptor-macos", "p2p-artifact-smoke"):
-        assert "if" not in JOBS[name]
+        assert JOBS[name]["if"] == "needs.validation-plan.outputs.run-heavy == 'true'"
 
 
 def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
@@ -380,8 +456,12 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
     assert set(workflow[True]) == {"pull_request", "workflow_dispatch"}
     assert WORKFLOW[True] == {
         "push": {"branches": ["main"]},
-        "schedule": [{"cron": "23 10 * * *"}],
+        "schedule": [
+            {"cron": "0 6-22/2 * * *", "timezone": "America/Los_Angeles"},
+            {"cron": "23 10 * * *"},
+        ],
         "workflow_dispatch": None,
+        "workflow_call": None,
     }
     job = workflow["jobs"]["fast"]
     assert job["timeout-minutes"] == 5
@@ -405,6 +485,38 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
     ]
     assert "--cov" not in script
     assert "torch-cpu-suite" not in str(job)
+
+
+def test_full_validation_schedule_and_concurrency_keep_durable_runs_alive() -> None:
+    assert WORKFLOW["permissions"] == {"actions": "read", "contents": "read"}
+    assert WORKFLOW["concurrency"] == {
+        "group": (
+            "${{ github.workflow }}-${{ github.ref }}-"
+            "${{ github.event_name == 'push' && 'push' || 'durable' }}"
+        ),
+        "cancel-in-progress": "${{ github.event_name == 'push' }}",
+    }
+    plan = JOBS["validation-plan"]
+    assert plan["outputs"] == {"run-heavy": "${{ steps.plan.outputs.run-heavy }}"}
+    script = plan["steps"][0]["with"]["script"]
+    for required in (
+        "context.eventName !== 'schedule'",
+        "workflow_id: 'full-validation.yml'",
+        "branch: 'main'",
+        "status: 'success'",
+        "per_page: 1",
+        "workflow_runs[0]?.head_sha === context.sha",
+    ):
+        assert required in script
+    for name, job in JOBS.items():
+        if name == "validation-plan":
+            continue
+        needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
+        assert "validation-plan" in needs, name
+        assert "needs.validation-plan.outputs.run-heavy == 'true'" in job["if"], name
+
+    docs = (ROOT / "docs/testing.md").read_text(encoding="utf-8").replace("\n", " ")
+    assert "`on.schedule` cron list in that file is the single schedule definition" in docs
 
 
 @pytest.mark.parametrize("environment", ["github-hosted", "self-hosted"])

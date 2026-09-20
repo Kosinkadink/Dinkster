@@ -6,6 +6,7 @@ one-way dependencies. Node execution is boundary-first - same venv, another venv
 or another machine are just different `Worker` transports. Everything on a graph
 edge is a typed value envelope, so caching and transport are location-independent.
 
+- Launch the browser editor: [docs/quickstart.md](docs/quickstart.md)
 - End-user backend and Desktop installation: [docs/install.md](docs/install.md)
 - What is supported today: [SUPPORTED.md index](SUPPORTED.md)
 - Architecture and design rationale: [DESIGN.md](DESIGN.md)
@@ -25,9 +26,9 @@ edge is a typed value envelope, so caching and transport are location-independen
 - Research notes:
   [workspace research](https://github.com/Kosinkadink/comfy-vibe-station/tree/main/notes/research)
 
-Status: private preview, distributed through private backend and Desktop
-releases. See [installation](docs/install.md) for prerequisites, platform
-limits, and release assets. Native and ComfyUI-compatibility workflows run through the
+Status: pre-release. One private backend source archive is available; no
+Desktop release exists. See [installation](docs/install.md) for prerequisites,
+platform limits, and release assets. Native and ComfyUI-compatibility workflows run through the
 same typed graph, server, worker, and sampling boundaries. The exact model,
 node, dtype, training, and compatibility coverage is linked from the
 [SUPPORTED.md index](SUPPORTED.md). `uv sync --all-packages` (or
@@ -76,7 +77,7 @@ performs a locked install and import check, and records both Git identities.
 - `uv run pyright` - static type checking (strict for `packages/`, standard
   for `src/` and `tests/`)
 - `uv run ruff check .` - lint
-- `uv run dinkster` - demo: toy graph through the real engine; shows caching,
+- `uv run dinkster demo` - demo: toy graph through the real engine; shows caching,
   partial re-execution, non-idempotent nodes, and value interrogation
 - `uv run dinkster-pack prepare-catalogs --defaults` - prepare installed
   default-pack dependencies and persist their schemas before serving; run it

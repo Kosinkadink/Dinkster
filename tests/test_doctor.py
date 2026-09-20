@@ -113,6 +113,22 @@ def test_healthy_pack_is_healthy(tmp_path: Path) -> None:
     assert codes(report) <= {"import.slow"}, render_text(report)
 
 
+def test_pack_nested_in_distribution_uses_shared_source_root(tmp_path: Path) -> None:
+    distribution = tmp_path / "distribution"
+    manifest = distribution / "healthy_pack" / "dinkster-pack.toml"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(HEALTHY_MANIFEST)
+    (distribution / "pyproject.toml").write_text("[project]\nname = 'healthy'\nversion = '1'\n")
+    source = distribution / "src"
+    source.mkdir()
+    (source / "healthy_nodes.py").write_text(HEALTHY_NODES)
+
+    report = diagnose(manifest)
+
+    assert report.ok, render_text(report)
+    assert report.node_types == ("healthy.doubler", "healthy.tagger")
+
+
 def test_blocking_import_emits_slow_warning(tmp_path: Path) -> None:
     source = "import time\ntime.sleep(2.1)\n" + HEALTHY_NODES
     manifest = write_pack(tmp_path / "blocking", HEALTHY_MANIFEST, "healthy_nodes", source)
