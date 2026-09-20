@@ -174,6 +174,7 @@ def test_assembly_loads_bound_sources_and_pins_quantized_gemma_matmul(
         compute_dtype=torch.bfloat16,
         sources=cast("Any", (gemma_source, projection_source)),
         source_files=(gemma_file, projection_file),
+        attention_backends=(("gemma3_12b", "qwen"), ("connectors", "flux")),
     )
 
     assert tokenizer_reads == [(gemma_file, "spiece_model", 8 * 1024 * 1024)]

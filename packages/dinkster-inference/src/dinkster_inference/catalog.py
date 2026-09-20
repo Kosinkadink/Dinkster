@@ -503,6 +503,13 @@ class _ChromaDetector:
         return evidence
 
 
+_CHROMA_ENGINE = EngineProperties(
+    quantized_component_load_device=True,
+    attention_backends=(("diffusion", "flux"), ("t5xxl", "t5"), ("vae", "vae")),
+    attention_requires_route=True,
+)
+
+
 CHROMA = ModelFamily(
     id=CHROMA_FAMILY_ID,
     display_name="Chroma",
@@ -518,6 +525,7 @@ CHROMA = ModelFamily(
     wiring=_CHROMA_WIRING,
     supported_dtypes=CHROMA_INFERENCE_DTYPES,
     memory_factor=3.2,
+    engine=_CHROMA_ENGINE,
 )
 
 CHROMA_RADIANCE = ModelFamily(
@@ -535,6 +543,7 @@ CHROMA_RADIANCE = ModelFamily(
     wiring=_CHROMA_WIRING,
     supported_dtypes=CHROMA_INFERENCE_DTYPES,
     memory_factor=0.044,
+    engine=_CHROMA_ENGINE,
 )
 
 FLUX_DEV = ModelFamily(
@@ -732,6 +741,7 @@ WAN21 = ModelFamily(
     engine=EngineProperties(
         preview_decoder=PreviewDecoderProperties("taehv"),
         compatibility_latent_formats=("Wan21",),
+        supports_context_windows=True,
     ),
 )
 
@@ -750,6 +760,7 @@ WAN22 = ModelFamily(
         vae_dtypes=(BFLOAT16, FLOAT16, FLOAT32),
         preview_decoder=PreviewDecoderProperties("taehv"),
         compatibility_latent_formats=("Wan22",),
+        supports_context_windows=True,
     ),
 )
 
@@ -767,6 +778,7 @@ LTXV = ModelFamily(
     ),
     supported_dtypes=frozenset({BFLOAT16, FLOAT32}),
     memory_factor=5.5,
+    engine=EngineProperties(supports_context_windows=True),
 )
 
 LTXAV = ModelFamily(
@@ -784,6 +796,14 @@ LTXAV = ModelFamily(
     ),
     supported_dtypes=frozenset({BFLOAT16, FLOAT32}),
     memory_factor=0.077,
+    engine=EngineProperties(
+        attention_backends=(
+            ("diffusion", "flux"),
+            ("gemma3_12b", "qwen"),
+            ("gemma4_12b", "qwen"),
+            ("connectors", "flux"),
+        )
+    ),
 )
 
 
@@ -914,6 +934,7 @@ MINIMAX_H3 = ModelFamily(
     wiring=ComponentWiring(text_encoders=()),
     supported_dtypes=frozenset({BFLOAT16}),
     aliases=MINIMAX_H3_FAMILY.aliases,
+    engine=EngineProperties(attention_backends=(("diffusion", "flux"),)),
 )
 
 
@@ -932,6 +953,10 @@ MINIMAX_MUSIC3 = ModelFamily(
     supported_dtypes=frozenset(MINIMAX_MUSIC3_CONFIG.inference_dtypes),
     memory_factor=MINIMAX_MUSIC3_CONFIG.memory_factor,
     aliases=("minimax_music3", "minimax-music-3"),
+    engine=EngineProperties(
+        attention_backends=(("diffusion", "flux"), ("text", "qwen")),
+        attention_requires_route=True,
+    ),
 )
 
 

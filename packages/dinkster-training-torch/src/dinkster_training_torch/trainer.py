@@ -31,7 +31,9 @@ from dinkster_inference import (
     FLUX_SCHNELL_CONFIG,
     KLEIN_QWEN3_4B_CONFIG,
     KLEIN_QWEN3_8B_CONFIG,
+    MINIMAX_H3,
     MINIMAX_H3_SIGMAS,
+    MINIMAX_MUSIC3,
     MISTRAL3_24B_CONFIG,
     MISTRAL3_24B_PRUNED_CONFIG,
     QWEN_IMAGE,
@@ -50,6 +52,7 @@ from dinkster_inference import (
     FluxAssemblyPlan,
     FluxFlowSigmas,
     LatentStream,
+    ModelFamily,
     MultiStreamLatent,
     QwenImageAssemblyPlan,
     SafetensorsSource,
@@ -73,6 +76,7 @@ from dinkster_inference import (
 from dinkster_inference.minimax_h3_assembly import MiniMaxH3ModelAssemblyPlan
 from dinkster_inference.minimax_h3_dit import MiniMaxH3TimeEmbeddingKind
 from dinkster_inference_torch import (
+    AttentionRole,
     AutoencoderKL,
     CastOperations,
     ClipTextModel,
@@ -1004,6 +1008,15 @@ def minimax_h3_time_embedding_kind(
     return minimax_h3_model_assembly_plan(config).diffusion.config.time_embedding_kind
 
 
+def _registered_attention_backend(family: ModelFamily, component_role: str) -> AttentionRole:
+    backend = family.engine.attention_backend(component_role)
+    if backend is None:
+        raise RuntimeError(
+            f"{family.id} has no registered attention backend for {component_role!r}"
+        )
+    return cast("AttentionRole", backend)
+
+
 def default_minimax_h3_model_factory(config: MiniMaxH3TrainingConfig) -> torch.nn.Module:
     """Verify, plan, identity-check, and strict-load one H3 DiT component."""
     plan = minimax_h3_model_assembly_plan(config)
@@ -1029,6 +1042,7 @@ def default_minimax_h3_model_factory(config: MiniMaxH3TrainingConfig) -> torch.n
         role=config.dit_role,
         expected_identity=config.dit_identity,
         diffusion_dtype=dtype,
+        attention_backend=_registered_attention_backend(MINIMAX_H3, "diffusion"),
     )
     if loaded.model_role != config.dit_role:
         raise ValueError(
@@ -1631,6 +1645,7 @@ def default_minimax_music3_model_factory(
         expected_role="diffusion",
         expected_identity=pin.identity,
         compute_dtype=dtype,
+        attention_backend=_registered_attention_backend(MINIMAX_MUSIC3, "diffusion"),
     )
     model = cast("MiniMaxMusic3DiT", loaded.module)
     int8_layers = tuple(module for module in model.modules() if isinstance(module, Int8Linear))
@@ -1661,6 +1676,7 @@ def default_minimax_music3_data_source_factory(
             expected_role="text",
             expected_identity=pin.identity,
             compute_dtype=dtype,
+            attention_backend=_registered_attention_backend(MINIMAX_MUSIC3, "text"),
         )
         if loaded.tokenizer is None:
             raise ValueError("MiniMax Music 3 text artifact contains no tokenizer")
