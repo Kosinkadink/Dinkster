@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -64,10 +67,87 @@ def test_every_cpu_composite_caller_explicitly_excludes_model_tests() -> None:
                     assert job["runs-on"] == ["self-hosted", "linux", "x64"]
     assert set(callers) == {
         ("full-validation.yml", "model-tests"),
-        *(("full-validation.yml", f"torch-cpu-try{number}") for number in range(1, 6)),
+        ("full-validation.yml", "torch-cpu"),
     }
-    assert len(callers) == 6
+    assert len(callers) == 2
     assert ACTION["inputs"]["run-model-tests"]["default"] == "false"
+
+
+def test_torch_cpu_has_one_contract_guard_and_an_unconditional_suite() -> None:
+    assert [name for name in JOBS if name.startswith("torch-cpu")] == ["torch-cpu"]
+    job = JOBS["torch-cpu"]
+    assert set(job) == {"needs", "if", "runs-on", "env", "steps"}
+    assert job["needs"] == "validation-plan"
+    assert job["if"] == "needs.validation-plan.outputs.run-heavy == 'true'"
+    assert job["runs-on"] == ["self-hosted", "linux", "x64"]
+    assert job["env"] == {"ATEN_CPU_CAPABILITY": "avx2", "ONEDNN_MAX_CPU_ISA": "AVX2"}
+    guard, checkout, suite = job["steps"]
+    assert set(guard) == {"name", "run"}
+    assert checkout == {
+        "uses": "actions/checkout@v4",
+        "with": {"clean": True, "persist-credentials": False},
+    }
+    assert suite == {
+        "uses": ACTION_PATH,
+        "with": {
+            "identity-deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}",
+            "evidence-deploy-key": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
+            "run-model-tests": "false",
+        },
+    }
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Linux CPU guard runs in Bash")
+@pytest.mark.parametrize(
+    ("vendor", "flags", "accepted"),
+    [
+        ("AuthenticAMD", "sse2 avx avx2", True),
+        ("GenuineIntel", "sse2 avx avx2", False),
+        ("AuthenticAMD", "sse2 avx", False),
+        ("AuthenticAMD", "sse2 avx avx2 avx512f", False),
+        ("AuthenticAMD", "sse2 avx avx20", False),
+    ],
+)
+def test_torch_cpu_guard_executes_the_golden_contract(
+    tmp_path: Path, vendor: str, flags: str, accepted: bool
+) -> None:
+    cpuinfo = tmp_path / "cpu info"
+    cpuinfo.write_text(
+        f"model name : Test CPU\nvendor_id : {vendor}\nflags : {flags}\n", encoding="utf-8"
+    )
+    script = JOBS["torch-cpu"]["steps"][0]["run"]
+    assert "/proc/cpuinfo" in script
+    result = subprocess.run(
+        [
+            "bash",
+            "-e",
+            "-o",
+            "pipefail",
+            "-c",
+            script.replace("/proc/cpuinfo", shlex.quote(str(cpuinfo))),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == (0 if accepted else 1), result.stderr
+    if not accepted:
+        assert (
+            "CPU golden contract requires AuthenticAMD with AVX2 and without AVX-512"
+            in result.stderr
+        )
+
+
+def test_artifact_smoke_uses_only_available_self_hosted_platforms() -> None:
+    assert JOBS["p2p-artifact-smoke"]["strategy"]["matrix"] == {
+        "os": ["linux", "windows", "macos"],
+        "python-version": ["3.12"],
+        "include": [
+            {"os": "linux", "labels": ["self-hosted", "linux", "x64"]},
+            {"os": "windows", "labels": ["self-hosted", "windows", "x64"]},
+            {"os": "macos", "labels": ["self-hosted", "macos", "arm64"]},
+        ],
+    }
 
 
 @pytest.mark.parametrize("enabled", ["", "false", "true"])

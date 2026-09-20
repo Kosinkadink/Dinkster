@@ -42,6 +42,18 @@ def test_release_requires_full_validation_for_the_exact_main_commit() -> None:
     assert workflow["jobs"]["build"]["needs"] == "validation"
 
 
+def test_release_installs_only_on_available_self_hosted_platforms() -> None:
+    root = Path(__file__).resolve().parent.parent
+    workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
+    assert workflow["jobs"]["install"]["strategy"]["matrix"] == {
+        "include": [
+            {"os": "linux", "labels": ["self-hosted", "linux", "x64"]},
+            {"os": "windows", "labels": ["self-hosted", "windows", "x64"]},
+            {"os": "macos", "labels": ["self-hosted", "macos", "arm64"]},
+        ],
+    }
+
+
 def test_artifact_install_does_not_activate_a_workspace_environment() -> None:
     root = Path(__file__).resolve().parent.parent
     workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())

@@ -180,13 +180,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [linux, linux-arm64, windows, macos]
+        os: [linux, windows, macos]
         python-version: ["3.12"]
         include:
           - os: linux
             labels: [self-hosted, linux, x64]
-          - os: linux-arm64
-            labels: ubuntu-24.04-arm
           - os: windows
             labels: [self-hosted, windows, x64]
           - os: macos
@@ -202,220 +200,33 @@ jobs:
       - run: uv sync --locked --package dinkster-p2p
       - run: uv run --locked --package dinkster-p2p pytest -q tests/test_p2p_artifact_smoke.py
 
-  # Hosted runners span CPU microarchitectures and vendors, and torch's
-  # CPU kernels are selected per-machine by three independent dispatchers:
-  # ATen (ATEN_CPU_CAPABILITY), oneDNN (ONEDNN_MAX_CPU_ISA), and oneMKL.
-  # The AVX2 pins below remove the microarchitecture axis (#864), but
-  # oneMKL's GEMM layer still branches on CPU vendor: with the pins active
-  # and MKL_CBWR unset (CNR:OFF, the state the goldens are minted under),
-  # AMD hosts without AVX-512 reproduce the executed-reference goldens
-  # bit-exactly while Intel hosts diverge in oneMKL (#900) and AMD AVX-512
-  # hosts diverge in ONNX Runtime MLAS (#1045). Until those dispatch axes
-  # are closed at the kernel level, the suite legs below run only on an
-  # AuthenticAMD runner without AVX-512: each leg checks /proc/cpuinfo
-  # first, runs the suite via .github/actions/torch-cpu-suite if the CPU
-  # matches, and otherwise concludes in seconds so the next leg redraws.
-  # The torch-cpu gate job fails only on a real suite failure or when all
-  # five legs miss that fingerprint. Legs after the first matching draw
-  # conclude as skipped, which is their expected green state. Linux golden
-  # minting must match the pins and CNR:OFF state on an AMD host without
-  # AVX-512 (README "Hosted-CI dispatch pins").
-  torch-cpu-try1:
+  # Intel oneMKL and AMD AVX-512 MLAS dispatch differ from the CPU goldens.
+  # Require the golden CPU contract before installing or running the suite.
+  torch-cpu:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
     runs-on: [self-hosted, linux, x64]
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
-    outputs:
-      eligible: ${{ steps.cpu.outputs.eligible }}
     steps:
-      - name: Detect runner CPU dispatch
-        id: cpu
+      - name: Require the CPU golden contract
         run: |
           grep -m1 'model name' /proc/cpuinfo
           vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
-          eligible=false
-          if [ "$vendor" = "AuthenticAMD" ] && grep -qw avx2 /proc/cpuinfo && ! grep -qw avx512f /proc/cpuinfo; then
-            eligible=true
-          else
-            echo "$vendor runner does not match the AMD no-AVX512 golden contract (#900, #1045); deferring to the next leg."
-          fi
-          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        if: steps.cpu.outputs.eligible == 'true'
-        with:
-          clean: true
-          persist-credentials: false
-      - uses: ./.github/actions/torch-cpu-suite
-        if: steps.cpu.outputs.eligible == 'true'
-        with:
-          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          run-model-tests: "false"
-
-  torch-cpu-try2:
-    runs-on: [self-hosted, linux, x64]
-    needs: [validation-plan, torch-cpu-try1]
-    if: needs.validation-plan.outputs.run-heavy == 'true' && needs.torch-cpu-try1.outputs.eligible != 'true'
-    env:
-      ATEN_CPU_CAPABILITY: avx2
-      ONEDNN_MAX_CPU_ISA: AVX2
-    outputs:
-      eligible: ${{ steps.cpu.outputs.eligible }}
-    steps:
-      - name: Detect runner CPU dispatch
-        id: cpu
-        run: |
-          grep -m1 'model name' /proc/cpuinfo
-          vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
-          eligible=false
-          if [ "$vendor" = "AuthenticAMD" ] && grep -qw avx2 /proc/cpuinfo && ! grep -qw avx512f /proc/cpuinfo; then
-            eligible=true
-          else
-            echo "$vendor runner does not match the AMD no-AVX512 golden contract (#900, #1045); deferring to the next leg."
-          fi
-          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        if: steps.cpu.outputs.eligible == 'true'
-        with:
-          clean: true
-          persist-credentials: false
-      - uses: ./.github/actions/torch-cpu-suite
-        if: steps.cpu.outputs.eligible == 'true'
-        with:
-          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          run-model-tests: "false"
-
-  torch-cpu-try3:
-    runs-on: [self-hosted, linux, x64]
-    needs: [validation-plan, torch-cpu-try2]
-    if: needs.validation-plan.outputs.run-heavy == 'true' && needs.torch-cpu-try2.outputs.eligible != 'true'
-    env:
-      ATEN_CPU_CAPABILITY: avx2
-      ONEDNN_MAX_CPU_ISA: AVX2
-    outputs:
-      eligible: ${{ steps.cpu.outputs.eligible }}
-    steps:
-      - name: Detect runner CPU dispatch
-        id: cpu
-        run: |
-          grep -m1 'model name' /proc/cpuinfo
-          vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
-          eligible=false
-          if [ "$vendor" = "AuthenticAMD" ] && grep -qw avx2 /proc/cpuinfo && ! grep -qw avx512f /proc/cpuinfo; then
-            eligible=true
-          else
-            echo "$vendor runner does not match the AMD no-AVX512 golden contract (#900, #1045); deferring to the next leg."
-          fi
-          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        if: steps.cpu.outputs.eligible == 'true'
-        with:
-          clean: true
-          persist-credentials: false
-      - uses: ./.github/actions/torch-cpu-suite
-        if: steps.cpu.outputs.eligible == 'true'
-        with:
-          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          run-model-tests: "false"
-
-  torch-cpu-try4:
-    runs-on: [self-hosted, linux, x64]
-    needs: [validation-plan, torch-cpu-try3]
-    if: needs.validation-plan.outputs.run-heavy == 'true' && needs.torch-cpu-try3.outputs.eligible != 'true'
-    env:
-      ATEN_CPU_CAPABILITY: avx2
-      ONEDNN_MAX_CPU_ISA: AVX2
-    outputs:
-      eligible: ${{ steps.cpu.outputs.eligible }}
-    steps:
-      - name: Detect runner CPU dispatch
-        id: cpu
-        run: |
-          grep -m1 'model name' /proc/cpuinfo
-          vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
-          eligible=false
-          if [ "$vendor" = "AuthenticAMD" ] && grep -qw avx2 /proc/cpuinfo && ! grep -qw avx512f /proc/cpuinfo; then
-            eligible=true
-          else
-            echo "$vendor runner does not match the AMD no-AVX512 golden contract (#900, #1045); deferring to the next leg."
-          fi
-          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        if: steps.cpu.outputs.eligible == 'true'
-        with:
-          clean: true
-          persist-credentials: false
-      - uses: ./.github/actions/torch-cpu-suite
-        if: steps.cpu.outputs.eligible == 'true'
-        with:
-          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          run-model-tests: "false"
-
-  torch-cpu-try5:
-    runs-on: [self-hosted, linux, x64]
-    needs: [validation-plan, torch-cpu-try4]
-    if: needs.validation-plan.outputs.run-heavy == 'true' && needs.torch-cpu-try4.outputs.eligible != 'true'
-    env:
-      ATEN_CPU_CAPABILITY: avx2
-      ONEDNN_MAX_CPU_ISA: AVX2
-    outputs:
-      eligible: ${{ steps.cpu.outputs.eligible }}
-    steps:
-      - name: Detect runner CPU dispatch
-        id: cpu
-        run: |
-          grep -m1 'model name' /proc/cpuinfo
-          vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
-          eligible=false
-          if [ "$vendor" = "AuthenticAMD" ] && grep -qw avx2 /proc/cpuinfo && ! grep -qw avx512f /proc/cpuinfo; then
-            eligible=true
-          else
-            echo "$vendor runner does not match the AMD no-AVX512 golden contract (#900, #1045); no legs remain."
-          fi
-          echo "eligible=$eligible" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        if: steps.cpu.outputs.eligible == 'true'
-        with:
-          clean: true
-          persist-credentials: false
-      - uses: ./.github/actions/torch-cpu-suite
-        if: steps.cpu.outputs.eligible == 'true'
-        with:
-          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          run-model-tests: "false"
-
-  torch-cpu:
-    runs-on: [self-hosted, linux, x64]
-    needs:
-      - validation-plan
-      - torch-cpu-try1
-      - torch-cpu-try2
-      - torch-cpu-try3
-      - torch-cpu-try4
-      - torch-cpu-try5
-    if: always() && needs.validation-plan.outputs.run-heavy == 'true'
-    steps:
-      - name: Require one compatible CPU leg to have run the suite
-        env:
-          NEEDS: ${{ toJSON(needs) }}
-        run: |
-          echo "$NEEDS" | jq .
-          failed="$(echo "$NEEDS" | jq '[.[] | select(.result == "failure" or .result == "cancelled")] | length')"
-          if [ "$failed" != "0" ]; then
-            echo "A suite leg failed on a compatible CPU: real failure, inspect that leg."
+          if [ "$vendor" != "AuthenticAMD" ] || ! grep -qw avx2 /proc/cpuinfo || grep -qw avx512f /proc/cpuinfo; then
+            echo "CPU golden contract requires AuthenticAMD with AVX2 and without AVX-512; found vendor $vendor." >&2
             exit 1
           fi
-          ran="$(echo "$NEEDS" | jq '[.[] | select(.result == "success" and .outputs.eligible == "true")] | length')"
-          if [ "$ran" = "0" ]; then
-            echo "All five legs missed the AMD no-AVX512 golden contract (#900, #1045): re-run this workflow."
-            exit 1
-          fi
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+      - uses: ./.github/actions/torch-cpu-suite
+        with:
+          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
+          run-model-tests: "false"
 
   model-tests:
     needs: validation-plan
