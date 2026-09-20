@@ -103,9 +103,9 @@ PACK_AUTHOR_API_CONTRACT = "dinkster-api/v1"
 PACK_INFERENCE_CONTRACT = "dinkster-inference/1"
 _PACK_REGISTRY_CONTRIBUTION_SURFACES: Mapping[str, str] = MappingProxyType(
     {
-        "dinkster.model-families": "inference.families",
-        "dinkster.samplers": "inference.samplers",
-        "dinkster.schedulers": "inference.schedulers",
+        "dinkster-model-families": "inference.families",
+        "dinkster-samplers": "inference.samplers",
+        "dinkster-schedulers": "inference.schedulers",
     }
 )
 
@@ -1814,7 +1814,9 @@ def unmatched_registry_providers(
         provider
         for provider in provides.registry
         if (
-            canonical_name(_PACK_REGISTRY_CONTRIBUTION_SURFACES.get(provider.registry, "")),
+            canonical_name(
+                _PACK_REGISTRY_CONTRIBUTION_SURFACES.get(canonical_name(provider.registry), "")
+            ),
             canonical_name(provider.id),
         )
         not in registered

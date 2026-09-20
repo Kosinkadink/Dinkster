@@ -28,7 +28,7 @@ from dinkster_inference import (
     write_sampler_catalog,
 )
 from dinkster_protocol import SamplerRegistrySnapshot, extension_behavior_hash
-from dinkster_server import STATE_KEY, create_app
+from dinkster_server import STATE_KEY, PackInfo, create_app
 
 from dinkster.compose import CompositionError, PackSpec, ServingComposer
 from dinkster.reload_api import apply_reload, apply_remove
@@ -303,7 +303,28 @@ def test_pack_registry_provider_orders_consumer_and_executes_declared_sampler(
             await composer.add_pack(
                 PackSpec(_host_manifest(tmp_path / "host"), trust_reserved=True)
             )
-            ordered = composer.order_pack_entries((consumer, provider))
+            digest = "sha256:" + "4" * 64
+            provider_spec = PackSpec(
+                provider,
+                packs={
+                    "proof_a": PackInfo(
+                        display_name="Proof A",
+                        version="1.2.3",
+                        artifact_digest=digest,
+                    )
+                },
+            )
+            consumer_spec = PackSpec(
+                consumer,
+                packs={
+                    "proof_b": PackInfo(
+                        display_name="Proof B",
+                        version="2.0.0",
+                        artifact_digest="sha256:" + "5" * 64,
+                    )
+                },
+            )
+            ordered = composer.order_pack_entries((consumer_spec, provider_spec))
             for spec in ordered:
                 await composer.add_pack(spec)
             composition = composer.composition
@@ -313,7 +334,7 @@ def test_pack_registry_provider_orders_consumer_and_executes_declared_sampler(
             assert len(registry_receipts) == 1
             assert registry_receipts[0].pack == "proof-b"
             assert registry_receipts[0].requirement == ("dinkster.samplers:proof_a.scaled_euler")
-            assert registry_receipts[0].provider == "proof-a"
+            assert registry_receipts[0].provider == f"proof-a@1.2.3#{digest}"
             sampled = await composition.make_engine(lambda _event: None).run(
                 Graph(nodes={"probe": GraphNode("dinkster.ksampler", {})}),
                 ["probe"],

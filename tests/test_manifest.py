@@ -26,8 +26,11 @@ from dinkster_workers import (
     PACK_INFERENCE_CONTRACT,
     GenerationProvider,
     ManifestError,
+    PackProvides,
+    PackRegistryProvider,
     VisionProvider,
     load_manifest,
+    unmatched_registry_providers,
 )
 from dinkster_workers.manifest import (
     COMFY_ALIASES_MAX_BYTES,
@@ -529,6 +532,16 @@ def test_pack_sandbox_needs_reject_ambiguous_shapes(
             '[pack.provides.registry]\n"families" = ["consumer.family"]\n',
             "must be namespaced",
         ),
+        (
+            '[pack.provides.registry]\n"dinkster.model-families" = ["consumer.one"]\n'
+            '"dinkster.model_families" = ["consumer.one"]\n',
+            "repeats registry provider",
+        ),
+        (
+            '[pack.requirements.registry]\n"dinkster.some-registry" = ["consumer.one"]\n'
+            '"dinkster.some_registry" = ["consumer.one"]\n',
+            "repeats registry requirement",
+        ),
         ('[pack.capabilities]\n"consumer.video" = "1.0"\n', "major.minor.patch"),
     ],
 )
@@ -542,6 +555,15 @@ def test_pack_contract_metadata_rejects_ambiguous_shapes(
     )
     with pytest.raises(ManifestError, match=message):
         load_manifest(path)
+
+
+def test_registry_provider_agreement_uses_canonical_registry_identity() -> None:
+    provides = PackProvides(
+        registry=(PackRegistryProvider("dinkster.model_families", "consumer.family"),)
+    )
+    assert (
+        unmatched_registry_providers(provides, (("inference.families", "consumer.family"),)) == ()
+    )
 
 
 def test_same_session_arms_may_implement_cross_pack_executes_claims(tmp_path: Path) -> None:
