@@ -2,7 +2,7 @@
   "ceilings": {
     "assemblyBuilder": 1,
     "descriptorCatalog": 8,
-    "registryFactory": 5
+    "registryFactory": 9
   },
   "sites": [
     {
@@ -79,11 +79,27 @@
     },
     {
       "kind": "registryFactory",
+      "call": "builtin_gguf_storage_registry",
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/gguf_linear.py",
+      "line": 58,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "registryFactory",
       "call": "builtin_family_registry",
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/memory.py",
       "line": 379,
       "column": 14,
       "issue": 179
+    },
+    {
+      "kind": "registryFactory",
+      "call": "builtin_gguf_storage_registry",
+      "path": "packages/dinkster-inference/src/dinkster_inference/gguf.py",
+      "line": 1236,
+      "column": 53,
+      "issue": 120
     },
     {
       "kind": "registryFactory",
@@ -115,6 +131,22 @@
       "path": "packages/dinkster-inference/src/dinkster_inference/registries.py",
       "line": 40,
       "column": 18,
+      "issue": 120
+    },
+    {
+      "kind": "registryFactory",
+      "call": "default_text_recipe_registry",
+      "path": "packages/dinkster-inference/src/dinkster_inference/text_recipes.py",
+      "line": 271,
+      "column": 20,
+      "issue": 120
+    },
+    {
+      "kind": "registryFactory",
+      "call": "builtin_preview_registry",
+      "path": "packages/dinkster-native/src/dinkster_native/preview_emit.py",
+      "line": 732,
+      "column": 16,
       "issue": 120
     }
   ]

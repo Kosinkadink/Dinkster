@@ -41,7 +41,7 @@ def test_extension_factory_guard_rejects_site_and_ceiling_drift(tmp_path: Path) 
     module.write_text(
         "registry = builtin_family_registry()\nfamilies = builtin_families()\n"
         "assemblies = build_builtin_assembly_registry(registry)\n"
-        "other = builtin_sampler_registry()\n",
+        "other = builtin_preview_registry()\n",
         encoding="utf-8",
     )
     added = run_guard(tmp_path, allowlist)

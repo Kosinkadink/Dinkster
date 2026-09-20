@@ -5,18 +5,17 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import sys
 from pathlib import Path
 from typing import TypedDict
 
-CALL_KINDS = {
-    "builtin_family_registry": "registryFactory",
-    "builtin_sampler_registry": "registryFactory",
-    "builtin_scheduler_registry": "registryFactory",
-    "default_component_registry": "registryFactory",
+SPECIAL_CALL_KINDS = {
     "build_builtin_assembly_registry": "assemblyBuilder",
     "builtin_families": "descriptorCatalog",
 }
+SITE_KINDS = ("assemblyBuilder", "descriptorCatalog", "registryFactory")
+REGISTRY_FACTORY = re.compile(r"^(?:builtin|default)_.+_registry$")
 
 
 class Site(TypedDict):
@@ -52,6 +51,12 @@ def call_name(call: ast.Call) -> str | None:
     return None
 
 
+def call_kind(call: str) -> str | None:
+    if REGISTRY_FACTORY.fullmatch(call):
+        return "registryFactory"
+    return SPECIAL_CALL_KINDS.get(call)
+
+
 def owning_issue(root: Path, path: Path) -> int:
     relative = path.relative_to(root).as_posix()
     if relative == "packages/dinkster-inference-torch/src/dinkster_inference_torch/memory.py":
@@ -67,11 +72,12 @@ def scan(root: Path) -> list[Site]:
             if not isinstance(node, ast.Call):
                 continue
             call = call_name(node)
-            if call not in CALL_KINDS:
+            kind = call_kind(call) if call is not None else None
+            if kind is None or call is None:
                 continue
             sites.append(
                 {
-                    "kind": CALL_KINDS[call],
+                    "kind": kind,
                     "call": call,
                     "path": path.relative_to(root).as_posix(),
                     "line": node.lineno,
@@ -117,10 +123,7 @@ def main() -> int:
         allowlist = root / allowlist
     sites = scan(root)
     if args.write:
-        ceilings = {
-            kind: sum(site["kind"] == kind for site in sites)
-            for kind in sorted(set(CALL_KINDS.values()))
-        }
+        ceilings = {kind: sum(site["kind"] == kind for site in sites) for kind in SITE_KINDS}
         allowlist.parent.mkdir(parents=True, exist_ok=True)
         allowlist.write_text(
             json.dumps({"ceilings": ceilings, "sites": sites}, indent=2) + "\n",
@@ -133,7 +136,7 @@ def main() -> int:
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"Cannot read extension factory allowlist: {error}", file=sys.stderr)
         return 1
-    kinds = set(CALL_KINDS.values())
+    kinds = set(SITE_KINDS)
     counts = {kind: sum(site["kind"] == kind for site in sites) for kind in kinds}
     allowed_counts = {kind: sum(site.get("kind") == kind for site in allowed) for kind in kinds}
     ceiling_drift = set(ceilings) != kinds or any(
