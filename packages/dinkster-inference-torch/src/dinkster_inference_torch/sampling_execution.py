@@ -32,6 +32,7 @@ from dinkster_inference import (
     CustomSamplingResult,
     CustomSamplingRuntime,
     DualSamplingGuidance,
+    ExecutionObserverAttachment,
     GuidanceCondition,
     GuidanceContractError,
     GuidanceContribution,
@@ -55,6 +56,7 @@ from dinkster_inference import (
     SparseLatent,
     StepCallback,
     cfg_needs_uncond,
+    execution_span,
     offset_first_sigma_for_snr,
     sampling_environment_cancellation,
     sampling_execution_context,
@@ -63,7 +65,13 @@ from dinkster_inference import (
 )
 
 from .brownian import BrownianTreeNoise
-from .denoise import latent_process_out, prepare_multistream_noise, prepare_noise, run_denoise
+from .denoise import (
+    PackedInpaintConfiguration,
+    latent_process_out,
+    prepare_multistream_noise,
+    prepare_noise,
+    run_denoise,
+)
 from .guidance import (
     ConditioningEvaluation,
     GuidanceExecutor,
@@ -540,6 +548,8 @@ class SamplingAdapterContext:
     device: torch.device | str | None = None
     compute_dtype: torch.dtype | None = None
     cancelled: Callable[[], bool] = lambda: False
+    observer: object | None = None
+    parent_span_id: int | None = None
 
 
 class SamplingLatentAdapter(Protocol):
@@ -658,6 +668,7 @@ class SamplingDenoiserExecution:
         default_factory=lambda: MappingProxyType({})
     )
     replica_group_size: int | None = None
+    replica_evaluation: bool = False
     distributed_evaluation: bool = False
     solver_options: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
     sampling: SamplingDescriptor | None = None
@@ -669,6 +680,7 @@ class SamplingDenoiserExecution:
     unpack_state: Callable[[torch.Tensor], object] | None = None
     denoise_mask_prepared: bool = False
     fixed_inpaint_latent: bool = False
+    packed_inpaint: PackedInpaintConfiguration | None = None
     close: Callable[[], None] | None = None
 
 
@@ -859,7 +871,6 @@ def sampling_execution(
 ) -> CustomSamplingResult[Any]:
     """Execute one custom-sampling request from registered family adapters."""
 
-    del observer, parent_span_id
     if cancelled is None:
         cancelled = sampling_environment_cancellation()
     owner = cast("SamplingExecutionRuntime", runtime)
@@ -871,18 +882,27 @@ def sampling_execution(
         MappingProxyType(dict(adapter_options)),
         seed=seed,
         cancelled=cancelled,
+        observer=observer,
+        parent_span_id=parent_span_id,
     )
-    inputs = registration.latent.prepare(
-        owner,
-        owner.family,
-        latent=latent,
-        noise=noise,
-        cond=cond,
-        cfg=cfg,
-        denoise_mask=denoise_mask,
-        context=adapter_context,
-        error=owner.sampling_error,
-    )
+    attachment = cast("ExecutionObserverAttachment | None", observer)
+    with execution_span(
+        attachment,
+        "sample",
+        "prepare",
+        parent_span_id=parent_span_id,
+    ):
+        inputs = registration.latent.prepare(
+            owner,
+            owner.family,
+            latent=latent,
+            noise=noise,
+            cond=cond,
+            cfg=cfg,
+            denoise_mask=denoise_mask,
+            context=adapter_context,
+            error=owner.sampling_error,
+        )
     owner.check_custom_sampling(
         request,
         has_denoise_mask=inputs.denoise_mask is not None,
@@ -1019,12 +1039,14 @@ def sampling_execution(
             raise SamplingCancelled("sampling cancelled")
 
     replica_evaluator_factory = None
-    if denoiser_execution.replica_group_size is not None:
+    if denoiser_execution.replica_evaluation:
         from .distributed import DistributedGuidanceEvaluator
 
         group_size = denoiser_execution.replica_group_size
 
         def distributed_replicas(evaluate: ReplicaEvaluator) -> ReplicaEvaluator:
+            if group_size is None:
+                return DistributedGuidanceEvaluator(evaluate).evaluate_request
             return DistributedGuidanceEvaluator(
                 evaluate, guidance_group_size=group_size
             ).evaluate_request
@@ -1080,6 +1102,7 @@ def sampling_execution(
                 denoise_mask=inputs.denoise_mask,
                 denoise_mask_prepared=denoiser_execution.denoise_mask_prepared,
                 fixed_inpaint_latent=denoiser_execution.fixed_inpaint_latent,
+                packed_inpaint=denoiser_execution.packed_inpaint,
             )
     except BaseException as error:
         primary = error
@@ -1091,7 +1114,14 @@ def sampling_execution(
             except BaseException:
                 if primary is None:
                     raise
-    return registration.latent.finish(inputs, output, captured[-1] if captured else None)
+    with execution_span(
+        attachment,
+        "sample",
+        "finalize",
+        parent_span_id=parent_span_id,
+        device=str(output.device),
+    ):
+        return registration.latent.finish(inputs, output, captured[-1] if captured else None)
 
 
 def run_ksampler_as_custom(
