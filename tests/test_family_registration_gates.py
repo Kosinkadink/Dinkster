@@ -15,19 +15,102 @@ SHARED_ENGINE_FILES = (
     "packages/dinkster-inference/src/dinkster_inference/identity.py",
     "packages/dinkster-inference/src/dinkster_inference/ipadapter.py",
     "packages/dinkster-inference/src/dinkster_inference/runtime.py",
+    "packages/dinkster-inference/src/dinkster_inference/solvers.py",
     "packages/dinkster-inference/src/dinkster_inference/taesd.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/assemble.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/_portable_solvers.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/component_runtime.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/denoise.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/memory.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_execution.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_runtime.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/schedules.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/solvers.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
     "packages/dinkster-native/src/dinkster_native/preview_emit.py",
     "src/dinkster/native_policy.py",
 )
 # native_arm.py is asserted separately by the #170 scanner test.
+
+SAMPLING_RUNTIME_CLASSES = (
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/anima_runtime.py",
+        "AnimaDiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/chroma_runtime.py",
+        "ChromaDiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/flux2_runtime.py",
+        "Flux2Runtime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/flux2_runtime.py",
+        "Flux2DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/ideogram4_runtime.py",
+        "Ideogram4DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "LTXAVDiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxv_runtime.py",
+        "LTXVDiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/lumina2_runtime.py",
+        "Lumina2DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "MiniMaxH3DiTRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_music3_runtime.py",
+        "MiniMaxMusic3DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/qwen_image_runtime.py",
+        "QwenImageRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/seedvr2_runtime.py",
+        "SeedVR2DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_runtime.py",
+        "Trellis2DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "TripoSplatDiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "Wan21Runtime",
+    ),
+    ("packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py", "FluxRuntime"),
+    ("packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py", "SDRuntime"),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/z_image_runtime.py",
+        "ZImageRuntime",
+    ),
+)
+FAMILY_ORCHESTRATION_CALLS = frozenset(
+    {
+        "brownian_step_noise",
+        "build_custom_sampling_schedule",
+        "compile_guidance_plan",
+        "guided_denoiser",
+        "resolve_custom_sampling_request",
+        "run_denoise",
+        "run_sampler_engine",
+    }
+)
 
 
 def _family_literal_gates(path: Path, family_ids: frozenset[str]) -> tuple[str, ...]:
@@ -56,6 +139,44 @@ def test_shared_engine_has_zero_literal_family_gates() -> None:
         for finding in _family_literal_gates(ROOT / relative_path, family_ids)
     )
     assert findings == (), "literal family gates remain:\n" + "\n".join(findings)
+
+
+def test_family_runtimes_have_zero_sampling_orchestration() -> None:
+    findings: list[str] = []
+    for relative_path, class_name in SAMPLING_RUNTIME_CLASSES:
+        path = ROOT / relative_path
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        runtime = next(
+            node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name
+        )
+        aliases = [
+            statement
+            for statement in runtime.body
+            if isinstance(statement, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "sample_custom"
+                for target in statement.targets
+            )
+        ]
+        if len(aliases) != 1 or "sampling_execution" not in {
+            node.id for node in ast.walk(aliases[0]) if isinstance(node, ast.Name)
+        }:
+            findings.append(
+                f"{relative_path}:{runtime.lineno}: {class_name} lacks the engine alias"
+            )
+        for node in ast.walk(runtime):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+                node.name == "sample_custom" or node.name.startswith("_sample_custom")
+            ):
+                findings.append(
+                    f"{relative_path}:{node.lineno}: {class_name}.{node.name} owns orchestration"
+                )
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id in FAMILY_ORCHESTRATION_CALLS:
+                    findings.append(
+                        f"{relative_path}:{node.lineno}: {class_name} calls {node.func.id}"
+                    )
+    assert findings == [], "family sampling orchestration remains:\n" + "\n".join(findings)
 
 
 def test_registered_engine_properties_cover_shared_family_behavior() -> None:

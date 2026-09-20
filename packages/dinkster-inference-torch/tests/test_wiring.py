@@ -1356,7 +1356,9 @@ class TestSample:
                 ),
                 (expected["brownian_min"], expected["brownian_max"]),
             )
-            noise = wiring.brownian_step_noise(sampler, schedule, torch.zeros(1, 2, 2, 2), seed=23)
+            noise = sampling_engine.brownian_step_noise(
+                sampler, schedule, torch.zeros(1, 2, 2, 2), seed=23
+            )
             if schedule.sigmas == schedule.pre_offset:
                 assert noise is None
                 noise = BrownianTreeNoise(
@@ -1855,7 +1857,7 @@ class TestSample:
     ) -> None:
         captured: list[GuidedDenoiser] = []
         executed_layouts: list[tuple[str, ...]] = []
-        original_guided_denoiser = wiring.guided_denoiser
+        original_guided_denoiser = sampling_engine.guided_denoiser
         original_validate_layout = wiring.FluxWindowConditioningEvaluation.validate_layout
 
         def capture_guided_denoiser(*args: Any, **kwargs: Any) -> GuidedDenoiser:
@@ -2395,7 +2397,7 @@ class TestSample:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         captured: list[GuidedDenoiser] = []
-        original = wiring.guided_denoiser
+        original = sampling_engine.guided_denoiser
 
         def capture(*args: Any, **kwargs: Any) -> GuidedDenoiser:
             guided = original(*args, **kwargs)
@@ -2476,7 +2478,7 @@ class TestSample:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         captured: list[GuidedDenoiser] = []
-        original = wiring.guided_denoiser
+        original = sampling_engine.guided_denoiser
 
         def capture(*args: Any, **kwargs: Any) -> GuidedDenoiser:
             guided = original(*args, **kwargs)
@@ -2515,7 +2517,7 @@ class TestSample:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         captured: list[GuidedDenoiser] = []
-        original = wiring.guided_denoiser
+        original = sampling_engine.guided_denoiser
 
         def capture(*args: Any, **kwargs: Any) -> GuidedDenoiser:
             guided = original(*args, **kwargs)

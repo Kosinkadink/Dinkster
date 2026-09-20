@@ -545,6 +545,7 @@ class SamplingAdapterContext:
     schedule: SamplingSchedule | None = None
     plan: SamplingGuidancePlan | None = None
     seed: int = 0
+    sampling_shift: float | None = None
     device: torch.device | str | None = None
     compute_dtype: torch.dtype | None = None
     cancelled: Callable[[], bool] = lambda: False
@@ -663,6 +664,7 @@ class SamplingDenoiserAdapter(Protocol):
 @dataclass(frozen=True)
 class SamplingDenoiserExecution:
     evaluator: SamplingDenoiserAdapter
+    direct_denoiser: object | None = None
     conditioning_evaluation: ConditioningEvaluation[Any] | None = None
     conditioning_payloads: Mapping[str, object] = field(
         default_factory=lambda: MappingProxyType({})
@@ -678,6 +680,7 @@ class SamplingDenoiserExecution:
     process_out: Callable[[torch.Tensor], torch.Tensor] | None = None
     inpaint_noise: torch.Tensor | None = None
     unpack_state: Callable[[torch.Tensor], object] | None = None
+    denoise_mask: torch.Tensor | None = None
     denoise_mask_prepared: bool = False
     fixed_inpaint_latent: bool = False
     packed_inpaint: PackedInpaintConfiguration | None = None
@@ -881,6 +884,7 @@ def sampling_execution(
         context_windows,
         MappingProxyType(dict(adapter_options)),
         seed=seed,
+        sampling_shift=sampling_shift,
         cancelled=cancelled,
         observer=observer,
         parent_span_id=parent_span_id,
@@ -999,7 +1003,7 @@ def sampling_execution(
         )
     adapter = denoiser_execution.evaluator
     evaluation = denoiser_execution.conditioning_evaluation
-    if evaluation is None:
+    if evaluation is None and denoiser_execution.direct_denoiser is None:
         evaluator_identity = adapter.evaluator_identity
         resolved_evaluator_identity: Callable[[GuidanceRole], str]
         if isinstance(evaluator_identity, str):
@@ -1052,19 +1056,23 @@ def sampling_execution(
             ).evaluate_request
 
         replica_evaluator_factory = distributed_replicas
-    denoiser = guided_denoiser(
-        evaluation,
-        input=inputs.latent,
-        executor=executor,
-        plan=plan,
-        execution=sampling_execution_context(
-            sigmas=schedule.sigmas,
-            seed=seed,
-            on_step=report_step if on_step is not None else None,
-            on_state=report_state,
-        ),
-        replica_evaluator_factory=replica_evaluator_factory,
-        distributed_evaluation=denoiser_execution.distributed_evaluation,
+    denoiser = (
+        cast("Any", denoiser_execution.direct_denoiser)
+        if denoiser_execution.direct_denoiser is not None
+        else guided_denoiser(
+            cast("ConditioningEvaluation[Any]", evaluation),
+            input=inputs.latent,
+            executor=executor,
+            plan=plan,
+            execution=sampling_execution_context(
+                sigmas=schedule.sigmas,
+                seed=seed,
+                on_step=report_step,
+                on_state=report_state,
+            ),
+            replica_evaluator_factory=replica_evaluator_factory,
+            distributed_evaluation=denoiser_execution.distributed_evaluation,
+        )
     )
     primary: BaseException | None = None
     try:
@@ -1090,7 +1098,7 @@ def sampling_execution(
                     else denoiser_execution.percent_to_sigma
                 ),
                 device=device,
-                on_step=report_step if on_step is not None else None,
+                on_step=report_step,
                 on_step_begin=denoiser_execution.on_step_begin,
                 on_state=(
                     report_state
@@ -1099,7 +1107,11 @@ def sampling_execution(
                     else None
                 ),
                 unpack_state=denoiser_execution.unpack_state,
-                denoise_mask=inputs.denoise_mask,
+                denoise_mask=(
+                    inputs.denoise_mask
+                    if denoiser_execution.denoise_mask is None
+                    else denoiser_execution.denoise_mask
+                ),
                 denoise_mask_prepared=denoiser_execution.denoise_mask_prepared,
                 fixed_inpaint_latent=denoiser_execution.fixed_inpaint_latent,
                 packed_inpaint=denoiser_execution.packed_inpaint,

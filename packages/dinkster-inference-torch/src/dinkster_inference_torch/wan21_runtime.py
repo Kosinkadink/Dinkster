@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 from dinkster_inference import (
@@ -28,11 +28,9 @@ from dinkster_inference import (
     ConditioningChannel,
     ConditioningRecord,
     ConditioningSet,
-    ContextWindowsSpec,
     CustomSamplingRequest,
     CustomSamplingResult,
     DualSamplingGuidance,
-    ExecutionObserverAttachment,
     FlowSigmas,
     GuidanceRole,
     ModelFamily,
@@ -52,8 +50,6 @@ from dinkster_inference import (
     SamplerInfo,
     SamplingCancelled,
     SamplingGuidance,
-    SamplingStateCallback,
-    SamplingStateEvent,
     SchedulerDescriptor,
     SolverStateEvent,
     StepCallback,
@@ -74,8 +70,6 @@ from dinkster_inference import (
     encode_wan22_dancer_settings,
     make_conditioning_carrier,
     plan_wan21_token_layout,
-    sampling_environment_cancellation,
-    sampling_execution_context,
 )
 
 from ._conditioning_layout import DeclaredConditioning
@@ -86,7 +80,6 @@ from .denoise import (
     FluxGuidance,
     prepare_multistream_noise,
     prepare_noise,
-    run_sampler_engine,
     to_batch,
 )
 from .guidance import ConditioningEvaluation
@@ -97,12 +90,14 @@ from .sampling_execution import (
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    guided_denoiser,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
+    SamplingExecutionInputs,
+    SamplingExecutionRegistration,
+    SamplingLatentAdapter,
     narrow_single_stream_custom_sampling,
-    resolve_custom_sampling_request,
+    sampling_execution,
 )
 from .sampling_runtime import MultiStreamSamplingRuntime
 from .schedules import (
@@ -2556,6 +2551,229 @@ class _Wan21CausalDenoiser:
         return output
 
 
+@dataclass(frozen=True, slots=True)
+class _WanSamplingContext:
+    streams: MultiStreamLatent[torch.Tensor]
+    structural: bool
+    initial_latent: torch.Tensor | None
+    uni3c: Wan21Uni3CExecution | None
+    multitalk: Wan21InfiniteTalkExecution | None
+
+
+def _wan_unpack_video_state(value: torch.Tensor) -> MultiStreamLatent[torch.Tensor]:
+    return MultiStreamLatent.from_pairs((("video", value),))
+
+
+@dataclass(frozen=True, slots=True)
+class _WanLatentAdapter:
+    def prepare(
+        self,
+        runtime: object,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs:
+        del family, error
+        owner = cast("Wan21Runtime", runtime)
+        unknown = set(context.options) - {"initial_latent", "uni3c", "multitalk"}
+        if unknown:
+            raise Wan21RuntimeError(
+                "Wan sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+            )
+        model = owner.assembled.diffusion
+        initial_latent = cast("torch.Tensor | None", context.options.get("initial_latent"))
+        uni3c = cast("Wan21Uni3CExecution | None", context.options.get("uni3c"))
+        multitalk = cast("Wan21InfiniteTalkExecution | None", context.options.get("multitalk"))
+        causal = type(model) is Wan21CausalModel
+        if causal:
+            if uni3c is not None or multitalk is not None:
+                raise Wan21RuntimeError("Wan CausalAR does not support Uni3C or InfiniteTalk")
+            if cfg is not None and (
+                type(cfg) is not SamplingGuidance
+                or type(cfg.scale) not in (int, float)
+                or float(cfg.scale) != 1.0
+            ):
+                raise Wan21RuntimeError("Wan CausalAR requires CFG exactly 1.0")
+            if cfg is not None and cfg.transforms:
+                raise Wan21RuntimeError("Wan CausalAR does not support guidance transforms")
+            structural = type(latent) is MultiStreamLatent
+            if structural:
+                streams, video = _video_streams(latent, channels=model.config.out_channels)
+                if type(noise) is not MultiStreamLatent or noise.roles != streams.roles:
+                    raise Wan21RuntimeError(
+                        "Wan custom sampling noise must match the latent stream roles"
+                    )
+                noise_video = _validate_video_latent(
+                    noise.by_role("video"), channels=model.config.out_channels
+                )
+                if tuple(noise_video.shape) != tuple(video.shape):
+                    raise Wan21RuntimeError(
+                        "Wan custom sampling noise must match the video latent shape"
+                    )
+            else:
+                video, noise_video, _, _, _ = narrow_single_stream_custom_sampling(
+                    owner.family.id,
+                    latent=latent,
+                    noise=noise,
+                    cond=cond,
+                    cfg=cfg,
+                    denoise_mask=denoise_mask,
+                    error=Wan21RuntimeError,
+                )
+                streams = MultiStreamLatent.from_pairs((("video", video),))
+            if initial_latent is not None:
+                initial_latent = _validate_video_latent(
+                    initial_latent, channels=model.config.out_channels
+                )
+                if (
+                    initial_latent.shape[0] not in (1, video.shape[0])
+                    or initial_latent.shape[2] > video.shape[2]
+                    or initial_latent.shape[3:] != video.shape[3:]
+                ):
+                    raise Wan21RuntimeError(
+                        "Wan CausalAR initial latent must match the target video"
+                    )
+
+            def text_lane(value: object | None) -> Conditioning[torch.Tensor] | None:
+                if value is None:
+                    return None
+                if type(value) is Conditioning and not structural:
+                    return value
+                if type(value) is not PreparedMultiStreamConditioning:
+                    raise Wan21RuntimeError(
+                        "Wan custom sampling requires prepared multistream conditioning"
+                    )
+                if value.runtime_identity != owner.conditioning_identity:
+                    raise Wan21RuntimeError(
+                        "Wan conditioning was prepared by a different conditioner component"
+                    )
+                if type(value.payload) is not Wan21PreparedConditioning:
+                    raise TypeError("conditioning must be exact Wan21PreparedConditioning")
+                return Conditioning(value.payload.text)
+
+            prepared_cond = text_lane(cond)
+            if prepared_cond is None:
+                raise Wan21RuntimeError("Wan CausalAR requires positive conditioning")
+            prepared_cfg = cfg
+            if cfg is not None:
+                if type(cfg) is not SamplingGuidance:
+                    raise Wan21RuntimeError("Wan CausalAR supports only CFG guidance")
+                prepared_cfg = replace(cfg, uncond=text_lane(cfg.uncond))
+            return SamplingExecutionInputs(
+                video,
+                noise_video,
+                prepared_cond,
+                cast("Any", prepared_cfg),
+                cast("torch.Tensor | None", denoise_mask),
+                _WanSamplingContext(streams, structural, initial_latent, None, None),
+            )
+        if initial_latent is not None:
+            raise Wan21RuntimeError("initial_latent is supported only by Wan CausalAR")
+        streams, video = _video_streams(latent, channels=model.config.out_channels)
+        if type(noise) is not MultiStreamLatent or noise.roles != streams.roles:
+            raise Wan21RuntimeError("Wan custom sampling noise must match the latent stream roles")
+        noise_video = _validate_video_latent(
+            noise.by_role("video"), channels=model.config.out_channels
+        )
+        if tuple(noise_video.shape) != tuple(video.shape):
+            raise Wan21RuntimeError("Wan custom sampling noise must match the video latent shape")
+        if context.context_windows is not None and context.context_windows.freenoise:
+            noise_video = apply_freenoise(
+                noise_video,
+                context.context_windows.dim,
+                context.context_windows.length,
+                context.context_windows.overlap,
+                context.seed,
+            )
+        if type(cond) is not PreparedMultiStreamConditioning:
+            raise Wan21RuntimeError(
+                "Wan custom sampling requires prepared multistream conditioning"
+            )
+        if cond.runtime_identity != owner.conditioning_identity:
+            raise Wan21RuntimeError(
+                "Wan conditioning was prepared by a different conditioner component"
+            )
+        conditioning = cond.payload
+        if type(conditioning) is not Wan21PreparedConditioning:
+            raise TypeError("conditioning must be exact Wan21PreparedConditioning")
+
+        def unwrap_lane(value: object | None, what: str) -> Wan21PreparedConditioning | None:
+            if value is None:
+                return None
+            if type(value) is not PreparedMultiStreamConditioning:
+                raise Wan21RuntimeError(f"{what} must use prepared multistream conditioning")
+            if value.runtime_identity != cond.runtime_identity:
+                raise Wan21RuntimeError("Wan guidance lanes were prepared by different components")
+            payload = value.payload
+            if type(payload) is not Wan21PreparedConditioning:
+                raise TypeError(f"{what} must contain exact Wan21PreparedConditioning")
+            return payload
+
+        if cfg is None:
+            guidance_cfg = None
+        elif isinstance(cfg, DualSamplingGuidance):
+            guidance_cfg = replace(
+                cfg,
+                uncond=unwrap_lane(cfg.uncond, "unconditional conditioning"),
+                middle=unwrap_lane(cfg.middle, "middle conditioning"),
+            )
+        elif type(cfg) is SamplingGuidance:
+            guidance_cfg = replace(
+                cfg,
+                uncond=unwrap_lane(cfg.uncond, "unconditional conditioning"),
+            )
+        else:
+            raise Wan21RuntimeError("Wan custom sampling requires basic or dual CFG guidance")
+        return SamplingExecutionInputs(
+            video,
+            noise_video,
+            conditioning,
+            cast("Any", guidance_cfg),
+            cast("torch.Tensor | None", denoise_mask),
+            _WanSamplingContext(streams, True, None, uni3c, multitalk),
+        )
+
+    def finish(
+        self,
+        inputs: SamplingExecutionInputs,
+        output: torch.Tensor,
+        denoised: object | None,
+    ) -> CustomSamplingResult[torch.Tensor] | CustomSamplingResult[MultiStreamLatent[torch.Tensor]]:
+        context = cast("_WanSamplingContext", inputs.latent_context)
+        multitalk = context.multitalk
+        if multitalk is not None and multitalk.extend:
+            motion = multitalk.motion_latent.to(output)
+            output = torch.cat((motion, output[:, :, motion.shape[2] :]), dim=2)
+            if type(denoised) is MultiStreamLatent:
+                denoised_video = denoised.by_role("video")
+                denoised = denoised.replace(
+                    "video",
+                    torch.cat((motion, denoised_video[:, :, motion.shape[2] :]), dim=2),
+                )
+            elif type(denoised) is torch.Tensor:
+                denoised = torch.cat((motion, denoised[:, :, motion.shape[2] :]), dim=2)
+        result = context.streams.replace("video", output)
+        denoised_result = None
+        if denoised is not None:
+            if type(denoised) is MultiStreamLatent:
+                denoised_result = denoised
+            elif type(denoised) is torch.Tensor:
+                denoised_result = context.streams.replace("video", denoised)
+            else:
+                raise TypeError("Wan denoised state has the wrong type")
+        if context.structural:
+            return CustomSamplingResult(result, denoised_result)
+        return CustomSamplingResult(
+            output, None if denoised_result is None else denoised_result.by_role("video")
+        )
+
+
 class Wan21Runtime(MultiStreamSamplingRuntime):
     """Positive/negative UMT5 conditioning, FLOW sampling, and the Wan VAE."""
 
@@ -2564,6 +2782,20 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
     supports_sampling_shift = True
     supports_denoised_capture = True
     supports_batch_noise_indices = False
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=cast("SamplingLatentAdapter", _WanLatentAdapter()),
+        denoiser=lambda runtime, compute_dtype, context: cast(
+            "Wan21Runtime", runtime
+        )._sampling_denoiser(compute_dtype, context),
+        device=lambda runtime: (
+            bound_compute_device(cast("Wan21Runtime", runtime).assembled.diffusion.patch_embedding)
+            or cast("Wan21Runtime", runtime).assembled.diffusion.patch_embedding.weight.device
+        ),
+        compute_dtype=lambda runtime: (
+            cast("Wan21Runtime", runtime).assembled.compute_dtype("diffusion") or torch.bfloat16
+        ),
+        flow=True,
+    )
 
     def __init__(
         self,
@@ -3161,224 +3393,59 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
             if has_context_windows and model.config.vace_layers is not None:
                 raise Wan21RuntimeError("Wan context windows do not support VACE models")
 
-    def sample_custom(
+    def _sampling_denoiser(
         self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: float | None = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: object | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        initial_latent: torch.Tensor | None = None,
-        cancelled: Callable[[], bool] | None = None,
-        observer: ExecutionObserverAttachment | None = None,
-        parent_span_id: int | None = None,
-        compute_dtype: torch.dtype | None = None,
-        device: torch.device | str | None = None,
-        sampling_shift: float | None = None,
-        uni3c: Wan21Uni3CExecution | None = None,
-        multitalk: Wan21InfiniteTalkExecution | None = None,
-        capture_denoised: bool = True,
-    ) -> CustomSamplingResult[torch.Tensor] | CustomSamplingResult[MultiStreamLatent[torch.Tensor]]:
+        compute_dtype: torch.dtype,
+        context: SamplingAdapterContext,
+    ) -> SamplingDenoiserExecution:
+        if context.inputs is None or context.device is None:
+            raise RuntimeError("Wan sampling context is unresolved")
+        if type(self.assembled.diffusion) is not Wan21CausalModel:
+            return self._standard_sampling_denoiser(compute_dtype, context)
+        inputs = context.inputs
         model = self.assembled.diffusion
-        if type(model) is not Wan21CausalModel:
-            if initial_latent is not None:
-                raise Wan21RuntimeError("initial_latent is supported only by Wan CausalAR")
-            return self._sample_standard_custom(
-                latent,
-                noise=noise,
-                cond=cond,
-                cfg=cfg,
-                request=request,
-                seed=seed,
-                guidance=guidance,
-                denoise_mask=denoise_mask,
-                inpaint=inpaint,
-                context_windows=context_windows,
-                on_step=on_step,
-                on_state=on_state,
-                cancelled=cancelled,
-                observer=observer,
-                parent_span_id=parent_span_id,
-                compute_dtype=compute_dtype,
-                device=device,
-                sampling_shift=sampling_shift,
-                uni3c=uni3c,
-                multitalk=multitalk,
-                capture_denoised=capture_denoised,
-            )
-        if uni3c is not None or multitalk is not None:
-            raise Wan21RuntimeError("Wan CausalAR does not support Uni3C or InfiniteTalk")
-        if sampling_shift is not None:
-            raise Wan21RuntimeError("Wan CausalAR sampling shift is fixed at 5.0")
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        if cancelled is None:
-            cancelled = sampling_environment_cancellation()
-        _check_cancelled(cancelled)
-        del observer, parent_span_id
-        structural = type(latent) is MultiStreamLatent
-        if structural:
-            streams, video = _video_streams(latent, channels=model.config.out_channels)
-            if type(noise) is not MultiStreamLatent or noise.roles != streams.roles:
-                raise Wan21RuntimeError(
-                    "Wan custom sampling noise must match the latent stream roles"
-                )
-            noise_video = _validate_video_latent(
-                noise.by_role("video"), channels=model.config.out_channels
-            )
-            if tuple(noise_video.shape) != tuple(video.shape):
-                raise Wan21RuntimeError(
-                    "Wan custom sampling noise must match the video latent shape"
-                )
-
-            def text_lane(value: object | None) -> Conditioning[torch.Tensor] | None:
-                if value is None:
-                    return None
-                if type(value) is not PreparedMultiStreamConditioning:
-                    raise Wan21RuntimeError(
-                        "Wan custom sampling requires prepared multistream conditioning"
-                    )
-                if value.runtime_identity != self.conditioning_identity:
-                    raise Wan21RuntimeError(
-                        "Wan conditioning was prepared by a different conditioner component"
-                    )
-                if type(value.payload) is not Wan21PreparedConditioning:
-                    raise TypeError("conditioning must be exact Wan21PreparedConditioning")
-                return Conditioning(value.payload.text)
-
-            prepared_cond = text_lane(cond)
-            if prepared_cond is None:
-                raise Wan21RuntimeError("Wan CausalAR requires positive conditioning")
-            cond = prepared_cond
-            if cfg is not None:
-                if type(cfg) is not SamplingGuidance:
-                    raise Wan21RuntimeError("Wan CausalAR supports only CFG guidance")
-                cfg = replace(cfg, uncond=text_lane(cfg.uncond))
-            latent, noise = video, noise_video
-        latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
-            self.family.id,
-            latent=latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            denoise_mask=denoise_mask,
-            error=Wan21RuntimeError,
-        )
+        latent_context = cast("_WanSamplingContext", inputs.latent_context)
+        latent = inputs.latent
+        cfg = inputs.cfg
         if latent.ndim != 5 or latent.shape[1] != 16:
             raise Wan21RuntimeError("Wan CausalAR input must be [batch,16,frames,height,width]")
-        if cfg is not None and (type(cfg.scale) not in (int, float) or float(cfg.scale) != 1.0):
+        if cfg is not None and (
+            not isinstance(cfg, SamplingGuidance)
+            or type(cfg.scale) not in (int, float)
+            or float(cfg.scale) != 1.0
+        ):
             raise Wan21RuntimeError("Wan CausalAR requires CFG exactly 1.0")
         if cfg is not None and cfg.transforms:
             raise Wan21RuntimeError("Wan CausalAR does not support guidance transforms")
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=Wan21RuntimeError
-        )
-        space = FlowSigmas(shift=5.0)
-        schedule = build_custom_sampling_schedule(request.sigmas, space, sampler, flow=True)
-        assert type(model) is Wan21CausalModel
+        cond = cast("Conditioning[torch.Tensor]", inputs.cond)
         text = _validate_text(cond.embeddings, text_dim=model.config.text_dim)
         if text.shape[0] not in (1, latent.shape[0]):
             raise Wan21RuntimeError("Wan CausalAR text batch must be one or match the video batch")
-        initial = None
-        if initial_latent is not None:
-            initial = _validate_video_latent(initial_latent, channels=model.config.out_channels)
+        initial = latent_context.initial_latent
+        if initial is not None:
+            initial = _validate_video_latent(initial, channels=model.config.out_channels)
             if (
                 initial.shape[0] not in (1, latent.shape[0])
                 or initial.shape[2] > latent.shape[2]
                 or initial.shape[3:] != latent.shape[3:]
             ):
                 raise Wan21RuntimeError("Wan CausalAR initial latent must match the target video")
-        load_device = (
-            bound_compute_device(model.patch_embedding) or model.patch_embedding.weight.device
-            if device is None
-            else torch.device(device)
-        )
-        selected_dtype = (
-            self.assembled.compute_dtype("diffusion") or torch.bfloat16
-            if compute_dtype is None
-            else compute_dtype
-        )
-        prepared_initial = (
-            None if initial is None else self._latent_process_in(initial.to(load_device))
-        )
+            initial = self._latent_process_in(initial.to(context.device))
         denoiser = _Wan21CausalDenoiser(
             model,
             text,
-            initial_latent=prepared_initial,
-            compute_dtype=selected_dtype,
+            initial_latent=initial,
+            compute_dtype=compute_dtype,
         )
-        captured: list[torch.Tensor] = []
-
-        def report_step(event: StepEvent) -> None:
-            _check_cancelled(cancelled)
-            if on_step is not None:
-                on_step(event)
-            _check_cancelled(cancelled)
-
-        def report_state(event: SamplingStateEvent[object]) -> None:
-            _check_cancelled(cancelled)
-            if event.denoised is not None:
-                if type(event.denoised) is not torch.Tensor:
-                    raise TypeError("Wan CausalAR denoised state must contain a torch.Tensor")
-                captured[:] = [self._latent_process_out(event.denoised)]
-            if on_state is not None:
-                on_state(
-                    replace(
-                        event,
-                        current=MultiStreamLatent.from_pairs((("video", event.current),)),
-                        denoised=(
-                            None
-                            if event.denoised is None
-                            else MultiStreamLatent.from_pairs((("video", event.denoised),))
-                        ),
-                    )
-                    if structural
-                    else event
-                )
-            _check_cancelled(cancelled)
-
-        output = run_sampler_engine(
-            denoiser,
-            request.build_solver(),
-            latent=latent,
-            noise=noise,
-            sigmas=schedule.sigmas,
-            initial_sigma=schedule.initial_sigma,
-            parameterization=Parameterization.FLOW,
-            sigma_min=space.sigma_min,
-            sigma_max=space.sigma_max,
+        return SamplingDenoiserExecution(
+            cast("SamplingDenoiserAdapter", model),
+            direct_denoiser=denoiser,
+            sampling=self.family.sampling,
+            percent_to_sigma=FlowSigmas(shift=5.0).percent_to_sigma,
             process_in=self._latent_process_in,
             process_out=self._latent_process_out,
-            seed=seed,
-            noise_kind=sampler.noise,
-            percent_to_sigma=space.percent_to_sigma,
-            device=load_device,
-            on_step=report_step,
-            on_state=report_state if capture_denoised or on_state is not None else None,
+            unpack_state=(_wan_unpack_video_state if latent_context.structural else None),
         )
-        _check_cancelled(cancelled)
-        denoised_output = captured[-1] if captured else (output if capture_denoised else None)
-        if structural:
-            return CustomSamplingResult(
-                MultiStreamLatent.from_pairs((("video", output),)),
-                None
-                if denoised_output is None
-                else MultiStreamLatent.from_pairs((("video", denoised_output),)),
-            )
-        return CustomSamplingResult(output, denoised_output)
 
     @property
     def dense_custom_sampling_role(self) -> str | None:
@@ -3442,104 +3509,37 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
         noise = prepare_noise(video, seed) if add_noise else torch.zeros_like(video)
         return MultiStreamLatent.from_pairs((("video", noise),))
 
-    def _sample_standard_custom(
+    sample_custom = sampling_execution
+
+    def _standard_sampling_denoiser(
         self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int,
-        guidance: float | None,
-        denoise_mask: CustomSamplingLatentValue | None,
-        inpaint: object | None,
-        context_windows: ContextWindowsSpec | None,
-        on_step: StepCallback | None,
-        on_state: SamplingStateCallback | None,
-        cancelled: Callable[[], bool] | None,
-        observer: ExecutionObserverAttachment | None,
-        parent_span_id: int | None,
-        compute_dtype: torch.dtype | None,
-        device: torch.device | str | None,
-        sampling_shift: float | None,
-        uni3c: Wan21Uni3CExecution | None,
-        multitalk: Wan21InfiniteTalkExecution | None,
-        capture_denoised: bool,
-    ) -> CustomSamplingResult[MultiStreamLatent[torch.Tensor]]:
-        del observer, parent_span_id
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=Wan21RuntimeError
-        )
-        if cancelled is None:
-            cancelled = sampling_environment_cancellation()
+        compute_dtype: torch.dtype,
+        context: SamplingAdapterContext,
+    ) -> SamplingDenoiserExecution:
+        if (
+            context.inputs is None
+            or context.device is None
+            or context.plan is None
+            or context.request is None
+            or context.sampler is None
+            or context.schedule is None
+        ):
+            raise RuntimeError("Wan sampling context is unresolved")
+        inputs = context.inputs
+        latent_context = cast("_WanSamplingContext", inputs.latent_context)
+        video = inputs.latent
+        conditioning = cast("Wan21PreparedConditioning", inputs.cond)
+        guidance_plan = context.plan
+        cancelled = context.cancelled
+        denoise_mask = inputs.denoise_mask
+        context_windows = context.context_windows
+        device = context.device
+        uni3c = latent_context.uni3c
+        multitalk = latent_context.multitalk
         _check_cancelled(cancelled)
         model = self.assembled.diffusion
         if type(model) is Wan21CausalModel:
             raise Wan21RuntimeError("Wan CausalAR requires the ar_video custom sampler")
-        latent_channels = model.config.out_channels
-        streams, video = _video_streams(latent, channels=latent_channels)
-        if type(noise) is not MultiStreamLatent or noise.roles != streams.roles:
-            raise Wan21RuntimeError("Wan custom sampling noise must match the latent stream roles")
-        noise_video = _validate_video_latent(noise.by_role("video"), channels=latent_channels)
-        if tuple(noise_video.shape) != tuple(video.shape):
-            raise Wan21RuntimeError("Wan custom sampling noise must match the video latent shape")
-        if type(cond) is not PreparedMultiStreamConditioning:
-            raise Wan21RuntimeError(
-                "Wan custom sampling requires prepared multistream conditioning"
-            )
-        if cond.runtime_identity != self.conditioning_identity:
-            raise Wan21RuntimeError(
-                "Wan conditioning was prepared by a different conditioner component"
-            )
-        conditioning = cond.payload
-        if type(conditioning) is not Wan21PreparedConditioning:
-            raise TypeError("conditioning must be exact Wan21PreparedConditioning")
-
-        def unwrap_lane(value: object | None, what: str) -> Wan21PreparedConditioning | None:
-            if value is None:
-                return None
-            if type(value) is not PreparedMultiStreamConditioning:
-                raise Wan21RuntimeError(f"{what} must use prepared multistream conditioning")
-            if value.runtime_identity != cond.runtime_identity:
-                raise Wan21RuntimeError("Wan guidance lanes were prepared by different components")
-            payload = value.payload
-            if type(payload) is not Wan21PreparedConditioning:
-                raise TypeError(f"{what} must contain exact Wan21PreparedConditioning")
-            return payload
-
-        if cfg is None:
-            guidance_cfg: (
-                SamplingGuidance[Wan21PreparedConditioning]
-                | DualSamplingGuidance[Wan21PreparedConditioning]
-                | None
-            ) = None
-        elif isinstance(cfg, DualSamplingGuidance):
-            guidance_cfg = cast(
-                "DualSamplingGuidance[Wan21PreparedConditioning]",
-                replace(
-                    cfg,
-                    uncond=unwrap_lane(cfg.uncond, "unconditional conditioning"),
-                    middle=unwrap_lane(cfg.middle, "middle conditioning"),
-                ),
-            )
-        elif type(cfg) is SamplingGuidance:
-            guidance_cfg = cast(
-                "SamplingGuidance[Wan21PreparedConditioning]",
-                replace(
-                    cfg,
-                    uncond=unwrap_lane(cfg.uncond, "unconditional conditioning"),
-                ),
-            )
-        else:
-            raise Wan21RuntimeError("Wan custom sampling requires basic or dual CFG guidance")
         admitted_uni3c = None
         if uni3c is not None:
             if type(uni3c) is not Wan21Uni3CExecution:
@@ -4154,10 +4154,11 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                     )
 
         validate_prepared(conditioning, "conditioning")
-        uncond = None if guidance_cfg is None else guidance_cfg.uncond
+        guidance_lanes = {lane.id: lane.conditioning for lane in guidance_plan.conditions}
+        uncond = cast("Wan21PreparedConditioning | None", guidance_lanes.get("negative"))
         if uncond is not None:
             validate_prepared(uncond, "unconditional conditioning")
-        middle = guidance_cfg.middle if isinstance(guidance_cfg, DualSamplingGuidance) else None
+        middle = cast("Wan21PreparedConditioning | None", guidance_lanes.get("middle"))
         if middle is not None:
             validate_prepared(middle, "middle conditioning")
         bernini_conditioning = any(
@@ -4186,23 +4187,10 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                         "structural conditioning cannot be windowed"
                     )
         _check_cancelled(cancelled)
-        sigmas = _wan_custom_space(self.assembled, sampling_shift)
-        schedule_plan = build_custom_sampling_schedule(
-            request.sigmas,
-            sigmas,
-            sampler,
-            flow=True,
-        )
-        schedule = schedule_plan.sigmas
-        guidance_plan = compile_guidance_plan(conditioning, guidance_cfg, sampler, None)
-        weight = model.patch_embedding.weight
-        model_device = bound_compute_device(model.patch_embedding) or weight.device
-        load_device = model_device if device is None else torch.device(device)
-        selected_dtype = (
-            self.assembled.compute_dtype("diffusion") or torch.bfloat16
-            if compute_dtype is None
-            else compute_dtype
-        )
+        sigmas = self.sampling_sigma_space(context.sampling_shift)
+        schedule = context.schedule.sigmas
+        load_device = torch.device(device)
+        selected_dtype = compute_dtype
         uni3c_render = (
             None
             if admitted_uni3c is None
@@ -5209,54 +5197,6 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
         if context_windows is not None:
             evaluation = windowed_conditioning_evaluation(evaluation, context_windows, schedule)
 
-        def report_step(event: StepEvent) -> None:
-            _check_cancelled(cancelled)
-            if on_step is not None:
-                on_step(event)
-
-        denoiser = guided_denoiser(
-            evaluation,
-            input=video,
-            executor=None,
-            plan=guidance_plan,
-            execution=sampling_execution_context(schedule, seed, report_step, on_state),
-        )
-        if not schedule_plan.pre_offset:
-            if admitted_multitalk is not None and admitted_multitalk.extend:
-                motion = admitted_multitalk.motion_latent.to(video)
-                output_streams = streams.replace(
-                    "video",
-                    torch.cat((motion, video[:, :, motion.shape[2] :]), dim=2),
-                )
-                return CustomSamplingResult(output_streams, None)
-            return CustomSamplingResult(streams, None)
-
-        noise_video = noise_video.to(device=load_device, dtype=video.dtype)
-        if context_windows is not None and context_windows.freenoise:
-            noise_video = apply_freenoise(
-                noise_video,
-                context_windows.dim,
-                context_windows.length,
-                context_windows.overlap,
-                seed,
-            )
-        step_noise = brownian_step_noise(
-            sampler, schedule_plan, video, seed=seed, device=load_device
-        )
-
-        def unpack_video_state(value: torch.Tensor) -> MultiStreamLatent[torch.Tensor]:
-            return MultiStreamLatent.from_pairs((("video", value),))
-
-        captured_denoised: list[MultiStreamLatent[torch.Tensor]] = []
-
-        def state_progress(event: SamplingStateEvent[object]) -> None:
-            _check_cancelled(cancelled)
-            if capture_denoised and type(event.denoised) is MultiStreamLatent:
-                captured_denoised[:] = [cast("MultiStreamLatent[torch.Tensor]", event.denoised)]
-            if on_state is not None:
-                on_state(event)
-            _check_cancelled(cancelled)
-
         cache_settings = self._pose_cache_settings
         if cache_settings is not None:
             cache_device = (
@@ -5269,47 +5209,19 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                 cache_settings.storage.value,
                 cache_settings.memory_limit_bytes,
             )
-        try:
-            output = run_sampler_engine(
-                denoiser,
-                request.build_solver(),
-                latent=video,
-                noise=noise_video,
-                sigmas=schedule,
-                initial_sigma=schedule_plan.initial_sigma,
-                parameterization=parameterization,
-                sigma_min=sigmas.sigma_min,
-                sigma_max=sigmas.sigma_max,
-                process_in=self._latent_process_in,
-                process_out=self._latent_process_out,
-                seed=seed,
-                noise_kind=sampler.noise,
-                noise_sampler=step_noise,
-                percent_to_sigma=sigmas.percent_to_sigma,
-                device=load_device,
-                on_step=report_step,
-                on_state=(state_progress if capture_denoised or on_state is not None else None),
-                unpack_state=unpack_video_state,
-                denoise_mask=prepared_denoise_mask,
-                fixed_inpaint_latent=prepared_denoise_mask is not None
-                and (model.config.model_type == "ti2v" or model.config.model_variant == "scail2"),
-            )
-        finally:
-            if pose_cache is not None:
-                pose_cache.free()
-        _check_cancelled(cancelled)
-        if admitted_multitalk is not None and admitted_multitalk.extend:
-            motion = admitted_multitalk.motion_latent.to(output)
-            output = torch.cat((motion, output[:, :, motion.shape[2] :]), dim=2)
-            if captured_denoised:
-                denoised = captured_denoised[-1].by_role("video")
-                captured_denoised[-1] = streams.replace(
-                    "video",
-                    torch.cat((motion, denoised[:, :, motion.shape[2] :]), dim=2),
-                )
-        return CustomSamplingResult(
-            streams.replace("video", output),
-            captured_denoised[-1] if captured_denoised else None,
+        return SamplingDenoiserExecution(
+            cast("SamplingDenoiserAdapter", model),
+            conditioning_evaluation=evaluation,
+            sampling=replace(self.family.sampling, parameterization=parameterization),
+            percent_to_sigma=sigmas.percent_to_sigma,
+            process_in=self._latent_process_in,
+            process_out=self._latent_process_out,
+            unpack_state=_wan_unpack_video_state,
+            denoise_mask=prepared_denoise_mask,
+            denoise_mask_prepared=True,
+            fixed_inpaint_latent=prepared_denoise_mask is not None
+            and (model.config.model_type == "ti2v" or model.config.model_variant == "scail2"),
+            close=None if pose_cache is None else pose_cache.free,
         )
 
     def encode_content(self, content: torch.Tensor) -> torch.Tensor:
@@ -5385,7 +5297,9 @@ class Wan21DiffusionRuntime(MultiStreamSamplingRuntime):
     prepare_vace_conditioning = Wan21Runtime.prepare_vace_conditioning
     check_custom_sampling = Wan21Runtime.check_custom_sampling
     sample_custom = Wan21Runtime.sample_custom
-    _sample_standard_custom = Wan21Runtime._sample_standard_custom  # pyright: ignore[reportPrivateUsage]
+    sampling_execution_registration = Wan21Runtime.sampling_execution_registration
+    _sampling_denoiser = Wan21Runtime._sampling_denoiser  # pyright: ignore[reportPrivateUsage]
+    _standard_sampling_denoiser = Wan21Runtime._standard_sampling_denoiser  # pyright: ignore[reportPrivateUsage]
 
     @property
     def dense_custom_sampling_role(self) -> str | None:
@@ -5449,6 +5363,8 @@ class Wan21CausalDiffusionRuntime(MultiStreamSamplingRuntime):
     prepare_conditioning = Wan21Runtime.prepare_conditioning
     check_custom_sampling = Wan21Runtime.check_custom_sampling
     sample_custom = Wan21Runtime.sample_custom
+    sampling_execution_registration = Wan21Runtime.sampling_execution_registration
+    _sampling_denoiser = Wan21Runtime._sampling_denoiser  # pyright: ignore[reportPrivateUsage]
 
     @property
     def dense_custom_sampling_role(self) -> str | None:
