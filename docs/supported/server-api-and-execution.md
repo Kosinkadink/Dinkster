@@ -22,6 +22,9 @@
   replay), values, queue control, live WebSocket events, settings, memory
   governance, cache trim/export; asset library and history routes when a
   library root is configured, including classified bounded latent upload
+- Filesystem mount scans report file, byte, and elapsed progress; publish
+  indexed assets before the scan finishes; reuse unchanged-file indexes; and
+  keep per-mount indexes under the configured library root
 - Inbound authentication with operator-managed static Bearer credentials,
   identity-service Ed25519 JWTs verified against cached JWKS, or both with
   static credentials tried first

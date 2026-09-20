@@ -5,7 +5,7 @@ composed in dinkster-serve, dinkster-server stays mount-agnostic, and this
 module is the seam.
 
 - GET    /api/mounts                     every mount: id, mode, source,
-                                         state, entryCount/error; operator
+                                         state, entryCount/scanProgress/error; operator
                                          mounts include real path, semantic
                                          model mounts include kind instead
 - GET    /api/mounts/{id}/list?path=     one level of a mount's virtual
@@ -46,6 +46,7 @@ from aiohttp import web
 from dinkster_assets import (
     AssetEntry,
     AssetError,
+    AssetScanProgress,
     MountDef,
     MountsError,
     MountTable,
@@ -64,6 +65,7 @@ _log = core_logger("mounts")
 
 _PAGE_LIMIT_DEFAULT = 100
 _PAGE_LIMIT_MAX = 500
+_SCAN_PROGRESS_INTERVAL = 1.0
 
 
 def _json_error(status: int, message: str) -> web.Response:
@@ -133,8 +135,48 @@ class MountService:
         raised past here - one unreadable directory must not take down
         the scan lane."""
         async with self._scan_lock:
+            loop = asyncio.get_running_loop()
+
+            def publish_progress(progress: AssetScanProgress) -> None:
+                _log.info(
+                    "mount %s scan: %d/%d files, %d/%d bytes, %.1fs elapsed",
+                    mount_id,
+                    progress.files_done,
+                    progress.files_total,
+                    progress.bytes_done,
+                    progress.bytes_total,
+                    progress.elapsed_seconds,
+                )
+
+                def announce() -> None:
+                    self.refresh_resolution_store()
+                    self.publish(app)
+
+                try:
+                    loop.call_soon_threadsafe(announce)
+                except RuntimeError:
+                    pass  # the hashing thread may outlive server shutdown
+
             try:
-                count = await asyncio.to_thread(self.table.scan, mount_id)
+                scan_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        self.table.scan,
+                        mount_id,
+                        on_progress=publish_progress,
+                        progress_interval=_SCAN_PROGRESS_INTERVAL,
+                    )
+                )
+                while not scan_task.done():
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(scan_task),
+                            timeout=_SCAN_PROGRESS_INTERVAL,
+                        )
+                    except TimeoutError:
+                        progress = self.table.scan_progress(mount_id)
+                        if progress is not None:
+                            publish_progress(progress)
+                count = await scan_task
             except MountsError:
                 return  # removed while queued: nothing to narrate
             except Exception as exc:  # noqa: BLE001 - recorded on the row

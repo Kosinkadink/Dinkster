@@ -717,6 +717,7 @@ Persistence root. When set, the following live under it:
 | `provenance.json` | Acquisition leads |
 | `resolver-indexes.json` | Resolver-index subscriptions and cached documents |
 | `mounts.toml` | Durable filesystem mount grants |
+| `asset-indexes/<mount-id>.json` | Per-mount digest indexes used to skip unchanged files |
 | `execution-cache/` | Layered execution-result manifests and content-addressed payloads |
 | `value-store/` | Persistent value store for remote workers (see [remote-workers.md](remote-workers.md)) |
 | `venvs/<accelerator>/<pack-digest>/<pack>/` | Standard vision-pack runtime environments provisioned before workers announce |
@@ -858,6 +859,13 @@ filesystem mounts while running (the desktop-shell folder-picker
 flow). Granted mounts persist to `<library-root>/mounts.toml`. Off by
 default: runtime mount mutation is a filesystem capability grant and
 stays operator-only. Requires `--library-root`.
+
+Mount scans store their indexes in `<library-root>/asset-indexes`, never in
+the mounted directory. If a mount still contains the former
+`.dinkster-asset-index.json`, its rows seed the library-owned index once; after
+the library index exists, the mount copy is ignored. `GET /api/mounts` reports
+scan progress as files, bytes, and elapsed seconds while unchanged size and
+mtime rows are reused.
 
 ## Logging
 
