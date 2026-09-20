@@ -59,11 +59,36 @@ jobs:
           IDENTITY_DEPLOY_KEY: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
         run: |
           set -euo pipefail
+          training_socket="$SSH_AUTH_SOCK"
+          eval "$(ssh-agent -s)" >/dev/null
           printf '%s\n' "$IDENTITY_DEPLOY_KEY" | ssh-add - >/dev/null
+          identity_config="$RUNNER_TEMP/private-dependencies-ssh-config"
+          cat > "$identity_config" <<EOF
+          Host github-training
+            HostName github.com
+            User git
+            IdentityAgent $training_socket
+            IdentitiesOnly yes
+            HostKeyAlias github.com
+            UserKnownHostsFile $RUNNER_TEMP/identity-known-hosts
+          Host github-identity
+            HostName github.com
+            User git
+            IdentityAgent $SSH_AUTH_SOCK
+            IdentitiesOnly yes
+            HostKeyAlias github.com
+            UserKnownHostsFile $RUNNER_TEMP/identity-known-hosts
+          EOF
           {
+            echo "IDENTITY_AGENT_PID=$SSH_AGENT_PID"
+            echo "IDENTITY_AUTH_SOCK=$SSH_AUTH_SOCK"
             echo 'GIT_CONFIG_COUNT=3'
-            echo 'GIT_CONFIG_KEY_2=url.ssh://git@github.com/Kosinkadink/dinkster-identity.insteadOf'
-            echo 'GIT_CONFIG_VALUE_2=https://github.com/Kosinkadink/dinkster-identity'
+            echo 'GIT_CONFIG_KEY_0=url.ssh://git@github-training/Kosinkadink/dinkster-training.insteadOf'
+            echo 'GIT_CONFIG_VALUE_0=https://github.com/Kosinkadink/dinkster-training'
+            echo 'GIT_CONFIG_KEY_1=url.ssh://git@github-identity/Kosinkadink/dinkster-identity.insteadOf'
+            echo 'GIT_CONFIG_VALUE_1=https://github.com/Kosinkadink/dinkster-identity'
+            echo 'GIT_CONFIG_KEY_2=core.sshCommand'
+            echo "GIT_CONFIG_VALUE_2=ssh -F $identity_config"
           } >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@v5
         with:
@@ -108,3 +133,10 @@ jobs:
           else:
               raise SystemExit(f"training nodes absent from {url}")
           PY
+      - name: Stop private identity agent
+        if: always() && env.IDENTITY_AGENT_PID != ''
+        shell: bash
+        run: ssh-agent -k >/dev/null
+        env:
+          SSH_AGENT_PID: ${{ env.IDENTITY_AGENT_PID }}
+          SSH_AUTH_SOCK: ${{ env.IDENTITY_AUTH_SOCK }}
