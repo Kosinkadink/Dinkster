@@ -67,8 +67,11 @@ from dinkster.native_policy import NativeDispatchPolicy, resolve_dtype_policy
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / "packages" / "dinkster-compat-comfy" / "dinkster-pack.toml"
 NATIVE_ARM_SOURCE_DIR = REPO_ROOT / "packages" / "dinkster-native" / "src" / "dinkster_native"
-NATIVE_ARM_SOURCES = tuple(sorted(NATIVE_ARM_SOURCE_DIR.glob("native_arm*.py"))) + tuple(
-    sorted(NATIVE_ARM_SOURCE_DIR.glob("nodes_*.py"))
+NATIVE_ARM_FAMILY_SOURCE_NAMES = ("ltx.py", "minimax_h3.py", "seedvr2.py", "wan21.py")
+NATIVE_ARM_SOURCES = (
+    tuple(sorted(NATIVE_ARM_SOURCE_DIR.glob("native_arm*.py")))
+    + tuple(sorted(NATIVE_ARM_SOURCE_DIR.glob("nodes_*.py")))
+    + tuple(NATIVE_ARM_SOURCE_DIR / "families" / name for name in NATIVE_ARM_FAMILY_SOURCE_NAMES)
 )
 
 

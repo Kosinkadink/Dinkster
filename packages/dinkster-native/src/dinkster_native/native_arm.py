@@ -20,15 +20,15 @@ from . import (
     nodes_guidance,
     nodes_latent,
     nodes_loaders,
-    nodes_ltx,
-    nodes_minimax,
     nodes_model3d,
     nodes_provider,
     nodes_samplers,
     nodes_sampling_runtime,
-    nodes_vae_seedvr2,
-    nodes_wan,
 )
+from .families import ltx as nodes_ltx
+from .families import minimax_h3 as nodes_minimax
+from .families import seedvr2 as nodes_vae_seedvr2
+from .families import wan21 as nodes_wan
 from .native_arm_registry import (
     GENERATION_PROVIDER_NODES as GENERATION_PROVIDER_NODES,
 )
@@ -795,9 +795,9 @@ from .native_arm_registry import __all__ as __all__
 from .native_arm_registry import (
     load_native_runtime_handle as load_native_runtime_handle,
 )
+from .native_arm_runtime import _NativeModelOverlay as _NativeModelOverlay
 
 _CustomSigmasValue = native_arm_core._CustomSigmasValue
-_NativeModelOverlay = native_arm_runtime._NativeModelOverlay
 
 _IMPLEMENTATION_MODULES = (
     native_arm_conditioning,

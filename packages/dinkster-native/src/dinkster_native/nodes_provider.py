@@ -4,6 +4,10 @@
 
 from __future__ import annotations
 
+from .families.minimax_h3 import (
+    _component_runtime_with_options,
+    _minimax_h3_schedule_runtime,
+)
 from .native_arm_core import (
     _ASSET,
     _BOOLEAN,
@@ -61,10 +65,6 @@ from .native_arm_runtime import (
     _native_model_sampling_space,
     _NativeModelOverlay,
     _sampling_space_runtime,
-)
-from .nodes_minimax import (
-    _component_runtime_with_options,
-    _minimax_h3_schedule_runtime,
 )
 
 

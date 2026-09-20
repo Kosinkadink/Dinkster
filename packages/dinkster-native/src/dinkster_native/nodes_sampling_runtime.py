@@ -6,6 +6,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .families.minimax_h3 import (
+    _adapt_multistream_latent,
+    _move_multistream_latent,
+    _prepared_multistream_conditioning,
+    _resolve_component_execution,
+    _sampling_memory_requirements,
+)
 from .native_arm_core import (
     Any,
     ExitStack,
@@ -63,13 +70,6 @@ from .native_arm_scheduling import (
     _compute_dtype,
     _NativeScheduleState,
     _scheduled_carrier,
-)
-from .nodes_minimax import (
-    _adapt_multistream_latent,
-    _move_multistream_latent,
-    _prepared_multistream_conditioning,
-    _resolve_component_execution,
-    _sampling_memory_requirements,
 )
 from .nodes_provider import (
     _materialize_provider_conditioning,

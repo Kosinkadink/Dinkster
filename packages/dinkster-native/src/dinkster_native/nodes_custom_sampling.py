@@ -4,6 +4,12 @@
 
 from __future__ import annotations
 
+from .families.minimax_h3 import (
+    _adapt_multistream_latent,
+    _move_multistream_latent,
+    _prepared_multistream_carrier,
+    _sampling_memory_requirements,
+)
 from .native_arm_core import (
     Any,
     ExitStack,
@@ -57,12 +63,6 @@ from .native_arm_runtime import (
 )
 from .native_arm_scheduling import (
     _catalog_id,
-)
-from .nodes_minimax import (
-    _adapt_multistream_latent,
-    _move_multistream_latent,
-    _prepared_multistream_carrier,
-    _sampling_memory_requirements,
 )
 from .nodes_provider import (
     _bind_sampling_shift,

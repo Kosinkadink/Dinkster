@@ -6,6 +6,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .families.minimax_h3 import (
+    NativeEmptyLTXAVLatent,
+    NativeEmptyLTXVLatent,
+)
 from .native_arm_conditioning import (
     _averaged_conditioning,
     _combined_conditioning,
@@ -37,10 +41,6 @@ from .native_arm_runtime import (
     _native_model_sampling_timeline,
     _NativeModelOverlay,
     _sampling_space_runtime,
-)
-from .nodes_minimax import (
-    NativeEmptyLTXAVLatent,
-    NativeEmptyLTXVLatent,
 )
 from .nodes_provider import (
     _generation_provider_schema,

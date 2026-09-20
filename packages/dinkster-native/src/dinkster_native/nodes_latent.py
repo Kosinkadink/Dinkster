@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+from .families.seedvr2 import (
+    _LATENT_RESIZE_METHODS,
+)
 from .native_arm_core import (
     Any,
     KSampler,
@@ -35,9 +38,6 @@ from .nodes_guidance import (
 )
 from .nodes_provider import (
     _generation_provider_schema,
-)
-from .nodes_vae_seedvr2 import (
-    _LATENT_RESIZE_METHODS,
 )
 
 

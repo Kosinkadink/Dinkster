@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .families.minimax_h3 import load_registered_component
 from .native_arm_core import (
     Any,
     ApplyZImageControlPatch,
@@ -83,7 +84,6 @@ from .native_arm_scheduling import (
     _trellis2_artifact_role_matches,
     build_text_recipe_handle,
 )
-from .nodes_minimax import load_registered_component
 from .nodes_provider import _generation_provider_schema
 
 if TYPE_CHECKING:
