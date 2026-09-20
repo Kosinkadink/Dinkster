@@ -1548,16 +1548,15 @@ def _build_runtime_handle(
         )
         if module is not None
     }
+    component_descriptor = _builtin_inference_registries().components.get(recipe.family_id)
     component_factory = _AimdoComponentFactory(
         mode,
         mechanism_factory,
         inference_torch.ResidentWeights,
         component_by_module,
         frozenset() if policy is None else policy.resident_components,
-        fixed_promotion_components=(
-            frozenset({"diffusion"})
-            if recipe.family_id in {"dinkster.chroma", "dinkster.chroma_radiance"}
-            else frozenset()
+        fixed_promotion_components=frozenset(
+            () if component_descriptor is None else component_descriptor.fixed_promotion_roles
         ),
     )
     return NativeRuntimeHandle(
@@ -3832,6 +3831,9 @@ def _ltxav_component_identity(
 
 
 class _LTXAVTextHandle:
+    family_id = "dinkster.ltxav"
+    role = "text"
+
     def __init__(
         self,
         handles: tuple[NativeComponentHandle, ...],
@@ -5223,7 +5225,7 @@ def _apply_native_lora_stack(
     if model_handle.recipe.family_id in inference.FLUX2_TEXT_ROLE_BY_FAMILY and isinstance(
         clip, NativeComponentHandle
     ):
-        text_handle = _flux2_component_handle(clip, "clip", None)
+        text_handle = load_registered_component(clip, "clip")
         if text_handle.recipe is None or (
             text_handle.recipe.family_id != model_handle.recipe.family_id
         ):
@@ -8304,43 +8306,11 @@ class NativeWan22ImageToVideoLatent(Wan22ImageToVideoLatent):
         return cls.outputs(latent={"samples": output, "noise_mask": output_mask})
 
 
-def _minimax_h3_component_handle(
-    value: object,
-    name: str,
-    source_role: str,
-) -> NativeComponentHandle:
-    inference = importlib.import_module("dinkster_inference")
-    family_id = inference.MINIMAX_H3_CONFIG.family_id
-    expected = {
-        "qwen3vl-32b-conditioner": "conditioner",
-        "video-vae": "video VAE",
-        "audio-vae": "audio VAE",
-    }[source_role]
-    if not isinstance(value, NativeComponentHandle):
-        raise TypeError(f"{name} must be a native MiniMax H3 {expected} component")
-    handle = value
-    handle.require_active()
-    recipe = handle.recipe
-    if (
-        recipe is None
-        or recipe.family_id != family_id
-        or tuple(binding.role for binding in recipe.sources) != (source_role,)
-        or recipe.runtime_identity != handle.resource_identity
-    ):
-        raise TypeError(f"{name} must be a native MiniMax H3 {expected} component")
-    try:
-        inference.ComponentBinding(
-            source_role.replace("-", "_"),
-            family_id,
-            handle.resource_identity,
-        )
-    except (TypeError, ValueError) as error:
-        raise TypeError(f"{name} must be a native MiniMax H3 {expected} component") from error
-    return handle
-
-
 def _minimax_h3_video_vae_runtime(value: object, name: str = "video_vae") -> tuple[Any, Any]:
-    handle = _minimax_h3_component_handle(value, name, "video-vae")
+    inference = importlib.import_module("dinkster_inference")
+    handle = load_registered_component(
+        value, name, "video-vae", family_id=inference.MINIMAX_H3_CONFIG.family_id
+    )
     torch = _torch()
     inference_torch = importlib.import_module("dinkster_inference_torch")
     assert handle.recipe is not None
@@ -8352,7 +8322,10 @@ def _minimax_h3_video_vae_runtime(value: object, name: str = "video_vae") -> tup
 
 
 def _minimax_h3_audio_vae_runtime(value: object, name: str = "audio_vae") -> tuple[Any, Any]:
-    handle = _minimax_h3_component_handle(value, name, "audio-vae")
+    inference = importlib.import_module("dinkster_inference")
+    handle = load_registered_component(
+        value, name, "audio-vae", family_id=inference.MINIMAX_H3_CONFIG.family_id
+    )
     torch = _torch()
     inference_torch = importlib.import_module("dinkster_inference_torch")
     assert handle.recipe is not None
@@ -8387,10 +8360,12 @@ def _minimax_h3_conditioner_runtime(
     video_vae: object | None = None,
     audio_vae: object | None = None,
 ) -> tuple[NativeComponentHandle, tuple[NativeComponentHandle, ...], Any]:
-    clip_handle = _minimax_h3_component_handle(
+    inference = importlib.import_module("dinkster_inference")
+    clip_handle = load_registered_component(
         clip,
         "clip",
         "qwen3vl-32b-conditioner",
+        family_id=inference.MINIMAX_H3_CONFIG.family_id,
     )
     video_handle = video_runtime = None
     if video_vae is not None:
@@ -9953,27 +9928,6 @@ def _minimax_h3_schedule_runtime(handle: NativeRuntimeHandle, inference: Any) ->
     )
 
 
-def _anima_component_handle(value: object, name: str, role: str) -> NativeComponentHandle:
-    inference = importlib.import_module("dinkster_inference")
-    family_id = inference.ANIMA_CONFIG.family_id
-    if not isinstance(value, NativeComponentHandle):
-        raise TypeError(f"{name} must be a native Anima {role} component")
-    value.require_active()
-    recipe = value.recipe
-    if (
-        recipe is None
-        or recipe.family_id != family_id
-        or tuple(source.role for source in recipe.sources) != (role,)
-        or recipe.runtime_identity != value.resource_identity
-    ):
-        raise TypeError(f"{name} must be a native Anima {role} component")
-    try:
-        inference.ComponentBinding(role, family_id, value.resource_identity)
-    except (TypeError, ValueError) as error:
-        raise TypeError(f"{name} must be a native Anima {role} component") from error
-    return value
-
-
 @dataclass(frozen=True, slots=True)
 class _ResolvedComponentExecution:
     runtime: Any
@@ -10250,110 +10204,6 @@ def resolve_component_execution(
     return None if resolved is None else resolved.values()
 
 
-def _minimax_music3_component_handle(value: object, name: str, role: str) -> NativeComponentHandle:
-    inference = importlib.import_module("dinkster_inference")
-    family_id = inference.MINIMAX_MUSIC3_CONFIG.family_id
-    if not isinstance(value, NativeComponentHandle):
-        raise TypeError(f"{name} must be a native MiniMax Music 3 {role} component")
-    value.require_active()
-    recipe = value.recipe
-    if (
-        recipe is None
-        or recipe.family_id != family_id
-        or tuple(source.role for source in recipe.sources) != (role,)
-        or recipe.runtime_identity != value.resource_identity
-    ):
-        raise TypeError(f"{name} must be a native MiniMax Music 3 {role} component")
-    try:
-        inference.ComponentBinding(role, family_id, value.resource_identity)
-    except (TypeError, ValueError) as error:
-        raise TypeError(f"{name} must be a native MiniMax Music 3 {role} component") from error
-    return value
-
-
-def _lumina2_component_handle(value: object, name: str, role: str) -> NativeComponentHandle:
-    inference = importlib.import_module("dinkster_inference")
-    family_id = inference.LUMINA2_CONFIG.family_id
-    if not isinstance(value, NativeComponentHandle):
-        raise TypeError(f"{name} must be a native Lumina2 {role} component")
-    value.require_active()
-    recipe = value.recipe
-    if (
-        recipe is None
-        or recipe.family_id != family_id
-        or tuple(source.role for source in recipe.sources) != (role,)
-        or recipe.runtime_identity != value.resource_identity
-    ):
-        raise TypeError(f"{name} must be a native Lumina2 {role} component")
-    try:
-        inference.ComponentBinding(role, family_id, value.resource_identity)
-    except (TypeError, ValueError) as error:
-        raise TypeError(f"{name} must be a native Lumina2 {role} component") from error
-    return value
-
-
-def _chroma_component_handle(value: object, name: str, role: str) -> NativeComponentHandle:
-    inference = importlib.import_module("dinkster_inference")
-    if not isinstance(value, NativeComponentHandle):
-        raise TypeError(f"{name} must be a native Chroma {role} component")
-    value.require_active()
-    recipe = value.recipe
-    if (
-        recipe is None
-        or recipe.family_id != inference.CHROMA.id
-        or tuple(source.role for source in recipe.sources) != (role,)
-        or recipe.runtime_identity != value.resource_identity
-    ):
-        raise TypeError(f"{name} must be a native Chroma {role} component")
-    try:
-        inference.ComponentBinding(role, inference.CHROMA.id, value.resource_identity)
-    except (TypeError, ValueError) as error:
-        raise TypeError(f"{name} must be a native Chroma {role} component") from error
-    return value
-
-
-def _krea2_component_handle(value: object, name: str, role: str) -> NativeComponentHandle:
-    inference = importlib.import_module("dinkster_inference")
-    family_id = inference.KREA2_CONFIG.family_id
-    if not isinstance(value, NativeComponentHandle):
-        raise TypeError(f"{name} must be a native Krea 2 {role} component")
-    value.require_active()
-    recipe = value.recipe
-    if (
-        recipe is None
-        or recipe.family_id != family_id
-        or tuple(source.role for source in recipe.sources) != (role,)
-        or recipe.runtime_identity != value.resource_identity
-    ):
-        raise TypeError(f"{name} must be a native Krea 2 {role} component")
-    try:
-        inference.ComponentBinding(role, family_id, value.resource_identity)
-    except (TypeError, ValueError) as error:
-        raise TypeError(f"{name} must be a native Krea 2 {role} component") from error
-    return value
-
-
-def _ideogram4_component_handle(value: object, name: str, role: str) -> NativeComponentHandle:
-    inference = importlib.import_module("dinkster_inference")
-    family_id = inference.IDEOGRAM4_CONFIG.family_id
-    if not isinstance(value, NativeComponentHandle):
-        raise TypeError(f"{name} must be a native Ideogram 4 {role} component")
-    value.require_active()
-    recipe = value.recipe
-    if (
-        recipe is None
-        or recipe.family_id != family_id
-        or tuple(source.role for source in recipe.sources) != (role,)
-        or recipe.runtime_identity != value.resource_identity
-    ):
-        raise TypeError(f"{name} must be a native Ideogram 4 {role} component")
-    try:
-        inference.ComponentBinding(role, family_id, value.resource_identity)
-    except (TypeError, ValueError) as error:
-        raise TypeError(f"{name} must be a native Ideogram 4 {role} component") from error
-    return value
-
-
 def resolve_ideogram4_component_execution(
     handle: NativeRuntimeHandle,
     positive: object,
@@ -10443,15 +10293,6 @@ def resolve_ideogram4_component_execution(
     return runtime, rows, negative_rows
 
 
-def _seedvr2_component_handle(value: object, name: str) -> Any:
-    inference = importlib.import_module("dinkster_inference")
-    handle = inference.require_inference_component_handle(value, name)
-    recipe = getattr(handle, "recipe", None)
-    if recipe is not None and recipe.runtime_identity != handle.resource_identity:
-        raise TypeError(f"{name} component identity does not match its recipe")
-    return handle
-
-
 def resolve_seedvr2_component_execution(
     handle: NativeRuntimeHandle,
     positive: object,
@@ -10489,351 +10330,6 @@ def resolve_seedvr2_component_execution(
 def _sampling_memory_requirements(runtime: Any, samples: Any) -> tuple[int, int | None]:
     estimate = getattr(runtime, "sampling_memory_requirements", None)
     return (0, None) if estimate is None else estimate(tuple(samples.shape))
-
-
-def _wan21_component_handle(value: object, name: str, role: str) -> NativeComponentHandle:
-    inference = importlib.import_module("dinkster_inference")
-    family_id = "dinkster.wan21"
-    if not isinstance(value, NativeComponentHandle):
-        raise TypeError(f"{name} must be a native Wan 2.1 {role} component")
-    value.require_active()
-    recipe = value.recipe
-    if (
-        recipe is None
-        or recipe.family_id != family_id
-        or tuple(source.role for source in recipe.sources) != (role,)
-        or recipe.runtime_identity != value.resource_identity
-    ):
-        raise TypeError(f"{name} must be a native Wan 2.1 {role} component")
-    try:
-        inference.ComponentBinding(role, family_id, value.resource_identity)
-    except (TypeError, ValueError) as error:
-        raise TypeError(f"{name} must be a native Wan 2.1 {role} component") from error
-    return value
-
-
-def _ltxv_component_handle(value: object, name: str, role: str) -> NativeComponentHandle:
-    inference = importlib.import_module("dinkster_inference")
-    family_id = "dinkster.ltxv"
-    if not isinstance(value, NativeComponentHandle):
-        raise TypeError(f"{name} must be a native LTX-Video {role} component")
-    value.require_active()
-    recipe = value.recipe
-    if (
-        recipe is None
-        or recipe.family_id != family_id
-        or tuple(source.role for source in recipe.sources) != (role,)
-        or recipe.runtime_identity != value.resource_identity
-    ):
-        raise TypeError(f"{name} must be a native LTX-Video {role} component")
-    try:
-        inference.ComponentBinding(role, family_id, value.resource_identity)
-    except (TypeError, ValueError) as error:
-        raise TypeError(f"{name} must be a native LTX-Video {role} component") from error
-    return value
-
-
-def _ltxav_component_handle(value: object, name: str, role: str) -> NativeComponentHandle:
-    inference = importlib.import_module("dinkster_inference")
-    family_id = "dinkster.ltxav"
-    if not isinstance(value, NativeComponentHandle):
-        raise TypeError(f"{name} must be a native LTX-2 {role} component")
-    value.require_active()
-    recipe = value.recipe
-    if (
-        recipe is None
-        or recipe.family_id != family_id
-        or tuple(source.role for source in recipe.sources) != (role,)
-        or recipe.runtime_identity != value.resource_identity
-    ):
-        raise TypeError(f"{name} must be a native LTX-2 {role} component")
-    try:
-        inference.ComponentBinding(role, family_id, value.resource_identity)
-    except (TypeError, ValueError) as error:
-        raise TypeError(f"{name} must be a native LTX-2 {role} component") from error
-    return value
-
-
-class _Wan21ComponentCodec:
-    sequence_content = True
-
-    def __init__(self, value: object) -> None:
-        self._handle = _wan21_component_handle(value, "vae", "vae")
-        recipe = self._handle.recipe
-        assert recipe is not None
-        self._resource_identity = self._handle.resource_identity
-        self.descriptor = importlib.import_module("dinkster_inference").WAN21_CODEC
-        self.load_device = self._handle.load_device
-        self._compute_dtype = _torch_dtype(_torch(), recipe.knobs.vae_dtype)
-
-    @property
-    def _dinkster_resident_owner(self) -> NativeComponentHandle:
-        return self._handle
-
-    @property
-    def resource_identity(self) -> str:
-        return self._resource_identity
-
-    def require_active(self) -> None:
-        self._handle.require_active()
-
-    def stage(self) -> Any:
-        return self._handle.stage(clear_cache_after=True)
-
-    def decode_latent(self, latent: Any) -> Any:
-        module = cast("Any", self._handle.component)
-        decoded = module.decode(latent.to(dtype=self._compute_dtype))
-        if decoded.ndim != 5 or decoded.shape[1] != self.descriptor.content_channels:
-            raise ValueError("Wan 2.1 VAE decode must return [batch,3,frames,height,width]")
-        return ((decoded.to(decoded.device, dtype=_torch().float32) + 1.0) / 2.0).clamp(0.0, 1.0)
-
-    def encode_content(self, content: Any) -> Any:
-        if content.ndim != 5 or content.shape[1] != self.descriptor.content_channels:
-            raise ValueError("Wan 2.1 content must have shape [batch,3,frames,height,width]")
-        module = cast("Any", self._handle.component)
-        return module.encode((content * 2.0 - 1.0).to(dtype=self._compute_dtype))
-
-
-class _SeedVR2ComponentCodec:
-    sequence_content = True
-    accepts_batched_video = True
-    accepts_image_batch_latent = True
-    manages_input_device = True
-
-    def __init__(self, value: object) -> None:
-        self._handle = _seedvr2_component_handle(value, "vae")
-        recipe = getattr(self._handle, "recipe", None)
-        dtype = None if recipe is None else recipe.knobs.vae_dtype
-        if recipe is None:
-            log.warning("SeedVR2 codec component has no reconstruction recipe; using VAE dtype")
-        self._runtime = importlib.import_module("dinkster_inference_torch").SeedVR2CodecRuntime(
-            self._handle.component,
-            compute_dtype=None if dtype is None else _torch_dtype(_torch(), dtype),
-        )
-        self._resource_identity = self._handle.resource_identity
-        self.descriptor = self._runtime.codec.descriptor
-        self.load_device = self._handle.load_device
-
-    @property
-    def _dinkster_resident_owner(self) -> NativeComponentHandle:
-        return self._handle
-
-    @property
-    def resource_identity(self) -> str:
-        return self._resource_identity
-
-    def require_active(self) -> None:
-        self._handle.require_active()
-
-    def stage(self) -> Any:
-        return self._handle.stage()
-
-    def decode_latent(self, latent: Any) -> Any:
-        return self._runtime.decode_latent(latent)
-
-    def decode_latent_tiled(
-        self,
-        latent: Any,
-        *,
-        tile: tuple[int, ...],
-        overlap: tuple[int, ...],
-    ) -> Any:
-        return self._runtime.decode_latent_tiled(latent, tile=tile, overlap=overlap)
-
-    def encode_content(self, content: Any) -> Any:
-        return self._runtime.encode_content(content)
-
-    def encode_content_tiled(
-        self,
-        content: Any,
-        *,
-        tile: tuple[int, ...],
-        overlap: tuple[int, ...],
-    ) -> Any:
-        return self._runtime.encode_content_tiled(content, tile=tile, overlap=overlap)
-
-
-class _LTXComponentCodec:
-    sequence_content = True
-
-    def __init__(self, value: object) -> None:
-        inference = importlib.import_module("dinkster_inference")
-        if not isinstance(value, NativeComponentHandle):
-            raise TypeError("vae must provide a native video codec component")
-        value.require_active()
-        recipe = value.recipe
-        if (
-            recipe is None
-            or tuple(source.role for source in recipe.sources) != ("vae",)
-            or recipe.runtime_identity != value.resource_identity
-        ):
-            raise TypeError("vae requires a vae source and matching recipe identity")
-        inference.ComponentBinding("vae", recipe.family_id, value.resource_identity)
-        descriptor = _component_descriptor(recipe.family_id)
-        latent = descriptor.family.latent
-        streams: dict[str, Any] = dict(getattr(latent, "streams", ()))
-        if streams:
-            latent = streams.get("video")
-        if latent is None or latent.dimensions != 3 or not latent.temporal_causal:
-            raise TypeError("vae requires a declared causal video latent geometry")
-        self._handle = value
-        self._resource_identity = self._handle.resource_identity
-        module = cast("Any", self._handle.component)
-        for method in ("encode", "decode"):
-            if not callable(getattr(module, method, None)):
-                raise TypeError(f"vae component requires callable {method}")
-        config = getattr(module, "config", None)
-        for field, expected in (
-            ("latent_channels", latent.channels),
-            ("spatial_ratio", latent.spatial_downscale),
-            ("temporal_ratio", latent.temporal_downscale),
-        ):
-            dimension = getattr(config, field, None)
-            if type(dimension) is not int or dimension <= 0 or dimension != expected:
-                raise TypeError(f"vae config.{field} must match declared video latent geometry")
-        inference_torch = importlib.import_module("dinkster_inference_torch")
-        runtime_type = (
-            inference_torch.LTXAVVideoCodecRuntime
-            if "audio" in streams
-            else inference_torch.LTXVVideoCodecRuntime
-        )
-        self._runtime = runtime_type(
-            module, compute_dtype=_torch_dtype(_torch(), recipe.knobs.vae_dtype)
-        )
-        self.descriptor = self._runtime.codec.descriptor
-        for field in ("channels", "spatial_downscale", "temporal_downscale"):
-            if getattr(self.descriptor.latent, field) != getattr(latent, field):
-                raise TypeError(f"vae codec requires matching declared latent.{field}")
-        self.load_device = self._handle.load_device
-
-    @property
-    def _dinkster_resident_owner(self) -> NativeComponentHandle:
-        return self._handle
-
-    @property
-    def resource_identity(self) -> str:
-        return self._resource_identity
-
-    def require_active(self) -> None:
-        self._handle.require_active()
-
-    def stage(self) -> Any:
-        return self._handle.stage(clear_cache_after=True)
-
-    def decode_latent(self, latent: Any) -> Any:
-        return self._runtime.decode_latent(latent)
-
-    def decode_latent_tiled(
-        self,
-        latent: Any,
-        *,
-        tile: tuple[int, ...],
-        overlap: tuple[int, ...],
-    ) -> Any:
-        return self._runtime.codec.decode_tiled(latent, tile=tile, overlap=overlap)
-
-    def encode_content(self, content: Any) -> Any:
-        return self._runtime.encode_content(content)
-
-    def encode_content_tiled(
-        self,
-        content: Any,
-        *,
-        tile: tuple[int, ...],
-        overlap: tuple[int, ...],
-    ) -> Any:
-        return self._runtime.codec.encode_tiled(content, tile=tile, overlap=overlap)
-
-
-def _qwen_image_component_handle(value: object, name: str, role: str) -> NativeComponentHandle:
-    inference = importlib.import_module("dinkster_inference")
-    family_id = inference.QWEN_IMAGE_CONFIG.family_id
-    if not isinstance(value, NativeComponentHandle):
-        raise TypeError(f"{name} must be a native Qwen Image {role} component")
-    value.require_active()
-    recipe = value.recipe
-    if (
-        recipe is None
-        or recipe.family_id != family_id
-        or tuple(source.role for source in recipe.sources) != (role,)
-        or recipe.runtime_identity != value.resource_identity
-    ):
-        raise TypeError(f"{name} must be a native Qwen Image {role} component")
-    try:
-        inference.ComponentBinding(role, family_id, value.resource_identity)
-    except (TypeError, ValueError) as error:
-        raise TypeError(f"{name} must be a native Qwen Image {role} component") from error
-    return value
-
-
-class _QwenImageComponentCodec:
-    def __init__(self, value: object) -> None:
-        self._handle = _qwen_image_component_handle(value, "vae", "vae")
-        self._resource_identity = self._handle.resource_identity
-        self.descriptor = importlib.import_module("dinkster_inference").WAN21_CODEC
-        self.load_device = self._handle.load_device
-
-    @property
-    def _dinkster_resident_owner(self) -> NativeComponentHandle:
-        return self._handle
-
-    @property
-    def resource_identity(self) -> str:
-        return self._resource_identity
-
-    def require_active(self) -> None:
-        self._handle.require_active()
-
-    def stage(self) -> Any:
-        return self._handle.stage(clear_cache_after=True)
-
-    def decode_latent(self, latent: Any) -> Any:
-        runtime = importlib.import_module("dinkster_inference_torch").WanVAECodecRuntime(
-            self._handle.component,
-            layered=latent.ndim == 5 and latent.shape[2] > 1,
-        )
-        return runtime.decode_latent(latent)
-
-    def encode_content(self, content: Any) -> Any:
-        if content.ndim == 4:
-            runtime = importlib.import_module("dinkster_inference_torch").WanVAECodecRuntime(
-                self._handle.component
-            )
-            return runtime.encode_content(content)
-        raise ValueError("Qwen Image content must have shape [batch,3,height,width]")
-
-
-def _flux2_component_handle(value: object, name: str, role: str | None) -> NativeComponentHandle:
-    """Validate one native Flux2 component. A None role accepts the
-    bound family's reference text encoder; "vae" requires the shared
-    neutral-scope VAE component."""
-    inference = importlib.import_module("dinkster_inference")
-    if not isinstance(value, NativeComponentHandle):
-        raise TypeError(f"{name} must be a native Flux2 {role or 'text'} component")
-    value.require_active()
-    recipe = value.recipe
-    if (
-        recipe is None
-        or recipe.runtime_identity != value.resource_identity
-        or len(recipe.sources) != 1
-    ):
-        raise TypeError(f"{name} must be a native Flux2 {role or 'text'} component")
-    bound_role = recipe.sources[0].role
-    if role == "vae":
-        valid = (
-            recipe.family_id == inference.FLUX2_SHARED_COMPONENT_FAMILY_ID and bound_role == "vae"
-        )
-    else:
-        valid = inference.FLUX2_TEXT_ROLE_BY_FAMILY.get(recipe.family_id) == bound_role
-    if not valid:
-        raise TypeError(f"{name} must be a native Flux2 {role or 'text'} component")
-    try:
-        inference.ComponentBinding(
-            recipe.sources[0].role, recipe.family_id, value.resource_identity
-        )
-    except (TypeError, ValueError) as error:
-        raise TypeError(f"{name} must be a native Flux2 {role or 'text'} component") from error
-    return value
 
 
 def resolve_trellis2_component_execution(
@@ -10898,139 +10394,42 @@ def resolve_trellis2_component_execution(
     )
 
 
-class _KLComponentCodec:
-    def __init__(self, handle: NativeComponentHandle, family_name: str) -> None:
-        self._handle = handle
-        self._family_name = family_name
-        self._resource_identity = self._handle.resource_identity
-        module = cast("Any", self._handle.component)
-        plugin = importlib.import_module("dinkster_inference_torch").kl_codec_plugin(module)
-        self._plugin = replace(plugin, compute_dtype=next(module.parameters()).dtype)
-        self.descriptor = self._plugin.descriptor
-        self.load_device = self._handle.load_device
+def load_registered_component(
+    value: object,
+    name: str,
+    role: str | None = None,
+    *,
+    family_id: str | None = None,
+) -> NativeComponentHandle:
+    from dinkster_inference.component_registry import execution_symbol
 
-    @property
-    def _dinkster_resident_owner(self) -> NativeComponentHandle:
-        return self._handle
+    registry = importlib.import_module("dinkster_native.family_registry")
+    if family_id is None:
+        load = registry.registered_callable(value, "native_load")
+    else:
+        descriptor = _builtin_inference_registries().components.get(family_id)
+        reference = None if descriptor is None else descriptor.native_load
+        if reference is None:
+            raise TypeError(f"no declared native_load for family={family_id!r}")
+        load = execution_symbol(reference)
+    return load(value, name, role)
 
-    @property
-    def resource_identity(self) -> str:
-        return self._resource_identity
 
-    def require_active(self) -> None:
-        self._handle.require_active()
+class _RegisteredComponentCodec:
+    def __init__(self, value: object, codec: Any) -> None:
+        registry = importlib.import_module("dinkster_native.family_registry")
+        self._codec = codec
+        self._decode = registry.registered_callable(value, "native_decode")
+        self._encode = registry.registered_callable(value, "native_encode")
 
-    def stage(self, *, memory_required: int = 0) -> Any:
-        return self._handle.stage(
-            memory_required=memory_required,
-            clear_cache_after=True,
-        )
-
-    def _memory_required(self, value: Any, direction: str) -> int:
-        estimator = self._plugin.memory
-        if estimator is None:
-            return 0
-        inference = importlib.import_module("dinkster_inference")
-        dtype_name = str(self._plugin.compute_dtype).removeprefix("torch.")
-        try:
-            dtype = {
-                "float16": inference.FLOAT16,
-                "bfloat16": inference.BFLOAT16,
-                "float32": inference.FLOAT32,
-            }[dtype_name]
-        except KeyError:
-            raise TypeError(f"unsupported component codec dtype {dtype_name!r}") from None
-        geometry = inference.TensorGeometry(tuple(value.shape), dtype)
-        if direction == "decode":
-            return estimator.decode_bytes(geometry)
-        return estimator.encode_bytes(geometry)
-
-    def decode_memory_required(self, latent: Any) -> int:
-        return self._memory_required(latent, "decode")
-
-    def encode_memory_required(self, content: Any) -> int:
-        return self._memory_required(content, "encode")
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._codec, name)
 
     def decode_latent(self, latent: Any) -> Any:
-        return _run_direct_vae(
-            handle=self._handle,
-            value=latent,
-            direction="decode",
-            operation=self._plugin.decode,
-            codec=self._plugin,
-        )
+        return self._decode(self._codec, latent)
 
     def encode_content(self, content: Any) -> Any:
-        if content.ndim != 4:
-            raise ValueError(f"{self._family_name} content must have shape [batch,3,height,width]")
-        return _run_direct_vae(
-            handle=self._handle,
-            value=content,
-            direction="encode",
-            operation=self._plugin.encode,
-            codec=self._plugin,
-        )
-
-
-class _MiniMaxMusic3ComponentCodec:
-    def __init__(self, value: object) -> None:
-        self._handle = _minimax_music3_component_handle(value, "vae", "vae")
-        self._resource_identity = self._handle.resource_identity
-        self._plugin = importlib.import_module("dinkster_inference_torch").minimax_music3_dav_codec(
-            self._handle.component
-        )
-        self.descriptor = self._plugin.descriptor
-        self.load_device = self._handle.load_device
-
-    @property
-    def _dinkster_resident_owner(self) -> NativeComponentHandle:
-        return self._handle
-
-    @property
-    def resource_identity(self) -> str:
-        return self._resource_identity
-
-    def require_active(self) -> None:
-        self._handle.require_active()
-
-    def stage(self) -> Any:
-        return self._handle.stage(clear_cache_after=True)
-
-    def decode_latent(self, latent: Any) -> Any:
-        return self._plugin.decode(latent)
-
-    def decode_latent_tiled(
-        self,
-        latent: Any,
-        *,
-        tile: tuple[int, ...],
-        overlap: tuple[int, ...],
-    ) -> Any:
-        return self._plugin.decode_tiled(
-            latent,
-            tile=tile,
-            overlap=overlap,
-            output_device="cpu",
-            dtype=_torch().float32,
-        )
-
-
-class _Flux2ComponentCodec(_KLComponentCodec):
-    def __init__(self, value: object) -> None:
-        super().__init__(_flux2_component_handle(value, "vae", "vae"), "Flux2")
-
-
-class _Lumina2ComponentCodec(_KLComponentCodec):
-    def __init__(self, value: object) -> None:
-        super().__init__(_lumina2_component_handle(value, "vae", "vae"), "Lumina2")
-
-
-class _ChromaComponentCodec(_KLComponentCodec):
-    def __init__(self, value: object) -> None:
-        super().__init__(_chroma_component_handle(value, "vae", "vae"), "Chroma")
-
-    def decode_latent(self, latent: Any) -> Any:
-        return super().decode_latent(latent).to("cpu")
+        return self._encode(self._codec, content)
 
 
 def _native_component_codec(value: object) -> Any:
@@ -11046,7 +10445,7 @@ def _native_component_codec(value: object) -> Any:
         raise TypeError(
             f"no declared codec adapter; detected family={family_id!r}, roles={roles!r}"
         )
-    return execution_symbol(descriptor.codec_adapter)(value)
+    return _RegisteredComponentCodec(value, execution_symbol(descriptor.codec_adapter)(value))
 
 
 def _z_image_control_latent(
@@ -11913,7 +11312,9 @@ class NativeVAEEncode(VAEEncode):
             raise ValueError(f"pixels must be NHWC rank 4, got shape {tuple(tensor.shape)}")
         with handle.stage("vae"):
             content = tensor.permute(0, 3, 1, 2).to(handle.load_device)
-            if handle.runtime.family.id in ("dinkster.wan21", "dinkster.wan22"):
+            if importlib.import_module("dinkster_native.families.wan21").is_runtime_family(
+                handle.runtime.family.id
+            ):
                 content = content.permute(1, 0, 2, 3).unsqueeze(0)
             with torch.inference_mode():
                 latent = _run_direct_vae(
@@ -16009,7 +15410,12 @@ def _run_qwen_text_generation(inputs: Mapping[str, object], prompt: str) -> str:
     max_length = _generation_input_int(inputs, "max_length", 1, 32_768)
     inference = importlib.import_module("dinkster_inference")
     sampler, seed = _generation_sampler(inputs, inference)
-    handle = _anima_component_handle(inputs.get("clip"), "clip", "qwen3_06b")
+    handle = load_registered_component(
+        inputs.get("clip"),
+        "clip",
+        "qwen3_06b",
+        family_id=inference.ANIMA_CONFIG.family_id,
+    )
     context = current_execution_context()
     cancelled = _not_cancelled if context is None else context.cancelled
 
@@ -16118,9 +15524,14 @@ class NativeMiniMaxMusic3TextEncode(MiniMaxMusic3TextEncode):
             raise ValueError("cfg_scale must be in [0.0, 100.0]")
         if type(top_k) is not int or not 1 <= top_k <= 16384:
             raise ValueError("top_k must be an integer in [1, 16384]")
-        handle = _minimax_music3_component_handle(clip, "clip", "text")
-        tokenizer = getattr(handle.component, "_dinkster_minimax_music3_tokenizer", None)
         inference = importlib.import_module("dinkster_inference")
+        handle = load_registered_component(
+            clip,
+            "clip",
+            "text",
+            family_id=inference.MINIMAX_MUSIC3_CONFIG.family_id,
+        )
+        tokenizer = getattr(handle.component, "_dinkster_minimax_music3_tokenizer", None)
         inference_torch = importlib.import_module("dinkster_inference_torch")
         max_audio_frames = min(
             inference.MAX_AUDIO_FRAMES,
@@ -16168,19 +15579,19 @@ class GenerationClipTextEncode(NativeClipTextEncode):
         options = _native_clip_options(clip)
         clip = options.source
         if type(clip) is _LTXAVTextHandle:
-            handle = clip
+            direct_clip = cast("Any", clip)
             inference = importlib.import_module("dinkster_inference")
             torch = _torch()
-            with handle.stage():
+            with direct_clip.stage():
                 with torch.inference_mode():
-                    carrier = handle.encode_text(text)
+                    carrier = direct_clip.encode_text(text)
             return cls.outputs(
                 conditioning=inference.bind_component_conditioning(
                     carrier,
                     inference.ComponentBinding(
-                        "text",
-                        "dinkster.ltxav",
-                        handle.resource_identity,
+                        direct_clip.role,
+                        direct_clip.family_id,
+                        direct_clip.resource_identity,
                     ),
                 )
             )
@@ -16210,227 +15621,9 @@ class GenerationClipTextEncode(NativeClipTextEncode):
                         ),
                     )
                 )
-            if recipe is not None and recipe.family_id == inference.LUMINA2_CONFIG.family_id:
-                handle = _lumina2_component_handle(clip, "clip", "gemma2_2b")
-                torch = _torch()
-                with handle.stage():
-                    with torch.inference_mode():
-                        runtime = importlib.import_module(
-                            "dinkster_inference_torch"
-                        ).Lumina2TextRuntime(handle.component)
-                        conditioning = runtime.encode_text(text)
-                carrier = importlib.import_module(
-                    "dinkster_inference_torch"
-                ).basic_conditioning_to_carrier(conditioning)
-                return cls.outputs(
-                    conditioning=inference.bind_component_conditioning(
-                        carrier,
-                        inference.ComponentBinding(
-                            "gemma2_2b",
-                            inference.LUMINA2_CONFIG.family_id,
-                            handle.resource_identity,
-                        ),
-                    )
-                )
-            if (
-                recipe is not None
-                and recipe.family_id == inference.CHROMA.id
-                and tuple(source.role for source in recipe.sources) == ("t5xxl",)
-            ):
-                handle = _chroma_component_handle(clip, "clip", "t5xxl")
-                torch = _torch()
-                with handle.stage():
-                    with torch.inference_mode():
-                        runtime = importlib.import_module(
-                            "dinkster_inference_torch"
-                        ).ChromaTextRuntime(handle.component)
-                        conditioning = runtime.encode_text(
-                            text,
-                            min_padding=options.t5_min_padding,
-                            min_length=options.t5_min_length,
-                        )
-                        carrier = importlib.import_module(
-                            "dinkster_inference_torch"
-                        ).basic_conditioning_to_carrier(conditioning)
-                        del conditioning
-                return cls.outputs(
-                    conditioning=inference.bind_component_conditioning(
-                        carrier,
-                        inference.ComponentBinding(
-                            "t5xxl",
-                            inference.CHROMA.id,
-                            handle.resource_identity,
-                        ),
-                    )
-                )
-            if recipe is not None and recipe.family_id == inference.ANIMA_CONFIG.family_id:
-                handle = _anima_component_handle(clip, "clip", "qwen3_06b")
-                torch = _torch()
-                with handle.stage():
-                    with torch.inference_mode():
-                        runtime = importlib.import_module(
-                            "dinkster_inference_torch"
-                        ).AnimaTextRuntime(handle.component)
-                        conditioning = runtime.encode_text(text)
-                carrier = importlib.import_module(
-                    "dinkster_inference_torch"
-                ).anima_conditioning_to_carrier(conditioning)
-                return cls.outputs(
-                    conditioning=inference.bind_component_conditioning(
-                        carrier,
-                        inference.ComponentBinding(
-                            "qwen3_06b",
-                            inference.ANIMA_CONFIG.family_id,
-                            handle.resource_identity,
-                        ),
-                    )
-                )
-            if recipe is not None and recipe.family_id == inference.IDEOGRAM4_CONFIG.family_id:
-                handle = _ideogram4_component_handle(clip, "clip", "qwen3vl_8b")
-                torch = _torch()
-                with handle.stage():
-                    with torch.inference_mode():
-                        runtime = importlib.import_module(
-                            "dinkster_inference_torch"
-                        ).Ideogram4TextRuntime(handle.component)
-                        conditioning = runtime.encode_text(text)
-                carrier = importlib.import_module(
-                    "dinkster_inference_torch"
-                ).ideogram4_conditioning_to_carrier(conditioning)
-                return cls.outputs(
-                    conditioning=inference.bind_component_conditioning(
-                        carrier,
-                        inference.ComponentBinding(
-                            "qwen3vl_8b",
-                            inference.IDEOGRAM4_CONFIG.family_id,
-                            handle.resource_identity,
-                        ),
-                    )
-                )
-            if recipe is not None and recipe.family_id == inference.KREA2_CONFIG.family_id:
-                handle = _krea2_component_handle(clip, "clip", "qwen3vl_4b")
-                torch = _torch()
-                with handle.stage():
-                    with torch.inference_mode():
-                        runtime = importlib.import_module(
-                            "dinkster_inference_torch"
-                        ).Krea2TextRuntime(handle.component)
-                        conditioning = runtime.encode_text(text)
-                carrier = importlib.import_module(
-                    "dinkster_inference_torch"
-                ).basic_conditioning_to_carrier(conditioning)
-                return cls.outputs(
-                    conditioning=inference.bind_component_conditioning(
-                        carrier,
-                        inference.ComponentBinding(
-                            "qwen3vl_4b",
-                            inference.KREA2_CONFIG.family_id,
-                            handle.resource_identity,
-                        ),
-                    )
-                )
-            if recipe is not None and recipe.family_id in inference.FLUX2_TEXT_ROLE_BY_FAMILY:
-                handle = _flux2_component_handle(clip, "clip", None)
-                torch = _torch()
-                with handle.stage():
-                    with torch.inference_mode():
-                        runtime = importlib.import_module(
-                            "dinkster_inference_torch"
-                        ).Flux2TextRuntime(handle.component)
-                        conditioning = runtime.encode_text(text)
-                carrier = importlib.import_module(
-                    "dinkster_inference_torch"
-                ).basic_conditioning_to_carrier(conditioning)
-                return cls.outputs(
-                    conditioning=inference.bind_component_conditioning(
-                        carrier,
-                        inference.ComponentBinding(
-                            recipe.sources[0].role,
-                            recipe.family_id,
-                            handle.resource_identity,
-                        ),
-                    )
-                )
-            if recipe is not None and recipe.family_id == "dinkster.wan21":
-                handle = _wan21_component_handle(clip, "clip", "umt5xxl")
-                torch = _torch()
-                with handle.stage():
-                    with torch.inference_mode():
-                        runtime = importlib.import_module(
-                            "dinkster_inference_torch"
-                        ).Wan21TextRuntime(handle.component)
-                        if options.t5_min_padding is None and options.t5_min_length is None:
-                            conditioning = runtime.encode_text(text)
-                        else:
-                            conditioning = runtime.encode_text(
-                                text,
-                                min_padding=options.t5_min_padding,
-                                min_length=options.t5_min_length,
-                            )
-                carrier = importlib.import_module(
-                    "dinkster_inference_torch"
-                ).wan21_text_conditioning_to_carrier(conditioning)
-                return cls.outputs(
-                    conditioning=inference.bind_component_conditioning(
-                        carrier,
-                        inference.ComponentBinding(
-                            "umt5xxl",
-                            "dinkster.wan21",
-                            handle.resource_identity,
-                        ),
-                    )
-                )
-            if recipe is not None and recipe.family_id == "dinkster.ltxv":
-                handle = _ltxv_component_handle(clip, "clip", "t5xxl")
-                torch = _torch()
-                with handle.stage():
-                    with torch.inference_mode():
-                        runtime = importlib.import_module(
-                            "dinkster_inference_torch"
-                        ).LTXVTextRuntime(handle.component)
-                        if options.t5_min_padding is None and options.t5_min_length is None:
-                            conditioning = runtime.encode_text(text)
-                        else:
-                            conditioning = runtime.encode_text(
-                                text,
-                                min_padding=options.t5_min_padding,
-                                min_length=options.t5_min_length,
-                            )
-                carrier = importlib.import_module(
-                    "dinkster_inference_torch"
-                ).ltxv_text_conditioning_to_carrier(conditioning)
-                return cls.outputs(
-                    conditioning=inference.bind_component_conditioning(
-                        carrier,
-                        inference.ComponentBinding(
-                            "t5xxl",
-                            "dinkster.ltxv",
-                            handle.resource_identity,
-                        ),
-                    )
-                )
-            handle = _qwen_image_component_handle(clip, "clip", "qwen2_5_vl_7b")
-            torch = _torch()
-            with handle.stage():
-                with torch.inference_mode():
-                    runtime = importlib.import_module(
-                        "dinkster_inference_torch"
-                    ).QwenImageTextRuntime(handle.component)
-                    conditioning = runtime.encode_text(text)
-            inference = importlib.import_module("dinkster_inference")
-            carrier = importlib.import_module(
-                "dinkster_inference_torch"
-            ).qwen_image_conditioning_to_carrier(conditioning)
-            return cls.outputs(
-                conditioning=inference.bind_component_conditioning(
-                    carrier,
-                    inference.ComponentBinding(
-                        "qwen2_5_vl_7b",
-                        inference.QWEN_IMAGE_CONFIG.family_id,
-                        handle.resource_identity,
-                    ),
-                )
-            )
+            registered = importlib.import_module("dinkster_native.family_registry")
+            encode_text = registered.registered_callable(clip, "native_encode_text")
+            return cls.outputs(conditioning=encode_text(clip, text, options))
         handle = _require_provider_runtime(clip, "clip")
         runtime = handle.runtime
         encode_text = getattr(runtime, "encode_text", None)
@@ -18180,8 +17373,8 @@ class GenerationLTXVLatentUpsampler(Node):
             raise ValueError(
                 "samples['samples'] must be nonempty floating [batch,128,time,height,width]"
             )
-        upscaler = _ltxav_component_handle(upscale_model, "upscale_model", "latent_upscaler")
-        video_vae = _ltxav_component_handle(vae, "vae", "vae")
+        upscaler = load_registered_component(upscale_model, "upscale_model", "latent_upscaler")
+        video_vae = load_registered_component(vae, "vae", "vae")
         inference_torch = importlib.import_module("dinkster_inference_torch")
         model = upscaler.component
         vae_model = video_vae.component
@@ -21407,7 +20600,7 @@ def _decode_minimax_music3_audio(
         latent = latent.unbind()[-1]
     if latent.ndim != 3 or latent.shape[0] < 1 or latent.shape[1] != 128:
         raise ValueError("samples['samples'] must be nonempty [batch,128,frames]")
-    codec = _MiniMaxMusic3ComponentCodec(vae)
+    codec = _native_component_codec(vae)
     with codec.stage():
         with torch.inference_mode():
             load_latent = latent.to(codec.load_device)
@@ -21504,9 +20697,10 @@ class GenerationVAEDecode(NativeVAEDecode):
                 "samples['samples'] must be NCHW or NCTHW rank 4/5, "
                 f"got shape {tuple(latent_tensor.shape)}"
             )
+        memory_required = getattr(codec, "decode_memory_required", None)
         stage = (
-            codec.stage(memory_required=codec.decode_memory_required(latent_tensor))
-            if isinstance(codec, _KLComponentCodec)
+            codec.stage(memory_required=memory_required(latent_tensor))
+            if callable(memory_required)
             else codec.stage()
         )
         with stage:
@@ -21670,9 +20864,10 @@ class GenerationVAEEncode(NativeVAEEncode):
             and (not component_codec or getattr(codec, "sequence_content", False))
         ):
             content = content.permute(1, 0, 2, 3).unsqueeze(0)
+        memory_required = getattr(codec, "encode_memory_required", None)
         stage = (
-            codec.stage(memory_required=codec.encode_memory_required(content))
-            if isinstance(codec, _KLComponentCodec)
+            codec.stage(memory_required=memory_required(content))
+            if callable(memory_required)
             else codec.stage()
         )
         with stage:
@@ -23382,13 +22577,6 @@ NATIVE_ARM_NODES: tuple[type[Node], ...] = (
 )
 
 __all__ = [
-    "_ChromaComponentCodec",
-    "_Flux2ComponentCodec",
-    "_LTXComponentCodec",
-    "_Lumina2ComponentCodec",
-    "_QwenImageComponentCodec",
-    "_SeedVR2ComponentCodec",
-    "_Wan21ComponentCodec",
     "GENERATION_PROVIDER_NODES",
     "NATIVE_ARM_NODES",
     "NativeClipTextEncode",
