@@ -18,21 +18,22 @@ from dinkster_nodes_image import DetectObjects as OwnerDetectObjects
 from dinkster_nodes_image import SegmentByText as OwnerSegmentByText
 from dinkster_nodes_image import SegmentDetections as OwnerSegmentDetections
 from dinkster_nodes_image import TrackObjects as OwnerTrackObjects
+from dinkster_nodes_vision.sam31 import DetectObjects as SAM31DetectObjects
+from dinkster_nodes_vision.sam31 import SegmentByText as SAM31SegmentByText
+from dinkster_nodes_vision.sam31 import SegmentDetections as SAM31SegmentDetections
+from dinkster_nodes_vision.sam31 import TrackObjects as SAM31TrackObjects
 from dinkster_schema import ComboWidget, schema_signature, schema_to_wire
-from dinkster_vision_sam31 import DetectObjects as SAM31DetectObjects
-from dinkster_vision_sam31 import SegmentByText as SAM31SegmentByText
-from dinkster_vision_sam31 import SegmentDetections as SAM31SegmentDetections
-from dinkster_vision_sam31 import TrackObjects as SAM31TrackObjects
 from dinkster_workers import load_manifest
 
 from dinkster.compose import compose_serving
 
 ROOT = Path(__file__).parent.parent
-PACKAGE = ROOT / "packages" / "dinkster-vision-sam31"
-MANIFEST = PACKAGE / "dinkster-pack.toml"
-LICENSE = PACKAGE / "SAM_LICENSE"
-CLIP_LICENSE = PACKAGE / "CLIP_LICENSE"
-TOKENIZER = PACKAGE / "src/dinkster_vision_sam31/data/bpe_simple_vocab_16e6.txt.gz"
+PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
+SIDECAR = PACKAGE / "dinkster_vision_sam31_pack"
+MANIFEST = SIDECAR / "dinkster-pack.toml"
+LICENSE = SIDECAR / "SAM_LICENSE"
+CLIP_LICENSE = SIDECAR / "CLIP_LICENSE"
+TOKENIZER = PACKAGE / "src/dinkster_nodes_vision/sam31/data/bpe_simple_vocab_16e6.txt.gz"
 LICENSE_SHA256 = "4dea99bfaa016e21bc860d73f344236bd1e5c4977d1a9a8fd32f822b500ae1be"
 SOURCE_LICENSE_SHA256 = "bec48f70bd37bf8280a9d1ebf01642d26086f6122ba735baa08fe03c5a6e7448"
 CLIP_LICENSE_SHA256 = "893951b3bf94db8df1b13e05da5cdeb499400960e4d44a3962a8b33ed0b4f28e"
@@ -164,8 +165,8 @@ def test_sam31_pack_declares_cpu_providers_and_pinned_model() -> None:
 
 def test_sam31_wheel_contains_pack_runtime_manifest_and_license() -> None:
     project = tomllib.loads((PACKAGE / "pyproject.toml").read_text(encoding="utf-8"))
-    assert project["project"]["license"] == "LicenseRef-SAM-License"
-    assert project["project"]["license-files"] == ["SAM_LICENSE", "CLIP_LICENSE"]
+    assert "dinkster_vision_sam31_pack/SAM_LICENSE" in project["project"]["license-files"]
+    assert "dinkster_vision_sam31_pack/CLIP_LICENSE" in project["project"]["license-files"]
     license_bytes = LICENSE.read_bytes()
     assert hashlib.sha256(license_bytes).hexdigest() == LICENSE_SHA256
     assert hashlib.sha256(license_bytes.removesuffix(b"\n")).hexdigest() == SOURCE_LICENSE_SHA256
@@ -174,11 +175,10 @@ def test_sam31_wheel_contains_pack_runtime_manifest_and_license() -> None:
     assert hashlib.sha256(clip_license + b"\n").hexdigest() == SOURCE_CLIP_LICENSE_SHA256
     assert hashlib.sha256(TOKENIZER.read_bytes()).hexdigest() == TOKENIZER_SHA256
     included = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert included["dinkster-pack.toml"] == "dinkster_vision_sam31_pack/dinkster-pack.toml"
-    assert included["SAM_LICENSE"] == "dinkster_vision_sam31_pack/SAM_LICENSE"
-    assert included["CLIP_LICENSE"] == "dinkster_vision_sam31_pack/CLIP_LICENSE"
+    assert included["dinkster_vision_sam31_pack"] == "dinkster_vision_sam31_pack"
     assert (
-        included["src/dinkster_vision_sam31"] == "dinkster_vision_sam31_pack/dinkster_vision_sam31"
+        included["src/dinkster_nodes_vision/sam31"]
+        == "dinkster_vision_sam31_pack/dinkster_nodes_vision/sam31"
     )
 
 

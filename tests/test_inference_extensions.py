@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,7 @@ from dinkster_inference import (
     write_sampler_catalog,
 )
 from dinkster_protocol import SamplerRegistrySnapshot, extension_behavior_hash
-from dinkster_server import STATE_KEY, create_app
+from dinkster_server import STATE_KEY, PackInfo, create_app
 
 from dinkster.compose import CompositionError, PackSpec, ServingComposer
 from dinkster.reload_api import apply_reload, apply_remove
@@ -58,6 +59,7 @@ def _extension_manifest(
     module: str,
     *,
     namespace: str | None = None,
+    contract: str = "",
 ) -> Path:
     root.mkdir(parents=True)
     manifest = root / "dinkster-pack.toml"
@@ -67,7 +69,8 @@ def _extension_manifest(
         '[pack.entry]\nnodes = "s1_sampler_empty:NODES"\n\n'
         "[pack.extension]\n"
         f'inference = "{module}:register"\n'
-        'privileges = ["inference"]\n',
+        'privileges = ["inference"]\n'
+        f"{contract}",
         encoding="utf-8",
     )
     return manifest
@@ -86,6 +89,19 @@ def _write_collision_module(root: Path, module: str, descriptor: str) -> None:
         "make=make, noise=NoiseKind.NONE)\n"
         "def register():\n"
         "    return SamplerContribution((SAMPLER,))\n",
+        encoding="utf-8",
+    )
+
+
+def _write_scheduler_module(root: Path, module: str, descriptor: str) -> None:
+    (root / f"{module}.py").write_text(
+        "from dinkster_api.v1 import InferenceContribution, SchedulerDescriptor\n"
+        "def make_sigmas(steps, _space):\n"
+        "    return (float(steps), 0.0)\n"
+        f"SCHEDULER = SchedulerDescriptor({descriptor}, display_name='collision', "
+        "make_sigmas=make_sigmas)\n"
+        "def register():\n"
+        "    return InferenceContribution(schedulers=(SCHEDULER,))\n",
         encoding="utf-8",
     )
 
@@ -190,6 +206,8 @@ def test_two_out_of_tree_packs_compose_in_sampling_worker_and_unload_exactly(
                 "s1_scaled_euler",
                 "s1_context_probe",
             )
+            assert composer.composition.choices["dinkster.schedulers"][-1] == ("proof_a.scheduler")
+            assert composer.composition.choices["comfy.schedulers"][-1] == "s1_scheduler"
             assert [extension.id for extension in runtime.extension_snapshot.extensions] == [
                 "proof_a",
                 "proof_b",
@@ -198,15 +216,25 @@ def test_two_out_of_tree_packs_compose_in_sampling_worker_and_unload_exactly(
                 contribution.id
                 for extension in runtime.extension_snapshot.extensions
                 for contribution in extension.keyed_contributions
-            ) == ("proof_a.scaled_euler", "proof_b.context_probe")
+            ) == (
+                "proof_a.scaled_euler",
+                "proof_a.scheduler",
+                "proof_b.context_probe",
+            )
             catalog = json.loads(composer._sampler_catalog_path.read_text(encoding="utf-8"))
             assert all(key.startswith("sha256:") for key in catalog["records"])
+
+            engine = composer.composition.make_engine(lambda _event: None)
+            sampled = await engine.run(
+                Graph(nodes={"probe": GraphNode("dinkster.ksampler", {})}),
+                ["probe"],
+            )
+            assert sampled.outputs["probe"]["value"].resolve() == 3.0
 
             # The synchronous sampling loop runs in asyncio.to_thread. Parent
             # cancellation must still set the worker-local cooperative token,
             # stop that thread, and leave the sampling worker usable.
             marker = tmp_path / "cancelled.txt"
-            engine = composer.composition.make_engine(lambda _event: None)
             cancellation = asyncio.create_task(
                 engine.run(
                     Graph(
@@ -248,6 +276,105 @@ def test_two_out_of_tree_packs_compose_in_sampling_worker_and_unload_exactly(
     asyncio.run(scenario())
 
 
+def test_pack_registry_provider_orders_consumer_and_executes_declared_sampler(
+    tmp_path: Path,
+) -> None:
+    provider = _extension_manifest(
+        tmp_path / "proof_a",
+        "proof_a",
+        "s1_sampler_pack_a",
+        contract=(
+            '\n[pack.provides.registry]\n"dinkster.samplers" = ["proof_a.scaled_euler"]\n'
+            '"dinkster.schedulers" = ["proof_a.scheduler"]\n'
+        ),
+    )
+    consumer = _extension_manifest(
+        tmp_path / "proof_b",
+        "proof_b",
+        "s1_sampler_pack_b",
+        contract=(
+            '\n[pack.requirements.registry]\n"dinkster.samplers" = ["proof_a.scaled_euler"]\n'
+        ),
+    )
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=_worker_env(tmp_path))
+        try:
+            await composer.add_pack(
+                PackSpec(_host_manifest(tmp_path / "host"), trust_reserved=True)
+            )
+            digest = "sha256:" + "4" * 64
+            provider_spec = PackSpec(
+                provider,
+                packs={
+                    "proof_a": PackInfo(
+                        display_name="Proof A",
+                        version="1.2.3",
+                        artifact_digest=digest,
+                    )
+                },
+            )
+            consumer_spec = PackSpec(
+                consumer,
+                packs={
+                    "proof_b": PackInfo(
+                        display_name="Proof B",
+                        version="2.0.0",
+                        artifact_digest="sha256:" + "5" * 64,
+                    )
+                },
+            )
+            ordered = composer.order_pack_entries((consumer_spec, provider_spec))
+            for spec in ordered:
+                await composer.add_pack(spec)
+            composition = composer.composition
+            registry_receipts = [
+                item for item in composition.generation.resolutions if item.kind == "registry"
+            ]
+            assert len(registry_receipts) == 1
+            assert registry_receipts[0].pack == "proof-b"
+            assert registry_receipts[0].requirement == ("dinkster.samplers:proof_a.scaled_euler")
+            assert registry_receipts[0].provider == f"proof-a@1.2.3#{digest}"
+            sampled = await composition.make_engine(lambda _event: None).run(
+                Graph(nodes={"probe": GraphNode("dinkster.ksampler", {})}),
+                ["probe"],
+            )
+            assert sampled.outputs["probe"]["value"].resolve() == 3.0
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+def test_pack_registry_provider_must_match_materialized_contribution(tmp_path: Path) -> None:
+    provider = _extension_manifest(
+        tmp_path / "proof_a",
+        "proof_a",
+        "s1_sampler_pack_a",
+        contract=('\n[pack.provides.registry]\n"dinkster.samplers" = ["proof_a.missing"]\n'),
+    )
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=_worker_env(tmp_path))
+        try:
+            await composer.add_pack(
+                PackSpec(_host_manifest(tmp_path / "host"), trust_reserved=True)
+            )
+            with pytest.raises(
+                CompositionError,
+                match=(
+                    "declares registry provider "
+                    "dinkster.samplers:proof_a.missing, but its inference contribution "
+                    "does not register it"
+                ),
+            ):
+                await composer.add_pack(provider)
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_live_sampler_choices_publish_add_reload_remove_and_rollback(
     tmp_path: Path,
 ) -> None:
@@ -282,7 +409,9 @@ def test_live_sampler_choices_publish_add_reload_remove_and_rollback(
             )
             assert set(added.derived_choices) == {
                 "dinkster.samplers",
+                "dinkster.schedulers",
                 "comfy.samplers",
+                "comfy.schedulers",
             }
             state.replace(
                 (),
@@ -401,6 +530,71 @@ def test_sampler_collision_and_activation_failure_roll_back_staged_generation(
             assert composer._runtime_seat.pin() is before
             assert composer.composition.choices == before_choices
             assert composer.pack_specs() == before_specs
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+def test_scheduler_collision_from_two_extensions_fails_host_composition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        _write_scheduler_module(
+            tmp_path,
+            "s1_scheduler_collision_a",
+            "id='scheduler_a.value', aliases=('shared_scheduler',)",
+        )
+        _write_scheduler_module(
+            tmp_path,
+            "s1_scheduler_collision_b",
+            "id='scheduler_b.value', aliases=('second_scheduler',)",
+        )
+        composer = ServingComposer(worker_env=_worker_env(tmp_path))
+        try:
+            await composer.add_pack(
+                PackSpec(_host_manifest(tmp_path / "host"), trust_reserved=True)
+            )
+            await composer.add_pack(
+                _extension_manifest(
+                    tmp_path / "scheduler_a",
+                    "scheduler_a",
+                    "s1_scheduler_collision_a",
+                )
+            )
+            await composer.add_pack(
+                _extension_manifest(
+                    tmp_path / "scheduler_b",
+                    "scheduler_b",
+                    "s1_scheduler_collision_b",
+                )
+            )
+            entries, contributions = await composer._materialize_inference_contributions(
+                composer._records, composer._topology
+            )
+            scheduler_b = contributions["scheduler_b"][0]
+            contributions["scheduler_b"] = (
+                replace(
+                    scheduler_b,
+                    aliases=("shared_scheduler",),
+                ),
+            )
+
+            async def colliding_contributions(_records, _topology):
+                return entries, contributions
+
+            monkeypatch.setattr(
+                composer,
+                "_materialize_inference_contributions",
+                colliding_contributions,
+            )
+            with pytest.raises(
+                CompositionError,
+                match="extension 'scheduler_b' scheduler registry collision: "
+                "'shared_scheduler' already registered",
+            ):
+                await composer._build_extension_snapshot(composer._records, composer._topology)
         finally:
             await composer.close()
 

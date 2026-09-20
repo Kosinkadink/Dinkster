@@ -1,9 +1,11 @@
 ## Standalone native generation
 
-- Native generation requires Dinkster's torch runtime, not a ComfyUI checkout.
-  SD1.5 text-to-image uses native checkpoint, text-encode, empty-latent,
-  sampler, decode, and image-save nodes. ComfyUI EmptyLatentImage imports
-  lower to the native empty-latent node with dimensions and batch size preserved.
+- The working native SD 1.5 path today is a SamplerCustomAdvanced graph served
+  with `--comfy-root`, as recorded in
+  [maintainer issue #114](https://github.com/Kosinkadink/comfy-vibe-station/issues/114).
+  Native-only generation without a ComfyUI checkout returns when that issue
+  lands. The graph uses native checkpoint, text-encode, empty-latent, sampler,
+  decode, and image-save nodes.
 - Pinned core ComfyUI schemas are advertised as import metadata, including
   KSampler and CLIPTextEncode. They are not additional executable node IDs.
   Unsupported or ambiguous imports refuse with node-specific diagnostics.

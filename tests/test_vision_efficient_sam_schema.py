@@ -13,15 +13,15 @@ from dinkster_nodes_image import (
 from dinkster_nodes_image import (
     SegmentDetections as OwnerSegmentDetections,
 )
+from dinkster_nodes_vision.efficient_sam import SegmentDetections as EfficientSamSegmentDetections
 from dinkster_schema import ComboWidget, schema_signature, schema_to_wire
-from dinkster_vision_efficient_sam import SegmentDetections as EfficientSamSegmentDetections
 from dinkster_workers import load_manifest
 
 from dinkster.compose import compose_serving
 
 ROOT = Path(__file__).parent.parent
-PACKAGE = ROOT / "packages" / "dinkster-vision-efficient-sam"
-MANIFEST = PACKAGE / "dinkster-pack.toml"
+PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
+MANIFEST = PACKAGE / "dinkster_vision_efficient_sam_pack" / "dinkster-pack.toml"
 ENCODER_DIGEST = "blake3:106600f3dd645019eff0d6fabe46cc1359654b03bfaec45316dabb1121cc9e6e"
 DECODER_DIGEST = "blake3:41cdd8a75918dbef651ba10a244d22084999fc6162a265b9d504faacaef14004"
 
@@ -80,10 +80,10 @@ def test_efficient_sam_pack_declares_cpu_provider_and_pinned_models() -> None:
 def test_efficient_sam_wheel_contains_pack_runtime_and_manifest() -> None:
     project = tomllib.loads((PACKAGE / "pyproject.toml").read_text(encoding="utf-8"))
     included = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert included["dinkster-pack.toml"] == "dinkster_vision_efficient_sam_pack/dinkster-pack.toml"
+    assert included["dinkster_vision_efficient_sam_pack"] == "dinkster_vision_efficient_sam_pack"
     assert (
-        included["src/dinkster_vision_efficient_sam"]
-        == "dinkster_vision_efficient_sam_pack/dinkster_vision_efficient_sam"
+        included["src/dinkster_nodes_vision/efficient_sam"]
+        == "dinkster_vision_efficient_sam_pack/dinkster_nodes_vision/efficient_sam"
     )
 
 

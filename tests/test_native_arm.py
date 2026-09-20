@@ -1844,6 +1844,11 @@ def test_native_controlnet_loader_uses_descriptor_with_provenance(
         )
     )
     monkeypatch.setattr(component_catalog, "default_component_registry", lambda: registry)
+    monkeypatch.setattr(
+        arm,
+        "_builtin_inference_registries",
+        lambda: SimpleNamespace(components=registry),
+    )
 
     def resolve_loader(reference: str):
         assert reference == descriptor.loader
@@ -1940,6 +1945,11 @@ def test_native_controlnet_loader_refuses_missing_required_attention_route(
         return real_import_module(name)
 
     monkeypatch.setattr(component_catalog, "default_component_registry", lambda: registry)
+    monkeypatch.setattr(
+        arm,
+        "_builtin_inference_registries",
+        lambda: SimpleNamespace(components=registry),
+    )
     monkeypatch.setattr(
         component_registry,
         "execution_symbol",

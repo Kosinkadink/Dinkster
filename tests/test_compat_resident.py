@@ -1822,6 +1822,65 @@ def test_compat_ksampler_delegates_to_callback_aware_sampler(
     assert len(calls) == 2  # validation failures never reach the sampler
 
 
+def test_compat_ksampler_routes_native_runtime_handle_to_native_sampling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_compat_comfy import sampling
+    from dinkster_native.native_arm import GenerationKSampler
+    from dinkster_native.native_residency import NativeRuntimeHandle
+
+    handle = object.__new__(NativeRuntimeHandle)
+    calls: list[dict[str, object]] = []
+
+    def native_execute(cls: type[object], **kwargs: object) -> Mapping[str, object]:
+        del cls
+        calls.append(kwargs)
+        return {"latent": {"samples": "native"}}
+
+    def refuse_compat(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("native handles must not reach compatibility sampling")
+
+    monkeypatch.setattr(
+        GenerationKSampler,
+        "execute",
+        classmethod(native_execute),
+    )
+    monkeypatch.setattr(comfy_execution, "common_ksampler", refuse_compat)
+
+    result = sampling.KSampler.execute(
+        model=handle,
+        seed=91,
+        steps=20,
+        cfg=8.0,
+        sampler_name="euler",
+        scheduler="normal",
+        positive="positive",
+        negative="negative",
+        latent_image={"samples": "noise"},
+        denoise=1.0,
+    )
+
+    assert result == {"latent": {"samples": "native"}}
+    assert calls == [
+        {
+            "model": handle,
+            "seed": 91,
+            "steps": 20,
+            "cfg": 8.0,
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "positive": "positive",
+            "negative": "negative",
+            "latent_image": {"samples": "noise"},
+            "denoise": 1.0,
+            "conditioning_batching": "auto",
+            "max_fused_lanes": 2,
+            "segment": None,
+        }
+    ]
+
+
 def test_compat_ksampler_maps_owned_multistream_callback_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

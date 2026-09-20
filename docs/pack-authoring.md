@@ -61,6 +61,9 @@ api = "dinkster-api/v1"             # author API imported by the pack
 [pack.requirements.registry]
 # "dinkster.samplers" = ["dinkster.euler"] # exact host registry descriptors
 
+[pack.provides.registry]
+# "dinkster.samplers" = ["my-pack.guided-euler"] # descriptors this pack registers
+
 [pack.requirements.capabilities]
 # "model-provider.video-generation" = ">=2,<3"
 
@@ -248,10 +251,20 @@ or none of them.
 
 Contracts and requirements are checked before execution. A host/API/
 inference contract mismatch, missing exact registry id, missing or
-incompatible capability, duplicate capability provider, or dependency
-cycle refuses the candidate composition. Dependencies determine provider
-ordering but do not grant Python imports between pack implementations;
-share behavior through registered ids or a deliberately versioned library.
+incompatible capability, duplicate registry or capability provider, or
+dependency cycle refuses the candidate composition. A pack that provides
+model families, samplers, or schedulers lists each exact id under
+`[pack.provides.registry]`. Doctor and serving composition require every
+listed id to appear in that pack's materialized inference contribution.
+Sampler and scheduler contributions currently expose that materialized
+provider surface. Model-family declarations participate in contract resolution,
+but cannot activate until the pack also materializes a matching family
+contribution.
+Registry requirements supplied by another pack order that provider before
+the consumer and record the provider pack identity in composition provenance.
+Dependencies determine provider ordering but do not grant Python imports
+between pack implementations; share behavior through registered ids or a
+deliberately versioned library.
 
 Every resolved composition has one canonical digest over its mode, pack
 versions, artifact digests, and requirement-to-provider mapping. Production
@@ -683,7 +696,8 @@ presentation icons (`presentation.icon-invalid`), invalid blueprints
 `blueprints.budget-exceeded`). Warnings (drift):
 unpinned requirements, import-time side effects (stdout output, thread
 spawns), raw import-time logging, slow imports (> 2 s), codec-less types
-that your own schemas put on edges, foreign-origin logging.
+that your own schemas put on edges, foreign-origin logging, and extension
+contribution kinds or capabilities that no runtime consumer implements.
 
 The rules exist because ComfyUI's ecosystem grew the opposite habits and
 every host change became a breaking change. A pack that only uses

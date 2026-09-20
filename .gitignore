@@ -21,3 +21,4 @@ dist/
 /docs/comfy-capability-evidence.json
 /.evidence-source/
 /.coverage-inputs/
+/.golden-cache/

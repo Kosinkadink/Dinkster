@@ -69,7 +69,7 @@ def desktop_windows_runtime(source: Path) -> dict[str, Any]:
     locked = {entry["version"] for entry in lock["package"] if entry["name"] == "torch"}
     if not isinstance(version, str) or locked != {version.split("+", 1)[0]}:
         raise ValueError("Desktop Windows runtime cudaTorch.version does not match uv.lock")
-    pack_path = "packages/dinkster-vision-birefnet/dinkster-pack.toml"
+    pack_path = "packages/dinkster-nodes-vision/dinkster_vision_birefnet_pack/dinkster-pack.toml"
     pack = tomllib.loads((source / pack_path).read_text("utf-8"))["pack"]
     torchvision_version = torch.get("torchvisionVersion")
     if (

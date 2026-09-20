@@ -77,18 +77,20 @@ from dinkster_engine import (
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, TypedLiteral, top_level_node_id
 from dinkster_inference import (
     INFERENCE_SAMPLERS_SURFACE,
+    INFERENCE_SCHEDULERS_SURFACE,
     SAMPLER_CATALOG_ENV,
     OpenAICompatibility,
     OpenAIGenerationProvider,
     Registry,
     RegistryError,
     SamplerExtensionEntry,
-    builtin_family_registry,
+    builtin_registries,
     builtin_sampler_snapshot,
-    builtin_schedulers,
     register_inference_types,
+    registry_choice_values,
     remove_sampler_catalog_record,
     sampler_choice_values,
+    scheduler_declaration,
     write_sampler_catalog,
 )
 from dinkster_memory import (
@@ -195,6 +197,7 @@ from dinkster_values import (
     RESOURCE_ID_META_KEY,
     RESOURCES_META_KEY,
     ListPayload,
+    Rendition,
     ResourcePins,
     TypeRegistry,
     Value,
@@ -236,8 +239,14 @@ from dinkster_workers import (
     load_manifest,
     normalize_egress_origin,
     resident_devices,
+    unmatched_registry_providers,
 )
-from dinkster_workers.catalog import PackCatalog, read_catalog, source_digest, worker_declarations
+from dinkster_workers.catalog import (
+    PackCatalog,
+    read_catalog,
+    source_digest,
+    worker_declarations_match_catalog,
+)
 from dinkster_workers.host import load_pack as load_host_pack
 from dinkster_workers.session import WorkerDied
 
@@ -298,15 +307,22 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
         "dinkster-nodes-remote": "dinkster_nodes_remote",
         "dinkster-nodes-generation": "dinkster_nodes_generation",
         "dinkster-nodes-generation-openai": "dinkster_nodes_generation_openai",
-        "dinkster-vision-birefnet": "dinkster_vision_birefnet",
-        "dinkster-vision-depth-anything-v2": "dinkster_vision_depth_anything_v2",
-        "dinkster-vision-depth-anything-v3": "dinkster_vision_depth_anything_v3",
-        "dinkster-vision-detr": "dinkster_vision_detr",
-        "dinkster-vision-efficient-sam": "dinkster_vision_efficient_sam",
-        "dinkster-vision-hed": "dinkster_vision_hed",
-        "dinkster-vision-rtdetr": "dinkster_vision_rtdetr",
-        "dinkster-vision-sam31": "dinkster_vision_sam31",
-        "dinkster-vision-upscale": "dinkster_vision_upscale",
+        "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
+        "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
+        "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
+        "dinkster-vision-detr": "dinkster_nodes_vision.detr",
+        "dinkster-vision-efficient-sam": "dinkster_nodes_vision.efficient_sam",
+        "dinkster-vision-hed": "dinkster_nodes_vision.hed",
+        "dinkster-vision-rtdetr": "dinkster_nodes_vision.rtdetr",
+        "dinkster-vision-sam31": "dinkster_nodes_vision.sam31",
+        "dinkster-vision-upscale": "dinkster_nodes_vision.upscale",
+    }
+)
+_FIRST_PARTY_PACK_DISTRIBUTIONS = MappingProxyType(
+    {
+        pack_id: "dinkster-nodes-vision"
+        for pack_id in _FIRST_PARTY_PACK_MODULES
+        if pack_id.startswith("dinkster-vision-")
     }
 )
 _ISOLATED_FIRST_PARTY_PACKS = frozenset(
@@ -420,6 +436,10 @@ class _ReplicaWorkerPool:
         return self._first.extension_contributions
 
     @property
+    def renditions(self) -> object:
+        return getattr(self._first, "renditions", ())
+
+    @property
     def can_convert_legacy_checkpoint(self) -> bool:
         return self._first.can_convert_legacy_checkpoint
 
@@ -441,6 +461,7 @@ class _ReplicaWorkerPool:
                 or dict(worker.compat_skips) != dict(first.compat_skips)
                 or worker.body_arms != first.body_arms
                 or worker.extension_contributions != first.extension_contributions
+                or getattr(worker, "renditions", ()) != getattr(first, "renditions", ())
                 or worker.attention_capabilities != first.attention_capabilities
                 or worker.attention_route_token != first.attention_route_token
             ):
@@ -1185,7 +1206,17 @@ def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
             root = temporary / "artifact"
             root.mkdir()
             shutil.copy2(manifest, root / "dinkster-pack.toml")
-            shutil.copytree(module_root, root / module_root.name)
+            if module_root.parent.name == "dinkster_nodes_vision":
+                namespace = root / module_root.parent.name
+                namespace.mkdir()
+                bundled_namespace = manifest.parent / module_root.parent.name
+                shutil.copy2(bundled_namespace / "__init__.py", namespace / "__init__.py")
+                shutil.copytree(module_root, namespace / module_root.name)
+                for sidecar in manifest.parent.iterdir():
+                    if sidecar.is_file() and sidecar != manifest:
+                        shutil.copy2(sidecar, root / sidecar.name)
+            else:
+                shutil.copytree(module_root, root / module_root.name)
             for filename in _PACK_ARTIFACT_SIDECARS:
                 sidecar = manifest.parent / filename
                 if sidecar.is_file():
@@ -1229,11 +1260,15 @@ def _installed_pack_spec(
     asset_vault_write: bool = False,
 ) -> PackSpec:
     """Resolve one installed first-party pack and its exact provenance."""
+    distribution_id = _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
     try:
-        distribution = importlib.metadata.distribution(pack_id)
+        distribution = importlib.metadata.distribution(distribution_id)
     except importlib.metadata.PackageNotFoundError as exc:
-        raise CompositionError(f"installed pack {pack_id!r} is unavailable") from exc
-    bundled = Path(str(distribution.locate_file(f"{module_name}_pack/dinkster-pack.toml")))
+        raise CompositionError(
+            f"installed pack distribution {distribution_id!r} is unavailable"
+        ) from exc
+    sidecar = pack_id.replace("-", "_")
+    bundled = Path(str(distribution.locate_file(f"{sidecar}_pack/dinkster-pack.toml")))
     module = importlib.util.find_spec(module_name)
     if module is None or module.origin is None:
         raise CompositionError(f"installed {pack_id} package is not discoverable")
@@ -1245,13 +1280,23 @@ def _installed_pack_spec(
         ),
         None,
     )
+    if source_manifest is None:
+        source_manifest = next(
+            (
+                parent / f"{sidecar}_pack" / "dinkster-pack.toml"
+                for parent in Path(module.origin).resolve().parents
+                if (parent / "pyproject.toml").is_file()
+                and (parent / f"{sidecar}_pack" / "dinkster-pack.toml").is_file()
+            ),
+            None,
+        )
     if source_manifest is not None:
         manifest = source_manifest
         source = f"local:{manifest.parent.resolve()}"
         source_install = True
     elif bundled.is_file():
         manifest = bundled
-        source = f"python:{pack_id}=={distribution.version}"
+        source = f"python:{distribution_id}=={distribution.version}"
         source_install = False
     else:
         raise CompositionError(f"installed {pack_id} has no bundled artifact or source manifest")
@@ -1961,15 +2006,16 @@ def _pack_provider_identity(manifest: PackManifest, spec: PackSpec) -> str:
 
 def _builtin_registry_providers() -> dict[str, dict[str, str]]:
     provider = PACK_INFERENCE_CONTRACT
+    registries = builtin_registries()
     return {
         canonical_name(MODEL_FAMILY_REGISTRY): {
-            canonical_name(id_): provider for id_ in builtin_family_registry().ids()
+            canonical_name(id_): provider for id_ in registries.families.ids()
         },
         canonical_name(SAMPLER_REGISTRY): {
             canonical_name(item.id): provider for item in builtin_sampler_snapshot().samplers
         },
         canonical_name(SCHEDULER_REGISTRY): {
-            canonical_name(item.id): provider for item in builtin_schedulers()
+            canonical_name(item.id): provider for item in registries.schedulers
         },
     }
 
@@ -1982,9 +2028,11 @@ def _resolve_pack_contracts(
     capabilities: dict[str, tuple[str, str]] = {}
     dependencies: dict[str, set[str]] = {}
     receipts: dict[str, list[ResolvedRequirement]] = {name: [] for name in entries}
+    providers = {registry: dict(items) for registry, items in registry_providers.items()}
+    provider_packs: dict[tuple[str, str], str] = {}
 
     for name in sorted(entries):
-        manifest, _spec = entries[name]
+        manifest, spec = entries[name]
         contracts = manifest.contracts
         if contracts is not None:
             expected: dict[RequirementKind, str] = {
@@ -2007,6 +2055,18 @@ def _resolve_pack_contracts(
                     )
                 receipts[name].append(ResolvedRequirement(name, kind, value, expected[kind]))
         dependencies[name] = {dependency.pack for dependency in manifest.dependencies}
+        for provider in manifest.provides.registry:
+            registry_id = canonical_name(provider.registry)
+            descriptor_id = canonical_name(provider.id)
+            registry = providers.setdefault(registry_id, {})
+            previous = registry.get(descriptor_id)
+            if previous is not None:
+                raise CompositionError(
+                    f"registry descriptor {provider.registry}:{provider.id} is provided by both "
+                    f"{previous!r} and {manifest.name!r}"
+                )
+            registry[descriptor_id] = _pack_provider_identity(manifest, spec)
+            provider_packs[(registry_id, descriptor_id)] = name
         for capability in manifest.capabilities:
             key = canonical_name(capability.id)
             previous = capabilities.get(key)
@@ -2049,10 +2109,10 @@ def _resolve_pack_contracts(
             )
 
         for requirement in manifest.requirements.registry:
-            registry = registry_providers.get(canonical_name(requirement.registry))
-            provider = (
-                registry.get(canonical_name(requirement.id)) if registry is not None else None
-            )
+            registry_id = canonical_name(requirement.registry)
+            descriptor_id = canonical_name(requirement.id)
+            registry = providers.get(registry_id)
+            provider = registry.get(descriptor_id) if registry is not None else None
             if provider is None:
                 raise CompositionError(
                     f"pack {manifest.name!r} requires registry descriptor "
@@ -2066,6 +2126,9 @@ def _resolve_pack_contracts(
                     provider,
                 )
             )
+            provider_pack = provider_packs.get((registry_id, descriptor_id))
+            if provider_pack is not None and provider_pack != name:
+                dependencies[name].add(provider_pack)
 
         for requirement in manifest.requirements.capabilities:
             provider = capabilities.get(canonical_name(requirement.id))
@@ -2097,7 +2160,10 @@ def _resolve_pack_contracts(
     while remaining:
         ready = sorted(name for name, required in remaining.items() if not required)
         if not ready:
-            cycle = ", ".join(sorted(remaining))
+            cycle = ", ".join(
+                f"{name} -> {', '.join(sorted(required))}"
+                for name, required in sorted(remaining.items())
+            )
             raise CompositionError(f"pack dependency cycle: {cycle}")
         for name in ready:
             order.append(name)
@@ -2508,7 +2574,7 @@ class ServingComposer:
         builtin_sampler_view = builtin_sampler_snapshot()
         self._core_choices: dict[str, tuple[str, ...]] = {
             "dinkster.samplers": tuple(d.id for d in builtin_sampler_view.samplers),
-            "dinkster.schedulers": tuple(d.id for d in builtin_schedulers()),
+            "dinkster.schedulers": tuple(d.id for d in builtin_registries().schedulers),
         }
         # The dev scaffolding composes in-process, so its choice lists and
         # shipped gallery template ride the core surface directly (an
@@ -4455,6 +4521,7 @@ class ServingComposer:
     ) -> tuple[
         ExtensionSnapshot,
         SamplerRegistrySnapshot,
+        tuple[KeyedContribution, ...],
         GraphCompilerRegistrySnapshot,
         GraphCompileTransport | None,
     ]:
@@ -4466,12 +4533,27 @@ class ServingComposer:
         sampler_registry: Registry[KeyedContribution] = Registry()
         for declaration in builtin_sampler_snapshot().samplers:
             sampler_registry.register(declaration)
+        scheduler_registry: Registry[KeyedContribution] = Registry()
+        for descriptor in builtin_registries().schedulers:
+            scheduler_registry.register(scheduler_declaration(descriptor))
         surfaces: dict[
             tuple[ExtensionScope, str],
             tuple[CompositionMode, list[str]],
         ] = {}
         active: list[ActiveExtension] = []
         for name, record in sorted(records.items()):
+            keyed_contributions = inference_contributions.get(name, ())
+            unmatched_providers = unmatched_registry_providers(
+                record.manifest.provides,
+                ((item.surface_id, item.id) for item in keyed_contributions),
+            )
+            if unmatched_providers:
+                provider = unmatched_providers[0]
+                raise CompositionError(
+                    f"pack {record.manifest.name!r} declares registry provider "
+                    f"{provider.registry}:{provider.id}, but its inference contribution "
+                    "does not register it"
+                )
             declaration = record.extension
             if declaration is None:
                 if record.extension_contributions:
@@ -4531,7 +4613,6 @@ class ServingComposer:
                             f"{descriptor.mode.value!r}"
                         )
                     owners.append(name)
-            keyed_contributions = inference_contributions.get(name, ())
             inference_entry = declaration.entries.inference
             if inference_entry is not None:
                 if not keyed_contributions:
@@ -4545,7 +4626,7 @@ class ServingComposer:
                         CompositionMode.EXCLUSIVE
                         if surface_id == GUIDANCE_SURFACES[2]
                         else CompositionMode.KEYED_REGISTRY
-                        if surface_id == INFERENCE_SAMPLERS_SURFACE
+                        if surface_id in (INFERENCE_SAMPLERS_SURFACE, INFERENCE_SCHEDULERS_SURFACE)
                         else CompositionMode.ORDERED_LIST
                         if surface_id == GRAPH_COMPILERS_SURFACE
                         else CompositionMode.WRAPPER_CHAIN
@@ -4571,6 +4652,7 @@ class ServingComposer:
             for contribution in keyed_contributions:
                 if contribution.surface_id not in (
                     INFERENCE_SAMPLERS_SURFACE,
+                    INFERENCE_SCHEDULERS_SURFACE,
                     GRAPH_COMPILERS_SURFACE,
                     *GUIDANCE_SURFACES,
                 ):
@@ -4589,6 +4671,13 @@ class ServingComposer:
                     except RegistryError as exc:
                         raise CompositionError(
                             f"extension {name!r} sampler registry collision: {exc}"
+                        ) from exc
+                if contribution.surface_id == INFERENCE_SCHEDULERS_SURFACE:
+                    try:
+                        scheduler_registry.register(contribution)
+                    except RegistryError as exc:
+                        raise CompositionError(
+                            f"extension {name!r} scheduler registry collision: {exc}"
                         ) from exc
             info = record.delta.packs.get(name)
             if info is None:
@@ -4641,6 +4730,7 @@ class ServingComposer:
                 )
         snapshot = ExtensionSnapshot(extensions=tuple(active), frontend_api=FRONTEND_API_VERSION)
         sampler_snapshot = SamplerRegistrySnapshot(tuple(sampler_registry))
+        scheduler_snapshot = tuple(scheduler_registry)
         try:
             GuidanceRegistrySnapshot(
                 tuple(
@@ -4744,6 +4834,7 @@ class ServingComposer:
         return (
             snapshot,
             sampler_snapshot,
+            scheduler_snapshot,
             graph_compiler_registry,
             graph_compile_transport,
         )
@@ -5422,7 +5513,7 @@ class ServingComposer:
                 loaded.append(loaded_worker)
                 self._validate_body_arms(manifest, loaded_worker)
                 assert catalog is not None
-                if worker_declarations(loaded_worker) != worker_declarations(catalog):
+                if not worker_declarations_match_catalog(loaded_worker, catalog):
                     raise CompositionError(f"{manifest.name}: declarations changed; rerun doctor")
                 composition._registry.replace_from(current_registry)
                 loaded_worker.bind_registry(composition._registry)
@@ -5640,12 +5731,16 @@ class ServingComposer:
             (
                 snapshot,
                 sampler_registry,
+                scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
             ) = await self._build_extension_snapshot(staged_records, topology)
             derived_choices = self._validated_derived_choices(
-                sampler_registry, staged_records, topology
+                sampler_registry, scheduler_registry, staged_records, topology
             )
+            staged_registry.remove_relayed_renditions(manifest.name)
+            if not spec.in_process:
+                self._register_worker_renditions(staged_registry, manifest.name, worker)
             if spec.host_types is not None:
                 spec.host_types(staged_registry)
         except BaseException:
@@ -5864,12 +5959,16 @@ class ServingComposer:
             (
                 snapshot,
                 sampler_registry,
+                scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
             ) = await self._build_extension_snapshot(self._records, topology)
             derived_choices = self._validated_derived_choices(
-                sampler_registry, self._records, topology
+                sampler_registry, scheduler_registry, self._records, topology
             )
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(spec.name)
+            self._register_worker_renditions(staged_registry, spec.name, worker)
         except BaseException:
             if snapshot is not None and topology is not None:
                 await self._rollback_unpublished_generation(snapshot, topology)
@@ -5880,6 +5979,7 @@ class ServingComposer:
         # Commit point: every validation passed, the connection is up -
         # now merge everything at once (mirrors add_pack).
         self._seen_names[canonical] = spec.name
+        composition._registry.replace_from(staged_registry)
         composition.packs.update(staged_packs)
         for node_type, schema in surface.schemas.items():
             composition.schemas[node_type] = schema
@@ -6355,12 +6455,16 @@ class ServingComposer:
             (
                 snapshot,
                 sampler_registry,
+                scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
             ) = await self._build_extension_snapshot(self._records, topology)
             derived_choices = self._validated_derived_choices(
-                sampler_registry, self._records, topology
+                sampler_registry, scheduler_registry, self._records, topology
             )
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(spec.name)
+            self._register_worker_renditions(staged_registry, spec.name, worker)
             # Reap the old session before the first published mutation:
             # everything from the route swap to the return is then free
             # of suspension points, so the caller publishes the surface
@@ -6391,6 +6495,7 @@ class ServingComposer:
         added_routes = tuple(node_type for node_type in candidates if topology.get(node_type))
         self._routing.swap_routes(removed_routes, self._dispatch_routes(topology, added_routes))
         self._remotes[spec.name] = new_record
+        composition._registry.replace_from(staged_registry)
         self._topology = topology
         composition._isolated.append(worker)
         if old_worker in composition._isolated:
@@ -6729,11 +6834,12 @@ class ServingComposer:
                 (
                     snapshot,
                     sampler_registry,
+                    scheduler_registry,
                     graph_compiler_registry,
                     graph_compile_transport,
                 ) = await self._build_extension_snapshot(staged_records, topology)
                 derived_choices = self._validated_derived_choices(
-                    sampler_registry, staged_records, topology
+                    sampler_registry, scheduler_registry, staged_records, topology
                 )
             except BaseException:
                 if snapshot is not None and topology is not None:
@@ -6743,6 +6849,10 @@ class ServingComposer:
                 raise
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(name)
+            if not spec.in_process:
+                self._register_worker_renditions(staged_registry, manifest.name, worker)
             removed_routes = tuple(
                 node_type
                 for node_type in dict.fromkeys((*old_types, *record.executes, *manifest.executes))
@@ -6766,6 +6876,7 @@ class ServingComposer:
             )
             del self._records[name]
             self._records[manifest.name] = new_record
+            composition._registry.replace_from(staged_registry)
             composition.generation = staged_generation
             self._topology = topology
             composition._isolated.append(worker)
@@ -7139,11 +7250,12 @@ class ServingComposer:
             (
                 snapshot,
                 sampler_registry,
+                scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
             ) = await self._build_extension_snapshot(staged_records, topology)
             derived_choices = self._validated_derived_choices(
-                sampler_registry, staged_records, topology
+                sampler_registry, scheduler_registry, staged_records, topology
             )
             route_candidates = tuple(
                 dict.fromkeys(
@@ -7166,9 +7278,12 @@ class ServingComposer:
                 topology,
                 tuple(node_type for node_type in route_candidates if topology.get(node_type)),
             )
-            for member_spec in specs.values():
+            staged_registry = self.composition._registry.copy()
+            for pack, member_spec in specs.items():
+                staged_registry.remove_relayed_renditions(pack)
+                self._register_worker_renditions(staged_registry, pack, members[pack])
                 if member_spec.host_types is not None:
-                    member_spec.host_types(self.composition._registry)
+                    member_spec.host_types(staged_registry)
         except BaseException:
             if snapshot is not None and topology is not None:
                 await self._rollback_unpublished_generation(snapshot, topology)
@@ -7190,6 +7305,7 @@ class ServingComposer:
         old_inference_worker = self._sampling_worker(self._topology)
         new_inference_worker = self._sampling_worker(topology)
         self._records = staged_records
+        self.composition._registry.replace_from(staged_registry)
         self.composition.generation = staged_generation
         self._topology = topology
         self._group_owners[group_name] = owner
@@ -7327,11 +7443,12 @@ class ServingComposer:
                 (
                     snapshot,
                     sampler_registry,
+                    scheduler_registry,
                     graph_compiler_registry,
                     graph_compile_transport,
                 ) = await self._build_extension_snapshot(staged_records, topology)
                 derived_choices = self._validated_derived_choices(
-                    sampler_registry, staged_records, topology
+                    sampler_registry, scheduler_registry, staged_records, topology
                 )
             except BaseException:
                 if snapshot is not None:
@@ -7340,6 +7457,8 @@ class ServingComposer:
             assert snapshot is not None
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(name)
             route_candidates = tuple(dict.fromkeys((*old_types, *record.executes)))
             removed_routes = tuple(
                 node_type for node_type in route_candidates if self._routing.has_route(node_type)
@@ -7363,6 +7482,7 @@ class ServingComposer:
                 else None
             )
             del self._records[name]
+            composition._registry.replace_from(staged_registry)
             composition.generation = staged_generation
             self._topology = topology
             self._rebuild_registries()
@@ -7426,7 +7546,12 @@ class ServingComposer:
     def _current_sampler_choices(self) -> dict[str, tuple[str, ...]]:
         return {
             choice_id: self.composition.choices[choice_id]
-            for choice_id in ("dinkster.samplers", "comfy.samplers")
+            for choice_id in (
+                "dinkster.samplers",
+                "comfy.samplers",
+                "dinkster.schedulers",
+                "comfy.schedulers",
+            )
             if choice_id in self.composition.choices
         }
 
@@ -7670,10 +7795,26 @@ class ServingComposer:
     def _validated_derived_choices(
         self,
         sampler_registry: SamplerRegistrySnapshot,
+        scheduler_registry: tuple[KeyedContribution, ...],
         records: Mapping[str, _PackRecord],
         topology: Topology,
     ) -> dict[str, tuple[str, ...]]:
         choices = self._validated_sampler_choices(sampler_registry)
+        canonical_schedulers = tuple(item.id for item in scheduler_registry)
+        compat_schedulers = registry_choice_values(scheduler_registry)
+        try:
+            combo_choices_json_bytes(
+                canonical_schedulers, subject="derived choice 'dinkster.schedulers'"
+            )
+            combo_choices_json_bytes(compat_schedulers, subject="derived choice 'comfy.schedulers'")
+        except ValueError as exc:
+            raise CompositionError(str(exc)) from exc
+        choices.update(
+            {
+                "dinkster.schedulers": canonical_schedulers,
+                "comfy.schedulers": compat_schedulers,
+            }
+        )
         for provider_kind, provider_choices in (
             ("vision", self._validated_vision_providers(records, topology)[0]),
             ("generation", self._validated_generation_providers(records, topology)[0]),
@@ -7698,6 +7839,11 @@ class ServingComposer:
         self.composition.choices["dinkster.samplers"] = canonical
         if "comfy.samplers" in self.composition.choices:
             self.composition.choices["comfy.samplers"] = choices["comfy.samplers"]
+        scheduler_ids = choices["dinkster.schedulers"]
+        self._core_choices["dinkster.schedulers"] = scheduler_ids
+        self.composition.choices["dinkster.schedulers"] = scheduler_ids
+        if "comfy.schedulers" in self.composition.choices:
+            self.composition.choices["comfy.schedulers"] = choices["comfy.schedulers"]
 
     def _apply_derived_choices(self, choices: Mapping[str, tuple[str, ...]]) -> None:
         self._apply_sampler_choices(choices)
@@ -7830,6 +7976,74 @@ class ServingComposer:
                 tuple(dict.fromkeys(arm.execution_arm for arm in arms))
                 if arms is not None
                 else ("native",)
+            )
+
+    @staticmethod
+    def _register_worker_renditions(registry: TypeRegistry, owner: str, worker: Any) -> None:
+        for declaration in worker.renditions:
+            existing = next(
+                (
+                    item
+                    for item in registry.renditions_of(declaration.type_id)
+                    if item.kind == declaration.kind
+                ),
+                None,
+            )
+            if existing is not None:
+                if existing.relay_owner is None:
+                    continue
+                if (
+                    existing.mime != declaration.mime
+                    or existing.default != declaration.default
+                    or existing.version != declaration.version
+                    or existing.parameters != declaration.parameters
+                    or dict(existing.defaults or {}) != dict(declaration.defaults or {})
+                    or dict(existing.limits or {}) != dict(declaration.limits or {})
+                ):
+                    raise ValueError(
+                        f"{declaration.type_id}: conflicting rendition declaration "
+                        f"for {declaration.kind!r}"
+                    )
+                continue
+
+            async def resolve(
+                metadata: Mapping[str, object],
+                parameters: Mapping[str, str],
+                *,
+                type_id: str = declaration.type_id,
+                kind: str = declaration.kind,
+            ) -> tuple[str, Mapping[str, str]]:
+                return await worker.resolve_rendition(type_id, kind, metadata, parameters)
+
+            async def resolve_mime(
+                metadata: Mapping[str, object],
+                *,
+                type_id: str = declaration.type_id,
+                kind: str = declaration.kind,
+            ) -> str:
+                return await worker.resolve_rendition_mime(type_id, kind, metadata)
+
+            async def render(
+                value: Value,
+                parameters: Mapping[str, str],
+                *,
+                kind: str = declaration.kind,
+            ) -> Rendition:
+                return await worker.render_rendition(value, kind, parameters)
+
+            registry.register_relayed_rendition(
+                declaration.type_id,
+                declaration.kind,
+                mime=declaration.mime,
+                default=declaration.default,
+                version=declaration.version,
+                parameters=declaration.parameters,
+                defaults=declaration.defaults,
+                limits=declaration.limits,
+                owner=owner,
+                resolve_mime=resolve_mime,
+                resolve=resolve,
+                render=render,
             )
 
     def _rebuild_asset_catalog(self) -> None:

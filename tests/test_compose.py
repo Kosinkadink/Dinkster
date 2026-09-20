@@ -636,6 +636,75 @@ def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_registry_i
         asyncio.run(composer.close())
 
 
+def test_pack_registry_providers_order_consumers_and_report_conflicts(tmp_path: Path) -> None:
+    digest = "sha256:" + "9" * 64
+
+    def spec(path: Path, name: str) -> PackSpec:
+        return PackSpec(
+            path,
+            packs={name: PackInfo(display_name=name, version="1.0.0", artifact_digest=digest)},
+        )
+
+    provider = write_contract_manifest(
+        tmp_path / "provider",
+        "provider",
+        '[pack.provides.registry]\n"dinkster.samplers" = ["provider.sampler"]\n'
+        '"dinkster.model-families" = ["provider.family"]\n',
+    )
+    consumer = write_contract_manifest(
+        tmp_path / "consumer",
+        "consumer",
+        '[pack.requirements.registry]\n"dinkster.samplers" = ["provider.sampler"]\n'
+        '"dinkster.model-families" = ["provider.family"]\n',
+    )
+    composer = ServingComposer()
+    try:
+        ordered = composer.order_pack_entries(
+            (spec(consumer, "consumer"), spec(provider, "provider"))
+        )
+        assert [Path(item.manifest) for item in ordered] == [provider, consumer]
+
+        duplicate = write_contract_manifest(
+            tmp_path / "duplicate",
+            "duplicate",
+            '[pack.provides.registry]\n"dinkster.samplers" = ["provider.sampler"]\n',
+        )
+        with pytest.raises(CompositionError, match="provided by both"):
+            composer.order_pack_entries((spec(provider, "provider"), spec(duplicate, "duplicate")))
+
+        builtin_collision = write_contract_manifest(
+            tmp_path / "builtin-collision",
+            "builtin-collision",
+            '[pack.provides.registry]\n"dinkster.samplers" = ["dinkster.euler"]\n',
+        )
+        with pytest.raises(CompositionError, match="dinkster-inference/1.*builtin-collision"):
+            composer.order_pack_entries((spec(builtin_collision, "builtin-collision"),))
+
+        alpha = write_contract_manifest(
+            tmp_path / "registry-alpha",
+            "registry-alpha",
+            '[pack.provides.registry]\n"dinkster.samplers" = ["alpha.sampler"]\n'
+            '[pack.requirements.registry]\n"dinkster.schedulers" = ["beta.scheduler"]\n',
+        )
+        beta = write_contract_manifest(
+            tmp_path / "registry-beta",
+            "registry-beta",
+            '[pack.provides.registry]\n"dinkster.schedulers" = ["beta.scheduler"]\n'
+            '[pack.requirements.registry]\n"dinkster.samplers" = ["alpha.sampler"]\n',
+        )
+        with pytest.raises(
+            CompositionError,
+            match=(
+                "dependency cycle: registry-alpha -> registry-beta, registry-beta -> registry-alpha"
+            ),
+        ):
+            composer.order_pack_entries(
+                (spec(alpha, "registry-alpha"), spec(beta, "registry-beta"))
+            )
+    finally:
+        asyncio.run(composer.close())
+
+
 def test_composed_generation_records_contract_and_registry_resolution(tmp_path: Path) -> None:
     manifest = write_contract_manifest(
         tmp_path / "consumer",
@@ -1087,7 +1156,7 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
         ),
         (
             "dinkster-nodes-image",
-            "sha256:0ee5a6f50cdb3cd53d3f2a7c8138127e5ce797f6f1247c7d24858d516f6bafcd",
+            "sha256:3d126cbf7fb4daa775c517885b96a93f0dff10aafed69facd48c834189405039",
         ),
         (
             "dinkster-nodes-remote",
@@ -1142,19 +1211,31 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
     tracked_paths = {Path(raw.decode("utf-8")) for raw in listed.split(b"\0") if raw}
     artifact_paths: set[Path] = set()
     for pack_id, module_name in compose._FIRST_PARTY_PACK_MODULES.items():
-        pack_root = Path("packages") / pack_id
-        manifest_path = pack_root / "dinkster-pack.toml"
+        distribution_id = compose._FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
+        pack_root = Path("packages") / distribution_id
+        sidecar_root = (
+            pack_root / f"{pack_id.replace('-', '_')}_pack"
+            if distribution_id != pack_id
+            else pack_root
+        )
+        manifest_path = sidecar_root / "dinkster-pack.toml"
         manifest = tomllib.loads((repo_root / manifest_path).read_text(encoding="utf-8"))
         docs = manifest.get("pack", {}).get("docs", {})
         docs_dir = docs.get("dir") if isinstance(docs, dict) else None
-        prefixes = [pack_root / "src" / module_name, pack_root / "locales"]
+        module_root = pack_root / "src" / Path(*module_name.split("."))
+        prefixes = [module_root, sidecar_root / "locales"]
         if isinstance(docs_dir, str):
-            prefixes.append(pack_root / docs_dir)
+            prefixes.append(sidecar_root / docs_dir)
         artifact_paths.add(manifest_path)
+        module_init = module_root.parent / "__init__.py"
+        if distribution_id != pack_id and module_init in tracked_paths:
+            artifact_paths.add(module_init)
+        if module_root.parent.name == "dinkster_nodes_vision":
+            artifact_paths.update(path for path in tracked_paths if path.parent == sidecar_root)
         artifact_paths.update(
-            pack_root / filename
+            sidecar_root / filename
             for filename in compose._PACK_ARTIFACT_SIDECARS
-            if pack_root / filename in tracked_paths
+            if sidecar_root / filename in tracked_paths
         )
         artifact_paths.update(
             path
@@ -1501,9 +1582,10 @@ def test_default_suite_package_matches_managed_lock() -> None:
     root = Path(__file__).parent.parent / "packages/dinkster-nodes-std"
     configuration = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     lock = json.loads((root / "dinkster.lock").read_text(encoding="utf-8"))
-    assert configuration["project"]["dependencies"] == [
-        f"{entry['pack']}=={entry['version']}" for entry in lock["packs"]
-    ]
+    locked_distributions = list(
+        dict.fromkeys(entry["source"].removeprefix("python:") for entry in lock["packs"])
+    )
+    assert configuration["project"]["dependencies"] == locked_distributions
     wheel = configuration["tool"]["hatch"]["build"]["targets"]["wheel"]
     assert wheel["force-include"] == {
         "dinkster.lock": "dinkster_nodes_std_suite/dinkster.lock",
@@ -1849,11 +1931,25 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = write_iso_manifest(tmp_path)
         composition = await compose_serving([manifest], worker_env=WORKER_ENV)
+        published_schemas = {
+            node_type: schema
+            for node_type, schema in composition.schemas.items()
+            if node_type.startswith("iso.") or node_type == "std.math.add_ints"
+        }
+        published_packs = {
+            pack_id: replace(info, comfy_aliases=None, comfy_groups=None)
+            for pack_id, info in composition.packs.items()
+            if pack_id in {"isopack", "dinkster-nodes-foundation"}
+        }
         app = create_app(
             composition.make_engine,
-            composition.schemas,
-            packs=composition.packs,
-            node_packs=composition.node_packs,
+            published_schemas,
+            packs=published_packs,
+            node_packs={
+                node_type: pack_id
+                for node_type, pack_id in composition.node_packs.items()
+                if node_type in published_schemas
+            },
             choices=composition.choices,
             lazy_choices=composition.lazy_choices,
         )
@@ -1879,6 +1975,17 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
             }
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
             assert data["nodes"]["std.math.add_ints"]["pack"] == "dinkster-nodes-foundation"
+            blob_size = next(
+                item
+                for item in data["nodes"]["iso.blob_out"]["interface"]
+                if item["role"] == "input" and item["id"] == "size"
+            )
+            assert blob_size["widget"] == {
+                "type": "isopack.size",
+                "min": 1,
+                "max": 12,
+                "unit": "bytes",
+            }
 
             # The in-process media-io pack's lazy device route serves per
             # fetch: no capture provider configured means an empty list,
@@ -1893,13 +2000,14 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                 nodes={
                     "g": GraphNode("std.math.add_ints", {"a": 2, "b": 3}),
                     "c": GraphNode("iso.chatty", {"value": "hi"}),
+                    "b": GraphNode("iso.blob_out", {"size": 3}),
                 }
             )
             body = {
                 "clientId": "c1",
                 "jobId": "j1",
                 "graph": graph_to_wire(graph),
-                "targets": ["g", "c"],
+                "targets": ["g", "c", "b"],
             }
             resp = await client.post("/api/jobs", json=body)
             assert resp.status == 202, await resp.text()
@@ -1910,8 +2018,56 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                     break
                 await asyncio.sleep(0.05)
             assert status.get("state") == "completed", status
+
+            value_url = "/api/values?clientId=c1&jobId=j1&nodeId=b&outputId=blob"
+            discovery = await client.get(value_url)
+            assert discovery.status == 200, await discovery.text()
+            value_data = await discovery.json()
+            assert value_data["descriptor"]["typeId"] == "iso.blob"
+            assert value_data["renditions"] == [
+                {
+                    "kind": "summary",
+                    "mime": "text/plain",
+                    "default": True,
+                    "cacheKey": "summary/1",
+                    "version": "1",
+                    "parameters": ["prefix"],
+                    "defaults": {"prefix": "blob"},
+                    "limits": {"prefixLength": 32},
+                }
+            ]
+            rendered = await client.get(value_url + "&rendition=summary/1&prefix=pack")
+            assert rendered.status == 200, await rendered.text()
+            assert rendered.content_type == "text/plain"
+            assert await rendered.read() == b"pack:3:xxx"
         finally:
             await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_serving_composer_replaces_and_retracts_pack_renditions(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        try:
+            manifest = write_iso_manifest(tmp_path)
+            await composer.add_pack(manifest)
+            registry = composer.composition._registry
+            original = registry.renditions_of("iso.blob")
+            assert len(original) == 1
+            assert original[0].kind == "summary"
+            assert original[0].relay_owner == "isopack"
+
+            await composer.reload_pack("isopack")
+            reloaded = registry.renditions_of("iso.blob")
+            assert len(reloaded) == 1
+            assert reloaded[0].relay_owner == "isopack"
+            assert reloaded[0].render_async is not original[0].render_async
+
+            await composer.remove_pack("isopack")
+            assert registry.renditions_of("iso.blob") == ()
+        finally:
+            await composer.close()
 
     asyncio.run(scenario())
 

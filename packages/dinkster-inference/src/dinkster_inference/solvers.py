@@ -3564,7 +3564,9 @@ def builtin_sampler_registry() -> Registry[SamplerDescriptor[Any]]:
 
 def select_builtin_sampler(sampler_id: str, **overrides: object) -> BuiltinSamplerSelection:
     """Create an immutable validated selection from the built-in catalog."""
-    descriptor = builtin_sampler_registry().get(sampler_id)
+    from .registries import builtin_registries
+
+    descriptor = builtin_registries().samplers.get(sampler_id)
     if descriptor is None:
         raise ValueError(f"unknown built-in sampler {sampler_id!r}")
     resolved = resolve_options(descriptor.options, overrides)

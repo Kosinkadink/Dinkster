@@ -2517,11 +2517,9 @@ def test_save_target_widget_suffix_validated() -> None:
 
 
 def test_malformed_widget_wire_rejected() -> None:
-    """Unknown or structurally invalid widget descriptors refuse loudly:
-    widgets are a closed frontend/backend contract, not open metadata."""
+    """Structurally invalid built-in widget descriptors refuse loudly."""
     for bad in (
         "ASSET",
-        {"type": "SPINNER"},
         {"type": "ASSET", "accept": "image/png"},
         {"type": "ASSET", "accept": [1]},
         {"type": "SAVE_TARGET", "suffix": 7},
