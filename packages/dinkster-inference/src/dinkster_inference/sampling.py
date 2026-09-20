@@ -1125,6 +1125,7 @@ class SamplerDescriptor(Generic[TensorT]):
     make: (
         Callable[[Mapping[str, OptionValue]], SolverFn[TensorT]]
         | Callable[[Mapping[str, OptionValue]], ContextSolverFn[TensorT]]
+        | None
     )
     options: tuple[OptionSpec, ...] = ()
     noise: NoiseKind = NoiseKind.NONE
@@ -1151,7 +1152,10 @@ class SamplerDescriptor(Generic[TensorT]):
     def build(self, **overrides: object) -> SolverFn[TensorT]:
         """A SolverFn with ``overrides`` validated against the option
         schema and defaults filled in."""
-        built = self.make(resolve_options(self.options, overrides))
+        make = self.make
+        if make is None:
+            raise RuntimeError(f"sampler {self.id!r} requires an execution backend")
+        built = make(resolve_options(self.options, overrides))
         if self.context_aware:
             solver = _adapt_context_solver(cast("ContextSolverFn[TensorT]", built))
         else:

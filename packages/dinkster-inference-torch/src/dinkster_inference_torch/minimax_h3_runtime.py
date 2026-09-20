@@ -1232,7 +1232,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             runtime_identity if conditioning_identity is None else conditioning_identity
         )
         self._compute_dtype = compute_dtype
-        self._samplers = torch_sampler_registry() if sampler_registry is None else sampler_registry
+        self._samplers = torch_sampler_registry(sampler_registry)
         self._schedulers = (
             torch_scheduler_registry() if scheduler_registry is None else scheduler_registry
         )

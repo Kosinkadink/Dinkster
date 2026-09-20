@@ -16,8 +16,8 @@ from dinkster_inference import (
     GuidanceRole,
     ProgressScope,
     SamplingExecutionContext,
-    cfg_combine,
 )
+from dinkster_inference_torch.cfg import cfg_combine
 from dinkster_inference_torch.guidance import GuidanceExecutor, GuidanceRegistry
 from dinkster_inference_torch.guidance_transforms import (
     cfg_override,
