@@ -55,10 +55,11 @@ import math
 import re
 import tomllib
 import unicodedata
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
+from types import MappingProxyType
 from typing import TypeVar, cast
 
 from dinkster_assets import (
@@ -100,6 +101,13 @@ class ManifestError(Exception):
 PACK_HOST_CONTRACT = "dinkster-pack-host/1"
 PACK_AUTHOR_API_CONTRACT = "dinkster-api/v1"
 PACK_INFERENCE_CONTRACT = "dinkster-inference/1"
+_PACK_REGISTRY_CONTRIBUTION_SURFACES: Mapping[str, str] = MappingProxyType(
+    {
+        "dinkster.model-families": "inference.families",
+        "dinkster.samplers": "inference.samplers",
+        "dinkster.schedulers": "inference.schedulers",
+    }
+)
 
 
 _ABBR_MAX = 8
@@ -1760,6 +1768,14 @@ class PackRegistryRequirement:
 
 
 @dataclass(frozen=True)
+class PackRegistryProvider:
+    """One exact registry descriptor provided by this pack."""
+
+    registry: str
+    id: str
+
+
+@dataclass(frozen=True)
 class PackCapabilityRequirement:
     """One provider-agnostic capability and its compatible release range."""
 
@@ -1776,6 +1792,33 @@ class PackRequirements:
 
     registry: tuple[PackRegistryRequirement, ...] = ()
     capabilities: tuple[PackCapabilityRequirement, ...] = ()
+
+
+@dataclass(frozen=True)
+class PackProvides:
+    """Registry descriptors supplied by one pack contribution."""
+
+    registry: tuple[PackRegistryProvider, ...] = ()
+
+
+def unmatched_registry_providers(
+    provides: PackProvides,
+    contributions: Iterable[tuple[str, str]],
+) -> tuple[PackRegistryProvider, ...]:
+    """Return provider claims absent from the pack's inference declarations."""
+    registered = {
+        (canonical_name(surface_id), canonical_name(descriptor_id))
+        for surface_id, descriptor_id in contributions
+    }
+    return tuple(
+        provider
+        for provider in provides.registry
+        if (
+            canonical_name(_PACK_REGISTRY_CONTRIBUTION_SURFACES.get(provider.registry, "")),
+            canonical_name(provider.id),
+        )
+        not in registered
+    )
 
 
 @dataclass(frozen=True)
@@ -1997,6 +2040,8 @@ class PackManifest:
     """Pack ordering dependencies, sorted by canonical pack id."""
     requirements: PackRequirements = PackRequirements()
     """Exact registry descriptors and versioned capabilities this pack consumes."""
+    provides: PackProvides = PackProvides()
+    """Exact registry descriptors supplied by this pack's contribution."""
     sandbox: PackSandboxNeeds = PackSandboxNeeds()
     """Requested OS resources. The host remains authoritative over every grant."""
     sandbox_declared: bool = False
@@ -2208,6 +2253,48 @@ def _parse_pack_dependencies(raw: object, manifest_path: Path) -> tuple[PackDepe
     return tuple(dependencies[name] for name in sorted(dependencies))
 
 
+def _parse_registry_descriptor_map(
+    raw: object,
+    manifest_path: Path,
+    *,
+    subject: str,
+    declaration: str,
+) -> tuple[tuple[str, str], ...]:
+    if not isinstance(raw, dict):
+        raise ManifestError(
+            f"{manifest_path}: {subject} registry must be a table of registry ids "
+            "to descriptor-id lists"
+        )
+    registry: dict[tuple[str, str], tuple[str, str]] = {}
+    for registry_declared, ids_raw in cast("dict[str, object]", raw).items():
+        registry_id = _canonical_namespaced_id(
+            registry_declared,
+            field=f"{subject} registry id",
+            manifest_path=manifest_path,
+        )
+        if not isinstance(ids_raw, list) or not all(
+            isinstance(item, str) for item in cast("list[object]", ids_raw)
+        ):
+            raise ManifestError(
+                f"{manifest_path}: {subject} registry {registry_declared!r} "
+                "must be a list of descriptor ids"
+            )
+        for item in cast("list[str]", ids_raw):
+            descriptor_id = _canonical_namespaced_id(
+                item,
+                field=f"{subject} registry {registry_declared!r} descriptor",
+                manifest_path=manifest_path,
+            )
+            key = (canonical_name(registry_id), canonical_name(descriptor_id))
+            if key in registry:
+                raise ManifestError(
+                    f"{manifest_path}: {subject} repeats registry {declaration} "
+                    f"{registry_id!r} {descriptor_id!r}"
+                )
+            registry[key] = (registry_id, descriptor_id)
+    return tuple(registry[key] for key in sorted(registry))
+
+
 def _parse_requirements(raw: object, manifest_path: Path) -> PackRequirements:
     if raw is None:
         return PackRequirements()
@@ -2220,39 +2307,15 @@ def _parse_requirements(raw: object, manifest_path: Path) -> PackRequirements:
             f"{manifest_path}: [pack.requirements] unknown fields: {', '.join(unknown)}"
         )
 
-    registry_raw = table.get("registry", {})
-    if not isinstance(registry_raw, dict):
-        raise ManifestError(
-            f"{manifest_path}: [pack.requirements] registry must be a table of registry ids "
-            "to descriptor-id lists"
+    registry = tuple(
+        PackRegistryRequirement(registry_id, descriptor_id)
+        for registry_id, descriptor_id in _parse_registry_descriptor_map(
+            table.get("registry", {}),
+            manifest_path,
+            subject="[pack.requirements]",
+            declaration="requirement",
         )
-    registry: dict[tuple[str, str], PackRegistryRequirement] = {}
-    for registry_declared, ids_raw in cast("dict[str, object]", registry_raw).items():
-        registry_id = _canonical_namespaced_id(
-            registry_declared,
-            field="[pack.requirements] registry id",
-            manifest_path=manifest_path,
-        )
-        if not isinstance(ids_raw, list) or not all(
-            isinstance(item, str) for item in cast("list[object]", ids_raw)
-        ):
-            raise ManifestError(
-                f"{manifest_path}: [pack.requirements] registry {registry_declared!r} "
-                "must be a list of descriptor ids"
-            )
-        for item in cast("list[str]", ids_raw):
-            descriptor_id = _canonical_namespaced_id(
-                item,
-                field=f"[pack.requirements] registry {registry_declared!r} descriptor",
-                manifest_path=manifest_path,
-            )
-            key = (canonical_name(registry_id), canonical_name(descriptor_id))
-            if key in registry:
-                raise ManifestError(
-                    f"{manifest_path}: [pack.requirements] repeats registry requirement "
-                    f"{registry_id!r} {descriptor_id!r}"
-                )
-            registry[key] = PackRegistryRequirement(registry_id, descriptor_id)
+    )
 
     capabilities_raw = table.get("capabilities", {})
     if not isinstance(capabilities_raw, dict):
@@ -2281,8 +2344,32 @@ def _parse_requirements(raw: object, manifest_path: Path) -> PackRequirements:
             ),
         )
     return PackRequirements(
-        registry=tuple(registry[key] for key in sorted(registry)),
+        registry=registry,
         capabilities=tuple(capabilities[key] for key in sorted(capabilities)),
+    )
+
+
+def _parse_provides(raw: object, manifest_path: Path) -> PackProvides:
+    if raw is None:
+        return PackProvides()
+    if not isinstance(raw, dict):
+        raise ManifestError(f"{manifest_path}: [pack.provides] must be a table")
+    table = cast("dict[str, object]", raw)
+    unknown = sorted(set(table) - {"registry"})
+    if unknown:
+        raise ManifestError(
+            f"{manifest_path}: [pack.provides] unknown fields: {', '.join(unknown)}"
+        )
+    return PackProvides(
+        registry=tuple(
+            PackRegistryProvider(registry_id, descriptor_id)
+            for registry_id, descriptor_id in _parse_registry_descriptor_map(
+                table.get("registry", {}),
+                manifest_path,
+                subject="[pack.provides]",
+                declaration="provider",
+            )
+        )
     )
 
 
@@ -2781,6 +2868,7 @@ def load_manifest(path: Path | str) -> PackManifest:
         contracts=_parse_contracts(pack.get("contracts"), manifest_path),
         dependencies=_parse_pack_dependencies(pack.get("dependencies"), manifest_path),
         requirements=_parse_requirements(pack.get("requirements"), manifest_path),
+        provides=_parse_provides(pack.get("provides"), manifest_path),
         sandbox=_parse_sandbox(pack.get("sandbox"), manifest_path),
         sandbox_declared="sandbox" in pack,
         capabilities=_parse_capabilities(pack.get("capabilities"), manifest_path),

@@ -113,6 +113,54 @@ def test_healthy_pack_is_healthy(tmp_path: Path) -> None:
     assert codes(report) <= {"import.slow"}, render_text(report)
 
 
+def test_registry_provider_declaration_matches_probed_inference_contribution(
+    tmp_path: Path,
+) -> None:
+    manifest = (
+        HEALTHY_MANIFEST
+        + """
+
+[pack.extension]
+inference = "healthy_nodes:register_inference"
+privileges = ["inference"]
+
+[pack.provides.registry]
+"dinkster.schedulers" = ["healthy.schedule"]
+"""
+    )
+    source = (
+        HEALTHY_NODES
+        + """
+
+from dinkster_api.v1 import InferenceContribution, SchedulerDescriptor
+
+
+def make_sigmas(steps, _space):
+    return (float(steps), 0.0)
+
+
+def register_inference():
+    return InferenceContribution(
+        schedulers=(
+            SchedulerDescriptor(
+                id="healthy.schedule",
+                display_name="Healthy schedule",
+                make_sigmas=make_sigmas,
+            ),
+        )
+    )
+"""
+    )
+    path = write_pack(tmp_path / "provider", manifest, "healthy_nodes", source)
+
+    report = diagnose(path)
+    assert "registry.provider-unregistered" not in codes(report), render_text(report)
+
+    path.write_text(manifest.replace("healthy.schedule", "healthy.missing"))
+    report = diagnose(path)
+    assert "registry.provider-unregistered" in codes(report), render_text(report)
+
+
 def test_pack_nested_in_distribution_uses_shared_source_root(tmp_path: Path) -> None:
     distribution = tmp_path / "distribution"
     manifest = distribution / "healthy_pack" / "dinkster-pack.toml"
@@ -151,7 +199,7 @@ def test_slow_import_warning_boundary(tmp_path: Path, elapsed_ms: float, warns: 
     probed = _run_probe(manifest, None)
     assert isinstance(probed, dict), probed
     probed["import_ms"] = elapsed_ms
-    findings = _probe_findings(probed, manifest.name)
+    findings = _probe_findings(probed, manifest)
     slow = [finding for finding in findings if finding.code == "import.slow"]
     assert bool(slow) is warns
     if warns:

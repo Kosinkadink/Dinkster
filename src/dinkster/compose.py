@@ -239,6 +239,7 @@ from dinkster_workers import (
     load_manifest,
     normalize_egress_origin,
     resident_devices,
+    unmatched_registry_providers,
 )
 from dinkster_workers.catalog import (
     PackCatalog,
@@ -2027,9 +2028,11 @@ def _resolve_pack_contracts(
     capabilities: dict[str, tuple[str, str]] = {}
     dependencies: dict[str, set[str]] = {}
     receipts: dict[str, list[ResolvedRequirement]] = {name: [] for name in entries}
+    providers = {registry: dict(items) for registry, items in registry_providers.items()}
+    provider_packs: dict[tuple[str, str], str] = {}
 
     for name in sorted(entries):
-        manifest, _spec = entries[name]
+        manifest, spec = entries[name]
         contracts = manifest.contracts
         if contracts is not None:
             expected: dict[RequirementKind, str] = {
@@ -2052,6 +2055,18 @@ def _resolve_pack_contracts(
                     )
                 receipts[name].append(ResolvedRequirement(name, kind, value, expected[kind]))
         dependencies[name] = {dependency.pack for dependency in manifest.dependencies}
+        for provider in manifest.provides.registry:
+            registry_id = canonical_name(provider.registry)
+            descriptor_id = canonical_name(provider.id)
+            registry = providers.setdefault(registry_id, {})
+            previous = registry.get(descriptor_id)
+            if previous is not None:
+                raise CompositionError(
+                    f"registry descriptor {provider.registry}:{provider.id} is provided by both "
+                    f"{previous!r} and {manifest.name!r}"
+                )
+            registry[descriptor_id] = _pack_provider_identity(manifest, spec)
+            provider_packs[(registry_id, descriptor_id)] = name
         for capability in manifest.capabilities:
             key = canonical_name(capability.id)
             previous = capabilities.get(key)
@@ -2094,10 +2109,10 @@ def _resolve_pack_contracts(
             )
 
         for requirement in manifest.requirements.registry:
-            registry = registry_providers.get(canonical_name(requirement.registry))
-            provider = (
-                registry.get(canonical_name(requirement.id)) if registry is not None else None
-            )
+            registry_id = canonical_name(requirement.registry)
+            descriptor_id = canonical_name(requirement.id)
+            registry = providers.get(registry_id)
+            provider = registry.get(descriptor_id) if registry is not None else None
             if provider is None:
                 raise CompositionError(
                     f"pack {manifest.name!r} requires registry descriptor "
@@ -2111,6 +2126,9 @@ def _resolve_pack_contracts(
                     provider,
                 )
             )
+            provider_pack = provider_packs.get((registry_id, descriptor_id))
+            if provider_pack is not None and provider_pack != name:
+                dependencies[name].add(provider_pack)
 
         for requirement in manifest.requirements.capabilities:
             provider = capabilities.get(canonical_name(requirement.id))
@@ -2142,7 +2160,10 @@ def _resolve_pack_contracts(
     while remaining:
         ready = sorted(name for name, required in remaining.items() if not required)
         if not ready:
-            cycle = ", ".join(sorted(remaining))
+            cycle = ", ".join(
+                f"{name} -> {', '.join(sorted(required))}"
+                for name, required in sorted(remaining.items())
+            )
             raise CompositionError(f"pack dependency cycle: {cycle}")
         for name in ready:
             order.append(name)
@@ -4521,6 +4542,18 @@ class ServingComposer:
         ] = {}
         active: list[ActiveExtension] = []
         for name, record in sorted(records.items()):
+            keyed_contributions = inference_contributions.get(name, ())
+            unmatched_providers = unmatched_registry_providers(
+                record.manifest.provides,
+                ((item.surface_id, item.id) for item in keyed_contributions),
+            )
+            if unmatched_providers:
+                provider = unmatched_providers[0]
+                raise CompositionError(
+                    f"pack {record.manifest.name!r} declares registry provider "
+                    f"{provider.registry}:{provider.id}, but its inference contribution "
+                    "does not register it"
+                )
             declaration = record.extension
             if declaration is None:
                 if record.extension_contributions:
@@ -4580,7 +4613,6 @@ class ServingComposer:
                             f"{descriptor.mode.value!r}"
                         )
                     owners.append(name)
-            keyed_contributions = inference_contributions.get(name, ())
             inference_entry = declaration.entries.inference
             if inference_entry is not None:
                 if not keyed_contributions:

@@ -59,6 +59,7 @@ def _extension_manifest(
     module: str,
     *,
     namespace: str | None = None,
+    contract: str = "",
 ) -> Path:
     root.mkdir(parents=True)
     manifest = root / "dinkster-pack.toml"
@@ -68,7 +69,8 @@ def _extension_manifest(
         '[pack.entry]\nnodes = "s1_sampler_empty:NODES"\n\n'
         "[pack.extension]\n"
         f'inference = "{module}:register"\n'
-        'privileges = ["inference"]\n',
+        'privileges = ["inference"]\n'
+        f"{contract}",
         encoding="utf-8",
     )
     return manifest
@@ -270,6 +272,84 @@ def test_two_out_of_tree_packs_compose_in_sampling_worker_and_unload_exactly(
             await composer.close()
             for module in PROOF_MODULES:
                 sys.modules.pop(module, None)
+
+    asyncio.run(scenario())
+
+
+def test_pack_registry_provider_orders_consumer_and_executes_declared_sampler(
+    tmp_path: Path,
+) -> None:
+    provider = _extension_manifest(
+        tmp_path / "proof_a",
+        "proof_a",
+        "s1_sampler_pack_a",
+        contract=(
+            '\n[pack.provides.registry]\n"dinkster.samplers" = ["proof_a.scaled_euler"]\n'
+            '"dinkster.schedulers" = ["proof_a.scheduler"]\n'
+        ),
+    )
+    consumer = _extension_manifest(
+        tmp_path / "proof_b",
+        "proof_b",
+        "s1_sampler_pack_b",
+        contract=(
+            '\n[pack.requirements.registry]\n"dinkster.samplers" = ["proof_a.scaled_euler"]\n'
+        ),
+    )
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=_worker_env(tmp_path))
+        try:
+            await composer.add_pack(
+                PackSpec(_host_manifest(tmp_path / "host"), trust_reserved=True)
+            )
+            ordered = composer.order_pack_entries((consumer, provider))
+            for spec in ordered:
+                await composer.add_pack(spec)
+            composition = composer.composition
+            registry_receipts = [
+                item for item in composition.generation.resolutions if item.kind == "registry"
+            ]
+            assert len(registry_receipts) == 1
+            assert registry_receipts[0].pack == "proof-b"
+            assert registry_receipts[0].requirement == ("dinkster.samplers:proof_a.scaled_euler")
+            assert registry_receipts[0].provider == "proof-a"
+            sampled = await composition.make_engine(lambda _event: None).run(
+                Graph(nodes={"probe": GraphNode("dinkster.ksampler", {})}),
+                ["probe"],
+            )
+            assert sampled.outputs["probe"]["value"].resolve() == 3.0
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+def test_pack_registry_provider_must_match_materialized_contribution(tmp_path: Path) -> None:
+    provider = _extension_manifest(
+        tmp_path / "proof_a",
+        "proof_a",
+        "s1_sampler_pack_a",
+        contract=('\n[pack.provides.registry]\n"dinkster.samplers" = ["proof_a.missing"]\n'),
+    )
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=_worker_env(tmp_path))
+        try:
+            await composer.add_pack(
+                PackSpec(_host_manifest(tmp_path / "host"), trust_reserved=True)
+            )
+            with pytest.raises(
+                CompositionError,
+                match=(
+                    "declares registry provider "
+                    "dinkster.samplers:proof_a.missing, but its inference contribution "
+                    "does not register it"
+                ),
+            ):
+                await composer.add_pack(provider)
+        finally:
+            await composer.close()
 
     asyncio.run(scenario())
 
