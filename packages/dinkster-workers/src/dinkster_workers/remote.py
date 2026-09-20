@@ -63,7 +63,9 @@ from dinkster_protocol.pack_surfaces import PackRoute
 from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, NodeSchema
 from dinkster_values import (
     ASSET_BASE_TYPE,
+    Rendition,
     TypeRegistry,
+    Value,
     iter_value_tree,
     parse_asset_type_id,
 )
@@ -73,7 +75,7 @@ from .devices import DeviceMap
 from .diagnostics import DiagnosticListener
 from .manifest import GenerationProvider, VisionProvider
 from .relay import ReleaseGuard, WorkerFullReleaseResult
-from .session import BoundarySession, WorkerDied
+from .session import BoundarySession, RenditionDeclaration, WorkerDied
 from .staging import StageAsset, StagingSource
 from .transport import TransportError
 from .workgroup import ReplicaEndpoint
@@ -203,6 +205,29 @@ class RemoteWorker:
         as announced by the service's hello; empty when the pack declares
         none. Feed these to the composed surface's /api/choices routes."""
         return self._session.combo_choices
+
+    @property
+    def renditions(self) -> tuple[RenditionDeclaration, ...]:
+        return self._session.renditions
+
+    async def resolve_rendition(
+        self,
+        type_id: str,
+        kind: str,
+        metadata: Mapping[str, object],
+        parameters: Mapping[str, str],
+    ) -> tuple[str, Mapping[str, str]]:
+        return await self._session.resolve_rendition(type_id, kind, metadata, parameters)
+
+    async def resolve_rendition_mime(
+        self, type_id: str, kind: str, metadata: Mapping[str, object]
+    ) -> str:
+        return await self._session.resolve_rendition_mime(type_id, kind, metadata)
+
+    async def render_rendition(
+        self, value: Value, kind: str, parameters: Mapping[str, str]
+    ) -> Rendition:
+        return await self._session.render_rendition(value, kind, parameters)
 
     @property
     def lazy_choice_ids(self) -> tuple[str, ...]:

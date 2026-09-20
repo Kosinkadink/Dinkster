@@ -15,18 +15,18 @@ from dinkster_nodes_image import (
 from dinkster_nodes_image import (
     ModelDepthPreprocessor as OwnerModelDepthPreprocessor,
 )
-from dinkster_schema import ComboWidget, schema_signature, schema_to_wire
-from dinkster_server.preflight import graph_provider_selections
-from dinkster_vision_depth_anything_v3 import (
+from dinkster_nodes_vision.depth_anything_v3 import (
     ModelDepthPreprocessor as DepthAnything3ModelDepthPreprocessor,
 )
+from dinkster_schema import ComboWidget, schema_signature, schema_to_wire
+from dinkster_server.preflight import graph_provider_selections
 from dinkster_workers import load_manifest
 
 from dinkster.compose import compose_serving
 
 ROOT = Path(__file__).parent.parent
-PACKAGE = ROOT / "packages" / "dinkster-vision-depth-anything-v3"
-MANIFEST = PACKAGE / "dinkster-pack.toml"
+PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
+MANIFEST = PACKAGE / "dinkster_vision_depth_anything_v3_pack" / "dinkster-pack.toml"
 MODEL_DIGEST = "blake3:c7c3ae1883d3ad41d64aa9ce2988f265fa3c437105fadc32ff2949b7e8f18323"
 
 
@@ -88,12 +88,12 @@ def test_depth_anything_v3_wheel_contains_pack_runtime_and_manifest() -> None:
     project = tomllib.loads((PACKAGE / "pyproject.toml").read_text(encoding="utf-8"))
     included = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
     assert (
-        included["dinkster-pack.toml"]
-        == "dinkster_vision_depth_anything_v3_pack/dinkster-pack.toml"
+        included["dinkster_vision_depth_anything_v3_pack"]
+        == "dinkster_vision_depth_anything_v3_pack"
     )
     assert (
-        included["src/dinkster_vision_depth_anything_v3"]
-        == "dinkster_vision_depth_anything_v3_pack/dinkster_vision_depth_anything_v3"
+        included["src/dinkster_nodes_vision/depth_anything_v3"]
+        == "dinkster_vision_depth_anything_v3_pack/dinkster_nodes_vision/depth_anything_v3"
     )
 
 

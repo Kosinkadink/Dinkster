@@ -8,7 +8,12 @@ from typing import Any
 
 from dinkster_protocol import Invocation, InvocationResult, OnInvocationEvent
 from dinkster_values import TypeRegistry
-from dinkster_workers.catalog import CatalogTypes, PackCatalog, source_digest, worker_declarations
+from dinkster_workers.catalog import (
+    CatalogTypes,
+    PackCatalog,
+    source_digest,
+    worker_declarations_match_catalog,
+)
 from dinkster_workers.manifest import PackManifest
 
 
@@ -118,6 +123,7 @@ class LazyWorker:
             "compat_skips",
             "body_arms",
             "extension_contributions",
+            "renditions",
         ):
             return getattr(self.catalog, name)
         if name in ("attention_capabilities", "attention_route_token"):
@@ -157,7 +163,7 @@ class LazyWorker:
             raise RuntimeError(f"pack {self.pack!r} changed; refresh its catalog and restart")
 
     def adopt(self, worker: Any) -> None:
-        if worker_declarations(worker) != worker_declarations(self.catalog):
+        if not worker_declarations_match_catalog(worker, self.catalog):
             if self._on_declarations_changed is None:
                 raise RuntimeError(
                     f"pack {self.pack!r} declarations changed; run dinkster-doctor and restart"

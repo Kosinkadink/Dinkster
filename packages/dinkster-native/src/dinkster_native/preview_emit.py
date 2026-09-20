@@ -44,6 +44,7 @@ from dinkster_inference import (
     MultiStreamLatent,
     MultiStreamLatentDescriptor,
     PreviewClip,
+    PreviewDecoderProperties,
     PreviewFrame,
     builtin_families,
     builtin_preview_registry,
@@ -313,28 +314,12 @@ def _stream_descriptor(
 
 # -- TAESD quality decoder ------------------------------------------------------
 
-# Families whose descriptor-named TAE decoder the pinned still-image TAESD
-# architecture can decode. 16-channel variants (Flux's taef1) need their own
-# architecture and stay unavailable; Wan's video TAEs decode through the
-# TAEHV path below.
-_TAESD_FAMILIES: dict[str, str] = {
-    "dinkster.sd15": "sd15",
-    "dinkster.sdxl": "sdxl",
-    "dinkster.sdxl_refiner": "sdxl",
-}
 
-# Families whose descriptor-named TAE decoder the causal TAEHV video
-# architecture (Wan's lighttaew2_*) can decode.
-_TAEHV_FAMILIES = frozenset(
-    {"dinkster.anima", "dinkster.krea2", "dinkster.wan21", "dinkster.wan22"}
-)
-
-# Families whose own codec asset (declared in this pack's manifest) decodes
-# sampling states that no generic projection can: TripoSplat's gaussian
-# decoder turns shape-code tokens into a rasterized splat frame.
-_FAMILY_CODEC_ASSETS: dict[str, str] = {
-    "dinkster.triposplat": "triposplat_vae_decoder",
-}
+def _preview_decoder(family_id: str) -> PreviewDecoderProperties | None:
+    return next(
+        (family.engine.preview_decoder for family in builtin_families() if family.id == family_id),
+        None,
+    )
 
 
 class _PreviewUnavailable(Exception):
@@ -581,11 +566,14 @@ def _taesd_emitter(
     if asset_id is None:
         return None
     try:
-        family = _TAESD_FAMILIES.get(family_id)
-        if family is None:
+        registered = _preview_decoder(family_id)
+        if registered is None or registered.kind != "taesd":
             raise _PreviewUnavailable(
                 f"the still-image TAESD decoder does not cover family {family_id}"
             )
+        family = registered.target
+        if family is None:
+            raise AssertionError("TAESD preview registration has no target")
         if load_device is None:
             raise _PreviewUnavailable("the sampling handle names no load device")
         entry = _resolve_taesd_decoder(asset_id, family, load_device)
@@ -623,7 +611,8 @@ def _taehv_emitter(
     if asset_id is None:
         return None
     try:
-        if family_id not in _TAEHV_FAMILIES:
+        registered = _preview_decoder(family_id)
+        if registered is None or registered.kind != "taehv":
             raise _PreviewUnavailable(f"the TAEHV video decoder does not cover family {family_id}")
         if load_device is None:
             raise _PreviewUnavailable("the sampling handle names no load device")
@@ -662,9 +651,12 @@ def _triposplat_emitter(
     structural fact, not an unavailability worth logging). Everything else
     degrades exactly like the TAESD path: one info log in ``quality`` mode,
     silence in ``auto``."""
-    asset_id = _FAMILY_CODEC_ASSETS.get(family_id)
-    if asset_id is None:
+    registered = _preview_decoder(family_id)
+    if registered is None or registered.kind != "asset":
         return None
+    asset_id = registered.target
+    if asset_id is None:
+        raise AssertionError("asset preview registration has no target")
     if descriptor.channels != TRIPOSPLAT_CONFIG.latent_channels:
         return None
     try:
@@ -762,13 +754,14 @@ def _emitter_for(
             kind_passes = (("image",),)
     else:
         kind_passes = (("image",),)
+    registered_decoder = _preview_decoder(family_id)
     resolutions = [
         registry.resolve(
             descriptor,
             family_id=family_id,
             mode=mode,
             kinds=cast("Any", kinds),
-            family_codec=family_id in _FAMILY_CODEC_ASSETS,
+            family_codec=(registered_decoder is not None and registered_decoder.kind == "asset"),
         )
         for kinds in kind_passes
     ]
@@ -894,16 +887,16 @@ def multistream_sampling_preview_emitter(handle: Any) -> PreviewEmitter | None:
 
 # -- ComfyUI-arm translation ----------------------------------------------------
 
-# ComfyUI latent-format class names whose latent space the Dinkster catalog
-# already describes. The catalog descriptor carries what the comfy instance
-# lacks (calibrated rgb factors, content fps, the TAE decoder asset name),
-# so both arms resolve identical providers and wire semantics.
-_COMFY_CATALOG_FAMILIES: dict[str, str] = {
-    "SD15": "dinkster.sd15",
-    "SDXL": "dinkster.sdxl",
-    "Wan21": "dinkster.wan21",
-    "Wan22": "dinkster.wan22",
-}
+
+def _compatibility_family(latent_format: str) -> str | None:
+    return next(
+        (
+            family.id
+            for family in builtin_families()
+            if latent_format in family.engine.compatibility_latent_formats
+        ),
+        None,
+    )
 
 
 def _catalog_latent(family_id: str) -> LatentDescriptor | None:
@@ -996,7 +989,7 @@ def comfy_sampling_preview_emitter(model: Any) -> SamplingPreviewEmitter | None:
     if fmt is None:
         return None
     name = type(fmt).__name__
-    family_id = _COMFY_CATALOG_FAMILIES.get(name)
+    family_id = _compatibility_family(name)
     descriptor = None if family_id is None else _catalog_latent(family_id)
     if descriptor is None or family_id is None:
         family_id = f"comfy.{name}"

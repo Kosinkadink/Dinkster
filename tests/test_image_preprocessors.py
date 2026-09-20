@@ -25,6 +25,12 @@ from dinkster_nodes_image.preprocess import (
     TileHintPreprocessor,
 )
 
+from tools.golden_platform import (
+    GoldenUnavailableError,
+    GoldenVariantNotFoundError,
+    fetch_platform_golden,
+)
+
 GOLDEN_PATH = Path(__file__).parent / "goldens" / "preprocessors_controlnet_aux_59b1fc4.json"
 GOLDEN = cast("dict[str, object]", json.loads(GOLDEN_PATH.read_text(encoding="utf-8")))
 GOLDEN_CASES = cast("dict[str, object]", GOLDEN["cases"])
@@ -65,9 +71,12 @@ def _hint_case_document() -> dict[str, object]:
     # asserted instead of the Linux base goldens; platforms whose builds
     # match Linux bit-exactly (windows CI today) keep asserting the base.
     key = f"{sys.platform}-numpy{np.__version__}-opencv{cv2.__version__}"
-    selected = HINT_GOLDEN_PATH.with_name(f"{HINT_GOLDEN_PATH.stem}.{key}{HINT_GOLDEN_PATH.suffix}")
-    if not selected.is_file():
+    try:
+        selected = fetch_platform_golden(HINT_GOLDEN_PATH, key)
+    except GoldenVariantNotFoundError:
         return HINT_GOLDEN
+    except GoldenUnavailableError as error:
+        pytest.skip(f"platform evidence unavailable; baseline comparison skipped: {error}")
     document = cast("dict[str, object]", json.loads(selected.read_text(encoding="utf-8")))
     assert document["baseline"] == HINT_GOLDEN["baseline"]
     assert document["numpy"] == np.__version__

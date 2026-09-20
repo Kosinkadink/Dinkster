@@ -35,6 +35,7 @@ from dinkster_inference import (
     Trellis2FlowConfig,
     build_runtime_identity,
     build_runtime_identity_from_facts,
+    builtin_registries,
     compose_execution,
     default_diffusion_dtype,
     default_text_dtype,
@@ -117,10 +118,7 @@ def resolve_dtype_policy(
     """Resolve independent serve selectors to concrete inference dtypes."""
     text_default = default_text_dtype(family_id)
     supported = frozenset(dtype for name, dtype in _DTYPES.items() if name in compute_dtypes)
-    if family_id == "dinkster.minimax_h3":
-        diffusion_default = BFLOAT16
-    else:
-        diffusion_default = default_diffusion_dtype(family_id)
+    diffusion_default = default_diffusion_dtype(family_id)
     defaults = (diffusion_default, text_default, default_vae_dtype(family_id, supported))
     modes = (policy["diffusion"], policy["textEncoder"], policy["vae"])
     # Text falls back to float32 before float16: T5-class RMS variance
@@ -263,6 +261,7 @@ class NativeDispatchPolicy:
         self._schedule_conversion = schedule_conversion
         self._minimax_h3_runtime_versions = minimax_h3_runtime_versions
         self._schemas = schemas
+        self._inference_registries = builtin_registries()
         self._next_native_lane = 0
         self._run_native_lanes: dict[str, str] = {}
         self._memo: dict[tuple[object, ...], _ProbeVerdict] = {}
@@ -916,7 +915,6 @@ class NativeDispatchPolicy:
                 attention_policy=owner_attention[0],
                 attention_route_token=owner_attention[1],
             )
-        from dinkster_inference.component_catalog import default_component_registry
         from dinkster_inference.component_registry import AmbiguousComponentError
 
         kind = "text" if node_type == _LOAD_CLIP else "codec"
@@ -945,7 +943,7 @@ class NativeDispatchPolicy:
                     )
                 return self._select_text_recipe(binding, native_arm, native_attention)
         try:
-            descriptor, role, plan = default_component_registry().select_detected(
+            descriptor, role, plan = self._inference_registries.components.select_detected(
                 matches, kind, family_id=f"dinkster.{clip_type}" if kind == "text" else None
             )
         except ValueError as error:
@@ -1367,9 +1365,7 @@ class NativeDispatchPolicy:
                 raise RuntimeError(f"diffusion component {role!r} is not a MiniMax H3 DiT")
             if self._minimax_h3_runtime_versions is None:
                 raise RuntimeError("MiniMax H3 runtime versions are unavailable")
-            from dinkster_inference.component_catalog import default_component_registry
-
-            descriptor = default_component_registry().get("dinkster.minimax_h3")
+            descriptor = self._inference_registries.components.get("dinkster.minimax_h3")
             assert descriptor is not None
             dtype = resolve_dtype_policy(
                 descriptor.id, self._dtype_policy(), self._compute_dtypes()
@@ -1432,9 +1428,7 @@ class NativeDispatchPolicy:
         )
 
     def _probe_components_transaction(self, digest: str) -> tuple[DetectedComponents, ...]:
-        from dinkster_inference.component_catalog import default_component_registry
-
-        registry = default_component_registry()
+        registry = self._inference_registries.components
         key = (digest, registry.ids())
         with self._component_probes_lock:
             cached = self._component_probes.get(key)
@@ -1497,10 +1491,8 @@ class NativeDispatchPolicy:
             match for match in matches if match.plan_for(match.descriptor.model_role) is not None
         )
         if models:
-            from dinkster_inference.component_catalog import default_component_registry
-
             try:
-                descriptor, role, planned = default_component_registry().select_detected(
+                descriptor, role, planned = self._inference_registries.components.select_detected(
                     models, "model"
                 )
             except ValueError as error:

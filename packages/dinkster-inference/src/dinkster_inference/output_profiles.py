@@ -10,10 +10,10 @@ from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
 from .assembly import ComponentPlan
-from .component_catalog import default_component_registry
 from .component_registry import component_plans
 from .identity import runtime_component_identity
 from .refusal import NativeRefusalError
+from .registries import builtin_registries
 from .runtime import plan_native
 from .sources import (
     SafetensorsSource,
@@ -81,7 +81,7 @@ def probe_model_output_profile(source: SafetensorsSource) -> ModelOutputProfile:
         plan = plan_native(checkpoint=source)
     except (ValueError, NativeRefusalError):
         try:
-            registry = default_component_registry()
+            registry = builtin_registries().components
             matches = registry.detect(source, source.path)
             descriptor, _role, planned = registry.select_detected(matches, "model")
         except ValueError:

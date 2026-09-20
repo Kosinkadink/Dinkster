@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
 
@@ -205,6 +206,33 @@ def test_standalone_native_graph_executes_through_registered_provider() -> None:
         assert result.outputs["preview"]["mask"].resolve() == [[0.0, 1.0], [1.0, 0.0]]
 
     asyncio.run(scenario())
+
+
+def test_native_entry_registers_every_schema_value_type() -> None:
+    from dinkster_native.entry import NATIVE_NODES, register_types
+
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_types(registry)
+    referenced: set[str] = set()
+
+    def collect(entries: Iterable[object]) -> None:
+        for entry in entries:
+            type_expr = getattr(entry, "type", None)
+            if type_expr is not None:
+                referenced.update(type_expr.types)
+
+    for node in NATIVE_NODES:
+        schema = node.schema()
+        collect(schema.inputs)
+        collect(schema.outputs)
+        for family in schema.input_families:
+            collect(family.template)
+        for combo in schema.combos:
+            for option in combo.options:
+                collect(option.inputs)
+
+    assert {type_id for type_id in referenced if type_id not in registry} == set()
 
 
 @pytest.mark.parametrize("native_only", [True, False])

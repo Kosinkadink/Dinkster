@@ -118,7 +118,10 @@ class P2PLocalFileMapping:
                 with _open_regular(self.path, writable=False) as handle:
                     current = os.fstat(handle.fileno())
                     _require_path_binding(self.path, current)
-                    return _local_file_fingerprint(handle, current) == self._fingerprint
+                    return (
+                        _local_file_fingerprint(handle, current) == self._fingerprint
+                        and _hash_handle(handle) == self.digest
+                    )
             except (OSError, P2PStorageError):
                 return False
         try:
@@ -838,6 +841,7 @@ def adopt_staged_asset(
                 if not locked:
                     raise P2PStorageError("could not lock the P2P staged asset")
                 before = os.fstat(handle.fileno())
+                before_fingerprint = _local_file_fingerprint(handle, before)
                 _require_staged_stat(staging.device, before, size)
                 _validate_safe_format(handle, format_policy_version)
                 actual = _hash_handle(handle)
@@ -848,7 +852,10 @@ def adopt_staged_asset(
                 handle.flush()
                 os.fsync(handle.fileno())
                 after = os.fstat(handle.fileno())
-                if _stable_fingerprint(after) != _stable_fingerprint(before):
+                changed = _local_file_fingerprint(handle, after) != before_fingerprint
+                if _p2p_windows is not None and not changed:
+                    changed = _hash_handle(handle) != actual
+                if changed:
                     raise P2PStorageError("P2P staged file changed during verification")
 
                 try:

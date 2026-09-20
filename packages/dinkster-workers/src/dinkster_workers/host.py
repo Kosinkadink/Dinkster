@@ -114,7 +114,10 @@ from dinkster_schema import (
     validate_name,
 )
 from dinkster_values import (
+    InvalidRenditionRequest,
+    RenditionUnavailable,
     TypeRegistry,
+    default_decode,
     process_instance_token,
     register_core_types,
     stamp_resource_producer_arm,
@@ -1212,6 +1215,19 @@ async def serve_connection(
         # a token from an earlier lifetime is dead without a round trip).
         "workerInstance": process_instance_token(),
         "bodyArms": {arm: sorted(node_types) for arm, node_types in (body_arms or {}).items()},
+        "renditions": [
+            {
+                "typeId": spec.type_id,
+                "kind": spec.kind,
+                "mime": spec.mime if isinstance(spec.mime, str) else "application/octet-stream",
+                "default": spec.default,
+                **({"version": spec.version} if spec.version is not None else {}),
+                **({"parameters": list(spec.parameters)} if spec.parameters else {}),
+                **({"defaults": dict(spec.defaults)} if spec.defaults is not None else {}),
+                **({"limits": dict(spec.limits)} if spec.limits is not None else {}),
+            }
+            for spec in worker.registry.registered_renditions()
+        ],
     }
     if comfy_aliases is not None:
         hello["comfyAliases"] = comfy_alias_registry_to_wire(comfy_aliases)
@@ -1474,11 +1490,18 @@ async def serve_connection(
                     return
             started = time.perf_counter()
             workgroup_cancelled = getattr(workgroup_handler, "invocation_cancelled", None)
+            inference_registries = None
+            if invocation.extension_snapshot_digest is not None:
+                inference = importlib.import_module("dinkster_inference")
+                inference_registries = inference.materialize_inference_generation(
+                    invocation.extension_snapshot_digest
+                ).registries
             with use_execution_context(
                 ExecutionContext(
                     arm=invocation.arm,
                     expected_execution_identity=invocation.expected_execution_identity,
                     extension_snapshot_digest=invocation.extension_snapshot_digest,
+                    inference_registries=inference_registries,
                     fp8_matmul=invocation.fp8_matmul,
                     diffusion_dtype=invocation.diffusion_dtype,
                     text_dtype=invocation.text_dtype,
@@ -2459,6 +2482,7 @@ async def serve_connection(
     full_release_tasks: set[asyncio.Task[None]] = set()
     workgroup_tasks: set[asyncio.Task[None]] = set()
     route_tasks: dict[str, asyncio.Task[None]] = {}
+    rendition_tasks: dict[str, asyncio.Task[None]] = {}
     pack_routes = {route.id: route for _, item in extension_contributions for route in item.routes}
 
     async def run_pack_route(header: Mapping[str, Any]) -> None:
@@ -2482,6 +2506,66 @@ async def serve_connection(
         finally:
             route_tasks.pop(request_id, None)
         await send(reply)
+
+    def requested_rendition(header: Mapping[str, Any]):
+        type_id = header.get("typeId")
+        kind = header.get("kind")
+        if type(type_id) is not str or not type_id or type(kind) is not str or not kind:
+            raise InvalidRenditionRequest("rendition type and kind must be non-empty strings")
+        spec = next(
+            (item for item in worker.registry.renditions_of(type_id) if item.kind == kind), None
+        )
+        if spec is None:
+            raise InvalidRenditionRequest(f"{type_id}: no rendition {kind!r}")
+        return spec
+
+    async def run_rendition(header: Mapping[str, Any], blobs: Sequence[bytes]) -> None:
+        request_id = str(header.get("requestId", ""))
+        reply: dict[str, object] = {"type": "renditionResult", "requestId": request_id}
+        result_blobs: list[bytes] = []
+        try:
+            spec = requested_rendition(header)
+            parameters_raw = header.get("parameters", {})
+            if not isinstance(parameters_raw, Mapping) or any(
+                type(name) is not str or type(value) is not str
+                for name, value in cast("Mapping[object, object]", parameters_raw).items()
+            ):
+                raise InvalidRenditionRequest("rendition parameters must be strings")
+            parameters = cast("Mapping[str, str]", parameters_raw)
+            if header.get("type") == "resolveRendition":
+                meta_blob = header.get("metaBlob")
+                if type(meta_blob) is not int or not 0 <= meta_blob < len(blobs):
+                    raise InvalidRenditionRequest("rendition metadata is missing")
+                metadata = default_decode(blobs[meta_blob])
+                if not isinstance(metadata, Mapping):
+                    raise InvalidRenditionRequest("rendition metadata must be a mapping")
+                meta = cast("Mapping[str, object]", metadata)
+                reply["mime"] = spec.mime_for(meta)
+                if header.get("normalize") is True:
+                    reply["parameters"] = dict(spec.normalize_parameters(parameters, meta))
+            else:
+                value_wire = header.get("value")
+                if not isinstance(value_wire, Mapping):
+                    raise InvalidRenditionRequest("rendition value is missing")
+                consumed: list[str] = []
+                value, _ = codec.decode(cast("Mapping[str, Any]", value_wire), blobs, consumed)
+                if consumed:
+                    await send({"type": "shmAck", "segments": consumed})
+                rendition = await run_sync_resource(
+                    worker.registry.render, value, spec.kind, parameters or None
+                )
+                reply["mime"] = rendition.mime
+                reply["dataBlob"] = 0
+                result_blobs.append(rendition.data)
+        except InvalidRenditionRequest as exc:
+            reply.update(error="invalid-request", message=str(exc))
+        except RenditionUnavailable as exc:
+            reply.update(error="unavailable", message=str(exc))
+        except Exception as exc:
+            reply.update(error="failed", message=f"{type(exc).__name__}: {exc}")
+        finally:
+            rendition_tasks.pop(request_id, None)
+        await send(reply, result_blobs)
 
     async def run_workgroup(command: WorkGroupMessage) -> None:
         assert workgroup_handler is not None
@@ -2618,6 +2702,13 @@ async def serve_connection(
                 task = route_tasks.get(str(header.get("requestId", "")))
                 if task is not None:
                     task.cancel()
+            elif kind in ("resolveRendition", "renderRendition"):
+                request_id = str(header.get("requestId", ""))
+                if not request_id or request_id in rendition_tasks:
+                    raise BoundaryError("duplicate rendition request id")
+                rendition_tasks[request_id] = track_resource_task(
+                    asyncio.create_task(run_rendition(header, blobs))
+                )
             elif kind == "invoke":
                 invocation_id = str(header["invocationId"])
                 if maintenance_operations:
@@ -2895,6 +2986,7 @@ async def serve_connection(
             + list(shed_tasks)
             + list(workgroup_tasks)
             + list(route_tasks.values())
+            + list(rendition_tasks.values())
             + [task for task, _ in compile_tasks.values()]
             + [task for task, _ in stage_tasks.values()]
             + ([schema_reload_task] if schema_reload_task is not None else [])
