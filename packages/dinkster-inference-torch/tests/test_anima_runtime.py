@@ -378,6 +378,17 @@ def test_sample_custom_refuses_multistream_shapes_and_unsupported_modes() -> Non
         sample(request=CustomSamplingRequest(unknown, (), (1.0, 0.0)))
     with pytest.raises(AnimaRuntimeError, match="exact AnimaConditioning"):
         sample(cond=Conditioning(torch.zeros((1, 512, 1024)), None))
+    with pytest.raises(AnimaRuntimeError, match="adapter options: bogus_option"):
+        sample(bogus_option=True)
+    with pytest.raises(AnimaRuntimeError, match="adapter options: bogus_option"):
+        runtime.sample(
+            latent,
+            cond=condition,
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=1,
+            bogus_option=True,
+        )
     assert not model.calls
 
 

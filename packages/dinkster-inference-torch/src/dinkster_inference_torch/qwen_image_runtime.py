@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -64,6 +64,7 @@ from .sampling_execution import (
     CustomSamplingLatentValue,
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
     SamplingExecutionInputs,
     SamplingExecutionRegistration,
     SingleStreamLatentAdapter,
@@ -260,7 +261,6 @@ class _QwenImageDenoiser:
         self._control_strength = 0.0
         self._diffsynth = tuple(diffsynth)
         self.evaluator_identity = "dinkster.qwen-image.conditioning.v1"
-        self.on_step_begin: Callable[[int], None] | None = None
 
     def set_control_strength(self, strength: float) -> None:
         if not math.isfinite(strength) or strength < 0.0:
@@ -502,7 +502,7 @@ def _qwen_image_denoiser(
     runtime: object,
     compute_dtype: torch.dtype,
     context: SamplingAdapterContext,
-) -> SamplingDenoiserAdapter:
+) -> SamplingDenoiserExecution:
     owner = cast("QwenImageRuntime", runtime)
     inputs = context.inputs
     sampler = context.sampler
@@ -613,6 +613,7 @@ def _qwen_image_denoiser(
     if prepared_diffsynth:
         identity += ":diffsynth=" + hashlib.sha256("\n".join(identity_lines).encode()).hexdigest()
     evaluator.evaluator_identity = identity
+    on_step_begin = None
     if control_strengths is not None and sampler.id not in {
         "dinkster.dpm_fast",
         "dinkster.dpm_adaptive",
@@ -626,8 +627,16 @@ def _qwen_image_denoiser(
             )
             evaluator.set_control_strength(control_strengths[index])
 
-        evaluator.on_step_begin = apply_control_step
-    return cast("SamplingDenoiserAdapter", evaluator)
+        on_step_begin = apply_control_step
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", evaluator),
+        sampling=replace(
+            owner.family.sampling,
+            sigma_min=space.sigma_min,
+            sigma_max=space.sigma_max,
+        ),
+        on_step_begin=on_step_begin,
+    )
 
 
 class QwenImageRuntime(FlowSamplingRuntime):
@@ -656,6 +665,7 @@ class QwenImageRuntime(FlowSamplingRuntime):
         self.assembled = assembled
         self._runtime_identity = runtime_identity
         self._samplers = torch_sampler_registry(sampler_registry)
+        self._guidance = None
         if scheduler_registry is None:
             self._schedulers = torch_scheduler_registry()
         else:
@@ -924,6 +934,7 @@ class QwenImageDiffusionRuntime(FlowSamplingRuntime):
         self.assembled = _QwenImageDiffusionAssembly(diffusion, family, vae)
         self._runtime_identity = runtime_identity
         self._samplers = torch_sampler_registry(sampler_registry)
+        self._guidance = None
         if scheduler_registry is None:
             self._schedulers = torch_scheduler_registry()
         else:

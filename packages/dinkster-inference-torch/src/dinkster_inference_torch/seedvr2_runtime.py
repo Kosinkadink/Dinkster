@@ -35,6 +35,7 @@ from .operations import bound_compute_dtype, module_compute_device
 from .sampling_execution import (
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
     SamplingExecutionRegistration,
     SingleStreamLatentAdapter,
     sampling_execution,
@@ -235,18 +236,20 @@ def _seedvr2_denoiser(
     runtime: object,
     compute_dtype: torch.dtype,
     context: SamplingAdapterContext,
-) -> SamplingDenoiserAdapter:
+) -> SamplingDenoiserExecution:
     owner = cast("SeedVR2DiffusionRuntime", runtime)
     if context.options:
         names = ", ".join(sorted(context.options))
         raise SeedVR2RuntimeError(f"SeedVR2 sampling does not accept adapter options: {names}")
-    return cast(
-        "SamplingDenoiserAdapter",
-        SeedVR2Denoiser(
-            owner.assembled.diffusion,
-            runtime_identity=owner.runtime_identity,
-            compute_dtype=compute_dtype,
-        ),
+    return SamplingDenoiserExecution(
+        cast(
+            "SamplingDenoiserAdapter",
+            SeedVR2Denoiser(
+                owner.assembled.diffusion,
+                runtime_identity=owner.runtime_identity,
+                compute_dtype=compute_dtype,
+            ),
+        )
     )
 
 

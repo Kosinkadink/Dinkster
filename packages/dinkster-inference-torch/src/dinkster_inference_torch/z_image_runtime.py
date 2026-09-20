@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Callable
 from dataclasses import replace
 from typing import Any, cast
 
@@ -44,6 +43,7 @@ from .qwen_text import ZImageTextEncoder
 from .sampling_execution import (
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
     SamplingExecutionRegistration,
     SingleStreamLatentAdapter,
     sampling_execution,
@@ -102,8 +102,6 @@ class ZImageDenoiser:
         )
         self.compute_dtype = compute_dtype
         self.evaluator_identity = "dinkster.z-image.conditioning.v1"
-        self.on_step_begin: Callable[[int], None] | None = None
-        self.solver_options: dict[str, object] = {}
 
     def set_control_gain_row(
         self,
@@ -274,7 +272,7 @@ def _z_image_denoiser(
     runtime: object,
     compute_dtype: torch.dtype,
     context: SamplingAdapterContext,
-) -> SamplingDenoiserAdapter:
+) -> SamplingDenoiserExecution:
     owner = cast("ZImageRuntime", runtime)
     inputs = context.inputs
     sampler = context.sampler
@@ -390,7 +388,7 @@ def _z_image_denoiser(
     if control_facts:
         digest = hashlib.sha256("\n".join((*control_facts, "")).encode()).hexdigest()
         evaluator.evaluator_identity += f":intervention-plan={digest}"
-    evaluator.solver_options = {"realized_timeline": realized_timeline}
+    on_step_begin = None
     if control_table is not None and not off_grid:
 
         def apply_control_step(index: int) -> None:
@@ -398,8 +396,12 @@ def _z_image_denoiser(
             require_realized_sampling_step(index, row.sigma, row.progress)
             evaluator.set_control_gain_row(lane_ids, _z_image_control_gain_row(row, lane_ids))
 
-        evaluator.on_step_begin = apply_control_step
-    return cast("SamplingDenoiserAdapter", evaluator)
+        on_step_begin = apply_control_step
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", evaluator),
+        solver_options={"realized_timeline": realized_timeline},
+        on_step_begin=on_step_begin,
+    )
 
 
 class ZImageRuntime(SingleStreamSamplingRuntime):

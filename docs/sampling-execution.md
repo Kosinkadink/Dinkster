@@ -21,6 +21,10 @@ policy:
   compatible batch of conditioning lanes. It owns only the network call and
   model-specific conditioning arithmetic. Its stable evaluator identity lets
   the guidance engine reason about batching and distribution.
+- A `SamplingDenoiserExecution` wraps that evaluator with explicit
+  denoiser-coupled solver options, sampling bounds, and model-state step hook.
+  The engine remains the only caller of the solver and hook; optional behavior
+  is declared on this shape rather than discovered through adapter attributes.
 - Device and compute-dtype resolvers select where and how the model call runs.
   The `flow` flag declares schedule parameterization. The runtime's
   `supports_denoised_capture` capability declares whether the result can carry

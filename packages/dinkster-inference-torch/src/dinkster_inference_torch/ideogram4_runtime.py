@@ -51,6 +51,7 @@ from .qwen_image_text import QwenImageLanguageModel
 from .sampling_execution import (
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
     SamplingExecutionRegistration,
     SingleStreamLatentAdapter,
     sampling_execution,
@@ -309,14 +310,16 @@ def _ideogram4_denoiser(
     runtime: object,
     compute_dtype: torch.dtype,
     context: SamplingAdapterContext,
-) -> SamplingDenoiserAdapter:
+) -> SamplingDenoiserExecution:
     owner = cast("Ideogram4DiffusionRuntime", runtime)
     if context.options:
         names = ", ".join(sorted(context.options))
         raise Ideogram4RuntimeError(f"Ideogram 4 sampling does not accept adapter options: {names}")
-    return cast(
-        "SamplingDenoiserAdapter",
-        _Ideogram4Denoiser(owner.assembled.diffusion, compute_dtype=compute_dtype),
+    return SamplingDenoiserExecution(
+        cast(
+            "SamplingDenoiserAdapter",
+            _Ideogram4Denoiser(owner.assembled.diffusion, compute_dtype=compute_dtype),
+        )
     )
 
 

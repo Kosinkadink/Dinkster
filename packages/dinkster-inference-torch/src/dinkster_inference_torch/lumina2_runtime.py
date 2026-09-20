@@ -39,6 +39,7 @@ from .operations import module_compute_device
 from .sampling_execution import (
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
     SamplingExecutionRegistration,
     SingleStreamLatentAdapter,
     sampling_execution,
@@ -232,14 +233,16 @@ def _lumina2_denoiser(
     runtime: object,
     compute_dtype: torch.dtype,
     context: SamplingAdapterContext,
-) -> SamplingDenoiserAdapter:
+) -> SamplingDenoiserExecution:
     owner = cast("Lumina2DiffusionRuntime", runtime)
     if context.options:
         names = ", ".join(sorted(context.options))
         raise Lumina2RuntimeError(f"Lumina2 sampling does not accept adapter options: {names}")
-    return cast(
-        "SamplingDenoiserAdapter",
-        Lumina2Denoiser(owner.assembled.diffusion, compute_dtype=compute_dtype),
+    return SamplingDenoiserExecution(
+        cast(
+            "SamplingDenoiserAdapter",
+            Lumina2Denoiser(owner.assembled.diffusion, compute_dtype=compute_dtype),
+        )
     )
 
 

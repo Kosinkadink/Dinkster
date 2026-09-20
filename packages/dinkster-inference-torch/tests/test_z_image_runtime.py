@@ -351,6 +351,42 @@ def test_z_image_runtime_ksampler_and_custom_sampling_are_bit_identical() -> Non
     assert custom.denoised_output is not None
 
 
+def test_z_image_sampling_paths_reject_unknown_adapter_options() -> None:
+    model = RecordingZImage(value=0.0)
+    assembled = type("Assembled", (), {"family": Z_IMAGE, "diffusion": model})()
+    runtime = object.__new__(ZImageRuntime)
+    runtime.assembled = cast("Any", assembled)
+    runtime._runtime_identity = "test-z-image"  # pyright: ignore[reportPrivateUsage]
+    runtime._samplers = torch_sampler_registry()  # pyright: ignore[reportPrivateUsage]
+    runtime._schedulers = torch_scheduler_registry()  # pyright: ignore[reportPrivateUsage]
+    runtime._guidance = None  # pyright: ignore[reportPrivateUsage]
+    latent = torch.zeros((1, 16, 2, 2))
+    condition = Conditioning(torch.zeros((1, 3, 2560)), None)
+    sampler = runtime._samplers.get("dinkster.euler")  # pyright: ignore[reportPrivateUsage]
+    assert sampler is not None
+
+    with pytest.raises(ZImageRuntimeError, match="adapter options: bogus_option"):
+        runtime.sample_custom(
+            latent,
+            noise=torch.zeros_like(latent),
+            cond=condition,
+            request=CustomSamplingRequest(sampler, (), (1.0, 0.0)),
+            compute_dtype=torch.float32,
+            bogus_option=True,
+        )
+    with pytest.raises(ZImageRuntimeError, match="adapter options: bogus_option"):
+        runtime.sample(
+            latent,
+            cond=condition,
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=1,
+            compute_dtype=torch.float32,
+            bogus_option=True,
+        )
+    assert not model.calls
+
+
 def test_z_image_runtime_refuses_unknown_control_site_before_execution() -> None:
     model = RecordingZImage(value=0.0)
     assembled = type("Assembled", (), {"family": Z_IMAGE, "diffusion": model})()

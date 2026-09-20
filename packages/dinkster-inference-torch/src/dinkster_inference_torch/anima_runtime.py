@@ -53,6 +53,7 @@ from .sampling_execution import (
     CustomSamplingLatentValue,
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
     SamplingExecutionInputs,
     SamplingExecutionRegistration,
     SingleStreamLatentAdapter,
@@ -394,14 +395,16 @@ def _anima_denoiser(
     runtime: object,
     compute_dtype: torch.dtype,
     context: SamplingAdapterContext,
-) -> SamplingDenoiserAdapter:
+) -> SamplingDenoiserExecution:
     owner = cast("AnimaDiffusionRuntime", runtime)
     if context.options:
         names = ", ".join(sorted(context.options))
         raise AnimaRuntimeError(f"Anima sampling does not accept adapter options: {names}")
-    return cast(
-        "SamplingDenoiserAdapter",
-        AnimaDenoiser(owner.assembled.diffusion, compute_dtype=compute_dtype),
+    return SamplingDenoiserExecution(
+        cast(
+            "SamplingDenoiserAdapter",
+            AnimaDenoiser(owner.assembled.diffusion, compute_dtype=compute_dtype),
+        )
     )
 
 

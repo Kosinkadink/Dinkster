@@ -25,6 +25,7 @@ from dinkster_inference import (
     PreparedMultiStreamConditioning,
     ReconstructionRecipe,
     RuntimeKnobs,
+    SamplingDescriptor,
     SamplingGuidance,
     SamplingSegment,
     SamplingSpaceOverrideRuntime,
@@ -403,6 +404,8 @@ def test_runtime_forwards_pre_offset_brownian_sampling_state(
         family=QWEN_IMAGE,
     )
     native = QwenImageRuntime(assembled, runtime_identity="test.qwen-image-brownian")
+    space = FlowSigmas(shift=3.1, multiplier=1.0, timesteps=1000)
+    native = native.with_sampling_space(space)
     latent = torch.zeros((1, 16, 1, 2, 3), dtype=torch.float32)
     sentinel = object()
 
@@ -429,6 +432,9 @@ def test_runtime_forwards_pre_offset_brownian_sampling_state(
         sigmas = kwargs["sigmas"]
         assert isinstance(sigmas, tuple)
         assert sigmas[0] != 1.0
+        sampling = cast("SamplingDescriptor", kwargs["sampling"])
+        assert sampling.sigma_min == space.sigma_min
+        assert sampling.sigma_max == space.sigma_max
         return latent
 
     monkeypatch.setattr(sampling_execution_module, "brownian_step_noise", capture_noise)
@@ -1298,6 +1304,17 @@ def test_sample_custom_refuses_multistream_shapes_and_unsupported_modes() -> Non
         sample(request=CustomSamplingRequest(unknown, (), (1.0, 0.0)))
     with pytest.raises(QwenImageRuntimeError, match="exact QwenImageConditioning"):
         sample(cond=Conditioning(torch.zeros((1, 2, 3584)), None))
+    with pytest.raises(QwenImageRuntimeError, match="adapter options: bogus_option"):
+        sample(bogus_option=True)
+    with pytest.raises(QwenImageRuntimeError, match="adapter options: bogus_option"):
+        native.sample(
+            latent,
+            cond=condition,
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=1,
+            bogus_option=True,
+        )
     assert not diffusion.calls
 
 

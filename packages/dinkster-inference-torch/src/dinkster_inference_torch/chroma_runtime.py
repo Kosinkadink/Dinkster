@@ -40,6 +40,7 @@ from .operations import module_compute_device
 from .sampling_execution import (
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
     SamplingExecutionRegistration,
     SingleStreamLatentAdapter,
     sampling_execution,
@@ -230,7 +231,7 @@ def _chroma_denoiser(
     runtime: object,
     compute_dtype: torch.dtype,
     context: SamplingAdapterContext,
-) -> SamplingDenoiserAdapter:
+) -> SamplingDenoiserExecution:
     owner = cast("ChromaDiffusionRuntime", runtime)
     if context.inputs is None:
         raise AssertionError("Chroma sampling adapter requires resolved execution context")
@@ -240,14 +241,16 @@ def _chroma_denoiser(
     if context.options:
         names = ", ".join(sorted(context.options))
         raise ChromaRuntimeError(f"Chroma sampling does not accept adapter options: {names}")
-    return cast(
-        "SamplingDenoiserAdapter",
-        ChromaDenoiser(
-            owner.assembled.diffusion,
-            guidance=0.0 if context.guidance is None else context.guidance,
-            option_windows=owner._option_windows,  # pyright: ignore[reportPrivateUsage]
-            compute_dtype=compute_dtype,
-        ),
+    return SamplingDenoiserExecution(
+        cast(
+            "SamplingDenoiserAdapter",
+            ChromaDenoiser(
+                owner.assembled.diffusion,
+                guidance=0.0 if context.guidance is None else context.guidance,
+                option_windows=owner._option_windows,  # pyright: ignore[reportPrivateUsage]
+                compute_dtype=compute_dtype,
+            ),
+        )
     )
 
 

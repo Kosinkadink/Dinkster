@@ -18,7 +18,7 @@ by a family runtime.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, cast, overload
 
@@ -44,6 +44,7 @@ from dinkster_inference import (
     PreparedMultiStreamConditioning,
     Registry,
     SamplerDescriptor,
+    SamplingDescriptor,
     SamplingExecutionContext,
     SamplingGuidance,
     SamplingSegment,
@@ -629,9 +630,17 @@ class SamplingDenoiserAdapter(Protocol):
 
 
 @dataclass(frozen=True)
+class SamplingDenoiserExecution:
+    evaluator: SamplingDenoiserAdapter
+    solver_options: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
+    sampling: SamplingDescriptor | None = None
+    on_step_begin: Callable[[int], None] | None = None
+
+
+@dataclass(frozen=True)
 class SamplingExecutionRegistration:
     latent: SamplingLatentAdapter
-    denoiser: Callable[[object, torch.dtype, SamplingAdapterContext], SamplingDenoiserAdapter]
+    denoiser: Callable[[object, torch.dtype, SamplingAdapterContext], SamplingDenoiserExecution]
     device: Callable[[object], torch.device | str | None]
     compute_dtype: Callable[[object], torch.dtype]
     flow: bool
@@ -842,7 +851,7 @@ def sampling_execution(
     )
     if registration.prepare_guidance is not None:
         inputs = registration.prepare_guidance(owner, inputs)
-    executor = cast("GuidanceExecutor | None", getattr(owner, "_guidance", None))
+    executor = owner._guidance  # pyright: ignore[reportPrivateUsage]
     plan = compile_guidance_plan(inputs.cond, inputs.cfg, sampler, executor)
     adapter_context = replace(
         adapter_context,
@@ -852,7 +861,8 @@ def sampling_execution(
         schedule=schedule,
         plan=plan,
     )
-    adapter = registration.denoiser(owner, compute_dtype, adapter_context)
+    denoiser_execution = registration.denoiser(owner, compute_dtype, adapter_context)
+    adapter = denoiser_execution.evaluator
     evaluator_identity = adapter.evaluator_identity
     resolved_evaluator_identity: Callable[[GuidanceRole], str]
     if isinstance(evaluator_identity, str):
@@ -891,21 +901,20 @@ def sampling_execution(
     )
     output = run_denoise(
         denoiser,
-        request.build_solver(**cast("Any", getattr(adapter, "solver_options", {}))),
+        request.build_solver(**cast("Any", denoiser_execution.solver_options)),
         latent=inputs.latent,
         noise=inputs.noise,
-        inpaint_noise=cast("torch.Tensor | None", getattr(adapter, "inpaint_noise", None)),
         sigmas=schedule.sigmas,
         initial_sigma=schedule.initial_sigma,
         family=owner.family,
-        sampling=cast("Any", getattr(adapter, "sampling", None)),
+        sampling=denoiser_execution.sampling,
         seed=seed,
         noise_kind=sampler.noise,
         noise_sampler=noise_sampler,
         percent_to_sigma=space.percent_to_sigma,
         device=device,
         on_step=on_step,
-        on_step_begin=cast("Callable[[int], None] | None", getattr(adapter, "on_step_begin", None)),
+        on_step_begin=denoiser_execution.on_step_begin,
         on_state=report_state,
         denoise_mask=inputs.denoise_mask,
     )

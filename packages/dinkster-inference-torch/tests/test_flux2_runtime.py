@@ -310,6 +310,34 @@ def test_flux2_runtime_samples_in_family_flow_space_with_shift_override(
     assert shifts == [2.02, 1.18452766]
 
 
+def test_flux2_sampling_paths_reject_unknown_adapter_options() -> None:
+    model = RecordingFlux(value=0.0)
+    runtime = _bare_runtime(model)
+    latent = torch.zeros((1, 128, 2, 2))
+    condition = Conditioning(torch.zeros((1, 3, 8)), None)
+    sampler = runtime._samplers.get("dinkster.euler")  # pyright: ignore[reportPrivateUsage]
+    assert sampler is not None
+
+    with pytest.raises(Flux2RuntimeError, match="adapter options: bogus_option"):
+        runtime.sample_custom(
+            latent,
+            noise=torch.zeros_like(latent),
+            cond=condition,
+            request=CustomSamplingRequest(sampler, (), (1.0, 0.0)),
+            bogus_option=True,
+        )
+    with pytest.raises(Flux2RuntimeError, match="adapter options: bogus_option"):
+        runtime.sample(
+            latent,
+            cond=condition,
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=1,
+            bogus_option=True,
+        )
+    assert not model.calls
+
+
 def test_flux2_runtime_sample_delegates_ksampler_composition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -45,6 +45,7 @@ from .qwen_text import Flux2DevTextEncoder, Flux2KleinTextEncoder, QwenTextModel
 from .sampling_execution import (
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
     SamplingExecutionRegistration,
     SingleStreamLatentAdapter,
     sampling_execution,
@@ -189,18 +190,20 @@ def _flux2_denoiser(
     runtime: object,
     compute_dtype: torch.dtype,
     context: SamplingAdapterContext,
-) -> SamplingDenoiserAdapter:
+) -> SamplingDenoiserExecution:
     owner = cast("Flux2Runtime | Flux2DiffusionRuntime", runtime)
     if context.options:
         names = ", ".join(sorted(context.options))
         raise Flux2RuntimeError(f"Flux2 sampling does not accept adapter options: {names}")
-    return cast(
-        "SamplingDenoiserAdapter",
-        Flux2Denoiser(
-            owner.assembled.diffusion,
-            guidance=context.guidance,
-            compute_dtype=compute_dtype,
-        ),
+    return SamplingDenoiserExecution(
+        cast(
+            "SamplingDenoiserAdapter",
+            Flux2Denoiser(
+                owner.assembled.diffusion,
+                guidance=context.guidance,
+                compute_dtype=compute_dtype,
+            ),
+        )
     )
 
 
@@ -292,7 +295,11 @@ class Flux2Runtime(SingleStreamSamplingRuntime):
     def _ksampler_kwargs(self, kwargs: dict[str, object]) -> dict[str, object]:
         if "_compute_dtype" in kwargs or "_device" in kwargs:
             raise TypeError("Flux2 KSampler does not accept private compute placement arguments")
-        return kwargs
+        return {
+            "compute_dtype": kwargs.pop("compute_dtype", torch.bfloat16),
+            "device": kwargs.pop("device", None),
+            **kwargs,
+        }
 
     def decode_latent(self, latent: torch.Tensor) -> torch.Tensor:
         return self.codec.decode(latent)
@@ -410,7 +417,12 @@ class Flux2DiffusionRuntime(SingleStreamSamplingRuntime):
     def _ksampler_kwargs(self, kwargs: dict[str, object]) -> dict[str, object]:
         if "_compute_dtype" in kwargs or "_device" in kwargs:
             raise TypeError("Flux2 KSampler does not accept private compute placement arguments")
-        return kwargs
+        params = next(self.assembled.diffusion.parameters())
+        return {
+            "compute_dtype": kwargs.pop("compute_dtype", params.dtype),
+            "device": kwargs.pop("device", module_compute_device(self.assembled.diffusion)),
+            **kwargs,
+        }
 
 
 __all__ = [

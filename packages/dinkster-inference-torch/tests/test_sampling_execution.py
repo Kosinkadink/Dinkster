@@ -83,6 +83,7 @@ from dinkster_inference_torch.guidance import (
 from dinkster_inference_torch.sampling_execution import (
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
     SamplingExecutionRegistration,
     SamplingSchedule,
     SingleStreamLatentAdapter,
@@ -1953,8 +1954,8 @@ def test_sampling_execution_owns_masks_denoise_range_cancellation_previews_and_d
         _runtime: object,
         _dtype: torch.dtype,
         _context: SamplingAdapterContext,
-    ) -> SamplingDenoiserAdapter:
-        return cast("SamplingDenoiserAdapter", DenoiserAdapter())
+    ) -> SamplingDenoiserExecution:
+        return SamplingDenoiserExecution(cast("SamplingDenoiserAdapter", DenoiserAdapter()))
 
     class SeamRuntime(SingleStreamSamplingRuntime):
         supports_denoised_capture = True
