@@ -449,6 +449,7 @@ from .effect_mask import (
 )
 from .extensions import (
     INFERENCE_SAMPLERS_SURFACE,
+    INFERENCE_SCHEDULERS_SURFACE,
     SAMPLER_CATALOG_ENV,
     InferenceContribution,
     KeyedContribution,
@@ -462,10 +463,12 @@ from .extensions import (
     guidance_declarations,
     materialize_inference_generation,
     materialize_sampler_registry,
+    registry_choice_values,
     release_inference_generation,
     remove_sampler_catalog_record,
     sampler_choice_values,
     sampler_declaration,
+    scheduler_declaration,
     write_sampler_catalog,
 )
 from .families import (
@@ -1218,6 +1221,14 @@ from .recipe import (
     canonical_patch_overlay,
     patch_overlay_stack_digest,
 )
+from .registries import (
+    NATIVE_WIRED_FAMILY_IDS,
+    InferenceRegistries,
+    builtin_assembly_registry,
+    builtin_registries,
+    merge,
+    wired_runtime_family_ids,
+)
 from .registry import Registrable, Registry, RegistryError, validate_registry_id
 from .res4lyf_rk import (
     RES4LYF_DEIS_2M,
@@ -1243,7 +1254,6 @@ from .res4lyf_rk import (
     resolve_rk_tableau,
 )
 from .runtime import (
-    NATIVE_WIRED_FAMILY_IDS,
     AssemblyRegistration,
     AudioPreview,
     ConditioningRuntime,
@@ -1264,11 +1274,9 @@ from .runtime import (
     PreparedMultiStreamConditioning,
     RuntimeTensor,
     SamplingSpaceOverrideRuntime,
-    builtin_assembly_registry,
     plan_native,
     probe_native,
     resolve_native_assembly,
-    wired_runtime_family_ids,
 )
 from .runtime_handle import (
     InferenceRuntimeHandle,
@@ -2035,6 +2043,7 @@ __all__ = [
     "GuidanceStrategyDescriptor",
     "guidance_declarations",
     "InferenceContribution",
+    "InferenceRegistries",
     "MaterializedInferenceGeneration",
     "materialize_inference_generation",
     "release_inference_generation",
@@ -2378,6 +2387,7 @@ __all__ = [
     "INT64",
     "INT8",
     "INFERENCE_SAMPLERS_SURFACE",
+    "INFERENCE_SCHEDULERS_SURFACE",
     "IDEOGRAM4",
     "IDEOGRAM4_CONFIG",
     "IDEOGRAM4_LANGUAGE_SUBTREE",
@@ -3016,12 +3026,14 @@ __all__ = [
     "bong_tangent_schedule",
     "builtin_families",
     "builtin_family_registry",
+    "builtin_registries",
     "builtin_sampler_registry",
     "builtin_sampler_snapshot",
     "builtin_samplers",
     "DINKSTER_AR_VIDEO",
     "builtin_scheduler_registry",
     "builtin_schedulers",
+    "merge",
     "build_runtime_identity",
     "build_runtime_identity_from_facts",
     "extend_runtime_identity",
@@ -3347,12 +3359,14 @@ __all__ = [
     "require_inference_component_handle",
     "require_inference_runtime_handle",
     "RankWeights",
+    "registry_choice_values",
     "replace_prefix",
     "runtime_component_identity",
     "resolve_options",
     "select_builtin_sampler",
     "sampler_choice_values",
     "sampler_declaration",
+    "scheduler_declaration",
     "sampling_sigmas",
     "sgm_uniform_schedule",
     "simple_schedule",

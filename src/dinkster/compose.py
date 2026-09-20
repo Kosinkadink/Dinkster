@@ -77,18 +77,20 @@ from dinkster_engine import (
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, TypedLiteral, top_level_node_id
 from dinkster_inference import (
     INFERENCE_SAMPLERS_SURFACE,
+    INFERENCE_SCHEDULERS_SURFACE,
     SAMPLER_CATALOG_ENV,
     OpenAICompatibility,
     OpenAIGenerationProvider,
     Registry,
     RegistryError,
     SamplerExtensionEntry,
-    builtin_family_registry,
+    builtin_registries,
     builtin_sampler_snapshot,
-    builtin_schedulers,
     register_inference_types,
+    registry_choice_values,
     remove_sampler_catalog_record,
     sampler_choice_values,
+    scheduler_declaration,
     write_sampler_catalog,
 )
 from dinkster_memory import (
@@ -2003,15 +2005,16 @@ def _pack_provider_identity(manifest: PackManifest, spec: PackSpec) -> str:
 
 def _builtin_registry_providers() -> dict[str, dict[str, str]]:
     provider = PACK_INFERENCE_CONTRACT
+    registries = builtin_registries()
     return {
         canonical_name(MODEL_FAMILY_REGISTRY): {
-            canonical_name(id_): provider for id_ in builtin_family_registry().ids()
+            canonical_name(id_): provider for id_ in registries.families.ids()
         },
         canonical_name(SAMPLER_REGISTRY): {
             canonical_name(item.id): provider for item in builtin_sampler_snapshot().samplers
         },
         canonical_name(SCHEDULER_REGISTRY): {
-            canonical_name(item.id): provider for item in builtin_schedulers()
+            canonical_name(item.id): provider for item in registries.schedulers
         },
     }
 
@@ -2550,7 +2553,7 @@ class ServingComposer:
         builtin_sampler_view = builtin_sampler_snapshot()
         self._core_choices: dict[str, tuple[str, ...]] = {
             "dinkster.samplers": tuple(d.id for d in builtin_sampler_view.samplers),
-            "dinkster.schedulers": tuple(d.id for d in builtin_schedulers()),
+            "dinkster.schedulers": tuple(d.id for d in builtin_registries().schedulers),
         }
         # The dev scaffolding composes in-process, so its choice lists and
         # shipped gallery template ride the core surface directly (an
@@ -4497,6 +4500,7 @@ class ServingComposer:
     ) -> tuple[
         ExtensionSnapshot,
         SamplerRegistrySnapshot,
+        tuple[KeyedContribution, ...],
         GraphCompilerRegistrySnapshot,
         GraphCompileTransport | None,
     ]:
@@ -4508,6 +4512,9 @@ class ServingComposer:
         sampler_registry: Registry[KeyedContribution] = Registry()
         for declaration in builtin_sampler_snapshot().samplers:
             sampler_registry.register(declaration)
+        scheduler_registry: Registry[KeyedContribution] = Registry()
+        for descriptor in builtin_registries().schedulers:
+            scheduler_registry.register(scheduler_declaration(descriptor))
         surfaces: dict[
             tuple[ExtensionScope, str],
             tuple[CompositionMode, list[str]],
@@ -4587,7 +4594,7 @@ class ServingComposer:
                         CompositionMode.EXCLUSIVE
                         if surface_id == GUIDANCE_SURFACES[2]
                         else CompositionMode.KEYED_REGISTRY
-                        if surface_id == INFERENCE_SAMPLERS_SURFACE
+                        if surface_id in (INFERENCE_SAMPLERS_SURFACE, INFERENCE_SCHEDULERS_SURFACE)
                         else CompositionMode.ORDERED_LIST
                         if surface_id == GRAPH_COMPILERS_SURFACE
                         else CompositionMode.WRAPPER_CHAIN
@@ -4613,6 +4620,7 @@ class ServingComposer:
             for contribution in keyed_contributions:
                 if contribution.surface_id not in (
                     INFERENCE_SAMPLERS_SURFACE,
+                    INFERENCE_SCHEDULERS_SURFACE,
                     GRAPH_COMPILERS_SURFACE,
                     *GUIDANCE_SURFACES,
                 ):
@@ -4631,6 +4639,13 @@ class ServingComposer:
                     except RegistryError as exc:
                         raise CompositionError(
                             f"extension {name!r} sampler registry collision: {exc}"
+                        ) from exc
+                if contribution.surface_id == INFERENCE_SCHEDULERS_SURFACE:
+                    try:
+                        scheduler_registry.register(contribution)
+                    except RegistryError as exc:
+                        raise CompositionError(
+                            f"extension {name!r} scheduler registry collision: {exc}"
                         ) from exc
             info = record.delta.packs.get(name)
             if info is None:
@@ -4683,6 +4698,7 @@ class ServingComposer:
                 )
         snapshot = ExtensionSnapshot(extensions=tuple(active), frontend_api=FRONTEND_API_VERSION)
         sampler_snapshot = SamplerRegistrySnapshot(tuple(sampler_registry))
+        scheduler_snapshot = tuple(scheduler_registry)
         try:
             GuidanceRegistrySnapshot(
                 tuple(
@@ -4786,6 +4802,7 @@ class ServingComposer:
         return (
             snapshot,
             sampler_snapshot,
+            scheduler_snapshot,
             graph_compiler_registry,
             graph_compile_transport,
         )
@@ -5682,11 +5699,12 @@ class ServingComposer:
             (
                 snapshot,
                 sampler_registry,
+                scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
             ) = await self._build_extension_snapshot(staged_records, topology)
             derived_choices = self._validated_derived_choices(
-                sampler_registry, staged_records, topology
+                sampler_registry, scheduler_registry, staged_records, topology
             )
             staged_registry.remove_relayed_renditions(manifest.name)
             if not spec.in_process:
@@ -5909,11 +5927,12 @@ class ServingComposer:
             (
                 snapshot,
                 sampler_registry,
+                scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
             ) = await self._build_extension_snapshot(self._records, topology)
             derived_choices = self._validated_derived_choices(
-                sampler_registry, self._records, topology
+                sampler_registry, scheduler_registry, self._records, topology
             )
             staged_registry = composition._registry.copy()
             staged_registry.remove_relayed_renditions(spec.name)
@@ -6404,11 +6423,12 @@ class ServingComposer:
             (
                 snapshot,
                 sampler_registry,
+                scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
             ) = await self._build_extension_snapshot(self._records, topology)
             derived_choices = self._validated_derived_choices(
-                sampler_registry, self._records, topology
+                sampler_registry, scheduler_registry, self._records, topology
             )
             staged_registry = composition._registry.copy()
             staged_registry.remove_relayed_renditions(spec.name)
@@ -6782,11 +6802,12 @@ class ServingComposer:
                 (
                     snapshot,
                     sampler_registry,
+                    scheduler_registry,
                     graph_compiler_registry,
                     graph_compile_transport,
                 ) = await self._build_extension_snapshot(staged_records, topology)
                 derived_choices = self._validated_derived_choices(
-                    sampler_registry, staged_records, topology
+                    sampler_registry, scheduler_registry, staged_records, topology
                 )
             except BaseException:
                 if snapshot is not None and topology is not None:
@@ -7197,11 +7218,12 @@ class ServingComposer:
             (
                 snapshot,
                 sampler_registry,
+                scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
             ) = await self._build_extension_snapshot(staged_records, topology)
             derived_choices = self._validated_derived_choices(
-                sampler_registry, staged_records, topology
+                sampler_registry, scheduler_registry, staged_records, topology
             )
             route_candidates = tuple(
                 dict.fromkeys(
@@ -7389,11 +7411,12 @@ class ServingComposer:
                 (
                     snapshot,
                     sampler_registry,
+                    scheduler_registry,
                     graph_compiler_registry,
                     graph_compile_transport,
                 ) = await self._build_extension_snapshot(staged_records, topology)
                 derived_choices = self._validated_derived_choices(
-                    sampler_registry, staged_records, topology
+                    sampler_registry, scheduler_registry, staged_records, topology
                 )
             except BaseException:
                 if snapshot is not None:
@@ -7491,7 +7514,12 @@ class ServingComposer:
     def _current_sampler_choices(self) -> dict[str, tuple[str, ...]]:
         return {
             choice_id: self.composition.choices[choice_id]
-            for choice_id in ("dinkster.samplers", "comfy.samplers")
+            for choice_id in (
+                "dinkster.samplers",
+                "comfy.samplers",
+                "dinkster.schedulers",
+                "comfy.schedulers",
+            )
             if choice_id in self.composition.choices
         }
 
@@ -7735,10 +7763,26 @@ class ServingComposer:
     def _validated_derived_choices(
         self,
         sampler_registry: SamplerRegistrySnapshot,
+        scheduler_registry: tuple[KeyedContribution, ...],
         records: Mapping[str, _PackRecord],
         topology: Topology,
     ) -> dict[str, tuple[str, ...]]:
         choices = self._validated_sampler_choices(sampler_registry)
+        canonical_schedulers = tuple(item.id for item in scheduler_registry)
+        compat_schedulers = registry_choice_values(scheduler_registry)
+        try:
+            combo_choices_json_bytes(
+                canonical_schedulers, subject="derived choice 'dinkster.schedulers'"
+            )
+            combo_choices_json_bytes(compat_schedulers, subject="derived choice 'comfy.schedulers'")
+        except ValueError as exc:
+            raise CompositionError(str(exc)) from exc
+        choices.update(
+            {
+                "dinkster.schedulers": canonical_schedulers,
+                "comfy.schedulers": compat_schedulers,
+            }
+        )
         for provider_kind, provider_choices in (
             ("vision", self._validated_vision_providers(records, topology)[0]),
             ("generation", self._validated_generation_providers(records, topology)[0]),
@@ -7763,6 +7807,11 @@ class ServingComposer:
         self.composition.choices["dinkster.samplers"] = canonical
         if "comfy.samplers" in self.composition.choices:
             self.composition.choices["comfy.samplers"] = choices["comfy.samplers"]
+        scheduler_ids = choices["dinkster.schedulers"]
+        self._core_choices["dinkster.schedulers"] = scheduler_ids
+        self.composition.choices["dinkster.schedulers"] = scheduler_ids
+        if "comfy.schedulers" in self.composition.choices:
+            self.composition.choices["comfy.schedulers"] = choices["comfy.schedulers"]
 
     def _apply_derived_choices(self, choices: Mapping[str, tuple[str, ...]]) -> None:
         self._apply_sampler_choices(choices)

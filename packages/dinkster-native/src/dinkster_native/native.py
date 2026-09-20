@@ -230,9 +230,14 @@ class LoadCheckpoint(Node):
         latent_space: str | None = None
         try:
             inference = cast("Any", importlib.import_module("dinkster_inference"))
-            detection = inference.builtin_family_registry().detect(
-                inference.load_safetensors_header(path)
+            context = current_execution_context()
+            registries = cast(
+                "Any",
+                context.inference_registries
+                if context is not None and context.inference_registries is not None
+                else inference.builtin_registries(),
             )
+            detection = registries.families.detect(inference.load_safetensors_header(path))
             if detection.best is not None:
                 latent_space = detection.best.family_id
         except Exception:  # noqa: BLE001 - optional provenance never gates loading

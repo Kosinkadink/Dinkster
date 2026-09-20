@@ -405,6 +405,9 @@ class InProcessWorker:
             attention_policy=invocation.attention_policy,
             attention_route_token=invocation.attention_route_token,
             extension_snapshot_digest=invocation.extension_snapshot_digest,
+            inference_registries=(
+                outer_context.inference_registries if outer_context is not None else None
+            ),
             node_id=invocation.node_id,
             cancelled=(outer_context.cancelled if outer_context is not None else lambda: False),
         )
@@ -510,6 +513,7 @@ class InProcessWorker:
                     arm=invocation.arm,
                     expected_execution_identity=invocation.expected_execution_identity,
                     extension_snapshot_digest=invocation.extension_snapshot_digest,
+                    inference_registries=None,
                     fp8_matmul=invocation.fp8_matmul,
                     diffusion_dtype=invocation.diffusion_dtype,
                     text_dtype=invocation.text_dtype,
@@ -528,6 +532,7 @@ class InProcessWorker:
                     arm=invocation.arm,
                     expected_execution_identity=invocation.expected_execution_identity,
                     extension_snapshot_digest=invocation.extension_snapshot_digest,
+                    inference_registries=outer_context.inference_registries,
                     fp8_matmul=invocation.fp8_matmul,
                     diffusion_dtype=invocation.diffusion_dtype,
                     text_dtype=invocation.text_dtype,
