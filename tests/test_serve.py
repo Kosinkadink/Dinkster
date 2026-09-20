@@ -489,7 +489,7 @@ def test_settings_gate_argparse_matrix(
 
 @pytest.mark.parametrize("persisted_enabled", [None, False, True])
 @pytest.mark.parametrize("disabled", [False, True])
-def test_serve_p2p_defaults_on_preserves_saved_choice_and_allows_cli_disable(
+def test_serve_p2p_defaults_off_preserves_saved_choice_and_allows_cli_disable(
     persisted_enabled: bool | None,
     disabled: bool,
     tmp_path: Path,
@@ -535,7 +535,7 @@ def test_serve_p2p_defaults_on_preserves_saved_choice_and_allows_cli_disable(
     serve.main()
     value = captured[0][0]["p2p"]
     assert isinstance(value, dict)
-    enabled = not disabled and persisted_enabled is not False
+    enabled = not disabled and persisted_enabled is True
     assert value["downloadsEnabled"] is enabled
     assert value["seedingEnabled"] is enabled
     assert value["stagingBudgetBytes"] == 64 * 1024**3
@@ -2588,25 +2588,9 @@ def test_library_startup_composes_without_pack_workers(
             async with session.get(f"http://127.0.0.1:{port}/api/p2p/status") as resp:
                 assert resp.status == 200
                 p2p = await resp.json()
-            if disable_p2p:
-                assert p2p["state"] == "disabled", p2p
-                assert p2p["sidecar"] is None, p2p
-                assert not server.children(recursive=True)
-            else:
-                assert p2p["state"] == "running", p2p
-                assert p2p["sidecar"]["leases"] == [], p2p
-                assert p2p["sidecar"]["global"]["active"] is False, p2p
-                child = psutil.Process(p2p["sidecar"]["pid"])
-                assert child != server
-                sidecar_processes = []
-                # Windows virtualenvs can put a redirector before the sidecar.
-                while child != server:
-                    assert child.cmdline()[1:3] == ["-m", "dinkster_p2p"]
-                    sidecar_processes.append(child)
-                    parent = child.parent()
-                    assert parent is not None
-                    child = parent
-                assert set(server.children(recursive=True)) == set(sidecar_processes)
+            assert p2p["state"] == "disabled", p2p
+            assert p2p["sidecar"] is None, p2p
+            assert not server.children(recursive=True)
 
     try:
         asyncio.run(scenario())
