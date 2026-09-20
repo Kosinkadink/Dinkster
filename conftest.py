@@ -6,6 +6,10 @@ from tempfile import TemporaryDirectory
 import pytest
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line("markers", "all_file_shards: run this test on every file shard")
+
+
 @pytest.fixture
 def model_root() -> Path:
     return Path(
