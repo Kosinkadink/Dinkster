@@ -18,6 +18,7 @@ import signal
 import socket
 import subprocess
 import sys
+import textwrap
 import time
 import tomllib
 from pathlib import Path
@@ -69,6 +70,102 @@ def test_partner_auth_is_injected_only_into_partner_worker_environment() -> None
         _with_partner_auth(foundation, api_key="secret", api_base="https://proxy.test")
         == foundation
     )
+
+
+def test_core_server_serves_nodes_without_collab_or_supervisor_importable() -> None:
+    script = textwrap.dedent(
+        """
+        import asyncio
+        import importlib.abc
+
+        from aiohttp.test_utils import TestClient, TestServer
+        from dinkster_caches import MemoryLRUCache
+        from dinkster_engine import Engine
+        from dinkster_values import TypeRegistry, register_core_types
+        from dinkster_workers import InProcessWorker
+
+
+        class MissingOptionalPackages(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname.split('.')[0] in {'dinkster_collab', 'dinkster_supervisor'}:
+                    raise ModuleNotFoundError(name=fullname)
+                return None
+
+
+        async def main():
+            import sys
+
+            sys.meta_path.insert(0, MissingOptionalPackages())
+            from dinkster import serve
+            from dinkster_server import create_app
+
+            registry = TypeRegistry()
+            register_core_types(registry)
+
+            def make_engine(on_event):
+                return Engine(
+                    schemas={},
+                    registry=registry,
+                    worker=InProcessWorker({}, registry),
+                    cache=MemoryLRUCache(),
+                    on_event=on_event,
+                )
+
+            app = create_app(make_engine, {})
+            assert serve._add_collaboration_routes(app, None) is False
+            client = TestClient(TestServer(app))
+            await client.start_server()
+            try:
+                response = await client.get('/api/nodes')
+                assert response.status == 200
+                assert (await response.json())['nodes'] == {}
+            finally:
+                await client.close()
+
+
+        asyncio.run(main())
+        """
+    )
+    subprocess.run([sys.executable, "-c", script], check=True)
+
+
+def test_installed_collaboration_package_registers_session_routes() -> None:
+    async def scenario() -> None:
+        from aiohttp.test_utils import TestClient, TestServer
+        from dinkster_caches import MemoryLRUCache
+        from dinkster_engine import Engine
+        from dinkster_server import create_app
+        from dinkster_values import TypeRegistry, register_core_types
+        from dinkster_workers import InProcessWorker
+
+        from dinkster.serve import _add_collaboration_routes
+
+        registry = TypeRegistry()
+        register_core_types(registry)
+
+        def make_engine(on_event):
+            return Engine(
+                schemas={},
+                registry=registry,
+                worker=InProcessWorker({}, registry),
+                cache=MemoryLRUCache(),
+                on_event=on_event,
+            )
+
+        app = create_app(make_engine, {})
+        assert _add_collaboration_routes(app, None) is True
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/sessions",
+                json={"scope": "local", "documentId": "doc", "snapshot": {}},
+            )
+            assert response.status == 201
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
 
 
 def test_parse_memory_budget() -> None:

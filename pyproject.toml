@@ -52,8 +52,11 @@ dinkster-serve = "dinkster.serve:main"
 dinkster-pack = "dinkster.manager:main"
 dinkster-isolated = "dinkster.isolated_demo:main"
 dinkster-port = "dinkster.port:main"
-dinkster-installs = "dinkster.install_manager:main"
 dinkster-p2p-diagnostics = "dinkster.p2p_diagnostics:main"
+
+[project.optional-dependencies]
+collab = ["dinkster-collab"]
+supervisor = ["dinkster-supervisor"]
 
 [dependency-groups]
 angle = [

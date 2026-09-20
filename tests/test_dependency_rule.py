@@ -296,12 +296,18 @@ def test_bundled_video_preview_imports_only_the_pack_api() -> None:
         assert dinkster_imports(module) <= {"dinkster_api", "dinkster_video_preview"}
 
 
-def test_gguf_dependency_is_locked_only_behind_inference_extra() -> None:
+def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:
     root_project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())["project"]
     inference_project = tomllib.loads(
         (REPO_ROOT / "packages/dinkster-inference/pyproject.toml").read_text()
     )["project"]
-    assert root_project.get("optional-dependencies") is None
+    assert root_project["optional-dependencies"] == {
+        "collab": ["dinkster-collab"],
+        "supervisor": ["dinkster-supervisor"],
+    }
+    assert {"dinkster-collab", "dinkster-supervisor"} <= {
+        dependency for dependency in root_project["dependencies"]
+    }
     assert all(not dependency.startswith("gguf") for dependency in root_project["dependencies"])
     assert all(
         not dependency.startswith("gguf") for dependency in inference_project["dependencies"]
@@ -314,6 +320,10 @@ def test_gguf_dependency_is_locked_only_behind_inference_extra() -> None:
     inference_locked = packages["dinkster-inference"]
     gguf_locked = packages["gguf"]
     assert "gguf" not in {dependency["name"] for dependency in root_locked["dependencies"]}
+    assert root_locked["optional-dependencies"] == {
+        "collab": [{"name": "dinkster-collab"}],
+        "supervisor": [{"name": "dinkster-supervisor"}],
+    }
     assert "gguf" not in {dependency["name"] for dependency in inference_locked["dependencies"]}
     assert inference_locked["optional-dependencies"] == {"gguf": [{"name": "gguf"}]}
     assert gguf_locked["version"] == "0.19.0"
