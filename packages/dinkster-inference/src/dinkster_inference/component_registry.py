@@ -82,6 +82,10 @@ class ComponentDescriptor:
     checkpoint_text_factory: str | None = None
     checkpoint_codec_factory: str | None = None
     codec_adapter: str | None = None
+    native_encode_text: str | None = None
+    native_decode: str | None = None
+    native_encode: str | None = None
+    native_load: str | None = None
 
     @property
     def id(self) -> str:
