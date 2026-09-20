@@ -8,6 +8,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from dinkster_assets import (
@@ -754,6 +755,44 @@ def test_windows_local_mapping_poll_uses_fingerprint_without_rehashing(
     changed = mapping.is_current()
     assert not changed
     assert full_reads == 0
+
+
+def test_windows_local_fingerprint_preserves_creation_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local = tmp_path / "model.safetensors"
+    local.write_bytes(_safetensors())
+    change_token = 1 << 96
+    monkeypatch.setattr(
+        storage_module,
+        "_p2p_windows",
+        SimpleNamespace(change_token=lambda _descriptor: change_token),
+    )
+
+    with local.open("rb") as handle:
+        item = os.fstat(handle.fileno())
+        fingerprint = storage_module._local_file_fingerprint(handle, item)
+
+    assert fingerprint == (*storage_module._stable_fingerprint(item), change_token)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="exercises Windows USN record parsing")
+@pytest.mark.parametrize(("major_version", "usn_offset"), [(2, 24), (3, 40)])
+def test_windows_usn_parser_accepts_only_known_record_layouts(
+    major_version: int,
+    usn_offset: int,
+) -> None:
+    from dinkster_assets import p2p_windows
+
+    record = bytearray(64)
+    record[4:6] = major_version.to_bytes(2, "little")
+    record[usn_offset : usn_offset + 8] = (42).to_bytes(8, "little", signed=True)
+    assert p2p_windows._usn_from_record(bytes(record), usn_offset + 8) == 42
+
+    record[4:6] = (4).to_bytes(2, "little")
+    with pytest.raises(OSError, match="unsupported USN record version 4"):
+        p2p_windows._usn_from_record(bytes(record), len(record))
 
 
 def test_corrupt_resume_state_fails_closed_without_truncating_partial(tmp_path: Path) -> None:

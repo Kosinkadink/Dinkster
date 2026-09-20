@@ -680,7 +680,8 @@ class LanP2PController:
                         path,
                         P2P_FORMAT_POLICY_VERSION,
                     )
-                except (AssetError, OSError):
+                except (AssetError, OSError) as error:
+                    _LOG.warning("P2P seed mapping rejected for %s: %s", digest, error)
                     continue
                 desired[digest] = SeedLease(
                     version=1,

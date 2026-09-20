@@ -33,7 +33,7 @@ from dinkster_p2p import (
     default_p2p_settings,
     seed_lease_from_wire,
 )
-from dinkster_p2p.global_transfers import GlobalTransferController, GlobalTransferError
+from dinkster_p2p.global_transfers import GlobalTransferController
 from dinkster_p2p.runtime import SidecarError, SidecarRuntime
 
 from dinkster.lan_p2p import LanP2PBackend
@@ -390,26 +390,36 @@ def test_global_seed_surfaces_unavailable_change_token_at_final_admission(
     tmp_path: Path,
 ) -> None:
     lease = _seed_lease(tmp_path)
-    controller = GlobalTransferController(
-        SimpleNamespace(add_torrent_params=lambda: SimpleNamespace()),
-        SimpleNamespace(),
+    calls = 0
+    original_require_current = P2PLocalFileMapping.require_current
+
+    def unavailable_at_final_admission(mapping: P2PLocalFileMapping) -> Path:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise OSError("USN change token unavailable")
+        return original_require_current(mapping)
+
+    monkeypatch.setattr(P2PLocalFileMapping, "require_current", unavailable_at_final_admission)
+    runtime = SidecarRuntime(
         state_root=tmp_path / "state",
         vault_root=tmp_path / "vault",
-        torrent_flags=lambda _: 0,
-        shared_handle_for=lambda _: None,
-        release_shared_handle=lambda _lease, _handle: None,
-        allows_lan_peer=lambda _: True,
+        installation_root=None,
+        settings=_global_settings(),
     )
-
-    def fail_mapping(*_args: object, **_kwargs: object) -> P2PLocalFileMapping:
-        raise OSError("USN change token unavailable")
-
-    monkeypatch.setattr(AssetVault, "verify_p2p_local_file", fail_mapping)
-    with pytest.raises(
-        GlobalTransferError,
-        match="seed mapping is not safe and current: USN change token unavailable",
-    ):
-        cast(Any, controller)._add(lease, ())
+    try:
+        with pytest.raises(
+            SidecarError,
+            match="seed mapping is not safe and current: USN change token unavailable",
+        ):
+            _grant_global(runtime, lease)
+        recovery = cast(dict[str, object], runtime.status()["recovery"])
+        assert recovery["state"] == "global-session-closed"
+        assert recovery["error"] == (
+            "seed mapping is not safe and current: USN change token unavailable"
+        )
+    finally:
+        runtime.close()
 
 
 def test_global_seed_manager_surfaces_unavailable_change_token(

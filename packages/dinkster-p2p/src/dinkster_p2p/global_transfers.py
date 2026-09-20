@@ -365,7 +365,7 @@ class GlobalTransferController:
         if mapping is not None:
             try:
                 mapping.require_current()
-            except AssetError as error:
+            except (AssetError, OSError) as error:
                 raise GlobalTransferError(
                     f"seed mapping is not safe and current: {error}"
                 ) from error
