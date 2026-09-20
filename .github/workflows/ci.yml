@@ -92,6 +92,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install the default backend and training pack
+        env:
+          GIT_CONFIG_COUNT: "4"
+          GIT_CONFIG_KEY_3: url.https://x-access-token:${{ github.token }}@github.com/Kosinkadink/Dinkster.insteadOf
+          GIT_CONFIG_VALUE_3: https://github.com/Kosinkadink/Dinkster
         run: uv run --no-project --python 3.12 scripts/install.py
       - name: Verify the default node catalog
         shell: bash
