@@ -119,7 +119,35 @@ def main() -> int:
         allowlist = root / allowlist
     sites = scan(root)
     if args.write:
-        ceilings = {kind: sum(site["kind"] == kind for site in sites) for kind in SITE_KINDS}
+        counts = {kind: sum(site["kind"] == kind for site in sites) for kind in SITE_KINDS}
+        if allowlist.exists():
+            try:
+                existing_ceilings, _ = load_allowlist(allowlist)
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                print(f"Cannot read extension factory allowlist: {error}", file=sys.stderr)
+                return 1
+            kinds = set(SITE_KINDS)
+            if set(existing_ceilings) != kinds:
+                print(
+                    "Cannot refresh extension factory allowlist: ceiling kinds differ",
+                    file=sys.stderr,
+                )
+                return 1
+            raised = [kind for kind in SITE_KINDS if counts[kind] > existing_ceilings[kind]]
+            if raised:
+                print(
+                    "Cannot refresh extension factory allowlist without raising ceilings:",
+                    file=sys.stderr,
+                )
+                for kind in raised:
+                    print(
+                        f"  {kind}: current={counts[kind]}, ceiling={existing_ceilings[kind]}",
+                        file=sys.stderr,
+                    )
+                return 1
+            ceilings = {kind: min(existing_ceilings[kind], counts[kind]) for kind in SITE_KINDS}
+        else:
+            ceilings = counts
         allowlist.parent.mkdir(parents=True, exist_ok=True)
         allowlist.write_text(
             json.dumps({"ceilings": ceilings, "sites": sites}, indent=2) + "\n",
@@ -157,6 +185,12 @@ def main() -> int:
             print(f"  unlisted {site}", file=sys.stderr)
         for site in sorted(expected - current):
             print(f"  stale {site}", file=sys.stderr)
+        print(
+            "Refresh intentional site changes with "
+            "`uv run --locked python scripts/check_extension_factories.py --write`, "
+            "then review the diff and confirm no ceiling rose.",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

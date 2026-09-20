@@ -52,6 +52,25 @@ def test_extension_factory_guard_tracks_each_descriptor_catalog(tmp_path: Path) 
         ]
 
 
+def test_extension_factory_guard_write_refuses_to_raise_ceiling(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    module = source / "runtime.py"
+    allowlist = tmp_path / "allowlist.json"
+    module.write_text("registry = builtin_family_registry()\n", encoding="utf-8")
+    assert run_guard(tmp_path, allowlist, "--write").returncode == 0
+    recorded = allowlist.read_text(encoding="utf-8")
+
+    module.write_text(
+        "registry = builtin_family_registry()\nother = builtin_preview_registry()\n",
+        encoding="utf-8",
+    )
+    raised = run_guard(tmp_path, allowlist, "--write")
+    assert raised.returncode == 1
+    assert "registryFactory: current=2, ceiling=1" in raised.stderr
+    assert allowlist.read_text(encoding="utf-8") == recorded
+
+
 def test_extension_factory_guard_rejects_site_and_ceiling_drift(tmp_path: Path) -> None:
     source = tmp_path / "packages/example/src/example"
     source.mkdir(parents=True)
@@ -74,6 +93,7 @@ def test_extension_factory_guard_rejects_site_and_ceiling_drift(tmp_path: Path) 
     added = run_guard(tmp_path, allowlist)
     assert added.returncode == 1
     assert "unlisted" in added.stderr
+    assert "scripts/check_extension_factories.py --write" in added.stderr
 
     module.write_text(
         "registry = builtin_family_registry()\n"
