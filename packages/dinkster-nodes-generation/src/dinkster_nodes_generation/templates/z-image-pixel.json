@@ -12,7 +12,7 @@
           "id": "model",
           "type": "dinkster.load_diffusion_model",
           "values": {
-            "diffusion_model": "zeta-chroma.safetensors"
+            "diffusion_model": "zeta-chroma-base-x0-pixel-dino-distance.safetensors"
           }
         },
         "clip": {

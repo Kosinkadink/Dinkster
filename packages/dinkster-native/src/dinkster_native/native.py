@@ -1864,6 +1864,7 @@ class LoadClip(Node):
         "stable_diffusion",
         "stable_cascade",
         "sd3",
+        "flux",
         "stable_audio",
         "mochi",
         "ltxv",

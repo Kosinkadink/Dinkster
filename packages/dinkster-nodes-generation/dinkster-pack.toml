@@ -429,7 +429,7 @@ name = "Z-Image Pixel Space"
 description = "Starter native workflow for Z-Image Pixel Space."
 family = "dinkster.z_image_pixel_space"
 tags = ["starter", "family", "dinkster.z_image_pixel_space"]
-models = ["zeta-chroma.safetensors", "qwen_3_4b.safetensors"]
+models = ["zeta-chroma-base-x0-pixel-dino-distance.safetensors", "qwen_3_4b.safetensors"]
 file = "src/dinkster_nodes_generation/templates/z-image-pixel.json"
 thumbnail = "src/dinkster_nodes_generation/templates/z-image-pixel.png"
 

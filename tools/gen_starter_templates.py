@@ -180,7 +180,7 @@ FAMILIES = (
         "z-image-pixel",
         "dinkster.z_image_pixel_space",
         "Z-Image Pixel Space",
-        ("zeta-chroma.safetensors", "qwen_3_4b.safetensors"),
+        ("zeta-chroma-base-x0-pixel-dino-distance.safetensors", "qwen_3_4b.safetensors"),
         "pixel-image",
     ),
     (
@@ -285,24 +285,195 @@ def _chunk(kind: bytes, data: bytes) -> bytes:
     return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
 
 
-def thumbnail(index: int) -> bytes:
-    base = (
-        (37 * index + 42) % 180 + 32,
-        (67 * index + 68) % 160 + 48,
-        (97 * index + 96) % 140 + 64,
+def thumbnail(index: int, slug: str, graph_kind: str) -> bytes:
+    width, height = 256, 144
+    accent = (
+        72 + (index * 53) % 152,
+        64 + (index * 79) % 160,
+        80 + (index * 97) % 144,
     )
+    pixels = [
+        [
+            [
+                10 + accent[0] * y // (height * 4),
+                13 + accent[1] * y // (height * 4),
+                22 + accent[2] * y // (height * 4),
+            ]
+            for _x in range(width)
+        ]
+        for y in range(height)
+    ]
+
+    def point(x: int, y: int, color: tuple[int, int, int]) -> None:
+        if 0 <= x < width and 0 <= y < height:
+            pixels[y][x] = list(color)
+
+    def rectangle(
+        left: int, top: int, right: int, bottom: int, color: tuple[int, int, int]
+    ) -> None:
+        for y in range(max(0, top), min(height, bottom)):
+            for x in range(max(0, left), min(width, right)):
+                point(x, y, color)
+
+    def line(
+        x0: int, y0: int, x1: int, y1: int, color: tuple[int, int, int], width_px: int = 1
+    ) -> None:
+        steps = max(abs(x1 - x0), abs(y1 - y0), 1)
+        for step in range(steps + 1):
+            x = x0 + (x1 - x0) * step // steps
+            y = y0 + (y1 - y0) * step // steps
+            rectangle(
+                x - width_px // 2,
+                y - width_px // 2,
+                x + (width_px + 1) // 2,
+                y + (width_px + 1) // 2,
+                color,
+            )
+
+    def circle(cx: int, cy: int, radius: int, color: tuple[int, int, int]) -> None:
+        for y in range(cy - radius, cy + radius + 1):
+            for x in range(cx - radius, cx + radius + 1):
+                if (x - cx) ** 2 + (y - cy) ** 2 <= radius**2:
+                    point(x, y, color)
+
+    bright = tuple(min(255, channel + 46) for channel in accent)
+    pale = tuple(min(255, channel + 96) for channel in accent)
+    dark = tuple(max(8, channel // 4) for channel in accent)
+    for star in range(34):
+        x = (star * 73 + index * 29) % width
+        y = (star * 37 + index * 11) % 82
+        point(x, y, pale if star % 7 == 0 else bright)
+
+    if graph_kind in {"music-audio"}:
+        for x in range(16, width - 16, 6):
+            amplitude = 12 + ((x * 17 + index * 23) % 52)
+            line(x, height // 2 - amplitude // 2, x, height // 2 + amplitude // 2, bright, 3)
+        line(12, height // 2, width - 12, height // 2, pale, 2)
+    elif graph_kind in {"triposplat-3d", "trellis-3d"}:
+        for offset in range(-80, 81, 16):
+            line(width // 2, 76, width // 2 + offset, height, dark)
+        for y in range(84, height, 12):
+            line(16, y, width - 16, y, dark)
+        top = (128, 27)
+        left = (72, 58)
+        right = (184, 58)
+        bottom_left = (72, 112)
+        bottom = (128, 139)
+        bottom_right = (184, 112)
+        for start, end in (
+            (top, left),
+            (top, right),
+            (top, (128, 82)),
+            (left, bottom_left),
+            (right, bottom_right),
+            ((128, 82), bottom),
+            (bottom_left, bottom),
+            (bottom_right, bottom),
+            (left, (128, 82)),
+            (right, (128, 82)),
+        ):
+            line(*start, *end, bright, 3)
+    else:
+        circle(198 - index % 4 * 13, 40 + index % 3 * 6, 17, pale)
+        for x in range(width):
+            horizon = 92 + ((x + index * 9) % 61 - 30) ** 2 // 95
+            for y in range(horizon, height):
+                point(x, y, dark)
+        line(0, 122, 72, 61 + index % 4 * 5, bright, 3)
+        line(72, 61 + index % 4 * 5, 137, 117, bright, 3)
+        line(98, 120, 170, 70 + index % 5 * 4, pale, 3)
+        line(170, 70 + index % 5 * 4, width, 126, pale, 3)
+
+        if slug == "sd15":
+            rectangle(29, 29, 56, 37, dark)
+            rectangle(34, 37, 51, 49, bright)
+            line(34, 49, 25, 91, pale, 3)
+            line(51, 49, 60, 91, pale, 3)
+            line(25, 91, 60, 91, pale, 3)
+            circle(43, 72, 11, accent)
+        elif slug == "sdxl-refiner":
+            line(42, 26, 42, 88, pale, 3)
+            line(12, 57, 72, 57, pale, 3)
+            line(20, 35, 64, 79, bright, 3)
+            line(20, 79, 64, 35, bright, 3)
+        elif slug in {"chroma", "chroma-radiance"}:
+            for radius in (24, 17, 10):
+                circle(46, 54, radius, bright if radius % 2 == 0 else dark)
+            if slug == "chroma-radiance":
+                for x, y in ((46, 14), (46, 94), (6, 54), (86, 54), (18, 26), (74, 82)):
+                    line(46, 54, x, y, pale, 2)
+        elif slug.startswith("flux"):
+            for offset in range(0, 55, 11):
+                line(8, 28 + offset, 39, 18 + offset, bright, 2)
+                line(39, 18 + offset, 78, 35 + offset, pale, 2)
+        elif slug == "ideogram4":
+            for y, length in ((28, 64), (42, 46), (56, 58), (70, 36)):
+                rectangle(14, y, 14 + length, y + 6, pale if y % 4 else bright)
+        elif slug == "qwen-image":
+            circle(44, 55, 28, pale)
+            circle(44, 55, 20, dark)
+            line(24, 74, 66, 36, bright, 5)
+        elif slug == "krea2":
+            for radius in (29, 22, 15, 8):
+                circle(43, 55, radius, bright if radius % 2 else dark)
+        elif slug == "anima":
+            circle(44, 42, 17, pale)
+            line(21, 91, 27, 68, bright, 4)
+            line(27, 68, 44, 61, bright, 4)
+            line(44, 61, 61, 68, bright, 4)
+            line(61, 68, 68, 91, bright, 4)
+        elif slug == "lumina2":
+            circle(44, 55, 8, pale)
+            for x, y in ((44, 18), (44, 92), (7, 55), (81, 55), (18, 29), (70, 81)):
+                line(44, 55, x, y, bright, 3)
+        elif slug == "z-image-pixel":
+            for y in range(22, 91, 11):
+                for x in range(11, 82, 11):
+                    if (x + y + index) % 3:
+                        rectangle(x, y, x + 8, y + 8, bright if x % 2 else accent)
+
+        if graph_kind == "seedvr-image":
+            for y in range(18, 124, 12):
+                for x in range(12, 112, 12):
+                    if (x + y + index) % 4:
+                        rectangle(x, y, x + 9, y + 9, accent)
+            line(128, 12, 128, 132, pale, 2)
+
+    if graph_kind in {"wan-video", "ltx-video", "ltxav-video", "h3-video"}:
+        rectangle(5, 5, width - 5, 13, (8, 10, 17))
+        rectangle(5, height - 13, width - 5, height - 5, (8, 10, 17))
+        for x in range(10, width - 10, 22):
+            rectangle(x, 7, x + 12, 11, pale)
+            rectangle(x, height - 11, x + 12, height - 7, pale)
+        if graph_kind in {"ltxav-video", "h3-video"}:
+            for x in range(16, width - 16, 8):
+                amplitude = 4 + (x * 13 + index * 7) % 18
+                line(x, 108 - amplitude // 2, x, 108 + amplitude // 2, bright, 2)
+
+    output_width, output_height = 64, 64
+    content_top, content_height = 14, 36
     rows = []
-    for y in range(64):
+    for output_y in range(output_height):
         row = bytearray((0,))
-        for x in range(64):
-            lift = (x + y) // 8
-            stripe = 24 if (x - y) % 31 < 6 else 0
-            row.extend(min(255, channel + lift // 3 + stripe) for channel in base)
+        if output_y < content_top or output_y >= content_top + content_height:
+            row.extend((8, 10, 17) * output_width)
+            rows.append(bytes(row))
+            continue
+        content_y = output_y - content_top
+        top = content_y * height // content_height
+        bottom = (content_y + 1) * height // content_height
+        for output_x in range(output_width):
+            left = output_x * width // output_width
+            right = (output_x + 1) * width // output_width
+            sample = [pixels[y][x] for y in range(top, bottom) for x in range(left, right)]
+            row.extend(
+                sum(pixel[channel] for pixel in sample) // len(sample) for channel in range(3)
+            )
         rows.append(bytes(row))
     raw = b"".join(rows)
     return (
         b"\x89PNG\r\n\x1a\n"
-        + _chunk(b"IHDR", struct.pack(">IIBBBBB", 64, 64, 8, 2, 0, 0, 0))
+        + _chunk(b"IHDR", struct.pack(">IIBBBBB", output_width, output_height, 8, 2, 0, 0, 0))
         + _chunk(b"IDAT", zlib.compress(raw, 9))
         + _chunk(b"IEND", b"")
     )
@@ -932,7 +1103,7 @@ def main() -> None:
         output.mkdir(parents=True, exist_ok=True)
         document = workflow(slug, family, name, models, graph_kind)
         (output / f"{slug}.json").write_text(json.dumps(document, indent=2) + "\n")
-        (output / f"{slug}.png").write_bytes(thumbnail(index))
+        (output / f"{slug}.png").write_bytes(thumbnail(index, slug, graph_kind))
     for owner, (package, module) in TARGETS.items():
         manifest = package / "dinkster-pack.toml"
         text = manifest.read_text()
