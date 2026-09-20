@@ -193,7 +193,7 @@ def _custom_sampler_value(
     context = current_execution_context()
     snapshot_digest = None if context is None else context.extension_snapshot_digest
     if context is None:
-        registry, extension_ids = inference.builtin_sampler_registry(), ()
+        registry, extension_ids = inference.builtin_registries().samplers, ()
     else:
         registry, extension_ids, _behavior_hash = _sampler_registry(inference, snapshot_digest)
     sampler_id = _catalog_id(registry, sampler_name, "sampler")

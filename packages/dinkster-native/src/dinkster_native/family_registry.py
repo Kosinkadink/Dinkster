@@ -17,9 +17,10 @@ def load_component(value: object, name: str, role: str | None = None) -> NativeC
     handle = cast("NativeComponentHandle", value)
     handle.require_active()
     recipe = handle.recipe
-    catalog = importlib.import_module("dinkster_inference.component_catalog")
     descriptor = (
-        None if recipe is None else catalog.default_component_registry().get(recipe.family_id)
+        None
+        if recipe is None
+        else native._active_inference_registries().components.get(recipe.family_id)
     )
     source_roles = () if recipe is None else tuple(source.role for source in recipe.sources)
     expected_roles = () if descriptor is None else descriptor.roles
@@ -107,8 +108,12 @@ def encode_component(codec: Any, content: Any) -> Any:
 def registered_callable(value: object, attribute: str) -> Any:
     recipe = getattr(value, "recipe", None)
     family_id = getattr(recipe, "family_id", None)
-    catalog = importlib.import_module("dinkster_inference.component_catalog")
-    descriptor = None if family_id is None else catalog.default_component_registry().get(family_id)
+    native = importlib.import_module("dinkster_native.native_arm")
+    descriptor = (
+        None
+        if family_id is None
+        else native._active_inference_registries().components.get(family_id)
+    )
     reference = None if descriptor is None else getattr(descriptor, attribute)
     if reference is None:
         roles = tuple(source.role for source in getattr(recipe, "sources", ()))
