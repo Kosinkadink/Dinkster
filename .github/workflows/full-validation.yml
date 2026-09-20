@@ -14,10 +14,10 @@ permissions:
   actions: read
   contents: read
 
-# Pushes retain fast feedback while scheduled and release validation always finish.
+# Pushes batch behind the active run while scheduled and release validation always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || 'durable' }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  cancel-in-progress: false
 
 jobs:
   validation-plan:
