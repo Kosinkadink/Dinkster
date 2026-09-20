@@ -1419,6 +1419,25 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
     )
 
 
+@pytest.mark.all_file_shards
+def test_vision_pack_license_worktree_bytes_are_lf() -> None:
+    repo_root = TESTS_DIR.parent
+    vision_root = repo_root / "packages/dinkster-nodes-vision"
+    licenses = sorted(vision_root.glob("*_pack/*_LICENSE"))
+
+    assert [path.relative_to(vision_root).as_posix() for path in licenses] == [
+        "dinkster_vision_hed_pack/LINEART_LICENSE",
+        "dinkster_vision_hed_pack/MANGA_LICENSE",
+        "dinkster_vision_hed_pack/MLSD_LICENSE",
+        "dinkster_vision_hed_pack/TEED_LICENSE",
+        "dinkster_vision_sam31_pack/CLIP_LICENSE",
+        "dinkster_vision_sam31_pack/SAM_LICENSE",
+    ]
+    assert [
+        path.relative_to(repo_root).as_posix() for path in licenses if b"\r" in path.read_bytes()
+    ] == []
+
+
 def test_default_pack_publishes_alias_registry_from_manifest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
