@@ -118,14 +118,14 @@ fault injection for the remote boundary, and property/fuzz tests for the
 wire decoders, type-id grammar, and graph nesting - the highest-value fuzz
 targets because their inputs come from outside.
 
-## Hosted checks and dedicated model tests
+## CPU checks and dedicated model tests
 
-GitHub-hosted jobs never acquire or execute model weights. All five
+The CPU retry jobs never acquire or execute model weights. All five
 `torch-cpu-try*` callers pass `run-model-tests: "false"` to
 `.github/actions/torch-cpu-suite`. The action defaults to false as well.
 Environment setup, pinned source downloads, source-parity receipts and their
-tests, and all eleven Torch/vision pyright projects remain hosted. The
-nine vision package suites also remain hosted without their artifact
+tests, and all eleven Torch/vision pyright projects remain in these jobs. The
+nine vision package suites also run without their artifact
 environment variables, so their weight-dependent cases skip while synthetic
 input validation, preprocessing, batching, cache, fallback, tiling, and
 architecture tests still run. The packages are `dinkster-vision-hed`,
@@ -134,7 +134,7 @@ architecture tests still run. The packages are `dinkster-vision-hed`,
 `dinkster-vision-birefnet`, `dinkster-vision-depth-anything-v3`, and
 `dinkster-vision-sam31`.
 
-Hosted jobs exclude all pinned model-weight acquisitions, the combined
+The CPU retry jobs exclude all pinned model-weight acquisitions, the combined
 `dinkster-inference-torch` and `dinkster-model-ipadapter` test lane, each vision
 suite's second real-artifact run, and
 `tests/test_benchmark_inference.py::test_minimax_h3_identities_are_accepted_by_the_production_dit_loader`.
@@ -163,23 +163,23 @@ GPU gates in `scripts/setup_envs.sh` and the Torch README also remain required
 where applicable. No CI input or repository variable changes local pytest
 selection.
 
-The `model-tests` job is disabled unless repository variable
-`DINKSTER_MODEL_TESTS_ENABLED` is `true`. It runs in full validation in
-`Kosinkadink/Dinkster`, never pull requests. Its job-level condition skips it
-before runner allocation; no hosted job depends on it. To enable it, provide
-a runner with labels `[self-hosted, linux, x64, dinkster-model-tests]` and set
-that variable, with no source edits. It uses the same complete composite
-action with `run-model-tests: "true"` and the existing read-only
-`DINKSTER_IDENTITY_DEPLOY_KEY` secret.
+The `model-tests` job runs in full validation in `Kosinkadink/Dinkster` on
+main pushes, the daily schedule and manual dispatch. PR labels never enable
+heavy jobs; dispatch full validation against the branch when model evidence
+is needed before landing. The job uses `[self-hosted, linux, x64]` and the
+same complete composite action with `run-model-tests: "true"` and the
+existing read-only identity and evidence deploy keys. No other job depends
+on it.
 
 The runner must have an AuthenticAMD CPU with AVX2 and **without AVX-512**,
 `MKL_CBWR` unset, and sufficient disk/RAM for the pinned CPU workloads.
 A GPU-equipped machine still runs CPU parity with Torch 2.13.0+cpu and the
-existing AVX2 dispatch pins; this does not switch to GPU goldens. Use an
-isolated disposable runner environment with a fresh workspace, home and
-`/tmp` for each job: setup writes SSH dependency configuration and uses fixed
-temporary source/build paths. The disk-reclaim step that removes hosted
-image tooling is guarded by `runner.environment == 'github-hosted'` and
+existing AVX2 dispatch pins; this does not switch to GPU goldens. Checkouts
+clean the workspace and do not persist credentials. Deploy keys live in
+per-step SSH agents with post-job cleanup, and downloads use `RUNNER_TEMP`.
+Linux full suites use the host's counted-suite launcher. The disk-reclaim
+step that removes hosted image tooling is guarded by
+`runner.environment == 'github-hosted'` and
 never runs on a self-hosted machine.
 
 ## Tooling enforcement

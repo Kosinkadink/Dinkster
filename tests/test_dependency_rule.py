@@ -399,7 +399,7 @@ def test_windows_ci_installs_published_engine_dependencies_without_torch() -> No
         if step.get("name") == "Install and verify published Windows engine dependencies"
     ]
 
-    assert install_step["if"] == "matrix.os == 'windows-latest'"
+    assert install_step["if"] == "matrix.os == 'windows'"
     assert install_step["shell"] == "pwsh"
     command = install_step["run"]
     assert "uv run --no-sync python" in command

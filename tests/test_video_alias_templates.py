@@ -606,7 +606,7 @@ def test_tracked_template_video_shapes(mounted_video):
             with Image.open(source) as image:
                 visit(json.loads(image.info["workflow"]), Path(path).parts[0])
         else:
-            visit(json.loads(source.read_text()), Path(path).parts[0])
+            visit(json.loads(source.read_text(encoding="utf-8")), Path(path).parts[0])
     templates = counts_by_directory["templates"]
     assert templates["SaveVideo"] >= 311
     assert templates["CreateVideo"] >= 167
