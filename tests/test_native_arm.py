@@ -7944,7 +7944,7 @@ def test_registry_runtime_threads_identity_and_enables_compute_following_storage
     }
 
 
-def test_sampler_registry_binds_aggregate_builtin_and_extension_generations(
+def test_sampler_registry_preserves_aggregate_generations_without_torch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     arm = _native_arm()
@@ -7955,30 +7955,25 @@ def test_sampler_registry_binds_aggregate_builtin_and_extension_generations(
         registries=SimpleNamespace(samplers=extension_samplers),
         extensions=(("proof_a", object()), ("proof_b", object())),
     )
-    bound: list[object] = []
-    inference_torch = SimpleNamespace(
-        torch_sampler_registry=lambda registry: bound.append(registry) or ("bound", registry)
-    )
     inference = SimpleNamespace(materialize_inference_generation=lambda _key: generation)
     real_import = importlib.import_module
 
     def fake_import(name: str) -> object:
-        if name == "dinkster_inference_torch":
-            return inference_torch
+        if name.startswith("dinkster_inference_torch") or name == "torch":
+            raise AssertionError("sampler registry metadata must not import torch")
         return real_import(name)
 
     monkeypatch.setattr(arm.importlib, "import_module", fake_import)
     monkeypatch.setattr(arm, "_builtin_inference_registries", lambda: builtin)
     monkeypatch.setattr(arm, "current_execution_context", lambda: None)
 
-    assert arm._sampler_registry(inference, None) == (("bound", builtin_samplers), (), None)
+    assert arm._sampler_registry(inference, None) == (builtin_samplers, (), None)
     digest = "sha256:" + "a" * 64
     assert arm._sampler_registry(inference, digest) == (
-        ("bound", extension_samplers),
+        extension_samplers,
         ("proof_a", "proof_b"),
         digest,
     )
-    assert bound == [builtin_samplers, extension_samplers]
 
 
 def test_load_runtime_passes_exact_sorted_split_source_kwargs(
