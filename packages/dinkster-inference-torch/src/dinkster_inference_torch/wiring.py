@@ -2723,6 +2723,8 @@ class SDRuntime(SingleStreamSamplingRuntime):
         )
         return CustomSamplingResult(output, captured[-1] if captured else None)
 
+    sample_custom = cast("Any", sampling_execution)  # noqa: F811
+
     def sample_scheduled(
         self,
         latent: torch.Tensor,
