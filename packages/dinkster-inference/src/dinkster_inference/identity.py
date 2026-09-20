@@ -16,7 +16,7 @@ from dinkster_protocol import (
 )
 
 from .assembly import ComponentPlan
-from .catalog import builtin_families
+from .catalog import builtin_family_registry
 from .devices import BFLOAT16, FLOAT16, FLOAT32, DType
 from .quantization import SUPPORTED_QUANT_FORMATS
 from .weights import LinearToConv2D
@@ -253,7 +253,7 @@ def build_runtime_identity(
 
 
 def _report_dtype_default(family_id: str, component: str, dtype: DType) -> DType:
-    if not any(family.id == family_id for family in builtin_families()):
+    if builtin_family_registry().get(family_id) is None:
         logging.getLogger(__name__).warning(
             "Checkpoint label %r has no %s dtype specialization; defaulting to %s",
             family_id,
@@ -274,8 +274,9 @@ def default_diffusion_dtype(family_id: str) -> DType:
     descriptor = default_component_registry().get(family_id)
     if descriptor is not None:
         return descriptor.default_diffusion_dtype
-    if family_id in ("dinkster.sd15", "dinkster.sdxl", "dinkster.sdxl_refiner"):
-        return FLOAT16
+    family = builtin_family_registry().get(family_id)
+    if family is not None:
+        return family.engine.diffusion_dtype
     return _report_dtype_default(family_id, "diffusion", BFLOAT16)
 
 
@@ -290,15 +291,9 @@ def default_text_dtype(family_id: str) -> DType:
     descriptor = default_component_registry().get(family_id)
     if descriptor is not None:
         return descriptor.default_text_dtype
-    if family_id in (
-        "dinkster.sd15",
-        "dinkster.sdxl",
-        "dinkster.sdxl_refiner",
-        "dinkster.wan22",
-        "dinkster.z_image",
-        "dinkster.z_image_pixel_space",
-    ):
-        return FLOAT32
+    family = builtin_family_registry().get(family_id)
+    if family is not None:
+        return family.engine.text_dtype
     return _report_dtype_default(family_id, "text", BFLOAT16)
 
 
@@ -316,12 +311,12 @@ def default_vae_dtype(
     from .component_catalog import default_component_registry
 
     descriptor = default_component_registry().get(family_id)
+    family = None
     if descriptor is not None:
         preferences = descriptor.vae_dtypes
     else:
-        preferences = (
-            (BFLOAT16, FLOAT16, FLOAT32) if family_id == "dinkster.wan22" else (BFLOAT16, FLOAT32)
-        )
+        family = builtin_family_registry().get(family_id)
+        preferences = family.engine.vae_dtypes if family is not None else (BFLOAT16, FLOAT32)
     try:
         dtype = next(dtype for dtype in preferences if dtype in compute_dtypes)
     except StopIteration:
@@ -329,7 +324,11 @@ def default_vae_dtype(
         raise ValueError(
             f"family {family_id!r} has no VAE dtype supported by device set: {names}"
         ) from None
-    return dtype if descriptor is not None else _report_dtype_default(family_id, "VAE", dtype)
+    return (
+        dtype
+        if descriptor is not None or family is not None
+        else _report_dtype_default(family_id, "VAE", dtype)
+    )
 
 
 __all__ = [

@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+
+import pytest
+from dinkster_inference import PreviewDecoderProperties, builtin_families
+
+ROOT = Path(__file__).resolve().parents[1]
+SHARED_ENGINE_FILES = (
+    "packages/dinkster-inference/src/dinkster_inference/assembly.py",
+    "packages/dinkster-inference/src/dinkster_inference/component_catalog.py",
+    "packages/dinkster-inference/src/dinkster_inference/gguf.py",
+    "packages/dinkster-inference/src/dinkster_inference/identity.py",
+    "packages/dinkster-inference/src/dinkster_inference/ipadapter.py",
+    "packages/dinkster-inference/src/dinkster_inference/runtime.py",
+    "packages/dinkster-inference/src/dinkster_inference/taesd.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/assemble.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/component_runtime.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/memory.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/schedules.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+    "packages/dinkster-native/src/dinkster_native/preview_emit.py",
+    "src/dinkster/native_policy.py",
+)
+# native_arm.py is asserted separately by the #170 scanner test.
+
+
+def _family_literal_gates(path: Path, family_ids: frozenset[str]) -> tuple[str, ...]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    findings: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Compare, ast.Dict, ast.IfExp, ast.Match, ast.Set)):
+            continue
+        literals = {
+            child.value
+            for child in ast.walk(node)
+            if isinstance(child, ast.Constant)
+            and isinstance(child.value, str)
+            and child.value in family_ids
+        }
+        for literal in literals:
+            findings.add(f"{path.relative_to(ROOT)}:{node.lineno}: {literal}")
+    return tuple(sorted(findings))
+
+
+def test_shared_engine_has_zero_literal_family_gates() -> None:
+    family_ids = frozenset(family.id for family in builtin_families())
+    findings = tuple(
+        finding
+        for relative_path in SHARED_ENGINE_FILES
+        for finding in _family_literal_gates(ROOT / relative_path, family_ids)
+    )
+    assert findings == (), "literal family gates remain:\n" + "\n".join(findings)
+
+
+def test_registered_engine_properties_cover_shared_family_behavior() -> None:
+    families = {family.id: family for family in builtin_families()}
+
+    assert families["dinkster.flux_dev"].engine.sigma_space == "flux"
+    assert families["dinkster.flux_schnell"].engine.sigma_space == "default"
+    assert families["dinkster.sd15"].engine.controlnet_profile == "sd15"
+    assert families["dinkster.sdxl"].engine.controlnet_profile == "sdxl"
+    assert families["dinkster.sdxl_refiner"].engine.adm_profile == "sdxl_refiner"
+    wan_preview = families["dinkster.wan21"].engine.preview_decoder
+    assert wan_preview is not None and wan_preview.kind == "taehv"
+    triposplat_preview = families["dinkster.triposplat"].engine.preview_decoder
+    assert triposplat_preview is not None
+    assert (triposplat_preview.kind, triposplat_preview.target) == (
+        "asset",
+        "triposplat_vae_decoder",
+    )
+
+
+def test_preview_decoder_registration_rejects_invalid_kind_target_pairs() -> None:
+    with pytest.raises(ValueError, match="does not accept a target"):
+        PreviewDecoderProperties("taehv", "unexpected")
+    with pytest.raises(ValueError, match="requires a target"):
+        PreviewDecoderProperties("asset")

@@ -472,10 +472,12 @@ from .families import (
     ComponentWiring,
     DetectionEvidence,
     DetectionResult,
+    EngineProperties,
     EvidenceValue,
     FamilyDetector,
     FamilyRegistry,
     ModelFamily,
+    PreviewDecoderProperties,
 )
 from .flux import (
     FLUX_AXES_DIM,
@@ -2188,6 +2190,7 @@ __all__ = [
     "DependencyScope",
     "DetectionEvidence",
     "DetectionResult",
+    "EngineProperties",
     "DeviceCapabilities",
     "DeviceRef",
     "DiffPatch",
@@ -2479,6 +2482,7 @@ __all__ = [
     "EncodedPreviewAnimation",
     "PreviewClip",
     "PreviewCost",
+    "PreviewDecoderProperties",
     "PreviewFrame",
     "PreviewKind",
     "PreviewProviderRegistry",
