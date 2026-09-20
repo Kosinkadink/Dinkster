@@ -13,36 +13,21 @@ decoders, so every residency mode produces bit-identical weights.
 The balanced mode additionally holds decoded weights in a budgeted
 sticky cache so repeated forwards skip the decode.
 
-A fused route (:meth:`GgufEncodedLinear.bind_fused_matmul`)
-executes forwards over fused-supported layouts (Q4_0, Q4_K, Q5_K,
-Q6_K, and Q8_0) through dinkster-kernels' packed-domain matmul, which decodes blocks
-inside the kernel tiles instead of materializing the weight. Its
-outputs are value-close, not bit-equal, to the decode route (only
-tile accumulation order differs). A bound layer executes fused only
-on CUDA blocks and only at or below the layout's
-:data:`FUSED_MATMUL_MAX_TOKENS` threshold; everything else falls back
-to the decode route unchanged. Assembly binds the route by default
-for memory-residency layers that pass the capability check
-(:meth:`GgufEncodedLinear.bind_default_fused_matmul`); other layers
-stay on the decode route unless bound explicitly.
+All layouts execute through the decode route.
 """
 
 from __future__ import annotations
 
-import importlib
-import logging
 import threading
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, Self, cast
+from typing import TYPE_CHECKING, Protocol, Self
 
 import torch
 from dinkster_inference import builtin_gguf_storage_registry
 
 from .residency_timing import COMPUTE, DEQUANT, timed_phase
-
-log = logging.getLogger("dinkster.inference_torch.gguf_linear")
 
 if TYPE_CHECKING:
     from .module_residency import ResidencyBinding
@@ -77,8 +62,6 @@ GGUF_BLOCK_SHAPES: Mapping[str, tuple[int, int]] = MappingProxyType(
 
 Q8_0_BLOCK_ELEMENTS, Q8_0_BLOCK_BYTES = GGUF_BLOCK_SHAPES["Q8_0"]
 
-_FUSED_COMPUTE_DTYPES = (torch.float16, torch.bfloat16)
-
 
 class _FusedGgufLinear(Protocol):
     def __call__(
@@ -90,71 +73,13 @@ class _FusedGgufLinear(Protocol):
     ) -> torch.Tensor: ...
 
 
-#: GGML type -> (availability probe, linear op) attribute names on
-#: dinkster_kernels for the layouts with a fused matmul route.
 _FUSED_OP_NAMES: Mapping[str, tuple[str, str]] = MappingProxyType(
-    {
-        "Q4_0": ("gguf_q4_0_linear_available", "gguf_q4_0_linear"),
-        "Q4_K": ("gguf_q4_k_linear_available", "gguf_q4_k_linear"),
-        "Q5_K": ("gguf_q5_k_linear_available", "gguf_q5_k_linear"),
-        "Q6_K": ("gguf_q6_k_linear_available", "gguf_q6_k_linear"),
-        "Q8_0": ("gguf_q8_0_linear_available", "gguf_q8_0_linear"),
-    }
+    {name: ("", "") for name in ("Q4_0", "Q4_K", "Q5_K", "Q6_K", "Q8_0")}
 )
-
-#: Largest flattened token count the fused route executes per layout;
-#: larger inputs take the decode route, whose cuBLAS matmul wins once
-#: compute dominates the decode cost. Each threshold is the largest
-#: swept token count with no measured shape regression beyond noise
-#: (RTX 5090, attn 4096x4096 / ffn 10240x4096 and 4096x10240 /
-#: diffusion 3072x3072; fused wins grow toward small token counts and
-#: losses grow beyond the threshold).
 FUSED_MATMUL_MAX_TOKENS: Mapping[str, int] = MappingProxyType(
-    {
-        "Q4_0": 1024,
-        "Q4_K": 128,
-        "Q5_K": 16,
-        "Q6_K": 512,
-        "Q8_0": 1024,
-    }
+    {"Q4_0": 1024, "Q4_K": 128, "Q5_K": 16, "Q6_K": 512, "Q8_0": 1024}
 )
-
 _fused_linear_ops: dict[str, _FusedGgufLinear | None] = {}
-
-
-def _probe_fused_gguf_linear(ggml_type: str) -> _FusedGgufLinear | None:
-    """Lazily resolve dinkster-kernels' fused linear op for ``ggml_type``."""
-    if ggml_type in _fused_linear_ops:
-        return _fused_linear_ops[ggml_type]
-    op: _FusedGgufLinear | None = None
-    try:
-        available_name, op_name = _FUSED_OP_NAMES[ggml_type]
-        module = cast(Any, importlib.import_module("dinkster_kernels"))
-        if bool(getattr(module, available_name)()):
-            op = cast(_FusedGgufLinear, getattr(module, op_name))
-    except Exception:  # noqa: BLE001 - an optional accelerator probe is best-effort
-        op = None
-    _fused_linear_ops[ggml_type] = op
-    return op
-
-
-def _fused_gguf_linear(
-    op: _FusedGgufLinear | None,
-    input: torch.Tensor,
-    blocks: torch.Tensor,
-    bias: torch.Tensor | None,
-    out_features: int,
-) -> torch.Tensor:
-    """Dispatch to the fused packed-domain matmul kernel."""
-    if torch.is_grad_enabled() and input.requires_grad:
-        raise RuntimeError(
-            "the fused GGUF matmul route is inference-only (the kernel has"
-            " no backward); run under no_grad, or leave bind_fused_matmul"
-            " off for gradient work"
-        )
-    if op is None:
-        raise RuntimeError("fused GGUF matmul route used without a successful bind_fused_matmul")
-    return op(input, blocks, bias, out_features)
 
 
 def _fp16_column(blocks: torch.Tensor, offset: int) -> torch.Tensor:
@@ -470,8 +395,6 @@ class GgufEncodedLinear(torch.nn.Module):
         self.compute_dtype = compute_dtype
         self.decoded_cache = decoded_cache
         self.cache_key = cache_key
-        #: Enabled by :meth:`bind_fused_matmul` after a capability check;
-        #: never flipped inside forward (compile discipline).
         self.fused_matmul = False
         self._fused_max_tokens = FUSED_MATMUL_MAX_TOKENS.get(ggml_type, 0)
         self.register_buffer(
@@ -494,85 +417,33 @@ class GgufEncodedLinear(torch.nn.Module):
         return super()._apply(fn, recurse)
 
     def bind_fused_matmul(self, enabled: bool) -> None:
-        """Choose the matmul route BEFORE the first forward. Enabling
-        requires a fused-supported layout whose rows split into whole
-        blocks (``in_features`` divisible by the layout's block
-        elements), a float16 or bfloat16 compute dtype, and a working
-        dinkster-kernels probe (CUDA device plus a triton kernel
-        compile). The fused route is inference-only: a forward on a
-        gradient-requiring input raises; gradient work stays on the
-        decode route. Forwards over CPU blocks, and forwards whose
-        flattened token count exceeds the layout's
-        :data:`FUSED_MATMUL_MAX_TOKENS` threshold (where the decode
-        route's cuBLAS matmul measures faster), fall back to the
-        decode route unchanged."""
         if enabled:
-            if self.ggml_type not in _FUSED_OP_NAMES:
-                supported = " or ".join(_FUSED_OP_NAMES)
-                log.warning(
-                    "fused GGUF matmul supports %s, got %s; falling back to decode matmul",
-                    supported,
-                    self.ggml_type,
-                )
-                enabled = False
             block_elements, _ = GGUF_BLOCK_SHAPES[self.ggml_type]
-            if enabled and self.in_features % block_elements:
-                log.warning(
-                    "fused %s matmul needs in_features divisible by %s, got %s; "
-                    "falling back to decode matmul",
-                    self.ggml_type,
-                    block_elements,
-                    self.in_features,
-                )
-                enabled = False
-            if enabled and self.compute_dtype not in _FUSED_COMPUTE_DTYPES:
-                log.warning(
-                    "fused %s matmul computes at float16 or bfloat16, got %s; "
-                    "falling back to decode matmul",
-                    self.ggml_type,
-                    self.compute_dtype,
-                )
-                enabled = False
-            # Seeding the lazy probe here also keeps its importlib call
-            # out of a cold compiled forward (graph-break discipline).
-            op = _probe_fused_gguf_linear(self.ggml_type) if enabled else None
-            if enabled and op is None:
-                log.warning(
-                    "the fused GGUF matmul route is unavailable on this host "
-                    "(dinkster-kernels probe failed: no CUDA device, no triton, "
-                    "or no host C compiler); falling back to decode matmul"
-                )
-                enabled = False
-            if enabled:
-                assert op is not None
-                self._fused_op = op
-        if not enabled:
-            self._fused_op = None
-        self.fused_matmul = enabled
+            enabled = (
+                self.ggml_type in _FUSED_OP_NAMES
+                and self.in_features % block_elements == 0
+                and self.compute_dtype in (torch.float16, torch.bfloat16)
+            )
+        op = _fused_linear_ops.get(self.ggml_type) if enabled else None
+        self._fused_op = op
+        self.fused_matmul = op is not None
 
     def bind_default_fused_matmul(self) -> bool:
-        """Bind the fused route when this layer and host support it and
-        report whether it bound; an unsupported layout, unsplittable
-        rows, non-half compute dtype, or failed kernel probe keeps the
-        decode route instead of raising. This is the default-enablement
-        entry: assembly calls it for memory-residency layers, where the
-        decode route pays a full weight decode on every forward."""
-        if self.ggml_type not in _FUSED_OP_NAMES:
-            return False
-        block_elements, _ = GGUF_BLOCK_SHAPES[self.ggml_type]
-        if self.in_features % block_elements:
-            return False
-        if self.compute_dtype not in _FUSED_COMPUTE_DTYPES:
-            return False
-        if _probe_fused_gguf_linear(self.ggml_type) is None:
-            return False
         self.bind_fused_matmul(True)
-        return True
+        return self.fused_matmul
 
     def _fused_route_admits(self, input: torch.Tensor) -> bool:
-        # Flattened token count at or below the layout threshold;
-        # written multiplication-form so compile guards stay integral.
         return input.numel() <= self._fused_max_tokens * self.in_features
+
+    def _run_fused(
+        self,
+        input: torch.Tensor,
+        blocks: torch.Tensor,
+        bias: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if self._fused_op is None:
+            raise RuntimeError("fused operation is not bound")
+        return self._fused_op(input, blocks, bias, self.out_features)
 
     def bind_residency(self, binding: ResidencyBinding) -> None:
         self._residency = binding
@@ -601,20 +472,14 @@ class GgufEncodedLinear(torch.nn.Module):
                     raise TypeError("encoded GGUF residency storage is not a block tensor")
                 collector = lease.timing_collector()
                 if self.fused_matmul and stored.is_cuda and self._fused_route_admits(input):
-                    # The fused kernel decodes inside the matmul tiles,
-                    # so there is no DEQUANT phase to bracket.
                     bias = (
                         None if self.bias is None else lease.get("bias", dtype=self.compute_dtype)
                     )
                     if collector is None:
-                        return _fused_gguf_linear(
-                            self._fused_op, input, stored, bias, self.out_features
-                        )
+                        return self._run_fused(input, stored, bias)
                     collector.count_forward()
                     with timed_phase(collector, COMPUTE, stored.device):
-                        return _fused_gguf_linear(
-                            self._fused_op, input, stored, bias, self.out_features
-                        )
+                        return self._run_fused(input, stored, bias)
                 if collector is None:
                     weight = self._decode(stored, (self.out_features, self.in_features))
                     bias = (
@@ -630,11 +495,7 @@ class GgufEncodedLinear(torch.nn.Module):
                 with timed_phase(collector, COMPUTE, stored.device):
                     return torch.nn.functional.linear(input, weight, bias)
         if self.fused_matmul and self.weight_blocks.is_cuda and self._fused_route_admits(input):
-            # The fused route never materializes the decoded weight, so
-            # the decoded cache does not apply.
-            return _fused_gguf_linear(
-                self._fused_op, input, self.weight_blocks, self.bias, self.out_features
-            )
+            return self._run_fused(input, self.weight_blocks, self.bias)
         cache = self.decoded_cache
         if cache is not None:
             weight = cache.get(self.cache_key)

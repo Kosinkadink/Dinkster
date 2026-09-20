@@ -11,10 +11,8 @@ State-dict keys are IDENTICAL to the reference's bare BFL layout:
 img_in.*, time_in.*, vector_in.*, guidance_in.*, txt_in.*,
 double_blocks.N.*, single_blocks.N.*, final_layer.*.
 
-Paired RoPE application capability-probes Dinkster's own fused ``apply_rope`` kernel
-(dinkster-kernels) first on CUDA inputs - bit-identical to the reference
-pure-torch math, so that route never moves a float - then dinkster-kitchen's
-combined operation (ComfyUI's pinned inference path, whose CUDA backends
+Paired RoPE application capability-probes dinkster-kitchen's combined
+operation (ComfyUI's pinned inference path, whose CUDA backends
 contract the pair rotation into fused multiply-adds one ulp from the
 reference), then the reference's pure-torch math. The single-input operation
 uses dinkster-kitchen before the same fallback. These kernels do not register an
@@ -75,11 +73,10 @@ see plain dataflow.
 
 from __future__ import annotations
 
-import importlib
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from threading import Lock
-from typing import Any, NamedTuple, Protocol, cast
+from typing import NamedTuple, Protocol, cast
 
 import torch
 import torch.nn.functional as F
@@ -180,38 +177,6 @@ def _kitchen_apply_rope1() -> _Rope1Kernel | None:
     return cast(_Rope1Kernel, _ck_apply_rope1) if callable(_ck_apply_rope1) else None
 
 
-class _DinksterRope(NamedTuple):
-    """dinkster-kernels' fused rotation with its shape-eligibility predicate."""
-
-    kernel: _RopeKernel
-    supported: Callable[[torch.Tensor, torch.Tensor, torch.Tensor], bool]
-
-
-_dk_rope: _DinksterRope | None = None
-_dk_rope_probed = False
-
-
-def _probe_dinkster_apply_rope() -> _DinksterRope | None:
-    """Lazily resolve dinkster-kernels' fused rotation. The availability
-    probe compiles a kernel, so it runs on the first CUDA dispatch
-    rather than at import; missing package or host capability ->
-    kitchen or pure torch (same degrade-never-break contract as
-    gguf_linear._probe_fused_gguf_linear)."""
-    global _dk_rope, _dk_rope_probed
-    if not _dk_rope_probed:
-        _dk_rope_probed = True
-        try:
-            module = cast(Any, importlib.import_module("dinkster_kernels"))
-            if bool(module.apply_rope_available()):
-                _dk_rope = _DinksterRope(
-                    kernel=cast(_RopeKernel, module.apply_rope),
-                    supported=module.apply_rope_supported,
-                )
-        except Exception:  # noqa: BLE001 - an optional accelerator probe is best-effort
-            _dk_rope = None
-    return _dk_rope
-
-
 def flux_timestep_embedding(
     t: torch.Tensor,
     dim: int,
@@ -289,15 +254,6 @@ def apply_rope(
     xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Rotate q and k through the fastest eligible combined operation."""
-    needs_grad = torch.is_grad_enabled() and (
-        xq.requires_grad or xk.requires_grad or freqs_cis.requires_grad
-    )
-    if not needs_grad and not torch.compiler.is_compiling():
-        if xq.device.type == "cuda":
-            owned = _probe_dinkster_apply_rope()
-            if owned is not None and owned.supported(xq, xk, freqs_cis):
-                with torch.cuda.device(xq.device):
-                    return owned.kernel(xq, xk, freqs_cis)
     return apply_rope_comfy(xq, xk, freqs_cis)
 
 

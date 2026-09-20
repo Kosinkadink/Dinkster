@@ -53,11 +53,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_inference",
         "dinkster_assets",
         "dinkster_memory",
-        "dinkster_kernels",
     },
-    # Fused GPU kernels are a leaf: torch/triton only, no dinkster imports,
-    # so consumers can probe for them without pulling anything upward.
-    "dinkster_kernels": set(),
     # The execution boundary itself (hazard H3): Worker/CacheStore protocols
     # plus the frozen data they exchange. A leaf on purpose - both the engine
     # (consumer) and workers/caches (implementations) depend on it, so a
@@ -349,7 +345,6 @@ def test_torch_runtime_backends_are_constrained_behind_torch_extra() -> None:
         "dinkster-aimdo==0.5.5.post2",
         "sentencepiece==0.2.1",
         "tokenizers==0.23.1",
-        "dinkster-kernels",
     ]
 
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
@@ -357,7 +352,6 @@ def test_torch_runtime_backends_are_constrained_behind_torch_extra() -> None:
     torch_runtime = packages["dinkster-inference-torch"]
     assert torch_runtime["optional-dependencies"]["torch"] == [
         {"name": "dinkster-aimdo"},
-        {"name": "dinkster-kernels"},
         {"name": "dinkster-kitchen"},
         {"name": "numpy"},
         {"name": "packaging"},
@@ -369,7 +363,6 @@ def test_torch_runtime_backends_are_constrained_behind_torch_extra() -> None:
         {"name": "torchvision"},
         {"name": "tqdm"},
     ]
-    assert packages["dinkster-kernels"]["source"] == {"editable": "packages/dinkster-kernels"}
     assert packages["dinkster-kitchen"]["version"] == "0.2.35.post1"
     assert packages["dinkster-aimdo"]["version"] == "0.5.5.post2"
     assert packages["sentencepiece"]["version"] == "0.2.1"

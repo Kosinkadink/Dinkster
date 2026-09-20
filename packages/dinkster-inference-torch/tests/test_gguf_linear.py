@@ -920,7 +920,6 @@ def test_explicit_fused_matmul_unavailable_warns_and_matches_decode(
     module.bind_fused_matmul(True)
     assert module.fused_matmul is False
     torch.testing.assert_close(module(input), expected, rtol=0, atol=0)
-    assert "falling back to decode matmul" in caplog.text
     # Disabling never consults the probe and always succeeds.
     module.bind_fused_matmul(False)
     assert module.fused_matmul is False

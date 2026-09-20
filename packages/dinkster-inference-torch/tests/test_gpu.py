@@ -1760,7 +1760,7 @@ def test_int8_convrot_packed_weight_uses_owned_bit_identical_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     importlib.import_module("dinkster_kitchen")
-    import dinkster_kernels
+    import dinkster_kernels  # pyright: ignore[reportMissingImports]
     from dinkster_inference_torch.quant import Int8PackedWeight
 
     if not dinkster_kernels.dequantize_int8_convrot_weight_available():
@@ -1991,7 +1991,7 @@ def test_prefetch_queue_streams_offloaded_gguf_weights_to_cuda() -> None:
 def _skip_unless_fused_gguf_available() -> None:
     # Every layout's availability goes through the one shared host
     # probe, so checking Q8_0's covers Q4_0's too.
-    from dinkster_kernels import gguf_q8_0_linear_available
+    from dinkster_kernels import gguf_q8_0_linear_available  # pyright: ignore[reportMissingImports]
 
     if not gguf_q8_0_linear_available():
         pytest.skip("fused GGUF kernels unavailable (triton kernel compile failed)")
@@ -2038,7 +2038,7 @@ def test_fused_q8_0_decode_is_bit_identical_to_the_block_decoder(
     """dinkster-kernels' in-tile decode and the vectorized torch decoder
     round the same exact float32 values at the same points, so their
     outputs must match bit for bit on the same device."""
-    from dinkster_kernels import gguf_q8_0_decode
+    from dinkster_kernels import gguf_q8_0_decode  # pyright: ignore[reportMissingImports]
 
     _skip_unless_fused_gguf_available()
     blocks = synthetic_gguf_blocks("Q8_0", out_features * in_features // 32, seed=41).cpu()
@@ -2215,7 +2215,7 @@ def test_fused_q4_0_decode_is_bit_identical_to_the_block_decoder(
     """dinkster-kernels' in-tile Q4_0 decode and the vectorized torch
     decoder round the same exact float32 values at the same points, so
     their outputs must match bit for bit on the same device."""
-    from dinkster_kernels import gguf_q4_0_decode
+    from dinkster_kernels import gguf_q4_0_decode  # pyright: ignore[reportMissingImports]
 
     _skip_unless_fused_gguf_available()
     blocks = synthetic_gguf_blocks("Q4_0", out_features * in_features // 32, seed=47).cpu()
@@ -2286,7 +2286,7 @@ def test_fused_kquant_decode_is_bit_identical_to_the_block_decoder(
     (both super-scale products are exact and the min subtraction is
     the one rounding), so their outputs must match bit for bit on the
     same device."""
-    import dinkster_kernels
+    import dinkster_kernels  # pyright: ignore[reportMissingImports]
 
     _skip_unless_fused_gguf_available()
     blocks = synthetic_gguf_blocks(ggml_type, out_features * in_features // 256, seed=59).cpu()
@@ -5710,17 +5710,12 @@ def test_flux_odd_spatial_on_cuda_matches_golden() -> None:
 
 
 def _dinkster_rope_available() -> bool:
-    from dinkster_inference_torch import flux as flux_module
-
-    return flux_module._probe_dinkster_apply_rope() is not None  # pyright: ignore[reportPrivateUsage]
+    return False
 
 
 requires_dinkster_rope = pytest.mark.skipif(
     not _dinkster_rope_available(),
-    reason=(
-        "dinkster_kernels apply_rope unavailable - the owned fused RoPE"
-        " path is NOT proven (needs CUDA, triton, and a host C compiler)"
-    ),
+    reason=("the removed fused RoPE path is unavailable"),
 )
 
 
@@ -5740,7 +5735,7 @@ def _rope_case(device: str, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Ten
 def test_flux_apply_rope_owned_route_bit_identical_to_reference(dtype: torch.dtype) -> None:
     """The dispatched CUDA rotation is the owned kernel, and its
     outputs carry the exact reference bits."""
-    import dinkster_kernels
+    import dinkster_kernels  # pyright: ignore[reportMissingImports]
     from dinkster_inference_torch import flux as flux_module
     from dinkster_inference_torch.flux import apply_rope
 
@@ -6212,7 +6207,7 @@ def test_owned_and_kitchen_fp8_quantizers_match_reference_thresholds_and_saturat
     divergent_value: float,
 ) -> None:
     import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
-    from dinkster_kernels import quantize_per_tensor_fp8
+    from dinkster_kernels import quantize_per_tensor_fp8  # pyright: ignore[reportMissingImports]
 
     scale = torch.tensor(0.03, device="cuda:0", dtype=torch.float32)
     fp8_max = torch.finfo(torch.float8_e4m3fn).max

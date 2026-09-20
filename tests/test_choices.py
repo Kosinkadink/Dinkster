@@ -42,6 +42,7 @@ from dinkster.reload_api import apply_reload, apply_remove
 
 TESTS_DIR = Path(__file__).parent
 WORKER_ENV = {"PYTHONPATH": str(TESTS_DIR)}
+DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
 
 
 def diagnostic(source_node: str, reason: str) -> CompatGateDiagnostic:
@@ -408,20 +409,22 @@ def test_core_native_inference_choices() -> None:
     """The native sampler/scheduler registries are core vocabulary on
     every composition surface (stage 3b): dinkster.samplers and
     dinkster.schedulers serve the ported catalog ids with no packs added,
-    and dev mode merges its lists on top instead of replacing them."""
+    and the development pack merges its lists instead of replacing them."""
     from dinkster_inference import builtin_samplers, builtin_schedulers
 
     async def scenario() -> None:
         for dev in (False, True):
             composer = ServingComposer(dev=dev, worker_env=WORKER_ENV)
             try:
+                if dev:
+                    await composer.add_pack(DEV_PACK_MANIFEST)
                 choices = composer.composition.choices
                 assert choices["dinkster.samplers"] == tuple(d.id for d in builtin_samplers())
                 assert choices["dinkster.schedulers"] == tuple(d.id for d in builtin_schedulers())
                 assert "dinkster.euler" in choices["dinkster.samplers"]
                 assert "dinkster.karras" in choices["dinkster.schedulers"]
                 if dev:
-                    # Dev lists merged on top, core lists intact.
+                    # Pack lists merge on top, leaving core lists intact.
                     assert any(cid.startswith("dev.") for cid in choices)
             finally:
                 await composer.composition.close()

@@ -6,10 +6,8 @@ server instead of only its local fixtures.
 What this proves: the gallery covers each native widget descriptor and
 socket shape on the wire, its choice lists ride /api/choices/* (one
 populated, one legally empty), the template document ships through the
-core packs table under --dev only, references only real gallery node
-types and ports, and the whole surface is absent from a non-dev
-composition. The manifest's [[pack.templates]] declaration and the
-in-process core template are pinned to the same bytes and metadata.
+development pack table, references only real gallery node types and ports,
+and the whole surface is absent unless its manifest is composed.
 """
 
 from __future__ import annotations
@@ -33,7 +31,7 @@ from dinkster_nodes_dev.gallery import (
     register_gallery_types,
 )
 from dinkster_schema.wire import SCHEMA_WIRE_VERSION, schema_to_wire
-from dinkster_server import CORE_PACK_ID, create_app
+from dinkster_server import create_app
 from dinkster_workers.manifest import load_pack_templates
 
 from dinkster.compose import compose_serving
@@ -84,7 +82,7 @@ def test_gallery_widget_wire_coverage() -> None:
     carry no widget at all."""
 
     async def scenario() -> None:
-        composition = await compose_serving(dev=True)
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             wire = schema_to_wire(composition.schemas["dev.gallery.widgets"])
             assert wire["schemaVersion"] == SCHEMA_WIRE_VERSION == 40
@@ -187,7 +185,7 @@ def test_gallery_socket_wire_coverage() -> None:
     optional, of-union, nested), match variables, and optional outputs."""
 
     async def scenario() -> None:
-        composition = await compose_serving(dev=True)
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             sockets = schema_to_wire(composition.schemas["dev.gallery.sockets"])
             union2 = _entry(sockets, "union2")["type"]
@@ -236,19 +234,17 @@ def test_gallery_socket_wire_coverage() -> None:
     asyncio.run(scenario())
 
 
-def test_gallery_dev_only_surface() -> None:
-    """dev=True serves gallery nodes, both choice lists, and the shipped
-    template; the default composition serves none of them - the gallery
-    can never leak onto a user's node surface."""
+def test_gallery_explicit_pack_surface() -> None:
+    """The explicit pack serves gallery nodes, choices, and its template."""
 
     async def scenario() -> None:
-        dev = await compose_serving(dev=True)
+        dev = await compose_serving([DEV_PACK_MANIFEST])
         try:
             assert "dev.gallery.widgets" in dev.schemas
             assert dev.choices[SAMPLERS_CHOICE_ID] == SAMPLERS
             assert dev.choices[EMPTY_CHOICE_ID] == ()
-            core = dev.packs[CORE_PACK_ID]
-            assert [t.id for t in core.templates] == [GALLERY_TEMPLATE_ID]
+            pack = dev.packs["dinkster-nodes-dev"]
+            assert [t.id for t in pack.templates] == [GALLERY_TEMPLATE_ID]
         finally:
             await dev.close()
 
@@ -302,7 +298,7 @@ def test_gallery_choice_and_template_endpoints() -> None:
     pack, and the body endpoint serves the exact declared bytes."""
 
     async def scenario() -> None:
-        composition = await compose_serving(dev=True)
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         client = None
         try:
             app = create_app(
@@ -323,10 +319,12 @@ def test_gallery_choice_and_template_endpoints() -> None:
 
             listing = await (await client.get("/api/templates")).json()
             rows = {(row["pack"], row["id"]): row for row in listing["templates"]}
-            row = rows[(CORE_PACK_ID, GALLERY_TEMPLATE_ID)]
+            row = rows[("dinkster-nodes-dev", GALLERY_TEMPLATE_ID)]
             assert row["name"] == GALLERY_TEMPLATE_NAME
 
-            body = await client.get(f"/api/packs/{CORE_PACK_ID}/templates/{GALLERY_TEMPLATE_ID}")
+            body = await client.get(
+                f"/api/packs/dinkster-nodes-dev/templates/{GALLERY_TEMPLATE_ID}"
+            )
             assert body.status == 200
             data = await body.read()
             assert data == gallery_template_bytes()
@@ -346,7 +344,7 @@ def test_gallery_template_references_real_ports() -> None:
     it does not have to)."""
 
     async def scenario() -> None:
-        composition = await compose_serving(dev=True)
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             document = json.loads(gallery_template_bytes())
             assert document["format"] == "dinkster-workflow"
@@ -393,9 +391,7 @@ def test_gallery_template_references_real_ports() -> None:
 
 
 def test_gallery_manifest_template_matches_module() -> None:
-    """[[pack.templates]] in the dev pack manifest and the in-process core
-    template are the same bytes and metadata - the manifest-composed path
-    and the --dev path can never serve different documents."""
+    """The manifest template matches the package's source bytes and metadata."""
     templates = load_pack_templates(DEV_PACK_MANIFEST, pack="dinkster-nodes-dev")
     assert len(templates) == 1
     declared = templates[0]
@@ -411,7 +407,7 @@ def test_gallery_nodes_execute() -> None:
     list through."""
 
     async def scenario() -> None:
-        composition = await compose_serving(dev=True)
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             engine = composition.make_engine(lambda event: None)
             graph = Graph(
