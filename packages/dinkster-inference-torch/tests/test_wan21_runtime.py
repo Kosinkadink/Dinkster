@@ -1191,11 +1191,12 @@ def test_causal_runtime_processes_custom_denoised_output_with_wan_normalization(
         report_state = cast("Any", kwargs["on_state"])
         process_out = cast("Any", kwargs["process_out"])
         unpack_state = cast("Any", kwargs["unpack_state"])
-        current = process_out(latent)
-        denoised = process_out(torch.full_like(latent, 4.0))
         if unpack_state is not None:
-            current = unpack_state(current)
-            denoised = unpack_state(denoised)
+            current = unpack_state(latent)
+            denoised = unpack_state(torch.full_like(latent, 4.0))
+        else:
+            current = process_out(latent)
+            denoised = process_out(torch.full_like(latent, 4.0))
         report_state(
             SamplingStateEvent(
                 step=0,
