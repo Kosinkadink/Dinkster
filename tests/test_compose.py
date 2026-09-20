@@ -1305,7 +1305,7 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
         ),
         (
             "dinkster-nodes-remote",
-            "sha256:712b9fd7b5c1b27892ca3bbc97472097fe93f7de333def566011ae57c6640267",
+            "sha256:0c90459042759de51d09a1977593195535facf3b4c4e1ad5632ae6e721469d4b",
         ),
     ],
 )

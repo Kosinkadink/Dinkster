@@ -75,7 +75,7 @@ def test_gallery_asset_codec_uses_the_process_vault(
 
 def test_gallery_widget_wire_coverage() -> None:
     """dev.gallery.widgets carries every native input-widget descriptor at
-    wire v11: bounded NUMBERs, a seed controller, a multiline STRING, a
+    the current wire: bounded NUMBERs, a seed controller, a multiline STRING, a
     per-input displayName, static COMBO, remote COMBO (route +
     refreshButton), a remote-only combo with no static options, a labeled
     BOOLEAN, and bare number/string/boolean inputs that (by convention)

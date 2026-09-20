@@ -689,9 +689,9 @@ def test_native_clip_text_encode_schema_is_text_clip_in_conditioning_out() -> No
         default="multiline",
         user_switchable=True,
     )
-    wire19 = schema_to_wire(schema)
-    text19 = next(entry for entry in wire19["interface"] if entry["id"] == "text")  # type: ignore[union-attr]
-    assert text19["widget"] == {
+    wire = schema_to_wire(schema)
+    text = next(entry for entry in wire["interface"] if entry["id"] == "text")  # type: ignore[union-attr]
+    assert text["widget"] == {
         "type": "REPRESENTATIONS",
         "default": "multiline",
         "userSwitchable": True,

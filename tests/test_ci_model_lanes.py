@@ -598,6 +598,7 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
     assert "uv run --locked pyright" in script
     assert re.findall(r"tests/\S+\.py", script) == [
         "tests/test_schema.py",
+        "tests/test_schema_current_contracts.py",
         "tests/test_values.py",
         "tests/test_graph.py",
         "tests/test_graph_wire.py",
