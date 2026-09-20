@@ -1161,6 +1161,8 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
         module_init = module_root.parent / "__init__.py"
         if distribution_id != pack_id and module_init in tracked_paths:
             artifact_paths.add(module_init)
+        if module_root.parent.name == "dinkster_nodes_vision":
+            artifact_paths.update(path for path in tracked_paths if path.parent == sidecar_root)
         artifact_paths.update(
             sidecar_root / filename
             for filename in compose._PACK_ARTIFACT_SIDECARS
