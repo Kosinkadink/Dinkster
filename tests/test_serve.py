@@ -2663,7 +2663,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
             assert data["nodes"]["dinkster.image.resize"]["pack"] == "dinkster-nodes-image"
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
             named_route = data["nodes"]["dinkster.route.switch_by_name"]
-            assert named_route["schemaVersion"] == 43
+            assert named_route["schemaVersion"] == 1
             assert named_route["interface"][0]["widget"] == {
                 "type": "COMBO",
                 "optionSource": {"inputFamily": "values"},
