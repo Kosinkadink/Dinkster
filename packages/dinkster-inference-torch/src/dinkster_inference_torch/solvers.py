@@ -1,7 +1,7 @@
-"""Torch reference-kernel solver overrides.
+"""Torch reference-kernel solver bindings and overrides.
 
-The portable solvers intentionally use Python floats so dinkster-inference stays
-torch-free. Executed tensor math can be bit-visible, however: ComfyUI keeps
+The portable solver bindings use Python floats. Executed tensor math can be
+bit-visible, however: ComfyUI keeps
 Euler, DPM++ 2M, DPM++ 2M SDE, DPM++ SDE, ER-SDE, and res_multistep arithmetic on the latent
 device as float32 tensors, while UniPC keeps its coefficients, linear solves,
 and updates there. This module rebinds those executed seams without changing
@@ -32,6 +32,8 @@ from dinkster_inference import (
     is_flow_parameterization,
 )
 from dinkster_inference.sampling import StepBeginSolverFn
+
+from . import _portable_solvers
 
 
 def _emit(
@@ -964,12 +966,19 @@ _TORCH_MAKE_EVIDENCE: dict[str, CallableEvidence] = {
 def torch_sampler_registry(
     descriptors: Iterable[SamplerDescriptor[Any]] | None = None,
 ) -> Registry[SamplerDescriptor[Any]]:
-    """A sampler registry with float-sensitive torch overrides."""
+    """A sampler registry bound to torch execution factories."""
     registry: Registry[SamplerDescriptor[Any]] = Registry()
+    portable_factories = {
+        descriptor.id: descriptor.make for descriptor in _portable_solvers.builtin_samplers()
+    }
     for descriptor in builtin_samplers() if descriptors is None else descriptors:
-        evidence = _TORCH_MAKE_EVIDENCE.get(descriptor.id)
-        if evidence is not None:
-            descriptor = replace(descriptor, make=evidence.resolve())
+        if descriptor.make is None and "build" not in vars(descriptor):
+            portable_factory = portable_factories.get(descriptor.id)
+            if portable_factory is not None:
+                descriptor = replace(descriptor, make=portable_factory)
+            evidence = _TORCH_MAKE_EVIDENCE.get(descriptor.id)
+            if evidence is not None:
+                descriptor = replace(descriptor, make=evidence.resolve())
         registry.register(descriptor)
     return registry
 

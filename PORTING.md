@@ -50,7 +50,8 @@ disciplines apply to every commit and are not repeated here.
    declaration, codec registration, encode/decode parity including any
    temporal or tiled paths the family actually uses.
 6. **Runtime integration** (`dinkster_inference/runtime.py`, `scheduled.py`,
-   `parameterizations.py`, `schedules.py`, `solvers.py`): the generic
+   `schedules.py`, `solvers.py`; parameterizations in
+   `dinkster_inference_torch`): the generic
    `FamilyRuntime` / `MultiStreamFamilyRuntime` / `ScheduledFamilyRuntime`
    protocols, the family's sigma parameterization, shared CFG and
    sampling. Validate the sampler subset the family actually supports

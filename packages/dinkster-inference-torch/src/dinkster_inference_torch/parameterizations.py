@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import math
 
-from .sampling import Parameterization, TensorT, is_flow_parameterization
+from dinkster_inference.sampling import Parameterization, TensorT, is_flow_parameterization
 
 
 def calculate_input(
