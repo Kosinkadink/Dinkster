@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-from types import ModuleType
 
 import pytest
 import torch
@@ -35,69 +34,31 @@ def _patch_kitchen(
     return called
 
 
-def _patch_owned_supported(monkeypatch: pytest.MonkeyPatch, kernels: ModuleType) -> None:
-    def supported(_qdata: torch.Tensor, _scale: torch.Tensor, _group_size: int) -> bool:
-        return True
-
-    monkeypatch.setattr(kernels, "dequantize_int8_convrot_weight_available", lambda: True)
-    monkeypatch.setattr(kernels, "dequantize_int8_convrot_weight_supported", supported)
-
-
-def test_int8_convrot_prefers_owned_dequantization(monkeypatch: pytest.MonkeyPatch) -> None:
-    kernels = importlib.import_module("dinkster_kernels")
+def test_int8_convrot_uses_kitchen_dequantization(monkeypatch: pytest.MonkeyPatch) -> None:
     expected = torch.arange(256, dtype=torch.float32).view(1, 256)
-    _patch_owned_supported(monkeypatch, kernels)
-
-    def dequantize(_qdata: torch.Tensor, _scale: torch.Tensor, _group_size: int) -> torch.Tensor:
-        return expected
-
-    monkeypatch.setattr(kernels, "dequantize_int8_convrot_weight", dequantize)
-    kitchen_called = _patch_kitchen(monkeypatch, torch.zeros_like(expected))
+    kitchen_called = _patch_kitchen(monkeypatch, expected)
     actual = _stored().dequantize(torch.float16)
     assert torch.equal(actual, expected.half())
-    assert not kitchen_called
-
-
-def test_int8_convrot_falls_back_when_owned_route_is_unavailable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    kernels = importlib.import_module("dinkster_kernels")
-    expected = torch.full((1, 256), 3.5)
-    monkeypatch.setattr(kernels, "dequantize_int8_convrot_weight_available", lambda: False)
-    kitchen_called = _patch_kitchen(monkeypatch, expected)
-    actual = _stored().dequantize()
-    assert torch.equal(actual, expected)
     assert kitchen_called == [True]
 
 
-def test_int8_convrot_falls_back_when_owned_route_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    kernels = importlib.import_module("dinkster_kernels")
-    expected = torch.full((1, 256), -2.0)
-    _patch_owned_supported(monkeypatch, kernels)
+def test_int8_convrot_kitchen_failure_is_loud(monkeypatch: pytest.MonkeyPatch) -> None:
+    importlib.import_module("dinkster_kitchen")
 
     def fail(*_args: object) -> torch.Tensor:
-        raise RuntimeError("kernel compile failed")
+        raise RuntimeError("dequantization failed")
 
-    monkeypatch.setattr(kernels, "dequantize_int8_convrot_weight", fail)
-    kitchen_called = _patch_kitchen(monkeypatch, expected)
-    actual = _stored().dequantize()
-    assert torch.equal(actual, expected)
-    assert kitchen_called == [True]
+    monkeypatch.setattr(torch.ops.dinkster_kitchen, "dequantize_int8_convrot_weight", fail)
+    with pytest.raises(RuntimeError, match="kitchen ConvRot INT8 dequantization failed"):
+        _stored().dequantize()
 
 
-def test_int8_convrot_owned_oom_is_not_retried_with_kitchen(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    kernels = importlib.import_module("dinkster_kernels")
-    _patch_owned_supported(monkeypatch, kernels)
+def test_int8_convrot_kitchen_oom_is_not_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    importlib.import_module("dinkster_kitchen")
 
     def oom(*_args: object) -> torch.Tensor:
         raise torch.OutOfMemoryError("allocation failed")
 
-    monkeypatch.setattr(kernels, "dequantize_int8_convrot_weight", oom)
-    kitchen_called = _patch_kitchen(monkeypatch, torch.zeros((1, 256)))
+    monkeypatch.setattr(torch.ops.dinkster_kitchen, "dequantize_int8_convrot_weight", oom)
     with pytest.raises(torch.OutOfMemoryError, match="allocation failed"):
         _stored().dequantize()
-    assert not kitchen_called

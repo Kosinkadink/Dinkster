@@ -62,6 +62,7 @@ from dinkster.compose import (
 )
 
 TESTS_DIR = Path(__file__).parent
+DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
 DEFAULT_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES, *IMAGE_NODES]
@@ -1720,15 +1721,14 @@ def test_default_suite_package_matches_managed_lock() -> None:
     }
 
 
-def test_compose_dev_adds_scaffold_nodes() -> None:
-    """dev=True composes the dev pack's scaffolding in-process alongside
-    the default packs - and ONLY dev mode does. Both surfaces attribute to core."""
-    from dinkster_nodes_dev import DEV_NODES
+def test_compose_dev_pack_adds_scaffold_nodes() -> None:
+    """The development manifest composes its complete node surface."""
+    from dinkster_nodes_dev import PACK_NODES
 
     async def scenario() -> None:
-        composition = await compose_serving(dev=True)
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
-            expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(DEV_NODES))
+            expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(PACK_NODES))
             assert set(composition.schemas) == expected
             engine = composition.make_engine(lambda event: None)
             graph = Graph(nodes={"g": GraphNode("dev.image.gradient", {"width": 8, "height": 4})})
@@ -1740,11 +1740,11 @@ def test_compose_dev_adds_scaffold_nodes() -> None:
     asyncio.run(scenario())
 
 
-def test_conformance_proof_nodes_are_dev_only_and_absent_from_production_catalogs() -> None:
-    """The canonical recorder's executable probes never become user nodes."""
+def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
+    """Conformance probes appear only when the development pack is composed."""
 
     async def scenario() -> None:
-        dev = await compose_serving(dev=True)
+        dev = await compose_serving([DEV_PACK_MANIFEST])
         try:
             assert "dev.conformance.preview" in dev.schemas
             assert "dev.conformance.cancellable" in dev.schemas
@@ -1762,16 +1762,10 @@ def test_conformance_proof_nodes_are_dev_only_and_absent_from_production_catalog
         finally:
             await production.close()
 
-        manifest = (
-            Path(__file__).parent.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
-        )
-        manifest_composition = await compose_serving([manifest])
+        manifest_composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             assert "dev.image.gradient" in manifest_composition.schemas
-            assert not any(
-                node_type.startswith("dev.conformance.")
-                for node_type in manifest_composition.schemas
-            )
+            assert "dev.conformance.preview" in manifest_composition.schemas
         finally:
             await manifest_composition.close()
 
@@ -1783,7 +1777,7 @@ def test_compose_dev_mode(caplog: pytest.LogCaptureFixture) -> None:
     render as one structured log line per crossing."""
 
     async def scenario() -> None:
-        composition = await compose_serving(dev=True)
+        composition = await compose_serving([DEV_PACK_MANIFEST], dev=True)
         try:
             events: list[object] = []
             engine = composition.make_engine(events.append)
@@ -1825,6 +1819,7 @@ def test_composed_layered_cache_reuses_disk_then_promotes_to_memory(tmp_path: Pa
 
         async def compose():
             return await compose_serving(
+                [DEV_PACK_MANIFEST],
                 include_default_packs=False,
                 dev=True,
                 cache_mode="layered",
@@ -1874,6 +1869,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             cache_disk_budget=1024**2,
         )
         try:
+            await composer.add_pack(DEV_PACK_MANIFEST)
             events: list[EngineEvent] = []
             engine = composer.composition.make_engine(events.append)
             graph = Graph(nodes={"g": GraphNode("dev.image.gradient", {"width": 8, "height": 4})})
@@ -1882,6 +1878,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             events.clear()
 
             staged = composer.spawn_empty()
+            await staged.add_pack(DEV_PACK_MANIFEST)
             old = composer.adopt(staged)
             await old.close()
             assert isinstance(engine.cache, LayeredCache)
@@ -1889,7 +1886,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             assert isinstance(memory, MemoryLRUCache)
             assert len(memory) == 1
 
-            (local,) = await composer.full_free("maintenance-cache")
+            local = (await composer.full_free("maintenance-cache"))[0]
             assert local["status"] == "complete"
             consumers = cast("list[dict[str, object]]", local["consumers"])
             assert consumers[0] == {
@@ -3336,6 +3333,7 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
             cache_dir=tmp_path / "execution-cache",
         )
         try:
+            await composer.add_pack(DEV_PACK_MANIFEST)
             await composer.add_pack(manifest)
             events: list[EngineEvent] = []
             engine = composer.composition.make_engine(events.append)
@@ -3354,7 +3352,9 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
             await engine.run(graph, ["load"])
             await asyncio.sleep(0.05)
 
-            local, worker = await composer.full_free("maintenance-composed")
+            results = await composer.full_free("maintenance-composed")
+            local = results[0]
+            worker = next(row for row in results[1:] if row["worker"] == "memorypack")
             assert local["status"] == "complete"
             assert worker["worker"] == "memorypack"
             assert worker["status"] == "complete"
@@ -3380,7 +3380,9 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
 
             live_worker = composer._records["memorypack"].worker
             await live_worker.close()
-            local, missing = await composer.full_free("maintenance-missing")
+            results = await composer.full_free("maintenance-missing")
+            local = results[0]
+            missing = next(row for row in results[1:] if row["worker"] == "memorypack")
             assert local["status"] == "complete"
             assert missing == {
                 "worker": "memorypack",
