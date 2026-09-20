@@ -1007,10 +1007,12 @@ def main(argv: list[str] | None = None) -> None:
         "--legacy-pack",
         action="append",
         default=[],
+        type=_resolve_pack_argument,
         metavar="PATH",
         help="unmodified ComfyUI custom node pack (directory or single .py), "
-        "repeatable; loads in the legacy quarantine worker and attributes "
-        "as 'comfy.<pack>' (requires --comfy-root)",
+        "repeatable; relative paths resolve from the launch directory; loads "
+        "in the legacy quarantine worker and attributes as 'comfy.<pack>' "
+        "(requires --comfy-root)",
     )
     parser.add_argument(
         "--strict-packs",

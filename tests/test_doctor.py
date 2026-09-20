@@ -212,7 +212,7 @@ contributions = [
     assert "'filesystem'" in capability.message
 
 
-def test_pack_nested_in_distribution_uses_shared_source_root(tmp_path: Path) -> None:
+def test_pack_nested_in_distribution_does_not_add_undeclared_source_root(tmp_path: Path) -> None:
     distribution = tmp_path / "distribution"
     manifest = distribution / "healthy_pack" / "dinkster-pack.toml"
     manifest.parent.mkdir(parents=True)
@@ -224,8 +224,9 @@ def test_pack_nested_in_distribution_uses_shared_source_root(tmp_path: Path) -> 
 
     report = diagnose(manifest)
 
-    assert report.ok, render_text(report)
-    assert report.node_types == ("healthy.doubler", "healthy.tagger")
+    assert not report.ok
+    assert "entry.unresolvable" in codes(report)
+    assert report.entry_path == ""
 
 
 def test_blocking_import_emits_slow_warning(tmp_path: Path) -> None:

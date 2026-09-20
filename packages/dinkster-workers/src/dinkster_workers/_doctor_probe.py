@@ -149,21 +149,14 @@ def _schema_atoms(schema: Any) -> set[str]:
 
 
 def probe(manifest_path: str) -> dict[str, Any]:
-    from dinkster_workers.manifest import load_manifest, resolve_entry
+    from dinkster_workers.manifest import (
+        add_pack_root_to_import_path,
+        load_manifest,
+        resolve_entry,
+    )
 
     manifest = load_manifest(manifest_path)
-    root = str(manifest.root.resolve())
-    module = manifest.nodes_entry.partition(":")[0]
-    source = manifest.root.joinpath(*module.split("."))
-    if source.with_suffix(".py").is_file() or source.is_dir():
-        sys.path.insert(0, root)
-    else:
-        sys.path.append(root)
-    distribution_root = manifest.root.parent
-    if (distribution_root / "pyproject.toml").is_file():
-        source_root = distribution_root / "src"
-        if source_root.is_dir():
-            sys.path.insert(0, str(source_root))
+    add_pack_root_to_import_path(manifest, sys.path)
 
     report: dict[str, Any] = {
         "entry_error": None,
