@@ -1510,11 +1510,383 @@ def _sd_denoiser(
     context: SamplingAdapterContext,
 ) -> SamplingDenoiserExecution:
     owner = cast("SDRuntime", runtime)
-    if context.inputs is None:
+    if (
+        context.inputs is None
+        or context.device is None
+        or context.plan is None
+        or context.request is None
+        or context.sampler is None
+        or context.schedule is None
+    ):
         raise RuntimeError("SD sampling context is unresolved")
     if type(context.inputs.cond) is ConditioningCarrier:
         return _sd_scheduled_denoiser(owner, compute_dtype, context)
-    raise RuntimeError("ordinary SD sampling adapter is not installed")
+    unknown = set(context.options) - {"scheduled", "control", "sd15_attention_contributions"}
+    if unknown:
+        raise WiringError(
+            "SD sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+        )
+    if context.options.get("scheduled") is not None:
+        raise WiringError("scheduled SD conditioning requires a ConditioningCarrier")
+    control = context.options.get("control")
+    controls: tuple[SDControlConditioning, ...] = ()
+    control_sites = SD15_CONTROL_RESIDUAL_SITES
+    if control is not None:
+        if type(control) is not SDControlConditioning:
+            raise TypeError("control must be an exact SDControlConditioning or None")
+        control = _snapshot_sd_control_conditioning(control)
+        newest_to_oldest: list[SDControlConditioning] = []
+        current: SDControlConditioning | None = control
+        while current is not None:
+            newest_to_oldest.append(current)
+            current = current.previous
+        controls = tuple(reversed(newest_to_oldest))
+        sdxl_control = tuple(
+            type(current.model) in (SDXLControlLoRA, SDXLControlNet, SDXLControlNetUnion)
+            for current in controls
+        )
+        if any(sdxl_control) and not all(sdxl_control):
+            raise WiringError("control chain mixes SD1.5 and SDXL providers")
+        if all(sdxl_control):
+            if owner.family.engine.controlnet_profile != "sdxl":
+                raise WiringError("SDXL control providers require the registered SDXL profile")
+            control_sites = SDXL_CONTROL_RESIDUAL_SITES
+        elif owner.family.engine.controlnet_profile != "sd15":
+            raise WiringError("SD1.5 control providers require the registered SD1.5 profile")
+        for current in controls:
+            if current.gain is not None and (
+                current.application.strength != 1.0
+                or current.application.window.start_percent != 0.0
+                or current.application.window.end_percent != 1.0
+            ):
+                raise WiringError(
+                    "explicit ControlNet gain requires application strength 1.0 and the full"
+                    " [0, 1] window; set the application to identity or fold the intended"
+                    " scaling/window into the gain keyframes"
+                )
+    contributions = context.options.get("sd15_attention_contributions", ())
+    if type(contributions) is not tuple or any(
+        type(contribution) is not SD15IPAdapterConditioning for contribution in contributions
+    ):
+        raise TypeError("sd15_attention_contributions must be an exact tuple")
+    ipadapter = owner._ipadapter_executions(contributions)  # pyright: ignore[reportPrivateUsage]
+    inputs = context.inputs
+    sigmas = context.schedule.sigmas
+    control_effect_fields = tuple(
+        tuple(
+            compile_sd_effect_mask(
+                source,
+                latent_height=inputs.latent.shape[2],
+                latent_width=inputs.latent.shape[3],
+            )
+            for source in current.effect_masks
+        )
+        for current in controls
+    )
+    if any(
+        source.mask.shape[0] not in (1, inputs.latent.shape[0])
+        for current in controls
+        for source in current.effect_masks
+    ):
+        raise WiringError(
+            "mask_layout_mismatch: effect-mask batch must be one or equal latent batch"
+        )
+    off_grid_control = bool(controls) and context.sampler.id in {
+        "dinkster.dpm_fast",
+        "dinkster.dpm_adaptive",
+    }
+    realized_timeline = (
+        None
+        if context.request.timeline is None
+        else realize_sampling_timeline(
+            context.request.timeline,
+            tuple(float(sigma) for sigma in sigmas),
+        )
+    )
+    plan = context.plan
+    admit_extra_lanes = plan.needs_unconditional or plan.has_strategy
+    admitted = [True] + [
+        condition.conditioning is not None and admit_extra_lanes
+        for condition in plan.conditions[1:]
+    ]
+    control_lane_ids = tuple(
+        "positive"
+        if condition.role is GuidanceRole.CONDITIONAL
+        else "negative"
+        if condition.role is GuidanceRole.UNCONDITIONAL
+        else "empty"
+        for condition, admit in zip(plan.conditions, admitted, strict=True)
+        if admit
+    )
+    control_tables = []
+    constant_control_gains: tuple[float, ...] | None = None
+    constant_control_gain_rows: tuple[SDControlGain, ...] | None = None
+    structured_control_gains = False
+    control_facts: tuple[str, ...] = ()
+    if controls and len(sigmas) > 1:
+        timeline = (
+            realized_timeline.executed
+            if realized_timeline is not None
+            else executed_sampling_timeline(tuple(float(sigma) for sigma in sigmas))
+        )
+        fact_parts: list[str] = []
+        off_grid_gains: list[float] = []
+        off_grid_gain_rows: list[SDControlGain] = []
+        for index, current in enumerate(controls):
+            gain = current.gain
+            if gain is None:
+                start_sigma = owner._percent_to_sigma(  # pyright: ignore[reportPrivateUsage]
+                    current.application.window.start_percent
+                )
+                end_sigma = owner._percent_to_sigma(  # pyright: ignore[reportPrivateUsage]
+                    current.application.window.end_percent
+                )
+                gain = ContributionGain(
+                    DirectGainTableCurve(
+                        tuple(
+                            current.application.strength
+                            if end_sigma <= sigma <= start_sigma
+                            else 0.0
+                            for sigma in sigmas[:-1]
+                        )
+                    ),
+                    1.0,
+                )
+            _validate_sd_control_gain_keys(gain, control_lane_ids, control_sites)
+            if (gain.site_gains or gain.lane_gains) and plan.has_strategy:
+                raise WiringError(
+                    "unsupported_control_partition: SD1.5 site/lane gains require the "
+                    "builtin guidance lane plan"
+                )
+            table = realize_gain_table(gain, timeline)
+            fields = control_effect_fields[index]
+            resolved_digests = tuple(field.compiled.input_digest for field in fields)
+            required_digests = tuple(
+                dict.fromkeys(digest for row in table.rows for digest in row.effect_mask_digests)
+            )
+            if resolved_digests != required_digests:
+                raise WiringError(
+                    "mask_role_mismatch: realized effect-mask declarations must resolve "
+                    "exactly in first-use order"
+                )
+            effective_gains = tuple(row.timeline_gain * row.global_gain for row in table.rows)
+            gain_rows = tuple(
+                _sd_control_gain(row, control_lane_ids, control_sites) for row in table.rows
+            )
+            structured_control_gains = structured_control_gains or bool(
+                gain.site_gains or gain.lane_gains or required_digests
+            )
+            if off_grid_control:
+                full_window = (
+                    current.application.window.start_percent == 0.0
+                    and current.application.window.end_percent == 1.0
+                )
+                if not full_window or any(value != gain_rows[0] for value in gain_rows[1:]):
+                    raise WiringError(
+                        f"sampler {context.sampler.id} supports only constant ControlNet gain over"
+                        " the full application window because its internal evaluation timeline"
+                        " does not map to executed sigma rows"
+                    )
+                off_grid_gains.append(effective_gains[0])
+                off_grid_gain_rows.append(gain_rows[0])
+            control_tables.append(table)
+            prefix = f"control[{index}]"
+            fact_parts.extend(
+                (
+                    f"{prefix}.child={current.application.child_id}",
+                    f"{prefix}.model={current.model_digest}",
+                    f"{prefix}.hint={current.hint_digest}",
+                    *(
+                        ()
+                        if current.application.mode is None
+                        else (
+                            f"{prefix}.mode.provider={current.application.mode.provider}",
+                            f"{prefix}.mode.token={current.application.mode.token}",
+                        )
+                    ),
+                    *(f"{prefix}.{fact}" for fact in contribution_gain_slot_facts(gain, table)),
+                    *(
+                        fact
+                        for mask_index, field in enumerate(fields)
+                        for fact in (
+                            f"{prefix}.effect_mask[{mask_index}].source="
+                            f"{field.compiled.source_digest}",
+                            f"{prefix}.effect_mask[{mask_index}].field={field.compiled.digest}",
+                            f"{prefix}.effect_mask[{mask_index}].layout="
+                            f"{field.compiled.layout_digest}",
+                            f"{prefix}.effect_mask[{mask_index}].transform="
+                            f"{field.compiled.transform_digest}",
+                        )
+                    ),
+                )
+            )
+        if off_grid_control:
+            if structured_control_gains:
+                constant_control_gain_rows = tuple(off_grid_gain_rows)
+            else:
+                constant_control_gains = tuple(off_grid_gains)
+        control_facts = tuple(fact_parts)
+    admitted_sources = [
+        condition.conditioning
+        for condition, admit in zip(plan.conditions, admitted, strict=True)
+        if admit
+    ]
+    token_counts = [
+        declared_token_count(source) if isinstance(source, Conditioning) else None
+        for source in admitted_sources
+    ]
+    declared_counts = [count for count in token_counts if count is not None]
+    if len(declared_counts) == len(token_counts):
+        repeats = cross_attn_repeat(declared_counts)
+        target_counts = (
+            [math.lcm(*declared_counts)] * len(declared_counts)
+            if repeats is not None
+            else declared_counts
+        )
+    else:
+        target_counts = [0 if count is None else count for count in token_counts]
+    bound_sources = [
+        bind_sd_layout(source, target_count)
+        for source, target_count in zip(admitted_sources, target_counts, strict=True)
+    ]
+    bound_iter = iter(bound_sources)
+    replacements = MappingProxyType(
+        {
+            condition.id: next(bound_iter)
+            for condition, admit in zip(plan.conditions, admitted, strict=True)
+            if admit
+        }
+    )
+    is_inpaint = owner.assembled.diffusion.config.in_channels == 9
+    inpaint = cast("InpaintConditioning[torch.Tensor] | None", context.inpaint)
+    evaluator = SDDenoiser(
+        owner.assembled.diffusion,
+        owner.sampling_sigma_space(),
+        parameterization=owner.sampling.parameterization,
+        inpaint_mask=(
+            inpaint.mask if inpaint is not None else inputs.denoise_mask if is_inpaint else None
+        ),
+        inpaint_masked_image=(
+            latent_process_in(
+                inpaint.masked_image if inpaint is not None else inputs.latent,
+                owner.family.single_stream_latent(),
+            )
+            if is_inpaint
+            else None
+        ),
+        control_model=(
+            None
+            if not controls
+            else controls[0].model
+            if len(controls) == 1
+            else tuple(current.model for current in controls)
+        ),
+        control_hint=(
+            None
+            if not controls
+            else controls[0].hint
+            if len(controls) == 1
+            else tuple(current.hint for current in controls)
+        ),
+        control_mode=(
+            None
+            if not controls
+            else controls[0].application.mode
+            if len(controls) == 1
+            else tuple(current.application.mode for current in controls)
+        ),
+        control_effect_masks=control_effect_fields,
+        ipadapter=ipadapter,
+        compute_dtype=compute_dtype,
+    )
+    if constant_control_gains is not None:
+        if len(constant_control_gains) == 1:
+            evaluator.set_control_gain(constant_control_gains[0])
+        else:
+            evaluator.set_control_gains(constant_control_gains)
+    elif constant_control_gain_rows is not None:
+        evaluator.set_control_gain_rows(constant_control_gain_rows)
+
+    def prepare_conditioning(
+        value: object, role: GuidanceRole
+    ) -> tuple[torch.Tensor, torch.Tensor | None, str]:
+        if not isinstance(value, Conditioning):
+            raise WiringError("SD guidance lane requires Conditioning")
+        return evaluator.prepare_conditioning(
+            value,
+            adm=owner._adm(  # pyright: ignore[reportPrivateUsage]
+                value,
+                inputs.latent,
+                negative=role is not GuidanceRole.CONDITIONAL,
+            ),
+            lane_id=(
+                "positive"
+                if role is GuidanceRole.CONDITIONAL
+                else "negative"
+                if role is GuidanceRole.UNCONDITIONAL
+                else "empty"
+            ),
+        )
+
+    evaluator_identity = "dinkster.sd.conditioning.v1"
+    if control_facts:
+        digest = hashlib.sha256("\n".join((*control_facts, "")).encode()).hexdigest()
+        evaluator_identity += f":intervention-plan={digest}"
+    evaluator_identity = owner._extend_ipadapter_evaluator_identity(  # pyright: ignore[reportPrivateUsage]
+        evaluator_identity, contributions
+    )
+    conditioning = ConditioningEvaluation(
+        prepare_conditioning,
+        evaluator.evaluate_conditioning,
+        evaluator.batchable,
+        evaluator.evaluate_conditioning_batch,
+        evaluate_batch_attention=evaluator.evaluate_conditioning_batch_attention,
+        evaluator_identity=lambda _role: evaluator_identity,
+        standard_activation_memory_factor=owner.family.memory_factor,
+        layout=conditioning_layout,
+        token_transforms=conditioning_token_transforms,
+        validate_layout=lambda condition, layout: validate_sd_layout(
+            condition[:2],
+            layout,
+            repeat_limit=CROSS_ATTN_REPEAT_LIMIT,
+        ),
+    )
+
+    def apply_control_step(index: int) -> None:
+        anchor = control_tables[0].rows[index]
+        require_realized_sampling_step(index, anchor.sigma, anchor.progress)
+        if structured_control_gains:
+            evaluator.set_control_gain_rows(
+                tuple(
+                    _sd_control_gain(table.rows[index], control_lane_ids, control_sites)
+                    for table in control_tables
+                )
+            )
+        elif len(control_tables) == 1:
+            row = control_tables[0].rows[index]
+            evaluator.set_control_gain(row.timeline_gain * row.global_gain)
+        else:
+            evaluator.set_control_gains(
+                tuple(
+                    table.rows[index].timeline_gain * table.rows[index].global_gain
+                    for table in control_tables
+                )
+            )
+
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", evaluator),
+        conditioning_evaluation=conditioning,
+        conditioning_payloads=replacements,
+        solver_options=MappingProxyType({"realized_timeline": realized_timeline}),
+        sampling=owner.sampling,
+        percent_to_sigma=owner._percent_to_sigma,  # pyright: ignore[reportPrivateUsage]
+        on_step_begin=(apply_control_step if control_tables and not off_grid_control else None),
+        inpaint_noise=(
+            prepare_noise(inputs.latent, context.seed + 1)
+            if context.sampler.random_inpaint_noise
+            else None
+        ),
+    )
 
 
 def _sd_device(runtime: object) -> torch.device:
@@ -1871,6 +2243,26 @@ class SDRuntime(SingleStreamSamplingRuntime):
                 capture_denoised=capture_denoised,
                 scheduled=ScheduledSamplingOptions(scheduled.resolver, None),
             )
+        return cast("Any", sampling_execution)(
+            self,
+            latent,
+            noise=noise,
+            cond=cond,
+            cfg=cfg,
+            request=request,
+            seed=seed,
+            guidance=guidance,
+            denoise_mask=denoise_mask,
+            inpaint=inpaint,
+            context_windows=context_windows,
+            control=control,
+            sd15_attention_contributions=sd15_attention_contributions,
+            on_step=on_step,
+            on_state=on_state,
+            compute_dtype=compute_dtype,
+            device=device,
+            capture_denoised=capture_denoised,
+        )
         latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
             self.family.id,
             latent=latent,

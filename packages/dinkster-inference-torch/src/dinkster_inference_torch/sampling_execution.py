@@ -862,10 +862,6 @@ def sampling_execution(
     del observer, parent_span_id
     if cancelled is None:
         cancelled = sampling_environment_cancellation()
-    if cancelled():
-        from dinkster_inference import SamplingCancelled
-
-        raise SamplingCancelled("sampling cancelled")
     owner = cast("SamplingExecutionRuntime", runtime)
     registration = owner.sampling_execution_registration
     adapter_context = SamplingAdapterContext(
@@ -982,18 +978,18 @@ def sampling_execution(
             ),
         )
     adapter = denoiser_execution.evaluator
-    evaluator_identity = adapter.evaluator_identity
-    resolved_evaluator_identity: Callable[[GuidanceRole], str]
-    if isinstance(evaluator_identity, str):
-        identity = evaluator_identity
-
-        def resolved_evaluator_identity(_role: GuidanceRole, /) -> str:
-            return identity
-
-    else:
-        resolved_evaluator_identity = evaluator_identity
     evaluation = denoiser_execution.conditioning_evaluation
     if evaluation is None:
+        evaluator_identity = adapter.evaluator_identity
+        resolved_evaluator_identity: Callable[[GuidanceRole], str]
+        if isinstance(evaluator_identity, str):
+            identity = evaluator_identity
+
+            def resolved_evaluator_identity(_role: GuidanceRole, /) -> str:
+                return identity
+
+        else:
+            resolved_evaluator_identity = evaluator_identity
         evaluation = ConditioningEvaluation(
             adapter.prepare_conditioning,
             adapter.evaluate_conditioning,
