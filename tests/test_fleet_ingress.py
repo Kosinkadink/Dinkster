@@ -23,10 +23,9 @@ from dinkster_supervisor import (
     parse_station_config,
 )
 from dinkster_supervisor import ingress as ingress_module
+from dinkster_supervisor.install_manager import _write_config
 from dinkster_supervisor.installs import InstallsError
 from multidict import CIMultiDict
-
-from dinkster.install_manager import _write_config
 
 
 async def _fleet(
