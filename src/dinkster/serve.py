@@ -1611,7 +1611,10 @@ def main(argv: list[str] | None = None) -> None:
         library_root = Path(args.library_root)
         mounts_config = library_root / "mounts.toml"
         mounts_snapshot = library_root / "worker-state" / "mounts-snapshot.json"
-        mount_table = MountTable(mounts_snapshot)
+        mount_table = MountTable(
+            mounts_snapshot,
+            index_root=library_root / "asset-indexes",
+        )
         try:
             for mount in load_mounts(mounts_config):
                 mount_table.add(mount, source="config")

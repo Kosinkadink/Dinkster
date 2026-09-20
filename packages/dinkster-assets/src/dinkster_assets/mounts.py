@@ -37,8 +37,9 @@ import json
 import os
 import re
 import threading
+import time
 import tomllib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -47,7 +48,7 @@ from .catalog import AssetEntry, FolderListing
 from .identity import AssetError, require_digest
 from .integrity import AssetVerificationRecord
 from .kind import KIND_MODEL_EMBEDDING, require_asset_kind
-from .library import IndexedAssetResolver, LocalAssetLibrary
+from .library import INDEX_NAME, AssetScanProgress, IndexedAssetResolver, LocalAssetLibrary
 from .model import AssetRef, AssetResolution
 
 __all__ = [
@@ -368,7 +369,7 @@ def dump_mounts(mounts: Sequence[MountDef]) -> str:
 
 class _MountRow:
     """Live state for one mount. States: pending (registered, not yet
-    scanned), scanning, ready (cataloged and in the snapshot), failed
+    scanned), scanning (publishing entries as they are indexed), ready, failed
     (directory missing/unreadable - recorded, never silently dropped)."""
 
     def __init__(self, mount: MountDef, source: str, kind: str) -> None:
@@ -379,6 +380,8 @@ class _MountRow:
         self.error: str | None = None
         self.library: LocalAssetLibrary | None = None
         self.entry_count: int | None = None
+        self.progress: AssetScanProgress | None = None
+        self.scan_started: float | None = None
 
 
 class MountTable:
@@ -391,10 +394,16 @@ class MountTable:
     workers can resolve rewrites the snapshot file atomically.
     """
 
-    def __init__(self, snapshot_path: Path | str | None = None) -> None:
+    def __init__(
+        self,
+        snapshot_path: Path | str | None = None,
+        *,
+        index_root: Path | str | None = None,
+    ) -> None:
         self._rows: dict[str, _MountRow] = {}
         self._lock = threading.RLock()
         self._snapshot_path = Path(snapshot_path) if snapshot_path is not None else None
+        self._index_root = Path(index_root) if index_root is not None else None
 
     def add(self, mount: MountDef, *, source: str = "config", kind: str = "") -> None:
         """Register a mount (state "pending"; call ``scan`` to catalog it).
@@ -488,12 +497,45 @@ class MountTable:
                     wire["path"] = str(row.mount.path)
                 if row.entry_count is not None:
                     wire["entryCount"] = row.entry_count
+                progress = self._current_progress(row)
+                if progress is not None:
+                    wire["scanProgress"] = {
+                        "filesDone": progress.files_done,
+                        "filesTotal": progress.files_total,
+                        "bytesDone": progress.bytes_done,
+                        "bytesTotal": progress.bytes_total,
+                        "elapsedSeconds": progress.elapsed_seconds,
+                    }
                 if row.error is not None:
                     wire["error"] = "model root unavailable" if hidden_semantic_root else row.error
                 out.append(wire)
             return out
 
-    def scan(self, mount_id: str) -> int:
+    @staticmethod
+    def _current_progress(row: _MountRow) -> AssetScanProgress | None:
+        progress = row.progress
+        if progress is None or row.scan_started is None:
+            return progress
+        return AssetScanProgress(
+            progress.files_done,
+            progress.files_total,
+            progress.bytes_done,
+            progress.bytes_total,
+            max(progress.elapsed_seconds, time.monotonic() - row.scan_started),
+        )
+
+    def scan_progress(self, mount_id: str) -> AssetScanProgress | None:
+        with self._lock:
+            row = self._rows.get(mount_id)
+            return self._current_progress(row) if row is not None else None
+
+    def scan(
+        self,
+        mount_id: str,
+        *,
+        on_progress: Callable[[AssetScanProgress], None] | None = None,
+        progress_interval: float = 1.0,
+    ) -> int:
         """(Re)catalog one mount. BLOCKING - hashes new/changed files - so
         run it on a thread. On success the mount is "ready" and enters the
         worker snapshot; on failure it is "failed" with the error recorded
@@ -504,13 +546,45 @@ class MountTable:
                 raise MountsError(f"unknown mount: {mount_id!r}")
             row.state = "scanning"
             row.error = None
+            row.progress = None
+            row.scan_started = time.monotonic()
         try:
             library = row.library
             if library is None:
-                library = LocalAssetLibrary(
-                    row.mount.path, namespace=f"{MOUNT_NAMESPACE}/{row.mount.id}"
+                index_path = (
+                    self._index_root / f"{row.mount.id}.json"
+                    if self._index_root is not None
+                    else None
                 )
-            count = library.scan()
+                library = LocalAssetLibrary(
+                    row.mount.path,
+                    namespace=f"{MOUNT_NAMESPACE}/{row.mount.id}",
+                    index_path=index_path,
+                    legacy_index_path=(
+                        row.mount.path / INDEX_NAME if index_path is not None else None
+                    ),
+                )
+
+            with self._lock:
+                if self._rows.get(mount_id) is row:
+                    row.library = library
+
+            def progress(update: AssetScanProgress) -> None:
+                with self._lock:
+                    if self._rows.get(mount_id) is not row:
+                        return
+                    previous_files_done = row.progress.files_done if row.progress is not None else 0
+                    row.progress = update
+                    row.entry_count = len(library.entries())
+                if update.files_done > previous_files_done:
+                    self.write_snapshot()
+                if on_progress is not None:
+                    on_progress(update)
+
+            count = library.scan(
+                on_progress=progress,
+                progress_interval=progress_interval,
+            )
         except (AssetError, OSError) as exc:
             with self._lock:
                 if self._rows.get(mount_id) is row:
@@ -518,6 +592,8 @@ class MountTable:
                     row.error = str(exc)
                     row.library = None
                     row.entry_count = None
+                    row.progress = None
+                    row.scan_started = None
             raise
         with self._lock:
             if self._rows.get(mount_id) is not row:
@@ -528,32 +604,34 @@ class MountTable:
             row.entry_count = count
             self.write_snapshot()
             row.state = "ready"
+            row.progress = None
+            row.scan_started = None
         return count
 
     def entries(self, mount_id: str) -> tuple[AssetEntry, ...]:
-        """Cataloged entries of one ready mount (empty until scanned)."""
+        """Entries indexed so far for one mount (empty until scanning starts)."""
         with self._lock:
             row = self._rows.get(mount_id)
             if row is None:
                 raise MountsError(f"unknown mount: {mount_id!r}")
             library = row.library
-        return library.catalog.entries() if library is not None else ()
+        return library.entries() if library is not None else ()
 
     def ready_snapshot(self) -> tuple[ReadyMountSnapshot, ...]:
-        """Capture ready mount rows and their exact catalog generation."""
+        """Capture indexed mount rows and their exact catalog generation."""
         with self._lock:
             return tuple(
                 ReadyMountSnapshot(
                     row.mount.id,
                     row.mount.priority,
                     row.kind,
-                    tuple(entry.ref() for entry in row.library.catalog.entries()),
+                    tuple(entry.ref() for entry in row.library.entries()),
                 )
                 for row in sorted(
                     self._rows.values(),
                     key=lambda row: (row.mount.priority, row.mount.id),
                 )
-                if row.state == "ready" and row.library is not None
+                if row.library is not None
             )
 
     def list_folder(self, mount_id: str, path: str = "") -> FolderListing:
@@ -569,7 +647,7 @@ class MountTable:
         prefix = f"{MOUNT_NAMESPACE}/{mount_id}"
         if path:
             prefix = f"{prefix}/{path}"
-        return library.catalog.list_folder(prefix)
+        return library.list_folder(prefix)
 
     def writable_root(self, mount_id: str) -> Path:
         """MountWriteAuthority (engine-side): the root of a READY readwrite
@@ -592,7 +670,7 @@ class MountTable:
             return row.mount.path
 
     def resolve(self, digest: str) -> Path | None:
-        """AssetResolver across every ready mount (engine-side)."""
+        """AssetResolver across mounts with indexed entries (engine-side)."""
         with self._lock:
             libraries = [
                 cast("LocalAssetLibrary", row.library)
@@ -633,13 +711,30 @@ class MountTable:
             row = self._rows.get(parts[1])
             library = row.library if row is not None else None
         if library is None:
-            raise AssetError(f"no ready mount holds {virtual_path!r}")
-        return library.ref(virtual_path)
+            raise AssetError(
+                f"asset {virtual_path!r} is not indexed because its mount is not ready"
+            )
+        try:
+            ref = library.ref(virtual_path)
+        except AssetError as exc:
+            raise AssetError(f"asset {virtual_path!r} is not indexed yet") from exc
+        if row is not None and row.state == "scanning":
+            available = len(library.entries())
+            with self._lock:
+                publish = self._rows.get(parts[1]) is row and available > (row.entry_count or 0)
+                if publish:
+                    row.entry_count = available
+            if publish:
+                library.persist_index()
+                self.write_snapshot()
+        return ref
 
     def write_snapshot(self) -> None:
-        """Publish the worker-facing view: every READY mount's root and
-        index path. Atomic (temp + os.replace) - workers stat/reread this
-        file per resolve, and a torn write must never be observable."""
+        """Publish each indexed mount's root and current index path.
+
+        Scanning mounts participate once their first entries are available.
+        Atomic replacement keeps workers from observing a torn snapshot.
+        """
         if self._snapshot_path is None:
             return
         with self._lock:

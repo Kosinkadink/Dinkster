@@ -7,12 +7,15 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetRef, MountDef, MountTable, digest_bytes
+from dinkster_assets.integrity import digest_file_with_record as real_digest_file_with_record
 from dinkster_caches import MemoryLRUCache
 from dinkster_compat_comfy import (
     COMFY_INPUT_ADAPTERS,
@@ -2994,6 +2997,74 @@ def test_endpoint_resolves_ckpt_name_through_category_mount(
                 == "mounts/comfy-model-checkpoints-1/sd15/model.safetensors"
             )
         finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_endpoint_uses_indexed_model_while_scan_continues_and_names_unindexed_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "models" / "checkpoints"
+    root.mkdir(parents=True)
+    cached = root / "cached.safetensors"
+    cached.write_bytes(b"cached weights")
+    table = MountTable(
+        tmp_path / "library" / "mounts.json",
+        index_root=tmp_path / "library" / "asset-indexes",
+    )
+    mount_id = "comfy-model-checkpoints-1"
+    table.add(
+        MountDef(id=mount_id, path=root),
+        source="derived",
+        kind="model/checkpoint",
+    )
+    table.scan(mount_id)
+
+    slow = root / "slow.safetensors"
+    slow.write_bytes(b"slow weights")
+    import dinkster_assets.library as library_module
+
+    hashing = Event()
+    release = Event()
+
+    def held_digest(path: Path):
+        if path == slow:
+            hashing.set()
+            assert release.wait(5)
+        return real_digest_file_with_record(path)
+
+    monkeypatch.setattr(library_module, "digest_file_with_record", held_digest)
+
+    async def scenario() -> None:
+        client = await make_client(mounts=MountService(table))
+        try:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(table.scan, mount_id, progress_interval=0)
+                assert await asyncio.to_thread(hashing.wait, 5)
+
+                ready = await client.post(
+                    "/api/compat/comfy/prompt?dryRun=1",
+                    json=ckpt_prompt("cached.safetensors"),
+                )
+                assert ready.status == 200
+                checkpoint = (await ready.json())["graph"]["nodes"]["1"]["inputs"]["checkpoint"]
+                assert checkpoint["digest"] == digest_bytes(b"cached weights")
+
+                pending = await client.post(
+                    "/api/compat/comfy/prompt?dryRun=1",
+                    json=ckpt_prompt("slow.safetensors"),
+                )
+                assert pending.status == 400
+                problem = (await pending.json())["problems"][0]
+                assert "slow.safetensors" in problem["message"]
+                assert "got str" not in problem["message"]
+
+                release.set()
+                assert future.result(timeout=5) == 2
+        finally:
+            release.set()
             await client.close()
 
     asyncio.run(scenario())
