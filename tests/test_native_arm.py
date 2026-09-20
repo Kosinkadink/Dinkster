@@ -50,6 +50,7 @@ from dinkster_inference import (
     Registry,
     SamplingCancelled,
     SamplingSegment,
+    builtin_families,
     extend_runtime_identity,
     require_inference_component_handle,
 )
@@ -65,6 +66,13 @@ from dinkster.native_policy import NativeDispatchPolicy, resolve_dtype_policy
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / "packages" / "dinkster-compat-comfy" / "dinkster-pack.toml"
+NATIVE_ARM_SOURCE_DIR = REPO_ROOT / "packages" / "dinkster-native" / "src" / "dinkster_native"
+NATIVE_ARM_FAMILY_SOURCE_NAMES = ("ltx.py", "minimax_h3.py", "seedvr2.py", "wan21.py")
+NATIVE_ARM_SOURCES = (
+    tuple(sorted(NATIVE_ARM_SOURCE_DIR.glob("native_arm*.py")))
+    + tuple(sorted(NATIVE_ARM_SOURCE_DIR.glob("nodes_*.py")))
+    + tuple(NATIVE_ARM_SOURCE_DIR / "families" / name for name in NATIVE_ARM_FAMILY_SOURCE_NAMES)
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -1151,6 +1159,37 @@ def _ksampler_inputs(arm, runtime: object, torch: FakeTorch | None = None) -> di
 
 def _accept_custom_sampling(_request: object, **_kwargs: object) -> None:
     pass
+
+
+def test_native_arm_sources_have_zero_literal_family_gates() -> None:
+    family_ids = frozenset(family.id for family in builtin_families())
+    findings: list[str] = []
+    for path in NATIVE_ARM_SOURCES:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Compare, ast.Dict, ast.IfExp, ast.Match, ast.Set)):
+                continue
+            literals = {
+                child.value
+                for child in ast.walk(node)
+                if isinstance(child, ast.Constant)
+                and isinstance(child.value, str)
+                and child.value in family_ids
+            }
+            findings.extend(
+                f"{path.relative_to(REPO_ROOT)}:{node.lineno}: {literal}"
+                for literal in sorted(literals)
+            )
+    assert findings == [], "literal family gates remain:\n" + "\n".join(findings)
+
+
+def test_native_arm_source_modules_stay_below_size_limit() -> None:
+    line_counts = {
+        str(path.relative_to(REPO_ROOT)): len(path.read_text(encoding="utf-8").splitlines())
+        for path in NATIVE_ARM_SOURCES
+    }
+    oversized = {path: count for path, count in line_counts.items() if count >= 3_000}
+    assert oversized == {}
 
 
 def test_native_arm_import_and_schemas_are_torch_free() -> None:
