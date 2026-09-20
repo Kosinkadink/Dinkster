@@ -1470,6 +1470,69 @@ def test_native_load_dual_clip_forwards_ordered_sources_and_context(
     ]
 
 
+def test_build_text_recipe_handle_forwards_registered_attention_backends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arm = _native_arm()
+    component_registry = importlib.import_module("dinkster_inference.component_registry")
+    text_recipes = importlib.import_module("dinkster_inference.text_recipes")
+    asset = _asset(_safetensors(tmp_path / "text.safetensors"))
+    attention_backends = (("gemma3_12b", "qwen"), ("connectors", "flux"))
+    recipe = SimpleNamespace(runtime_identity="text-identity", overlays=())
+    binding = SimpleNamespace(
+        id="ltxv",
+        family_id="dinkster.ltxav",
+        components=(),
+        loader="test:loader",
+        runtime_class="test:runtime",
+        recipe=lambda *args, **kwargs: recipe,
+    )
+    registry = SimpleNamespace(
+        detect=lambda source, path: (),
+        get=lambda family_id: SimpleNamespace(
+            family=SimpleNamespace(engine=SimpleNamespace(attention_backends=attention_backends))
+        ),
+    )
+    load_calls: list[dict[str, object]] = []
+    loaded = SimpleNamespace(module={})
+    runtime = object()
+    handle = object()
+
+    def load(_binding: object, **kwargs: object) -> object:
+        load_calls.append(kwargs)
+        return loaded
+
+    def execution_symbol(reference: str) -> object:
+        if reference == "test:loader":
+            return load
+        if reference == "test:runtime":
+            return lambda loaded_value, **kwargs: runtime
+        raise AssertionError(reference)
+
+    monkeypatch.setattr(
+        arm,
+        "_active_inference_registries",
+        lambda: SimpleNamespace(components=registry),
+    )
+    monkeypatch.setattr(arm, "_torch", lambda: FakeTorch(cuda=False))
+    monkeypatch.setattr(arm, "_weight_source_ref", lambda *args: object())
+    monkeypatch.setattr(arm, "_materialize_patch_sets", lambda *args: {})
+    monkeypatch.setattr(arm, "_enroll_component_handle", lambda *args, **kwargs: handle)
+    monkeypatch.setattr(component_registry, "execution_symbol", execution_symbol)
+    monkeypatch.setattr(text_recipes, "resolve_text_recipe", lambda *args: binding)
+
+    assert (
+        arm.build_text_recipe_handle(
+            (asset,),
+            "ltxv",
+            "text-identity",
+            compute_dtype="bfloat16",
+        )
+        is handle
+    )
+    assert load_calls[0]["attention_backends"] == attention_backends
+
+
 @pytest.mark.parametrize("same_asset", (False, True))
 def test_compat_load_dual_clip_preserves_sources_and_refuses_unknown_type(
     tmp_path: Path,
