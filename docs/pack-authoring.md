@@ -256,6 +256,10 @@ dependency cycle refuses the candidate composition. A pack that provides
 model families, samplers, or schedulers lists each exact id under
 `[pack.provides.registry]`. Doctor and serving composition require every
 listed id to appear in that pack's materialized inference contribution.
+Sampler and scheduler contributions currently expose that materialized
+provider surface. Model-family declarations participate in contract resolution,
+but cannot activate until the pack also materializes a matching family
+contribution.
 Registry requirements supplied by another pack order that provider before
 the consumer and record the provider pack identity in composition provenance.
 Dependencies determine provider ordering but do not grant Python imports
