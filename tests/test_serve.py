@@ -1558,10 +1558,14 @@ def test_serve_resolves_legacy_pack_from_launch_directory(
 
     def capture_specs(_root: str, **kwargs: object) -> list[object]:
         captured.extend(kwargs["legacy_packs"])  # type: ignore[arg-type]
-        raise RuntimeError("captured legacy pack")
+        return []
+
+    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        awaitable.close()  # type: ignore[attr-defined]
 
     monkeypatch.chdir(launch_directory)
     monkeypatch.setattr(serve, "comfy_compat_specs", capture_specs)
+    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -1576,8 +1580,7 @@ def test_serve_resolves_legacy_pack_from_launch_directory(
         ],
     )
 
-    with pytest.raises(RuntimeError, match="captured legacy pack"):
-        serve.main()
+    serve.main()
 
     assert captured == [legacy_pack.resolve()]
 
