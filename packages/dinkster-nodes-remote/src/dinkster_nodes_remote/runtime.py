@@ -37,7 +37,7 @@ from dinkster_workers import current_execution_context
 
 from .catalog import CatalogClient, RemoteSchema, cache_path_from_env
 
-_DEFAULT_GATEWAY_BASE = "https://api.comfy.org"
+_DEFAULT_GATEWAY_BASE = ""
 _ERROR_MESSAGES = {
     "unauthenticated": "Sign in to use remote nodes.",
     "insufficient_credit": "The account does not have enough credit for this remote job.",

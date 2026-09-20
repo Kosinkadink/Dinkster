@@ -6,7 +6,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import torch
 from dinkster_inference import (
@@ -14,32 +14,22 @@ from dinkster_inference import (
     LUMINA2,
     LUMINA2_CONFIG,
     Conditioning,
-    ContextWindowsSpec,
-    CustomSamplingRequest,
-    CustomSamplingResult,
     FlowSigmas,
     FluxFlowSigmas,
     GuidanceRole,
-    InpaintConditioning,
     ModelFamily,
     Registry,
     SamplerDescriptor,
-    SamplingStateCallback,
     SchedulerDescriptor,
-    StepCallback,
-    sampling_execution_context,
     tokenize_lumina2_prompt,
 )
 
 from .assemble import AssembledLumina2
 from .autoencoder_kl import kl_codec_plugin
-from .brownian import BrownianTreeNoise
-from .denoise import run_denoise
 from .gemma_text import GemmaTextModel
 from .gemma_tokenizer import LUMINA2_TOKENIZER_ATTRIBUTE, GemmaSentencePieceTokenizer
 from .guidance import (
     ConditioningBatch,
-    ConditioningEvaluation,
     GuidanceExecutor,
 )
 from .guidance import (
@@ -47,16 +37,12 @@ from .guidance import (
 )
 from .operations import module_compute_device
 from .sampling_execution import (
-    CustomSamplingCfgValue,
-    CustomSamplingCondValue,
-    CustomSamplingLatentValue,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    custom_denoised_callback,
-    guided_denoiser,
-    narrow_single_stream_custom_sampling,
-    resolve_custom_sampling_request,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
+    SamplingExecutionRegistration,
+    SingleStreamLatentAdapter,
+    sampling_execution,
 )
 from .sampling_runtime import FlowSamplingRuntime
 from .schedules import (
@@ -131,6 +117,8 @@ class Lumina2TextRuntime:
 class Lumina2Denoiser:
     """Single-conditioning flow evaluator over the native Lumina2 DiT."""
 
+    evaluator_identity = "dinkster.lumina2.conditioning.v1"
+
     def __init__(
         self,
         model: ZImage,
@@ -141,7 +129,11 @@ class Lumina2Denoiser:
         self.compute_dtype = compute_dtype
 
     def prepare_conditioning(
-        self, value: object, *, lane_id: str = "positive"
+        self,
+        value: object,
+        role: GuidanceRole = GuidanceRole.CONDITIONAL,
+        *,
+        lane_id: str | None = None,
     ) -> tuple[torch.Tensor, str]:
         if not isinstance(value, Conditioning):
             raise Lumina2RuntimeError("Lumina2 conditioning must be a Conditioning value")
@@ -150,7 +142,9 @@ class Lumina2Denoiser:
         context = value.embeddings
         if context.ndim != 3 or context.shape[0] < 1 or context.shape[2] != 2304:
             raise Lumina2RuntimeError("Lumina2 context must have shape [batch,tokens,2304]")
-        if lane_id not in ("positive", "negative"):
+        if lane_id is None:
+            lane_id = "negative" if role is GuidanceRole.UNCONDITIONAL else "positive"
+        elif lane_id not in ("positive", "negative"):
             raise Lumina2RuntimeError("Lumina2 guidance lane id is not supported")
         return context, lane_id
 
@@ -223,6 +217,45 @@ class _Lumina2DiffusionAssembly:
         return self.compute if component == "diffusion" else None
 
 
+def _validate_lumina2_latent(latent: torch.Tensor) -> None:
+    channels = LUMINA2_CONFIG.latent_channels
+    if (
+        latent.ndim not in (4, 5)
+        or latent.shape[1] != channels
+        or (latent.ndim == 5 and latent.shape[2] != 1)
+    ):
+        raise Lumina2RuntimeError(
+            f"Lumina2 latent must be [batch,{channels},height,width] or single-frame rank 5"
+        )
+
+
+def _lumina2_denoiser(
+    runtime: object,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserExecution:
+    owner = cast("Lumina2DiffusionRuntime", runtime)
+    if context.options:
+        names = ", ".join(sorted(context.options))
+        raise Lumina2RuntimeError(f"Lumina2 sampling does not accept adapter options: {names}")
+    return SamplingDenoiserExecution(
+        cast(
+            "SamplingDenoiserAdapter",
+            Lumina2Denoiser(owner.assembled.diffusion, compute_dtype=compute_dtype),
+        )
+    )
+
+
+def _lumina2_device(runtime: object) -> torch.device:
+    owner = cast("Lumina2DiffusionRuntime", runtime)
+    return module_compute_device(owner.assembled.diffusion)
+
+
+def _lumina2_compute_dtype(runtime: object) -> torch.dtype:
+    owner = cast("Lumina2DiffusionRuntime", runtime)
+    return owner.assembled.compute_dtype("diffusion") or torch.bfloat16
+
+
 class Lumina2DiffusionRuntime(FlowSamplingRuntime):
     """Diffusion-only Lumina2 runtime implementing the custom-sampling seam."""
 
@@ -231,6 +264,13 @@ class Lumina2DiffusionRuntime(FlowSamplingRuntime):
     supports_sampling_shift = True
     sampling_compute_dtype = torch.bfloat16
     supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=SingleStreamLatentAdapter(_validate_lumina2_latent),
+        denoiser=_lumina2_denoiser,
+        device=_lumina2_device,
+        compute_dtype=_lumina2_compute_dtype,
+        flow=True,
+    )
 
     def __init__(
         self,
@@ -265,108 +305,7 @@ class Lumina2DiffusionRuntime(FlowSamplingRuntime):
             return self._sampling_space_override
         return _sigma_space(sampling_shift)
 
-    def sample_custom(
-        self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue = None,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: float | None = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        compute_dtype: torch.dtype | None = None,
-        device: torch.device | str | None = None,
-        capture_denoised: bool = True,
-        sampling_shift: float | None = None,
-    ) -> CustomSamplingResult[torch.Tensor]:
-        latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
-            self.family.id,
-            latent=latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            denoise_mask=denoise_mask,
-            error=Lumina2RuntimeError,
-        )
-        channels = LUMINA2_CONFIG.latent_channels
-        if (
-            latent.ndim not in (4, 5)
-            or latent.shape[1] != channels
-            or (latent.ndim == 5 and latent.shape[2] != 1)
-        ):
-            raise Lumina2RuntimeError(
-                f"Lumina2 latent must be [batch,{channels},height,width] or single-frame rank 5"
-            )
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=Lumina2RuntimeError
-        )
-        if compute_dtype is None:
-            compute_dtype = self.assembled.compute_dtype("diffusion") or torch.bfloat16
-        if device is None:
-            device = module_compute_device(self.assembled.diffusion)
-        space = self.sampling_sigma_space(sampling_shift)
-        schedule = build_custom_sampling_schedule(request.sigmas, space, sampler, flow=True)
-        noise_sampler: BrownianTreeNoise | None = brownian_step_noise(
-            sampler, schedule, latent, seed=seed, device=device
-        )
-        plan = compile_guidance_plan(cond, cfg, sampler, self._guidance)
-        evaluator = Lumina2Denoiser(self.assembled.diffusion, compute_dtype=compute_dtype)
-        report_state: SamplingStateCallback | None
-        captured: list[torch.Tensor]
-        if capture_denoised:
-            report_state, captured = custom_denoised_callback(self.family, on_state)
-        else:
-            report_state, captured = on_state, []
-        denoiser = guided_denoiser(
-            ConditioningEvaluation(
-                lambda value, role: evaluator.prepare_conditioning(
-                    value,
-                    lane_id=("negative" if role is GuidanceRole.UNCONDITIONAL else "positive"),
-                ),
-                evaluator.evaluate_conditioning,
-                evaluator.batchable,
-                evaluator.evaluate_conditioning_batch,
-                evaluator_identity=lambda _role: "dinkster.lumina2.conditioning.v1",
-                standard_activation_memory_factor=self.family.memory_factor,
-            ),
-            input=latent,
-            executor=self._guidance,
-            plan=plan,
-            execution=sampling_execution_context(
-                sigmas=schedule.sigmas, seed=seed, on_step=on_step, on_state=report_state
-            ),
-        )
-        output = run_denoise(
-            denoiser,
-            request.build_solver(),
-            latent=latent,
-            noise=noise,
-            sigmas=schedule.sigmas,
-            initial_sigma=schedule.initial_sigma,
-            family=self.family,
-            seed=seed,
-            noise_kind=sampler.noise,
-            noise_sampler=noise_sampler,
-            percent_to_sigma=space.percent_to_sigma,
-            device=device,
-            on_step=on_step,
-            on_state=report_state,
-            denoise_mask=denoise_mask,
-        )
-        return CustomSamplingResult(output, captured[-1] if captured else None)
+    sample_custom = sampling_execution
 
     def encode_text(self, text: str) -> Conditioning[torch.Tensor]:
         raise Lumina2RuntimeError("Lumina2 diffusion component carries no text encoder")
