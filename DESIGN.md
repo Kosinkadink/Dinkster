@@ -831,6 +831,14 @@ assembled checkpoint. Family-specific sigma spaces and conditioning adapters
 provide model semantics; shared sampling checks and numerical receipts govern
 cross-cutting features on every entry point.
 
+The core inference package owns backend-agnostic descriptors, option schemas,
+assembly plans, checkpoint inspection, and family detection. It does not own
+executing numerical mirrors. `dinkster-inference-torch` binds the shared
+sampler descriptors and model contracts to torch kernels; a sibling backend
+that does not use torch can bind the same declarations to its own kernels.
+Only the documented float64 `schedules.py` pair remains because those functions
+are part of schedule declaration rather than backend execution.
+
 ### 3.14 Model interposition: patch programs as values, not mutation
 
 Evidence base: a usage-ranked census of heavy ModelPatcher consumers (RES4LYF,
