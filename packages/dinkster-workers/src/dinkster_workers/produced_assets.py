@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
-from dinkster_assets import AssetError, AssetRef, AssetResolver, AssetVault
+from dinkster_assets import AssetError, AssetRef, AssetResolver, AssetVault, open_verified
 from dinkster_values import (
     ASSET_BASE_TYPE,
     Value,
@@ -123,7 +122,7 @@ class ProducedAssetAuthority:
                 continue
             held = self._existing.resolve(ref.digest) if self._existing is not None else None
             if held is not None:
-                with replace(ref, resolver=self._existing).open() as handle:
+                with open_verified(held, ref.digest) as handle:
                     if os.fstat(handle.fileno()).st_size != ref.size:
                         raise AssetError("source byte size does not match engine vault")
                 continue

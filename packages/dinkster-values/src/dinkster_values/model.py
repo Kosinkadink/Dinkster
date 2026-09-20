@@ -8,7 +8,9 @@ accessed through a transport.
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import math
 import threading
 from collections.abc import Callable, Generator, Iterable, Mapping
 from contextlib import contextmanager, suppress
@@ -17,6 +19,49 @@ from typing import ClassVar, Protocol, cast, runtime_checkable
 
 TypeId = str
 Fingerprint = str
+type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+
+
+def _validate_json_value(value: object, *, subject: str) -> None:
+    if value is None or type(value) in (bool, int, str):
+        return
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError(f"{subject} must be finite JSON data")
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(cast("list[object]", value)):
+            _validate_json_value(item, subject=f"{subject}[{index}]")
+        return
+    if isinstance(value, dict):
+        items = cast("dict[object, object]", value)
+        if not all(isinstance(key, str) for key in items):
+            raise ValueError(f"{subject} must be JSON data")
+        for key, item in items.items():
+            _validate_json_value(item, subject=f"{subject}.{key}")
+        return
+    raise ValueError(f"{subject} must be JSON data")
+
+
+@dataclass(frozen=True)
+class CustomWidgetDescriptor:
+    """Pack-defined input presentation transported as inert JSON data."""
+
+    widget_type: str
+    params: Mapping[str, JsonValue] = field(default_factory=lambda: {})
+
+    def __post_init__(self) -> None:
+        if type(self.widget_type) is not str or not self.widget_type:
+            raise ValueError("custom widget type must be a non-empty string")
+        params = cast("object", self.params)
+        if not isinstance(params, Mapping):
+            raise ValueError("custom widget params must be a mapping")
+        copied = copy.deepcopy(dict(cast("Mapping[str, JsonValue]", params)))
+        if "type" in copied:
+            raise ValueError("custom widget params must not contain 'type'")
+        _validate_json_value(copied, subject="custom widget params")
+        object.__setattr__(self, "params", copied)
+
 
 RESOURCES_META_KEY = "resources"
 """Well-known ValueMeta entry: a mapping of resource kind -> concrete
