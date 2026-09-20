@@ -38,7 +38,7 @@ frontend activation door consumes it.
 | `textEditorExtension` | Works | `Dinkster-Frontend/packages/core/test/extensions.test.ts` |
 | `menu` | Works | `Dinkster-Frontend/packages/core/test/extensions.test.ts` |
 | `command` | Works | `Dinkster-Frontend/packages/app/test/extension-world.test.ts` |
-| `keybinding` | Works | `Dinkster-Frontend/packages/app/test/settings.test.ts` |
+| `keybinding` | Works | Consumer: `Dinkster-Frontend/packages/core/src/extensions/host.ts`; registry behavior: `Dinkster-Frontend/packages/app/test/settings.test.ts` (no dedicated contribution-registration test) |
 | `setting` | Works | `Dinkster-Frontend/packages/core/test/extensions.test.ts` |
 | `canvasLayer` | Declared and unconsumed | - |
 | `nodeDecoration` | Declared and unconsumed | - |
