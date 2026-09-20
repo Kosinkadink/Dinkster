@@ -327,7 +327,9 @@ class _ScheduledConditioning:
     role: GuidanceRole
 
 
-class _ScheduledDenoiser:
+class ScheduledConditioningDenoiser:
+    evaluator_identity = "dinkster.scheduled-conditioning.v1"
+
     def __init__(
         self,
         conditional: tuple[MaterializedRegion, ...],
@@ -519,7 +521,7 @@ def _progress_callback(
 
 def _drive(
     denoiser: Any,
-    owner: _ScheduledDenoiser,
+    owner: ScheduledConditioningDenoiser,
     solver: Any,
     *,
     latent: torch.Tensor,
@@ -571,7 +573,7 @@ def _drive(
     return result
 
 
-def _prepare_carriers(
+def prepare_scheduled_carriers(
     runtime: Any,
     latent: torch.Tensor,
     plan: SamplingGuidancePlan,
@@ -610,7 +612,7 @@ def _prepare_carriers(
     )
 
 
-def _narrow_scheduled_values(
+def narrow_scheduled_values(
     family_id: str,
     *,
     latent: object,
@@ -643,7 +645,7 @@ def _narrow_scheduled_values(
     )
 
 
-def _validate_unconditional_carrier(plan: SamplingGuidancePlan) -> None:
+def validate_unconditional_carrier(plan: SamplingGuidancePlan) -> None:
     if not plan.needs_unconditional:
         return
     unconditional = next(
@@ -717,7 +719,7 @@ def sample_flux_scheduled_custom(
             "guidance was given but this Flux model has no guidance"
             " embedder (schnell); pass guidance=None"
         )
-    latent, noise, cond, cfg, denoise_mask = _narrow_scheduled_values(
+    latent, noise, cond, cfg, denoise_mask = narrow_scheduled_values(
         runtime.family.id,
         latent=latent,
         noise=noise,
@@ -734,7 +736,7 @@ def sample_flux_scheduled_custom(
         guidance=guidance,
     )
     plan = compile_guidance_plan(cond, cfg, sampler, runtime._guidance)
-    _validate_unconditional_carrier(plan)
+    validate_unconditional_carrier(plan)
     target = latent.device if device is None else torch.device(device)
     if compute_dtype is None:
         compute_dtype = runtime.assembled.compute_dtype("diffusion") or torch.bfloat16
@@ -752,7 +754,7 @@ def sample_flux_scheduled_custom(
         if request.timeline is None
         else realize_sampling_timeline(request.timeline, tuple(float(sigma) for sigma in sigmas))
     )
-    conditional, unconditional, patch_sets, materialized_plan = _prepare_carriers(
+    conditional, unconditional, patch_sets, materialized_plan = prepare_scheduled_carriers(
         runtime,
         latent,
         plan,
@@ -762,7 +764,7 @@ def sample_flux_scheduled_custom(
         timeline=realized_timeline,
         space=space,
     )
-    denoiser = _ScheduledDenoiser(
+    denoiser = ScheduledConditioningDenoiser(
         conditional,
         unconditional,
         family_id=runtime.family.id,
@@ -865,7 +867,7 @@ def sample_sd_scheduled_custom(
         raise _refuse("scheduled-sd-inpaint")
     if context_windows is not None:
         raise _refuse("context-windows", runtime.family.id)
-    latent, noise, cond, cfg, denoise_mask = _narrow_scheduled_values(
+    latent, noise, cond, cfg, denoise_mask = narrow_scheduled_values(
         runtime.family.id,
         latent=latent,
         noise=noise,
@@ -882,7 +884,7 @@ def sample_sd_scheduled_custom(
         guidance=None,
     )
     plan = compile_guidance_plan(cond, cfg, sampler, runtime._guidance)
-    _validate_unconditional_carrier(plan)
+    validate_unconditional_carrier(plan)
     target = latent.device if device is None else torch.device(device)
     if compute_dtype is None:
         compute_dtype = runtime.assembled.compute_dtype("diffusion") or torch.float16
@@ -898,7 +900,7 @@ def sample_sd_scheduled_custom(
         if request.timeline is None
         else realize_sampling_timeline(request.timeline, tuple(float(sigma) for sigma in sigmas))
     )
-    conditional, unconditional, patch_sets, materialized_plan = _prepare_carriers(
+    conditional, unconditional, patch_sets, materialized_plan = prepare_scheduled_carriers(
         runtime,
         latent,
         plan,
@@ -919,7 +921,7 @@ def sample_sd_scheduled_custom(
             )
 
         adm = resolve_adm
-    denoiser = _ScheduledDenoiser(
+    denoiser = ScheduledConditioningDenoiser(
         conditional,
         unconditional,
         family_id=runtime.family.id,

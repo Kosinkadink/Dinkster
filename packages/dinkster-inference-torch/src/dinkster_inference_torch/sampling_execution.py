@@ -59,6 +59,7 @@ from dinkster_inference import (
     sampling_environment_cancellation,
     sampling_execution_context,
     sampling_sigmas,
+    use_sampling_environment,
 )
 
 from .brownian import BrownianTreeNoise
@@ -526,7 +527,7 @@ class SamplingExecutionInputs:
 
 @dataclass(frozen=True)
 class SamplingAdapterContext:
-    guidance: float | None
+    guidance: float | Literal["disabled"] | None
     inpaint: object | None
     context_windows: ContextWindowsSpec | None
     options: Mapping[str, object]
@@ -668,6 +669,7 @@ class SamplingDenoiserExecution:
     unpack_state: Callable[[torch.Tensor], object] | None = None
     denoise_mask_prepared: bool = False
     fixed_inpaint_latent: bool = False
+    close: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -686,30 +688,6 @@ class SamplingExecutionRegistration:
     prepare_guidance: (
         Callable[[object, SamplingExecutionInputs], SamplingExecutionInputs] | None
     ) = None
-    scheduled: Callable[[object, SamplingExecutionInvocation], CustomSamplingResult[Any]] | None = (
-        None
-    )
-
-
-@dataclass(frozen=True)
-class SamplingExecutionInvocation:
-    latent: CustomSamplingLatentValue
-    noise: CustomSamplingLatentValue
-    cond: CustomSamplingCondValue
-    cfg: CustomSamplingCfgValue
-    request: CustomSamplingRequest[torch.Tensor]
-    seed: int
-    guidance: object | None
-    denoise_mask: CustomSamplingLatentValue | None
-    inpaint: object | None
-    context_windows: ContextWindowsSpec | None
-    on_step: StepCallback | None
-    on_state: SamplingStateCallback | None
-    compute_dtype: torch.dtype | None
-    device: torch.device | str | None
-    capture_denoised: bool
-    cancelled: Callable[[], bool]
-    options: Mapping[str, object]
 
 
 class DistributedGuidanceAdmission(Protocol):
@@ -732,7 +710,7 @@ class SamplingExecutionRuntime(Protocol):
         has_denoise_mask: bool,
         has_inpaint: bool,
         has_context_windows: bool,
-        guidance: float | None = None,
+        guidance: float | Literal["disabled"] | None = None,
     ) -> None: ...
 
     def sampling_sigma_space(self, sampling_shift: float | None = None) -> SigmaSpace: ...
@@ -864,7 +842,7 @@ def sampling_execution(
     cfg: CustomSamplingCfgValue = None,
     request: CustomSamplingRequest[torch.Tensor],
     seed: int = 0,
-    guidance: float | None = None,
+    guidance: float | Literal["disabled"] | None = None,
     denoise_mask: CustomSamplingLatentValue | None = None,
     inpaint: object | None = None,
     context_windows: ContextWindowsSpec | None = None,
@@ -890,31 +868,6 @@ def sampling_execution(
         raise SamplingCancelled("sampling cancelled")
     owner = cast("SamplingExecutionRuntime", runtime)
     registration = owner.sampling_execution_registration
-    if registration.scheduled is not None and (
-        type(cond) is ConditioningCarrier or adapter_options.get("scheduled") is not None
-    ):
-        return registration.scheduled(
-            owner,
-            SamplingExecutionInvocation(
-                latent,
-                noise,
-                cond,
-                cfg,
-                request,
-                seed,
-                guidance,
-                denoise_mask,
-                inpaint,
-                context_windows,
-                on_step,
-                on_state,
-                compute_dtype,
-                device,
-                capture_denoised,
-                cancelled,
-                MappingProxyType(dict(adapter_options)),
-            ),
-        )
     adapter_context = SamplingAdapterContext(
         guidance,
         inpaint,
@@ -1057,6 +1010,18 @@ def sampling_execution(
         if on_state is not None:
             on_state(event)
 
+    def report_step(event: Any) -> None:
+        if cancelled():
+            from dinkster_inference import SamplingCancelled
+
+            raise SamplingCancelled("sampling cancelled")
+        if on_step is not None:
+            on_step(event)
+        if cancelled():
+            from dinkster_inference import SamplingCancelled
+
+            raise SamplingCancelled("sampling cancelled")
+
     replica_evaluator_factory = None
     if denoiser_execution.replica_group_size is not None:
         from .distributed import DistributedGuidanceEvaluator
@@ -1077,45 +1042,59 @@ def sampling_execution(
         execution=sampling_execution_context(
             sigmas=schedule.sigmas,
             seed=seed,
-            on_step=on_step,
+            on_step=report_step if on_step is not None else None,
             on_state=report_state,
         ),
         replica_evaluator_factory=replica_evaluator_factory,
         distributed_evaluation=denoiser_execution.distributed_evaluation,
     )
-    output = run_denoise(
-        denoiser,
-        request.build_solver(**cast("Any", denoiser_execution.solver_options)),
-        latent=inputs.latent,
-        noise=inputs.noise,
-        sigmas=schedule.sigmas,
-        initial_sigma=schedule.initial_sigma,
-        family=owner.family,
-        sampling=denoiser_execution.sampling,
-        process_in=denoiser_execution.process_in,
-        process_out=denoiser_execution.process_out,
-        inpaint_noise=denoiser_execution.inpaint_noise,
-        seed=seed,
-        noise_kind=sampler.noise,
-        noise_sampler=noise_sampler,
-        percent_to_sigma=(
-            space.percent_to_sigma
-            if denoiser_execution.percent_to_sigma is None
-            else denoiser_execution.percent_to_sigma
-        ),
-        device=device,
-        on_step=on_step,
-        on_step_begin=denoiser_execution.on_step_begin,
-        on_state=(
-            report_state
-            if (capture_denoised and owner.supports_denoised_capture) or on_state is not None
-            else None
-        ),
-        unpack_state=denoiser_execution.unpack_state,
-        denoise_mask=inputs.denoise_mask,
-        denoise_mask_prepared=denoiser_execution.denoise_mask_prepared,
-        fixed_inpaint_latent=denoiser_execution.fixed_inpaint_latent,
-    )
+    primary: BaseException | None = None
+    try:
+        with use_sampling_environment((), cancelled):
+            output = run_denoise(
+                denoiser,
+                request.build_solver(**cast("Any", denoiser_execution.solver_options)),
+                latent=inputs.latent,
+                noise=inputs.noise,
+                sigmas=schedule.sigmas,
+                initial_sigma=schedule.initial_sigma,
+                family=owner.family,
+                sampling=denoiser_execution.sampling,
+                process_in=denoiser_execution.process_in,
+                process_out=denoiser_execution.process_out,
+                inpaint_noise=denoiser_execution.inpaint_noise,
+                seed=seed,
+                noise_kind=sampler.noise,
+                noise_sampler=noise_sampler,
+                percent_to_sigma=(
+                    space.percent_to_sigma
+                    if denoiser_execution.percent_to_sigma is None
+                    else denoiser_execution.percent_to_sigma
+                ),
+                device=device,
+                on_step=report_step if on_step is not None else None,
+                on_step_begin=denoiser_execution.on_step_begin,
+                on_state=(
+                    report_state
+                    if (capture_denoised and owner.supports_denoised_capture)
+                    or on_state is not None
+                    else None
+                ),
+                unpack_state=denoiser_execution.unpack_state,
+                denoise_mask=inputs.denoise_mask,
+                denoise_mask_prepared=denoiser_execution.denoise_mask_prepared,
+                fixed_inpaint_latent=denoiser_execution.fixed_inpaint_latent,
+            )
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        if denoiser_execution.close is not None:
+            try:
+                denoiser_execution.close()
+            except BaseException:
+                if primary is None:
+                    raise
     return registration.latent.finish(inputs, output, captured[-1] if captured else None)
 
 

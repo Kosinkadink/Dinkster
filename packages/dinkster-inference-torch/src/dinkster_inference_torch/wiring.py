@@ -149,6 +149,7 @@ from .controlnet import (
     compile_sd_effect_mask,
 )
 from .denoise import (
+    DenoiseError,
     FluxCondition,
     FluxDenoiser,
     FluxGuidance,
@@ -180,6 +181,7 @@ from .lumina2_runtime import Lumina2Runtime
 from .operations import module_compute_device
 from .qwen_image_runtime import QwenImageRuntime
 from .qwen_text import OvisTextEncoder
+from .regional import flux_grouped_region_evaluator
 from .sampling_execution import (
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
@@ -187,7 +189,7 @@ from .sampling_execution import (
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
     SamplingDenoiserExecution,
-    SamplingExecutionInvocation,
+    SamplingExecutionInputs,
     SamplingExecutionRegistration,
     SingleStreamCustomSamplingCfg,
     SingleStreamLatentAdapter,
@@ -320,6 +322,173 @@ def _validate_flux_latent(latent: torch.Tensor) -> None:
         raise WiringError("Flux latent must have shape [batch,channels,height,width]")
 
 
+class _FluxLatentAdapter(SingleStreamLatentAdapter):
+    def prepare(
+        self,
+        runtime: object,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs:
+        scheduled_request = (
+            type(cond) is ConditioningCarrier or context.options.get("scheduled") is not None
+        )
+        if not scheduled_request:
+            return super().prepare(
+                runtime,
+                family,
+                latent=latent,
+                noise=noise,
+                cond=cond,
+                cfg=cfg,
+                denoise_mask=denoise_mask,
+                context=context,
+                error=error,
+            )
+        from .scheduled_sampling import ScheduledSamplingError, narrow_scheduled_values
+
+        owner = cast("FluxRuntime", runtime)
+        executor = owner.sampling_execution_registration.guidance_executor(owner)
+        if executor is not None and executor.registry.active:
+            raise ScheduledSamplingError("guidance-extensions")
+        if cfg is not None and cfg.transforms:
+            raise ScheduledSamplingError("guidance-extensions")
+        if context.guidance is not None and owner.assembled.diffusion.guidance_in is None:
+            raise DenoiseError(
+                "guidance was given but this Flux model has no guidance"
+                " embedder (schnell); pass guidance=None"
+            )
+
+        latent, noise, cond, cfg, denoise_mask = narrow_scheduled_values(
+            family.id,
+            latent=latent,
+            noise=noise,
+            cond=cond,
+            cfg=cfg,
+            denoise_mask=denoise_mask,
+        )
+        self.validate(latent)
+        return SamplingExecutionInputs(
+            latent,
+            noise,
+            cond,
+            cfg,
+            denoise_mask,
+            family.single_stream_latent(),
+        )
+
+
+def _flux_scheduled_denoiser(
+    owner: FluxRuntime,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserExecution:
+    from .scheduled_sampling import (
+        ScheduledConditioningDenoiser,
+        ScheduledSamplingOptions,
+        prepare_scheduled_carriers,
+        validate_unconditional_carrier,
+    )
+
+    if (
+        context.inputs is None
+        or context.device is None
+        or context.plan is None
+        or context.request is None
+        or context.schedule is None
+    ):
+        raise RuntimeError("scheduled Flux sampling context is unresolved")
+    scheduled = context.options.get("scheduled")
+    if scheduled is None:
+        scheduled = ScheduledSamplingOptions()
+    elif type(scheduled) is not ScheduledSamplingOptions:
+        raise TypeError("scheduled must be an exact ScheduledSamplingOptions or None")
+    unknown = set(context.options) - {"scheduled", "window_plan"}
+    if unknown:
+        raise WiringError(
+            "Flux sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+        )
+    executor = owner.sampling_execution_registration.guidance_executor(owner)
+    if executor is not None and executor.registry.active:
+        raise RuntimeError("scheduled guidance was admitted after validation")
+    if context.inputs.cfg is not None and context.inputs.cfg.transforms:
+        raise RuntimeError("scheduled guidance transforms were admitted after validation")
+    if context.inputs.denoise_mask is not None:
+        raise WiringError(f"scheduled-sampling:denoise-mask: {owner.family.id}")
+    if context.inpaint is not None:
+        raise WiringError(f"scheduled-sampling:inpaint: {owner.family.id}")
+    if context.context_windows is not None:
+        raise WiringError(f"scheduled-sampling:context-windows: {owner.family.id}")
+    if context.options.get("window_plan") is not None:
+        raise WiringError(f"scheduled-sampling:window-plan: {owner.family.id}")
+    if context.guidance == "disabled":
+        raise WiringError(f"scheduled-sampling:distilled-guidance: {owner.family.id}")
+    validate_unconditional_carrier(context.plan)
+    device = torch.device(context.device)
+    realized_timeline = (
+        None
+        if context.request.timeline is None
+        else realize_sampling_timeline(
+            context.request.timeline,
+            tuple(float(sigma) for sigma in context.schedule.sigmas),
+        )
+    )
+    space = owner.sampling_sigma_space()
+    conditional, unconditional, patch_sets, materialized_plan = prepare_scheduled_carriers(
+        owner,
+        context.inputs.latent,
+        context.plan,
+        resolver=scheduled.resolver,
+        device=device,
+        cancel=context.cancelled,
+        timeline=realized_timeline,
+        space=space,
+    )
+    evaluator = ScheduledConditioningDenoiser(
+        conditional,
+        unconditional,
+        family_id=owner.family.id,
+        space=space,
+        model=owner.assembled.diffusion,
+        evaluate=flux_grouped_region_evaluator(
+            owner.assembled.diffusion,
+            guidance=context.guidance,
+            compute_dtype=compute_dtype,
+        ),
+        patch_sets=patch_sets,
+        compute_dtype=compute_dtype,
+        device=device,
+        cancel=context.cancelled,
+    )
+    replacements = MappingProxyType(
+        {
+            condition.id: condition.conditioning
+            for condition in materialized_plan.conditions
+            if condition.conditioning is not None
+        }
+    )
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", evaluator),
+        conditioning_evaluation=ConditioningEvaluation(
+            evaluator.prepare_conditioning,
+            evaluator.evaluate_conditioning,
+            evaluator.batchable,
+            evaluator.evaluate_conditioning_batch,
+            evaluator_identity=lambda _role: f"{owner.family.id}.scheduled-conditioning.v1",
+            standard_activation_memory_factor=owner.family.memory_factor,
+        ),
+        conditioning_payloads=replacements,
+        solver_options=MappingProxyType({"realized_timeline": realized_timeline}),
+        close=evaluator.close,
+    )
+
+
 def _flux_denoiser(
     runtime: object,
     compute_dtype: torch.dtype,
@@ -335,6 +504,8 @@ def _flux_denoiser(
         or context.schedule is None
     ):
         raise RuntimeError("Flux sampling context is unresolved")
+    if type(context.inputs.cond) is ConditioningCarrier:
+        return _flux_scheduled_denoiser(owner, compute_dtype, context)
     execution_device = torch.device(context.device)
     unknown = set(context.options) - {"window_plan", "scheduled"}
     if unknown:
@@ -518,49 +689,6 @@ def _flux_compute_dtype(runtime: object) -> torch.dtype:
     return owner.assembled.compute_dtype("diffusion") or torch.bfloat16
 
 
-def _flux_scheduled(
-    runtime: object,
-    invocation: SamplingExecutionInvocation,
-) -> CustomSamplingResult[torch.Tensor]:
-    from .scheduled_sampling import ScheduledSamplingOptions, sample_flux_scheduled_custom
-
-    owner = cast("FluxRuntime", runtime)
-    unknown = set(invocation.options) - {"window_plan", "scheduled"}
-    if unknown:
-        raise WiringError(
-            "Flux sampling does not accept adapter options: " + ", ".join(sorted(unknown))
-        )
-    scheduled = invocation.options.get("scheduled")
-    if scheduled is None:
-        scheduled = ScheduledSamplingOptions()
-    elif type(scheduled) is not ScheduledSamplingOptions:
-        raise TypeError("scheduled must be an exact ScheduledSamplingOptions or None")
-    window_plan = invocation.options.get("window_plan")
-    if window_plan is not None and type(window_plan) is not CompositeWindowPlan:
-        raise WiringError("invalid-window-plan: expected an exact CompositeWindowPlan")
-    return sample_flux_scheduled_custom(
-        owner,
-        invocation.latent,
-        noise=invocation.noise,
-        cond=invocation.cond,
-        cfg=invocation.cfg,
-        request=invocation.request,
-        seed=invocation.seed,
-        guidance=cast("FluxGuidance", invocation.guidance),
-        denoise_mask=invocation.denoise_mask,
-        inpaint=cast("InpaintConditioning[torch.Tensor] | None", invocation.inpaint),
-        context_windows=invocation.context_windows,
-        window_plan=window_plan,
-        on_step=invocation.on_step,
-        on_state=invocation.on_state,
-        resolver=scheduled.resolver,
-        cancelled=scheduled.cancelled,
-        compute_dtype=invocation.compute_dtype,
-        device=invocation.device,
-        capture_denoised=invocation.capture_denoised,
-    )
-
-
 class FluxRuntime(SingleStreamSamplingRuntime):
     """FamilyRuntime[torch.Tensor] over an assembled classic Flux.
 
@@ -581,12 +709,11 @@ class FluxRuntime(SingleStreamSamplingRuntime):
     sampling_compute_dtype = torch.bfloat16
     supports_denoised_capture = True
     sampling_execution_registration = SamplingExecutionRegistration(
-        latent=SingleStreamLatentAdapter(_validate_flux_latent),
+        latent=_FluxLatentAdapter(_validate_flux_latent),
         denoiser=_flux_denoiser,
         device=_flux_device,
         compute_dtype=_flux_compute_dtype,
         flow=True,
-        scheduled=_flux_scheduled,
     )
 
     def __init__(
@@ -1123,7 +1250,8 @@ class FluxRuntime(SingleStreamSamplingRuntime):
             on_step=on_step,
             on_state=on_state,
             sample_custom_kwargs={
-                "scheduled": ScheduledSamplingOptions(resolver, cancelled),
+                "scheduled": ScheduledSamplingOptions(resolver, None),
+                "cancelled": cancelled,
                 "compute_dtype": compute_dtype,
                 "device": device,
                 "capture_denoised": False,

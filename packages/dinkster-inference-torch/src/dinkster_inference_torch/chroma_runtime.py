@@ -246,7 +246,7 @@ def _chroma_denoiser(
             "SamplingDenoiserAdapter",
             ChromaDenoiser(
                 owner.assembled.diffusion,
-                guidance=0.0 if context.guidance is None else context.guidance,
+                guidance=0.0 if context.guidance is None else cast("float", context.guidance),
                 option_windows=owner._option_windows,  # pyright: ignore[reportPrivateUsage]
                 compute_dtype=compute_dtype,
             ),
