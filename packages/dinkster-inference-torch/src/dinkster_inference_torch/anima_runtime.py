@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
@@ -16,12 +16,9 @@ from dinkster_inference import (
     ConditioningChannel,
     ConditioningRecord,
     ConditioningSet,
-    ContextWindowsSpec,
-    CustomSamplingRequest,
     CustomSamplingResult,
     FlowSigmas,
     GuidanceRole,
-    InpaintConditioning,
     ModelFamily,
     PayloadDescriptor,
     PayloadReference,
@@ -29,12 +26,9 @@ from dinkster_inference import (
     Registry,
     SamplerDescriptor,
     SamplingGuidance,
-    SamplingStateCallback,
     SchedulerDescriptor,
-    StepCallback,
     encode_conditioning_carrier,
     make_conditioning_carrier,
-    sampling_execution_context,
     tokenize_anima_prompt,
 )
 
@@ -42,11 +36,8 @@ if TYPE_CHECKING:
     from .checkpoint_runtime import ComponentAssembly
 
 from .anima_model import AnimaModel
-from .brownian import BrownianTreeNoise
-from .denoise import run_denoise
 from .guidance import (
     ConditioningBatch,
-    ConditioningEvaluation,
     GuidanceExecutor,
 )
 from .guidance import (
@@ -60,13 +51,12 @@ from .sampling_execution import (
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    custom_denoised_callback,
-    guided_denoiser,
-    narrow_single_stream_custom_sampling,
-    resolve_custom_sampling_request,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingExecutionInputs,
+    SamplingExecutionRegistration,
+    SingleStreamLatentAdapter,
+    sampling_execution,
 )
 from .sampling_runtime import SingleStreamSamplingRuntime
 from .schedules import (
@@ -233,6 +223,8 @@ class AnimaRuntimeError(ValueError):
 class AnimaDenoiser:
     """Single-conditioning FLOW evaluator over the native Anima DiT."""
 
+    evaluator_identity = "dinkster.anima.conditioning.v1"
+
     def __init__(
         self,
         model: AnimaModel,
@@ -243,14 +235,29 @@ class AnimaDenoiser:
         self.compute_dtype = compute_dtype
 
     def prepare_conditioning(
-        self, value: object, *, lane_id: str = "positive"
+        self,
+        value: object,
+        role: GuidanceRole = GuidanceRole.CONDITIONAL,
+        *,
+        lane_id: str | None = None,
     ) -> tuple[torch.Tensor, str]:
-        if not isinstance(value, Conditioning):
+        if type(value) is AnimaConditioning:
+            raw = value
+            device = _module_compute_device(self.model)
+            context = self.model.preprocess_text_embeds(
+                raw.embeddings.to(device=device, dtype=self.compute_dtype),
+                raw.t5xxl_ids.to(device=device),
+                raw.t5xxl_weights.to(device=device),
+            ).float()
+            validate_context = False
+        elif isinstance(value, Conditioning):
+            if value.pooled is not None:
+                raise AnimaRuntimeError("Anima conditioning does not accept a pooled vector")
+            context = value.embeddings
+            validate_context = True
+        else:
             raise AnimaRuntimeError("Anima conditioning must be a Conditioning value")
-        if value.pooled is not None:
-            raise AnimaRuntimeError("Anima conditioning does not accept a pooled vector")
-        context = value.embeddings
-        if (
+        if validate_context and (
             context.ndim != 3
             or context.shape[0] < 1
             or context.shape[1] < _MIN_CONTEXT_ROWS
@@ -259,7 +266,9 @@ class AnimaDenoiser:
             raise AnimaRuntimeError(
                 f"Anima context must have shape [batch,rows>={_MIN_CONTEXT_ROWS},{_CONTEXT_WIDTH}]"
             )
-        if lane_id not in ("positive", "negative"):
+        if lane_id is None:
+            lane_id = "negative" if role is GuidanceRole.UNCONDITIONAL else "positive"
+        elif lane_id not in ("positive", "negative"):
             raise AnimaRuntimeError("Anima guidance lane id is not supported")
         return context, lane_id
 
@@ -329,6 +338,107 @@ class _AnimaDiffusionAssembly:
         return self.compute if component == "diffusion" else None
 
 
+def _validate_anima_latent(latent: torch.Tensor) -> None:
+    channels = ANIMA_CONFIG.latent_channels
+    if latent.ndim != 5 or latent.shape[1] != channels or latent.shape[2] != 1:
+        raise AnimaRuntimeError(f"Anima input must have shape [batch,{channels},1,height,width]")
+
+
+@dataclass(frozen=True)
+class _AnimaLatentAdapter:
+    inner: SingleStreamLatentAdapter = SingleStreamLatentAdapter(_validate_anima_latent)
+
+    def prepare(
+        self,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs:
+        inputs = self.inner.prepare(
+            family,
+            latent=latent,
+            noise=noise,
+            cond=cond,
+            cfg=cfg,
+            denoise_mask=denoise_mask,
+            context=context,
+            error=error,
+        )
+        values = [inputs.cond]
+        if inputs.cfg is not None:
+            values.extend(
+                value
+                for name in ("uncond", "middle", "empty")
+                if (value := getattr(inputs.cfg, name, None)) is not None
+            )
+        if any(type(value) is not AnimaConditioning for value in values):
+            raise AnimaRuntimeError("split Anima sampling requires exact AnimaConditioning")
+        return inputs
+
+    def finish(
+        self,
+        inputs: SamplingExecutionInputs,
+        output: torch.Tensor,
+        denoised: torch.Tensor | None,
+    ) -> CustomSamplingResult[torch.Tensor]:
+        return self.inner.finish(inputs, output, denoised)
+
+
+def _anima_denoiser(
+    runtime: object,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserAdapter:
+    owner = cast("AnimaDiffusionRuntime", runtime)
+    if context.options:
+        names = ", ".join(sorted(context.options))
+        raise AnimaRuntimeError(f"Anima sampling does not accept adapter options: {names}")
+    return cast(
+        "SamplingDenoiserAdapter",
+        AnimaDenoiser(owner.assembled.diffusion, compute_dtype=compute_dtype),
+    )
+
+
+def _anima_device(runtime: object) -> torch.device:
+    owner = cast("AnimaDiffusionRuntime", runtime)
+    return _module_compute_device(owner.assembled.diffusion)
+
+
+def _anima_compute_dtype(runtime: object) -> torch.dtype:
+    owner = cast("AnimaDiffusionRuntime", runtime)
+    return owner.assembled.compute_dtype("diffusion") or torch.bfloat16
+
+
+def _prepare_anima_guidance(
+    runtime: object,
+    inputs: SamplingExecutionInputs,
+) -> SamplingExecutionInputs:
+    owner = cast("AnimaDiffusionRuntime", runtime)
+    conditioning = owner._bake_conditioning(  # pyright: ignore[reportPrivateUsage]
+        cast("Conditioning[torch.Tensor]", inputs.cond)
+    )
+    guidance = inputs.cfg
+    if guidance is not None:
+        guidance = SamplingGuidance(
+            (
+                None
+                if guidance.uncond is None
+                else owner._bake_conditioning(  # pyright: ignore[reportPrivateUsage]
+                    cast("Conditioning[torch.Tensor]", guidance.uncond)
+                )
+            ),
+            guidance.scale,
+            guidance.transforms,
+        )
+    return replace(inputs, cond=conditioning, cfg=guidance)
+
+
 class AnimaDiffusionRuntime(SingleStreamSamplingRuntime):
     """Diffusion-only Anima sampling over independently encoded conditioning."""
 
@@ -336,6 +446,14 @@ class AnimaDiffusionRuntime(SingleStreamSamplingRuntime):
     sampling_error = AnimaRuntimeError
     sampling_compute_dtype = torch.bfloat16
     supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=_AnimaLatentAdapter(),
+        denoiser=_anima_denoiser,
+        device=_anima_device,
+        compute_dtype=_anima_compute_dtype,
+        flow=True,
+        prepare_guidance=_prepare_anima_guidance,
+    )
 
     def __init__(
         self,
@@ -367,122 +485,20 @@ class AnimaDiffusionRuntime(SingleStreamSamplingRuntime):
             raise AnimaRuntimeError("split Anima sampling requires exact AnimaConditioning")
         raw = value
         diffusion = self.assembled.diffusion
-        device = _module_compute_device(diffusion)
-        dtype = self.assembled.compute_dtype("diffusion") or torch.bfloat16
         context = diffusion.preprocess_text_embeds(
-            raw.embeddings.to(device=device, dtype=dtype),
-            raw.t5xxl_ids.to(device=device),
-            raw.t5xxl_weights.to(device=device),
+            raw.embeddings.to(
+                device=_module_compute_device(diffusion),
+                dtype=self.assembled.compute_dtype("diffusion") or torch.bfloat16,
+            ),
+            raw.t5xxl_ids.to(device=_module_compute_device(diffusion)),
+            raw.t5xxl_weights.to(device=_module_compute_device(diffusion)),
         ).float()
         return Conditioning(context, None)
 
     def _sampling_sigma_space(self, sampling_shift: float | None) -> FlowSigmas:
         return _anima_sigma_space()
 
-    def sample_custom(
-        self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue = None,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: float | None = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        compute_dtype: torch.dtype | None = None,
-        device: torch.device | str | None = None,
-        capture_denoised: bool = True,
-    ) -> CustomSamplingResult[torch.Tensor]:
-        latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
-            self.family.id,
-            latent=latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            denoise_mask=denoise_mask,
-            error=AnimaRuntimeError,
-        )
-        channels = ANIMA_CONFIG.latent_channels
-        if latent.ndim != 5 or latent.shape[1] != channels or latent.shape[2] != 1:
-            raise AnimaRuntimeError(
-                f"Anima input must have shape [batch,{channels},1,height,width]"
-            )
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=AnimaRuntimeError
-        )
-        cond = self._bake_conditioning(cond)
-        if cfg is not None:
-            cfg = SamplingGuidance(
-                None if cfg.uncond is None else self._bake_conditioning(cfg.uncond),
-                cfg.scale,
-                cfg.transforms,
-            )
-        if compute_dtype is None:
-            compute_dtype = self.assembled.compute_dtype("diffusion") or torch.bfloat16
-        if device is None:
-            device = _module_compute_device(self.assembled.diffusion)
-        space = _anima_sigma_space()
-        schedule = build_custom_sampling_schedule(request.sigmas, space, sampler, flow=True)
-        noise_sampler: BrownianTreeNoise | None = brownian_step_noise(
-            sampler, schedule, latent, seed=seed, device=device
-        )
-        plan = compile_guidance_plan(cond, cfg, sampler, self._guidance)
-        evaluator = AnimaDenoiser(self.assembled.diffusion, compute_dtype=compute_dtype)
-        report_state: SamplingStateCallback | None
-        captured: list[torch.Tensor]
-        if capture_denoised:
-            report_state, captured = custom_denoised_callback(self.family, on_state)
-        else:
-            report_state, captured = on_state, []
-        denoiser = guided_denoiser(
-            ConditioningEvaluation(
-                lambda value, role: evaluator.prepare_conditioning(
-                    value,
-                    lane_id=("negative" if role is GuidanceRole.UNCONDITIONAL else "positive"),
-                ),
-                evaluator.evaluate_conditioning,
-                evaluator.batchable,
-                evaluator.evaluate_conditioning_batch,
-                evaluator_identity=lambda _role: "dinkster.anima.conditioning.v1",
-                standard_activation_memory_factor=self.family.memory_factor,
-            ),
-            input=latent,
-            executor=self._guidance,
-            plan=plan,
-            execution=sampling_execution_context(
-                sigmas=schedule.sigmas, seed=seed, on_step=on_step, on_state=report_state
-            ),
-        )
-        output = run_denoise(
-            denoiser,
-            request.build_solver(),
-            latent=latent,
-            noise=noise,
-            sigmas=schedule.sigmas,
-            initial_sigma=schedule.initial_sigma,
-            family=self.family,
-            seed=seed,
-            noise_kind=sampler.noise,
-            noise_sampler=noise_sampler,
-            percent_to_sigma=space.percent_to_sigma,
-            device=device,
-            on_step=on_step,
-            on_state=report_state,
-            denoise_mask=denoise_mask,
-        )
-        return CustomSamplingResult(output, captured[-1] if captured else None)
+    sample_custom = sampling_execution
 
     def encode_text(self, text: str) -> Conditioning[torch.Tensor]:
         raise AnimaRuntimeError("Anima diffusion component carries no text encoder")

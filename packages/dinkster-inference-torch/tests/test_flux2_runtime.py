@@ -58,7 +58,6 @@ from dinkster_inference_torch import (
     prepare_noise,
     tensor_to_payload_binding,
 )
-from dinkster_inference_torch import flux2_runtime as runtime_mod
 from dinkster_inference_torch import sampling_execution as sampling_execution_mod
 from dinkster_inference_torch.schedules import (
     _endpoints,  # pyright: ignore[reportPrivateUsage]
@@ -378,8 +377,8 @@ def test_flux2_runtime_sample_delegates_ksampler_composition(
     assert kwargs["on_state"] == states.append
     assert kwargs["sample_custom_kwargs"] == {
         "sampling_shift": 1.18452766,
-        "_compute_dtype": torch.float32,
-        "_device": "cpu",
+        "compute_dtype": torch.float32,
+        "device": "cpu",
     }
     assert kwargs["error"] is Flux2RuntimeError
 
@@ -551,8 +550,8 @@ def test_flux2_custom_sampling_uses_exact_sigmas_noise_options_and_denoised_stat
         )
         return output
 
-    monkeypatch.setattr(runtime_mod, "brownian_step_noise", capture_step_noise)
-    monkeypatch.setattr(runtime_mod, "run_denoise", capture_run)
+    monkeypatch.setattr(sampling_execution_mod, "brownian_step_noise", capture_step_noise)
+    monkeypatch.setattr(sampling_execution_mod, "run_denoise", capture_run)
     result = runtime.sample_custom(
         latent,
         noise=noise,

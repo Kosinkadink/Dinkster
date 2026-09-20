@@ -6,7 +6,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import torch
 from dinkster_inference import (
@@ -15,31 +15,22 @@ from dinkster_inference import (
     T5_XXL_PIXART_PROFILE,
     Conditioning,
     ConditioningCarrier,
-    ContextWindowsSpec,
-    CustomSamplingRequest,
-    CustomSamplingResult,
     FlowSigmas,
     GuidanceRole,
-    InpaintConditioning,
     ModelFamily,
     PromptTokenizer,
     Registry,
     SamplerDescriptor,
-    SamplingStateCallback,
     SchedulerDescriptor,
-    StepCallback,
     load_t5_spm,
-    sampling_execution_context,
 )
 
 from .attention import AttentionRole, AttentionStatus
-from .brownian import BrownianTreeNoise
 from .chroma import Chroma, ChromaRadiance, ChromaRadianceOptions
 from .conditioning_adapters import basic_conditioning_to_carrier, materialize_basic_conditioning
-from .denoise import FluxGuidance, run_denoise
+from .denoise import FluxGuidance
 from .guidance import (
     ConditioningBatch,
-    ConditioningEvaluation,
     GuidanceExecutor,
 )
 from .guidance import (
@@ -47,16 +38,11 @@ from .guidance import (
 )
 from .operations import module_compute_device
 from .sampling_execution import (
-    CustomSamplingCfgValue,
-    CustomSamplingCondValue,
-    CustomSamplingLatentValue,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    custom_denoised_callback,
-    guided_denoiser,
-    narrow_single_stream_custom_sampling,
-    resolve_custom_sampling_request,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingExecutionRegistration,
+    SingleStreamLatentAdapter,
+    sampling_execution,
 )
 from .sampling_runtime import SingleStreamSamplingRuntime
 from .schedules import (
@@ -128,6 +114,8 @@ class ChromaTextRuntime:
 class ChromaDenoiser:
     """Single-conditioning FLOW evaluator over a Chroma diffusion component."""
 
+    evaluator_identity = "dinkster.chroma.conditioning.v1"
+
     def __init__(
         self,
         model: Chroma | ChromaRadiance,
@@ -142,7 +130,11 @@ class ChromaDenoiser:
         self.compute_dtype = compute_dtype
 
     def prepare_conditioning(
-        self, value: object, *, lane_id: str = "positive"
+        self,
+        value: object,
+        role: GuidanceRole = GuidanceRole.CONDITIONAL,
+        *,
+        lane_id: str | None = None,
     ) -> tuple[torch.Tensor, str]:
         if not isinstance(value, Conditioning):
             raise ChromaRuntimeError("Chroma conditioning must be a Conditioning value")
@@ -151,7 +143,9 @@ class ChromaDenoiser:
         context = value.embeddings
         if context.ndim != 3 or context.shape[0] < 1 or context.shape[2] != 4096:
             raise ChromaRuntimeError("Chroma context must have shape [batch,tokens,4096]")
-        if lane_id not in ("positive", "negative"):
+        if lane_id is None:
+            lane_id = "negative" if role is GuidanceRole.UNCONDITIONAL else "positive"
+        elif lane_id not in ("positive", "negative"):
             raise ChromaRuntimeError("Chroma guidance lane id is not supported")
         return context, lane_id
 
@@ -227,12 +221,60 @@ class _ChromaDiffusionAssembly:
         return self.compute if component == "diffusion" else None
 
 
+def _validate_chroma_latent(latent: torch.Tensor) -> None:
+    if latent.ndim != 4:
+        raise ChromaRuntimeError("Chroma input must have shape [batch,channels,height,width]")
+
+
+def _chroma_denoiser(
+    runtime: object,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserAdapter:
+    owner = cast("ChromaDiffusionRuntime", runtime)
+    if context.inputs is None:
+        raise AssertionError("Chroma sampling adapter requires resolved execution context")
+    channels = owner.family.single_stream_latent().channels
+    if context.inputs.latent.shape[1] != channels:
+        raise ChromaRuntimeError(f"Chroma input must have shape [batch,{channels},height,width]")
+    if context.options:
+        names = ", ".join(sorted(context.options))
+        raise ChromaRuntimeError(f"Chroma sampling does not accept adapter options: {names}")
+    return cast(
+        "SamplingDenoiserAdapter",
+        ChromaDenoiser(
+            owner.assembled.diffusion,
+            guidance=0.0 if context.guidance is None else context.guidance,
+            option_windows=owner._option_windows,  # pyright: ignore[reportPrivateUsage]
+            compute_dtype=compute_dtype,
+        ),
+    )
+
+
+def _chroma_device(runtime: object) -> torch.device:
+    owner = cast("ChromaDiffusionRuntime", runtime)
+    return module_compute_device(owner.assembled.diffusion)
+
+
+def _chroma_compute_dtype(runtime: object) -> torch.dtype:
+    owner = cast("ChromaDiffusionRuntime", runtime)
+    return owner.assembled.compute_dtype("diffusion") or torch.bfloat16
+
+
 class ChromaDiffusionRuntime(SingleStreamSamplingRuntime):
     """Diffusion-only Chroma custom sampling over independently encoded conditioning."""
 
     streamed_residency_components = frozenset()
     sampling_error = ChromaRuntimeError
     supports_sampling_shift = True
+    supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=SingleStreamLatentAdapter(_validate_chroma_latent),
+        denoiser=_chroma_denoiser,
+        device=_chroma_device,
+        compute_dtype=_chroma_compute_dtype,
+        flow=True,
+    )
 
     def __init__(
         self,
@@ -313,109 +355,7 @@ class ChromaDiffusionRuntime(SingleStreamSamplingRuntime):
         if guidance is not None and (guidance == "disabled" or not 0.0 <= guidance <= 100.0):
             raise ChromaRuntimeError("Chroma guidance must be in [0, 100]")
 
-    def sample_custom(
-        self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue = None,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: float | None = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        compute_dtype: torch.dtype | None = None,
-        device: torch.device | str | None = None,
-        capture_denoised: bool = True,
-        sampling_shift: float | None = None,
-    ) -> CustomSamplingResult[torch.Tensor]:
-        latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
-            self.family.id,
-            latent=latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            denoise_mask=denoise_mask,
-            error=ChromaRuntimeError,
-        )
-        channels = self.family.single_stream_latent().channels
-        if latent.ndim != 4 or latent.shape[1] != channels:
-            raise ChromaRuntimeError(
-                f"Chroma input must have shape [batch,{channels},height,width]"
-            )
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=ChromaRuntimeError
-        )
-        if compute_dtype is None:
-            compute_dtype = self.assembled.compute_dtype("diffusion") or torch.bfloat16
-        if device is None:
-            device = module_compute_device(self.assembled.diffusion)
-        space = self.sampling_sigma_space(sampling_shift)
-        schedule = build_custom_sampling_schedule(request.sigmas, space, sampler, flow=True)
-        noise_sampler: BrownianTreeNoise | None = brownian_step_noise(
-            sampler, schedule, latent, seed=seed, device=device
-        )
-        plan = compile_guidance_plan(cond, cfg, sampler, self._guidance)
-        evaluator = ChromaDenoiser(
-            self.assembled.diffusion,
-            guidance=0.0 if guidance is None else guidance,
-            option_windows=self._option_windows,
-            compute_dtype=compute_dtype,
-        )
-        report_state: SamplingStateCallback | None
-        captured: list[torch.Tensor]
-        if capture_denoised:
-            report_state, captured = custom_denoised_callback(self.family, on_state)
-        else:
-            report_state, captured = on_state, []
-        denoiser = guided_denoiser(
-            ConditioningEvaluation(
-                lambda value, role: evaluator.prepare_conditioning(
-                    value,
-                    lane_id=("negative" if role is GuidanceRole.UNCONDITIONAL else "positive"),
-                ),
-                evaluator.evaluate_conditioning,
-                evaluator.batchable,
-                evaluator.evaluate_conditioning_batch,
-                evaluator_identity=lambda _role: "dinkster.chroma.conditioning.v1",
-                standard_activation_memory_factor=self.family.memory_factor,
-            ),
-            input=latent,
-            executor=self._guidance,
-            plan=plan,
-            execution=sampling_execution_context(
-                sigmas=schedule.sigmas, seed=seed, on_step=on_step, on_state=report_state
-            ),
-        )
-        output = run_denoise(
-            denoiser,
-            request.build_solver(),
-            latent=latent,
-            noise=noise,
-            sigmas=schedule.sigmas,
-            initial_sigma=schedule.initial_sigma,
-            family=self.family,
-            seed=seed,
-            noise_kind=sampler.noise,
-            noise_sampler=noise_sampler,
-            percent_to_sigma=space.percent_to_sigma,
-            device=device,
-            on_step=on_step,
-            on_state=report_state,
-            denoise_mask=denoise_mask,
-        )
-        return CustomSamplingResult(output, captured[-1] if captured else None)
+    sample_custom = sampling_execution
 
     def encode_text(self, text: str) -> Conditioning[torch.Tensor]:
         raise ChromaRuntimeError("Chroma diffusion component carries no text encoder")

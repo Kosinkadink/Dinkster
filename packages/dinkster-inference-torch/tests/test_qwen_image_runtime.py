@@ -37,6 +37,7 @@ from dinkster_inference.sampling_wire import SigmaSchedule
 from dinkster_inference_torch import basic_conditioning_to_carrier, materialize_basic_conditioning
 from dinkster_inference_torch import qwen_image_control as control_module
 from dinkster_inference_torch import qwen_image_runtime as runtime
+from dinkster_inference_torch import sampling_execution as sampling_execution_module
 from dinkster_inference_torch.denoise import prepare_noise
 from dinkster_inference_torch.operations import InitlessOperations
 from dinkster_inference_torch.qwen_image import QwenImage
@@ -411,6 +412,7 @@ def test_runtime_forwards_pre_offset_brownian_sampling_state(
         _latent: torch.Tensor,
         *,
         seed: int,
+        device: torch.device | str | None,
     ) -> object:
         assert schedule.initial_sigma == 1.0
         assert schedule.sigmas[0] != 1.0
@@ -429,8 +431,8 @@ def test_runtime_forwards_pre_offset_brownian_sampling_state(
         assert sigmas[0] != 1.0
         return latent
 
-    monkeypatch.setattr(runtime, "brownian_step_noise", capture_noise)
-    monkeypatch.setattr(runtime, "run_sampler_engine", capture_engine)
+    monkeypatch.setattr(sampling_execution_module, "brownian_step_noise", capture_noise)
+    monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_engine)
 
     output = native.sample(
         latent,
@@ -1045,13 +1047,13 @@ def test_qwen_sampling_space_reaches_both_native_sampling_nodes(
             qwen_image_conditioning_to_carrier(negative), binding
         )
     executed_spaces: list[object] = []
-    build_schedule = runtime.build_custom_sampling_schedule
+    build_schedule = sampling_execution_module.build_custom_sampling_schedule
 
     def capture(*args: Any, **kwargs: Any) -> Any:
         executed_spaces.append(args[1])
         return build_schedule(*args, **kwargs)
 
-    monkeypatch.setattr(runtime, "build_custom_sampling_schedule", capture)
+    monkeypatch.setattr(sampling_execution_module, "build_custom_sampling_schedule", capture)
     try:
         sigmas = arm.GenerationBasicScheduler.execute(
             model=model, scheduler=scheduler, steps=3, denoise=1.0

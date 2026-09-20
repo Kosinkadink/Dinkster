@@ -17,30 +17,21 @@ from dinkster_inference import (
     ConditioningChannel,
     ConditioningRecord,
     ConditioningSet,
-    ContextWindowsSpec,
-    CustomSamplingRequest,
-    CustomSamplingResult,
     GuidanceRole,
-    InpaintConditioning,
     ModelFamily,
     Parameterization,
     PayloadDescriptor,
     PayloadReference,
     Registry,
     SamplerDescriptor,
-    SamplingStateCallback,
     SchedulerDescriptor,
     SigmaSpace,
-    StepCallback,
     calculate_denoised,
     encode_conditioning_carrier,
     make_conditioning_carrier,
-    sampling_execution_context,
 )
 
-from .brownian import BrownianTreeNoise
 from .conditioning_adapters import materialize_basic_conditioning
-from .denoise import run_denoise
 from .guidance import (
     ConditioningBatch,
     ConditioningEvaluation,
@@ -58,16 +49,11 @@ from .operations import bound_compute_device, module_compute_device
 from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
 from .qwen_image_text import QwenImageLanguageModel
 from .sampling_execution import (
-    CustomSamplingCfgValue,
-    CustomSamplingCondValue,
-    CustomSamplingLatentValue,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    custom_denoised_callback,
-    guided_denoiser,
-    narrow_single_stream_custom_sampling,
-    resolve_custom_sampling_request,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingExecutionRegistration,
+    SingleStreamLatentAdapter,
+    sampling_execution,
 )
 from .sampling_runtime import SingleStreamSamplingRuntime
 from .schedules import (
@@ -147,6 +133,8 @@ def materialize_ideogram4_conditioning(
 
 
 class _Ideogram4Denoiser:
+    evaluator_identity = "dinkster.ideogram4.conditioning.v1"
+
     def __init__(
         self,
         model: Ideogram4DiT,
@@ -157,7 +145,9 @@ class _Ideogram4Denoiser:
         self.compute_dtype = compute_dtype
 
     def prepare_conditioning(
-        self, value: object
+        self,
+        value: object,
+        _role: GuidanceRole = GuidanceRole.CONDITIONAL,
     ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
         if not isinstance(value, Conditioning):
             raise Ideogram4RuntimeError("Ideogram 4 conditioning must be a Conditioning value")
@@ -307,9 +297,50 @@ class _Ideogram4DiffusionAssembly:
         return self.compute if component == "diffusion" else None
 
 
+def _validate_ideogram4_latent(latent: torch.Tensor) -> None:
+    channels = IDEOGRAM4.single_stream_latent().channels
+    if latent.ndim != 4 or latent.shape[1] != channels:
+        raise Ideogram4RuntimeError(
+            f"Ideogram 4 latent must have shape [batch,{channels},height,width]"
+        )
+
+
+def _ideogram4_denoiser(
+    runtime: object,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserAdapter:
+    owner = cast("Ideogram4DiffusionRuntime", runtime)
+    if context.options:
+        names = ", ".join(sorted(context.options))
+        raise Ideogram4RuntimeError(f"Ideogram 4 sampling does not accept adapter options: {names}")
+    return cast(
+        "SamplingDenoiserAdapter",
+        _Ideogram4Denoiser(owner.assembled.diffusion, compute_dtype=compute_dtype),
+    )
+
+
+def _ideogram4_device(runtime: object) -> torch.device:
+    owner = cast("Ideogram4DiffusionRuntime", runtime)
+    return module_compute_device(owner.assembled.diffusion)
+
+
+def _ideogram4_compute_dtype(runtime: object) -> torch.dtype:
+    owner = cast("Ideogram4DiffusionRuntime", runtime)
+    return owner.assembled.compute_dtype("diffusion") or torch.bfloat16
+
+
 class Ideogram4DiffusionRuntime(SingleStreamSamplingRuntime):
     streamed_residency_components = frozenset()
     sampling_error = Ideogram4RuntimeError
+    supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=SingleStreamLatentAdapter(_validate_ideogram4_latent),
+        denoiser=_ideogram4_denoiser,
+        device=_ideogram4_device,
+        compute_dtype=_ideogram4_compute_dtype,
+        flow=True,
+    )
 
     def __init__(
         self,
@@ -384,91 +415,7 @@ class Ideogram4DiffusionRuntime(SingleStreamSamplingRuntime):
     def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
         return IDEOGRAM4_SIGMAS
 
-    def sample_custom(
-        self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue = None,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: float | None = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        compute_dtype: torch.dtype | None = None,
-        device: torch.device | str | None = None,
-        capture_denoised: bool = True,
-    ) -> CustomSamplingResult[torch.Tensor]:
-        latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
-            self.family.id,
-            latent=latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            denoise_mask=denoise_mask,
-            error=Ideogram4RuntimeError,
-        )
-        channels = self.family.single_stream_latent().channels
-        if latent.ndim != 4 or latent.shape[1] != channels:
-            raise Ideogram4RuntimeError(
-                f"Ideogram 4 latent must have shape [batch,{channels},height,width]"
-            )
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=Ideogram4RuntimeError
-        )
-        dtype = compute_dtype or self.assembled.compute_dtype("diffusion") or torch.bfloat16
-        device = device or module_compute_device(self.assembled.diffusion)
-        schedule = build_custom_sampling_schedule(
-            request.sigmas, IDEOGRAM4_SIGMAS, sampler, flow=True
-        )
-        noise_sampler: BrownianTreeNoise | None = brownian_step_noise(
-            sampler, schedule, latent, seed=seed, device=device
-        )
-        plan = compile_guidance_plan(cond, cfg, sampler, self._guidance)
-        report_state: SamplingStateCallback | None
-        captured: list[torch.Tensor]
-        if capture_denoised:
-            report_state, captured = custom_denoised_callback(self.family, on_state)
-        else:
-            report_state, captured = on_state, []
-        denoiser = guided_denoiser(
-            self.conditioning_evaluation(compute_dtype=dtype),
-            input=latent,
-            executor=self._guidance,
-            plan=plan,
-            execution=sampling_execution_context(
-                sigmas=schedule.sigmas, seed=seed, on_step=on_step, on_state=report_state
-            ),
-        )
-        output = run_denoise(
-            denoiser,
-            request.build_solver(),
-            latent=latent,
-            noise=noise,
-            sigmas=schedule.sigmas,
-            initial_sigma=schedule.initial_sigma,
-            family=self.family,
-            seed=seed,
-            noise_kind=sampler.noise,
-            noise_sampler=noise_sampler,
-            percent_to_sigma=IDEOGRAM4_SIGMAS.percent_to_sigma,
-            device=device,
-            on_step=on_step,
-            on_state=report_state,
-            denoise_mask=denoise_mask,
-        )
-        return CustomSamplingResult(output, captured[-1] if captured else None)
+    sample_custom = sampling_execution
 
     def encode_text(self, text: str) -> Conditioning[torch.Tensor]:
         raise Ideogram4RuntimeError("Ideogram 4 diffusion component has no text encoder")

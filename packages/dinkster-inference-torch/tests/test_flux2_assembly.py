@@ -472,7 +472,7 @@ def test_flux2_diffusion_runtime_samples_end_to_end_with_shift_override(
     assert shifts == [1.5]
 
 
-def test_flux2_diffusion_runtime_binds_sample_to_module_dtype_and_device(
+def test_flux2_diffusion_runtime_registers_module_dtype_and_device(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster_inference import CustomSamplingResult
@@ -501,9 +501,10 @@ def test_flux2_diffusion_runtime_binds_sample_to_module_dtype_and_device(
     )
     assert seen["runtime"] is runtime
     assert seen["latent"] is latent
-    assert seen["_compute_dtype"] is torch.bfloat16
-    assert seen["_device"] == next(model.parameters()).device
     assert seen["sampling_shift"] == 2.5
+    registration = runtime.sampling_execution_registration
+    assert registration.compute_dtype(runtime) is torch.bfloat16
+    assert registration.device(runtime) == next(model.parameters()).device
 
 
 def test_flux2_diffusion_runtime_materializes_basic_conditioning_on_module_device() -> None:

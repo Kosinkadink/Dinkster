@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from types import EllipsisType, MappingProxyType
+from types import MappingProxyType
 from typing import Any, cast
 
 import torch
@@ -14,23 +14,17 @@ from dinkster_inference import (
     Conditioning,
     ConditioningCarrier,
     ConditioningSet,
-    ContextWindowsSpec,
-    CustomSamplingRequest,
-    CustomSamplingResult,
     FluxFlowSigmas,
-    InpaintConditioning,
+    GuidanceRole,
     ModelFamily,
     PayloadReference,
     Registry,
     SamplerDescriptor,
-    SamplingStateCallback,
     SchedulerDescriptor,
-    StepCallback,
     TekkenBpe,
     encode_conditioning_carrier,
     load_flux2_tekken_bpe,
     make_conditioning_carrier,
-    sampling_execution_context,
 )
 
 from .assemble import AssembledFlux2
@@ -40,27 +34,20 @@ from .conditioning_adapters import materialize_basic_conditioning
 from .denoise import (
     FluxCondition,
     FluxDenoiser,
-    FluxGuidance,
     _flux_condition_parts,  # pyright: ignore[reportPrivateUsage]
-    run_denoise,
 )
 from .flux import Flux
 from .flux2_assembly import FLUX2_TEKKEN_ATTRIBUTE
-from .guidance import ConditioningEvaluation, GuidanceExecutor
+from .guidance import GuidanceExecutor
 from .operations import module_compute_device
 from .payloads import payload_binding_to_tensor
 from .qwen_text import Flux2DevTextEncoder, Flux2KleinTextEncoder, QwenTextModel
 from .sampling_execution import (
-    CustomSamplingCfgValue,
-    CustomSamplingCondValue,
-    CustomSamplingLatentValue,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    custom_denoised_callback,
-    guided_denoiser,
-    narrow_single_stream_custom_sampling,
-    resolve_custom_sampling_request,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingExecutionRegistration,
+    SingleStreamLatentAdapter,
+    sampling_execution,
 )
 from .sampling_runtime import SingleStreamSamplingRuntime
 from .schedules import (
@@ -145,7 +132,13 @@ class Flux2Denoiser(FluxDenoiser):
     contexts pass through unchanged.
     """
 
-    def prepare_conditioning(self, conditioning: object) -> FluxCondition:
+    evaluator_identity = "dinkster.flux2.conditioning.v1"
+
+    def prepare_conditioning(
+        self,
+        conditioning: object,
+        _role: GuidanceRole = GuidanceRole.CONDITIONAL,
+    ) -> FluxCondition:
         references: tuple[torch.Tensor, ...] = ()
         if type(conditioning) is Flux2Conditioning:
             references = conditioning.reference_latents
@@ -185,6 +178,51 @@ def _exact_scheduler_registry(
     return registry
 
 
+def _validate_flux2_latent(latent: torch.Tensor) -> None:
+    if latent.ndim != 4 or latent.shape[1] != FLUX2_LATENT_CHANNELS:
+        raise Flux2RuntimeError(
+            f"Flux2 input must have shape [batch,{FLUX2_LATENT_CHANNELS},height,width]"
+        )
+
+
+def _flux2_denoiser(
+    runtime: object,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserAdapter:
+    owner = cast("Flux2Runtime | Flux2DiffusionRuntime", runtime)
+    if context.options:
+        names = ", ".join(sorted(context.options))
+        raise Flux2RuntimeError(f"Flux2 sampling does not accept adapter options: {names}")
+    return cast(
+        "SamplingDenoiserAdapter",
+        Flux2Denoiser(
+            owner.assembled.diffusion,
+            guidance=context.guidance,
+            compute_dtype=compute_dtype,
+        ),
+    )
+
+
+def _flux2_device(runtime: object) -> torch.device:
+    owner = cast("Flux2Runtime | Flux2DiffusionRuntime", runtime)
+    return module_compute_device(owner.assembled.diffusion)
+
+
+def _flux2_compute_dtype(runtime: object) -> torch.dtype:
+    owner = cast("Flux2Runtime | Flux2DiffusionRuntime", runtime)
+    return owner.assembled.compute_dtype("diffusion") or torch.bfloat16
+
+
+_FLUX2_SAMPLING_EXECUTION = SamplingExecutionRegistration(
+    latent=SingleStreamLatentAdapter(_validate_flux2_latent),
+    denoiser=_flux2_denoiser,
+    device=_flux2_device,
+    compute_dtype=_flux2_compute_dtype,
+    flow=True,
+)
+
+
 class Flux2Runtime(SingleStreamSamplingRuntime):
     """Family runtime for the published Flux2 releases.
 
@@ -200,6 +238,8 @@ class Flux2Runtime(SingleStreamSamplingRuntime):
     streamed_residency_components = frozenset({"text_encoder"})
     sampling_error = Flux2RuntimeError
     supports_sampling_shift = True
+    supports_denoised_capture = True
+    sampling_execution_registration = _FLUX2_SAMPLING_EXECUTION
 
     def __init__(
         self,
@@ -247,104 +287,12 @@ class Flux2Runtime(SingleStreamSamplingRuntime):
     def supports_distilled_guidance(self) -> bool:
         return self.assembled.diffusion.guidance_in is not None
 
-    def sample_custom(
-        self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: FluxGuidance = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        sampling_shift: float | None = None,
-        _compute_dtype: torch.dtype | None = None,
-        _device: torch.device | str | None | EllipsisType = ...,
-    ) -> CustomSamplingResult[torch.Tensor]:
-        latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
-            self.family.id,
-            latent=latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            denoise_mask=denoise_mask,
-            error=Flux2RuntimeError,
-        )
-        channels = FLUX2_LATENT_CHANNELS
-        if latent.ndim != 4 or latent.shape[1] != channels:
-            raise Flux2RuntimeError(f"Flux2 input must have shape [batch,{channels},height,width]")
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=Flux2RuntimeError
-        )
-        space = _flux2_sigma_space(self.family, sampling_shift)
-        schedule = build_custom_sampling_schedule(request.sigmas, space, sampler, flow=True)
-        device = module_compute_device(self.assembled.diffusion) if _device is ... else _device
-        step_noise = brownian_step_noise(sampler, schedule, latent, seed=seed, device=device)
-        plan = compile_guidance_plan(cond, cfg, sampler, self._guidance)
-        compute_dtype = _compute_dtype
-        if compute_dtype is None:
-            compute_dtype = self.assembled.compute_dtype("diffusion") or torch.bfloat16
-        evaluator = Flux2Denoiser(
-            self.assembled.diffusion,
-            guidance=guidance,
-            compute_dtype=compute_dtype,
-        )
-        report_state, captured = custom_denoised_callback(self.family, on_state)
-        denoiser = guided_denoiser(
-            ConditioningEvaluation(
-                lambda value, _role: evaluator.prepare_conditioning(value),
-                evaluator.evaluate_conditioning,
-                evaluator.batchable,
-                evaluator.evaluate_conditioning_batch,
-                evaluator_identity=lambda _role: "dinkster.flux2.conditioning.v1",
-                standard_activation_memory_factor=self.family.memory_factor,
-            ),
-            input=latent,
-            executor=self._guidance,
-            plan=plan,
-            execution=sampling_execution_context(
-                sigmas=schedule.sigmas, seed=seed, on_step=on_step, on_state=report_state
-            ),
-        )
-        output = run_denoise(
-            denoiser,
-            request.build_solver(),
-            latent=latent,
-            noise=noise,
-            sigmas=schedule.sigmas,
-            initial_sigma=schedule.initial_sigma,
-            family=self.family,
-            seed=seed,
-            noise_kind=sampler.noise,
-            noise_sampler=step_noise,
-            percent_to_sigma=space.percent_to_sigma,
-            device=device,
-            on_step=on_step,
-            on_state=report_state,
-            denoise_mask=denoise_mask,
-        )
-        return CustomSamplingResult(output, captured[-1] if captured else None)
+    sample_custom = sampling_execution
 
     def _ksampler_kwargs(self, kwargs: dict[str, object]) -> dict[str, object]:
         if "_compute_dtype" in kwargs or "_device" in kwargs:
             raise TypeError("Flux2 KSampler does not accept private compute placement arguments")
-        return {
-            "_compute_dtype": kwargs.pop("compute_dtype", torch.bfloat16),
-            "_device": kwargs.pop("device", None),
-            **kwargs,
-        }
+        return kwargs
 
     def decode_latent(self, latent: torch.Tensor) -> torch.Tensor:
         return self.codec.decode(latent)
@@ -396,6 +344,8 @@ class Flux2DiffusionRuntime(SingleStreamSamplingRuntime):
 
     sampling_error = Flux2RuntimeError
     supports_sampling_shift = True
+    supports_denoised_capture = True
+    sampling_execution_registration = _FLUX2_SAMPLING_EXECUTION
 
     def __init__(
         self,
@@ -455,53 +405,12 @@ class Flux2DiffusionRuntime(SingleStreamSamplingRuntime):
 
     supports_distilled_guidance = Flux2Runtime.supports_distilled_guidance  # pyright: ignore[reportIncompatibleMethodOverride]
 
-    def sample_custom(
-        self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: FluxGuidance = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        sampling_shift: float | None = None,
-        _compute_dtype: torch.dtype | None = None,
-        _device: torch.device | str | None | EllipsisType = ...,
-    ) -> CustomSamplingResult[torch.Tensor]:
-        return Flux2Runtime.sample_custom(
-            self,  # pyright: ignore[reportArgumentType]
-            latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            request=request,
-            seed=seed,
-            guidance=guidance,
-            denoise_mask=denoise_mask,
-            inpaint=inpaint,
-            context_windows=context_windows,
-            on_step=on_step,
-            on_state=on_state,
-            sampling_shift=sampling_shift,
-            _compute_dtype=_compute_dtype,
-            _device=_device,
-        )
+    sample_custom = sampling_execution
 
     def _ksampler_kwargs(self, kwargs: dict[str, object]) -> dict[str, object]:
         if "_compute_dtype" in kwargs or "_device" in kwargs:
             raise TypeError("Flux2 KSampler does not accept private compute placement arguments")
-        params = next(self.assembled.diffusion.parameters())
-        return {
-            "_compute_dtype": params.dtype,
-            "_device": module_compute_device(self.assembled.diffusion),
-            **kwargs,
-        }
+        return kwargs
 
 
 __all__ = [

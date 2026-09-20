@@ -669,6 +669,8 @@ def _fake_stored_source_pins(
 ) -> tuple[Any, dict[int, int], list[object], int]:
     registered: dict[int, int] = {}
     syncs: list[object] = []
+    pinned_host = residency_mod.pinned_host
+    monkeypatch.setattr(pinned_host, "_owners", [])
 
     def register(ptr: int, size: int) -> bool:
         registered[ptr] = size
@@ -687,10 +689,10 @@ def _fake_stored_source_pins(
     monkeypatch.setattr(residency_mod, "_cuda_host_register", register)
     monkeypatch.setattr(residency_mod, "_cuda_host_unregister", unregister)
     monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
-    monkeypatch.setattr(residency_mod.pinned_host, "ensure_pin_budget", registerable)
-    monkeypatch.setattr(residency_mod.pinned_host, "ensure_pin_registerable", registerable)
+    monkeypatch.setattr(pinned_host, "ensure_pin_budget", registerable)
+    monkeypatch.setattr(pinned_host, "ensure_pin_registerable", registerable)
     pins = residency_mod._StoredSourcePins(torch.device("cuda", 0))  # pyright: ignore[reportPrivateUsage]
-    initial = residency_mod.pinned_host.TOTAL_PINNED_MEMORY
+    initial = pinned_host.TOTAL_PINNED_MEMORY
     pins.ensure(tensor)
     return pins, registered, syncs, initial
 

@@ -30,8 +30,8 @@ from dinkster_inference_torch import (
     z_image_control_resource_digest,
 )
 from dinkster_inference_torch import module_residency as residency_mod
+from dinkster_inference_torch import sampling_execution as sampling_execution_mod
 from dinkster_inference_torch import z_image_control as control_mod
-from dinkster_inference_torch import z_image_runtime as runtime_mod
 from dinkster_inference_torch.denoise import prepare_noise
 from dinkster_inference_torch.operations import INITLESS
 from dinkster_inference_torch.schedules import torch_scheduler_registry
@@ -413,7 +413,7 @@ def test_z_image_runtime_realizes_site_lane_gains_and_binds_identity(
         return cast("torch.Tensor", kwargs["latent"])
 
     monkeypatch.setattr(ZImageDenoiser, "set_control_gain_row", capture_row)
-    monkeypatch.setattr(runtime_mod, "run_denoise", capture_run)
+    monkeypatch.setattr(sampling_execution_mod, "run_denoise", capture_run)
     gain = ContributionGain(
         DirectGainTableCurve((1.0, 0.5, 0.0)),
         2.0,
