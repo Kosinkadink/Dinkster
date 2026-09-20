@@ -62,15 +62,13 @@ SD15_IPADAPTER_SITES: tuple[SD15AttentionSite, ...] = tuple(
 
 @dataclass(frozen=True, slots=True)
 class SD15IPAdapterConfig:
-    family_id: str = "dinkster.sd15"
+    family_id: str = field(init=False, default="dinkster.sd15")
     clip_embedding_dim: int = 1024
     token_count: int = 4
     token_dim: int = 768
     sites: tuple[SD15AttentionSite, ...] = SD15_IPADAPTER_SITES
 
     def __post_init__(self) -> None:
-        if self.family_id != "dinkster.sd15":
-            raise ValueError("standard SD1.5 IP-Adapter requires family dinkster.sd15")
         if (
             self.clip_embedding_dim != 1024
             or self.token_count != 4

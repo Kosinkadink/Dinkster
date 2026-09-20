@@ -298,15 +298,22 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
         "dinkster-nodes-remote": "dinkster_nodes_remote",
         "dinkster-nodes-generation": "dinkster_nodes_generation",
         "dinkster-nodes-generation-openai": "dinkster_nodes_generation_openai",
-        "dinkster-vision-birefnet": "dinkster_vision_birefnet",
-        "dinkster-vision-depth-anything-v2": "dinkster_vision_depth_anything_v2",
-        "dinkster-vision-depth-anything-v3": "dinkster_vision_depth_anything_v3",
-        "dinkster-vision-detr": "dinkster_vision_detr",
-        "dinkster-vision-efficient-sam": "dinkster_vision_efficient_sam",
-        "dinkster-vision-hed": "dinkster_vision_hed",
-        "dinkster-vision-rtdetr": "dinkster_vision_rtdetr",
-        "dinkster-vision-sam31": "dinkster_vision_sam31",
-        "dinkster-vision-upscale": "dinkster_vision_upscale",
+        "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
+        "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
+        "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
+        "dinkster-vision-detr": "dinkster_nodes_vision.detr",
+        "dinkster-vision-efficient-sam": "dinkster_nodes_vision.efficient_sam",
+        "dinkster-vision-hed": "dinkster_nodes_vision.hed",
+        "dinkster-vision-rtdetr": "dinkster_nodes_vision.rtdetr",
+        "dinkster-vision-sam31": "dinkster_nodes_vision.sam31",
+        "dinkster-vision-upscale": "dinkster_nodes_vision.upscale",
+    }
+)
+_FIRST_PARTY_PACK_DISTRIBUTIONS = MappingProxyType(
+    {
+        pack_id: "dinkster-nodes-vision"
+        for pack_id in _FIRST_PARTY_PACK_MODULES
+        if pack_id.startswith("dinkster-vision-")
     }
 )
 _ISOLATED_FIRST_PARTY_PACKS = frozenset(
@@ -1185,7 +1192,17 @@ def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
             root = temporary / "artifact"
             root.mkdir()
             shutil.copy2(manifest, root / "dinkster-pack.toml")
-            shutil.copytree(module_root, root / module_root.name)
+            if module_root.parent.name == "dinkster_nodes_vision":
+                namespace = root / module_root.parent.name
+                namespace.mkdir()
+                bundled_namespace = manifest.parent / module_root.parent.name
+                shutil.copy2(bundled_namespace / "__init__.py", namespace / "__init__.py")
+                shutil.copytree(module_root, namespace / module_root.name)
+                for sidecar in manifest.parent.iterdir():
+                    if sidecar.is_file() and sidecar != manifest:
+                        shutil.copy2(sidecar, root / sidecar.name)
+            else:
+                shutil.copytree(module_root, root / module_root.name)
             for filename in _PACK_ARTIFACT_SIDECARS:
                 sidecar = manifest.parent / filename
                 if sidecar.is_file():
@@ -1229,11 +1246,15 @@ def _installed_pack_spec(
     asset_vault_write: bool = False,
 ) -> PackSpec:
     """Resolve one installed first-party pack and its exact provenance."""
+    distribution_id = _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
     try:
-        distribution = importlib.metadata.distribution(pack_id)
+        distribution = importlib.metadata.distribution(distribution_id)
     except importlib.metadata.PackageNotFoundError as exc:
-        raise CompositionError(f"installed pack {pack_id!r} is unavailable") from exc
-    bundled = Path(str(distribution.locate_file(f"{module_name}_pack/dinkster-pack.toml")))
+        raise CompositionError(
+            f"installed pack distribution {distribution_id!r} is unavailable"
+        ) from exc
+    sidecar = pack_id.replace("-", "_")
+    bundled = Path(str(distribution.locate_file(f"{sidecar}_pack/dinkster-pack.toml")))
     module = importlib.util.find_spec(module_name)
     if module is None or module.origin is None:
         raise CompositionError(f"installed {pack_id} package is not discoverable")
@@ -1245,13 +1266,23 @@ def _installed_pack_spec(
         ),
         None,
     )
+    if source_manifest is None:
+        source_manifest = next(
+            (
+                parent / f"{sidecar}_pack" / "dinkster-pack.toml"
+                for parent in Path(module.origin).resolve().parents
+                if (parent / "pyproject.toml").is_file()
+                and (parent / f"{sidecar}_pack" / "dinkster-pack.toml").is_file()
+            ),
+            None,
+        )
     if source_manifest is not None:
         manifest = source_manifest
         source = f"local:{manifest.parent.resolve()}"
         source_install = True
     elif bundled.is_file():
         manifest = bundled
-        source = f"python:{pack_id}=={distribution.version}"
+        source = f"python:{distribution_id}=={distribution.version}"
         source_install = False
     else:
         raise CompositionError(f"installed {pack_id} has no bundled artifact or source manifest")

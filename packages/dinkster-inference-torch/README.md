@@ -929,15 +929,13 @@ reproduces the goldens while Intel diverges by ~1e-5 (#900). ONNX
 Runtime's MLAS dispatcher is not affected by either pin; EfficientSAM
 vectors from an AMD EPYC 9V45 with AVX-512 diverged by up to 2.48e-5
 from the AMD no-AVX512 golden (#1045). CI therefore runs the torch
-suites only on AMD runners without AVX-512. ci.yml defines five
-sequential legs (`torch-cpu-try1`..`try5`) that each check
-`/proc/cpuinfo` first and either run the full suite through the
-`torch-cpu-suite` composite action on a matching draw or conclude in
-seconds so the next leg redraws. Legs after the first matching draw
-are skipped - that is their expected green state, and merge watchers
-must accept conclusion "skipped" for `torch-cpu-try*`. The
-`torch-cpu` gate job is the authoritative signal: it fails on a real
-suite failure or when all five legs miss the required fingerprint.
+suites only on AMD runners with AVX2 and without AVX-512.
+`full-validation.yml` defines one `torch-cpu` job. Before checkout,
+it checks `/proc/cpuinfo` for `AuthenticAMD`, `avx2` and the absence
+of `avx512f`, failing with a CPU golden-contract diagnostic on a
+mismatch. A matching runner executes the suite through the
+`torch-cpu-suite` composite action. The job fails on a CPU-contract
+mismatch or a suite failure; there are no retry legs or aggregate job.
 
 Unpinned oneMKL still selects kernels
 per microarchitecture, so the fixed-seed sha256 digest assertions in

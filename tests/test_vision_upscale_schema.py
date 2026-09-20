@@ -12,15 +12,15 @@ from dinkster_nodes_image import (
 from dinkster_nodes_image import (
     UpscaleWithModel as OwnerUpscaleWithModel,
 )
+from dinkster_nodes_vision.upscale import UpscaleWithModel as ProviderUpscaleWithModel
 from dinkster_schema import ComboWidget, schema_signature
-from dinkster_vision_upscale import UpscaleWithModel as ProviderUpscaleWithModel
 from dinkster_workers import load_manifest
 
 from dinkster.compose import compose_serving
 
 ROOT = Path(__file__).parent.parent
-PACKAGE = ROOT / "packages" / "dinkster-vision-upscale"
-MANIFEST = PACKAGE / "dinkster-pack.toml"
+PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
+MANIFEST = PACKAGE / "dinkster_vision_upscale_pack" / "dinkster-pack.toml"
 
 
 def test_upscale_owner_schema_is_stable_and_provider_populated() -> None:
@@ -59,10 +59,10 @@ def test_upscale_pack_declares_isolated_cpu_provider_without_artifacts() -> None
 def test_upscale_wheel_contains_pack_runtime_and_manifest() -> None:
     project = tomllib.loads((PACKAGE / "pyproject.toml").read_text(encoding="utf-8"))
     included = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert included["dinkster-pack.toml"] == "dinkster_vision_upscale_pack/dinkster-pack.toml"
+    assert included["dinkster_vision_upscale_pack"] == "dinkster_vision_upscale_pack"
     assert (
-        included["src/dinkster_vision_upscale"]
-        == "dinkster_vision_upscale_pack/dinkster_vision_upscale"
+        included["src/dinkster_nodes_vision/upscale"]
+        == "dinkster_vision_upscale_pack/dinkster_nodes_vision/upscale"
     )
 
 

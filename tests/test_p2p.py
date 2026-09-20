@@ -132,10 +132,10 @@ class BlockingNetwork(Network):
         return cost
 
 
-def test_p2p_defaults_enable_global_transport_with_budgets() -> None:
+def test_p2p_defaults_disable_transport_with_budgets() -> None:
     assert default_p2p_settings() == {
-        "downloadsEnabled": True,
-        "seedingEnabled": True,
+        "downloadsEnabled": False,
+        "seedingEnabled": False,
         "scope": "lan-and-internet",
         "internetUploadBytesPerSecond": 5_242_880,
         "internetDownloadBytesPerSecond": 0,
@@ -864,41 +864,19 @@ def test_state_lock_denies_a_second_owner(tmp_path: Path) -> None:
     replacement.close()
 
 
-def test_default_manager_starts_without_opt_in_but_has_no_untrusted_global_handles(
+def test_default_manager_creates_no_p2p_state_or_child(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
         manager = P2PSidecarManager(vault_root=tmp_path / "vault")
+        assert not manager.state_root.exists()
         await manager.start(default_p2p_settings())
         try:
             status = await manager.status()
-            assert manager.process is not None
-            assert status["state"] == "running"
-            assert status["settings"] == default_p2p_settings()
-            sidecar = cast(dict[str, Any], status["sidecar"])
-            assert sidecar["global"]["active"] is False
-            assert sidecar["global"]["closureReason"] == "no-authority"
-            assert sidecar["leases"] == []
-        finally:
-            await manager.close()
-
-    asyncio.run(scenario())
-
-
-def test_disabled_manager_start_creates_no_p2p_state_or_child(tmp_path: Path) -> None:
-    async def scenario() -> None:
-        manager = P2PSidecarManager(vault_root=tmp_path / "vault")
-        assert not manager.state_root.exists()
-        await manager.start(enabled_settings())
-        try:
             assert manager.process is None
-            assert await manager.status() == {
-                "state": "disabled",
-                "settings": enabled_settings(),
-                "restartCount": 0,
-                "lastError": None,
-                "sidecar": None,
-            }
+            assert status["state"] == "disabled"
+            assert status["settings"] == default_p2p_settings()
+            assert status["sidecar"] is None
             assert not manager.state_root.exists()
         finally:
             await manager.close()

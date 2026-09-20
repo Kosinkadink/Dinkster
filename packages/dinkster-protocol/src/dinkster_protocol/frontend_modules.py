@@ -26,12 +26,9 @@ FRONTEND_CONTRIBUTION_KINDS = (
     "setting",
     "canvasLayer",
     "nodeDecoration",
-    "linkDecoration",
-    "canvasTool",
     "hostUi",
     "searchProvider",
     "workflowObserver",
-    "workflowGuard",
     "eventConsumer",
     "workflowImporter",
 )

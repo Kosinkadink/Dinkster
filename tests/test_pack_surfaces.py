@@ -21,6 +21,7 @@ from dinkster_api.v1 import (
     JsonObjectSchema,
     PackRoute,
 )
+from dinkster_protocol.frontend_modules import FRONTEND_CONTRIBUTION_KINDS
 from dinkster_server import Principal, StaticBearerAuthenticator, create_app
 from dinkster_server.auth import install_auth
 from dinkster_server.pack_surfaces import install_pack_surfaces
@@ -36,6 +37,26 @@ PROOF_EVENT = "video-preview.initialized"
 PROOF_ROUTE = f"/api/extensions/{PROOF_PACK}/routes/preview-policy"
 SAFE_JSON_INTS = (-(2**53 - 1), 2**53 - 1)
 UNSAFE_JSON_INTS = (-(2**53 + 1), -(2**53), 2**53, 2**53 + 1)
+
+
+def test_frontend_contribution_vocabulary_is_the_supported_set() -> None:
+    assert FRONTEND_CONTRIBUTION_KINDS == (
+        "widgetKind",
+        "widgetView",
+        "previewRenderer",
+        "textEditorExtension",
+        "menu",
+        "command",
+        "keybinding",
+        "setting",
+        "canvasLayer",
+        "nodeDecoration",
+        "hostUi",
+        "searchProvider",
+        "workflowObserver",
+        "eventConsumer",
+        "workflowImporter",
+    )
 
 
 @pytest.fixture

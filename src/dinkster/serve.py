@@ -122,6 +122,8 @@ from dinkster_workers import (
     normalize_egress_origin,
     resolve_accelerator,
 )
+from dinkster_workers.catalog import read_catalog
+from dinkster_workers.doctor import prepare_catalog
 
 from .activation import add_activation_routes
 from .benchmark import (
@@ -144,6 +146,7 @@ from .compose import (
     resolve_manifest_path,
     training_pack_specs,
 )
+from .frontend import install_frontend
 from .generation_api import GenerationModel, GenerationService, add_generation_routes
 from .guess_api import add_guess_routes
 from .installer import Installer
@@ -205,9 +208,15 @@ def _default_pack_venv_root(library_root: str) -> Path:
 
 def _pack_runtime_sources(manifest: PackManifest) -> tuple[tuple[Path, ...], str]:
     manifest_root = manifest.root
-    packages = manifest_root.parent
+    source_root = manifest_root
     if (
-        not (manifest_root / "pyproject.toml").is_file()
+        not (source_root / "pyproject.toml").is_file()
+        and (source_root.parent / "pyproject.toml").is_file()
+    ):
+        source_root = source_root.parent
+    packages = source_root.parent
+    if (
+        not (source_root / "pyproject.toml").is_file()
         or not (packages.parent / "pyproject.toml").is_file()
     ):
         module = manifest.nodes_entry.partition(":")[0].partition(".")[0]
@@ -222,7 +231,7 @@ def _pack_runtime_sources(manifest: PackManifest) -> tuple[tuple[Path, ...], str
         raise CompositionError(
             f"source workspace is missing pack-host packages: {', '.join(missing)}"
         )
-    pythonpath = os.pathsep.join(str(path / "src") for path in (*workspace, manifest_root))
+    pythonpath = os.pathsep.join(str(path / "src") for path in (*workspace, source_root))
     return workspace, pythonpath
 
 
@@ -779,12 +788,15 @@ def _install_event_loop_stall_diagnostics(
     app.on_cleanup.append(stop)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Run a Dinkster server from its installed defaults plus configured packs"
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=3639)
+    parser.add_argument("--frontend-root", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--frontend-dev", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--prepare-stale-catalogs", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--allow-host",
         action="append",
@@ -1271,7 +1283,7 @@ def main() -> None:
         help="diagnose event-loop stalls longer than SECONDS with safe request timing "
         "and Python thread stacks",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if (args.official_resolver_url or args.official_resolver_provider_id) and not args.library_root:
         parser.error("official resolver bootstrap requires --library-root")
     openai_values = (args.openai_base_url, args.openai_model, args.openai_api_key)
@@ -1913,6 +1925,38 @@ def main() -> None:
             specs[:resolved_default_pack_count] = ordered_defaults
         composer_ref.append(composer)
         composer.validate_specs(specs)
+        if args.prepare_stale_catalogs:
+            for entry in specs:
+                if not isinstance(entry, PackSpec) or not entry.require_catalog:
+                    continue
+                prepared = (
+                    _prepare_default_pack(
+                        entry,
+                        venv_root=default_pack_venv_root,
+                        accelerator=default_pack_accelerator,
+                    )
+                    if not entry.in_process and _is_standard_vision_pack(entry)
+                    else entry
+                )
+                for manifest_path in (
+                    resolve_manifest_path(prepared.manifest),
+                    *prepared.group_manifests,
+                ):
+                    manifest = load_manifest(manifest_path)
+                    if read_catalog(manifest) is None:
+                        report = prepare_catalog(
+                            manifest_path,
+                            interpreter=prepared.python,
+                            environment=prepared.env,
+                        )
+                        if not report.ok:
+                            raise CompositionError(
+                                f"runtime catalog preparation failed for {report.pack_name}"
+                            )
+                        print(
+                            f"Prepared runtime catalog: {report.pack_name} "
+                            f"({len(report.node_types)} nodes)"
+                        )
         composer.validate_catalogs(specs)
         composition = composer.composition
         make_engine = composition.make_engine
@@ -2183,6 +2227,12 @@ def main() -> None:
                     await apply_reload(app[STATE_KEY], composer, name)
 
                 watcher = PackWatcher(composer.watch_targets, reload_changed)
+        if args.frontend_root or args.frontend_dev:
+            install_frontend(
+                app,
+                bundle=Path(args.frontend_root) if args.frontend_root else None,
+                development_url=args.frontend_dev or None,
+            )
 
         state = app[STATE_KEY]
         default_failure_count = len(default_pack_failures)

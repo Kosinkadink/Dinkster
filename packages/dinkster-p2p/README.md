@@ -79,8 +79,8 @@ outside the sidecar in `TransportResolver`, whose explicit `global-p2p` slot
 ranks after preferred-region HTTP and before other healthy HTTP sources.
 
 The `p2p` settings category is the only enable boundary. Both
-`downloadsEnabled` and `seedingEnabled` default to true with
-`scope=lan-and-internet`; saved opt-outs remain authoritative. Use
+`downloadsEnabled` and `seedingEnabled` default to false with
+`scope=lan-and-internet`; saved choices remain authoritative. Use
 `dinkster-serve --disable-p2p` to start disabled without changing saved settings.
 Constructing a disabled host manager creates no directory, process, socket,
 or peer port. The host launches one sidecar when either capability becomes true and stops it

@@ -29,11 +29,29 @@ from scripts.verify_release_install import stop
 def test_release_requires_full_validation_for_the_exact_main_commit() -> None:
     root = Path(__file__).resolve().parent.parent
     workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
-    (step,) = workflow["jobs"]["authorize"]["steps"]
+    authorize = workflow["jobs"]["authorize"]
+    (step,) = authorize["steps"]
     script = step["with"]["script"]
     assert "context.ref !== 'refs/heads/main'" in script
-    assert "workflow_id: 'full-validation.yml', head_sha: context.sha, event: 'push'" in script
-    assert "runs.data.workflow_runs[0]?.conclusion !== 'success'" in script
+    assert "listWorkflowRuns" not in script
+    assert workflow["jobs"]["validation"] == {
+        "needs": "authorize",
+        "uses": "./.github/workflows/full-validation.yml",
+        "secrets": "inherit",
+    }
+    assert workflow["jobs"]["build"]["needs"] == "validation"
+
+
+def test_release_installs_only_on_available_self_hosted_platforms() -> None:
+    root = Path(__file__).resolve().parent.parent
+    workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
+    assert workflow["jobs"]["install"]["strategy"]["matrix"] == {
+        "include": [
+            {"os": "linux", "labels": ["self-hosted", "linux", "x64"]},
+            {"os": "windows", "labels": ["self-hosted", "windows", "x64"]},
+            {"os": "macos", "labels": ["self-hosted", "macos", "arm64"]},
+        ],
+    }
 
 
 def test_artifact_install_does_not_activate_a_workspace_environment() -> None:
@@ -154,7 +172,7 @@ def windows_runtime_source() -> dict[str, str]:
             f'hash = "sha256:{"d" * 64}", size = 123 }}\n]\n\n'
             '[[package]]\nname = "torch"\nversion = "2.14.0"\n'
         ),
-        "packages/dinkster-vision-birefnet/dinkster-pack.toml": (
+        "packages/dinkster-nodes-vision/dinkster_vision_birefnet_pack/dinkster-pack.toml": (
             '[pack]\nrequires = ["torch==2.14.0", "torchvision==0.29.0"]\n'
         ),
     }
@@ -320,22 +338,25 @@ def test_release_manifest_binds_archive_to_resolved_commit(
         ),
         ("uv.lock", 'version = "2.14.0"', 'version = "2.15.0"', "cudaTorch.version"),
         (
-            "packages/dinkster-vision-birefnet/dinkster-pack.toml",
+            "packages/dinkster-nodes-vision/dinkster_vision_birefnet_pack/dinkster-pack.toml",
             "torchvision==0.29.0",
             "torchvision==0.30.0",
-            r"torchvisionVersion.*dinkster-vision-birefnet/dinkster-pack.toml \[pack\].requires",
+            r"torchvisionVersion.*dinkster_vision_birefnet_pack/"
+            r"dinkster-pack.toml \[pack\].requires",
         ),
         (
-            "packages/dinkster-vision-birefnet/dinkster-pack.toml",
+            "packages/dinkster-nodes-vision/dinkster_vision_birefnet_pack/dinkster-pack.toml",
             ', "torchvision==0.29.0"',
             "",
-            r"torchvisionVersion.*dinkster-vision-birefnet/dinkster-pack.toml \[pack\].requires",
+            r"torchvisionVersion.*dinkster_vision_birefnet_pack/"
+            r"dinkster-pack.toml \[pack\].requires",
         ),
         (
-            "packages/dinkster-vision-birefnet/dinkster-pack.toml",
+            "packages/dinkster-nodes-vision/dinkster_vision_birefnet_pack/dinkster-pack.toml",
             "torchvision==0.29.0",
             "torchvision>=0.29.0",
-            r"torchvisionVersion.*dinkster-vision-birefnet/dinkster-pack.toml \[pack\].requires",
+            r"torchvisionVersion.*dinkster_vision_birefnet_pack/"
+            r"dinkster-pack.toml \[pack\].requires",
         ),
     ],
 )

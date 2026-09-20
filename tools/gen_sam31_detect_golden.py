@@ -273,9 +273,10 @@ def main() -> None:
     tokenizer_path = (
         REPO
         / "packages"
-        / "dinkster-vision-sam31"
+        / "dinkster-nodes-vision"
         / "src"
-        / "dinkster_vision_sam31"
+        / "dinkster_nodes_vision"
+        / "sam31"
         / "data"
         / "bpe_simple_vocab_16e6.txt.gz"
     )

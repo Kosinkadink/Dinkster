@@ -1315,7 +1315,7 @@ def _preprocessor_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]
             ),
             tier="exact",
             evidence=[
-                "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors",
+                "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors",
                 "tests/test_vision_line_edge_schema.py::test_line_edge_aliases_preserve_parameters_and_refuse_excluded_models",
             ],
         ),
@@ -1325,7 +1325,7 @@ def _preprocessor_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]
             {**common, "provider": MappingSource.constant("dinkster-vision-hed")},
             tier="exact",
             evidence=[
-                "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
+                "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
             ],
         ),
         record(
@@ -1334,7 +1334,7 @@ def _preprocessor_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]
             {**common, "provider": MappingSource.constant("dinkster-vision-hed")},
             tier="exact",
             evidence=[
-                "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
+                "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
             ],
         ),
         record(
@@ -1351,7 +1351,7 @@ def _preprocessor_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]
             },
             tier="exact",
             evidence=[
-                "packages/dinkster-vision-hed/tests/test_provider.py::test_anyline_merge_arms_match_pinned_controlnet_aux_vectors"
+                "packages/dinkster-nodes-vision/tests/test_hed.py::test_anyline_merge_arms_match_pinned_controlnet_aux_vectors"
             ],
         ),
         *(
@@ -1388,7 +1388,7 @@ def _preprocessor_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]
                 ),
                 tier="exact",
                 evidence=[
-                    "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors",
+                    "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors",
                     "tests/test_vision_line_edge_schema.py::test_line_edge_aliases_preserve_parameters_and_refuse_excluded_models",
                 ],
             )
@@ -1407,7 +1407,7 @@ def _preprocessor_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]
             },
             tier="exact",
             evidence=[
-                "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
+                "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
             ],
         ),
         record(
@@ -1421,7 +1421,7 @@ def _preprocessor_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]
             },
             tier="exact",
             evidence=[
-                "packages/dinkster-vision-hed/tests/test_provider.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
+                "packages/dinkster-nodes-vision/tests/test_hed.py::test_learned_preprocessors_match_pinned_controlnet_aux_vectors"
             ],
         ),
         *(
@@ -1655,7 +1655,7 @@ def _preprocessor_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]
             },
             tier="exact",
             evidence=[
-                "packages/dinkster-vision-depth-anything-v2/tests/test_provider.py::test_depth_output_matches_pinned_controlnet_aux_vector",
+                "packages/dinkster-nodes-vision/tests/test_depth_anything_v2.py::test_depth_output_matches_pinned_controlnet_aux_vector",
                 "tests/test_vision_depth_anything_v2_schema.py::test_depth_aliases_are_provider_local_and_inactive",
             ],
         ),
@@ -1677,7 +1677,7 @@ def _preprocessor_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]
             ),
             tier="exact",
             evidence=[
-                "packages/dinkster-vision-depth-anything-v2/tests/test_provider.py::test_depth_output_matches_pinned_controlnet_aux_vector",
+                "packages/dinkster-nodes-vision/tests/test_depth_anything_v2.py::test_depth_output_matches_pinned_controlnet_aux_vector",
                 "tests/test_vision_depth_anything_v2_schema.py::test_depth_aliases_are_provider_local_and_inactive",
             ],
         ),

@@ -72,7 +72,11 @@ COMPAT_MANIFEST = (
     Path(__file__).parent.parent / "packages" / "dinkster-compat-comfy" / "dinkster-pack.toml"
 )
 UPSCALE_MANIFEST = (
-    Path(__file__).parent.parent / "packages" / "dinkster-vision-upscale" / "dinkster-pack.toml"
+    Path(__file__).parent.parent
+    / "packages"
+    / "dinkster-nodes-vision"
+    / "dinkster_vision_upscale_pack"
+    / "dinkster-pack.toml"
 )
 OPENAI_MANIFEST = (
     Path(__file__).parent.parent
