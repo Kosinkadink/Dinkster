@@ -917,7 +917,7 @@ def test_native_model_loader_schemas_are_asset_in_resident_out() -> None:
             "CLIPLoader",
             "text_encoder",
             "model/text-encoder",
-            {"clip": ("comfy.CLIP",)},
+            {"clip": ("dinkster.clip",)},
         ),
         (
             LoadDiffusionModel,

@@ -307,6 +307,33 @@ inline in the `/api/nodes` packs table and fetch the document lazily from
 change the document, ship new bytes, get a new digest. Blueprints never
 join schema signatures or execution identity.
 
+## Templates
+
+`[[pack.templates]]` entries ship complete starter workflows shown in the
+new-workflow gallery. They use the same `id`, `name`, optional `description`,
+`tags`, and JSON `file` rules as blueprints. `family` groups the template in
+the gallery, `models` lists exact required model filenames, and `assets`
+lists required pack-local `[[pack.assets]]` ids. An optional `thumbnail`
+names a static 64x64 PNG or WebP under the pack directory.
+
+```toml
+[[pack.templates]]
+id = "starter"
+name = "Starter workflow"
+description = "A minimal generation workflow."
+family = "example.image"
+tags = ["starter", "image"]
+models = ["example-model.safetensors"]
+assets = ["example-model"]
+file = "templates/starter.json"
+thumbnail = "templates/starter.png"
+```
+
+Descriptors are paged by `GET /api/templates`. Workflow and thumbnail bytes
+use immutable digest caching at
+`/api/packs/{packId}/templates/{id}` and
+`/api/packs/{packId}/templates/{id}/thumbnail`.
+
 ## Documentation
 
 Declare documentation explicitly and keep it with the nodes it describes:

@@ -715,10 +715,13 @@ class PackTemplateAsset:
     digest: str
     description: str = ""
     tags: tuple[str, ...] = ()
+    family: str = ""
+    models: tuple[str, ...] = ()
     assets: tuple[str, ...] = ()
     """Pack-local [[pack.assets]] ids, passed through verbatim: the
     manifest already validated they exist among the pack's surviving
     declarations."""
+    thumbnail: PackIconAsset | None = None
     data: bytes = field(repr=False, default=b"")
 
     def descriptor(self, pack_id: str) -> dict[str, object]:
@@ -731,8 +734,17 @@ class PackTemplateAsset:
             wire["description"] = self.description
         if self.tags:
             wire["tags"] = list(self.tags)
+        if self.family:
+            wire["family"] = self.family
+        if self.models:
+            wire["models"] = list(self.models)
         if self.assets:
             wire["assets"] = list(self.assets)
+        if self.thumbnail is not None:
+            wire["thumbnail"] = {
+                "digest": self.thumbnail.digest,
+                "mediaType": self.thumbnail.media_type,
+            }
         wire["digest"] = self.digest
         return wire
 
@@ -2778,6 +2790,27 @@ async def handle_pack_template(request: web.Request) -> web.Response:
     )
 
 
+async def handle_pack_template_thumbnail(request: web.Request) -> web.Response:
+    """Immutable thumbnail bytes for one template descriptor."""
+    state = request.app[STATE_KEY]
+    info = state.packs.get(request.match_info["pack_id"])
+    template = None
+    if info is not None:
+        template_id = request.match_info["template_id"]
+        template = next((tp for tp in info.templates if tp.id == template_id), None)
+    if template is None or template.thumbnail is None:
+        raise web.HTTPNotFound(
+            text=json.dumps({"error": "no such template thumbnail"}),
+            content_type="application/json",
+        )
+    return _immutable_pack_response(
+        request,
+        template.thumbnail.digest,
+        template.thumbnail.data,
+        template.thumbnail.media_type,
+    )
+
+
 def _valid_doc_pages(state: ServerState, pack_id: str) -> tuple[PackDocPageAsset, ...]:
     info = state.packs.get(pack_id)
     if info is None or info.docs is None:
@@ -4393,6 +4426,10 @@ def create_app(
     app.router.add_get("/api/packs/{pack_id}/blueprints/{blueprint_id}", handle_pack_blueprint)
     app.router.add_get("/api/templates", handle_templates_list)
     app.router.add_get("/api/packs/{pack_id}/templates/{template_id}", handle_pack_template)
+    app.router.add_get(
+        "/api/packs/{pack_id}/templates/{template_id}/thumbnail",
+        handle_pack_template_thumbnail,
+    )
     app.router.add_get("/api/docs", handle_docs_list)
     app.router.add_get("/api/packs/{pack_id}/docs/pages/{digest}", handle_pack_doc_page)
     app.router.add_get("/api/packs/{pack_id}/docs/assets/{digest}", handle_pack_doc_asset)

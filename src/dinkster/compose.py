@@ -271,6 +271,7 @@ __all__ = [
     "default_pack_ids",
     "default_pack_spec",
     "default_pack_specs",
+    "model_pack_specs",
     "openai_generation_pack_spec",
     "resolve_manifest_path",
     "training_pack_specs",
@@ -306,6 +307,9 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
         "dinkster-nodes-remote": "dinkster_nodes_remote",
         "dinkster-nodes-generation": "dinkster_nodes_generation",
         "dinkster-nodes-generation-openai": "dinkster_nodes_generation_openai",
+        "dinkster-model-qwen-image": "dinkster_model_qwen_image",
+        "dinkster-model-triposplat": "dinkster_model_triposplat",
+        "dinkster-model-wan": "dinkster_model_wan",
         "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
         "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
         "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
@@ -330,6 +334,11 @@ _ISOLATED_FIRST_PARTY_PACKS = frozenset(
 _PACK_ARTIFACT_SIDECARS = ("comfy-aliases.json", "comfy-groups.json")
 _DEFAULT_SUITE_DISTRIBUTION = "dinkster-nodes-std"
 _DEFAULT_SUITE_LOCK = "dinkster_nodes_std_suite/dinkster.lock"
+_MODEL_PACK_IDS = (
+    "dinkster-model-qwen-image",
+    "dinkster-model-triposplat",
+    "dinkster-model-wan",
+)
 
 
 def _trusted_reserved_claims_can_overlap(first: str, second: str) -> bool:
@@ -1438,6 +1447,11 @@ def default_pack_specs() -> tuple[PackSpec, ...]:
         by_name[name] = spec
     order, _receipts = _resolve_pack_contracts(entries, _builtin_registry_providers())
     return tuple(by_name[name] for name in order)
+
+
+def model_pack_specs() -> tuple[PackSpec, ...]:
+    """Resolve the installed first-party model packs in stable order."""
+    return tuple(default_pack_spec(pack_id) for pack_id in _MODEL_PACK_IDS)
 
 
 def training_pack_specs(journal_path: Path | str) -> tuple[PackSpec, PackSpec]:

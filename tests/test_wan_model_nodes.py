@@ -54,6 +54,7 @@ def test_wan_model_manifest_owns_the_native_animate_schemas() -> None:
     ]
     assert {(item.registry, item.id) for item in manifest.requirements.registry} == {
         ("dinkster.model-families", "dinkster.wan21"),
+        ("dinkster.model-families", "dinkster.wan22"),
         ("dinkster.samplers", "dinkster.ar_video"),
         ("dinkster.samplers", "dinkster.uni_pc"),
         ("dinkster.schedulers", "dinkster.simple"),

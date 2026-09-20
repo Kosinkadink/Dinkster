@@ -644,12 +644,15 @@ class PackTemplate:
     path: Path
     description: str = ""
     tags: tuple[str, ...] = ()
+    family: str = ""
+    models: tuple[str, ...] = ()
     assets: tuple[str, ...] = ()
     """Pack-local ``[[pack.assets]]`` ids this template requires.
     Validated to exist among the pack's surviving declarations at parse
     time (a dangling reference drops the template - its acquisition plan
     could never be constructed); passed through as ids on the wire, where
     clients join them against the pack's asset descriptors."""
+    thumbnail: PackIcon | None = None
     data: bytes = dataclass_field(repr=False, default=b"")
 
 
@@ -1375,6 +1378,17 @@ def validate_pack_template(
         return None, "'tags' must be a list of non-empty strings"
     tags = tuple(cast("list[str]", tags_raw))
 
+    family = table.get("family", "")
+    if not isinstance(family, str):
+        return None, "'family' must be a string"
+
+    models_raw = table.get("models", [])
+    if not isinstance(models_raw, list) or not all(
+        isinstance(model, str) and model for model in cast("list[object]", models_raw)
+    ):
+        return None, "'models' must be a list of non-empty model names"
+    models = tuple(cast("list[str]", models_raw))
+
     assets_raw = table.get("assets", [])
     if not isinstance(assets_raw, list) or not all(
         isinstance(ref, str) and ref for ref in cast("list[object]", assets_raw)
@@ -1391,6 +1405,15 @@ def validate_pack_template(
     if data is None or path is None:
         return None, problem
 
+    thumbnail = None
+    thumbnail_file = table.get("thumbnail")
+    if thumbnail_file is not None:
+        if not isinstance(thumbnail_file, str) or not thumbnail_file:
+            return None, "'thumbnail' must be a non-empty string"
+        thumbnail, thumbnail_problem = validate_pack_icon(manifest_path, thumbnail_file)
+        if thumbnail is None:
+            return None, f"'thumbnail' {thumbnail_problem}"
+
     digest = "sha256:" + hashlib.sha256(data).hexdigest()
     return (
         PackTemplate(
@@ -1400,7 +1423,10 @@ def validate_pack_template(
             path=path,
             description=description,
             tags=tags,
+            family=family,
+            models=models,
             assets=assets,
+            thumbnail=thumbnail,
             data=data,
         ),
         None,
