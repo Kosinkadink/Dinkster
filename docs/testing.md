@@ -51,12 +51,17 @@ without editing the job, set repository variable `DINKSTER_PR_RUNNER` to
 the JSON string `"ubuntu-latest"`. No local wrapper or machine path is used
 by the fast checks.
 
-`.github/workflows/full-validation.yml` runs on every main push, daily at
-10:23 UTC (03:23 Pacific daylight time / 02:23 Pacific standard time), and
-manual dispatch. It retains the Python 3.12 Linux suite, both Python 3.12
-Windows shards, branch coverage with the 80% floor, model tests, one
-torch CPU job, translation coverage, artifact
-smoke checks and the macOS descriptor test. Select a branch in Actions'
+`.github/workflows/full-validation.yml` runs on every main push, every two
+hours from 06:00 through 22:00 Pacific, daily at 10:23 UTC, on manual
+dispatch, and when called by the release workflow. The `on.schedule` cron
+list in that file is the single schedule definition; change its first cron
+line to change the two-hour cadence. A scheduled run skips the heavy jobs
+when the latest successful main run already validated the same commit.
+Push runs cancel superseded push runs, while scheduled and called runs use a
+separate non-cancelling concurrency group. Full validation retains the
+Python 3.12 Linux suite, both Python 3.12 Windows shards, branch coverage
+with the 80% floor, model tests, one torch CPU job, translation coverage,
+artifact smoke checks and the macOS descriptor test. Select a branch in Actions'
 "Run workflow" menu, or pass the dispatch ref explicitly:
 
 ```bash
@@ -66,6 +71,10 @@ gh workflow run full-validation.yml --repo Kosinkadink/Dinkster --ref <branch>
 The dispatch ref selects both the workflow and checked-out code, so owners
 can obtain Windows and full-suite evidence for an unmerged branch. The
 selected branch must contain the workflow. The daily audit uses main.
+
+`release.yml` calls this reusable workflow before building and publishing,
+so release validation runs against the exact selected main commit rather
+than relying on an earlier push run.
 
 Both workflows use Python 3.12 only. Package requirements and the dependency
 lock continue to support Python 3.13. Heavy jobs run independently; the
