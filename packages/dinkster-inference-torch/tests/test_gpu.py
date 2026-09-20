@@ -5089,13 +5089,11 @@ def test_unet_runs_from_worker_threads_per_device() -> None:
 # ------------------------------------------------- Flux
 #
 # Same discipline as the UNet block above, plus the
-# Flux-specific seam: apply_rope routes through the Dinkster-owned fused
-# rotation on CUDA (bit-identical to the pure-torch reference), with
-# dinkster-kitchen's combined operation as the fallback tier, when no
-# input needs gradients. Every no-grad forward here proves the owned
-# route; the kitchen tier is pinned separately with the owned probe
-# disabled. Golden comparisons use atol=1e-4 because CUDA SDPA
-# accumulates differently from the CPU reference.
+# Flux-specific seam: apply_rope uses dinkster-kitchen's combined
+# operation when no input needs gradients, otherwise pure torch. The
+# kitchen route is pinned separately against the direct backend. Golden
+# comparisons use atol=1e-4 because CUDA SDPA accumulates differently
+# from the CPU reference.
 
 
 def _flux_model(case: str):  # noqa: ANN202 - test-local helper
