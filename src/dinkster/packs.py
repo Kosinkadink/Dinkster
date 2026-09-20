@@ -19,6 +19,7 @@ from dinkster_server import (
     PackDocAsset,
     PackDocPageAsset,
     PackDocsAsset,
+    PackFrontendAsset,
     PackIconAsset,
     PackInfo,
     PackLocaleCatalogAsset,
@@ -169,4 +170,14 @@ def pack_info_from_manifest(manifest: PackManifest) -> PackInfo:
         info = replace(info, comfy_aliases=manifest.comfy_aliases)
     if manifest.comfy_groups is not None:
         info = replace(info, comfy_groups=manifest.comfy_groups)
+    if manifest.frontend_assets:
+        info = replace(
+            info,
+            frontend_assets=tuple(
+                PackFrontendAsset(asset.path, asset.media_type, asset.data)
+                for asset in manifest.frontend_assets
+            ),
+        )
+    if manifest.settings_schema is not None:
+        info = replace(info, settings_schema=manifest.settings_schema)
     return info

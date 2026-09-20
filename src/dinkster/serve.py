@@ -2121,6 +2121,9 @@ def main(argv: list[str] | None = None) -> None:
                 choice_owners=composition.choice_owners,
                 compat_skips=composition.compat_skips,
                 settings=runtime_settings,
+                pack_settings_root=(
+                    Path(args.library_root) / "pack-settings" if args.library_root else None
+                ),
                 redactor=redactor,
                 attention_policy=attention_policy,
                 execution_journal=execution_journal,

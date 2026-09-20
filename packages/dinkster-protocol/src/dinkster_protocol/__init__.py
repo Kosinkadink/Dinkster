@@ -98,7 +98,15 @@ from .extensions import (
     is_extension_snapshot_digest,
 )
 from .frontend_modules import FrontendContribution, FrontendModule
-from .pack_surfaces import JsonField, JsonObjectSchema, PackEvent, PackRoute, report_pack_event
+from .pack_surfaces import (
+    JsonField,
+    JsonObjectSchema,
+    PackEvent,
+    PackRoute,
+    PackSettingField,
+    PackSettingsSchema,
+    report_pack_event,
+)
 from .preview import (
     PREVIEW_ANIMATIONS,
     PREVIEW_MODES,
@@ -644,6 +652,8 @@ __all__ = [
     "JsonObjectSchema",
     "PackEvent",
     "PackRoute",
+    "PackSettingField",
+    "PackSettingsSchema",
     "report_pack_event",
     "EXTENSION_CAPABILITIES",
     "EXTENSION_SCOPES",
