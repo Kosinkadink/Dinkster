@@ -8,6 +8,8 @@
 - Installed packs can publish snapshot-selected immutable JavaScript modules.
   Snapshot and module reads do not start execution workers. Frontend privileges
   and controls do not grant or remove backend node execution ownership.
+- Doctor warns when a pack declares a frontend contribution kind or extension
+  capability for which no runtime consumer exists.
 - Packs can publish validated locale catalogs for node, blueprint, and guide
   text. Catalog descriptors are available on schema wire 44, and their exact
   digest-addressed JSON bytes are served as immutable pack resources.
