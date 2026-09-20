@@ -148,6 +148,8 @@ def _schema_atoms(schema: Any) -> set[str]:
 
 
 def probe(manifest_path: str) -> dict[str, Any]:
+    from dinkster_protocol import EXTENSION_SCOPES
+
     from dinkster_workers.manifest import load_manifest, resolve_entry
 
     manifest = load_manifest(manifest_path)
@@ -176,6 +178,7 @@ def probe(manifest_path: str) -> dict[str, Any]:
         "unregistered_schema_atoms": [],
         "replacement_errors": [],
         "types_error": None,
+        "extension_entry_errors": {},
     }
 
     threads_before = threading.active_count()
@@ -189,6 +192,14 @@ def probe(manifest_path: str) -> dict[str, Any]:
         ):
             nodes_obj = resolve_entry(manifest.nodes_entry)
             types_fn = resolve_entry(manifest.types_entry) if manifest.types_entry else None
+            for scope in EXTENSION_SCOPES:
+                entry = getattr(manifest.extension.entries, scope)
+                if entry is None:
+                    continue
+                try:
+                    resolve_entry(entry)
+                except BaseException as exc:  # noqa: BLE001 - every accepted entry is probed
+                    report["extension_entry_errors"][scope] = _exception_detail(exc)
     except BaseException as exc:  # noqa: BLE001 - pack code may raise anything
         report["entry_error"] = _exception_detail(exc)
         report["import_stdout"] = out.getvalue()[:4000]

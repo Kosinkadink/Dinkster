@@ -39,6 +39,12 @@ Compose the pack explicitly with its manifest:
 uv run dinkster-serve --pack packages/dinkster-nodes-dev/dinkster-pack.toml
 ```
 
+`extension-contract-pack.toml` is a separate ordinary pack used by CI to prove
+the public third-party extension contract. It registers a custom value type,
+two nodes, a typed route, a typed event, and a frontend module. The proof graph
+sends `dev.image.gradient` through `dev.extension.contract`; the frontend
+module renders the route response and execution event in host-owned status UI.
+
 ## The widget/socket gallery
 
 `gallery.py` ships `dev.gallery.*` nodes that collectively exercise every

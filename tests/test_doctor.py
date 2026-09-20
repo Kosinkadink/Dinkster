@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from dinkster_protocol import EXTENSION_SCOPES
 from dinkster_workers import detect_bubblewrap, load_manifest
 from dinkster_workers.doctor import (
     DOCTOR_REPORT_VERSION,
@@ -999,6 +1000,42 @@ def test_broken_entry_is_a_finding_not_a_crash(tmp_path: Path) -> None:
     unresolvable = [f for f in report.findings if f.code == "entry.unresolvable"]
     assert len(unresolvable) == 1
     assert "kaboom" in unresolvable[0].message
+
+
+@pytest.mark.parametrize("scope", EXTENSION_SCOPES)
+def test_every_extension_entry_scope_must_resolve(tmp_path: Path, scope: str) -> None:
+    valid_manifest_text = HEALTHY_MANIFEST + (
+        f'\n[pack.extension]\n{scope} = "healthy_nodes:Doubler"\nprivileges = ["{scope}"]\n'
+    )
+    valid_manifest = write_pack(
+        tmp_path / "valid" / scope,
+        valid_manifest_text,
+        "healthy_nodes",
+        HEALTHY_NODES,
+    )
+    valid_report = diagnose(valid_manifest)
+    assert all(item.code != "extension.entry-unresolvable" for item in valid_report.findings), (
+        render_text(valid_report)
+    )
+
+    invalid_manifest_text = HEALTHY_MANIFEST + (
+        f'\n[pack.extension]\n{scope} = "healthy_nodes:missing_{scope}"\nprivileges = ["{scope}"]\n'
+    )
+    invalid_manifest = write_pack(
+        tmp_path / "invalid" / scope,
+        invalid_manifest_text,
+        "healthy_nodes",
+        HEALTHY_NODES,
+    )
+
+    report = diagnose(invalid_manifest)
+
+    findings = [item for item in report.findings if item.code == "extension.entry-unresolvable"]
+    assert len(findings) == 1, render_text(report)
+    assert findings[0].severity == "error"
+    assert f"[pack.extension] {scope}" in findings[0].message
+    assert f"missing_{scope}" in findings[0].message
+    assert findings[0].fix
 
 
 def test_schema_problems_and_duplicates_are_errors(tmp_path: Path) -> None:
