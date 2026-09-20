@@ -68,14 +68,12 @@ jobs:
             HostName github.com
             User git
             IdentityAgent $training_socket
-            IdentitiesOnly yes
             HostKeyAlias github.com
             UserKnownHostsFile $RUNNER_TEMP/identity-known-hosts
           Host github-identity
             HostName github.com
             User git
             IdentityAgent $SSH_AUTH_SOCK
-            IdentitiesOnly yes
             HostKeyAlias github.com
             UserKnownHostsFile $RUNNER_TEMP/identity-known-hosts
           EOF
