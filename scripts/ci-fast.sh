@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+uv run --locked python tools/gen_extension_contribution_kinds.py --check
 uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked pyright

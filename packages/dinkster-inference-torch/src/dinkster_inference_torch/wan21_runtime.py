@@ -2632,10 +2632,6 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
         return not isinstance(self.assembled.diffusion, Wan21CausalModel)
 
     @property
-    def supports_context_windows(self) -> bool:
-        return True
-
-    @property
     def conditioning_identity(self) -> str:
         """Stable compatibility identity for materialized Wan conditioning."""
         config = self.assembled.diffusion.config
@@ -5378,7 +5374,6 @@ class Wan21DiffusionRuntime(MultiStreamSamplingRuntime):
     family = Wan21Runtime.family  # pyright: ignore[reportIncompatibleMethodOverride]
     runtime_identity = Wan21Runtime.runtime_identity
     supports_denoise_mask = Wan21Runtime.supports_denoise_mask
-    supports_context_windows = Wan21Runtime.supports_context_windows  # pyright: ignore[reportIncompatibleMethodOverride]
     conditioning_identity = Wan21Runtime.conditioning_identity  # pyright: ignore[reportIncompatibleMethodOverride]
     prepare_text_conditioning = Wan21Runtime.prepare_text_conditioning
     prepare_conditioning = Wan21Runtime.prepare_conditioning

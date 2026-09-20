@@ -89,7 +89,13 @@ def detect_ace15_components(
 
 def ace15_component_descriptor(family: ModelFamily) -> ComponentDescriptor:
     return ComponentDescriptor(
-        family,
+        replace(
+            family,
+            engine=replace(
+                family.engine,
+                attention_backends=tuple((role, "qwen") for role in ACE15_TEXT_ROLES),
+            ),
+        ),
         detect_ace15_components,
         ACE15_TEXT_ROLES,
         ACE15_TEXT_ROLES,
@@ -97,7 +103,6 @@ def ace15_component_descriptor(family: ModelFamily) -> ComponentDescriptor:
         "dinkster_inference_torch.ace15_text:assemble_ace15_text_recipe",
         "dinkster_inference_torch.ace15_text:ACE15TextRuntime",
         requires_text_recipe=True,
-        attention_roles=ACE15_TEXT_ROLES,
     )
 
 

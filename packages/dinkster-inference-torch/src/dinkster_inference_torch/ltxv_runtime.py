@@ -485,10 +485,6 @@ class LTXVDiffusionRuntime(MultiStreamSamplingRuntime):
         return self.assembled.vae_config
 
     @property
-    def supports_context_windows(self) -> bool:
-        return True
-
-    @property
     def conditioning_identity(self) -> str:
         """Stable compatibility identity for materialized LTX-Video conditioning."""
         config = self.assembled.diffusion.config

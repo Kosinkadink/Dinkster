@@ -119,7 +119,7 @@ class SamplingRuntime(ABC):
 
     @property
     def supports_context_windows(self) -> bool:
-        return False
+        return self.family.engine.supports_context_windows
 
     def _validate_sampling_guidance(self, guidance: FluxGuidance) -> None:
         if guidance is None or (type(guidance) is str and guidance == FLUX_GUIDANCE_DISABLED):

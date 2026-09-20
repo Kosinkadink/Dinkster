@@ -636,6 +636,75 @@ def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_registry_i
         asyncio.run(composer.close())
 
 
+def test_pack_registry_providers_order_consumers_and_report_conflicts(tmp_path: Path) -> None:
+    digest = "sha256:" + "9" * 64
+
+    def spec(path: Path, name: str) -> PackSpec:
+        return PackSpec(
+            path,
+            packs={name: PackInfo(display_name=name, version="1.0.0", artifact_digest=digest)},
+        )
+
+    provider = write_contract_manifest(
+        tmp_path / "provider",
+        "provider",
+        '[pack.provides.registry]\n"dinkster.samplers" = ["provider.sampler"]\n'
+        '"dinkster.model-families" = ["provider.family"]\n',
+    )
+    consumer = write_contract_manifest(
+        tmp_path / "consumer",
+        "consumer",
+        '[pack.requirements.registry]\n"dinkster.samplers" = ["provider.sampler"]\n'
+        '"dinkster.model-families" = ["provider.family"]\n',
+    )
+    composer = ServingComposer()
+    try:
+        ordered = composer.order_pack_entries(
+            (spec(consumer, "consumer"), spec(provider, "provider"))
+        )
+        assert [Path(item.manifest) for item in ordered] == [provider, consumer]
+
+        duplicate = write_contract_manifest(
+            tmp_path / "duplicate",
+            "duplicate",
+            '[pack.provides.registry]\n"dinkster.samplers" = ["provider.sampler"]\n',
+        )
+        with pytest.raises(CompositionError, match="provided by both"):
+            composer.order_pack_entries((spec(provider, "provider"), spec(duplicate, "duplicate")))
+
+        builtin_collision = write_contract_manifest(
+            tmp_path / "builtin-collision",
+            "builtin-collision",
+            '[pack.provides.registry]\n"dinkster.samplers" = ["dinkster.euler"]\n',
+        )
+        with pytest.raises(CompositionError, match="dinkster-inference/1.*builtin-collision"):
+            composer.order_pack_entries((spec(builtin_collision, "builtin-collision"),))
+
+        alpha = write_contract_manifest(
+            tmp_path / "registry-alpha",
+            "registry-alpha",
+            '[pack.provides.registry]\n"dinkster.samplers" = ["alpha.sampler"]\n'
+            '[pack.requirements.registry]\n"dinkster.schedulers" = ["beta.scheduler"]\n',
+        )
+        beta = write_contract_manifest(
+            tmp_path / "registry-beta",
+            "registry-beta",
+            '[pack.provides.registry]\n"dinkster.schedulers" = ["beta.scheduler"]\n'
+            '[pack.requirements.registry]\n"dinkster.samplers" = ["alpha.sampler"]\n',
+        )
+        with pytest.raises(
+            CompositionError,
+            match=(
+                "dependency cycle: registry-alpha -> registry-beta, registry-beta -> registry-alpha"
+            ),
+        ):
+            composer.order_pack_entries(
+                (spec(alpha, "registry-alpha"), spec(beta, "registry-beta"))
+            )
+    finally:
+        asyncio.run(composer.close())
+
+
 def test_composed_generation_records_contract_and_registry_resolution(tmp_path: Path) -> None:
     manifest = write_contract_manifest(
         tmp_path / "consumer",
@@ -1161,6 +1230,8 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
         module_init = module_root.parent / "__init__.py"
         if distribution_id != pack_id and module_init in tracked_paths:
             artifact_paths.add(module_init)
+        if module_root.parent.name == "dinkster_nodes_vision":
+            artifact_paths.update(path for path in tracked_paths if path.parent == sidecar_root)
         artifact_paths.update(
             sidecar_root / filename
             for filename in compose._PACK_ARTIFACT_SIDECARS
@@ -1391,6 +1462,21 @@ def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
     bundled_digest = compose._installed_pack_digest(bundled / "dinkster-pack.toml", None)
 
     assert source_digest == bundled_digest
+
+
+def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Path) -> None:
+    from dinkster import compose
+
+    source = Path(__file__).parent.parent / "packages/dinkster-nodes-vision"
+    copied = shutil.copytree(source, tmp_path / source.name)
+    manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
+    module = copied / "src/dinkster_nodes_vision/hed"
+    expected = compose._installed_pack_digest(manifest, module)
+    assert expected == ("sha256:6badee4196df5ec5e7e73ea7729229921d08353b9c98c1ed3ca0c5c79d73d9af")
+    license_file = manifest.parent / "MLSD_LICENSE"
+    license_file.write_bytes(license_file.read_bytes().replace(b"\n", b"\r\n"))
+
+    assert compose._installed_pack_digest(manifest, module) == expected
 
 
 def test_default_pack_refuses_version_outside_suite_lock(
