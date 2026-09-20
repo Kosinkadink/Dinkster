@@ -13,6 +13,9 @@ from typing import TypedDict
 SPECIAL_CALL_KINDS = {
     "build_builtin_assembly_registry": "assemblyBuilder",
     "builtin_families": "descriptorCatalog",
+    "builtin_sampler_snapshot": "descriptorCatalog",
+    "builtin_samplers": "descriptorCatalog",
+    "builtin_schedulers": "descriptorCatalog",
 }
 SITE_KINDS = ("assemblyBuilder", "descriptorCatalog", "registryFactory")
 REGISTRY_FACTORY = re.compile(r"^(?:builtin|default)_.+_registry$")

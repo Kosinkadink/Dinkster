@@ -25,6 +25,33 @@ def run_guard(root: Path, allowlist: Path, *arguments: str) -> subprocess.Comple
     )
 
 
+def test_extension_factory_guard_tracks_each_descriptor_catalog(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    module = source / "runtime.py"
+    allowlist = tmp_path / "allowlist.json"
+
+    for call in (
+        "builtin_families",
+        "builtin_sampler_snapshot",
+        "builtin_samplers",
+        "builtin_schedulers",
+    ):
+        module.write_text(f"catalog = {call}()\n", encoding="utf-8")
+        assert run_guard(tmp_path, allowlist, "--write").returncode == 0
+        recorded = json.loads(allowlist.read_text(encoding="utf-8"))
+        assert recorded["sites"] == [
+            {
+                "kind": "descriptorCatalog",
+                "call": call,
+                "path": "src/runtime.py",
+                "line": 1,
+                "column": 11,
+                "issue": 120,
+            }
+        ]
+
+
 def test_extension_factory_guard_rejects_site_and_ceiling_drift(tmp_path: Path) -> None:
     source = tmp_path / "packages/example/src/example"
     source.mkdir(parents=True)

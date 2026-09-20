@@ -1,7 +1,7 @@
 {
   "ceilings": {
     "assemblyBuilder": 1,
-    "descriptorCatalog": 8,
+    "descriptorCatalog": 17,
     "registryFactory": 9
   },
   "sites": [
@@ -11,6 +11,38 @@
       "path": "packages/dinkster-inference/src/dinkster_inference/registries.py",
       "line": 42,
       "column": 20,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_samplers",
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/_portable_solvers.py",
+      "line": 3561,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_schedulers",
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/schedules.py",
+      "line": 724,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_samplers",
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/solvers.py",
+      "line": 972,
+      "column": 58,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_samplers",
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/solvers.py",
+      "line": 974,
+      "column": 23,
       "issue": 120
     },
     {
@@ -34,6 +66,22 @@
       "call": "builtin_families",
       "path": "packages/dinkster-inference/src/dinkster_inference/gguf.py",
       "line": 986,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_schedulers",
+      "path": "packages/dinkster-inference/src/dinkster_inference/schedules.py",
+      "line": 478,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_samplers",
+      "path": "packages/dinkster-inference/src/dinkster_inference/solvers.py",
+      "line": 543,
       "column": 23,
       "issue": 120
     },
@@ -75,6 +123,30 @@
       "path": "packages/dinkster-native/src/dinkster_native/preview_emit.py",
       "line": 903,
       "column": 19,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_sampler_snapshot",
+      "path": "src/dinkster/compose.py",
+      "line": 1986,
+      "column": 59,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_sampler_snapshot",
+      "path": "src/dinkster/compose.py",
+      "line": 2544,
+      "column": 32,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_sampler_snapshot",
+      "path": "src/dinkster/compose.py",
+      "line": 4491,
+      "column": 28,
       "issue": 120
     },
     {

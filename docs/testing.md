@@ -34,7 +34,7 @@ makes, and these rules keep it that way as the codebase grows.
   scanner pins every zero-argument registry factory, assembly-registry builder,
   and descriptor-catalog read to an exact source location and separate
   non-increasing ceilings. The committed ceilings are 9 registry factories,
-  1 assembly builder, and 8 descriptor-catalog reads. New and stale sites fail
+  1 assembly builder, and 17 descriptor-catalog reads. New and stale sites fail
   the check. The shared-engine family-gate scanner also runs in fast CI with its
   current zero-site ceiling.
 
