@@ -3344,6 +3344,10 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
         )
 
     def _sampling_sigma_space(self, sampling_shift: float | None) -> FlowSigmas:
+        if type(self.assembled.diffusion) is Wan21CausalModel:
+            if sampling_shift is not None:
+                raise Wan21RuntimeError("Wan CausalAR sampling shift is fixed at 5.0")
+            return FlowSigmas(shift=5.0)
         return _wan_custom_space(self.assembled, sampling_shift)
 
     def _custom_sampling_process_in(self, latent: torch.Tensor) -> torch.Tensor:
@@ -3437,6 +3441,12 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
             initial_latent=initial,
             compute_dtype=compute_dtype,
         )
+
+        def capture_structural_denoised(value: object) -> object:
+            if type(value) is not MultiStreamLatent:
+                raise TypeError("Wan CausalAR denoised state must contain a multistream latent")
+            return value.replace("video", self._latent_process_out(value.by_role("video")))
+
         return SamplingDenoiserExecution(
             cast("SamplingDenoiserAdapter", model),
             direct_denoiser=denoiser,
@@ -3445,6 +3455,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
             process_in=self._latent_process_in,
             process_out=self._latent_process_out,
             unpack_state=(_wan_unpack_video_state if latent_context.structural else None),
+            capture_denoised=(capture_structural_denoised if latent_context.structural else None),
         )
 
     @property
@@ -5319,7 +5330,8 @@ class Wan21CausalDiffusionRuntime(MultiStreamSamplingRuntime):
 
     retained_offload_storage_components = frozenset()
     sampling_error = Wan21RuntimeError
-    supports_sampling_shift = True
+    supports_sampling_shift = False
+    supports_denoised_capture = True
 
     def __init__(
         self,
@@ -5353,7 +5365,9 @@ class Wan21CausalDiffusionRuntime(MultiStreamSamplingRuntime):
         return self._assembled
 
     def _sampling_sigma_space(self, sampling_shift: float | None) -> FlowSigmas:
-        return _wan_custom_space(self.assembled, sampling_shift)
+        if sampling_shift is not None:
+            raise Wan21RuntimeError("Wan CausalAR sampling shift is fixed at 5.0")
+        return FlowSigmas(shift=5.0)
 
     family = Wan21Runtime.family  # pyright: ignore[reportIncompatibleMethodOverride]
     runtime_identity = Wan21Runtime.runtime_identity

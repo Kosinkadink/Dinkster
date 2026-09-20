@@ -684,6 +684,8 @@ class SamplingDenoiserExecution:
     denoise_mask_prepared: bool = False
     fixed_inpaint_latent: bool = False
     packed_inpaint: PackedInpaintConfiguration | None = None
+    capture_denoised: Callable[[object], object] | None = None
+    defer_callback_cancellation: bool = False
     close: Callable[[], None] | None = None
 
 
@@ -1026,7 +1028,11 @@ def sampling_execution(
 
     def report_state(event: SamplingStateEvent[object]) -> None:
         if capture_denoised and owner.supports_denoised_capture and event.denoised is not None:
-            captured[:] = [event.denoised]
+            captured[:] = [
+                event.denoised
+                if denoiser_execution.capture_denoised is None
+                else denoiser_execution.capture_denoised(event.denoised)
+            ]
         if on_state is not None:
             on_state(event)
 
@@ -1037,7 +1043,7 @@ def sampling_execution(
             raise SamplingCancelled("sampling cancelled")
         if on_step is not None:
             on_step(event)
-        if cancelled():
+        if not denoiser_execution.defer_callback_cancellation and cancelled():
             from dinkster_inference import SamplingCancelled
 
             raise SamplingCancelled("sampling cancelled")

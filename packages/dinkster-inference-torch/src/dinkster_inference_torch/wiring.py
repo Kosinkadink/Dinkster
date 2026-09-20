@@ -471,6 +471,7 @@ def _flux_scheduled_denoiser(
         ),
         conditioning_payloads=replacements,
         solver_options=MappingProxyType({"realized_timeline": realized_timeline}),
+        defer_callback_cancellation=True,
         close=evaluator.close,
     )
 

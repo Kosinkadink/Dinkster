@@ -134,6 +134,7 @@ from dinkster_inference_torch import (
     torch_sampler_registry,
     torch_scheduler_registry,
 )
+from dinkster_inference_torch import sampling_execution as sampling_engine
 from dinkster_inference_torch import sampling_execution as sampling_execution_module
 from dinkster_inference_torch._conditioning_layout import declare_text_conditioning
 from dinkster_inference_torch.attention import builtin_sdpa_kernel
@@ -3607,13 +3608,11 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
-
         def refuse_run(*_args: object, **_kwargs: object) -> torch.Tensor:
             pytest.fail("run_denoise must not execute")
 
         monkeypatch.setattr(
-            wiring_module,
+            sampling_engine,
             "run_denoise",
             refuse_run,
         )
@@ -3695,13 +3694,11 @@ class TestSample:
         gain: ContributionGain,
         message: str,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
-
         def fail_run(*_args: object, **_kwargs: object) -> torch.Tensor:
             pytest.fail("run_denoise must not execute")
 
         monkeypatch.setattr(
-            wiring_module,
+            sampling_engine,
             "run_denoise",
             fail_run,
         )
