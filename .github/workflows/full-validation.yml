@@ -4,17 +4,48 @@ on:
   push:
     branches: [main]
   schedule:
+    - cron: '0 6-22/2 * * *'
+      timezone: America/Los_Angeles
     - cron: '23 10 * * *'
   workflow_dispatch:
+  workflow_call:
 
-# Superseded runs of the same ref are cancelled: with rapid pushes the
-# old runs only burn private-repo minutes without informing anyone.
+permissions:
+  actions: read
+  contents: read
+
+# Pushes retain fast feedback while scheduled and release validation always finish.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || 'durable' }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
+  validation-plan:
+    runs-on: [self-hosted, linux, x64]
+    outputs:
+      run-heavy: ${{ steps.plan.outputs.run-heavy }}
+    steps:
+      - name: Skip an unchanged scheduled commit
+        id: plan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName !== 'schedule') {
+              core.setOutput('run-heavy', 'true');
+              return;
+            }
+            const runs = await github.rest.actions.listWorkflowRuns({
+              ...context.repo,
+              workflow_id: 'full-validation.yml',
+              branch: 'main',
+              status: 'success',
+              per_page: 1,
+            });
+            core.setOutput('run-heavy', runs.data.workflow_runs[0]?.head_sha === context.sha ? 'false' : 'true');
+
   test:
+    needs: validation-plan
+    if: needs.validation-plan.outputs.run-heavy == 'true'
     name: test (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.shard_name }})
     runs-on: ${{ matrix.labels }}
     strategy:
@@ -125,6 +156,8 @@ jobs:
           CATALOG: ${{ runner.temp }}/default-catalog.json
 
   p2p-descriptor-macos:
+    needs: validation-plan
+    if: needs.validation-plan.outputs.run-heavy == 'true'
     runs-on: [self-hosted, macos, arm64]
     steps:
       - uses: actions/checkout@v4
@@ -141,6 +174,8 @@ jobs:
       - run: uv run --locked pytest -q tests/test_p2p_descriptor.py
 
   p2p-artifact-smoke:
+    needs: validation-plan
+    if: needs.validation-plan.outputs.run-heavy == 'true'
     runs-on: ${{ matrix.labels }}
     strategy:
       fail-fast: false
@@ -186,6 +221,8 @@ jobs:
   # minting must match the pins and CNR:OFF state on an AMD host without
   # AVX-512 (README "Hosted-CI dispatch pins").
   torch-cpu-try1:
+    needs: validation-plan
+    if: needs.validation-plan.outputs.run-heavy == 'true'
     runs-on: [self-hosted, linux, x64]
     env:
       ATEN_CPU_CAPABILITY: avx2
@@ -219,8 +256,8 @@ jobs:
 
   torch-cpu-try2:
     runs-on: [self-hosted, linux, x64]
-    needs: torch-cpu-try1
-    if: needs.torch-cpu-try1.outputs.eligible != 'true'
+    needs: [validation-plan, torch-cpu-try1]
+    if: needs.validation-plan.outputs.run-heavy == 'true' && needs.torch-cpu-try1.outputs.eligible != 'true'
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
@@ -253,8 +290,8 @@ jobs:
 
   torch-cpu-try3:
     runs-on: [self-hosted, linux, x64]
-    needs: torch-cpu-try2
-    if: needs.torch-cpu-try2.outputs.eligible != 'true'
+    needs: [validation-plan, torch-cpu-try2]
+    if: needs.validation-plan.outputs.run-heavy == 'true' && needs.torch-cpu-try2.outputs.eligible != 'true'
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
@@ -287,8 +324,8 @@ jobs:
 
   torch-cpu-try4:
     runs-on: [self-hosted, linux, x64]
-    needs: torch-cpu-try3
-    if: needs.torch-cpu-try3.outputs.eligible != 'true'
+    needs: [validation-plan, torch-cpu-try3]
+    if: needs.validation-plan.outputs.run-heavy == 'true' && needs.torch-cpu-try3.outputs.eligible != 'true'
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
@@ -321,8 +358,8 @@ jobs:
 
   torch-cpu-try5:
     runs-on: [self-hosted, linux, x64]
-    needs: torch-cpu-try4
-    if: needs.torch-cpu-try4.outputs.eligible != 'true'
+    needs: [validation-plan, torch-cpu-try4]
+    if: needs.validation-plan.outputs.run-heavy == 'true' && needs.torch-cpu-try4.outputs.eligible != 'true'
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
@@ -356,12 +393,13 @@ jobs:
   torch-cpu:
     runs-on: [self-hosted, linux, x64]
     needs:
+      - validation-plan
       - torch-cpu-try1
       - torch-cpu-try2
       - torch-cpu-try3
       - torch-cpu-try4
       - torch-cpu-try5
-    if: always()
+    if: always() && needs.validation-plan.outputs.run-heavy == 'true'
     steps:
       - name: Require one compatible CPU leg to have run the suite
         env:
@@ -380,7 +418,8 @@ jobs:
           fi
 
   model-tests:
-    if: github.repository == 'Kosinkadink/Dinkster'
+    needs: validation-plan
+    if: needs.validation-plan.outputs.run-heavy == 'true' && github.repository == 'Kosinkadink/Dinkster'
     runs-on: [self-hosted, linux, x64]
     permissions:
       contents: read
@@ -403,6 +442,8 @@ jobs:
   coverage:
     # Branch-coverage floor (docs/testing.md): a ratchet, not a target.
     # Raise --cov-fail-under when real coverage rises; never lower it.
+    needs: validation-plan
+    if: needs.validation-plan.outputs.run-heavy == 'true'
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
@@ -429,6 +470,8 @@ jobs:
           --cov=dinkster_workers --cov-branch --cov-fail-under=80
 
   translation-coverage:
+    needs: validation-plan
+    if: needs.validation-plan.outputs.run-heavy == 'true'
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4

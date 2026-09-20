@@ -320,14 +320,7 @@ def test_model_job_runs_only_in_trusted_full_validation(
     # PyYAML reads the YAML 1.1 spelling "on" as True.
     triggers = WORKFLOW[True]
     triggered = event in triggers and (event != "push" or ref == "refs/heads/main")
-    allocated = triggered and _condition_matches(
-        job["if"],
-        {
-            "github.event_name": event,
-            "github.ref": ref,
-            "github.repository": repository,
-        },
-    )
+    allocated = triggered and repository == "Kosinkadink/Dinkster"
     assert allocated == (
         (
             event in {"schedule", "workflow_dispatch"}
@@ -336,14 +329,17 @@ def test_model_job_runs_only_in_trusted_full_validation(
         and repository == "Kosinkadink/Dinkster"
     )
     assert job["runs-on"] == ["self-hosted", "linux", "x64"]
-    assert "needs" not in job
+    assert job["needs"] == "validation-plan"
     for name, hosted in JOBS.items():
-        if name != "model-tests":
+        if name not in {"model-tests", "validation-plan"}:
             assert "model-tests" not in hosted.get("needs", [])
 
 
 def test_model_job_has_no_pull_request_label_path() -> None:
-    assert JOBS["model-tests"]["if"] == "github.repository == 'Kosinkadink/Dinkster'"
+    assert JOBS["model-tests"]["if"] == (
+        "needs.validation-plan.outputs.run-heavy == 'true' && "
+        "github.repository == 'Kosinkadink/Dinkster'"
+    )
     assert "pull_request" not in WORKFLOW[True]
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     assert workflow[True]["pull_request"] is None
@@ -371,7 +367,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         "MKL_NUM_THREADS": "4",
     }
     for name in ("p2p-descriptor-macos", "p2p-artifact-smoke"):
-        assert "if" not in JOBS[name]
+        assert JOBS[name]["if"] == "needs.validation-plan.outputs.run-heavy == 'true'"
 
 
 def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
@@ -380,8 +376,12 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
     assert set(workflow[True]) == {"pull_request", "workflow_dispatch"}
     assert WORKFLOW[True] == {
         "push": {"branches": ["main"]},
-        "schedule": [{"cron": "23 10 * * *"}],
+        "schedule": [
+            {"cron": "0 6-22/2 * * *", "timezone": "America/Los_Angeles"},
+            {"cron": "23 10 * * *"},
+        ],
         "workflow_dispatch": None,
+        "workflow_call": None,
     }
     job = workflow["jobs"]["fast"]
     assert job["timeout-minutes"] == 5
@@ -405,6 +405,38 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
     ]
     assert "--cov" not in script
     assert "torch-cpu-suite" not in str(job)
+
+
+def test_full_validation_schedule_and_concurrency_keep_durable_runs_alive() -> None:
+    assert WORKFLOW["permissions"] == {"actions": "read", "contents": "read"}
+    assert WORKFLOW["concurrency"] == {
+        "group": (
+            "${{ github.workflow }}-${{ github.ref }}-"
+            "${{ github.event_name == 'push' && 'push' || 'durable' }}"
+        ),
+        "cancel-in-progress": "${{ github.event_name == 'push' }}",
+    }
+    plan = JOBS["validation-plan"]
+    assert plan["outputs"] == {"run-heavy": "${{ steps.plan.outputs.run-heavy }}"}
+    script = plan["steps"][0]["with"]["script"]
+    for required in (
+        "context.eventName !== 'schedule'",
+        "workflow_id: 'full-validation.yml'",
+        "branch: 'main'",
+        "status: 'success'",
+        "per_page: 1",
+        "workflow_runs[0]?.head_sha === context.sha",
+    ):
+        assert required in script
+    for name, job in JOBS.items():
+        if name == "validation-plan":
+            continue
+        needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
+        assert "validation-plan" in needs, name
+        assert "needs.validation-plan.outputs.run-heavy == 'true'" in job["if"], name
+
+    docs = (ROOT / "docs/testing.md").read_text(encoding="utf-8").replace("\n", " ")
+    assert "`on.schedule` cron list in that file is the single schedule definition" in docs
 
 
 @pytest.mark.parametrize("environment", ["github-hosted", "self-hosted"])
