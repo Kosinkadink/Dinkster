@@ -22,6 +22,7 @@ import os
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any, cast
 
 _MAX_CAPTURED_LOGS = 200
@@ -151,7 +152,13 @@ def probe(manifest_path: str) -> dict[str, Any]:
     from dinkster_workers.manifest import load_manifest, resolve_entry
 
     manifest = load_manifest(manifest_path)
-    sys.path.insert(0, str(manifest.root))
+    root = str(manifest.root.resolve())
+    module = manifest.nodes_entry.partition(":")[0]
+    source = manifest.root.joinpath(*module.split("."))
+    if source.with_suffix(".py").is_file() or source.is_dir():
+        sys.path.insert(0, root)
+    else:
+        sys.path.append(root)
     distribution_root = manifest.root.parent
     if (distribution_root / "pyproject.toml").is_file():
         source_root = distribution_root / "src"
@@ -160,6 +167,8 @@ def probe(manifest_path: str) -> dict[str, Any]:
 
     report: dict[str, Any] = {
         "entry_error": None,
+        "entry_path": "",
+        "interpreter": str(Path(sys.executable).absolute()),
         "import_ms": 0.0,
         "import_stdout": "",
         "import_stderr": "",
@@ -194,6 +203,10 @@ def probe(manifest_path: str) -> dict[str, Any]:
         report["import_stdout"] = out.getvalue()[:4000]
         report["import_stderr"] = err.getvalue()[:4000]
         return report
+    nodes_module = sys.modules.get(manifest.nodes_entry.partition(":")[0])
+    nodes_module_file = getattr(nodes_module, "__file__", None)
+    if nodes_module_file is not None:
+        report["entry_path"] = str(Path(nodes_module_file).resolve())
     report["import_ms"] = (time.monotonic() - started) * 1000.0
     report["import_stdout"] = out.getvalue()[:4000]
     report["import_stderr"] = err.getvalue()[:4000]
@@ -306,7 +319,6 @@ def probe(manifest_path: str) -> dict[str, Any]:
             if inference_entry is not None:
                 import tempfile
                 from dataclasses import asdict
-                from pathlib import Path
 
                 inference = importlib.import_module("dinkster_inference.extensions")
                 with tempfile.TemporaryDirectory() as directory:

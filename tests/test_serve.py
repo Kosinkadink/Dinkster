@@ -2616,7 +2616,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
         serve_command(
             port,
             "--pack",
-            str(manifest),
+            str(manifest.relative_to(tmp_path)),
             "--event-loop-stall-threshold",
             "4",
         ),

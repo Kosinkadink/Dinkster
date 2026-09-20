@@ -834,8 +834,23 @@ def load_extension_contributions(
     return tuple(contributions)
 
 
+def _add_pack_root_to_import_path(manifest: PackManifest) -> None:
+    root = str(manifest.root.resolve())
+    if root in sys.path:
+        return
+    module = manifest.nodes_entry.partition(":")[0]
+    source = manifest.root.joinpath(*module.split("."))
+    if source.with_suffix(".py").is_file() or source.is_dir():
+        sys.path.insert(0, root)
+    else:
+        # Split package manifests can contain only a distribution shim while
+        # their entry module comes from the selected interpreter's install.
+        sys.path.append(root)
+
+
 async def serve(endpoint: str, manifest_path: str, *, shm_threshold: int, use_shm: bool) -> None:
     manifest = load_manifest(Path(manifest_path))
+    _add_pack_root_to_import_path(manifest)
     worker, registry, node_classes, arm_workers = load_pack(manifest)
     with use_declared_asset_pack(manifest.name):
         planner = load_planner(manifest)
@@ -890,6 +905,7 @@ async def serve_many(
     loaded: list[tuple[Any, ...]] = []
     for path in manifest_paths:
         manifest = load_manifest(Path(path))
+        _add_pack_root_to_import_path(manifest)
         pack_load = load_pack(manifest)
         with use_declared_asset_pack(manifest.name):
             loaded.append(
