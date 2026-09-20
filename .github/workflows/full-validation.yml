@@ -78,6 +78,12 @@ jobs:
         with:
           clean: true
           persist-credentials: false
+      - name: Refresh tracked files with current attributes
+        if: matrix.os == 'windows'
+        shell: bash
+        run: |
+          git rm -r --cached -q .
+          git reset --hard -q HEAD
       - uses: ./.github/actions/prepare-validation-inputs
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
