@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import replace
+from types import MappingProxyType
 from typing import Any, cast
 
 import torch
@@ -317,10 +318,7 @@ def _z_image_denoiser(
     lane_ids = ("positive", "negative") if include_uncond else ("positive",)
     control_table = None
     control_facts: tuple[str, ...] = ()
-    off_grid = admitted_control is not None and sampler.id in {
-        "dinkster.dpm_fast",
-        "dinkster.dpm_adaptive",
-    }
+    off_grid = admitted_control is not None and not sampler.supports_step_begin
     if admitted_control is not None and len(schedule.sigmas) > 1:
         gain = admitted_control.gain
         if gain is None:
@@ -399,7 +397,7 @@ def _z_image_denoiser(
         on_step_begin = apply_control_step
     return SamplingDenoiserExecution(
         cast("SamplingDenoiserAdapter", evaluator),
-        solver_options={"realized_timeline": realized_timeline},
+        solver_options=MappingProxyType({"realized_timeline": realized_timeline}),
         on_step_begin=on_step_begin,
     )
 

@@ -361,6 +361,9 @@ class _AnimaLatentAdapter:
         context: SamplingAdapterContext,
         error: type[Exception],
     ) -> SamplingExecutionInputs:
+        if context.options:
+            names = ", ".join(sorted(context.options))
+            raise AnimaRuntimeError(f"Anima sampling does not accept adapter options: {names}")
         inputs = self.inner.prepare(
             family,
             latent=latent,
@@ -397,9 +400,7 @@ def _anima_denoiser(
     context: SamplingAdapterContext,
 ) -> SamplingDenoiserExecution:
     owner = cast("AnimaDiffusionRuntime", runtime)
-    if context.options:
-        names = ", ".join(sorted(context.options))
-        raise AnimaRuntimeError(f"Anima sampling does not accept adapter options: {names}")
+    del context
     return SamplingDenoiserExecution(
         cast(
             "SamplingDenoiserAdapter",

@@ -34,7 +34,6 @@ from dinkster_inference import (
     SparseLatent,
     StepCallback,
     is_flow_parameterization,
-    noise_scaling,
     sampling_sigmas,
 )
 
@@ -47,6 +46,7 @@ from .denoise import (
     prepare_multistream_noise,
 )
 from .guidance import GuidanceExecutor, ReplicaEvaluator
+from .parameterizations import noise_scaling
 from .sampling_execution import (
     CustomSamplingCfgValue,
     SamplingGuidancePlan,
@@ -119,7 +119,7 @@ class SamplingRuntime(ABC):
 
     @property
     def supports_context_windows(self) -> bool:
-        return False
+        return self.family.engine.supports_context_windows
 
     def _validate_sampling_guidance(self, guidance: FluxGuidance) -> None:
         if guidance is None or (type(guidance) is str and guidance == FLUX_GUIDANCE_DISABLED):

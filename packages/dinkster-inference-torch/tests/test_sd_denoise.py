@@ -40,9 +40,6 @@ from dinkster_inference import (
     ProgressScope,
     SamplingExecutionContext,
     UNetConfig,
-    calculate_denoised,
-    calculate_input,
-    cfg_combine,
     sampling_sigmas,
 )
 from dinkster_inference_torch import (
@@ -61,7 +58,9 @@ from dinkster_inference_torch import (
     torch_scheduler_registry,
 )
 from dinkster_inference_torch._conditioning_layout import repeat_cross_attn
+from dinkster_inference_torch.cfg import cfg_combine
 from dinkster_inference_torch.guidance import ConditioningEvaluation, GuidedDenoiser
+from dinkster_inference_torch.parameterizations import calculate_denoised, calculate_input
 from dinkster_inference_torch.schedules import continuous_edm_percent_to_sigma
 from dinkster_inference_torch.sd_denoise import (
     _calculate_denoised,

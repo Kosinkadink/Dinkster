@@ -81,18 +81,19 @@ def test_union_control_descriptor_declares_its_attention_role() -> None:
     descriptors = {descriptor.id: descriptor for descriptor in control_component_descriptors()}
 
     union = descriptors["dinkster.sdxl_controlnet_union"]
-    assert union.attention_roles == ("controlnet",)
-    assert union.attention_requires_route
+    assert union.family.engine.attention_backends == (("controlnet", "unet"),)
+    assert union.family.engine.attention_requires_route
     assert all(
-        descriptor.attention_roles == ()
+        descriptor.family.engine.attention_backends == ()
         for identifier, descriptor in descriptors.items()
         if identifier != "dinkster.sdxl_controlnet_union"
     )
 
-    with pytest.raises(ValueError, match="attention roles must be component roles"):
-        replace(union, attention_roles=("unet",))
-    with pytest.raises(ValueError, match="need at least one attention role"):
-        replace(union, attention_roles=())
+    with pytest.raises(ValueError, match="need at least one attention backend"):
+        replace(
+            union.family.engine,
+            attention_backends=(),
+        )
 
 
 def test_union_control_identity_binds_authenticated_attention_route() -> None:

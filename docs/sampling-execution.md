@@ -44,26 +44,22 @@ invariants so every sampler surface observes identical behavior.
 
 ## Migration order
 
-Migration proceeds from the smallest adapter surface to the largest. The
-current engine state is one `torch.Tensor`; structural families require the
-registration seam to gain a structural-latent adapter shape before migration.
-That extension must preserve the engine policy and execution path:
+Migration proceeds from the smallest adapter surface to the largest:
 
-1. Flux2 uses `SingleStreamLatentAdapter`, shifted FLOW schedules, module
-   placement, and its existing distilled-guidance-aware denoiser.
-2. The other single-stream runtimes follow: Anima, Chroma, Ideogram4,
-   Lumina2, Qwen Image, SeedVR2, Z-Image, and the wiring-owned SD runtime.
-3. Extend the registration seam with the structural-latent adapter shape.
+1. Flux2, Anima, Chroma, Ideogram4, Lumina2, Qwen Image, SeedVR2, and Z-Image
+   use `SingleStreamLatentAdapter` and execute through `sampling_execution`.
+2. The wiring-owned Flux and SD runtimes complete the single-stream migration.
+3. The registration seam gains a structural-latent adapter shape.
    This is an interface extension, not a Wan21 or MiniMax H3 branch in engine
    policy.
-4. Wan21 then maps structural video streams, typed conditioning, context
+4. Wan21 maps structural video streams, typed conditioning, context
    windows, inpaint data, and masks into that adapter. Its loop, cancellation,
    observers, and schedule move to the engine.
-5. LTXV, LTXAV, TRELLIS.2, and TripoSplat follow the structural-latent contract.
+5. LTXV, LTXAV, TRELLIS.2, and TripoSplat use the structural-latent contract.
 6. MiniMax H3 packs video/audio streams through the structural adapter and
    finalizes audio scaling and capture. Distributed model evaluation stays
    inside its denoiser adapter; solver and callback execution stay in the
-   engine. MiniMax Music 3 then reuses that multi-stream shape.
+   engine. MiniMax Music 3 reuses that multi-stream shape.
 
 Autoregressive or windowed model evaluation is a denoiser implementation, not
 a second sampling run. A migration is complete only when KSampler and direct

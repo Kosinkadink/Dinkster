@@ -543,7 +543,7 @@ def _qwen_image_denoiser(
             admitted_control.application.strength if end_sigma <= sigma <= start_sigma else 0.0
             for sigma in schedule.sigmas[:-1]
         )
-        if sampler.id in {"dinkster.dpm_fast", "dinkster.dpm_adaptive"} and any(
+        if not sampler.supports_step_begin and any(
             value != control_strengths[0] for value in control_strengths[1:]
         ):
             raise QwenImageRuntimeError(
@@ -591,10 +591,7 @@ def _qwen_image_denoiser(
         control=admitted_control,
         diffsynth=tuple(prepared_diffsynth),
     )
-    if control_strengths is not None and sampler.id in {
-        "dinkster.dpm_fast",
-        "dinkster.dpm_adaptive",
-    }:
+    if control_strengths is not None and not sampler.supports_step_begin:
         evaluator.set_control_strength(control_strengths[0])
     identity = "dinkster.qwen-image.conditioning.v1"
     if admitted_control is not None:
@@ -614,10 +611,7 @@ def _qwen_image_denoiser(
         identity += ":diffsynth=" + hashlib.sha256("\n".join(identity_lines).encode()).hexdigest()
     evaluator.evaluator_identity = identity
     on_step_begin = None
-    if control_strengths is not None and sampler.id not in {
-        "dinkster.dpm_fast",
-        "dinkster.dpm_adaptive",
-    }:
+    if control_strengths is not None and sampler.supports_step_begin:
 
         def apply_control_step(index: int) -> None:
             require_realized_sampling_step(

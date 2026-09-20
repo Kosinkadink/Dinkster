@@ -4,7 +4,8 @@ import ast
 from pathlib import Path
 
 import pytest
-from dinkster_inference import PreviewDecoderProperties, builtin_families
+from dinkster_inference import EngineProperties, PreviewDecoderProperties, builtin_families
+from dinkster_inference.component_catalog import default_component_registry
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_ENGINE_FILES = (
@@ -17,7 +18,10 @@ SHARED_ENGINE_FILES = (
     "packages/dinkster-inference/src/dinkster_inference/taesd.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/assemble.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/component_runtime.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/denoise.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/memory.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_execution.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_runtime.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/schedules.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
     "packages/dinkster-native/src/dinkster_native/preview_emit.py",
@@ -70,6 +74,27 @@ def test_registered_engine_properties_cover_shared_family_behavior() -> None:
         "asset",
         "triposplat_vae_decoder",
     )
+    assert families["dinkster.wan21"].engine.supports_context_windows
+    assert families["dinkster.wan22"].engine.supports_context_windows
+    assert families["dinkster.ltxv"].engine.supports_context_windows
+    assert not families["dinkster.sd15"].engine.supports_context_windows
+    chroma = families["dinkster.chroma"]
+    assert chroma.engine.quantized_component_load_device
+    assert chroma.engine.attention_backends == (
+        ("diffusion", "flux"),
+        ("t5xxl", "t5"),
+        ("vae", "vae"),
+    )
+    assert chroma.engine.attention_requires_route
+    assert families["dinkster.chroma_radiance"].engine is chroma.engine
+
+    components = {descriptor.id: descriptor for descriptor in default_component_registry()}
+    assert components["dinkster.minimax_h3"].family.engine.attention_backend("diffusion") == "flux"
+    assert components["dinkster.minimax_music3"].family.engine.attention_backends == (
+        ("diffusion", "flux"),
+        ("text", "qwen"),
+    )
+    assert components["dinkster.ltxav"].family.engine.attention_backend("gemma4_12b") == "qwen"
 
 
 def test_preview_decoder_registration_rejects_invalid_kind_target_pairs() -> None:
@@ -77,3 +102,10 @@ def test_preview_decoder_registration_rejects_invalid_kind_target_pairs() -> Non
         PreviewDecoderProperties("taehv", "unexpected")
     with pytest.raises(ValueError, match="requires a target"):
         PreviewDecoderProperties("asset")
+
+
+def test_engine_properties_reject_invalid_attention_registration() -> None:
+    with pytest.raises(ValueError, match="must be unique"):
+        EngineProperties(attention_backends=(("diffusion", "flux"), ("diffusion", "qwen")))
+    with pytest.raises(ValueError, match="need at least one attention backend"):
+        EngineProperties(attention_requires_route=True)

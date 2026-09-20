@@ -205,6 +205,13 @@ run is recorded in [maintainer issue #114](https://github.com/Kosinkadink/comfy-
 The native-only claim returns when that issue lands. See
 [the complete server reference](serve-cli.md).
 
+With `--comfy-root`, `--comfy-python` selects the compatibility interpreter as
+well as the native execution interpreter. If the flag is absent, selection
+continues through `DINKSTER_COMFYUI_PYTHON`, `<comfy-root>/venv/bin/python`, and
+then the serving process's Python. Before compatibility packs compose, Dinkster
+checks that interpreter against the install's `requirements.txt`; a failure
+names the unavailable module, interpreter path, and selecting step.
+
 Catalog preparation probes trusted installed code and validates its runtime
 declarations. It is not a substitute for `doctor` authoring checks or registry
 publication review. Use the same `DINKSTER_ACCELERATOR`, library root, and uv on

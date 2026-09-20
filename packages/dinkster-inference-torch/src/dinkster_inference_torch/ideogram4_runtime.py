@@ -26,7 +26,6 @@ from dinkster_inference import (
     SamplerDescriptor,
     SchedulerDescriptor,
     SigmaSpace,
-    calculate_denoised,
     encode_conditioning_carrier,
     make_conditioning_carrier,
 )
@@ -46,6 +45,7 @@ from .ideogram4_conditioner import (
 )
 from .ideogram4_dit import Ideogram4DiT
 from .operations import bound_compute_device, module_compute_device
+from .parameterizations import calculate_denoised
 from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
 from .qwen_image_text import QwenImageLanguageModel
 from .sampling_execution import (

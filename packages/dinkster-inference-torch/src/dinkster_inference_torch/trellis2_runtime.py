@@ -41,8 +41,6 @@ from dinkster_inference import (
     SparseSupport,
     StepCallback,
     StepEvent,
-    calculate_denoised,
-    calculate_input,
     sampling_environment_cancellation,
     sampling_execution_context,
 )
@@ -51,6 +49,7 @@ from PIL import Image
 from .denoise import prepare_denoise_mask, run_sampler_engine, to_batch
 from .guidance import ConditioningEvaluation
 from .operations import bound_compute_device, module_compute_device
+from .parameterizations import calculate_denoised, calculate_input
 from .sampling_execution import (
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
@@ -969,7 +968,7 @@ class Trellis2DiffusionRuntime(DenseOrSparseSamplingRuntime):
         self._model = assembled.diffusion
         self._runtime_identity = runtime_identity
         self._compute_dtype = compute_dtype
-        self._samplers = torch_sampler_registry() if sampler_registry is None else sampler_registry
+        self._samplers = torch_sampler_registry(sampler_registry)
         from .schedules import torch_scheduler_registry
 
         self._schedulers = (
