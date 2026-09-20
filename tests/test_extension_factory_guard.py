@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/check_extension_factories.py"
+SITE_KINDS = ("assemblyBuilder", "descriptorCatalog", "registryFactory")
 
 
 def run_guard(root: Path, allowlist: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -25,6 +26,14 @@ def run_guard(root: Path, allowlist: Path, *arguments: str) -> subprocess.Comple
     )
 
 
+def write_allowlist(path: Path, sites: list[dict[str, object]]) -> None:
+    ceilings = {kind: sum(site["kind"] == kind for site in sites) for kind in SITE_KINDS}
+    path.write_text(
+        json.dumps({"ceilings": ceilings, "sites": sites}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_extension_factory_guard_tracks_each_descriptor_catalog(tmp_path: Path) -> None:
     source = tmp_path / "src"
     source.mkdir()
@@ -38,9 +47,7 @@ def test_extension_factory_guard_tracks_each_descriptor_catalog(tmp_path: Path) 
         "builtin_schedulers",
     ):
         module.write_text(f"catalog = {call}()\n", encoding="utf-8")
-        assert run_guard(tmp_path, allowlist, "--write").returncode == 0
-        recorded = json.loads(allowlist.read_text(encoding="utf-8"))
-        assert recorded["sites"] == [
+        expected = [
             {
                 "kind": "descriptorCatalog",
                 "call": call,
@@ -50,6 +57,10 @@ def test_extension_factory_guard_tracks_each_descriptor_catalog(tmp_path: Path) 
                 "issue": 120,
             }
         ]
+        write_allowlist(allowlist, expected)
+        assert run_guard(tmp_path, allowlist, "--write").returncode == 0
+        recorded = json.loads(allowlist.read_text(encoding="utf-8"))
+        assert recorded["sites"] == expected
 
 
 def test_extension_factory_guard_write_refuses_to_raise_ceiling(tmp_path: Path) -> None:
@@ -58,6 +69,19 @@ def test_extension_factory_guard_write_refuses_to_raise_ceiling(tmp_path: Path) 
     module = source / "runtime.py"
     allowlist = tmp_path / "allowlist.json"
     module.write_text("registry = builtin_family_registry()\n", encoding="utf-8")
+    write_allowlist(
+        allowlist,
+        [
+            {
+                "kind": "registryFactory",
+                "call": "builtin_family_registry",
+                "path": "src/runtime.py",
+                "line": 1,
+                "column": 12,
+                "issue": 120,
+            }
+        ],
+    )
     assert run_guard(tmp_path, allowlist, "--write").returncode == 0
     recorded = allowlist.read_text(encoding="utf-8")
 
@@ -65,10 +89,32 @@ def test_extension_factory_guard_write_refuses_to_raise_ceiling(tmp_path: Path) 
         "registry = builtin_family_registry()\nother = builtin_preview_registry()\n",
         encoding="utf-8",
     )
+    plain = run_guard(tmp_path, allowlist)
+    assert plain.returncode == 1
+    assert "explicit owning issues" in plain.stderr
+    raised = run_guard(tmp_path, allowlist, "--write")
+    assert raised.returncode == 1
+    assert "builtin_preview_registry" in raised.stderr
+    assert "positive issue" in raised.stderr
+    assert allowlist.read_text(encoding="utf-8") == recorded
+
+    explicit = json.loads(recorded)
+    explicit["sites"].append(
+        {
+            "kind": "registryFactory",
+            "call": "builtin_preview_registry",
+            "path": "src/runtime.py",
+            "line": 2,
+            "column": 9,
+            "issue": 120,
+        }
+    )
+    allowlist.write_text(json.dumps(explicit, indent=2) + "\n", encoding="utf-8")
+    explicit_recorded = allowlist.read_text(encoding="utf-8")
     raised = run_guard(tmp_path, allowlist, "--write")
     assert raised.returncode == 1
     assert "registryFactory: current=2, ceiling=1" in raised.stderr
-    assert allowlist.read_text(encoding="utf-8") == recorded
+    assert allowlist.read_text(encoding="utf-8") == explicit_recorded
 
 
 def test_extension_factory_guard_rejects_site_and_ceiling_drift(tmp_path: Path) -> None:
@@ -80,6 +126,35 @@ def test_extension_factory_guard_rejects_site_and_ceiling_drift(tmp_path: Path) 
         "registry = builtin_family_registry()\nfamilies = builtin_families()\n"
         "assemblies = build_builtin_assembly_registry(registry)\n",
         encoding="utf-8",
+    )
+    write_allowlist(
+        allowlist,
+        [
+            {
+                "kind": "assemblyBuilder",
+                "call": "build_builtin_assembly_registry",
+                "path": "packages/example/src/example/runtime.py",
+                "line": 3,
+                "column": 14,
+                "issue": 120,
+            },
+            {
+                "kind": "descriptorCatalog",
+                "call": "builtin_families",
+                "path": "packages/example/src/example/runtime.py",
+                "line": 2,
+                "column": 12,
+                "issue": 120,
+            },
+            {
+                "kind": "registryFactory",
+                "call": "builtin_family_registry",
+                "path": "packages/example/src/example/runtime.py",
+                "line": 1,
+                "column": 12,
+                "issue": 120,
+            },
+        ],
     )
     assert run_guard(tmp_path, allowlist, "--write").returncode == 0
     assert run_guard(tmp_path, allowlist).returncode == 0

@@ -337,6 +337,13 @@ current per-kind status is listed in
 
 ## 5. Packaging, identity, compatibility
 
+Extension factory allowlists pin every site by path, line, column, and owning
+issue. Their ceilings are non-increasing; raising one is an explicit reviewed
+decision, never an effect of regeneration. After merging main, run
+`uv run --locked python scripts/check_extension_factories.py --write`, review
+that only expected line or column coordinates changed and no ceiling changed,
+then run `bash scripts/ci-fast.sh`.
+
 - Packs declare: id, version, required host API version, capabilities (routes,
   filesystem, downloads, background jobs, model-family registration,
   accelerator, artifacts), and provided services (per-scope, P7). A declared
