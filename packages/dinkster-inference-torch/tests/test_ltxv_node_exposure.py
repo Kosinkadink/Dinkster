@@ -624,10 +624,10 @@ def test_ltxv_latent_upsampler_normalizes_and_preserves_latent_metadata(
     monkeypatch.setattr(inference_torch, "LTXVideoVAE", VideoVAE)
     monkeypatch.setattr(inference_torch, "LTXDiffusionVideoVAE", VideoVAE)
 
-    def component_handle(value: object, *_args: object) -> object:
+    def component_handle(value: object, *_args: object, **_kwargs: object) -> object:
         return upscaler if value == "upscaler" else vae
 
-    monkeypatch.setattr(native_arm, "_ltxav_component_handle", component_handle)
+    monkeypatch.setattr(native_arm, "load_registered_component", component_handle)
     latent = torch.arange(128 * 2 * 3 * 4, dtype=torch.float32).reshape(1, 128, 2, 3, 4)
 
     output = native_arm.GenerationLTXVLatentUpsampler.execute(
