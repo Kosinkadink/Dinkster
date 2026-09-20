@@ -3617,12 +3617,14 @@ def _build_component_runtime_handle(
         else replace(required_recipe, overlays=()).runtime_identity
     )
     load_kwargs: dict[str, Any] = {}
-    if descriptor.attention_roles:
+    attention_backend = descriptor.family.engine.attention_backend(role)
+    if attention_backend is not None:
         load_kwargs.update(
             attention_policy=attention_policy,
             attention_route_token=attention_route_token,
+            attention_backend=attention_backend,
         )
-    if descriptor.loader_uses_device:
+    if descriptor.family.engine.quantized_component_load_device:
         load_kwargs["load_device"] = device
     if artifact_role is not None:
         load_kwargs["artifact_role"] = artifact_role
@@ -4310,6 +4312,10 @@ def build_text_recipe_handle(
         recipe = base_recipe if required_recipe is None else required_recipe
         if recipe.runtime_identity != expected_identity:
             raise RuntimeError("text encoding recipe identity differs from dispatch identity")
+        load_kwargs: dict[str, object] = {}
+        descriptor = registry.get(binding.family_id)
+        if descriptor is not None and descriptor.family.engine.attention_backends:
+            load_kwargs["attention_backends"] = descriptor.family.engine.attention_backends
         loaded = execution_symbol(binding.loader)(
             binding,
             compute_dtype=_torch_dtype(torch, compute_dtype),
@@ -4317,6 +4323,7 @@ def build_text_recipe_handle(
             source_files=files,
             attention_policy=attention_policy,
             attention_route_token=attention_route_token,
+            **load_kwargs,
         )
     runtime = execution_symbol(binding.runtime_class)(loaded, embedding_lookups=embedding_lookups)
     resolvers = dict(source_resolvers or {})
@@ -4831,9 +4838,10 @@ class NativeControlNetLoader(ControlNetLoader):
         digest = control_net_name.digest.removeprefix("blake3:")
         if not getattr(descriptor, "requires_base", False):
             load_kwargs: dict[str, object] = {}
-            if getattr(descriptor, "attention_roles", ()):
+            attention_backend = descriptor.family.engine.attention_backend("controlnet")
+            if attention_backend is not None:
                 context = current_execution_context()
-                if getattr(descriptor, "attention_requires_route", False) and (
+                if descriptor.family.engine.attention_requires_route and (
                     context is None or context.attention_route_token is None
                 ):
                     raise ValueError(
@@ -4845,6 +4853,7 @@ class NativeControlNetLoader(ControlNetLoader):
                     attention_route_token=(
                         None if context is None else context.attention_route_token
                     ),
+                    attention_backend=attention_backend,
                 )
             module = execution_symbol(descriptor.loader)(plan, controlnet_dtype, **load_kwargs)
             handle = _enroll_control_module(module, torch, inference_torch)

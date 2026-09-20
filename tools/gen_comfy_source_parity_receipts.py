@@ -4168,12 +4168,16 @@ def _controlnet_loader_trace(
         requires_base=True,
         hint_channels=3,
         default_diffusion_dtype=SimpleNamespace(name="float16"),
+        checkpoint_loader=None,
         loader="unused",
     )
     plan = SimpleNamespace(source_layout="canonical", component=SimpleNamespace(config=object()))
     selection_calls: list[dict[str, object]] = []
 
     class Registry:
+        def __iter__(self) -> Iterator[object]:
+            return iter((descriptor,))
+
         @staticmethod
         def select(source: object, path: Path, role: str) -> tuple[object, str, object]:
             selection_calls.append(

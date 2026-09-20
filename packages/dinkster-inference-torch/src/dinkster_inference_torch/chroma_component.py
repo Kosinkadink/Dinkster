@@ -165,6 +165,7 @@ def load_chroma_component(
     load_device: torch.device | None = None,
     attention_policy: AttentionPolicy = "auto",
     attention_route_token: AttentionRouteToken | None = None,
+    attention_backend: AttentionRole,
 ) -> ChromaLoadedComponent:
     """Verify, plan, identity-check, and strict-load one Chroma component."""
 
@@ -175,14 +176,8 @@ def load_chroma_component(
     identity_dtype = _IDENTITY_DTYPES.get(compute_dtype)
     if identity_dtype is None:
         raise TypeError("Chroma component compute dtype must be bfloat16, float16, or float32")
-    attention_roles: Mapping[ChromaComponentRole, AttentionRole] = {
-        "diffusion": "flux",
-        "t5xxl": "t5",
-        "vae": "vae",
-    }
-    attention_role = attention_roles[expected_role]
     attention = resolve_role_attention(
-        attention_role,
+        attention_backend,
         attention_policy,
         attention_route_token,
     )
@@ -223,7 +218,7 @@ def load_chroma_component(
             compute_dtype=compute_dtype,
             source_file=handle,
             source=source,
-            attention_kernels={attention_role: attention.kernel},
+            attention_kernels={attention_backend: attention.kernel},
         )
         if (
             expected_role == "diffusion"
