@@ -3209,11 +3209,14 @@ def test_minimax_h3_identities_are_accepted_by_the_production_dit_loader(
         "_load_component",
         lambda component, _build, **_kwargs: torch.nn.Identity(),
     )
+    attention_backend = dinkster_inference.MINIMAX_H3.engine.attention_backend("diffusion")
+    assert attention_backend == "flux"
     model = assembly.load_minimax_h3_model(
         dit_path,
         asset=assets["diffusion"],
         role="fl2va-dit",
         expected_identity=identities["diffusion"],
+        attention_backend=attention_backend,
     )
     assert model.model_role == "fl2va-dit"
     assert model.runtime_identity == identities["diffusion"]
