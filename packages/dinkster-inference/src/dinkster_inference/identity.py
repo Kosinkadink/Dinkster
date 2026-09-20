@@ -6,7 +6,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Callable, Collection, Sequence
-from functools import cache
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from dinkster_protocol import (
@@ -255,7 +255,7 @@ def build_runtime_identity(
     )
 
 
-@cache
+@lru_cache(maxsize=8)
 def _cached_default_inference_registries(
     _component_factory: Callable[[], object],
 ) -> InferenceRegistries:

@@ -1,11 +1,24 @@
 {
-  "_meta": {
-    "cpu": "Intel(R) Core(TM) Ultra 7 270K Plus"
-  },
-  "digests": {
-    "flux_cfg_one": "238ca0b1aab40bc0aca1d7792ad50acfe0e31376444c01faadc3312bfcbb66ca",
-    "flux_multi_window": "012c4b76f84bc0cf668c89469a33b7a607c06aeb9144aa429f985b960e751a9f",
-    "sd15_cfg_one": "c6ba833bdd54fd01e09749cf35385c91213c2611eb0c69c128eb0e289872a6eb",
-    "sd15_inpaint": "4c3b21b10ca9ee47add2d961ca27bfddcade90b63d6725876b7b76119dd52482"
-  }
+  "variants": [
+    {
+      "cpu": "Intel(R) Core(TM) Ultra 7 270K Plus",
+      "python": "Python 3.12.3",
+      "torch": "2.13.0+cpu",
+      "digests": {
+        "flux_cfg_one": "238ca0b1aab40bc0aca1d7792ad50acfe0e31376444c01faadc3312bfcbb66ca",
+        "flux_multi_window": "012c4b76f84bc0cf668c89469a33b7a607c06aeb9144aa429f985b960e751a9f",
+        "sd15_cfg_one": "c6ba833bdd54fd01e09749cf35385c91213c2611eb0c69c128eb0e289872a6eb",
+        "sd15_inpaint": "4c3b21b10ca9ee47add2d961ca27bfddcade90b63d6725876b7b76119dd52482"
+      }
+    },
+    {
+      "cpu": "AMD Ryzen 9 5950X 16-Core Processor",
+      "python": "Python 3.12.13",
+      "torch": "2.13.0+cpu",
+      "digests": {
+        "sd15_cfg_one": "cf162ee434116de5e1f4a9c7b399d1cabb8629bb4f88d1addb61c80263a681e1",
+        "sd15_inpaint": "8b3530802ec03a272a16537c7c10c74131c6c179ebe20a7e4409cec1e470ba0a"
+      }
+    }
+  ]
 }

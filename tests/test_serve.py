@@ -1543,6 +1543,48 @@ def test_serve_without_comfy_mounts_native_provider(
         assert options["single_job_multi_gpu"] is None
 
 
+def test_serve_resolves_legacy_pack_from_launch_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import serve
+
+    launch_directory = tmp_path / "launch"
+    legacy_pack = launch_directory / "packs" / "legacy"
+    legacy_pack.mkdir(parents=True)
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
+    captured: list[Path] = []
+
+    def capture_specs(_root: str, **kwargs: object) -> list[object]:
+        captured.extend(kwargs["legacy_packs"])  # type: ignore[arg-type]
+        return []
+
+    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        awaitable.close()  # type: ignore[attr-defined]
+
+    monkeypatch.chdir(launch_directory)
+    monkeypatch.setattr(serve, "comfy_compat_specs", capture_specs)
+    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dinkster-serve",
+            "--library-root",
+            "",
+            "--comfy-root",
+            str(comfy_root),
+            "--legacy-pack",
+            str(legacy_pack.relative_to(launch_directory)),
+        ],
+    )
+
+    serve.main()
+
+    assert captured == [legacy_pack.resolve()]
+
+
 @pytest.mark.parametrize("mode", [None, "auto", "on", "off"])
 def test_serve_aimdo_cli_defaults_and_reaches_compat_specs(
     mode: str | None,
@@ -2601,7 +2643,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
         serve_command(
             port,
             "--pack",
-            str(manifest),
+            str(manifest.relative_to(tmp_path)),
             "--event-loop-stall-threshold",
             "4",
         ),
