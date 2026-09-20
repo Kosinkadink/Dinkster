@@ -15,7 +15,7 @@ import struct
 import subprocess
 import sys
 import threading
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
@@ -46,6 +46,7 @@ from dinkster_inference import (
     InferenceRuntimeHandle,
     LatentDescriptor,
     PreparedMultiStreamConditioning,
+    Registry,
     SamplingCancelled,
     SamplingSegment,
     extend_runtime_identity,
@@ -72,6 +73,21 @@ def initialize_optional_torch_runtime() -> None:
     # the real runtime before any scenario installs those doubles.
     if importlib.util.find_spec("torch") is not None:
         importlib.import_module("dinkster_inference_torch.distributed")
+    else:
+        inference_torch = cast(Any, importlib.import_module("dinkster_inference_torch"))
+        inference_torch.torch_sampler_registry = _fake_torch_sampler_registry
+
+
+def _fake_torch_sampler_registry(registry: Iterable[Any] | None = None) -> Any:
+    portable = importlib.import_module("dinkster_inference_torch._portable_solvers")
+    if registry is None:
+        return portable.builtin_sampler_registry()
+    factories = {descriptor.id: descriptor.make for descriptor in portable.builtin_samplers()}
+    bound = Registry()
+    for descriptor in registry:
+        factory = factories.get(descriptor.id)
+        bound.register(replace(descriptor, make=factory) if factory is not None else descriptor)
+    return bound
 
 
 def _component_conditioning_carrier(reference: str = "component-text") -> Any:
@@ -3461,6 +3477,7 @@ def test_recipe_materializer_groups_overlays_and_enables_compute_following_stora
         build_patch_set=build_patch_set,
         load_runtime=load_runtime,
         load_tensors=load_tensors,
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     plan = SimpleNamespace(family=SimpleNamespace(id=recipe.family_id), identity_components=())
     monkeypatch.setattr(inference, "plan_native", lambda **_sources: plan)
@@ -3760,6 +3777,7 @@ def test_split_recipe_materializer_verifies_and_loads_every_named_source(
     )
     inference_torch = SimpleNamespace(
         load_runtime=load_runtime,
+        torch_sampler_registry=_fake_torch_sampler_registry,
         worker_planning_context=lambda: pytest.fail(
             "generic native reconstruction must not request MiniMax H3 planning context"
         ),
@@ -3966,7 +3984,10 @@ def test_split_recipe_materializer_propagates_runtime_identity_refusal(
         lambda name: (
             inference
             if name == "dinkster_inference"
-            else SimpleNamespace(load_runtime=refuse_runtime)
+            else SimpleNamespace(
+                load_runtime=refuse_runtime,
+                torch_sampler_registry=_fake_torch_sampler_registry,
+            )
             if name == "dinkster_inference_torch"
             else real_import(name)
         ),
@@ -7299,7 +7320,9 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             return inference.CustomSamplingResult(cast("Any", latent), None)
 
     fake_module = SimpleNamespace(
-        MiniMaxH3Model=MiniMaxH3Model, MiniMaxH3DiTRuntime=MiniMaxH3DiTRuntime
+        MiniMaxH3Model=MiniMaxH3Model,
+        MiniMaxH3DiTRuntime=MiniMaxH3DiTRuntime,
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
@@ -7822,6 +7845,7 @@ def test_legacy_sidecar_loads_and_enables_compute_following_storage(
             return SimpleNamespace(
                 enroll_assembled=_fake_enroll_assembled,
                 supports_fp8_matmul=lambda _device: True,
+                torch_sampler_registry=_fake_torch_sampler_registry,
             )
         if name == "dinkster_inference_torch.wiring":
             return SimpleNamespace(load_runtime=load_runtime)
@@ -7927,6 +7951,43 @@ def test_registry_runtime_threads_identity_and_enables_compute_following_storage
     }
 
 
+def test_sampler_registry_binds_aggregate_builtin_and_extension_generations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arm = _native_arm()
+    builtin_samplers = object()
+    extension_samplers = object()
+    builtin = SimpleNamespace(samplers=builtin_samplers)
+    generation = SimpleNamespace(
+        registries=SimpleNamespace(samplers=extension_samplers),
+        extensions=(("proof_a", object()), ("proof_b", object())),
+    )
+    bound: list[object] = []
+    inference_torch = SimpleNamespace(
+        torch_sampler_registry=lambda registry: bound.append(registry) or ("bound", registry)
+    )
+    inference = SimpleNamespace(materialize_inference_generation=lambda _key: generation)
+    real_import = importlib.import_module
+
+    def fake_import(name: str) -> object:
+        if name == "dinkster_inference_torch":
+            return inference_torch
+        return real_import(name)
+
+    monkeypatch.setattr(arm.importlib, "import_module", fake_import)
+    monkeypatch.setattr(arm, "_builtin_inference_registries", lambda: builtin)
+    monkeypatch.setattr(arm, "current_execution_context", lambda: None)
+
+    assert arm._sampler_registry(inference, None) == (("bound", builtin_samplers), (), None)
+    digest = "sha256:" + "a" * 64
+    assert arm._sampler_registry(inference, digest) == (
+        ("bound", extension_samplers),
+        ("proof_a", "proof_b"),
+        digest,
+    )
+    assert bound == [builtin_samplers, extension_samplers]
+
+
 def test_load_runtime_passes_exact_sorted_split_source_kwargs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -7941,6 +8002,8 @@ def test_load_runtime_passes_exact_sorted_split_source_kwargs(
     def fake_import(name: str) -> object:
         if name == "dinkster_inference":
             return inference
+        if name == "dinkster_inference_torch":
+            return SimpleNamespace(torch_sampler_registry=_fake_torch_sampler_registry)
         if name == "dinkster_inference_torch.wiring":
             return SimpleNamespace(
                 load_runtime=lambda **kwargs: captured.update(kwargs) or "runtime"
@@ -8424,6 +8487,7 @@ def test_native_checkpoint_fp8_request_clears_unsupported_effective_binding(
             return SimpleNamespace(
                 supports_fp8_matmul=supports_fp8_matmul,
                 enroll_assembled=enroll,
+                torch_sampler_registry=_fake_torch_sampler_registry,
             )
         if name == "dinkster_inference_torch.wiring":
             return SimpleNamespace(load_runtime=load_runtime)
@@ -8537,7 +8601,11 @@ def test_lumina2_checkpoint_handle_enrolls_text_and_rebuilds(
             for component in ("diffusion", "gemma2_2b", "vae")
         }
 
-    fake_inference_torch = SimpleNamespace(enroll_assembled=enroll, load_runtime=runtime_for_recipe)
+    fake_inference_torch = SimpleNamespace(
+        enroll_assembled=enroll,
+        load_runtime=runtime_for_recipe,
+        torch_sampler_registry=_fake_torch_sampler_registry,
+    )
     real_import = importlib.import_module
     monkeypatch.setattr(
         arm.importlib,
@@ -9071,6 +9139,7 @@ def test_z_image_sampler_encodes_and_stages_bound_control(
         latent_process_in=lambda encoded, latent: (
             events.append(("process", encoded, latent)) or control_latent
         ),
+        torch_sampler_registry=_fake_torch_sampler_registry,
         z_image_control_hint_digest=lambda hint: "2" * 64,
         ZImageControlConditioning=lambda *args: SimpleNamespace(args=args),
     )
@@ -9212,6 +9281,7 @@ def test_z_image_custom_sampler_encodes_control_after_admission(
         latent_process_in=lambda encoded, latent: (
             events.append(("process", encoded, latent)) or control_latent
         ),
+        torch_sampler_registry=_fake_torch_sampler_registry,
         z_image_control_hint_digest=lambda hint: "2" * 64,
         ZImageControlConditioning=lambda *args: SimpleNamespace(args=args),
     )
@@ -9739,7 +9809,10 @@ def test_wan22_sampler_forwards_shift_segment_and_first_frame_mask(
     negative = arm.NativeClipTextEncode.execute(text="static", clip=handle)["conditioning"]
     mask = FakeTensor((1, 1, 3, 8, 12), "mask")
     segment = SamplingSegment(20, 0, 10, True, True)
-    fake_torch_inference = SimpleNamespace(Wan21Runtime=Runtime)
+    fake_torch_inference = SimpleNamespace(
+        Wan21Runtime=Runtime,
+        torch_sampler_registry=_fake_torch_sampler_registry,
+    )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
         arm.importlib,
@@ -13594,7 +13667,9 @@ def test_native_sampler_stages_and_passes_classic_control(
         arm.importlib,
         "import_module",
         lambda name: (
-            SimpleNamespace() if name == "dinkster_inference_torch" else real_import_module(name)
+            SimpleNamespace(torch_sampler_registry=_fake_torch_sampler_registry)
+            if name == "dinkster_inference_torch"
+            else real_import_module(name)
         ),
     )
     monkeypatch.setattr(arm, "_torch", lambda: torch)
@@ -13754,7 +13829,8 @@ def test_generation_custom_sampler_stages_and_passes_classic_control(
             generated_noise
             if (samples.shape, seed, noise_inds) == ((1, 4, 8, 8), 17, None)
             else pytest.fail("unexpected noise request")
-        )
+        ),
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
@@ -13954,6 +14030,7 @@ def test_generation_custom_sampling_preserves_sparse_latent_outputs(
     fake_inference_torch = SimpleNamespace(
         unpack_sparse_latent=lambda latent: (latent.support, latent.features),
         pack_sparse_latent=SparseLatent,
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
@@ -14039,7 +14116,7 @@ def test_extension_sampler_executes_through_native_ksampler_and_differs_from_eul
     from s1_sampler_pack_a import SCALED_EULER
 
     arm = _native_arm()
-    registry = builtin_sampler_registry()
+    registry = _fake_torch_sampler_registry(builtin_sampler_registry())
     registry.register(SCALED_EULER)
     torch = FakeTorch()
     info = SamplerInfo(Parameterization.EPS, seed=7)
@@ -15284,7 +15361,10 @@ def test_sampling_supplier_nodes_use_application_chain_base_runtime(
         arm.importlib,
         "import_module",
         lambda name: (
-            SimpleNamespace(prepare_noise=lambda samples, seed, noise_inds: samples)
+            SimpleNamespace(
+                prepare_noise=lambda samples, seed, noise_inds: samples,
+                torch_sampler_registry=_fake_torch_sampler_registry,
+            )
             if name == "dinkster_inference_torch"
             else real_import(name)
         ),
@@ -15512,6 +15592,7 @@ def test_generation_custom_samplers_execute_the_public_runtime_contract(
             if (samples.shape, seed, noise_inds) == ((1, 16, 8, 8), 17, (0,))
             else pytest.fail("unexpected noise request")
         ),
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
 
     def import_module(name: str) -> object:
@@ -16501,7 +16582,10 @@ def test_native_sampler_executes_composed_qwen_components_and_application(
     binding = ComponentBinding("qwen2_5_vl_7b", QWEN_IMAGE_CONFIG.family_id, text_identity)
     positive = bind_component_conditioning(carrier, binding)
     negative = bind_component_conditioning(carrier, binding)
-    fake_torch_inference = SimpleNamespace(QwenImageDiffusionRuntime=Runtime)
+    fake_torch_inference = SimpleNamespace(
+        QwenImageDiffusionRuntime=Runtime,
+        torch_sampler_registry=_fake_torch_sampler_registry,
+    )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
         arm.importlib,
@@ -17991,7 +18075,10 @@ def test_generation_ksampler_prepares_descriptor_fallback_once(
         arm.importlib,
         "import_module",
         lambda name: (
-            SimpleNamespace(LTXVDiffusionRuntime=Runtime)
+            SimpleNamespace(
+                LTXVDiffusionRuntime=Runtime,
+                torch_sampler_registry=_fake_torch_sampler_registry,
+            )
             if name == "dinkster_inference_torch"
             else real_import(name)
         ),
@@ -18085,7 +18172,10 @@ def test_sampler_prepares_canonical_component_fallbacks_once(
         arm.importlib,
         "import_module",
         lambda name: (
-            SimpleNamespace(LTXVDiffusionRuntime=Runtime)
+            SimpleNamespace(
+                LTXVDiffusionRuntime=Runtime,
+                torch_sampler_registry=_fake_torch_sampler_registry,
+            )
             if name == "dinkster_inference_torch"
             else real_import(name)
         ),
@@ -20369,6 +20459,7 @@ def test_generation_custom_sampling_routes_wan_causalar_selection_and_metadata(
             if samples.by_role("video") is latent["samples"] and seed == 23 and indices is None
             else pytest.fail("unexpected CausalAR noise request")
         ),
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
     real_resolve = arm._resolve_sampling_model
@@ -20623,6 +20714,7 @@ def test_generation_custom_sampling_routes_flux2_components_and_guidance(
             if (samples.shape, seed, noise_inds) == ((1, 128, 8, 8), 17, None)
             else pytest.fail("unexpected noise request")
         ),
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
@@ -20869,6 +20961,7 @@ def test_generation_custom_sampling_executes_multistream_latent_families(
     fake_inference_torch = SimpleNamespace(
         prepare_multistream_noise=prepare_multistream_noise,
         soft_empty_cache=cache_devices.append,
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
@@ -21283,6 +21376,7 @@ def test_generation_custom_sampling_routes_multistream_payload_for_single_stream
     fake_inference_torch = SimpleNamespace(
         Wan21Runtime=Runtime,
         prepare_multistream_noise=prepare_multistream_noise,
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
@@ -22631,6 +22725,7 @@ def test_generation_custom_sampling_routes_anima_components_and_normalizes_video
             if (samples.shape, seed, noise_inds) == ((1, 16, 1, 8, 8), 17, None)
             else pytest.fail("unexpected noise request")
         ),
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
@@ -22813,6 +22908,7 @@ def test_generation_custom_sampling_routes_krea2_components_and_normalizes_laten
             if (samples.shape, seed, noise_inds) == ((1, 16, 1, 8, 8), 17, None)
             else pytest.fail("unexpected noise request")
         ),
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
@@ -23061,6 +23157,7 @@ def test_generation_custom_sampling_routes_qwen_components_and_materializes_appl
             if (samples.shape, seed, noise_inds) == ((1, 16, 1, 8, 8), 17, None)
             else pytest.fail("unexpected noise request")
         ),
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
@@ -23243,6 +23340,7 @@ def test_generation_custom_sampling_forwards_sd15_attention_applications(
             if samples.shape == (1, 4, 8, 8) and seed == 17 and noise_inds is None
             else pytest.fail("unexpected noise request")
         ),
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
@@ -23392,7 +23490,10 @@ def test_generation_custom_sampling_applies_components_without_a_family_allowlis
 
     monkeypatch.setattr(arm, "_resolve_component_execution", fake_execution)
     monkeypatch.setattr(arm, "_torch", lambda: torch)
-    fake_inference_torch = SimpleNamespace(prepare_noise=lambda samples, *_args: samples)
+    fake_inference_torch = SimpleNamespace(
+        prepare_noise=lambda samples, *_args: samples,
+        torch_sampler_registry=_fake_torch_sampler_registry,
+    )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
         arm.importlib,
@@ -23543,7 +23644,10 @@ def test_generation_custom_sampling_routes_triposplat_components_and_wraps_condi
         prepare_calls.append((samples, seed, noise_inds))
         return generated_noise
 
-    fake_inference_torch = SimpleNamespace(prepare_multistream_noise=prepare_multistream_noise)
+    fake_inference_torch = SimpleNamespace(
+        prepare_multistream_noise=prepare_multistream_noise,
+        torch_sampler_registry=_fake_torch_sampler_registry,
+    )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
         arm.importlib,
@@ -24996,7 +25100,10 @@ def test_native_sampler_passes_sampling_shift_to_composed_flux2_runtime(
     binding = ComponentBinding("mistral3_24b", FLUX2_DEV.id, text_identity)
     positive = bind_component_conditioning(carrier, binding)
     negative = bind_component_conditioning(carrier, binding)
-    fake_torch_inference = SimpleNamespace(Flux2DiffusionRuntime=Runtime)
+    fake_torch_inference = SimpleNamespace(
+        Flux2DiffusionRuntime=Runtime,
+        torch_sampler_registry=_fake_torch_sampler_registry,
+    )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
         arm.importlib,
@@ -25830,6 +25937,7 @@ def test_native_ksampler_delegates_single_stream_context_windows(
             if name == "dinkster_inference_torch.sampling_execution"
             else SimpleNamespace(
                 PatchProviderSnapshot=lambda providers: providers,
+                torch_sampler_registry=_fake_torch_sampler_registry,
                 torch_scheduler_registry=lambda: object(),
             )
             if name == "dinkster_inference_torch"
@@ -25967,7 +26075,9 @@ def test_generation_custom_sampling_forwards_context_windows(
     runtime = Runtime()
     handle = _handle(arm, runtime, torch, recipe=runtime_recipe)
     real_import = arm.importlib.import_module
-    fake_inference_torch = SimpleNamespace()
+    fake_inference_torch = SimpleNamespace(
+        torch_sampler_registry=_fake_torch_sampler_registry,
+    )
     monkeypatch.setattr(
         arm.importlib,
         "import_module",
@@ -26547,7 +26657,10 @@ def test_native_sampler_executes_composed_wan21_split_runtime(
     binding = ComponentBinding("umt5xxl", WAN21.id, text_identity)
     positive = bind_component_conditioning(carrier, binding)
     negative = bind_component_conditioning(carrier, binding)
-    fake_torch_inference = SimpleNamespace(Wan21DiffusionRuntime=Runtime)
+    fake_torch_inference = SimpleNamespace(
+        Wan21DiffusionRuntime=Runtime,
+        torch_sampler_registry=_fake_torch_sampler_registry,
+    )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
         arm.importlib,
@@ -26773,6 +26886,7 @@ def test_wan21_public_samplers_resolve_component_bindings_before_preparation(
     fake_torch_inference = SimpleNamespace(
         Wan21DiffusionRuntime=Runtime,
         prepare_multistream_noise=lambda latent, _seed, _indices: latent,
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
     monkeypatch.setattr(
@@ -27715,9 +27829,10 @@ def _dependency_materialization_fakes(
         "import_module",
         lambda name: (
             SimpleNamespace(
+                torch_sampler_registry=_fake_torch_sampler_registry,
                 worker_planning_context=lambda: pytest.fail(
                     "generic native prevalidation must not request MiniMax H3 planning context"
-                )
+                ),
             )
             if name == "dinkster_inference_torch"
             else real_import(name)
@@ -28244,7 +28359,10 @@ def test_native_hook_graph_routes_sampler_through_scheduled_runtime(
         arm.importlib,
         "import_module",
         lambda name: (
-            SimpleNamespace(PatchProviderSnapshot=lambda providers: providers)
+            SimpleNamespace(
+                PatchProviderSnapshot=lambda providers: providers,
+                torch_sampler_registry=_fake_torch_sampler_registry,
+            )
             if name == "dinkster_inference_torch"
             else real_import(name)
         ),
@@ -28665,7 +28783,10 @@ def test_native_scheduled_sampler_closes_state_when_second_carrier_fails(
         arm.importlib,
         "import_module",
         lambda name: (
-            SimpleNamespace(PatchProviderSnapshot=lambda providers: providers)
+            SimpleNamespace(
+                PatchProviderSnapshot=lambda providers: providers,
+                torch_sampler_registry=_fake_torch_sampler_registry,
+            )
             if name == "dinkster_inference_torch"
             else real_import(name)
         ),
@@ -28815,6 +28936,7 @@ def test_native_sampling_forwards_callbacks_and_live_cancellation(
         materialize_basic_conditioning=lambda value, **_kwargs: Conditioning(
             FakeTensor((1, 77, 4), "materialized")
         ),
+        torch_sampler_registry=_fake_torch_sampler_registry,
     )
     monkeypatch.setattr(
         arm.importlib,

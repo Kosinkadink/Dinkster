@@ -38,11 +38,11 @@ from dinkster_inference import (
     GuidanceRole,
     GuidanceScaleDescriptor,
     GuidanceStrategyDescriptor,
-    cfg_combine,
     cfg_needs_uncond,
 )
 from dinkster_inference.guidance import GuidancePhaseParticipation
 
+from .cfg import cfg_combine
 from .guidance import _standard_plan
 
 APG_STATE_NAMESPACE = "dinkster.apg"

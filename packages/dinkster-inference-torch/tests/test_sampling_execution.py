@@ -51,7 +51,7 @@ from dinkster_inference import (
     SchedulerDescriptor,
     SparseLatent,
     UNetConfig,
-    cfg_combine,
+    builtin_samplers,
     offset_first_sigma_for_snr,
     sampling_sigmas,
     use_sampling_environment,
@@ -74,6 +74,7 @@ from dinkster_inference_torch import (
     UNetModel,
     guidance_transforms,
 )
+from dinkster_inference_torch.cfg import cfg_combine
 from dinkster_inference_torch.denoise import prepare_noise
 from dinkster_inference_torch.guidance import (
     ConditioningEvaluation,
@@ -308,6 +309,15 @@ class _CaptureSparseRuntime:
         self.noise = kwargs["noise"]
         self.kwargs = dict(kwargs)
         return CustomSamplingResult(latent, None)
+
+
+def test_torch_registry_binds_every_backend_agnostic_sampler() -> None:
+    registry = torch_sampler_registry()
+    descriptors = builtin_samplers()
+
+    assert registry.ids() == tuple(descriptor.id for descriptor in descriptors)
+    assert all(descriptor.make is not None for descriptor in registry)
+    assert tuple(replace(descriptor, make=None) for descriptor in registry) == descriptors
 
 
 def test_ksampler_sparse_noise_samples_only_features_and_preserves_support() -> None:
