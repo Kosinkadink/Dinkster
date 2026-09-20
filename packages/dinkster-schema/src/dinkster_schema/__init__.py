@@ -1,3 +1,5 @@
+from dinkster_values import CustomWidgetDescriptor as CustomWidgetDescriptor
+
 from .capture import (
     install_stream_capture,
     use_capture_budget,
