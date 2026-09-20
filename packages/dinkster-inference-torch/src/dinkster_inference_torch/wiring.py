@@ -1306,6 +1306,226 @@ def _sd_control_gain(
     return SDControlGain(lane_ids, values, row.effect_mask_digests)
 
 
+def _validate_sd_latent(latent: torch.Tensor) -> None:
+    if latent.ndim != 4:
+        raise WiringError("SD latent must have shape [batch,channels,height,width]")
+
+
+class _SDLatentAdapter(SingleStreamLatentAdapter):
+    def prepare(
+        self,
+        runtime: object,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs:
+        scheduled_request = (
+            type(cond) is ConditioningCarrier or context.options.get("scheduled") is not None
+        )
+        if not scheduled_request:
+            return super().prepare(
+                runtime,
+                family,
+                latent=latent,
+                noise=noise,
+                cond=cond,
+                cfg=cfg,
+                denoise_mask=denoise_mask,
+                context=context,
+                error=error,
+            )
+        from .scheduled_sampling import ScheduledSamplingError, narrow_scheduled_values
+
+        owner = cast("SDRuntime", runtime)
+        executor = owner.sampling_execution_registration.guidance_executor(owner)
+        if executor is not None and executor.registry.active:
+            raise ScheduledSamplingError("guidance-extensions")
+        if cfg is not None and cfg.transforms:
+            raise ScheduledSamplingError("guidance-extensions")
+        control = context.options.get("control")
+        if control is not None:
+            raise ScheduledSamplingError("control", family.id)
+        contributions = context.options.get("sd15_attention_contributions", ())
+        if type(contributions) is not tuple or contributions:
+            raise ScheduledSamplingError("attention-contributions", family.id)
+        if context.guidance is not None:
+            raise ScheduledSamplingError("distilled-guidance", family.id)
+        if (
+            denoise_mask is not None
+            or context.inpaint is not None
+            or owner.assembled.diffusion.config.in_channels == 9
+        ):
+            raise ScheduledSamplingError("scheduled-sd-inpaint")
+        if context.context_windows is not None:
+            raise ScheduledSamplingError("context-windows", family.id)
+        latent, noise, cond, cfg, denoise_mask = narrow_scheduled_values(
+            family.id,
+            latent=latent,
+            noise=noise,
+            cond=cond,
+            cfg=cfg,
+            denoise_mask=denoise_mask,
+        )
+        self.validate(latent)
+        return SamplingExecutionInputs(
+            latent,
+            noise,
+            cond,
+            cfg,
+            denoise_mask,
+            family.single_stream_latent(),
+        )
+
+
+def _sd_scheduled_denoiser(
+    owner: SDRuntime,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserExecution:
+    from .scheduled_sampling import (
+        ScheduledConditioningDenoiser,
+        ScheduledSamplingError,
+        ScheduledSamplingOptions,
+        prepare_scheduled_carriers,
+        validate_unconditional_carrier,
+    )
+
+    if (
+        context.inputs is None
+        or context.device is None
+        or context.plan is None
+        or context.request is None
+        or context.schedule is None
+    ):
+        raise RuntimeError("scheduled SD sampling context is unresolved")
+    inputs = context.inputs
+    scheduled = context.options.get("scheduled")
+    if scheduled is None:
+        scheduled = ScheduledSamplingOptions()
+    elif type(scheduled) is not ScheduledSamplingOptions:
+        raise TypeError("scheduled must be an exact ScheduledSamplingOptions or None")
+    unknown = set(context.options) - {"scheduled", "control", "sd15_attention_contributions"}
+    if unknown:
+        raise WiringError(
+            "SD sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+        )
+    if context.inputs.denoise_mask is not None:
+        raise ScheduledSamplingError("denoise-mask", owner.family.id)
+    if context.inpaint is not None:
+        raise ScheduledSamplingError("scheduled-sd-inpaint")
+    if context.context_windows is not None:
+        raise ScheduledSamplingError("context-windows", owner.family.id)
+    if context.options.get("control") is not None:
+        raise ScheduledSamplingError("scheduled-sd-control")
+    contributions = context.options.get("sd15_attention_contributions", ())
+    if contributions:
+        raise ScheduledSamplingError("scheduled-sd-attention")
+    validate_unconditional_carrier(context.plan)
+    device = torch.device(context.device)
+    realized_timeline = (
+        None
+        if context.request.timeline is None
+        else realize_sampling_timeline(
+            context.request.timeline,
+            tuple(float(sigma) for sigma in context.schedule.sigmas),
+        )
+    )
+    conditional, unconditional, patch_sets, materialized_plan = prepare_scheduled_carriers(
+        owner,
+        inputs.latent,
+        context.plan,
+        resolver=scheduled.resolver,
+        device=device,
+        cancel=context.cancelled,
+        timeline=realized_timeline,
+        space=owner.sampling_sigma_space(),
+    )
+
+    adm = None
+    if owner.assembled.diffusion.config.adm_in_channels is not None:
+
+        def resolve_adm(region: Any, role: GuidanceRole) -> torch.Tensor | None:
+            return owner._adm(  # pyright: ignore[reportPrivateUsage]
+                region.conditioning,
+                inputs.latent,
+                negative=role is GuidanceRole.UNCONDITIONAL,
+            )
+
+        adm = resolve_adm
+
+    from . import scheduled_sampling as scheduled_module
+
+    evaluator = ScheduledConditioningDenoiser(
+        conditional,
+        unconditional,
+        family_id=owner.family.id,
+        space=owner.sampling_sigma_space(),
+        model=owner.assembled.diffusion,
+        evaluate=scheduled_module.sd_grouped_region_evaluator(
+            owner.assembled.diffusion,
+            owner.sampling_sigma_space(),
+            parameterization=owner.sampling.parameterization,
+            adm=adm,
+            compute_dtype=compute_dtype,
+        ),
+        patch_sets=patch_sets,
+        compute_dtype=compute_dtype,
+        device=device,
+        cancel=context.cancelled,
+    )
+    replacements = MappingProxyType(
+        {
+            condition.id: condition.conditioning
+            for condition in materialized_plan.conditions
+            if condition.conditioning is not None
+        }
+    )
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", evaluator),
+        conditioning_evaluation=ConditioningEvaluation(
+            evaluator.prepare_conditioning,
+            evaluator.evaluate_conditioning,
+            evaluator.batchable,
+            evaluator.evaluate_conditioning_batch,
+            evaluator_identity=lambda _role: f"{owner.family.id}.scheduled-conditioning.v1",
+            standard_activation_memory_factor=owner.family.memory_factor,
+        ),
+        conditioning_payloads=replacements,
+        solver_options=MappingProxyType({"realized_timeline": realized_timeline}),
+        sampling=owner.sampling,
+        percent_to_sigma=owner._percent_to_sigma,  # pyright: ignore[reportPrivateUsage]
+        close=evaluator.close,
+    )
+
+
+def _sd_denoiser(
+    runtime: object,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserExecution:
+    owner = cast("SDRuntime", runtime)
+    if context.inputs is None:
+        raise RuntimeError("SD sampling context is unresolved")
+    if type(context.inputs.cond) is ConditioningCarrier:
+        return _sd_scheduled_denoiser(owner, compute_dtype, context)
+    raise RuntimeError("ordinary SD sampling adapter is not installed")
+
+
+def _sd_device(runtime: object) -> torch.device:
+    return cast("SDRuntime", runtime)._compute_device  # pyright: ignore[reportPrivateUsage]
+
+
+def _sd_compute_dtype(runtime: object) -> torch.dtype:
+    owner = cast("SDRuntime", runtime)
+    return owner.assembled.compute_dtype("diffusion") or torch.float16
+
+
 class SDRuntime(SingleStreamSamplingRuntime):
     """FamilyRuntime[torch.Tensor] over an assembled SD 1.5 / SDXL
     base / SDXL refiner.
@@ -1331,6 +1551,13 @@ class SDRuntime(SingleStreamSamplingRuntime):
     sampling_error = WiringError
     sampling_compute_dtype = torch.float16
     supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=_SDLatentAdapter(_validate_sd_latent, admit_perp_neg=True),
+        denoiser=_sd_denoiser,
+        device=_sd_device,
+        compute_dtype=_sd_compute_dtype,
+        flow=False,
+    )
 
     def __init__(
         self,
@@ -1616,14 +1843,13 @@ class SDRuntime(SingleStreamSamplingRuntime):
         capture_denoised: bool = True,
     ) -> CustomSamplingResult[torch.Tensor]:
         if scheduled is not None or type(cond) is ConditioningCarrier:
-            from .scheduled_sampling import ScheduledSamplingOptions, sample_sd_scheduled_custom
+            from .scheduled_sampling import ScheduledSamplingOptions
 
             if scheduled is None:
                 scheduled = ScheduledSamplingOptions()
             elif type(scheduled) is not ScheduledSamplingOptions:
                 raise TypeError("scheduled must be an exact ScheduledSamplingOptions or None")
-
-            return sample_sd_scheduled_custom(
+            return cast("Any", sampling_execution)(
                 self,
                 latent,
                 noise=noise,
@@ -1636,14 +1862,14 @@ class SDRuntime(SingleStreamSamplingRuntime):
                 inpaint=inpaint,
                 context_windows=context_windows,
                 control=control,
-                attention_contributions=sd15_attention_contributions,
+                sd15_attention_contributions=sd15_attention_contributions,
                 on_step=on_step,
                 on_state=on_state,
-                resolver=scheduled.resolver,
                 cancelled=scheduled.cancelled,
                 compute_dtype=compute_dtype,
                 device=device,
                 capture_denoised=capture_denoised,
+                scheduled=ScheduledSamplingOptions(scheduled.resolver, None),
             )
         latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
             self.family.id,
