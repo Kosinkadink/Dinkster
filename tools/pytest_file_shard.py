@@ -8,7 +8,7 @@ import pytest
 _SHARD_COUNT = 2
 # The namespace balances whole files by the root suite's measured phase times.
 _HASH_PREFIX = b"dinkster-windows-pytest-v1:22340:"
-_ALL_FILE_SHARDS_MARKER = "all_file_shards"
+ALL_FILE_SHARDS_MARKER = "all_file_shards"
 
 
 def file_shard(path: str) -> int:
@@ -33,7 +33,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
-        f"{_ALL_FILE_SHARDS_MARKER}: run this test on every file shard",
+        f"{ALL_FILE_SHARDS_MARKER}: run this test on every file shard",
     )
 
 
@@ -52,7 +52,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     deselected: list[pytest.Item] = []
     for item in items:
         path = Path(item.path).relative_to(root).as_posix()
-        runs_on_all_shards = item.get_closest_marker(_ALL_FILE_SHARDS_MARKER) is not None
+        runs_on_all_shards = item.get_closest_marker(ALL_FILE_SHARDS_MARKER) is not None
         (selected if runs_on_all_shards or file_shard(path) == index else deselected).append(item)
 
     config.hook.pytest_deselected(items=deselected)
