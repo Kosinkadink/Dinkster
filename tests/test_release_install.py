@@ -26,6 +26,16 @@ from scripts.install import install
 from scripts.verify_release_install import stop
 
 
+def test_release_requires_full_validation_for_the_exact_main_commit() -> None:
+    root = Path(__file__).resolve().parent.parent
+    workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
+    (step,) = workflow["jobs"]["authorize"]["steps"]
+    script = step["with"]["script"]
+    assert "context.ref !== 'refs/heads/main'" in script
+    assert "workflow_id: 'full-validation.yml', head_sha: context.sha, event: 'push'" in script
+    assert "runs.data.workflow_runs[0]?.conclusion !== 'success'" in script
+
+
 def test_artifact_install_does_not_activate_a_workspace_environment() -> None:
     root = Path(__file__).resolve().parent.parent
     workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())

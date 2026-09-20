@@ -27,6 +27,51 @@ makes, and these rules keep it that way as the codebase grows.
   state the contract in their docstring and would still make sense if the
   implementation were rewritten.
 
+## Pull requests and full validation
+
+`.github/workflows/ci.yml` runs one job with a five-minute limit. After
+installing the locked workspace and fetching pinned evidence for type
+resolution (not model weights or coverage inputs), it runs
+`bash scripts/ci-fast.sh`: Ruff format, Ruff lint, Pyright, and this fixed
+path-based unit subset:
+
+- `tests/test_schema.py`: schema construction and type validation.
+- `tests/test_values.py`: codecs, fingerprints, inline values and renditions.
+- `tests/test_graph.py`: graph validation and execution planning.
+- `tests/test_graph_wire.py`: wire round trips and malformed-input rejection.
+
+These tests use synthetic in-process data. Selection does not depend on the
+changed files, network access, model availability or hardware. Full suites
+remain required locally before landing; this subset is fast PR feedback,
+not a replacement for full validation. Reproduce the job after
+`uv sync --locked --all-packages` with `bash scripts/ci-fast.sh`.
+
+The PR job defaults to `[self-hosted, linux, x64]`. To use hosted Linux
+without editing the job, set repository variable `DINKSTER_PR_RUNNER` to
+the JSON string `"ubuntu-latest"`. No local wrapper or machine path is used
+by the fast checks.
+
+`.github/workflows/full-validation.yml` runs on every main push, daily at
+10:23 UTC (03:23 Pacific daylight time / 02:23 Pacific standard time), and
+manual dispatch. It retains the Python 3.12 Linux suite, both Python 3.12
+Windows shards, branch coverage with the 80% floor, model tests, all five
+torch CPU attempts and their final gate, translation coverage, artifact
+smoke checks and the macOS descriptor test. Select a branch in Actions'
+"Run workflow" menu, or pass the dispatch ref explicitly:
+
+```bash
+gh workflow run full-validation.yml --repo Kosinkadink/Dinkster --ref <branch>
+```
+
+The dispatch ref selects both the workflow and checked-out code, so owners
+can obtain Windows and full-suite evidence for an unmerged branch. The
+selected branch must contain the workflow. The daily audit uses main.
+
+Both workflows use Python 3.12 only. Package requirements and the dependency
+lock continue to support Python 3.13. Heavy jobs run independently; the
+torch CPU attempt chain selects a CPU matching its golden-data contract,
+not a serialization limit.
+
 ## Coverage
 
 Measured with branch coverage across all packages:
@@ -40,7 +85,7 @@ uv run pytest -q --cov=dinkster_api --cov=dinkster_assets --cov=dinkster_caches 
   --cov-branch --cov-report=term-missing
 ```
 
-CI enforces a ratcheting floor (see `.github/workflows/ci.yml`); raise it
+CI enforces a ratcheting floor (see `.github/workflows/full-validation.yml`); raise it
 when real coverage rises, never lower it to make a PR pass. Known
 measurement caveat: code that runs in worker subprocesses (`host.py`,
 `service.py`, `provision.py`, `_doctor_probe.py`) is exercised by the suite
@@ -64,7 +109,7 @@ are clearly labeled, and skip loudly rather than silently not existing:
   the optional runtime with `uv sync --group angle`, then run the test to
   execute every declared GLSL image mirror against its CPU parity corpus.
   It skips when ANGLE or a float-renderable EGL/GLES 3 context is unavailable.
-- **CI matrix**: ubuntu + windows, Python 3.12 + 3.13 - Windows is the
+- **CI matrix**: Linux + Windows, Python 3.12 - Windows is the
   dominant user OS and keeps the tcp-transport and shm-lifetime rules
   honest.
 
@@ -73,14 +118,14 @@ fault injection for the remote boundary, and property/fuzz tests for the
 wire decoders, type-id grammar, and graph nesting - the highest-value fuzz
 targets because their inputs come from outside.
 
-## Hosted checks and dedicated model tests
+## CPU checks and dedicated model tests
 
-GitHub-hosted jobs never acquire or execute model weights. All five
+The CPU retry jobs never acquire or execute model weights. All five
 `torch-cpu-try*` callers pass `run-model-tests: "false"` to
 `.github/actions/torch-cpu-suite`. The action defaults to false as well.
 Environment setup, pinned source downloads, source-parity receipts and their
-tests, and all eleven Torch/vision pyright projects remain hosted. The
-nine vision package suites also remain hosted without their artifact
+tests, and all eleven Torch/vision pyright projects remain in these jobs. The
+nine vision package suites also run without their artifact
 environment variables, so their weight-dependent cases skip while synthetic
 input validation, preprocessing, batching, cache, fallback, tiling, and
 architecture tests still run. The packages are `dinkster-vision-hed`,
@@ -89,7 +134,7 @@ architecture tests still run. The packages are `dinkster-vision-hed`,
 `dinkster-vision-birefnet`, `dinkster-vision-depth-anything-v3`, and
 `dinkster-vision-sam31`.
 
-Hosted jobs exclude all pinned model-weight acquisitions, the combined
+The CPU retry jobs exclude all pinned model-weight acquisitions, the combined
 `dinkster-inference-torch` and `dinkster-model-ipadapter` test lane, each vision
 suite's second real-artifact run, and
 `tests/test_benchmark_inference.py::test_minimax_h3_identities_are_accepted_by_the_production_dit_loader`.
@@ -118,23 +163,23 @@ GPU gates in `scripts/setup_envs.sh` and the Torch README also remain required
 where applicable. No CI input or repository variable changes local pytest
 selection.
 
-The `model-tests` job is disabled unless repository variable
-`DINKSTER_MODEL_TESTS_ENABLED` is `true`. It only accepts pushes to `main` in
-`Kosinkadink/Dinkster`, never pull requests. Its job-level condition skips it
-before runner allocation; no hosted job depends on it. To enable it, provide
-a runner with labels `[self-hosted, linux, x64, dinkster-model-tests]` and set
-that variable, with no source edits. It uses the same complete composite
-action with `run-model-tests: "true"` and the existing read-only
-`DINKSTER_IDENTITY_DEPLOY_KEY` secret.
+The `model-tests` job runs in full validation in `Kosinkadink/Dinkster` on
+main pushes, the daily schedule and manual dispatch. PR labels never enable
+heavy jobs; dispatch full validation against the branch when model evidence
+is needed before landing. The job uses `[self-hosted, linux, x64]` and the
+same complete composite action with `run-model-tests: "true"` and the
+existing read-only identity and evidence deploy keys. No other job depends
+on it.
 
 The runner must have an AuthenticAMD CPU with AVX2 and **without AVX-512**,
 `MKL_CBWR` unset, and sufficient disk/RAM for the pinned CPU workloads.
 A GPU-equipped machine still runs CPU parity with Torch 2.13.0+cpu and the
-existing AVX2 dispatch pins; this does not switch to GPU goldens. Use an
-isolated disposable runner environment with a fresh workspace, home and
-`/tmp` for each job: setup writes SSH dependency configuration and uses fixed
-temporary source/build paths. The disk-reclaim step that removes hosted
-image tooling is guarded by `runner.environment == 'github-hosted'` and
+existing AVX2 dispatch pins; this does not switch to GPU goldens. Checkouts
+clean the workspace and do not persist credentials. Deploy keys live in
+per-step SSH agents with post-job cleanup, and downloads use `RUNNER_TEMP`.
+Linux full suites use the host's counted-suite launcher. The disk-reclaim
+step that removes hosted image tooling is guarded by
+`runner.environment == 'github-hosted'` and
 never runs on a self-hosted machine.
 
 ## Tooling enforcement

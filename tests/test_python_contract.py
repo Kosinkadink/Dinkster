@@ -59,10 +59,13 @@ def test_workspace_and_generated_metadata_share_python_floor() -> None:
     assert generated["tool"]["pyright"]["pythonVersion"] == "3.12"
 
 
-def test_ci_exercises_supported_baseline_and_current_versions() -> None:
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert 'python-version: ["3.12", "3.13"]' in workflow
-    assert 'python-version: ["3.11"' not in workflow
+def test_ci_exercises_python_312_without_narrowing_package_support() -> None:
+    for name in ("ci.yml", "full-validation.yml"):
+        workflow = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+        assert 'python-version: "3.12"' in workflow
+        assert '"3.13"' not in workflow
+        assert '"3.11"' not in workflow
+    assert _toml(ROOT / "uv.lock")["requires-python"] == ">=3.12"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX resource_tracker contract")

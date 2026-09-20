@@ -34,7 +34,7 @@ jobs:
               throw new Error('Refusing publication from a non-main branch');
             }
             const runs = await github.rest.actions.listWorkflowRuns({
-              ...context.repo, workflow_id: 'ci.yml', head_sha: context.sha, event: 'push',
+              ...context.repo, workflow_id: 'full-validation.yml', head_sha: context.sha, event: 'push',
             });
             if (runs.data.workflow_runs[0]?.conclusion !== 'success') {
               throw new Error('The exact main commit must have successful CI before release');
