@@ -46,6 +46,11 @@ _COMMANDS: dict[str, _Command] = {
         passes_argv=False,
         summary="run a Dinkster server (alias: dinkster-serve)",
     ),
+    "setup": _Command(
+        "dinkster.setup",
+        passes_argv=True,
+        summary="prepare the local installation used by the default launcher",
+    ),
     "pack": _Command(
         "dinkster.manager",
         passes_argv=False,
@@ -96,11 +101,10 @@ def _usage() -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if not args:
-        print(_usage(), file=sys.stderr)
-        return 2
+    if not args or args[0].startswith("-"):
+        return int(importlib.import_module("dinkster.launch").main(args))
     head, *tail = args
-    if head in ("-h", "--help", "help"):
+    if head == "help":
         print(_usage())
         return 0
     command = _COMMANDS.get(head)
