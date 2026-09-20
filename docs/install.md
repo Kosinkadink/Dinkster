@@ -194,16 +194,30 @@ Windows/Linux NVIDIA execution installs the exact `dinkster-aimdo==0.5.5.post2`
 wheel from PyPI. macOS does not use Aimdo. Models are
 not bundled; consult [supported models](supported/model-families-native-execution.md)
 before downloading.
-Select the execution interpreter with `--comfy-python` and omit
-`--no-default-packs` when serving the default suite. After installation, run
-`uv run --no-sync dinkster-pack prepare-catalogs --defaults --library-root ../library`
-using the same interpreter via `DINKSTER_COMFYUI_PYTHON`. Rerun it after changing
-the backend checkout or any default-pack dependency. The server refuses to bind
-when a required catalog is missing or stale. Today, the working native SD 1.5
-path is a SamplerCustomAdvanced graph served with `--comfy-root`; the audited
-run is recorded in [maintainer issue #114](https://github.com/Kosinkadink/comfy-vibe-station/issues/114).
-The native-only claim returns when that issue lands. See
-[the complete server reference](serve-cli.md).
+
+The bare launcher inherits `DINKSTER_COMFYUI_PYTHON` as the native execution
+interpreter. Point it at the Python environment containing PyTorch and the
+native inference packages:
+
+```sh
+DINKSTER_COMFYUI_PYTHON=/absolute/path/to/pytorch-venv/bin/python uv run --no-sync dinkster
+```
+
+In PowerShell, set the variable first, then run the same bare command:
+
+```powershell
+$env:DINKSTER_COMFYUI_PYTHON = 'C:\absolute\path\to\pytorch-venv\Scripts\python.exe'
+uv run --no-sync dinkster
+```
+
+Use that same environment variable when manually running
+`uv run --no-sync dinkster-pack prepare-catalogs --defaults --library-root ../library`.
+The bare launcher prepares missing or stale default-pack catalogs itself. The
+server refuses to bind when a required catalog cannot be prepared. Native SD
+1.5 generation runs through the default workflow without a ComfyUI checkout or
+`--comfy-root`. Advanced `dinkster serve` launches may select the same
+interpreter with `--comfy-python`; see the
+[complete server reference](serve-cli.md).
 
 Catalog preparation probes trusted installed code and validates its runtime
 declarations. It is not a substitute for `doctor` authoring checks or registry
