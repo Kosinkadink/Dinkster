@@ -1,12 +1,9 @@
 """dinkster-installs: manage the station's install registry.
 
-The station (dinkster-station, in dinkster-supervisor) READS ``installs.toml``
-and deliberately imports no engine code; this CLI is the WRITER, and it
-lives in the umbrella because registering an install is an operator
-action on the machine, not a fleet-runtime action. The split keeps one
-format (both sides go through dinkster_supervisor.installs) and one
-direction of knowledge: the umbrella knows about the supervisor package,
-never the reverse.
+The station READS ``installs.toml`` and deliberately imports no engine code;
+this CLI is the WRITER. Both belong to the independently installable
+supervisor package and share one registry format without coupling the engine
+umbrella to supervisor code.
 
 Config mutations follow the plan/apply discipline every other mutating
 Dinkster command follows: print exactly what would change, then apply only
@@ -30,8 +27,9 @@ import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import cast
 
-from dinkster_supervisor import (
+from . import (
     InstallDef,
     InstallsError,
     dump_station_config,
@@ -39,7 +37,7 @@ from dinkster_supervisor import (
     load_station_config,
     parse_station_config,
 )
-from dinkster_supervisor.installs import DEFAULT_INSTALLS_FILE
+from .installs import DEFAULT_INSTALLS_FILE
 
 __all__ = ["main"]
 
@@ -168,7 +166,7 @@ def _station_post(station: str, route: str) -> dict[str, object]:
         ) from exc
     if not isinstance(body, dict):
         raise InstallsError(f"station answered non-object JSON for {route}")
-    return body
+    return cast("dict[str, object]", body)
 
 
 def _cmd_runtime(args: argparse.Namespace) -> None:

@@ -35,13 +35,34 @@ uv run dinkster
 
 The editor opens at `http://127.0.0.1:3639`. Its application, API, and event
 connections all use that origin. The default pack suite includes the
-foundation, media, vision, and training nodes. Collaboration routes are
-available, while peer-to-peer discovery is disabled for the local launch.
+foundation, media, vision, and training nodes. The default Dinkster install
+also includes the independently installable `dinkster-collab` collaboration
+routes and `dinkster-supervisor` process supervisor. The command above starts
+the engine directly with collaboration enabled; peer-to-peer discovery is
+disabled for the local launch.
 Catalog preparation can make the first launch take longer than later launches.
 
 Use Ctrl+C in the terminal to stop the engine. If the default port is busy,
 run `uv run dinkster --port 4640`. Use `--no-browser` on a headless machine and
 open the printed URL from a browser on that machine.
+
+To put the supervisor in front of the engine, run:
+
+```sh
+uv run dinkster-supervisor -- uv run --no-sync dinkster-serve
+```
+
+An embedded or headless core installation may omit both optional packages.
+From a source checkout, remove them from the environment and disable automatic
+sync while launching so the default meta-package does not restore them:
+
+```sh
+uv sync --no-install-package dinkster-collab --no-install-package dinkster-supervisor
+uv run --no-sync dinkster-serve
+```
+
+Installers that select capabilities explicitly can use the `dinkster[collab]`
+and `dinkster[supervisor]` extras. The default `dinkster` install selects both.
 
 ![The browser editor after the one-command launch](quickstart.png)
 

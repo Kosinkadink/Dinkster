@@ -252,7 +252,7 @@ def verify(root: Path, state: Path, registry_command: Path) -> None:
         (state / "job.json").write_text(json.dumps(job, indent=2) + "\n")
         config = str(state / "installs.toml")
         run(
-            "dinkster.install_manager",
+            "dinkster_supervisor.install_manager",
             "--config",
             config,
             "add",
@@ -263,7 +263,7 @@ def verify(root: Path, state: Path, registry_command: Path) -> None:
             backend_url.rsplit(":", 1)[1],
             "--yes",
         )
-        assert "local" in run("dinkster.install_manager", "--config", config, "list")
+        assert "local" in run("dinkster_supervisor.install_manager", "--config", config, "list")
     print(
         "Registry publication, pack installation, backend catalog and install registration "
         f"passed: {state}"
