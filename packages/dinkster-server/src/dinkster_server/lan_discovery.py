@@ -12,7 +12,7 @@ from types import TracebackType
 from typing import cast
 
 from dinkster_p2p import LanInterface, LanNetworkPolicy, lan_interfaces
-from zeroconf import IPVersion, ServiceInfo, ServiceStateChange, Zeroconf
+from zeroconf import IPVersion, NonUniqueNameException, ServiceInfo, ServiceStateChange, Zeroconf
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
 
 __all__ = [
@@ -114,10 +114,19 @@ class LanMdnsDiscovery:
             server=f"{self._instance_id}.local.",
         )
         assert self._zeroconf is not None
-        announcement = cast(
-            "Awaitable[object]",
-            await self._zeroconf.async_register_service(info),  # pyright: ignore[reportUnknownMemberType]
-        )
+        self._evict_cached_service_pointer(info)
+        try:
+            announcement = cast(
+                "Awaitable[object]",
+                await self._zeroconf.async_register_service(info),  # pyright: ignore[reportUnknownMemberType]
+            )
+        except NonUniqueNameException:
+            # A looped-back PTR can arrive during zeroconf's randomized probe delay.
+            self._evict_cached_service_pointer(info)
+            announcement = cast(
+                "Awaitable[object]",
+                await self._zeroconf.async_register_service(info),  # pyright: ignore[reportUnknownMemberType]
+            )
         self._advertisement = info
         try:
             await announcement
@@ -136,8 +145,17 @@ class LanMdnsDiscovery:
             await self._zeroconf.async_unregister_service(info),  # pyright: ignore[reportUnknownMemberType]
         )
         await goodbye
+        self._evict_cached_service_pointer(info)
         if self._advertisement is info:
             self._advertisement = None
+
+    def _evict_cached_service_pointer(self, info: ServiceInfo) -> None:
+        assert self._zeroconf is not None
+        # Goodbye completion only sends packets; zeroconf can retain its received PTR locally.
+        zeroconf = self._zeroconf.zeroconf
+        pointer = zeroconf.cache.current_entry_with_name_and_alias(info.type, info.name)
+        if pointer is not None:
+            zeroconf.cache.async_remove_records((pointer,))
 
     def _service_changed(
         self,
