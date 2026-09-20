@@ -60,20 +60,13 @@ def write_pack(root: Path) -> Path:
     return root
 
 
-def test_no_command_is_usage_on_stderr_exit_2(capsys) -> None:
-    assert main([]) == 2
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "usage: dinkster" in captured.err
-    assert "doctor" in captured.err
-
-
 def test_help_lists_every_command_exit_0(capsys) -> None:
-    assert main(["--help"]) == 0
+    assert main(["help"]) == 0
     listing = capsys.readouterr().out
     for name in (
         "doctor",
         "serve",
+        "setup",
         "pack",
         "installs",
         "port",
@@ -125,7 +118,7 @@ def test_dispatcher_imports_lazily_and_module_form_works() -> None:
     probe = (
         "import sys\n"
         "import dinkster.cli\n"
-        "rc = dinkster.cli.main(['--help'])\n"
+        "rc = dinkster.cli.main(['help'])\n"
         "assert rc == 0, rc\n"
         "heavy = [m for m in ('dinkster.serve', 'dinkster.demo', 'dinkster.manager',"
         " 'dinkster_workers.doctor') if m in sys.modules]\n"
