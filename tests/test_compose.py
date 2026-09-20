@@ -1403,9 +1403,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == (
-        "sha256:6badee4196df5ec5e7e73ea7729229921d08353b9c98c1ed3ca0c5c79d73d9af"
-    )
+    assert expected == ("sha256:6badee4196df5ec5e7e73ea7729229921d08353b9c98c1ed3ca0c5c79d73d9af")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_file.write_bytes(license_file.read_bytes().replace(b"\n", b"\r\n"))
 
