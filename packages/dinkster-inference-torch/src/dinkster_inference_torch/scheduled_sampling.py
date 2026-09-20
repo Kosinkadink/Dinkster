@@ -26,6 +26,7 @@ from dinkster_inference import (
     GuidanceRole,
     InpaintConditioning,
     KeyedContribution,
+    ModelFamily,
     NoiseKind,
     PatchSet,
     PatchTargetComponent,
@@ -333,7 +334,7 @@ class _ScheduledDenoiser:
         conditional: tuple[MaterializedRegion, ...],
         unconditional: tuple[MaterializedRegion, ...],
         *,
-        family_id: str,
+        family: ModelFamily,
         space: Any,
         model: torch.nn.Module,
         evaluate: Any,
@@ -344,7 +345,8 @@ class _ScheduledDenoiser:
     ) -> None:
         self._conditional = conditional
         self._unconditional = unconditional
-        self._family_id = family_id
+        self._family = family
+        self._family_id = family.id
         self._space = space
         self._model = model
         self._evaluate = evaluate
@@ -411,7 +413,7 @@ class _ScheduledDenoiser:
                 x,
                 float(sigma),
                 self._space,
-                self._family_id,
+                self._family,
                 self._model,
                 self._evaluate,
                 owner,
@@ -765,7 +767,7 @@ def sample_flux_scheduled_custom(
     denoiser = _ScheduledDenoiser(
         conditional,
         unconditional,
-        family_id=runtime.family.id,
+        family=runtime.family,
         space=space,
         model=runtime.assembled.diffusion,
         evaluate=flux_grouped_region_evaluator(
@@ -922,7 +924,7 @@ def sample_sd_scheduled_custom(
     denoiser = _ScheduledDenoiser(
         conditional,
         unconditional,
-        family_id=runtime.family.id,
+        family=runtime.family,
         space=runtime._space,
         model=runtime.assembled.diffusion,
         evaluate=sd_grouped_region_evaluator(

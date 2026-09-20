@@ -34,6 +34,7 @@ from .native_arm_core import (
     _embedding_resource,
     _freeze_embedding_resource,
     _GuidedRows,
+    _inference_registries,
     _NativeHooks,
     _NativeLoraHook,
     _run_direct_vae,
@@ -133,6 +134,7 @@ def _load_runtime(
         for role, source_path in paths.items()
     }
     sampler_registry, _, registry_token = _sampler_registry(inference, extension_snapshot_digest)
+    family_registry = _inference_registries(inference, extension_snapshot_digest).families
     attention_kwargs = (
         {}
         if attention_route_token is None
@@ -147,6 +149,7 @@ def _load_runtime(
             expected_identity=expected_identity,
             storage_dtype_follows_compute=True,
             fp8_matmul=fp8_matmul,
+            family_registry=family_registry,
             **dtype_kwargs,
             **attention_kwargs,
             **embedding_kwargs,
@@ -168,6 +171,7 @@ def _load_runtime(
         **dtype_kwargs,
         **attention_kwargs,
         "sampler_registry": sampler_registry,
+        "family_registry": family_registry,
         "registry_token": registry_token,
         "extension_behavior_hash": extension_snapshot_digest.removeprefix("sha256:"),
         **embedding_kwargs,
