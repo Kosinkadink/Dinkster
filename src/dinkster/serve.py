@@ -205,9 +205,15 @@ def _default_pack_venv_root(library_root: str) -> Path:
 
 def _pack_runtime_sources(manifest: PackManifest) -> tuple[tuple[Path, ...], str]:
     manifest_root = manifest.root
-    packages = manifest_root.parent
+    source_root = manifest_root
     if (
-        not (manifest_root / "pyproject.toml").is_file()
+        not (source_root / "pyproject.toml").is_file()
+        and (source_root.parent / "pyproject.toml").is_file()
+    ):
+        source_root = source_root.parent
+    packages = source_root.parent
+    if (
+        not (source_root / "pyproject.toml").is_file()
         or not (packages.parent / "pyproject.toml").is_file()
     ):
         module = manifest.nodes_entry.partition(":")[0].partition(".")[0]
@@ -222,7 +228,7 @@ def _pack_runtime_sources(manifest: PackManifest) -> tuple[tuple[Path, ...], str
         raise CompositionError(
             f"source workspace is missing pack-host packages: {', '.join(missing)}"
         )
-    pythonpath = os.pathsep.join(str(path / "src") for path in (*workspace, manifest_root))
+    pythonpath = os.pathsep.join(str(path / "src") for path in (*workspace, source_root))
     return workspace, pythonpath
 
 

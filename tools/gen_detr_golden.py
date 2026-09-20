@@ -70,7 +70,7 @@ def _float_record(array: np.ndarray) -> dict[str, object]:
 
 
 def _prepare_frame(frame: np.ndarray) -> torch.Tensor:
-    """Match dinkster_vision_detr.model.prepare_frame; divergence fails the
+    """Match dinkster_nodes_vision.detr.model.prepare_frame; divergence fails the
     provider's golden test."""
     height, width = frame.shape[:2]
     scale = SHORTEST_SIDE / min(height, width)

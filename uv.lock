@@ -40,6 +40,7 @@ members = [
     "dinkster-nodes-remote",
     "dinkster-nodes-std",
     "dinkster-nodes-training",
+    "dinkster-nodes-vision",
     "dinkster-p2p",
     "dinkster-protocol",
     "dinkster-registry",
@@ -50,15 +51,6 @@ members = [
     "dinkster-training-worker",
     "dinkster-values",
     "dinkster-video",
-    "dinkster-vision-birefnet",
-    "dinkster-vision-depth-anything-v2",
-    "dinkster-vision-depth-anything-v3",
-    "dinkster-vision-detr",
-    "dinkster-vision-efficient-sam",
-    "dinkster-vision-hed",
-    "dinkster-vision-rtdetr",
-    "dinkster-vision-sam31",
-    "dinkster-vision-upscale",
     "dinkster-workers",
 ]
 
@@ -1511,15 +1503,7 @@ dependencies = [
     { name = "dinkster-nodes-image" },
     { name = "dinkster-nodes-media-io" },
     { name = "dinkster-nodes-remote" },
-    { name = "dinkster-vision-birefnet" },
-    { name = "dinkster-vision-depth-anything-v2" },
-    { name = "dinkster-vision-depth-anything-v3" },
-    { name = "dinkster-vision-detr" },
-    { name = "dinkster-vision-efficient-sam" },
-    { name = "dinkster-vision-hed" },
-    { name = "dinkster-vision-rtdetr" },
-    { name = "dinkster-vision-sam31" },
-    { name = "dinkster-vision-upscale" },
+    { name = "dinkster-nodes-vision" },
 ]
 
 [package.metadata]
@@ -1528,15 +1512,7 @@ requires-dist = [
     { name = "dinkster-nodes-image", editable = "packages/dinkster-nodes-image" },
     { name = "dinkster-nodes-media-io", editable = "packages/dinkster-nodes-media-io" },
     { name = "dinkster-nodes-remote", editable = "packages/dinkster-nodes-remote" },
-    { name = "dinkster-vision-birefnet", editable = "packages/dinkster-vision-birefnet" },
-    { name = "dinkster-vision-depth-anything-v2", editable = "packages/dinkster-vision-depth-anything-v2" },
-    { name = "dinkster-vision-depth-anything-v3", editable = "packages/dinkster-vision-depth-anything-v3" },
-    { name = "dinkster-vision-detr", editable = "packages/dinkster-vision-detr" },
-    { name = "dinkster-vision-efficient-sam", editable = "packages/dinkster-vision-efficient-sam" },
-    { name = "dinkster-vision-hed", editable = "packages/dinkster-vision-hed" },
-    { name = "dinkster-vision-rtdetr", editable = "packages/dinkster-vision-rtdetr" },
-    { name = "dinkster-vision-sam31", editable = "packages/dinkster-vision-sam31" },
-    { name = "dinkster-vision-upscale", editable = "packages/dinkster-vision-upscale" },
+    { name = "dinkster-nodes-vision", editable = "packages/dinkster-nodes-vision" },
 ]
 
 [[package]]
@@ -1549,6 +1525,27 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
+
+[[package]]
+name = "dinkster-nodes-vision"
+version = "0.0.1"
+source = { editable = "packages/dinkster-nodes-vision" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference-torch" },
+    { name = "numpy" },
+    { name = "opencv-python-headless" },
+    { name = "pillow" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference-torch", editable = "packages/dinkster-inference-torch" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "opencv-python-headless", specifier = ">=4.10" },
+    { name = "pillow", specifier = ">=10" },
+]
 
 [[package]]
 name = "dinkster-p2p"
@@ -1783,153 +1780,6 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "opentimelineio", specifier = "==0.18.1" },
     { name = "pillow", specifier = ">=10" },
-]
-
-[[package]]
-name = "dinkster-vision-birefnet"
-version = "0.0.1"
-source = { editable = "packages/dinkster-vision-birefnet" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference-torch" },
-    { name = "numpy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference-torch", editable = "packages/dinkster-inference-torch" },
-    { name = "numpy", specifier = ">=1.26" },
-]
-
-[[package]]
-name = "dinkster-vision-depth-anything-v2"
-version = "0.0.1"
-source = { editable = "packages/dinkster-vision-depth-anything-v2" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "numpy" },
-    { name = "opencv-python-headless" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "opencv-python-headless", specifier = ">=4.10" },
-]
-
-[[package]]
-name = "dinkster-vision-depth-anything-v3"
-version = "0.0.1"
-source = { editable = "packages/dinkster-vision-depth-anything-v3" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "numpy" },
-    { name = "opencv-python-headless" },
-    { name = "pillow" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "opencv-python-headless", specifier = ">=4.10" },
-    { name = "pillow", specifier = ">=10" },
-]
-
-[[package]]
-name = "dinkster-vision-detr"
-version = "0.0.1"
-source = { editable = "packages/dinkster-vision-detr" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "numpy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "numpy", specifier = ">=1.26" },
-]
-
-[[package]]
-name = "dinkster-vision-efficient-sam"
-version = "0.0.1"
-source = { editable = "packages/dinkster-vision-efficient-sam" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "numpy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "numpy", specifier = ">=1.26" },
-]
-
-[[package]]
-name = "dinkster-vision-hed"
-version = "0.0.1"
-source = { editable = "packages/dinkster-vision-hed" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "numpy" },
-    { name = "opencv-python-headless" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "opencv-python-headless", specifier = ">=4.10" },
-]
-
-[[package]]
-name = "dinkster-vision-rtdetr"
-version = "0.0.1"
-source = { editable = "packages/dinkster-vision-rtdetr" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "numpy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "numpy", specifier = ">=1.26" },
-]
-
-[[package]]
-name = "dinkster-vision-sam31"
-version = "0.0.1"
-source = { editable = "packages/dinkster-vision-sam31" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "numpy" },
-    { name = "opencv-python-headless" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "opencv-python-headless", specifier = ">=4.10" },
-]
-
-[[package]]
-name = "dinkster-vision-upscale"
-version = "0.0.1"
-source = { editable = "packages/dinkster-vision-upscale" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "numpy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "numpy", specifier = ">=1.26" },
 ]
 
 [[package]]

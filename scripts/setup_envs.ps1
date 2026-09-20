@@ -64,15 +64,7 @@ $CpuEditablePackages = @(
     "packages/dinkster-model-ipadapter",
     "packages/dinkster-model-qwen-image",
     "packages/dinkster-model-triposplat",
-    "packages/dinkster-vision-birefnet",
-    "packages/dinkster-vision-depth-anything-v2",
-    "packages/dinkster-vision-depth-anything-v3",
-    "packages/dinkster-vision-detr",
-    "packages/dinkster-vision-efficient-sam",
-    "packages/dinkster-vision-hed",
-    "packages/dinkster-vision-rtdetr",
-    "packages/dinkster-vision-sam31",
-    "packages/dinkster-vision-upscale",
+    "packages/dinkster-nodes-vision",
     "packages/dinkster-workers",
     "packages/dinkster-training-torch[torch]"
 )

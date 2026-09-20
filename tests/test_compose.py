@@ -1087,7 +1087,7 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
         ),
         (
             "dinkster-nodes-image",
-            "sha256:0ee5a6f50cdb3cd53d3f2a7c8138127e5ce797f6f1247c7d24858d516f6bafcd",
+            "sha256:3d126cbf7fb4daa775c517885b96a93f0dff10aafed69facd48c834189405039",
         ),
         (
             "dinkster-nodes-remote",
@@ -1142,19 +1142,29 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
     tracked_paths = {Path(raw.decode("utf-8")) for raw in listed.split(b"\0") if raw}
     artifact_paths: set[Path] = set()
     for pack_id, module_name in compose._FIRST_PARTY_PACK_MODULES.items():
-        pack_root = Path("packages") / pack_id
-        manifest_path = pack_root / "dinkster-pack.toml"
+        distribution_id = compose._FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
+        pack_root = Path("packages") / distribution_id
+        sidecar_root = (
+            pack_root / f"{pack_id.replace('-', '_')}_pack"
+            if distribution_id != pack_id
+            else pack_root
+        )
+        manifest_path = sidecar_root / "dinkster-pack.toml"
         manifest = tomllib.loads((repo_root / manifest_path).read_text(encoding="utf-8"))
         docs = manifest.get("pack", {}).get("docs", {})
         docs_dir = docs.get("dir") if isinstance(docs, dict) else None
-        prefixes = [pack_root / "src" / module_name, pack_root / "locales"]
+        module_root = pack_root / "src" / Path(*module_name.split("."))
+        prefixes = [module_root, sidecar_root / "locales"]
         if isinstance(docs_dir, str):
-            prefixes.append(pack_root / docs_dir)
+            prefixes.append(sidecar_root / docs_dir)
         artifact_paths.add(manifest_path)
+        module_init = module_root.parent / "__init__.py"
+        if distribution_id != pack_id and module_init in tracked_paths:
+            artifact_paths.add(module_init)
         artifact_paths.update(
-            pack_root / filename
+            sidecar_root / filename
             for filename in compose._PACK_ARTIFACT_SIDECARS
-            if pack_root / filename in tracked_paths
+            if sidecar_root / filename in tracked_paths
         )
         artifact_paths.update(
             path
@@ -1501,9 +1511,10 @@ def test_default_suite_package_matches_managed_lock() -> None:
     root = Path(__file__).parent.parent / "packages/dinkster-nodes-std"
     configuration = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     lock = json.loads((root / "dinkster.lock").read_text(encoding="utf-8"))
-    assert configuration["project"]["dependencies"] == [
-        f"{entry['pack']}=={entry['version']}" for entry in lock["packs"]
-    ]
+    locked_distributions = list(
+        dict.fromkeys(entry["source"].removeprefix("python:") for entry in lock["packs"])
+    )
+    assert configuration["project"]["dependencies"] == locked_distributions
     wheel = configuration["tool"]["hatch"]["build"]["targets"]["wheel"]
     assert wheel["force-include"] == {
         "dinkster.lock": "dinkster_nodes_std_suite/dinkster.lock",

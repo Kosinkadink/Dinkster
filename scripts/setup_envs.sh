@@ -93,15 +93,7 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     -e packages/dinkster-model-ipadapter \
     -e packages/dinkster-model-qwen-image \
     -e packages/dinkster-model-triposplat \
-    -e packages/dinkster-vision-birefnet \
-    -e packages/dinkster-vision-depth-anything-v2 \
-    -e packages/dinkster-vision-depth-anything-v3 \
-    -e packages/dinkster-vision-detr \
-    -e packages/dinkster-vision-efficient-sam \
-    -e packages/dinkster-vision-hed \
-    -e packages/dinkster-vision-rtdetr \
-    -e packages/dinkster-vision-sam31 \
-    -e packages/dinkster-vision-upscale \
+    -e packages/dinkster-nodes-vision \
     -e packages/dinkster-workers \
     -e 'packages/dinkster-training-torch[torch]'
 uv pip install --python .venv-torch/bin/python --no-deps --no-sources \
@@ -226,24 +218,8 @@ echo '  CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv
 echo "    .venv-torch/bin/python -m pytest -q packages/dinkster-inference-torch/tests"
 echo "  .venv/bin/pyright -p packages/dinkster-training-torch"
 echo "  .venv-torch/bin/python -m pytest -q packages/dinkster-training-torch/tests"
-echo "  .venv/bin/pyright -p packages/dinkster-vision-hed"
-echo "  DINKSTER_HED_TEST_MODEL=/path/to/ControlNetHED.pth .venv-torch/bin/python -m pytest -q packages/dinkster-vision-hed/tests"
-echo "  .venv/bin/pyright -p packages/dinkster-vision-upscale"
-echo "  .venv-torch/bin/python -m pytest -q packages/dinkster-vision-upscale/tests"
-echo "  .venv/bin/pyright -p packages/dinkster-vision-depth-anything-v2"
-echo "  DINKSTER_DEPTH_ANYTHING_V2_TEST_MODEL=/path/to/model.safetensors .venv-torch/bin/python -m pytest -q packages/dinkster-vision-depth-anything-v2/tests"
-echo "  .venv/bin/pyright -p packages/dinkster-vision-depth-anything-v3"
-echo "  DINKSTER_DEPTH_ANYTHING_V3_TEST_MODEL=/path/to/model.safetensors .venv-torch/bin/python -m pytest -q packages/dinkster-vision-depth-anything-v3/tests"
-echo "  .venv/bin/pyright -p packages/dinkster-vision-detr"
-echo "  DINKSTER_DETR_TEST_MODEL=/path/to/detr-r50-e632da11.pth .venv-torch/bin/python -m pytest -q packages/dinkster-vision-detr/tests"
-echo "  .venv/bin/pyright -p packages/dinkster-vision-rtdetr"
-echo "  DINKSTER_RTDETR_TEST_MODEL=/path/to/rt_detr_v4-x-hgnet_fp16.safetensors .venv-torch/bin/python -m pytest -q packages/dinkster-vision-rtdetr/tests"
-echo "  .venv/bin/pyright -p packages/dinkster-vision-efficient-sam"
-echo "  DINKSTER_EFFICIENT_SAM_TEST_ENCODER=/path/to/encoder.onnx DINKSTER_EFFICIENT_SAM_TEST_DECODER=/path/to/decoder.onnx .venv-torch/bin/python -m pytest -q packages/dinkster-vision-efficient-sam/tests"
-echo "  .venv/bin/pyright -p packages/dinkster-vision-birefnet"
-echo "  DINKSTER_BIREFNET_TEST_MODEL=/path/to/birefnet.safetensors .venv-torch/bin/python -m pytest -q packages/dinkster-vision-birefnet/tests"
-echo "  .venv/bin/pyright -p packages/dinkster-vision-sam31"
-echo "  DINKSTER_SAM31_TEST_MODEL=/path/to/sam3.1_multiplex_fp16.safetensors .venv-torch/bin/python -m pytest -q packages/dinkster-vision-sam31/tests"
+echo "  .venv/bin/pyright -p packages/dinkster-nodes-vision"
+echo "  .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests"
 echo "GPU machines additionally (dinkster-kernels resolves against .venv-gpu):"
 echo "  .venv/bin/pyright -p packages/dinkster-kernels"
 echo '  CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \'

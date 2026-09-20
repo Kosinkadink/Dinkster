@@ -30,15 +30,15 @@ ACCEPTANCE_SAMPLING_TEST = (
 )
 TRAINING_SUITE = "packages/dinkster-training-torch/tests"
 VISION_SUITES = (
-    "packages/dinkster-vision-hed/tests",
-    "packages/dinkster-vision-upscale/tests",
-    "packages/dinkster-vision-depth-anything-v2/tests",
-    "packages/dinkster-vision-detr/tests",
-    "packages/dinkster-vision-rtdetr/tests",
-    "packages/dinkster-vision-efficient-sam/tests",
-    "packages/dinkster-vision-birefnet/tests",
-    "packages/dinkster-vision-depth-anything-v3/tests",
-    "packages/dinkster-vision-sam31/tests",
+    "packages/dinkster-nodes-vision/tests/test_hed.py",
+    "packages/dinkster-nodes-vision/tests/test_upscale.py",
+    "packages/dinkster-nodes-vision/tests/test_depth_anything_v2.py",
+    "packages/dinkster-nodes-vision/tests/test_detr.py",
+    "packages/dinkster-nodes-vision/tests/test_rtdetr.py",
+    "packages/dinkster-nodes-vision/tests/test_efficient_sam.py",
+    "packages/dinkster-nodes-vision/tests/test_birefnet.py",
+    "packages/dinkster-nodes-vision/tests/test_depth_anything_v3.py",
+    "packages/dinkster-nodes-vision/tests/test_sam31.py",
 )
 
 
@@ -223,7 +223,7 @@ def test_model_lane_commands_artifact_pins_and_environments_match_reviewed_contr
         if step.get("if") == MODEL_CONDITION
     ]
     assert hashlib.sha256(json.dumps(steps, sort_keys=True).encode()).hexdigest() == (
-        "bc5228fa3f12c1340acab8aacb04db1f5a2394399cfb6077bccc0dc4d08f9fda"
+        "5583341b0b7a3877b63970114606a11f5c6f3dd426cea7c592eee8f4a285dc1d"
     )
 
 
@@ -243,7 +243,7 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
         )
         if 'venv = ".venv-torch"' in path.read_text(encoding="utf-8")
     }
-    assert len(projects) == 12
+    assert len(projects) == 4
     assert {command for command in commands if "pyright -p" in command} == {
         (
             ".venv/bin/pyright -p .evidence-source/packages/dinkster-acceptance "
