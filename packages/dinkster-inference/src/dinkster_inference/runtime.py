@@ -604,26 +604,6 @@ def build_builtin_assembly_registry(
     return registry
 
 
-def builtin_assembly_registry() -> Registry[AssemblyRegistration]:
-    """Build the builtin assembly registry through the aggregate factory."""
-    from .registries import builtin_registries
-
-    return builtin_registries().assemblies
-
-
-def wired_runtime_family_ids() -> tuple[str, ...]:
-    """Registered runtime labels for diagnostics, never an admission predicate."""
-    from .registries import builtin_registries
-
-    return tuple(
-        sorted(
-            name
-            for assembly in builtin_registries().assemblies
-            for name in (assembly.aliases or (assembly.id,))
-        )
-    )
-
-
 def _require_refusal_category(category: object) -> NativeRefusalCategory:
     if not isinstance(category, NativeRefusalCategory):
         raise TypeError("category must be a NativeRefusalCategory")
@@ -1075,10 +1055,8 @@ __all__ = [
     "PreparedMultiStreamConditioning",
     "RuntimeTensor",
     "SamplingSpaceOverrideRuntime",
-    "builtin_assembly_registry",
     "build_builtin_assembly_registry",
     "plan_native",
     "probe_native",
     "resolve_native_assembly",
-    "wired_runtime_family_ids",
 ]

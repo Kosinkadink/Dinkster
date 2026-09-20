@@ -109,7 +109,15 @@ def test_healthy_pack_is_healthy(tmp_path: Path) -> None:
     report = diagnose(manifest)
     assert report.ok, render_text(report)
     assert report.pack_name == "healthy-pack"
+    assert report.entry_path == str((manifest.parent / "healthy_nodes.py").resolve())
+    assert report.interpreter == str(Path(sys.executable).absolute())
     assert report.node_types == ("healthy.doubler", "healthy.tagger")
+    payload = json.loads(report.to_json())
+    assert payload["entryPath"] == report.entry_path
+    assert payload["interpreter"] == report.interpreter
+    text = render_text(report)
+    assert f"  entry: {report.entry_path}" in text
+    assert f"  interpreter: {report.interpreter}" in text
     # Elapsed import time depends on host load, not just pack behavior.
     assert codes(report) <= {"import.slow"}, render_text(report)
 
@@ -229,7 +237,7 @@ contributions = [{ id = "healthy-pack.future", kind = "futureKind" }]
         load_manifest(manifest)
 
 
-def test_pack_nested_in_distribution_uses_shared_source_root(tmp_path: Path) -> None:
+def test_pack_nested_in_distribution_does_not_add_undeclared_source_root(tmp_path: Path) -> None:
     distribution = tmp_path / "distribution"
     manifest = distribution / "healthy_pack" / "dinkster-pack.toml"
     manifest.parent.mkdir(parents=True)
@@ -241,8 +249,9 @@ def test_pack_nested_in_distribution_uses_shared_source_root(tmp_path: Path) -> 
 
     report = diagnose(manifest)
 
-    assert report.ok, render_text(report)
-    assert report.node_types == ("healthy.doubler", "healthy.tagger")
+    assert not report.ok
+    assert "entry.unresolvable" in codes(report)
+    assert report.entry_path == ""
 
 
 def test_blocking_import_emits_slow_warning(tmp_path: Path) -> None:

@@ -2,7 +2,7 @@
   "ceilings": {
     "assemblyBuilder": 1,
     "descriptorCatalog": 17,
-    "registryFactory": 9
+    "registryFactory": 8
   },
   "sites": [
     {
@@ -89,7 +89,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-native/src/dinkster_native/native_arm.py",
-      "line": 15906,
+      "line": 15909,
       "column": 26,
       "issue": 120
     },
@@ -97,7 +97,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-native/src/dinkster_native/native_arm.py",
-      "line": 18055,
+      "line": 18058,
       "column": 30,
       "issue": 120
     },
@@ -156,14 +156,6 @@
       "line": 58,
       "column": 23,
       "issue": 120
-    },
-    {
-      "kind": "registryFactory",
-      "call": "builtin_family_registry",
-      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/memory.py",
-      "line": 379,
-      "column": 14,
-      "issue": 179
     },
     {
       "kind": "registryFactory",
