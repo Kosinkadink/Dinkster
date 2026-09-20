@@ -83,6 +83,7 @@ jobs:
         shell: pwsh
         run: |
           git rm -r --cached -q .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git reset --hard -q HEAD
       - uses: ./.github/actions/prepare-validation-inputs
         with:

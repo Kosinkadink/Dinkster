@@ -623,8 +623,16 @@ def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path
         "name": "Refresh tracked files with current attributes",
         "if": "matrix.os == 'windows'",
         "shell": "pwsh",
-        "run": "git rm -r --cached -q .\ngit reset --hard -q HEAD\n",
+        "run": (
+            "git rm -r --cached -q .\n"
+            "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
+            "git reset --hard -q HEAD\n"
+        ),
     }
+    repair_commands = "\n".join(
+        line for line in refresh["run"].splitlines() if line.startswith("git ")
+    )
+    assert repair_commands == "git rm -r --cached -q .\ngit reset --hard -q HEAD"
 
     clone = tmp_path / "checkout"
     subprocess.run(
@@ -678,13 +686,13 @@ def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path
     assert status.stdout == ""
 
     subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", refresh["run"]],
+        ["bash", "-e", "-o", "pipefail", "-c", repair_commands],
         cwd=clone,
         check=True,
     )
     assert license_file.read_bytes() == lf_bytes
     subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", refresh["run"]],
+        ["bash", "-e", "-o", "pipefail", "-c", repair_commands],
         cwd=clone,
         check=True,
     )
