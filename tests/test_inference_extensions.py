@@ -190,6 +190,7 @@ def test_two_out_of_tree_packs_compose_in_sampling_worker_and_unload_exactly(
                 "s1_scaled_euler",
                 "s1_context_probe",
             )
+            assert composer.composition.choices["dinkster.schedulers"][-1] == ("proof_a.scheduler")
             assert [extension.id for extension in runtime.extension_snapshot.extensions] == [
                 "proof_a",
                 "proof_b",
@@ -198,15 +199,25 @@ def test_two_out_of_tree_packs_compose_in_sampling_worker_and_unload_exactly(
                 contribution.id
                 for extension in runtime.extension_snapshot.extensions
                 for contribution in extension.keyed_contributions
-            ) == ("proof_a.scaled_euler", "proof_b.context_probe")
+            ) == (
+                "proof_a.scaled_euler",
+                "proof_a.scheduler",
+                "proof_b.context_probe",
+            )
             catalog = json.loads(composer._sampler_catalog_path.read_text(encoding="utf-8"))
             assert all(key.startswith("sha256:") for key in catalog["records"])
+
+            engine = composer.composition.make_engine(lambda _event: None)
+            sampled = await engine.run(
+                Graph(nodes={"probe": GraphNode("dinkster.ksampler", {})}),
+                ["probe"],
+            )
+            assert sampled.outputs["probe"]["value"].resolve() == 3.0
 
             # The synchronous sampling loop runs in asyncio.to_thread. Parent
             # cancellation must still set the worker-local cooperative token,
             # stop that thread, and leave the sampling worker usable.
             marker = tmp_path / "cancelled.txt"
-            engine = composer.composition.make_engine(lambda _event: None)
             cancellation = asyncio.create_task(
                 engine.run(
                     Graph(
@@ -282,6 +293,7 @@ def test_live_sampler_choices_publish_add_reload_remove_and_rollback(
             )
             assert set(added.derived_choices) == {
                 "dinkster.samplers",
+                "dinkster.schedulers",
                 "comfy.samplers",
             }
             state.replace(

@@ -1474,11 +1474,18 @@ async def serve_connection(
                     return
             started = time.perf_counter()
             workgroup_cancelled = getattr(workgroup_handler, "invocation_cancelled", None)
+            inference_registries = None
+            if invocation.extension_snapshot_digest is not None:
+                inference = importlib.import_module("dinkster_inference")
+                inference_registries = inference.materialize_inference_generation(
+                    invocation.extension_snapshot_digest
+                ).registries
             with use_execution_context(
                 ExecutionContext(
                     arm=invocation.arm,
                     expected_execution_identity=invocation.expected_execution_identity,
                     extension_snapshot_digest=invocation.extension_snapshot_digest,
+                    inference_registries=inference_registries,
                     fp8_matmul=invocation.fp8_matmul,
                     diffusion_dtype=invocation.diffusion_dtype,
                     text_dtype=invocation.text_dtype,

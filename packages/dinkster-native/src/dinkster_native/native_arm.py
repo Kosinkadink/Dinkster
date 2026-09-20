@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ParamSpec, cast
 
 from dinkster_assets import AssetRef, EmbeddingNameIndex, resolver_from_env
+from dinkster_inference.registries import builtin_registries as _builtin_inference_registries
 from dinkster_inference.runtime import uses_classic_embedding_bindings
 from dinkster_inference.sampling_wire import NoiseSelection, SamplerSelection, SigmaSchedule
 from dinkster_memory import AcceleratorMemoryPolicyError
@@ -1093,13 +1094,29 @@ def _sampler_registry(
     inference: Any, extension_snapshot_digest: str | None
 ) -> tuple[Any, tuple[str, ...], str | None]:
     if extension_snapshot_digest is None:
-        return inference.builtin_sampler_registry(), (), None
-    materialized = inference.materialize_sampler_registry(extension_snapshot_digest)
+        return _inference_registries(inference).samplers, (), None
+    generation = inference.materialize_inference_generation(extension_snapshot_digest)
     return (
-        materialized.registry,
-        materialized.extension_ids,
+        _inference_registries(inference, extension_snapshot_digest).samplers,
+        tuple(extension_id for extension_id, _ in generation.extensions),
         extension_snapshot_digest,
     )
+
+
+def _inference_registries(inference: Any, generation_key: str | None = None) -> Any:
+    context = current_execution_context()
+    active = getattr(context, "inference_registries", None)
+    context_key = getattr(context, "extension_snapshot_digest", None)
+    if active is not None and generation_key in (None, context_key):
+        return active
+    key = generation_key or context_key
+    if key is not None:
+        return inference.materialize_inference_generation(key).registries
+    return _builtin_inference_registries()
+
+
+def _active_inference_registries() -> Any:
+    return _inference_registries(importlib.import_module("dinkster_inference"))
 
 
 def _load_runtime(
@@ -1688,9 +1705,7 @@ def _materialize_patch_sets(
     """
     if not recipe.overlays:
         return {}
-    from dinkster_inference.component_catalog import default_component_registry
-
-    descriptor = default_component_registry().get(recipe.family_id)
+    descriptor = _active_inference_registries().components.get(recipe.family_id)
     model_role = "diffusion" if descriptor is None else descriptor.model_role
     grouped: dict[str, dict[str, tuple[object, ...]]] = {}
     for overlay in recipe.overlays:
@@ -3558,9 +3573,7 @@ def _component_candidate_path(asset: AssetRef) -> Path:
 
 
 def _component_descriptor(family_id: str) -> Any:
-    from dinkster_inference.component_catalog import default_component_registry
-
-    descriptor = default_component_registry().get(family_id)
+    descriptor = _active_inference_registries().components.get(family_id)
     if descriptor is None:
         raise ValueError(f"no component architecture detected for {family_id!r}")
     return descriptor
@@ -4191,10 +4204,8 @@ def _load_detected_component(
     detected: Any | None = None,
     storage_dtype: object | None = None,
 ) -> Any:
-    from dinkster_inference.component_catalog import default_component_registry
-
     inference = importlib.import_module("dinkster_inference")
-    registry = default_component_registry()
+    registry = _active_inference_registries().components
     family_id = context.expected_execution_identity.partition(":")[2].partition(":")[0]
     if detected is None:
         path = _component_candidate_path(asset)
@@ -4244,7 +4255,6 @@ def build_text_recipe_handle(
 ) -> NativeComponentHandle:
     """Verify ordered sources and reconstruct their explicit text encoding recipe."""
     from dinkster_inference import PatchSet
-    from dinkster_inference.component_catalog import default_component_registry
     from dinkster_inference.component_registry import execution_symbol
     from dinkster_inference.sources import SafetensorsSource, load_safetensors_header_from_file
     from dinkster_inference.text_recipes import resolve_text_recipe
@@ -4269,7 +4279,7 @@ def build_text_recipe_handle(
                 asset_size=asset.size,
             )
             sources.append(replace(source, configuration_file=file))
-        registry = default_component_registry()
+        registry = _active_inference_registries().components
         detected = tuple(registry.detect(source, source.path) for source in sources)
         binding = resolve_text_recipe(detected, requested_type)
         if any(part.profile is not None for part in binding.components):
@@ -4362,7 +4372,6 @@ class NativeLoadClip(LoadClip):
     def execute(cls, *, text_encoder: object, type: str, device: str) -> Mapping[str, object]:
         if not isinstance(text_encoder, AssetRef):
             raise TypeError("text_encoder must be an AssetRef")
-        from dinkster_inference.component_catalog import default_component_registry
         from dinkster_inference.sources import load_safetensors_header
         from dinkster_inference.text_recipes import UnresolvedTextRecipe, resolve_text_recipe
 
@@ -4374,7 +4383,7 @@ class NativeLoadClip(LoadClip):
             source = load_safetensors_header(
                 path, asset_digest=text_encoder.digest, asset_size=text_encoder.size
             )
-            detected = default_component_registry().detect(source, path)
+            detected = _active_inference_registries().components.detect(source, path)
             try:
                 resolve_text_recipe((detected,), type)
             except UnresolvedTextRecipe:
@@ -4790,7 +4799,6 @@ class NativeControlNetLoader(ControlNetLoader):
             raise TypeError(
                 f"control_net_name must be an AssetRef, got {type(control_net_name).__name__}"
             )
-        from dinkster_inference.component_catalog import default_component_registry
         from dinkster_inference.component_registry import component_plans, execution_symbol
 
         path = resolve_weight_source(
@@ -4801,7 +4809,9 @@ class NativeControlNetLoader(ControlNetLoader):
         source = inference.load_safetensors_header(
             path, asset_digest=control_net_name.digest, asset_size=control_net_name.size
         )
-        descriptor, _role, plan = default_component_registry().select(source, path, "controlnet")
+        descriptor, _role, plan = _active_inference_registries().components.select(
+            source, path, "controlnet"
+        )
         log.info(
             "Control component %s selected by tensor geometry; "
             "target-model compatibility is checked during execution, not by family name",
@@ -10030,11 +10040,10 @@ def _resolve_component_execution(
     negative_handle: NativeRuntimeHandle | None = None,
     image_only_negative: bool = False,
 ) -> _ResolvedComponentExecution | None:
-    from dinkster_inference.component_catalog import default_component_registry
     from dinkster_inference.component_registry import execution_symbol
 
     recipe = handle.recipe
-    descriptor = default_component_registry().get(recipe.family_id)
+    descriptor = _active_inference_registries().components.get(recipe.family_id)
     if descriptor is None:
         return None
     execution_options: dict[str, Any] = {}
@@ -11013,12 +11022,13 @@ class _ChromaComponentCodec(_KLComponentCodec):
 
 
 def _native_component_codec(value: object) -> Any:
-    from dinkster_inference.component_catalog import default_component_registry
     from dinkster_inference.component_registry import execution_symbol
 
     recipe = getattr(value, "recipe", None)
     family_id = getattr(recipe, "family_id", None)
-    descriptor = None if family_id is None else default_component_registry().get(family_id)
+    descriptor = (
+        None if family_id is None else _active_inference_registries().components.get(family_id)
+    )
     if descriptor is None or descriptor.codec_adapter is None:
         roles = tuple(source.role for source in getattr(recipe, "sources", ()))
         raise TypeError(
@@ -11152,9 +11162,7 @@ def _resolve_sampling_model(
             raise TypeError("runtime does not support separate-model or image-only guidance")
         return handle.runtime, positive, negative, False, False
     runtime, positive, negative = resolved.values()
-    from dinkster_inference.component_catalog import default_component_registry
-
-    descriptor = default_component_registry().get(handle.recipe.family_id)
+    descriptor = _active_inference_registries().components.get(handle.recipe.family_id)
     if (
         resolved.conditioning_prepared
         and descriptor is not None
@@ -11359,7 +11367,7 @@ class NativeKSampler(KSampler):
             )
             sampler_id = _catalog_id(sampler_registry, sampler_name, "sampler")
             scheduler_id = _catalog_id(
-                inference.builtin_scheduler_registry(), scheduler, "scheduler"
+                _inference_registries(inference).schedulers, scheduler, "scheduler"
             )
             check_custom_sampling = getattr(runtime, "check_custom_sampling", None)
             if check_custom_sampling is not None:
@@ -11531,7 +11539,7 @@ class NativeKSampler(KSampler):
             noise_mask = cast("Any", noise_mask_obj)
             sampler_id = _catalog_id(sampler_registry, sampler_name, "sampler")
             scheduler_id = _catalog_id(
-                inference.builtin_scheduler_registry(), scheduler, "scheduler"
+                _inference_registries(inference).schedulers, scheduler, "scheduler"
             )
             active_runtime = component_runtime if component_runtime is not None else handle.runtime
             sampling_space = _native_model_sampling_space(model)
@@ -14147,7 +14155,7 @@ class _ShiftedCustomSamplingRuntime:
     ) -> tuple[float, ...]:
         inference = importlib.import_module("dinkster_inference")
         if device is None:
-            scheduler = inference.builtin_scheduler_registry().get(scheduler_id)
+            scheduler = _inference_registries(inference).schedulers.get(scheduler_id)
             if scheduler is None:
                 raise ValueError(f"unknown scheduler {scheduler_id!r}")
             return inference.sampling_sigmas(scheduler, self._space, steps, denoise=denoise)
@@ -14234,9 +14242,7 @@ def _require_custom_sampling_runtime(
                 or (sampling_shift is None and not radiance_options)
             ):
                 raise ValueError(f"{node_name} does not accept a model overlay")
-            from dinkster_inference.component_catalog import default_component_registry
-
-            descriptor = default_component_registry().get(handle.recipe.family_id)
+            descriptor = _active_inference_registries().components.get(handle.recipe.family_id)
             if descriptor is None or descriptor.execution_options is None:
                 raise TypeError("model must be a native Chroma diffusion component")
             sampling_runtime = getattr(runtime, "component_sampling_runtime", runtime)
@@ -19512,7 +19518,9 @@ class GenerationBasicScheduler(Node):
             raise ValueError(f"denoise must be in [0.0, 1.0], got {denoise}")
         runtime, sampling_shift, device = _require_custom_sampling_runtime(model, "BasicScheduler")
         inference = importlib.import_module("dinkster_inference")
-        scheduler_id = _catalog_id(inference.builtin_scheduler_registry(), scheduler, "scheduler")
+        scheduler_id = _catalog_id(
+            _inference_registries(inference).schedulers, scheduler, "scheduler"
+        )
         build_sigmas = _bind_sampling_shift(runtime.custom_sampling_sigmas, sampling_shift)
         return cls.outputs(
             sigmas=_CustomSigmasValue(build_sigmas(scheduler_id, steps, denoise, device=device))
@@ -21150,7 +21158,7 @@ def _impact_regional_provider(
         model, "ImpactRegionalSampler"
     )
     inference = importlib.import_module("dinkster_inference")
-    scheduler_id = _catalog_id(inference.builtin_scheduler_registry(), scheduler, "scheduler")
+    scheduler_id = _catalog_id(_inference_registries(inference).schedulers, scheduler, "scheduler")
     descriptor = cast("Any", sampler.descriptor)
     schedule_steps = steps + 1 if descriptor.discard_penultimate else steps
     build_sigmas = _bind_sampling_shift(runtime.custom_sampling_sigmas, sampling_shift)

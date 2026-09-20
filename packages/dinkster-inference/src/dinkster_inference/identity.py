@@ -269,9 +269,9 @@ def default_diffusion_dtype(family_id: str) -> DType:
     The execution backend resolves text and VAE defaults separately; a
     dispatch host computing the cache tag must mirror all resolved defaults.
     """
-    from .component_catalog import default_component_registry
+    from .registries import builtin_registries
 
-    descriptor = default_component_registry().get(family_id)
+    descriptor = builtin_registries().components.get(family_id)
     if descriptor is not None:
         return descriptor.default_diffusion_dtype
     if family_id in ("dinkster.sd15", "dinkster.sdxl", "dinkster.sdxl_refiner"):
@@ -285,9 +285,9 @@ def default_text_dtype(family_id: str) -> DType:
     Architecture registrations own component defaults. Classic checkpoint
     defaults follow their reference text tower.
     """
-    from .component_catalog import default_component_registry
+    from .registries import builtin_registries
 
-    descriptor = default_component_registry().get(family_id)
+    descriptor = builtin_registries().components.get(family_id)
     if descriptor is not None:
         return descriptor.default_text_dtype
     if family_id in (
@@ -313,9 +313,9 @@ def default_vae_dtype(
     float16 because their activations can overflow to black or non-finite
     output.
     """
-    from .component_catalog import default_component_registry
+    from .registries import builtin_registries
 
-    descriptor = default_component_registry().get(family_id)
+    descriptor = builtin_registries().components.get(family_id)
     if descriptor is not None:
         preferences = descriptor.vae_dtypes
     else:

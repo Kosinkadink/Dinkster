@@ -17,7 +17,6 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import BinaryIO, Literal, TypeAlias, cast
 
-from .catalog import builtin_family_registry
 from .devices import BFLOAT16, FLOAT16, FLOAT32, DType
 from .registry import Registry
 from .t5_text import T5_XXL_CONFIG, T5TextDetectError, detect_t5_config
@@ -852,7 +851,9 @@ def map_gguf_diffusion_component(source: GGUFSource) -> GGUFComponentMap:
     if admitted_families is None:
         raise GGUFMappingError(f"unsupported diffusion GGUF architecture {architecture!r}")
     shapes = _logical_shapes(source)
-    detection = builtin_family_registry().detect(_GeometrySource(shapes))
+    from .registries import builtin_registries
+
+    detection = builtin_registries().families.detect(_GeometrySource(shapes))
     detected_families = tuple(dict.fromkeys(item.family_id for item in detection.candidates))
     if len(detected_families) > 1:
         names = ", ".join(detected_families)

@@ -3,6 +3,7 @@
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any, cast
 
 from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 
@@ -17,7 +18,25 @@ class KSamplerHost(Node):
 
     @classmethod
     def execute(cls) -> Mapping[str, object]:
-        return cls.outputs(value=0.0)
+        from dinkster_inference import Parameterization, SamplerInfo
+        from dinkster_workers import current_execution_context
+
+        context = current_execution_context()
+        if context is None or context.inference_registries is None:
+            return cls.outputs(value=0.0)
+        registries = cast("Any", context.inference_registries)
+        scheduler = registries.schedulers.get("proof_a.scheduler")
+        sampler = registries.samplers.get("proof_a.scaled_euler")
+        if scheduler is None or sampler is None:
+            return cls.outputs(value=0.0)
+        return cls.outputs(
+            value=sampler.build()(
+                lambda _value, _sigma: 0.0,
+                8.0,
+                scheduler.make_sigmas(2, object()),
+                SamplerInfo(Parameterization.EPS, seed=7),
+            )
+        )
 
 
 class CancellationProbe(Node):
