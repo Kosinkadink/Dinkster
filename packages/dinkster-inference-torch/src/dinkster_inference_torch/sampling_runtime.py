@@ -34,7 +34,6 @@ from dinkster_inference import (
     SparseLatent,
     StepCallback,
     is_flow_parameterization,
-    noise_scaling,
     sampling_sigmas,
 )
 
@@ -47,6 +46,7 @@ from .denoise import (
     prepare_multistream_noise,
 )
 from .guidance import GuidanceExecutor, ReplicaEvaluator
+from .parameterizations import noise_scaling
 from .sampling_execution import (
     CustomSamplingCfgValue,
     SamplingGuidancePlan,

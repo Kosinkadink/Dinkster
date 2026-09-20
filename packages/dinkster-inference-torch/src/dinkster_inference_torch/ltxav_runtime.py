@@ -69,8 +69,6 @@ from dinkster_inference import (
     StepEvent,
     TokenLayoutDescriptor,
     TokenSegmentDescriptor,
-    calculate_denoised,
-    calculate_input,
     encode_conditioning_carrier,
     ltx_audio_output_sample_rate,
     make_conditioning_carrier,
@@ -95,6 +93,7 @@ from .ltxav_component import LTXAVAudioCodec
 from .ltxav_model import LTXAVModel, pack_av_latents, unpack_av_latents
 from .memory import get_total_memory
 from .operations import bound_compute_device
+from .parameterizations import calculate_denoised, calculate_input
 from .payloads import TensorPayloadError, payload_binding_to_tensor, tensor_to_payload_binding
 from .sampling_execution import (
     CustomSamplingCfgValue,
@@ -792,7 +791,7 @@ class LTXAVDiffusionRuntime(MultiStreamSamplingRuntime):
             raise ValueError("LTX-2 diffusion runtime identity must be nonempty")
         self._assembled = _LTXAVDiffusionAssembly(LTXAV, diffusion, compute_dtype)
         self._runtime_identity = runtime_identity
-        self._samplers = torch_sampler_registry() if sampler_registry is None else sampler_registry
+        self._samplers = torch_sampler_registry(sampler_registry)
         self._schedulers = (
             torch_scheduler_registry() if scheduler_registry is None else scheduler_registry
         )

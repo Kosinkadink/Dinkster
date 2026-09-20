@@ -39,14 +39,14 @@ from dinkster_inference import (
     SamplingExecutionContext,
     TokenGridTransform,
     TokenLayoutError,
-    calculate_denoised,
-    cfg_combine,
     cfg_needs_uncond,
     map_transforms,
 )
 from dinkster_inference.guidance import GuidancePhaseParticipation
 
+from .cfg import cfg_combine
 from .memory import get_free_memory
+from .parameterizations import calculate_denoised
 from .sampling_cache import active_guidance_evaluation_cache
 
 Evaluator = Callable[[GuidanceEvaluationRequest[torch.Tensor]], GuidancePredictions[torch.Tensor]]

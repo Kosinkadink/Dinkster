@@ -67,8 +67,6 @@ from dinkster_inference import (
     Wan21PoseBlockCacheSettings,
     Wan21VideoLatentGeometry,
     Wan22DancerSettings,
-    calculate_denoised,
-    calculate_input,
     decode_wan21_animate2_settings,
     decode_wan22_dancer_settings,
     encode_conditioning_carrier,
@@ -93,6 +91,7 @@ from .denoise import (
 )
 from .guidance import ConditioningEvaluation
 from .operations import bound_compute_device, bound_compute_dtype
+from .parameterizations import calculate_denoised, calculate_input
 from .payloads import TensorPayloadError, payload_binding_to_tensor, tensor_to_payload_binding
 from .sampling_execution import (
     CustomSamplingCfgValue,
@@ -2610,7 +2609,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
         self._tokenizer = PromptTokenizer(encode_word=tokenizer.encode)
         self._latent_process_in = assembled.vae.process_in
         self._latent_process_out = assembled.vae.process_out
-        self._samplers = torch_sampler_registry() if sampler_registry is None else sampler_registry
+        self._samplers = torch_sampler_registry(sampler_registry)
         self._schedulers = (
             torch_scheduler_registry() if scheduler_registry is None else scheduler_registry
         )
@@ -5363,7 +5362,7 @@ class Wan21DiffusionRuntime(MultiStreamSamplingRuntime):
         self._normalizer = normalizer
         self._latent_process_in = normalizer.process_in
         self._latent_process_out = normalizer.process_out
-        self._samplers = torch_sampler_registry() if sampler_registry is None else sampler_registry
+        self._samplers = torch_sampler_registry(sampler_registry)
         self._schedulers = (
             torch_scheduler_registry() if scheduler_registry is None else scheduler_registry
         )
@@ -5436,7 +5435,7 @@ class Wan21CausalDiffusionRuntime(MultiStreamSamplingRuntime):
         self._normalizer = normalizer
         self._latent_process_in = normalizer.process_in
         self._latent_process_out = normalizer.process_out
-        self._samplers = torch_sampler_registry() if sampler_registry is None else sampler_registry
+        self._samplers = torch_sampler_registry(sampler_registry)
         self._schedulers = torch_scheduler_registry()
         self._pose_cache_settings = None
 

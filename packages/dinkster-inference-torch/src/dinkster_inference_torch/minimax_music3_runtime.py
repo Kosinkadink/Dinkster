@@ -31,7 +31,6 @@ from dinkster_inference import (
     SchedulerDescriptor,
     SigmaSpace,
     StepCallback,
-    calculate_denoised,
     encode_conditioning_carrier,
     make_conditioning_carrier,
     sampling_execution_context,
@@ -53,6 +52,7 @@ from .memory import soft_empty_cache
 from .minimax_music3_model import MiniMaxMusic3DiT
 from .minimax_music3_text import MiniMaxMusic3TextModel, tokenize_music_prompt
 from .operations import module_compute_device
+from .parameterizations import calculate_denoised
 from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
 from .sampling_execution import (
     CustomSamplingCfgValue,

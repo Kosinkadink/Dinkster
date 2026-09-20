@@ -18,7 +18,6 @@ from dinkster_inference import (
     SamplerInfo,
     SamplingCancelled,
     StepEvent,
-    builtin_sampler_registry,
     builtin_sampler_snapshot,
     materialize_sampler_registry,
     sampling_execution_context,
@@ -26,6 +25,7 @@ from dinkster_inference import (
     use_sampling_environment,
     write_sampler_catalog,
 )
+from dinkster_inference_torch._portable_solvers import builtin_sampler_registry
 from dinkster_protocol import SamplerRegistrySnapshot, extension_behavior_hash
 from dinkster_server import STATE_KEY, create_app
 

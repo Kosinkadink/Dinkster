@@ -675,8 +675,7 @@ def _fake_stored_source_pins(
         return True
 
     def unregister(ptr: int) -> bool:
-        registered.pop(ptr)
-        return True
+        return registered.pop(ptr, None) is not None
 
     def synchronize(device: torch.device | None = None) -> None:
         syncs.append(device)
@@ -689,6 +688,7 @@ def _fake_stored_source_pins(
     monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
     monkeypatch.setattr(residency_mod.pinned_host, "ensure_pin_budget", registerable)
     monkeypatch.setattr(residency_mod.pinned_host, "ensure_pin_registerable", registerable)
+    monkeypatch.setattr(residency_mod.pinned_host, "_owners", [])
     pins = residency_mod._StoredSourcePins(torch.device("cuda", 0))  # pyright: ignore[reportPrivateUsage]
     initial = residency_mod.pinned_host.TOTAL_PINNED_MEMORY
     pins.ensure(tensor)

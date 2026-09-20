@@ -1092,11 +1092,12 @@ def _retry_tiled_vae_after_oom(
 def _sampler_registry(
     inference: Any, extension_snapshot_digest: str | None
 ) -> tuple[Any, tuple[str, ...], str | None]:
+    inference_torch = importlib.import_module("dinkster_inference_torch")
     if extension_snapshot_digest is None:
-        return inference.builtin_sampler_registry(), (), None
+        return inference_torch.torch_sampler_registry(), (), None
     materialized = inference.materialize_sampler_registry(extension_snapshot_digest)
     return (
-        materialized.registry,
+        inference_torch.torch_sampler_registry(materialized.registry),
         materialized.extension_ids,
         extension_snapshot_digest,
     )
@@ -19195,7 +19196,10 @@ def _custom_sampler_value(
     inference = importlib.import_module("dinkster_inference")
     context = current_execution_context()
     snapshot_digest = None if context is None else context.extension_snapshot_digest
-    registry, extension_ids, _behavior_hash = _sampler_registry(inference, snapshot_digest)
+    if context is None:
+        registry, extension_ids = inference.builtin_sampler_registry(), ()
+    else:
+        registry, extension_ids, _behavior_hash = _sampler_registry(inference, snapshot_digest)
     sampler_id = _catalog_id(registry, sampler_name, "sampler")
     descriptor = registry.get(sampler_id)
     if descriptor is None:
