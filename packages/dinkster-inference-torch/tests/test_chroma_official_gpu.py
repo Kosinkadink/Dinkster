@@ -162,6 +162,7 @@ def test_official_chroma_family_loads_text_codec_and_samples_on_cuda() -> None:
         expected_identity=identities["t5xxl"],
         compute_dtype=torch.float32,
         load_device=torch.device("cuda:0"),
+        attention_backend="t5",
     )
     text_model = cast("T5TextModel", text_loaded.module)
     assert not any(
@@ -184,6 +185,7 @@ def test_official_chroma_family_loads_text_codec_and_samples_on_cuda() -> None:
         expected_identity=identities["vae"],
         compute_dtype=torch.bfloat16,
         load_device=torch.device("cuda:0"),
+        attention_backend="vae",
     )
     vae_model = cast("AutoencoderKL", vae_loaded.module)
     vae_mechanism = enroll_component(vae_model, load_device="cuda:0", offload_device="cpu")
@@ -212,6 +214,7 @@ def test_official_chroma_family_loads_text_codec_and_samples_on_cuda() -> None:
             expected_identity=identities[name],
             compute_dtype=torch.bfloat16,
             load_device=torch.device("cuda:0"),
+            attention_backend="flux",
         )
         model = cast("Chroma | ChromaRadiance", loaded.module)
         assert isinstance(model, model_type)
