@@ -10,6 +10,9 @@
   and controls do not grant or remove backend node execution ownership.
 - Doctor warns when a pack declares a frontend contribution kind or extension
   capability for which no runtime consumer exists.
+- Isolated packs can publish value renditions whose metadata, parameter
+  normalization, MIME selection, and rendering remain pack-owned while being
+  available through the host value API.
 - Packs can publish validated locale catalogs for node, blueprint, and guide
   text. Catalog descriptors are available on schema wire 44, and their exact
   digest-addressed JSON bytes are served as immutable pack resources.

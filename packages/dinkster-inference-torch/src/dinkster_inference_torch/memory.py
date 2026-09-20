@@ -32,6 +32,7 @@ from types import MappingProxyType
 from typing import cast
 
 import torch
+from dinkster_inference import builtin_family_registry
 from dinkster_memory import (
     DEFAULT_ACCELERATOR_HEADROOM_BYTES,
     DEFAULT_INFERENCE_RESERVE_BYTES,
@@ -360,15 +361,6 @@ def get_total_memory(
     )
 
 
-_REGIONAL_MEMORY_FACTORS = {
-    "dinkster.sd15": 1.0,
-    "dinkster.sdxl": 0.8,
-    "dinkster.sdxl_refiner": 1.0,
-    "dinkster.flux_dev": 3.1,
-    "dinkster.flux_schnell": 3.1,
-}
-
-
 def regional_working_memory(
     family_id: str,
     *,
@@ -384,9 +376,10 @@ def regional_working_memory(
     compute dtype bytes times 0.01 MiB times the exact family factor.
     """
 
-    factor = _REGIONAL_MEMORY_FACTORS.get(family_id)
-    if factor is None:
+    family = builtin_family_registry().get(family_id)
+    if family is None or family.engine.regional_memory_factor is None:
         raise ValueError(f"unsupported regional memory family {family_id!r}")
+    factor = family.engine.regional_memory_factor
     if any(type(value) is not int or value < 1 for value in (batch, height, width)):
         raise ValueError("regional memory dimensions must be positive integers")
     if not dtype.is_floating_point:

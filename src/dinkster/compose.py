@@ -195,6 +195,7 @@ from dinkster_values import (
     RESOURCE_ID_META_KEY,
     RESOURCES_META_KEY,
     ListPayload,
+    Rendition,
     ResourcePins,
     TypeRegistry,
     Value,
@@ -237,7 +238,12 @@ from dinkster_workers import (
     normalize_egress_origin,
     resident_devices,
 )
-from dinkster_workers.catalog import PackCatalog, read_catalog, source_digest, worker_declarations
+from dinkster_workers.catalog import (
+    PackCatalog,
+    read_catalog,
+    source_digest,
+    worker_declarations_match_catalog,
+)
 from dinkster_workers.host import load_pack as load_host_pack
 from dinkster_workers.session import WorkerDied
 
@@ -298,15 +304,22 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
         "dinkster-nodes-remote": "dinkster_nodes_remote",
         "dinkster-nodes-generation": "dinkster_nodes_generation",
         "dinkster-nodes-generation-openai": "dinkster_nodes_generation_openai",
-        "dinkster-vision-birefnet": "dinkster_vision_birefnet",
-        "dinkster-vision-depth-anything-v2": "dinkster_vision_depth_anything_v2",
-        "dinkster-vision-depth-anything-v3": "dinkster_vision_depth_anything_v3",
-        "dinkster-vision-detr": "dinkster_vision_detr",
-        "dinkster-vision-efficient-sam": "dinkster_vision_efficient_sam",
-        "dinkster-vision-hed": "dinkster_vision_hed",
-        "dinkster-vision-rtdetr": "dinkster_vision_rtdetr",
-        "dinkster-vision-sam31": "dinkster_vision_sam31",
-        "dinkster-vision-upscale": "dinkster_vision_upscale",
+        "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
+        "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
+        "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
+        "dinkster-vision-detr": "dinkster_nodes_vision.detr",
+        "dinkster-vision-efficient-sam": "dinkster_nodes_vision.efficient_sam",
+        "dinkster-vision-hed": "dinkster_nodes_vision.hed",
+        "dinkster-vision-rtdetr": "dinkster_nodes_vision.rtdetr",
+        "dinkster-vision-sam31": "dinkster_nodes_vision.sam31",
+        "dinkster-vision-upscale": "dinkster_nodes_vision.upscale",
+    }
+)
+_FIRST_PARTY_PACK_DISTRIBUTIONS = MappingProxyType(
+    {
+        pack_id: "dinkster-nodes-vision"
+        for pack_id in _FIRST_PARTY_PACK_MODULES
+        if pack_id.startswith("dinkster-vision-")
     }
 )
 _ISOLATED_FIRST_PARTY_PACKS = frozenset(
@@ -420,6 +433,10 @@ class _ReplicaWorkerPool:
         return self._first.extension_contributions
 
     @property
+    def renditions(self) -> object:
+        return getattr(self._first, "renditions", ())
+
+    @property
     def can_convert_legacy_checkpoint(self) -> bool:
         return self._first.can_convert_legacy_checkpoint
 
@@ -441,6 +458,7 @@ class _ReplicaWorkerPool:
                 or dict(worker.compat_skips) != dict(first.compat_skips)
                 or worker.body_arms != first.body_arms
                 or worker.extension_contributions != first.extension_contributions
+                or getattr(worker, "renditions", ()) != getattr(first, "renditions", ())
                 or worker.attention_capabilities != first.attention_capabilities
                 or worker.attention_route_token != first.attention_route_token
             ):
@@ -1185,7 +1203,17 @@ def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
             root = temporary / "artifact"
             root.mkdir()
             shutil.copy2(manifest, root / "dinkster-pack.toml")
-            shutil.copytree(module_root, root / module_root.name)
+            if module_root.parent.name == "dinkster_nodes_vision":
+                namespace = root / module_root.parent.name
+                namespace.mkdir()
+                bundled_namespace = manifest.parent / module_root.parent.name
+                shutil.copy2(bundled_namespace / "__init__.py", namespace / "__init__.py")
+                shutil.copytree(module_root, namespace / module_root.name)
+                for sidecar in manifest.parent.iterdir():
+                    if sidecar.is_file() and sidecar != manifest:
+                        shutil.copy2(sidecar, root / sidecar.name)
+            else:
+                shutil.copytree(module_root, root / module_root.name)
             for filename in _PACK_ARTIFACT_SIDECARS:
                 sidecar = manifest.parent / filename
                 if sidecar.is_file():
@@ -1229,11 +1257,15 @@ def _installed_pack_spec(
     asset_vault_write: bool = False,
 ) -> PackSpec:
     """Resolve one installed first-party pack and its exact provenance."""
+    distribution_id = _FIRST_PARTY_PACK_DISTRIBUTIONS.get(pack_id, pack_id)
     try:
-        distribution = importlib.metadata.distribution(pack_id)
+        distribution = importlib.metadata.distribution(distribution_id)
     except importlib.metadata.PackageNotFoundError as exc:
-        raise CompositionError(f"installed pack {pack_id!r} is unavailable") from exc
-    bundled = Path(str(distribution.locate_file(f"{module_name}_pack/dinkster-pack.toml")))
+        raise CompositionError(
+            f"installed pack distribution {distribution_id!r} is unavailable"
+        ) from exc
+    sidecar = pack_id.replace("-", "_")
+    bundled = Path(str(distribution.locate_file(f"{sidecar}_pack/dinkster-pack.toml")))
     module = importlib.util.find_spec(module_name)
     if module is None or module.origin is None:
         raise CompositionError(f"installed {pack_id} package is not discoverable")
@@ -1245,13 +1277,23 @@ def _installed_pack_spec(
         ),
         None,
     )
+    if source_manifest is None:
+        source_manifest = next(
+            (
+                parent / f"{sidecar}_pack" / "dinkster-pack.toml"
+                for parent in Path(module.origin).resolve().parents
+                if (parent / "pyproject.toml").is_file()
+                and (parent / f"{sidecar}_pack" / "dinkster-pack.toml").is_file()
+            ),
+            None,
+        )
     if source_manifest is not None:
         manifest = source_manifest
         source = f"local:{manifest.parent.resolve()}"
         source_install = True
     elif bundled.is_file():
         manifest = bundled
-        source = f"python:{pack_id}=={distribution.version}"
+        source = f"python:{distribution_id}=={distribution.version}"
         source_install = False
     else:
         raise CompositionError(f"installed {pack_id} has no bundled artifact or source manifest")
@@ -5422,7 +5464,7 @@ class ServingComposer:
                 loaded.append(loaded_worker)
                 self._validate_body_arms(manifest, loaded_worker)
                 assert catalog is not None
-                if worker_declarations(loaded_worker) != worker_declarations(catalog):
+                if not worker_declarations_match_catalog(loaded_worker, catalog):
                     raise CompositionError(f"{manifest.name}: declarations changed; rerun doctor")
                 composition._registry.replace_from(current_registry)
                 loaded_worker.bind_registry(composition._registry)
@@ -5646,6 +5688,9 @@ class ServingComposer:
             derived_choices = self._validated_derived_choices(
                 sampler_registry, staged_records, topology
             )
+            staged_registry.remove_relayed_renditions(manifest.name)
+            if not spec.in_process:
+                self._register_worker_renditions(staged_registry, manifest.name, worker)
             if spec.host_types is not None:
                 spec.host_types(staged_registry)
         except BaseException:
@@ -5870,6 +5915,9 @@ class ServingComposer:
             derived_choices = self._validated_derived_choices(
                 sampler_registry, self._records, topology
             )
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(spec.name)
+            self._register_worker_renditions(staged_registry, spec.name, worker)
         except BaseException:
             if snapshot is not None and topology is not None:
                 await self._rollback_unpublished_generation(snapshot, topology)
@@ -5880,6 +5928,7 @@ class ServingComposer:
         # Commit point: every validation passed, the connection is up -
         # now merge everything at once (mirrors add_pack).
         self._seen_names[canonical] = spec.name
+        composition._registry.replace_from(staged_registry)
         composition.packs.update(staged_packs)
         for node_type, schema in surface.schemas.items():
             composition.schemas[node_type] = schema
@@ -6361,6 +6410,9 @@ class ServingComposer:
             derived_choices = self._validated_derived_choices(
                 sampler_registry, self._records, topology
             )
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(spec.name)
+            self._register_worker_renditions(staged_registry, spec.name, worker)
             # Reap the old session before the first published mutation:
             # everything from the route swap to the return is then free
             # of suspension points, so the caller publishes the surface
@@ -6391,6 +6443,7 @@ class ServingComposer:
         added_routes = tuple(node_type for node_type in candidates if topology.get(node_type))
         self._routing.swap_routes(removed_routes, self._dispatch_routes(topology, added_routes))
         self._remotes[spec.name] = new_record
+        composition._registry.replace_from(staged_registry)
         self._topology = topology
         composition._isolated.append(worker)
         if old_worker in composition._isolated:
@@ -6743,6 +6796,10 @@ class ServingComposer:
                 raise
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(name)
+            if not spec.in_process:
+                self._register_worker_renditions(staged_registry, manifest.name, worker)
             removed_routes = tuple(
                 node_type
                 for node_type in dict.fromkeys((*old_types, *record.executes, *manifest.executes))
@@ -6766,6 +6823,7 @@ class ServingComposer:
             )
             del self._records[name]
             self._records[manifest.name] = new_record
+            composition._registry.replace_from(staged_registry)
             composition.generation = staged_generation
             self._topology = topology
             composition._isolated.append(worker)
@@ -7166,9 +7224,12 @@ class ServingComposer:
                 topology,
                 tuple(node_type for node_type in route_candidates if topology.get(node_type)),
             )
-            for member_spec in specs.values():
+            staged_registry = self.composition._registry.copy()
+            for pack, member_spec in specs.items():
+                staged_registry.remove_relayed_renditions(pack)
+                self._register_worker_renditions(staged_registry, pack, members[pack])
                 if member_spec.host_types is not None:
-                    member_spec.host_types(self.composition._registry)
+                    member_spec.host_types(staged_registry)
         except BaseException:
             if snapshot is not None and topology is not None:
                 await self._rollback_unpublished_generation(snapshot, topology)
@@ -7190,6 +7251,7 @@ class ServingComposer:
         old_inference_worker = self._sampling_worker(self._topology)
         new_inference_worker = self._sampling_worker(topology)
         self._records = staged_records
+        self.composition._registry.replace_from(staged_registry)
         self.composition.generation = staged_generation
         self._topology = topology
         self._group_owners[group_name] = owner
@@ -7340,6 +7402,8 @@ class ServingComposer:
             assert snapshot is not None
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
+            staged_registry = composition._registry.copy()
+            staged_registry.remove_relayed_renditions(name)
             route_candidates = tuple(dict.fromkeys((*old_types, *record.executes)))
             removed_routes = tuple(
                 node_type for node_type in route_candidates if self._routing.has_route(node_type)
@@ -7363,6 +7427,7 @@ class ServingComposer:
                 else None
             )
             del self._records[name]
+            composition._registry.replace_from(staged_registry)
             composition.generation = staged_generation
             self._topology = topology
             self._rebuild_registries()
@@ -7830,6 +7895,74 @@ class ServingComposer:
                 tuple(dict.fromkeys(arm.execution_arm for arm in arms))
                 if arms is not None
                 else ("native",)
+            )
+
+    @staticmethod
+    def _register_worker_renditions(registry: TypeRegistry, owner: str, worker: Any) -> None:
+        for declaration in worker.renditions:
+            existing = next(
+                (
+                    item
+                    for item in registry.renditions_of(declaration.type_id)
+                    if item.kind == declaration.kind
+                ),
+                None,
+            )
+            if existing is not None:
+                if existing.relay_owner is None:
+                    continue
+                if (
+                    existing.mime != declaration.mime
+                    or existing.default != declaration.default
+                    or existing.version != declaration.version
+                    or existing.parameters != declaration.parameters
+                    or dict(existing.defaults or {}) != dict(declaration.defaults or {})
+                    or dict(existing.limits or {}) != dict(declaration.limits or {})
+                ):
+                    raise ValueError(
+                        f"{declaration.type_id}: conflicting rendition declaration "
+                        f"for {declaration.kind!r}"
+                    )
+                continue
+
+            async def resolve(
+                metadata: Mapping[str, object],
+                parameters: Mapping[str, str],
+                *,
+                type_id: str = declaration.type_id,
+                kind: str = declaration.kind,
+            ) -> tuple[str, Mapping[str, str]]:
+                return await worker.resolve_rendition(type_id, kind, metadata, parameters)
+
+            async def resolve_mime(
+                metadata: Mapping[str, object],
+                *,
+                type_id: str = declaration.type_id,
+                kind: str = declaration.kind,
+            ) -> str:
+                return await worker.resolve_rendition_mime(type_id, kind, metadata)
+
+            async def render(
+                value: Value,
+                parameters: Mapping[str, str],
+                *,
+                kind: str = declaration.kind,
+            ) -> Rendition:
+                return await worker.render_rendition(value, kind, parameters)
+
+            registry.register_relayed_rendition(
+                declaration.type_id,
+                declaration.kind,
+                mime=declaration.mime,
+                default=declaration.default,
+                version=declaration.version,
+                parameters=declaration.parameters,
+                defaults=declaration.defaults,
+                limits=declaration.limits,
+                owner=owner,
+                resolve_mime=resolve_mime,
+                resolve=resolve,
+                render=render,
             )
 
     def _rebuild_asset_catalog(self) -> None:

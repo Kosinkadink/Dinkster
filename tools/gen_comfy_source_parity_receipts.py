@@ -92,7 +92,7 @@ CONTROL_AUX_COMMIT = "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
 CONTROL_AUX_INPUT_SHA256 = "28e2ffe0c96d7c7d44c45ff10c6754ef9741c638caa06c619774f82a0d4e12c5"
 CONTROL_AUX_GPU_UUID = "5ac69527-f5f0-f6f0-1d46-24c6f401cdc6"
 CONTROL_AUX_RESOLUTION = 512
-CONTROL_AUX_RUNNER_SHA256 = "b363fd04f851463328b4e8a23c0ac4ab760fa7a04f00ab745e36672f319e675e"
+CONTROL_AUX_RUNNER_SHA256 = "5e1e1d52dc097a491061835b24a22a8fdf4197a9e79abbd3138793aa231442f6"
 
 for source_root in sorted(REPO.glob("packages/*/src")):
     sys.path.insert(0, str(source_root))
@@ -1786,7 +1786,7 @@ def _control_aux_receipts(root: Path) -> list[Path]:
     checksums = _control_aux_checksums()
     reference_cases, native_cases = _control_aux_runner_cases()
     source_defaults = _source_input_defaults("comfyui_controlnet_aux")
-    from dinkster_vision_hed import nodes as control_aux_nodes
+    from dinkster_nodes_vision.hed import nodes as control_aux_nodes
 
     outputs: list[Path] = []
     for node_class, cases in _CONTROL_AUX_CASES.items():

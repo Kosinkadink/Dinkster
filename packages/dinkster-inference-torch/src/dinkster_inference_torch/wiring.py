@@ -38,7 +38,6 @@ from dinkster_inference import (
     CLIP_G_PROFILE,
     FLOAT16,
     FLOAT32,
-    FLUX_SCHNELL,
     SD15_CONTROL_RESIDUAL_SITES,
     SDXL_CONTROL_RESIDUAL_SITES,
     AttentionPolicy,
@@ -274,7 +273,7 @@ def _flux_sigma_space(family: ModelFamily) -> SigmaSpace:
     schedulers (simple, ddim_uniform, beta) index the table directly,
     and sigma_min differs (1e-3 vs ~3.16e-4), so conflating the
     spaces moves every schnell schedule."""
-    if family.id == FLUX_SCHNELL.id:
+    if family.engine.sigma_space == "default":
         return FlowSigmas(shift=family.sampling.shift, multiplier=1.0, timesteps=1000)
     return FluxFlowSigmas(shift=family.sampling.shift)
 
@@ -957,7 +956,7 @@ class SDRuntime(SingleStreamSamplingRuntime):
                 return discrete_percent_to_sigma(discrete_space, percent)
 
             self._percent_to_sigma = percent_to_sigma
-        sd1 = assembled.family.id == "dinkster.sd15"
+        sd1 = assembled.family.engine.clip_text_profile == "sd1"
         lookups = embedding_lookups or {}
         self._clip_l_encoder = (
             None
@@ -1121,7 +1120,7 @@ class SDRuntime(SingleStreamSamplingRuntime):
         scale = self.family.single_stream_latent().spatial_downscale
         height = latent.shape[2] * scale
         width = latent.shape[3] * scale
-        if self.family.id == "dinkster.sdxl_refiner":
+        if self.family.engine.adm_profile == "sdxl_refiner":
             return encode_sdxl_refiner_adm(
                 pooled,
                 width=width,
@@ -1146,8 +1145,8 @@ class SDRuntime(SingleStreamSamplingRuntime):
             type(contribution) is not SD15IPAdapterConditioning for contribution in contributions
         ):
             raise TypeError("sd15_attention_contributions must be an exact tuple")
-        if contributions and self.family.id != "dinkster.sd15":
-            raise WiringError("standard SD1.5 IP-Adapter requires family dinkster.sd15")
+        if contributions and self.family.engine.ipadapter_profile != "sd15":
+            raise WiringError("this family does not register the standard IP-Adapter profile")
         return tuple(
             SD15IPAdapterExecution(
                 contribution,
@@ -1304,11 +1303,11 @@ class SDRuntime(SingleStreamSamplingRuntime):
             if any(sdxl_control) and not all(sdxl_control):
                 raise WiringError("control chain mixes SD1.5 and SDXL providers")
             if all(sdxl_control):
-                if self.family.id != "dinkster.sdxl":
-                    raise WiringError("SDXL control providers require family dinkster.sdxl")
+                if self.family.engine.controlnet_profile != "sdxl":
+                    raise WiringError("SDXL control providers require the registered SDXL profile")
                 control_sites = SDXL_CONTROL_RESIDUAL_SITES
-            elif self.family.id != "dinkster.sd15":
-                raise WiringError("SD1.5 control providers require family dinkster.sd15")
+            elif self.family.engine.controlnet_profile != "sd15":
+                raise WiringError("SD1.5 control providers require the registered SD1.5 profile")
             for current in controls:
                 if current.gain is not None and (
                     current.application.strength != 1.0

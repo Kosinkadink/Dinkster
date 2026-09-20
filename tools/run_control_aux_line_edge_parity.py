@@ -155,8 +155,8 @@ def _setup_dinkster(
         LineartPreprocessor,
         ScribblePreprocessor,
     )
-    from dinkster_vision_hed.cache import MODEL_CACHE
-    from dinkster_vision_hed.nodes import (
+    from dinkster_nodes_vision.hed.cache import MODEL_CACHE
+    from dinkster_nodes_vision.hed.nodes import (
         AnimeLineartPreprocessor,
         AnyLinePreprocessor,
         MangaLineartPreprocessor,

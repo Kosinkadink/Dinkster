@@ -12,15 +12,15 @@ from dinkster_nodes_image import (
     vision_choices,
 )
 from dinkster_nodes_image import DetectObjects as OwnerDetectObjects
+from dinkster_nodes_vision.rtdetr import DetectObjects as RTDETRDetectObjects
 from dinkster_schema import ComboWidget, schema_signature, schema_to_wire
-from dinkster_vision_rtdetr import DetectObjects as RTDETRDetectObjects
 from dinkster_workers import load_manifest
 
 from dinkster.compose import compose_serving
 
 ROOT = Path(__file__).parent.parent
-PACKAGE = ROOT / "packages" / "dinkster-vision-rtdetr"
-MANIFEST = PACKAGE / "dinkster-pack.toml"
+PACKAGE = ROOT / "packages" / "dinkster-nodes-vision"
+MANIFEST = PACKAGE / "dinkster_vision_rtdetr_pack" / "dinkster-pack.toml"
 MODEL_DIGEST = "blake3:5eaa01a6d16d654d9a4991ab1dfe489b580acc4b939cd1963ac6d12ceb9dc7f8"
 
 
@@ -78,10 +78,10 @@ def test_pack_declares_isolated_cpu_provider_and_pinned_fp16_model() -> None:
 def test_wheel_contains_pack_runtime_and_manifest() -> None:
     project = tomllib.loads((PACKAGE / "pyproject.toml").read_text(encoding="utf-8"))
     included = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
-    assert included["dinkster-pack.toml"] == "dinkster_vision_rtdetr_pack/dinkster-pack.toml"
+    assert included["dinkster_vision_rtdetr_pack"] == "dinkster_vision_rtdetr_pack"
     assert (
-        included["src/dinkster_vision_rtdetr"]
-        == "dinkster_vision_rtdetr_pack/dinkster_vision_rtdetr"
+        included["src/dinkster_nodes_vision/rtdetr"]
+        == "dinkster_vision_rtdetr_pack/dinkster_nodes_vision/rtdetr"
     )
 
 

@@ -117,10 +117,7 @@ def resolve_dtype_policy(
     """Resolve independent serve selectors to concrete inference dtypes."""
     text_default = default_text_dtype(family_id)
     supported = frozenset(dtype for name, dtype in _DTYPES.items() if name in compute_dtypes)
-    if family_id == "dinkster.minimax_h3":
-        diffusion_default = BFLOAT16
-    else:
-        diffusion_default = default_diffusion_dtype(family_id)
+    diffusion_default = default_diffusion_dtype(family_id)
     defaults = (diffusion_default, text_default, default_vae_dtype(family_id, supported))
     modes = (policy["diffusion"], policy["textEncoder"], policy["vae"])
     # Text falls back to float32 before float16: T5-class RMS variance

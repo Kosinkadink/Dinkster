@@ -37,6 +37,7 @@ from dinkster_values import (
     CORE_STRING,
     COST_META_KEY,
     RESOURCES_META_KEY,
+    CustomWidgetDescriptor,
     TypeRegistry,
 )
 
@@ -47,10 +48,40 @@ BLOB = TypeExpr.concrete("iso.blob")
 GPU_BLOB = TypeExpr.concrete("iso.gpu_blob")
 
 
+def blob_rendition_parameters(
+    parameters: Mapping[str, str], _metadata: Mapping[str, object]
+) -> Mapping[str, str]:
+    prefix = parameters.get("prefix", "blob").strip()
+    if not prefix:
+        raise ValueError("prefix must be non-empty")
+    return {"prefix": prefix}
+
+
+def render_blob(blob: object, parameters: Mapping[str, str]) -> bytes:
+    assert isinstance(blob, Mapping)
+    return f"{parameters['prefix']}:{blob['n']}:{blob['data']}".encode()
+
+
+def blob_metadata(blob: object) -> Mapping[str, object]:
+    assert isinstance(blob, Mapping)
+    return {"size": blob["n"]}
+
+
 def register_types(registry: TypeRegistry) -> None:
-    # Deliberately bare: no codec, no fingerprint - exercises the
-    # correct-everywhere default path and the fallback-codec diagnostic.
-    registry.register("iso.blob")
+    # No codec or fingerprint: this exercises the fallback codec while the
+    # pack-owned rendition remains executable only in this process.
+    registry.register("iso.blob", meta=blob_metadata)
+    registry.register_rendition(
+        "iso.blob",
+        "summary",
+        mime=lambda metadata: "text/plain" if metadata["size"] else "text/x-empty",
+        render=render_blob,
+        version="1",
+        parameters=("prefix",),
+        defaults={"prefix": "blob"},
+        limits={"prefixLength": 32},
+        normalize=blob_rendition_parameters,
+    )
     # A value that publishes device facts in this process's namespace -
     # the device-namespacing test subject (a stand-in for a loaded model).
     registry.register(
@@ -253,7 +284,17 @@ class BlobOut(Node):
             node_type="iso.blob_out",
             display_name="Blob Out",
             category="test",
-            inputs=(InputSpec("size", INT, default=8),),
+            inputs=(
+                InputSpec(
+                    "size",
+                    INT,
+                    default=8,
+                    widget=CustomWidgetDescriptor(
+                        "isopack.size",
+                        {"min": 1, "max": 12, "unit": "bytes"},
+                    ),
+                ),
+            ),
             outputs=(OutputSpec("blob", BLOB),),
         )
 

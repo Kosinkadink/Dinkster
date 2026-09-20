@@ -172,7 +172,7 @@ def windows_runtime_source() -> dict[str, str]:
             f'hash = "sha256:{"d" * 64}", size = 123 }}\n]\n\n'
             '[[package]]\nname = "torch"\nversion = "2.14.0"\n'
         ),
-        "packages/dinkster-vision-birefnet/dinkster-pack.toml": (
+        "packages/dinkster-nodes-vision/dinkster_vision_birefnet_pack/dinkster-pack.toml": (
             '[pack]\nrequires = ["torch==2.14.0", "torchvision==0.29.0"]\n'
         ),
     }
@@ -338,22 +338,25 @@ def test_release_manifest_binds_archive_to_resolved_commit(
         ),
         ("uv.lock", 'version = "2.14.0"', 'version = "2.15.0"', "cudaTorch.version"),
         (
-            "packages/dinkster-vision-birefnet/dinkster-pack.toml",
+            "packages/dinkster-nodes-vision/dinkster_vision_birefnet_pack/dinkster-pack.toml",
             "torchvision==0.29.0",
             "torchvision==0.30.0",
-            r"torchvisionVersion.*dinkster-vision-birefnet/dinkster-pack.toml \[pack\].requires",
+            r"torchvisionVersion.*dinkster_vision_birefnet_pack/"
+            r"dinkster-pack.toml \[pack\].requires",
         ),
         (
-            "packages/dinkster-vision-birefnet/dinkster-pack.toml",
+            "packages/dinkster-nodes-vision/dinkster_vision_birefnet_pack/dinkster-pack.toml",
             ', "torchvision==0.29.0"',
             "",
-            r"torchvisionVersion.*dinkster-vision-birefnet/dinkster-pack.toml \[pack\].requires",
+            r"torchvisionVersion.*dinkster_vision_birefnet_pack/"
+            r"dinkster-pack.toml \[pack\].requires",
         ),
         (
-            "packages/dinkster-vision-birefnet/dinkster-pack.toml",
+            "packages/dinkster-nodes-vision/dinkster_vision_birefnet_pack/dinkster-pack.toml",
             "torchvision==0.29.0",
             "torchvision>=0.29.0",
-            r"torchvisionVersion.*dinkster-vision-birefnet/dinkster-pack.toml \[pack\].requires",
+            r"torchvisionVersion.*dinkster_vision_birefnet_pack/"
+            r"dinkster-pack.toml \[pack\].requires",
         ),
     ],
 )

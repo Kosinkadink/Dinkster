@@ -274,6 +274,14 @@ class InProcessWorker:
         """Bind a staged worker to the host registry before publication."""
         self._registry = registry
 
+    @property
+    def registry(self) -> TypeRegistry:
+        return self._registry
+
+    @property
+    def renditions(self) -> tuple[object, ...]:
+        return self._registry.registered_renditions()
+
     async def start(self) -> None:
         # Node stdout/stderr becomes attributed execution log events while
         # still reaching the terminal (idempotent, process-global).

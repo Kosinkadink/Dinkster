@@ -16,11 +16,11 @@ architectures register from packs; the core is not edited.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Protocol
+from typing import Literal, Protocol
 
-from .devices import DType
+from .devices import BFLOAT16, FLOAT32, DType
 from .latents import LatentDescriptor, MultiStreamLatentDescriptor
 from .sampling import SamplingDescriptor
 from .weights import WeightSource
@@ -67,6 +67,47 @@ class ComponentWiring:
 
 
 @dataclass(frozen=True)
+class PreviewDecoderProperties:
+    """A family's quality-preview decoder kind and decoder-specific target."""
+
+    kind: Literal["taesd", "taehv", "asset"]
+    target: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("taesd", "taehv", "asset"):
+            raise ValueError(f"unsupported preview decoder kind {self.kind!r}")
+        if self.kind == "taehv":
+            if self.target is not None:
+                raise ValueError("TAEHV preview registration does not accept a target")
+        elif not self.target:
+            raise ValueError(f"{self.kind} preview registration requires a target")
+
+
+@dataclass(frozen=True)
+class EngineProperties:
+    """Cross-cutting engine behavior supplied by family registration."""
+
+    diffusion_dtype: DType = BFLOAT16
+    text_dtype: DType = BFLOAT16
+    vae_dtypes: tuple[DType, ...] = (BFLOAT16, FLOAT32)
+    sigma_space: Literal["default", "flux"] = "default"
+    regional_memory_factor: float | None = None
+    clip_text_profile: Literal["none", "sd1", "sdxl"] = "none"
+    adm_profile: Literal["none", "sdxl", "sdxl_refiner"] = "none"
+    ipadapter_profile: Literal["none", "sd15"] = "none"
+    controlnet_profile: Literal["none", "sd15", "sdxl"] = "none"
+    preview_decoder: PreviewDecoderProperties | None = None
+    compatibility_latent_formats: tuple[str, ...] = ()
+    gguf_architecture: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.vae_dtypes:
+            raise ValueError("vae_dtypes must not be empty")
+        if self.regional_memory_factor is not None and self.regional_memory_factor <= 0:
+            raise ValueError("regional_memory_factor must be positive")
+
+
+@dataclass(frozen=True)
 class ModelFamily:
     """One registered architecture family.
 
@@ -87,6 +128,7 @@ class ModelFamily:
     supported_dtypes: frozenset[DType]
     memory_factor: float = 1.0
     aliases: tuple[str, ...] = ()
+    engine: EngineProperties = field(default_factory=EngineProperties)
 
     def __post_init__(self) -> None:
         if self.memory_factor <= 0:
@@ -167,7 +209,9 @@ __all__ = [
     "DetectionEvidence",
     "DetectionResult",
     "EvidenceValue",
+    "EngineProperties",
     "FamilyDetector",
     "FamilyRegistry",
     "ModelFamily",
+    "PreviewDecoderProperties",
 ]
