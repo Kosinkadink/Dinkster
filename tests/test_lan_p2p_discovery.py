@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from collections.abc import Awaitable
 from ipaddress import IPv4Address, IPv4Network
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
@@ -15,6 +17,7 @@ from dinkster_server import (
     LanNetworkPolicy,
     lan_interfaces,
 )
+from zeroconf import NonUniqueNameException, ServiceInfo
 
 
 def _interface(
@@ -103,6 +106,61 @@ def test_lan_mdns_constructor_opens_no_socket_until_started() -> None:
         assert isinstance(zeroconf, Mock)
         zeroconf.assert_not_called()
         asyncio.run(discovery.close())
+
+
+def test_lan_mdns_readvertises_after_its_withdrawn_record_remains_cached() -> None:
+    class StaleCache:
+        def __init__(self, events: list[str]) -> None:
+            self.pointer: object | None = None
+            self.events = events
+
+        def current_entry_with_name_and_alias(self, _name: str, _alias: str) -> object | None:
+            return self.pointer
+
+        def async_remove_records(self, records: tuple[object, ...]) -> None:
+            assert records == (self.pointer,)
+            assert self.events[-1] == "goodbye"
+            self.events.append("evict")
+            self.pointer = None
+
+    class StaleZeroconf:
+        def __init__(self) -> None:
+            self.zeroconf = self
+            self.events: list[str] = []
+            self.cache = StaleCache(self.events)
+
+        async def async_register_service(self, info: ServiceInfo) -> Awaitable[None]:
+            if self.cache.current_entry_with_name_and_alias(info.type, info.name) is not None:
+                raise NonUniqueNameException
+            self.cache.pointer = info.dns_pointer()
+            self.events.append("register")
+            return asyncio.sleep(0)
+
+        async def async_unregister_service(self, _info: ServiceInfo) -> Awaitable[None]:
+            async def goodbye() -> None:
+                self.events.append("goodbye")
+
+            return goodbye()
+
+    async def scenario() -> None:
+        discovery = LanMdnsDiscovery("same-instance", LanNetworkPolicy((_interface(),)))
+        stale_zeroconf = StaleZeroconf()
+        discovery._zeroconf = cast("object", stale_zeroconf)  # type: ignore[assignment]
+
+        await discovery.advertise(41001)
+        await discovery.withdraw()
+        await discovery.advertise(41002)
+        await discovery.withdraw()
+        assert stale_zeroconf.events == [
+            "register",
+            "goodbye",
+            "evict",
+            "register",
+            "goodbye",
+            "evict",
+        ]
+
+    asyncio.run(scenario())
 
 
 def test_two_mdns_instances_discover_only_lan_addresses() -> None:
