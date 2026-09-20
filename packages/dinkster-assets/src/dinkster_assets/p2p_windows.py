@@ -9,6 +9,8 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import NoReturn
 
+from .p2p_usn import usn_from_record
+
 if os.name != "nt":  # pragma: no cover - imported only by the Windows branch
     raise ImportError("p2p_windows is available only on Windows")
 
@@ -676,16 +678,6 @@ def raw_file_handle(descriptor: int) -> int:
     return msvcrt.get_osfhandle(descriptor)
 
 
-def _usn_from_record(record: bytes, returned: int) -> int:
-    major_version = int.from_bytes(record[4:6], "little")
-    if major_version not in (2, 3):
-        raise OSError(f"unsupported USN record version {major_version}")
-    usn_offset = 24 if major_version == 2 else 40
-    if returned < usn_offset + 8:
-        raise OSError("incomplete USN record")
-    return int.from_bytes(record[usn_offset : usn_offset + 8], "little", signed=True)
-
-
 def change_token(descriptor: int) -> int:
     result = _FileBasicInformation()
     handle = _handle(raw_file_handle(descriptor))
@@ -711,7 +703,7 @@ def change_token(descriptor: int) -> int:
         None,
     ):
         _raise_last_error()
-    usn = _usn_from_record(buffer.raw, returned.value)
+    usn = usn_from_record(buffer.raw, returned.value)
     return (usn << 64) | (result.ChangeTime & ((1 << 64) - 1))
 
 

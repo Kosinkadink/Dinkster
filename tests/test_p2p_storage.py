@@ -23,6 +23,7 @@ from dinkster_assets import (
     digest_bytes,
 )
 from dinkster_assets import p2p_storage as storage_module
+from dinkster_assets.p2p_usn import usn_from_record
 
 from tests.platform_support import symlink_or_skip
 
@@ -777,22 +778,19 @@ def test_windows_local_fingerprint_preserves_creation_time(
     assert fingerprint == (*storage_module._stable_fingerprint(item), change_token)
 
 
-@pytest.mark.skipif(os.name != "nt", reason="exercises Windows USN record parsing")
 @pytest.mark.parametrize(("major_version", "usn_offset"), [(2, 24), (3, 40)])
 def test_windows_usn_parser_accepts_only_known_record_layouts(
     major_version: int,
     usn_offset: int,
 ) -> None:
-    from dinkster_assets import p2p_windows
-
     record = bytearray(64)
     record[4:6] = major_version.to_bytes(2, "little")
     record[usn_offset : usn_offset + 8] = (42).to_bytes(8, "little", signed=True)
-    assert p2p_windows._usn_from_record(bytes(record), usn_offset + 8) == 42
+    assert usn_from_record(bytes(record), usn_offset + 8) == 42
 
     record[4:6] = (4).to_bytes(2, "little")
     with pytest.raises(OSError, match="unsupported USN record version 4"):
-        p2p_windows._usn_from_record(bytes(record), len(record))
+        usn_from_record(bytes(record), len(record))
 
 
 def test_corrupt_resume_state_fails_closed_without_truncating_partial(tmp_path: Path) -> None:
