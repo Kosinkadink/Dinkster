@@ -7,8 +7,9 @@ source-checkout steps work on Windows x64, Linux x64, and macOS Apple Silicon.
 ## Install
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and
-[Node.js](https://nodejs.org/), enable pnpm with `corepack enable`, then clone
-the backend and frontend beside each other:
+[Node.js](https://nodejs.org/), install the pinned pnpm release with
+`npm install --global pnpm@10.31.0`, then clone the backend and frontend beside
+each other:
 
 ```sh
 git clone https://github.com/Kosinkadink/Dinkster.git
