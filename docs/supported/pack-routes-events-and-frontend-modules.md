@@ -8,6 +8,9 @@
 - Installed packs can publish snapshot-selected immutable JavaScript modules.
   Snapshot and module reads do not start execution workers. Frontend privileges
   and controls do not grant or remove backend node execution ownership.
+- Isolated packs can publish value renditions whose metadata, parameter
+  normalization, MIME selection, and rendering remain pack-owned while being
+  available through the host value API.
 - Packs can publish validated locale catalogs for node, blueprint, and guide
   text. Their exact digest-addressed JSON bytes are served as immutable pack
   resources.

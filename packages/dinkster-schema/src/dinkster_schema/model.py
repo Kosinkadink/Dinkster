@@ -31,6 +31,7 @@ from typing import Literal, cast
 # reaches sideways in the bottom layer, so expression-level types and
 # runtime type ids can never drift apart.
 from dinkster_values import (
+    CustomWidgetDescriptor,
     asset_type_id,
     list_type_id,
     parse_asset_type_id,
@@ -838,7 +839,8 @@ class CompositorWidget:
 
 
 WidgetDescriptor = (
-    AssetWidget
+    CustomWidgetDescriptor
+    | AssetWidget
     | SaveTargetWidget
     | ComboWidget
     | MultiComboWidget
@@ -859,6 +861,8 @@ def _widget_value_domain(widget: WidgetDescriptor) -> str:
     between editors that construct different canonical value shapes.
     """
 
+    if isinstance(widget, CustomWidgetDescriptor):
+        return widget.widget_type
     if isinstance(widget, AssetWidget):
         return "asset"
     if isinstance(widget, SaveTargetWidget):
@@ -894,6 +898,7 @@ class WidgetRepresentation:
         if not isinstance(
             raw_widget,
             (
+                CustomWidgetDescriptor,
                 AssetWidget,
                 SaveTargetWidget,
                 ComboWidget,

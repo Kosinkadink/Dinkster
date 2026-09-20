@@ -125,14 +125,36 @@ def worker_declarations(worker: Any) -> dict[str, Any]:
             }
             for scope, item in worker.extension_contributions
         ],
+        "renditions": [
+            {
+                "typeId": item.type_id,
+                "kind": item.kind,
+                "mime": item.mime if isinstance(item.mime, str) else "application/octet-stream",
+                "default": item.default,
+                **({"version": item.version} if item.version is not None else {}),
+                **({"parameters": list(item.parameters)} if item.parameters else {}),
+                **({"defaults": dict(item.defaults)} if item.defaults is not None else {}),
+                **({"limits": dict(item.limits)} if item.limits is not None else {}),
+            }
+            for item in getattr(worker, "renditions", ())
+        ],
     }
+
+
+def worker_declarations_match_catalog(worker: Any, catalog: PackCatalog) -> bool:
+    """Compare pack declarations while allowing shared host renderer extras."""
+    actual = worker_declarations(worker)
+    expected = worker_declarations(catalog)
+    actual_renditions = cast("list[dict[str, object]]", actual.pop("renditions"))
+    expected_renditions = cast("list[dict[str, object]]", expected.pop("renditions"))
+    return actual == expected and all(item in actual_renditions for item in expected_renditions)
 
 
 def write_catalog(manifest: PackManifest, declarations: Mapping[str, Any], *, source: str) -> None:
     PackCatalog(declarations, source)
     destination = catalog_path(manifest.path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    data = {"version": 1, "source": source, "declarations": declarations}
+    data = {"version": 2, "source": source, "declarations": declarations}
     fd, temporary = tempfile.mkstemp(dir=destination.parent, prefix="catalog-", suffix=".json")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
@@ -145,7 +167,7 @@ def write_catalog(manifest: PackManifest, declarations: Mapping[str, Any], *, so
 def read_catalog(manifest: PackManifest) -> PackCatalog | None:
     try:
         data = json.loads(catalog_path(manifest.path).read_text(encoding="utf-8"))
-        if data["version"] != 1 or data["source"] != source_digest(manifest):
+        if data["version"] != 2 or data["source"] != source_digest(manifest):
             return None
         return PackCatalog(data["declarations"], data["source"])
     except (OSError, ValueError, KeyError, TypeError, RuntimeError):

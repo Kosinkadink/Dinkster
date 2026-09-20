@@ -27,6 +27,23 @@ makes, and these rules keep it that way as the codebase grows.
   state the contract in their docstring and would still make sense if the
   implementation were rewritten.
 
+## Platform golden evidence
+
+Portable golden baselines remain in Dinkster. Platform-specific variants live
+only in the sibling `dinkster-evidence` checkout under
+`platform-goldens/files/<Dinkster-relative-path>`; its manifest records each
+path, platform key, and SHA-256 digest. `DINKSTER_EVIDENCE_ROOT` selects that
+checkout and defaults to the sibling `dinkster-evidence` directory.
+
+Golden generators write Linux baselines to Dinkster. On other platforms they
+route variant output to the evidence layout instead of creating a sidecar in
+Dinkster. Linux runtime-specific baselines without a platform key remain beside
+their portable baseline in Dinkster. Generators that deliberately produce a
+platform-keyed variant on Linux route it to evidence. After generating a
+variant, add or update its unique path/platform manifest entry and SHA-256 in
+the evidence repository. Generation fails if the evidence checkout or its
+`platform-goldens/files` layout is absent.
+
 ## Pull requests and full validation
 
 `.github/workflows/ci.yml` runs one job with a five-minute limit. After
@@ -175,13 +192,23 @@ GPU gates in `scripts/setup_envs.sh` and the Torch README also remain required
 where applicable. No CI input or repository variable changes local pytest
 selection.
 
-The `model-tests` job runs in full validation in `Kosinkadink/Dinkster` on
+The `model-tests` matrix runs in full validation in `Kosinkadink/Dinkster` on
 main pushes, the daily schedule and manual dispatch. PR labels never enable
 heavy jobs; dispatch full validation against the branch when model evidence
-is needed before landing. The job uses `[self-hosted, linux, x64]` and the
-same complete composite action with `run-model-tests: "true"` and the
-existing read-only identity and evidence deploy keys. No other job depends
-on it.
+is needed before landing. Six fixed groups cover inference and IPAdapter;
+acceptance sampling and the benchmark loader; HED, upscale and EfficientSAM;
+Depth Anything V2, DETR and RT-DETR; BiRefNet and Depth Anything V3; and SAM
+3.1. Every vision test is selected from the single
+`packages/dinkster-nodes-vision/tests` tree. All six groups may run
+concurrently on runners carrying the `cpu-golden-avx2` label. The `torch-cpu`
+job requires the same label; other CPU-only full validation jobs retain the
+generic Linux labels and can use RipperPC and LesserRipperPC. The model suites
+still execute with CPU Torch and the pinned AVX2 dispatch. `model-tests-gate`
+requires every group to pass. The contract test asserts the complete suite
+manifest so a suite cannot be silently omitted or assigned twice. Each group
+uses the same composite action with
+`run-model-tests: "true"` and the existing read-only identity and evidence
+deploy keys.
 
 The runner must have an AuthenticAMD CPU with AVX2 and **without AVX-512**,
 `MKL_CBWR` unset, and sufficient disk/RAM for the pinned CPU workloads.

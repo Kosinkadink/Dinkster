@@ -15,7 +15,9 @@ from dinkster_values import (
     INLINE_STRING_CAP,
     BufferEncoding,
     EncodedPayload,
+    Rendition,
     TypeRegistry,
+    Value,
     default_decode,
     default_encode,
     make_absent_value,
@@ -510,6 +512,44 @@ def test_rendition_default_negotiation() -> None:
     assert kinds == {("txt", True), ("html", False)}
     assert registry.render(registry.wrap("mypack.doc", "x")).kind == "txt"
     assert registry.render(registry.wrap("mypack.doc", "x"), "html").data == b"h"
+
+
+def test_local_rendition_replaces_matching_worker_relay() -> None:
+    registry = make_registry()
+    registry.register("mypack.doc")
+
+    async def unused_mime(_metadata: Mapping[str, object]) -> str:
+        raise AssertionError("relay callback must be replaced")
+
+    async def unused_resolve(
+        _metadata: Mapping[str, object], _parameters: Mapping[str, str]
+    ) -> tuple[str, Mapping[str, str]]:
+        raise AssertionError("relay callback must be replaced")
+
+    async def unused_render(_value: Value, _parameters: Mapping[str, str]) -> Rendition:
+        raise AssertionError("relay callback must be replaced")
+
+    registry.register_relayed_rendition(
+        "mypack.doc",
+        "txt",
+        mime="text/plain",
+        default=True,
+        version=None,
+        parameters=(),
+        defaults=None,
+        limits=None,
+        owner="worker",
+        resolve_mime=unused_mime,
+        resolve=unused_resolve,
+        render=unused_render,
+    )
+
+    local = registry.register_rendition(
+        "mypack.doc", "txt", mime="text/plain", render=lambda _obj: b"local"
+    )
+    assert local.default
+    assert local.relay_owner is None
+    assert registry.render(registry.wrap("mypack.doc", "x")).data == b"local"
 
 
 def test_rendition_registration_rejections() -> None:

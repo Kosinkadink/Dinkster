@@ -29,6 +29,12 @@ from typing import Any
 import pytest
 import torch
 
+from tools.golden_platform import (  # pyright: ignore[reportMissingImports]
+    GoldenUnavailableError,
+    GoldenVariantNotFoundError,
+    fetch_platform_golden,
+)
+
 REFERENCE_VALIDATION_ENV = "DINKSTER_VALIDATE_REFERENCE_GOLDENS"
 
 
@@ -143,12 +149,23 @@ def platform_golden_path(
     key = key or runtime_key()
     selected = path.with_name(f"{path.stem}.{key}{path.suffix}")
     if not selected.is_file():
-        if allow_portable_fallback:
-            return path
-        pytest.skip(
-            f"excluded: no executed-reference golden minted for {key}: {path.name}",
-            allow_module_level=True,
-        )
+        try:
+            selected = fetch_platform_golden(path, key)
+        except GoldenVariantNotFoundError:
+            if allow_portable_fallback:
+                return path
+            pytest.skip(
+                f"excluded: no executed-reference golden minted for {key}: {path.name}",
+                allow_module_level=True,
+            )
+        except GoldenUnavailableError as error:
+            if allow_portable_fallback:
+                pytest.skip(
+                    "excluded: platform evidence unavailable; "
+                    f"baseline comparison skipped: {error}",
+                    allow_module_level=True,
+                )
+            pytest.skip(str(error), allow_module_level=True)
     return selected
 
 

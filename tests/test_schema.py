@@ -151,7 +151,7 @@ def test_type_expressions_roundtrip_and_remain_closed() -> None:
 def test_malformed_widget_wire_is_rejected() -> None:
     wire = schema_to_wire(SCHEMA)
     entry = cast("list[dict[str, Any]]", wire["interface"])[0]
-    entry["widget"] = {"type": "SPINNER"}
+    entry["widget"] = {"type": ""}
     with pytest.raises(ValueError):
         schema_from_wire(wire)
 

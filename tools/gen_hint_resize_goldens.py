@@ -17,6 +17,11 @@ from typing import Any
 import cv2
 import numpy as np
 
+if __package__:
+    from .golden_platform import platform_variant_output_path
+else:
+    from golden_platform import platform_variant_output_path
+
 BASELINE = "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
 REPO = Path(__file__).resolve().parent.parent
 BASE_OUT = REPO / "tests" / "goldens" / "hint_resize_controlnet_aux_59b1fc4.json"
@@ -29,7 +34,7 @@ def _out_path() -> Path:
     if sys.platform.startswith("linux"):
         return BASE_OUT
     key = f"{sys.platform}-numpy{np.__version__}-opencv{cv2.__version__}"
-    return BASE_OUT.with_name(f"{BASE_OUT.stem}.{key}{BASE_OUT.suffix}")
+    return platform_variant_output_path(BASE_OUT, key)
 
 
 def _continuous_source() -> np.ndarray:

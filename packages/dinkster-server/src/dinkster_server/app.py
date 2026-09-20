@@ -3496,7 +3496,7 @@ async def handle_value(request: web.Request) -> web.Response:
     renditions: list[tuple[Any, str]] = []
     for rendition_spec in registry.renditions_of(value.type_id):
         try:
-            mime = rendition_spec.mime_for(value.meta.entries)
+            mime = await registry.rendition_mime(rendition_spec, value.meta.entries)
         except ValueError:
             continue
         renditions.append((rendition_spec, mime))
@@ -3570,8 +3570,10 @@ async def handle_value(request: web.Request) -> web.Response:
         if values:
             raw_parameters[name] = values[0]
     try:
-        normalized_parameters = spec.normalize_parameters(
-            {**dict(spec.defaults or {}), **raw_parameters}, value.meta.entries
+        _mime, normalized_parameters = await registry.resolve_rendition(
+            spec,
+            value.meta.entries,
+            {**dict(spec.defaults or {}), **raw_parameters},
         )
     except InvalidRenditionRequest as error:
         return _rendition_problem(400, "invalid_rendition_request", str(error))
@@ -3591,7 +3593,7 @@ async def handle_value(request: web.Request) -> web.Response:
             headers={"ETag": f'"{etag_value}"', "Cache-Control": cache_control},
         )
     try:
-        rendition = registry.render(value, spec.kind, normalized_parameters or None)
+        rendition = await registry.render_async(value, spec.kind, normalized_parameters or None)
     except InvalidRenditionRequest as error:
         return _rendition_problem(400, "invalid_rendition_request", str(error))
     except RenditionUnavailable as error:

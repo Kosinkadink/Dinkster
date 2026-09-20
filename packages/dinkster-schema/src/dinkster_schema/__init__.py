@@ -1,3 +1,5 @@
+from dinkster_values import CustomWidgetDescriptor
+
 from .capture import (
     install_stream_capture,
     use_capture_budget,
@@ -198,6 +200,7 @@ __all__ = [
     "AssetWidget",
     "BooleanWidget",
     "ColorWidget",
+    "CustomWidgetDescriptor",
     "CompositorWidget",
     "ConditionalWidgetCondition",
     "ConditionalWidgetGroup",

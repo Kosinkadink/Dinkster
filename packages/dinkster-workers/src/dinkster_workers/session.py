@@ -22,6 +22,7 @@ import contextlib
 import os
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -76,7 +77,15 @@ from dinkster_schema import (
     schema_from_wire,
     validate_name,
 )
-from dinkster_values import TypeRegistry, value_resource_ids
+from dinkster_values import (
+    InvalidRenditionRequest,
+    Rendition,
+    RenditionUnavailable,
+    TypeRegistry,
+    Value,
+    default_encode,
+    value_resource_ids,
+)
 
 from .blobs import BlobTransfer, attribute_moved, await_file_operation
 from .boundary import (
@@ -112,6 +121,85 @@ ArtifactAuthority = Callable[
 ]
 SchemaReloadListener = Callable[[str, str], None]
 _T = TypeVar("_T")
+
+
+@dataclass(frozen=True)
+class RenditionDeclaration:
+    type_id: str
+    kind: str
+    mime: str
+    default: bool
+    version: str | None
+    parameters: tuple[str, ...]
+    defaults: Mapping[str, str] | None
+    limits: Mapping[str, object] | None
+
+
+def _renditions_from_hello(
+    header: Mapping[str, Any], *, role: str, pack: str
+) -> tuple[RenditionDeclaration, ...]:
+    raw = header.get("renditions", [])
+    if type(raw) is not list:
+        raise RuntimeError(f"{role} '{pack}' hello carried malformed renditions")
+    declarations: list[RenditionDeclaration] = []
+    seen: set[tuple[str, str]] = set()
+    for item in cast("list[object]", raw):
+        if not isinstance(item, Mapping):
+            raise RuntimeError(f"{role} '{pack}' hello carried malformed renditions")
+        wire = cast("Mapping[str, object]", item)
+        type_id = wire.get("typeId")
+        kind = wire.get("kind")
+        mime = wire.get("mime", "application/octet-stream")
+        version = wire.get("version")
+        parameters = wire.get("parameters", [])
+        defaults = wire.get("defaults")
+        limits = wire.get("limits")
+        if (
+            type(type_id) is not str
+            or not type_id
+            or type(kind) is not str
+            or not kind
+            or type(mime) is not str
+            or not mime
+            or type(wire.get("default")) is not bool
+            or (version is not None and (type(version) is not str or not version))
+            or type(parameters) is not list
+            or any(type(name) is not str or not name for name in cast("list[object]", parameters))
+            or len(set(cast("list[str]", parameters))) != len(cast("list[str]", parameters))
+            or (defaults is not None and not isinstance(defaults, Mapping))
+            or (limits is not None and not isinstance(limits, Mapping))
+        ):
+            raise RuntimeError(f"{role} '{pack}' hello carried malformed renditions")
+        parsed_defaults = (
+            None
+            if defaults is None
+            else {
+                str(name): value
+                for name, value in cast("Mapping[object, object]", defaults).items()
+                if type(name) is str and type(value) is str
+            }
+        )
+        if defaults is not None and len(parsed_defaults or {}) != len(
+            cast("Mapping[object, object]", defaults)
+        ):
+            raise RuntimeError(f"{role} '{pack}' hello carried malformed rendition defaults")
+        key = (type_id, kind)
+        if key in seen:
+            raise RuntimeError(f"{role} '{pack}' hello repeated rendition {type_id}:{kind}")
+        seen.add(key)
+        declarations.append(
+            RenditionDeclaration(
+                type_id=type_id,
+                kind=kind,
+                mime=mime,
+                default=cast("bool", wire["default"]),
+                version=version,
+                parameters=tuple(cast("list[str]", parameters)),
+                defaults=parsed_defaults,
+                limits=(None if limits is None else dict(cast("Mapping[str, object]", limits))),
+            )
+        )
+    return tuple(declarations)
 
 
 def _retrieve_future_exception(task: asyncio.Future[_T]) -> None:
@@ -316,6 +404,7 @@ class PackDeclarations:
         self.extension_contributions = _extension_contributions_from_hello(
             declarations, role=role, pack=pack
         )
+        self.renditions = _renditions_from_hello(declarations, role=role, pack=pack)
 
 
 class BoundarySession:
@@ -384,6 +473,8 @@ class BoundarySession:
         self._graph_compile_request_index = 0
         self._route_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._route_request_index = 0
+        self._rendition_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
+        self._rendition_request_index = 0
         # Asset staging (declared assets on a remote daemon): request
         # futures for assetQuery/stageAssets replies, plus per-request
         # sinks for the daemon's stageEvent progress frames.
@@ -444,6 +535,7 @@ class BoundarySession:
         self._comfy_aliases: ComfyAliasRegistry | None = None
         self._comfy_groups: ComfyGroupRegistry | None = None
         self._combo_choices: dict[str, tuple[str, ...]] = {}
+        self._renditions: tuple[RenditionDeclaration, ...] = ()
         self._lazy_choice_ids: tuple[str, ...] = ()
         self._compat_skips: dict[str, CompatGateDiagnostic] = {}
         self._body_arms: dict[str, tuple[str, ...]] | None = None
@@ -554,6 +646,12 @@ class BoundarySession:
         if self._schemas is None:
             raise RuntimeError("BoundarySession.begin() has not completed")
         return self._combo_choices
+
+    @property
+    def renditions(self) -> tuple[RenditionDeclaration, ...]:
+        if self._schemas is None:
+            raise RuntimeError("BoundarySession.begin() has not completed")
+        return self._renditions
 
     @property
     def lazy_choice_ids(self) -> tuple[str, ...]:
@@ -734,6 +832,7 @@ class BoundarySession:
                     f"{self._role} '{self._pack}' hello carried malformed comfyGroups: {exc}"
                 ) from exc
         self._combo_choices = declarations.combo_choices
+        self._renditions = declarations.renditions
         self._lazy_choice_ids = declarations.lazy_choice_ids
         self._compat_skips = declarations.compat_skips
         self._body_arms = declarations.body_arms
@@ -1180,6 +1279,116 @@ class BoundarySession:
             raise
         finally:
             self._route_pending.pop(request_id, None)
+
+    async def resolve_rendition(
+        self,
+        type_id: str,
+        kind: str,
+        metadata: Mapping[str, object],
+        parameters: Mapping[str, str],
+    ) -> tuple[str, Mapping[str, str]]:
+        reply, _ = await self._call_rendition(
+            "resolveRendition",
+            kind,
+            {
+                "typeId": type_id,
+                "metaBlob": 0,
+                "parameters": dict(parameters),
+                "normalize": True,
+            },
+            [default_encode(dict(metadata))],
+        )
+        self._raise_rendition_error(reply)
+        mime = reply.get("mime")
+        normalized = reply.get("parameters")
+        if type(mime) is not str or not mime or not isinstance(normalized, Mapping):
+            raise BoundaryError("worker returned malformed rendition resolution")
+        parsed = {
+            str(name): value
+            for name, value in cast("Mapping[object, object]", normalized).items()
+            if type(name) is str and type(value) is str
+        }
+        if len(parsed) != len(cast("Mapping[object, object]", normalized)):
+            raise BoundaryError("worker returned malformed rendition parameters")
+        return mime, parsed
+
+    async def resolve_rendition_mime(
+        self, type_id: str, kind: str, metadata: Mapping[str, object]
+    ) -> str:
+        reply, _ = await self._call_rendition(
+            "resolveRendition",
+            kind,
+            {"typeId": type_id, "metaBlob": 0, "parameters": {}, "normalize": False},
+            [default_encode(dict(metadata))],
+        )
+        self._raise_rendition_error(reply)
+        mime = reply.get("mime")
+        if type(mime) is not str or not mime:
+            raise BoundaryError("worker returned malformed rendition MIME")
+        return mime
+
+    async def render_rendition(
+        self, value: Value, kind: str, parameters: Mapping[str, str]
+    ) -> Rendition:
+        blobs: list[bytes] = []
+        segments: list[SharedMemory] = []
+        with self._codec.suspend_persistent_cas():
+            value_wire, _ = self._codec.encode(value, blobs, segments)
+        reply, result_blobs = await self._call_rendition(
+            "renderRendition",
+            kind,
+            {"typeId": value.type_id, "value": value_wire, "parameters": dict(parameters)},
+            blobs,
+            segments,
+        )
+        self._raise_rendition_error(reply)
+        mime = reply.get("mime")
+        blob = reply.get("dataBlob")
+        if (
+            type(mime) is not str
+            or not mime
+            or type(blob) is not int
+            or not 0 <= blob < len(result_blobs)
+        ):
+            raise BoundaryError("worker returned malformed rendition bytes")
+        return Rendition(kind=kind, mime=mime, data=result_blobs[blob])
+
+    async def _call_rendition(
+        self,
+        frame_type: str,
+        kind: str,
+        fields: Mapping[str, object],
+        blobs: Sequence[bytes],
+        segments: Sequence[SharedMemory] = (),
+    ) -> tuple[dict[str, Any], list[bytes]]:
+        if not self._alive:
+            raise WorkerDied()
+        request_id = f"rendition-{self._rendition_request_index}"
+        self._rendition_request_index += 1
+        future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._rendition_pending[request_id] = future
+        try:
+            await self.send(
+                {"type": frame_type, "requestId": request_id, "kind": kind, **fields},
+                blobs,
+                segments,
+            )
+            return await future
+        finally:
+            self._rendition_pending.pop(request_id, None)
+
+    @staticmethod
+    def _raise_rendition_error(reply: Mapping[str, object]) -> None:
+        error = reply.get("error")
+        message = str(reply.get("message", "rendition failed"))
+        if error == "invalid-request":
+            raise InvalidRenditionRequest(message)
+        if error == "unavailable":
+            raise RenditionUnavailable(message)
+        if error:
+            raise RuntimeError(message)
 
     async def compile_graph(
         self,
@@ -1675,6 +1884,10 @@ class BoundarySession:
             if not future.done():
                 future.set_exception(WorkerDied())
         self._route_pending.clear()
+        for future in self._rendition_pending.values():
+            if not future.done():
+                future.set_exception(WorkerDied())
+        self._rendition_pending.clear()
         for future in self._staging_pending.values():
             if not future.done():
                 future.set_exception(WorkerDied())
@@ -1974,6 +2187,10 @@ class BoundarySession:
                     future = self._route_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
                         future.set_result(header)
+                elif kind == "renditionResult":
+                    future = self._rendition_pending.pop(str(header.get("requestId")), None)
+                    if future is not None and not future.done():
+                        future.set_result((header, blobs))
                 elif kind == GRAPH_COMPILE_RESULT_TYPE:
                     future = self._graph_compile_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
@@ -2123,6 +2340,7 @@ class BoundarySession:
             self._conversion_pending,
             self._graph_compile_pending,
             self._route_pending,
+            self._rendition_pending,
             self._staging_pending,
             self._choices_pending,
         ):

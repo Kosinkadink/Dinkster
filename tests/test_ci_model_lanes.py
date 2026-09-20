@@ -21,6 +21,7 @@ WORKFLOW = yaml.safe_load(
 )
 JOBS = WORKFLOW["jobs"]
 MODEL_CONDITION = "inputs.run-model-tests == 'true'"
+MODEL_GROUP_ENV = "env.DINKSTER_MODEL_TEST_GROUP"
 RECEIPT_TEST = "tests/test_gen_comfy_source_parity_receipts.py"
 ACCEPTANCE_CLOSURE_TEST = (
     ".evidence-source/packages/dinkster-acceptance/tests/test_acceptance_closure.py"
@@ -40,6 +41,82 @@ VISION_SUITES = (
     "packages/dinkster-nodes-vision/tests/test_depth_anything_v3.py",
     "packages/dinkster-nodes-vision/tests/test_sam31.py",
 )
+MODEL_GROUPS = (
+    {
+        "name": "inference and IPAdapter",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+    },
+    {
+        "name": "acceptance and benchmark",
+        "group": "acceptance",
+        "suites": "acceptance-sampling,benchmark-loader",
+    },
+    {
+        "name": "HED, upscale and EfficientSAM",
+        "group": "vision-fast",
+        "suites": "hed,upscale,efficient-sam",
+    },
+    {
+        "name": "Depth Anything V2, DETR and RT-DETR",
+        "group": "vision-detection",
+        "suites": "depth-anything-v2,detr,rtdetr",
+    },
+    {
+        "name": "BiRefNet and Depth Anything V3",
+        "group": "vision-large",
+        "suites": "birefnet,depth-anything-v3",
+    },
+    {"name": "SAM 3.1", "group": "vision-sam", "suites": "sam31"},
+)
+EXPECTED_MODEL_SUITES = {
+    "inference-torch",
+    "model-ipadapter",
+    "acceptance-sampling",
+    "benchmark-loader",
+    "hed",
+    "upscale",
+    "efficient-sam",
+    "depth-anything-v2",
+    "detr",
+    "rtdetr",
+    "birefnet",
+    "depth-anything-v3",
+    "sam31",
+}
+
+
+def _model_group(step: dict[str, object]) -> str:
+    command = str(step.get("run", ""))
+    name = str(step.get("name", ""))
+    if "dinkster-inference-torch/tests" in command:
+        return "inference"
+    if ACCEPTANCE_SAMPLING_TEST in command or "test_benchmark_inference.py" in command:
+        return "acceptance"
+    if any(
+        token in name or token in command
+        for token in ("line and edge", "test_hed.py", "upscale", "efficient_sam")
+    ):
+        return "vision-fast"
+    if any(
+        token in name or token in command
+        for token in (
+            "Depth Anything V2",
+            "test_depth_anything_v2.py",
+            "DETR",
+            "test_detr.py",
+            "test_rtdetr.py",
+        )
+    ):
+        return "vision-detection"
+    if any(
+        token in name or token in command
+        for token in ("BiRefNet", "birefnet", "Depth Anything 3", "depth_anything_v3")
+    ):
+        return "vision-large"
+    if "SAM 3.1" in name or "sam31" in command:
+        return "vision-sam"
+    raise AssertionError(f"unassigned model step: {step}")
 
 
 def _condition_matches(expression: str, context: dict[str, str]) -> bool:
@@ -63,8 +140,12 @@ def test_every_cpu_composite_caller_explicitly_excludes_model_tests() -> None:
                 assert step["with"]["run-model-tests"] == (
                     "true" if name == "model-tests" else "false"
                 )
-                if name != "model-tests":
-                    assert job["runs-on"] == ["self-hosted", "linux", "x64"]
+                assert job["runs-on"] == [
+                    "self-hosted",
+                    "Linux",
+                    "X64",
+                    "cpu-golden-avx2",
+                ]
     assert set(callers) == {
         ("full-validation.yml", "model-tests"),
         ("full-validation.yml", "torch-cpu"),
@@ -79,7 +160,7 @@ def test_torch_cpu_has_one_contract_guard_and_an_unconditional_suite() -> None:
     assert set(job) == {"needs", "if", "runs-on", "env", "steps"}
     assert job["needs"] == "validation-plan"
     assert job["if"] == "needs.validation-plan.outputs.run-heavy == 'true'"
-    assert job["runs-on"] == ["self-hosted", "linux", "x64"]
+    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "cpu-golden-avx2"]
     assert job["env"] == {"ATEN_CPU_CAPABILITY": "avx2", "ONEDNN_MAX_CPU_ISA": "AVX2"}
     guard, checkout, suite = job["steps"]
     assert set(guard) == {"name", "run"}
@@ -167,10 +248,12 @@ def test_all_model_downloads_and_model_pytest_lanes_require_opt_in(enabled: str)
         )
         if not (is_download or is_execution):
             continue
-        assert step["if"] == MODEL_CONDITION
-        assert _condition_matches(step["if"], {"inputs.run-model-tests": enabled}) == (
-            enabled == "true"
-        )
+        group = _model_group(step)
+        assert step["if"] == (f"{MODEL_CONDITION} && {MODEL_GROUP_ENV} == '{group}'")
+        assert _condition_matches(
+            step["if"],
+            {"inputs.run-model-tests": enabled, MODEL_GROUP_ENV: group},
+        ) == (enabled == "true")
         if is_download:
             downloads.append(step)
         if is_execution:
@@ -192,11 +275,11 @@ def test_acceptance_sampling_runs_only_in_the_model_lane() -> None:
     assert common["run"].strip() == (
         f".venv-torch/bin/python -m pytest -q {ACCEPTANCE_CLOSURE_TEST}"
     )
-    assert "if" not in common
+    assert common["if"] == f"{MODEL_GROUP_ENV} == ''"
     assert sampling["run"].strip() == (
         f".venv-torch/bin/python -m pytest -q {ACCEPTANCE_SAMPLING_TEST}"
     )
-    assert sampling["if"] == MODEL_CONDITION
+    assert sampling["if"] == (f"{MODEL_CONDITION} && {MODEL_GROUP_ENV} == 'acceptance'")
 
 
 def test_weight_free_vision_suites_remain_hosted_without_artifacts() -> None:
@@ -208,9 +291,9 @@ def test_weight_free_vision_suites_remain_hosted_without_artifacts() -> None:
         ]
         assert len(executions) == 2
         hosted, model = executions
-        assert "if" not in hosted
+        assert hosted["if"] == f"{MODEL_GROUP_ENV} == ''"
         assert "env" not in hosted
-        assert model["if"] == MODEL_CONDITION
+        assert model["if"].startswith(f"{MODEL_CONDITION} && {MODEL_GROUP_ENV} == ")
         assert model["env"]
 
 
@@ -220,7 +303,7 @@ def test_model_lane_commands_artifact_pins_and_environments_match_reviewed_contr
     steps = [
         {key: value for key, value in step.items() if key not in {"if", "name"}}
         for step in ACTION["runs"]["steps"]
-        if step.get("if") == MODEL_CONDITION
+        if step.get("if", "").startswith(f"{MODEL_CONDITION} &&")
     ]
     assert hashlib.sha256(json.dumps(steps, sort_keys=True).encode()).hexdigest() == (
         "5583341b0b7a3877b63970114606a11f5c6f3dd426cea7c592eee8f4a285dc1d"
@@ -230,9 +313,13 @@ def test_model_lane_commands_artifact_pins_and_environments_match_reviewed_contr
 def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
     retained = []
     for step in ACTION["runs"]["steps"]:
-        if step.get("if") == MODEL_CONDITION or step.get("name") == "Reclaim runner disk":
+        if (
+            step.get("if", "").startswith(f"{MODEL_CONDITION} &&")
+            or step.get("name") == "Reclaim runner disk"
+        ):
             continue
-        assert "if" not in step
+        if "if" in step:
+            assert step["if"] == f"{MODEL_GROUP_ENV} == ''"
         retained.append(step)
     commands = [step.get("run", "").strip() for step in retained]
     projects = {
@@ -258,6 +345,7 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
     assert training_steps == [
         {
             "name": "Test training runtime",
+            "if": f"{MODEL_GROUP_ENV} == ''",
             "shell": "bash",
             "env": {"OMP_NUM_THREADS": "4", "MKL_NUM_THREADS": "4"},
             "run": f".venv-torch/bin/python -m pytest -q {TRAINING_SUITE}",
@@ -307,7 +395,7 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
     (checkout,) = [step for step in preparation_steps if step.get("uses") == "actions/checkout@v4"]
     assert checkout["with"] == {
         "repository": "Kosinkadink/dinkster-evidence",
-        "ref": "ef914dab9c8c2b959539f8e774bc35e6b4fe58b8",
+        "ref": "983b5dc3b45e74410b55908a833e7769abe63dea",
         "path": ".evidence-source",
         "clean": True,
         "persist-credentials": False,
@@ -408,10 +496,10 @@ def test_model_job_runs_only_in_trusted_full_validation(
         )
         and repository == "Kosinkadink/Dinkster"
     )
-    assert job["runs-on"] == ["self-hosted", "linux", "x64"]
+    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "cpu-golden-avx2"]
     assert job["needs"] == "validation-plan"
     for name, hosted in JOBS.items():
-        if name not in {"model-tests", "validation-plan"}:
+        if name not in {"model-tests", "model-tests-gate", "validation-plan"}:
             assert "model-tests" not in hosted.get("needs", [])
 
 
@@ -427,6 +515,17 @@ def test_model_job_has_no_pull_request_label_path() -> None:
 
 def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
     job = JOBS["model-tests"]
+    assert job["strategy"] == {
+        "fail-fast": False,
+        "matrix": {"include": list(MODEL_GROUPS)},
+    }
+    suites = [
+        suite
+        for group in job["strategy"]["matrix"]["include"]
+        for suite in group["suites"].split(",")
+    ]
+    assert len(suites) == len(set(suites))
+    assert set(suites) == EXPECTED_MODEL_SUITES
     assert job["permissions"] == {"contents": "read"}
     assert job["steps"][0] == {
         "uses": "actions/checkout@v4",
@@ -445,6 +544,21 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         "ONEDNN_MAX_CPU_ISA": "AVX2",
         "OMP_NUM_THREADS": "4",
         "MKL_NUM_THREADS": "4",
+        "DINKSTER_MODEL_TEST_GROUP": "${{ matrix.group }}",
+    }
+    assert JOBS["model-tests-gate"] == {
+        "needs": ["validation-plan", "model-tests"],
+        "if": (
+            "always() && needs.validation-plan.outputs.run-heavy == 'true' && "
+            "github.repository == 'Kosinkadink/Dinkster'"
+        ),
+        "runs-on": ["self-hosted", "linux", "x64"],
+        "steps": [
+            {
+                "name": "Verify every model-test group passed",
+                "run": "test '${{ needs.model-tests.result }}' = success",
+            }
+        ],
     }
     for name in ("p2p-descriptor-macos", "p2p-artifact-smoke"):
         assert JOBS[name]["if"] == "needs.validation-plan.outputs.run-heavy == 'true'"
