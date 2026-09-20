@@ -6,7 +6,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 from dinkster_inference import (
@@ -80,11 +80,18 @@ from .sampling_execution import (
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
+    SamplingExecutionInputs,
+    SamplingExecutionRegistration,
+    SamplingLatentAdapter,
     brownian_step_noise,
     build_custom_sampling_schedule,
     compile_guidance_plan,
     guided_denoiser,
     resolve_custom_sampling_request,
+    sampling_execution,
 )
 from .sampling_runtime import MultiStreamSamplingRuntime
 from .schedules import (
@@ -426,6 +433,310 @@ def _batch_guides(
     return tuple(result)
 
 
+@dataclass(frozen=True)
+class _LTXVLatentContext:
+    original: MultiStreamLatent[torch.Tensor]
+    model_mask: torch.Tensor | None
+
+
+@dataclass(frozen=True)
+class _LTXVLatentAdapter:
+    def prepare(
+        self,
+        runtime: object,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs:
+        del family, error
+        owner = cast("LTXVDiffusionRuntime", runtime)
+        if context.options:
+            names = ", ".join(sorted(context.options))
+            raise LTXVRuntimeError(f"LTX-Video sampling does not accept adapter options: {names}")
+        model = owner.assembled.diffusion
+        streams, video = _video_streams(latent, channels=model.config.in_channels)
+        if type(noise) is not MultiStreamLatent:
+            raise LTXVRuntimeError("LTX-Video custom sampling requires MultiStreamLatent noise")
+        if noise.roles != streams.roles:
+            raise LTXVRuntimeError("LTX-Video noise streams must match the latent stream roles")
+        noise_video = noise.by_role("video")
+        if (
+            type(noise_video) is not torch.Tensor
+            or not noise_video.is_floating_point()
+            or noise_video.layout != torch.strided
+        ):
+            raise TypeError("LTX-Video noise stream must be an exact strided floating torch.Tensor")
+        if tuple(noise_video.shape) != tuple(video.shape):
+            raise LTXVRuntimeError("LTX-Video noise stream must match the video latent shape")
+        if context.context_windows is not None and context.context_windows.freenoise:
+            noise_video = apply_freenoise(
+                noise_video,
+                context.context_windows.dim,
+                context.context_windows.length,
+                context.context_windows.overlap,
+                context.seed,
+            )
+        if isinstance(cfg, PerpNegSamplingGuidance):
+            raise LTXVRuntimeError(
+                "LTX-Video custom sampling does not support PerpNegSamplingGuidance"
+                " (perp-neg guidance); pass SamplingGuidance"
+            )
+        if type(cond) is not PreparedMultiStreamConditioning:
+            raise LTXVRuntimeError(
+                "LTX-Video custom sampling requires prepared multi-stream conditioning"
+            )
+        if cond.runtime_identity != owner.conditioning_identity:
+            raise LTXVRuntimeError(
+                "LTX-Video conditioning was prepared by a different conditioner component"
+            )
+        conditioning = cond.payload
+        if type(conditioning) is not LTXVPreparedConditioning:
+            raise TypeError("conditioning must be exact LTXVPreparedConditioning")
+        text_dim = model.config.caption_channels
+        _validate_text(conditioning.text, text_dim=text_dim)
+
+        def unwrap(value: object) -> LTXVPreparedConditioning | None:
+            if value is None:
+                return None
+            if type(value) is not PreparedMultiStreamConditioning:
+                raise LTXVRuntimeError(
+                    "LTX-Video custom sampling guidance requires prepared multi-stream conditioning"
+                )
+            if value.runtime_identity != cond.runtime_identity:
+                raise LTXVRuntimeError(
+                    "LTX-Video guidance lanes were prepared by different conditioner components"
+                )
+            payload = value.payload
+            if type(payload) is not LTXVPreparedConditioning:
+                raise TypeError("LTX-Video guidance lanes require exact LTXVPreparedConditioning")
+            _validate_text(payload.text, text_dim=text_dim)
+            return payload
+
+        uncond = unwrap(None if cfg is None else cfg.uncond)
+        middle = unwrap(cfg.middle) if isinstance(cfg, DualSamplingGuidance) else None
+        if cfg is None:
+            guidance_cfg = None
+        elif isinstance(cfg, DualSamplingGuidance):
+            guidance_cfg = replace(
+                cast("DualSamplingGuidance[object]", cfg), uncond=uncond, middle=middle
+            )
+        else:
+            guidance_cfg = replace(cast("SamplingGuidance[object]", cfg), uncond=uncond)
+        for lane in (uncond, middle):
+            if lane is not None and lane.frame_rate != conditioning.frame_rate:
+                raise LTXVRuntimeError("LTX-Video guidance lanes must share one frame rate")
+            if lane is not None and not ltxv_guides_equal(lane.guides, conditioning.guides):
+                raise LTXVRuntimeError("LTX-Video guidance lanes must share the same guides")
+        if context.context_windows is not None and context.context_windows.cond_retain_indices:
+            raise LTXVRuntimeError("LTX-Video context windows do not accept cond_retain_indices")
+        if context.context_windows is not None and conditioning.guides:
+            raise LTXVRuntimeError("LTX-Video guide conditioning does not support context windows")
+        if context.context_windows is not None and denoise_mask is not None:
+            raise LTXVRuntimeError("LTX-Video denoise masks do not support context windows")
+        sampler_mask = None
+        model_mask = None
+        if denoise_mask is not None:
+            try:
+                sampler_mask = normalize_latent_mask(
+                    cast("torch.Tensor | MultiStreamLatent[torch.Tensor]", denoise_mask), streams
+                ).by_role("video")
+            except (TypeError, ValueError) as exception:
+                raise LTXVRuntimeError(f"LTX-Video denoise mask is invalid: {exception}") from None
+            if (
+                not bool(torch.isfinite(sampler_mask).all())
+                or float(sampler_mask.amin()) < 0.0
+                or float(sampler_mask.amax()) > 1.0
+            ):
+                raise LTXVRuntimeError("LTX-Video denoise mask values must be finite within [0, 1]")
+            model_mask = sampler_mask[:, :1]
+        if conditioning.guides and model_mask is None:
+            raise LTXVRuntimeError("LTX-Video guide conditioning requires a denoise mask")
+        return SamplingExecutionInputs(
+            video,
+            noise_video,
+            conditioning,
+            guidance_cfg,
+            sampler_mask,
+            _LTXVLatentContext(streams, model_mask),
+        )
+
+    def finish(
+        self,
+        inputs: SamplingExecutionInputs,
+        output: torch.Tensor,
+        denoised: object | None,
+    ) -> CustomSamplingResult[MultiStreamLatent[torch.Tensor]]:
+        context = cast("_LTXVLatentContext", inputs.latent_context)
+        result = context.original.replace("video", output)
+        if denoised is None:
+            return CustomSamplingResult(result, None)
+        if type(denoised) is not MultiStreamLatent:
+            raise TypeError("LTX-Video denoised state must contain a MultiStreamLatent")
+        return CustomSamplingResult(
+            result, context.original.replace("video", denoised.by_role("video"))
+        )
+
+
+class _LTXVSamplingDenoiser:
+    evaluator_identity = "dinkster.ltxv.conditioning.v1"
+
+    def __init__(
+        self,
+        owner: LTXVDiffusionRuntime,
+        model_mask: torch.Tensor | None,
+        *,
+        device: torch.device | str,
+        compute_dtype: torch.dtype,
+        space: FluxFlowSigmas,
+        cancelled: Callable[[], bool],
+    ) -> None:
+        self.owner = owner
+        self.model_mask = model_mask
+        self.device = device
+        self.compute_dtype = compute_dtype
+        self.space = space
+        self.cancelled = cancelled
+
+    def prepare_conditioning(self, value: object, _role: GuidanceRole) -> _LTXVModelConditioning:
+        _check_cancelled(self.cancelled)
+        if type(value) is not LTXVPreparedConditioning:
+            raise TypeError("LTX-Video guidance lanes require exact prepared conditioning")
+        text = _validate_text(
+            value.text, text_dim=self.owner.assembled.diffusion.config.caption_channels
+        ).to(device=self.device, dtype=self.compute_dtype)
+        mask = torch.zeros((text.shape[0], text.shape[1]), device=self.device, dtype=torch.long)
+        mask[:, : value.attention_tokens] = 1
+        guides = tuple(
+            LTXVGuideConditioning(
+                guide.keyframe_indices.to(device=self.device),
+                guide.latent_shape,
+                guide.strength,
+                None
+                if guide.attention_mask is None
+                else guide.attention_mask.to(device=self.device, dtype=self.compute_dtype),
+            )
+            for guide in value.guides
+        )
+        return _LTXVModelConditioning(text, mask, value.frame_rate, guides)
+
+    def evaluate_conditioning(
+        self, x: torch.Tensor, sigma: float, condition: _LTXVModelConditioning
+    ) -> torch.Tensor:
+        return self.evaluate_conditioning_batch(x, sigma, (condition,))[0]
+
+    def batchable(self, values: tuple[_LTXVModelConditioning, ...]) -> bool:
+        if not values:
+            return False
+        first = values[0]
+        return all(
+            value.text.shape[1:] == first.text.shape[1:]
+            and value.frame_rate == first.frame_rate
+            and ltxv_guides_equal(value.guides, first.guides)
+            for value in values[1:]
+        )
+
+    def evaluate_conditioning_batch(
+        self, x: torch.Tensor, sigma: float, values: tuple[_LTXVModelConditioning, ...]
+    ) -> tuple[torch.Tensor, ...]:
+        _check_cancelled(self.cancelled)
+        if not values or not self.batchable(values):
+            raise LTXVRuntimeError("LTX-Video model evaluation requires conditioning")
+        first = next(iter(values))
+        batch = x.shape[0]
+        base_input = calculate_input(Parameterization.FLOW, sigma, x).to(self.compute_dtype)
+        model_input = base_input if len(values) == 1 else torch.cat((base_input,) * len(values))
+        text = torch.cat(tuple(to_batch(value.text, batch) for value in values))
+        mask = torch.cat(tuple(to_batch(value.mask, batch) for value in values))
+        timestep = self.space.timestep(sigma)
+        arguments: dict[str, object] = {}
+        if self.model_mask is None:
+            timesteps = torch.full(
+                (model_input.shape[0],), timestep, device=self.device, dtype=torch.float32
+            )
+        else:
+            lane_mask = to_batch(self.model_mask.to(self.device, self.compute_dtype), batch)
+            timesteps = (lane_mask.float() * timestep).flatten(1)
+            if len(values) > 1:
+                timesteps = torch.cat((timesteps,) * len(values))
+            arguments["denoise_mask"] = (
+                lane_mask if len(values) == 1 else torch.cat((lane_mask,) * len(values))
+            )
+        if first.guides:
+            arguments["guides"] = _batch_guides(first.guides, batch, len(values))
+        velocity = self.owner.assembled.diffusion(
+            model_input,
+            timesteps,
+            text,
+            attention_mask=mask,
+            frame_rate=first.frame_rate,
+            **arguments,
+        ).float()
+        return tuple(
+            calculate_denoised(Parameterization.FLOW, sigma, output, x)
+            for output in velocity.chunk(len(values))
+        )
+
+
+def _ltxv_denoiser(
+    runtime: object, compute_dtype: torch.dtype, context: SamplingAdapterContext
+) -> SamplingDenoiserExecution:
+    owner = cast("LTXVDiffusionRuntime", runtime)
+    if context.inputs is None or context.device is None or context.schedule is None:
+        raise RuntimeError("LTX-Video sampling context is unresolved")
+    latent_context = cast("_LTXVLatentContext", context.inputs.latent_context)
+    evaluator = _LTXVSamplingDenoiser(
+        owner,
+        latent_context.model_mask,
+        device=context.device,
+        compute_dtype=compute_dtype,
+        space=cast("FluxFlowSigmas", owner.sampling_sigma_space()),
+        cancelled=context.cancelled,
+    )
+    conditioning_evaluation = None
+    if context.context_windows is not None:
+        base = ConditioningEvaluation(
+            evaluator.prepare_conditioning,
+            evaluator.evaluate_conditioning,
+            evaluator.batchable,
+            evaluator.evaluate_conditioning_batch,
+            evaluator_identity=lambda _role: "dinkster.ltxv.conditioning.v1",
+            standard_activation_memory_factor=owner.family.memory_factor,
+        )
+        windowed = windowed_conditioning_evaluation(
+            base, context.context_windows, context.schedule.sigmas
+        )
+        conditioning_evaluation = windowed
+
+    def unpack_video(value: torch.Tensor) -> object:
+        return MultiStreamLatent.from_pairs((("video", value),))
+
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", evaluator),
+        conditioning_evaluation=conditioning_evaluation,
+        process_in=lambda value: value,
+        process_out=lambda value: value,
+        unpack_state=unpack_video,
+        fixed_inpaint_latent=True,
+    )
+
+
+def _ltxv_device(runtime: object) -> torch.device:
+    model = cast("LTXVDiffusionRuntime", runtime).assembled.diffusion
+    return bound_compute_device(model.patchify_proj) or model.patchify_proj.weight.device
+
+
+def _ltxv_compute_dtype(runtime: object) -> torch.dtype:
+    return (
+        cast("LTXVDiffusionRuntime", runtime).assembled.compute_dtype("diffusion") or torch.bfloat16
+    )
+
+
 class LTXVDiffusionRuntime(MultiStreamSamplingRuntime):
     """Diffusion-only classic LTX-Video custom-sampling runtime."""
 
@@ -434,6 +745,13 @@ class LTXVDiffusionRuntime(MultiStreamSamplingRuntime):
     supports_denoised_capture = True
     supports_batch_noise_indices = False
     supports_sampling_shift = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=cast("SamplingLatentAdapter", _LTXVLatentAdapter()),
+        denoiser=_ltxv_denoiser,
+        device=_ltxv_device,
+        compute_dtype=_ltxv_compute_dtype,
+        flow=True,
+    )
 
     def __init__(
         self,
@@ -467,6 +785,7 @@ class LTXVDiffusionRuntime(MultiStreamSamplingRuntime):
         self._schedulers = (
             torch_scheduler_registry() if scheduler_registry is None else scheduler_registry
         )
+        self._guidance = None
 
     @property
     def assembled(self) -> _LTXVDiffusionAssembly:
@@ -856,6 +1175,8 @@ class LTXVDiffusionRuntime(MultiStreamSamplingRuntime):
         if captured_denoised:
             denoised_output = streams.replace("video", captured_denoised[-1].by_role("video"))
         return CustomSamplingResult(output_latent, denoised_output)
+
+    sample_custom = cast("Any", sampling_execution)  # noqa: F811
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,7 +10,7 @@ import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from types import MappingProxyType
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 import torch
@@ -54,11 +54,18 @@ from .sampling_execution import (
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
+    SamplingExecutionInputs,
+    SamplingExecutionRegistration,
+    SamplingLatentAdapter,
     brownian_step_noise,
     build_custom_sampling_schedule,
     compile_guidance_plan,
     guided_denoiser,
     resolve_custom_sampling_request,
+    sampling_execution,
 )
 from .sampling_runtime import DenseOrSparseSamplingRuntime
 from .solvers import torch_sampler_registry
@@ -948,10 +955,336 @@ class _ModelConditioning:
     stage: Trellis2Stage
 
 
+@dataclass(frozen=True)
+class _Trellis2LatentContext:
+    support: SparseSupport[torch.Tensor] | None
+    stage: Trellis2Stage
+
+
+@dataclass(frozen=True)
+class _Trellis2LatentAdapter:
+    def prepare(
+        self,
+        runtime: object,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs:
+        del family, error
+        owner = cast("Trellis2DiffusionRuntime", runtime)
+        if context.options:
+            names = ", ".join(sorted(context.options))
+            raise Trellis2RuntimeError(
+                f"TRELLIS.2 sampling does not accept adapter options: {names}"
+            )
+        if type(cond) is not PreparedMultiStreamConditioning:
+            raise Trellis2RuntimeError("TRELLIS.2 requires prepared conditioning")
+        if cond.runtime_identity != owner.conditioning_identity:
+            raise Trellis2RuntimeError("TRELLIS.2 conditioning identity differs from the runtime")
+        if type(cond.payload) not in (Trellis2Conditioning, Trellis2ConditioningResource):
+            raise TypeError("TRELLIS.2 conditioning payload has the wrong type")
+        conditioning = cast("Trellis2Conditioning | Trellis2ConditioningResource", cond.payload)
+        stage = conditioning.stage
+        if isinstance(cfg, (DualSamplingGuidance, PerpNegSamplingGuidance)):
+            raise Trellis2RuntimeError("TRELLIS.2 supports ordinary CFG guidance only")
+        uncond_value = None
+        if cfg is not None and cfg.uncond is not None:
+            uncond = cfg.uncond
+            if (
+                type(uncond) is not PreparedMultiStreamConditioning
+                or uncond.runtime_identity != owner.conditioning_identity
+                or type(uncond.payload) not in (Trellis2Conditioning, Trellis2ConditioningResource)
+            ):
+                raise Trellis2RuntimeError("TRELLIS.2 negative conditioning is incompatible")
+            uncond_value = cast(
+                "Trellis2Conditioning | Trellis2ConditioningResource", uncond.payload
+            )
+            if uncond_value.stage != stage:
+                raise Trellis2RuntimeError("TRELLIS.2 guidance lanes must use the same stage")
+        guidance_cfg = (
+            None
+            if cfg is None
+            else replace(cast("SamplingGuidance[object]", cfg), uncond=uncond_value)
+        )
+        sparse = type(latent) is SparseLatent
+        if sparse != (type(noise) is SparseLatent):
+            raise Trellis2RuntimeError("TRELLIS.2 latent and noise must share one representation")
+        if sparse:
+            support, latent_tensor = unpack_sparse_latent(latent)
+            noise_support, noise_tensor = unpack_sparse_latent(noise)
+            if not support.same_support(noise_support):
+                raise Trellis2RuntimeError("TRELLIS.2 sparse noise must use the latent support")
+            if stage == "structure":
+                raise Trellis2RuntimeError("TRELLIS.2 sparse latent needs a sparse stage")
+        else:
+            support = None
+            if type(latent) is not torch.Tensor or type(noise) is not torch.Tensor:
+                raise Trellis2RuntimeError(
+                    "TRELLIS.2 structure sampling requires tensor latent and noise"
+                )
+            latent_tensor = latent
+            noise_tensor = noise
+            if stage != "structure":
+                raise Trellis2RuntimeError("TRELLIS.2 dense latent requires structure conditioning")
+            if tuple(latent_tensor.shape[1:]) != (32, 16, 16, 16):
+                raise Trellis2RuntimeError("TRELLIS.2 structure latent must be [B,32,16,16,16]")
+        mask_tensor = None
+        if denoise_mask is not None:
+            if support is not None:
+                mask_support, mask_tensor = unpack_sparse_latent(denoise_mask)
+                if not support.same_support(mask_support):
+                    raise Trellis2RuntimeError("sparse mask must use the latent support")
+                mask_tensor = torch.broadcast_to(mask_tensor, latent_tensor.shape)
+            elif type(denoise_mask) is torch.Tensor:
+                mask_tensor = prepare_denoise_mask(denoise_mask, latent_tensor)
+            else:
+                raise TypeError("dense sampling requires a dense tensor mask")
+        return SamplingExecutionInputs(
+            latent_tensor,
+            noise_tensor,
+            conditioning,
+            guidance_cfg,
+            mask_tensor,
+            _Trellis2LatentContext(support, stage),
+        )
+
+    def finish(
+        self,
+        inputs: SamplingExecutionInputs,
+        output: torch.Tensor,
+        denoised: object | None,
+    ) -> CustomSamplingResult[Any]:
+        context = cast("_Trellis2LatentContext", inputs.latent_context)
+        if context.support is None:
+            if denoised is not None and type(denoised) is not torch.Tensor:
+                raise TypeError("TRELLIS.2 dense denoised state must contain a tensor")
+            return CustomSamplingResult(output, denoised)
+        result = pack_sparse_latent(context.support, output)
+        if denoised is None:
+            return CustomSamplingResult(result, None)
+        if type(denoised) is not SparseLatent:
+            raise TypeError("TRELLIS.2 sparse denoised state must contain a SparseLatent")
+        return CustomSamplingResult(result, denoised)
+
+
+class _Trellis2SamplingDenoiser:
+    evaluator_identity = "dinkster.trellis2.conditioning.v1"
+
+    def __init__(
+        self,
+        owner: Trellis2DiffusionRuntime,
+        support: SparseSupport[torch.Tensor] | None,
+        stage: Trellis2Stage,
+        *,
+        device: torch.device | str,
+        compute_dtype: torch.dtype,
+        cancelled: Callable[[], bool],
+    ) -> None:
+        self.owner = owner
+        self.support = support
+        self.stage = stage
+        self.device = device
+        self.compute_dtype = compute_dtype
+        self.cancelled = cancelled
+
+    def _materialize(self, value: object) -> Trellis2Conditioning:
+        if type(value) is Trellis2ConditioningResource:
+            return materialize_trellis2_resource(value, support=self.support, device=self.device)
+        if type(value) is Trellis2Conditioning:
+            return value
+        raise Trellis2RuntimeError("TRELLIS.2 guidance lanes must use the same stage")
+
+    def prepare_conditioning(self, value: object, _role: GuidanceRole) -> _ModelConditioning:
+        _check_cancelled(self.cancelled)
+        value = self._materialize(value)
+        if value.stage != self.stage:
+            raise Trellis2RuntimeError("TRELLIS.2 guidance lanes must use the same stage")
+        global_features = (
+            value.global_512 if value.stage in ("structure", "shape-512") else value.global_1024
+        ).to(device=self.device, dtype=self.compute_dtype)
+        projected = (
+            None
+            if value.projected is None
+            else value.projected.to(device=self.device, dtype=self.compute_dtype)
+        )
+        shape_features = (
+            None
+            if value.shape_features is None
+            else value.shape_features.to(device=self.device, dtype=self.compute_dtype)
+        )
+        return _ModelConditioning(global_features, projected, shape_features, value.stage)
+
+    def evaluate_conditioning(
+        self, value: torch.Tensor, sigma: float, condition: _ModelConditioning
+    ) -> torch.Tensor:
+        _check_cancelled(self.cancelled)
+        support = self.support
+        batch = value.shape[0] if support is None else support.batch_size
+        model_input = calculate_input(Parameterization.FLOW, sigma, value).to(self.compute_dtype)
+        if support is None:
+            model_latent: torch.Tensor | SparseLatent[torch.Tensor] = model_input
+        else:
+            features = model_input
+            if condition.stage == "texture":
+                if condition.shape_features is None:
+                    raise Trellis2RuntimeError("texture stage requires shape features")
+                features = torch.cat((features, condition.shape_features), dim=-1)
+            model_latent = pack_sparse_latent(support, features)
+        timestep = torch.full(
+            (batch,), TRELLIS2_SIGMAS.timestep(sigma), device=self.device, dtype=torch.float32
+        )
+        result = self.owner._model(
+            condition.stage.removesuffix("-512"),
+            model_latent,
+            timestep,
+            to_batch(condition.global_features, batch),
+            projected=condition.projected,
+            first_shape_pass=condition.stage == "shape-512",
+            low_resolution_texture=(
+                condition.stage == "texture" and support is not None and support.resolution <= 32
+            ),
+        )
+        velocity = (
+            unpack_sparse_latent(result)[1]
+            if type(result) is SparseLatent
+            else cast("torch.Tensor", result)
+        ).float()
+        return calculate_denoised(Parameterization.FLOW, sigma, velocity, value)
+
+    def batchable(self, values: tuple[_ModelConditioning, ...]) -> bool:
+        if self.support is not None or not values:
+            return False
+        first = next(iter(values))
+        return all(
+            value.stage == first.stage
+            and value.global_features.shape == first.global_features.shape
+            and (value.projected is None) == (first.projected is None)
+            and (
+                value.projected is None
+                or first.projected is not None
+                and value.projected.shape == first.projected.shape
+            )
+            for value in values[1:]
+        )
+
+    def evaluate_conditioning_batch(
+        self, value: torch.Tensor, sigma: float, values: tuple[_ModelConditioning, ...]
+    ) -> tuple[torch.Tensor, ...]:
+        if not values or not self.batchable(values):
+            raise Trellis2RuntimeError("TRELLIS.2 conditioning batch is incompatible")
+        first = next(iter(values))
+        batch = value.shape[0]
+        model_input = torch.cat(
+            (calculate_input(Parameterization.FLOW, sigma, value).to(self.compute_dtype),)
+            * len(values)
+        )
+        timestep = torch.full(
+            (batch * len(values),),
+            TRELLIS2_SIGMAS.timestep(sigma),
+            device=self.device,
+            dtype=torch.float32,
+        )
+        global_features = torch.cat(
+            tuple(to_batch(condition.global_features, batch) for condition in values)
+        )
+        projected = (
+            None
+            if first.projected is None
+            else torch.cat(
+                tuple(
+                    to_batch(cast("torch.Tensor", condition.projected), batch)
+                    for condition in values
+                )
+            )
+        )
+        result = cast(
+            "torch.Tensor",
+            self.owner._model(
+                first.stage.removesuffix("-512"),
+                model_input,
+                timestep,
+                global_features,
+                projected=projected,
+                first_shape_pass=first.stage == "shape-512",
+                low_resolution_texture=False,
+            ),
+        ).float()
+        repeated = torch.cat((value,) * len(values))
+        return tuple(
+            calculate_denoised(Parameterization.FLOW, sigma, result, repeated).chunk(len(values))
+        )
+
+
+def _trellis2_stage_model(owner: Trellis2DiffusionRuntime, stage: Trellis2Stage) -> torch.nn.Module:
+    return {
+        "structure": owner._model.structure,
+        "shape-512": owner._model.shape_512,
+        "shape": owner._model.shape,
+        "texture": owner._model.texture,
+    }[stage]
+
+
+def _trellis2_device_from_inputs(runtime: object, inputs: SamplingExecutionInputs) -> torch.device:
+    owner = cast("Trellis2DiffusionRuntime", runtime)
+    stage = cast("_Trellis2LatentContext", inputs.latent_context).stage
+    model = cast("Any", _trellis2_stage_model(owner, stage))
+    return bound_compute_device(model.input_layer) or model.input_layer.weight.device
+
+
+def _trellis2_denoiser(
+    runtime: object, compute_dtype: torch.dtype, context: SamplingAdapterContext
+) -> SamplingDenoiserExecution:
+    owner = cast("Trellis2DiffusionRuntime", runtime)
+    if context.inputs is None or context.device is None:
+        raise RuntimeError("TRELLIS.2 sampling context is unresolved")
+    latent_context = cast("_Trellis2LatentContext", context.inputs.latent_context)
+    support = latent_context.support
+    if support is not None:
+        support = replace(support, coordinates=support.coordinates.to(context.device))
+    evaluator = _Trellis2SamplingDenoiser(
+        owner,
+        support,
+        latent_context.stage,
+        device=context.device,
+        compute_dtype=compute_dtype,
+        cancelled=context.cancelled,
+    )
+
+    def unpack_state(value: torch.Tensor) -> object:
+        return value if support is None else pack_sparse_latent(support, value)
+
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", evaluator),
+        process_in=lambda value: value,
+        process_out=lambda value: value,
+        unpack_state=unpack_state,
+        denoise_mask_prepared=True,
+    )
+
+
+def _trellis2_compute_dtype(runtime: object) -> torch.dtype:
+    return cast("Trellis2DiffusionRuntime", runtime)._compute_dtype
+
+
 class Trellis2DiffusionRuntime(DenseOrSparseSamplingRuntime):
     """FLOW sampling for all dense and sparse TRELLIS.2 stages."""
 
     sampling_error = Trellis2RuntimeError
+    supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=cast("SamplingLatentAdapter", _Trellis2LatentAdapter()),
+        denoiser=_trellis2_denoiser,
+        device=lambda _runtime: None,
+        device_from_inputs=_trellis2_device_from_inputs,
+        compute_dtype=_trellis2_compute_dtype,
+        flow=True,
+    )
 
     def __init__(
         self,
@@ -974,6 +1307,7 @@ class Trellis2DiffusionRuntime(DenseOrSparseSamplingRuntime):
         self._schedulers = (
             torch_scheduler_registry() if scheduler_registry is None else scheduler_registry
         )
+        self._guidance = None
 
     @property
     def family(self) -> ModelFamily:
@@ -1346,6 +1680,8 @@ class Trellis2DiffusionRuntime(DenseOrSparseSamplingRuntime):
             pack_sparse_latent(support, output_tensor),
             None if not captured else pack_sparse_latent(support, captured[-1]),
         )
+
+    sample_custom = cast("Any", sampling_execution)  # noqa: F811
 
 
 __all__ = [

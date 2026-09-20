@@ -456,6 +456,7 @@ class _QwenImageLatentAdapter:
 
     def prepare(
         self,
+        runtime: object,
         family: ModelFamily,
         *,
         latent: CustomSamplingLatentValue,
@@ -467,6 +468,7 @@ class _QwenImageLatentAdapter:
         error: type[Exception],
     ) -> SamplingExecutionInputs:
         inputs = self._single_stream.prepare(
+            runtime,
             family,
             latent=latent,
             noise=noise,
@@ -484,8 +486,10 @@ class _QwenImageLatentAdapter:
         self,
         inputs: SamplingExecutionInputs,
         output: torch.Tensor,
-        denoised: torch.Tensor | None,
+        denoised: object | None,
     ) -> CustomSamplingResult[torch.Tensor]:
+        if denoised is not None and type(denoised) is not torch.Tensor:
+            raise TypeError("Qwen Image denoised state must contain a torch.Tensor")
         return CustomSamplingResult(output, denoised)
 
 
