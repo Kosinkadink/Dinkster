@@ -242,6 +242,23 @@ def test_seedvr2_runtime_refuses_partial_and_wrong_conditioning_surfaces() -> No
             request=request,
             context_windows=cast("Any", object()),
         )
+    with pytest.raises(SeedVR2RuntimeError, match="adapter options: bogus_option"):
+        runtime.sample_custom(
+            latent,
+            noise=torch.zeros_like(latent),
+            cond=positive,
+            request=request,
+            bogus_option=True,
+        )
+    with pytest.raises(SeedVR2RuntimeError, match="adapter options: bogus_option"):
+        runtime.sample(
+            latent,
+            cond=positive,
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=1,
+            bogus_option=True,
+        )
     assert not cast("RecordingSeedVR2", runtime.assembled.diffusion).calls
 
 

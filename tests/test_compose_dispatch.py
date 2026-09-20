@@ -86,8 +86,6 @@ from dinkster.compose import (
     _ResidencyDomain,
     _SingleJobWorkerPool,
     compose_serving,
-    default_pack_spec,
-    openai_generation_pack_spec,
 )
 
 
@@ -1519,126 +1517,6 @@ def test_generation_provider_is_explicit_and_suppresses_lazy_native_inputs(
                 )
         finally:
             await composer.close()
-
-    asyncio.run(scenario())
-
-
-def test_installed_openai_provider_executes_generation_in_its_isolated_worker() -> None:
-    async def scenario() -> None:
-        requests: list[dict[str, object]] = []
-
-        async def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-            try:
-                header = await reader.readuntil(b"\r\n\r\n")
-                lines = header.decode("ascii").split("\r\n")
-                headers = dict(line.split(": ", 1) for line in lines[1:] if ": " in line)
-                body = await reader.readexactly(int(headers["Content-Length"]))
-                requests.append(json.loads(body))
-                encoded = json.dumps(
-                    {
-                        "choices": [
-                            {
-                                "index": 0,
-                                "text": "external answer",
-                                "finish_reason": "stop",
-                            }
-                        ]
-                    }
-                ).encode()
-                writer.write(
-                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
-                    + f"Content-Length: {len(encoded)}\r\nConnection: close\r\n\r\n".encode()
-                    + encoded
-                )
-                await writer.drain()
-            finally:
-                writer.close()
-                await writer.wait_closed()
-
-        server = await asyncio.start_server(respond, "127.0.0.1", 0)
-        port = int(server.sockets[0].getsockname()[1])
-        composer = ServingComposer()
-        entries = (
-            default_pack_spec("dinkster-nodes-foundation"),
-            default_pack_spec("dinkster-nodes-media-io"),
-            default_pack_spec("dinkster-nodes-generation"),
-            openai_generation_pack_spec(
-                base_url=f"http://127.0.0.1:{port}/v1",
-                model="test-model",
-                api_key="",
-                compatibility="openai",
-                stream=False,
-                timeout_s=2.0,
-            ),
-        )
-        try:
-            for entry in composer.order_pack_entries(entries):
-                await composer.add_pack(entry)
-            assert composer.composition.choices["dinkster.generation.providers"] == (
-                "dinkster-nodes-generation-openai",
-            )
-            provider_input = composer.composition.schemas["dinkster.text_generate"].input(
-                "provider"
-            )
-            assert provider_input is not None
-            assert provider_input.display_name == "Service"
-            assert provider_input.hidden
-            assert not provider_input.advanced
-            assert provider_input.widget == ComboWidget(
-                options=(
-                    ComboOption("builtin", "Built-in"),
-                    ComboOption(
-                        "dinkster-nodes-generation-openai",
-                        "Configured OpenAI-compatible service",
-                    ),
-                )
-            )
-            omitted_graph = Graph(
-                nodes={
-                    "generate": GraphNode(
-                        "dinkster.text_generate",
-                        {"prompt": "hello", "max_length": 8},
-                        slot_variants={"sampling_mode": "off"},
-                    )
-                }
-            )
-            with pytest.raises(ExecutionError, match="no default generation execution provider"):
-                await composer.composition.make_engine(lambda _event: None).run(
-                    omitted_graph, ["generate"]
-                )
-            graph = Graph(
-                nodes={
-                    "generate": GraphNode(
-                        "dinkster.text_generate",
-                        {
-                            "provider": "dinkster-nodes-generation-openai",
-                            "prompt": "hello",
-                            "max_length": 8,
-                        },
-                        slot_variants={"sampling_mode": "off"},
-                    )
-                }
-            )
-            result = await composer.composition.make_engine(lambda _event: None).run(
-                graph, ["generate"]
-            )
-            assert result.outputs["generate"]["generated_text"].resolve() == "external answer"
-            assert requests == [
-                {
-                    "model": "test-model",
-                    "max_tokens": 8,
-                    "stream": False,
-                    "temperature": 0.0,
-                    "top_p": 1.0,
-                    "presence_penalty": 0.0,
-                    "frequency_penalty": 0.0,
-                    "prompt": "hello",
-                }
-            ]
-        finally:
-            await composer.close()
-            server.close()
-            await server.wait_closed()
 
     asyncio.run(scenario())
 

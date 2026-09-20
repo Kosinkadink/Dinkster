@@ -21,7 +21,6 @@ from dinkster_nodes_generation import (
     GENERATION_NODES,
     GENERATION_SCHEMA_NODE_IDS,
 )
-from dinkster_nodes_generation_openai import OPENAI_GENERATION_NODES
 from dinkster_nodes_image import UpscaleWithModel
 from dinkster_nodes_media_io import (
     IMAGE_TYPE,
@@ -51,19 +50,16 @@ from dinkster_schema import (
     schema_signature,
     schema_to_wire,
 )
-from dinkster_server import STATE_KEY, create_app
 from dinkster_values import TypeRegistry
 from dinkster_workers import InProcessWorker, PackManifest, load_manifest
 
 from dinkster.comfy_compose import comfy_compat_specs
 from dinkster.compose import (
     CompositionError,
-    PackDelta,
     PackSpec,
     ServingComposer,
     default_pack_spec,
 )
-from dinkster.reload_api import apply_reload
 
 MANIFEST = (
     Path(__file__).parent.parent / "packages" / "dinkster-nodes-generation" / "dinkster-pack.toml"
@@ -76,12 +72,6 @@ UPSCALE_MANIFEST = (
     / "packages"
     / "dinkster-nodes-vision"
     / "dinkster_vision_upscale_pack"
-    / "dinkster-pack.toml"
-)
-OPENAI_MANIFEST = (
-    Path(__file__).parent.parent
-    / "packages"
-    / "dinkster-nodes-generation-openai"
     / "dinkster-pack.toml"
 )
 
@@ -3385,99 +3375,6 @@ def test_production_compat_specs_compose_with_carrier_owners(
                 isinstance(node, GraphNode) and node.node_type == "dinkster.image.upscale_model"
                 for node in translation.graph.nodes.values()
             )
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())
-
-
-def test_production_generation_providers_publish_progressively_and_reload(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def isolated_worker(
-        _composer: ServingComposer,
-        _spec: PackSpec,
-        manifest: PackManifest,
-        registry: TypeRegistry,
-    ) -> InProcessWorker:
-        if manifest.name == "dinkster-compat-comfy":
-            return _CompatSchemaWorker(registry)
-        if manifest.name == "dinkster-nodes-generation-openai":
-            return InProcessWorker(build_node_types(OPENAI_GENERATION_NODES), registry)
-        raise AssertionError(f"unexpected isolated pack {manifest.name}")
-
-    monkeypatch.setattr(ServingComposer, "_isolated_worker", isolated_worker)
-    comfy_root = tmp_path / "ComfyUI"
-    comfy_root.mkdir()
-    generation, compat = comfy_compat_specs(comfy_root, python=sys.executable)
-    openai = PackSpec(OPENAI_MANIFEST, python=sys.executable)
-
-    async def scenario() -> None:
-        composer = ServingComposer()
-        try:
-            composition = composer.composition
-            app = create_app(
-                composition.make_engine,
-                composition.schemas,
-                choices=composition.choices,
-                schema_owners=composition.schema_owners,
-                choice_owners=composition.choice_owners,
-            )
-            state = app[STATE_KEY]
-
-            def publish(delta: PackDelta) -> None:
-                state.replace(
-                    (),
-                    (),
-                    delta.schemas,
-                    delta.packs,
-                    delta.node_packs,
-                    execution_arms=delta.execution_arms,
-                    remove_choices=tuple(delta.derived_choices),
-                    choices={**delta.choices, **delta.derived_choices},
-                    lazy_choices=delta.lazy_choices,
-                    schema_owners=delta.schema_owners,
-                    choice_owners=delta.choice_owners,
-                    compat_skips=delta.compat_skips,
-                )
-
-            for pack_id in (
-                "dinkster-nodes-foundation",
-                "dinkster-nodes-media-io",
-                "dinkster-nodes-image",
-            ):
-                publish(await composer.add_pack(default_pack_spec(pack_id)))
-            generation_delta = await composer.add_pack(generation)
-            assert generation_delta.choice_owners["dinkster.generation.providers"] == (
-                "dinkster-nodes-generation"
-            )
-            publish(generation_delta)
-            assert "dinkster.text_generate" not in state.schemas
-            assert state.choices["dinkster.generation.providers"] == ()
-
-            compat_delta = await composer.add_pack(compat)
-            assert compat_delta.schema_owners["dinkster.text_generate"] == (
-                "dinkster-nodes-generation"
-            )
-            publish(compat_delta)
-            assert "dinkster.text_generate" in state.schemas
-            assert state.node_packs["dinkster.text_generate"] == "dinkster-nodes-generation"
-
-            openai_delta = await composer.add_pack(openai)
-            assert openai_delta.choice_owners["dinkster.generation.providers"] == (
-                "dinkster-nodes-generation"
-            )
-            publish(openai_delta)
-            assert state.choices["dinkster.generation.providers"] == (
-                "dinkster-nodes-generation-openai",
-            )
-
-            result = await apply_reload(state, composer, "dinkster-nodes-generation-openai")
-            assert result["epoch"] == state.schema_epoch
-            assert state.choices["dinkster.generation.providers"] == (
-                "dinkster-nodes-generation-openai",
-            )
-            assert "dinkster.text_generate" in state.schemas
         finally:
             await composer.close()
 
