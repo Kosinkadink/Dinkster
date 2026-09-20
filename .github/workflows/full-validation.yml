@@ -206,7 +206,7 @@ jobs:
   torch-cpu:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, Linux, X64, cpu-golden-avx2]
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2

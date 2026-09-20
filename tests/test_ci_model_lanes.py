@@ -140,8 +140,12 @@ def test_every_cpu_composite_caller_explicitly_excludes_model_tests() -> None:
                 assert step["with"]["run-model-tests"] == (
                     "true" if name == "model-tests" else "false"
                 )
-                if name != "model-tests":
-                    assert job["runs-on"] == ["self-hosted", "linux", "x64"]
+                assert job["runs-on"] == [
+                    "self-hosted",
+                    "Linux",
+                    "X64",
+                    "cpu-golden-avx2",
+                ]
     assert set(callers) == {
         ("full-validation.yml", "model-tests"),
         ("full-validation.yml", "torch-cpu"),
@@ -156,7 +160,7 @@ def test_torch_cpu_has_one_contract_guard_and_an_unconditional_suite() -> None:
     assert set(job) == {"needs", "if", "runs-on", "env", "steps"}
     assert job["needs"] == "validation-plan"
     assert job["if"] == "needs.validation-plan.outputs.run-heavy == 'true'"
-    assert job["runs-on"] == ["self-hosted", "linux", "x64"]
+    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "cpu-golden-avx2"]
     assert job["env"] == {"ATEN_CPU_CAPABILITY": "avx2", "ONEDNN_MAX_CPU_ISA": "AVX2"}
     guard, checkout, suite = job["steps"]
     assert set(guard) == {"name", "run"}
