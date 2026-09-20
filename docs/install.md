@@ -1,25 +1,22 @@
 # Install Dinkster
 
-Dinkster is a private preview. You need access to the private
-[backend releases](https://github.com/Kosinkadink/Dinkster/releases),
-[Desktop releases](https://github.com/Kosinkadink/Dinkster-Frontend/releases).
-A GitHub 404 can mean missing access, not a missing release. Nothing here
+Dinkster is pre-release. You need access to the private
+[backend release](https://github.com/Kosinkadink/Dinkster/releases). The
+Desktop app is unreleased and has no downloadable installer. A GitHub 404 can
+mean missing access, not a missing backend release. Nothing here
 publishes Dinkster to a public package index. The pinned identity dependency is
 bundled in the backend archive; installation needs no Git or GitHub token
 after you download the private release assets.
 
 ## Choose an installation
 
-- **Windows Desktop:** download the `Dinkster-Desktop-*-Setup.exe` asset from a
-  Desktop release. Follow that release's instructions and the
+- **Desktop app:** unreleased on every platform. The source and current support
+  boundaries are documented in the
   [Desktop guide](https://github.com/Kosinkadink/Dinkster-Frontend/blob/main/docs/desktop.md).
-  Desktop manages its own backend; do not install a second one just for Desktop.
 - **Backend plus browser frontend:** use the steps below on Windows x64,
   Linux x64, or macOS Apple Silicon. The backend installer installs the CPU
   graph host and pack manager, not model weights or a GPU execution runtime.
   Model execution needs the separately configured runtime described below.
-  macOS/Linux Desktop installer availability is stated on each Desktop release;
-  a Windows EXE does not run on those systems.
 
 Use a short writable path outside OneDrive or network shares, for example
 `C:\Dinkster` or `~/Dinkster`. Allow at least 3 GB for the host and dependencies;
@@ -169,11 +166,22 @@ after installation, stop that registry with Ctrl+C.
 
 ## Browser frontend and native generation
 
-The backend serves JSON, not HTML. Install the companion browser frontend
-following the [frontend installation guide](https://github.com/Kosinkadink/Dinkster-Frontend/blob/main/docs/desktop.md).
-Configure its proxy to this backend's loopback address and chosen port.
-Do not expose the backend directly to the Internet; read [authentication](auth.md)
-before configuring any shared access.
+The backend serves JSON, not HTML. Keep `dinkster-serve` running on loopback,
+then clone the companion frontend and run its preview proxy from that checkout:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm --filter @dinkster/app build
+DINKSTER_NATIVE_BACKEND=http://127.0.0.1:3639 pnpm --filter @dinkster/app preview
+```
+
+In PowerShell, set `$env:DINKSTER_NATIVE_BACKEND =
+'http://127.0.0.1:3639'` before the preview command. Open the URL printed by
+Vite. If the backend uses another port, put that loopback URL in
+`DINKSTER_NATIVE_BACKEND`. Do not expose the backend directly to the Internet;
+read [authentication](auth.md) before configuring any shared access. The
+[frontend installation guide](https://github.com/Kosinkadink/Dinkster-Frontend/blob/main/docs/desktop.md)
+documents platform details and production proxying.
 
 For native generation, install a supported PyTorch execution environment using
 the [runtime setup instructions](../packages/dinkster-inference-torch/README.md).
@@ -186,8 +194,11 @@ Select the execution interpreter with `--comfy-python` and omit
 `uv run --no-sync dinkster-pack prepare-catalogs --defaults --library-root ../library`
 using the same interpreter via `DINKSTER_COMFYUI_PYTHON`. Rerun it after changing
 the backend checkout or any default-pack dependency. The server refuses to bind
-when a required catalog is missing or stale. A ComfyUI checkout is not required
-for native generation. See [the complete server reference](serve-cli.md).
+when a required catalog is missing or stale. Today, the working native SD 1.5
+path is a SamplerCustomAdvanced graph served with `--comfy-root`; the audited
+run is recorded in [maintainer issue #114](https://github.com/Kosinkadink/comfy-vibe-station/issues/114).
+The native-only claim returns when that issue lands. See
+[the complete server reference](serve-cli.md).
 
 Catalog preparation probes trusted installed code and validates its runtime
 declarations. It is not a substitute for `doctor` authoring checks or registry
