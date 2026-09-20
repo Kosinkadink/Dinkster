@@ -1095,14 +1095,13 @@ def _retry_tiled_vae_after_oom(
 def _sampler_registry(
     inference: Any, extension_snapshot_digest: str | None
 ) -> tuple[Any, tuple[str, ...], str | None]:
-    inference_torch = importlib.import_module("dinkster_inference_torch")
     if extension_snapshot_digest is None:
         registries = _inference_registries(inference)
-        return inference_torch.torch_sampler_registry(registries.samplers), (), None
+        return registries.samplers, (), None
     generation = inference.materialize_inference_generation(extension_snapshot_digest)
     registries = _inference_registries(inference, extension_snapshot_digest)
     return (
-        inference_torch.torch_sampler_registry(registries.samplers),
+        registries.samplers,
         tuple(extension_id for extension_id, _ in generation.extensions),
         extension_snapshot_digest,
     )
