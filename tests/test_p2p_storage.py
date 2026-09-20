@@ -721,12 +721,13 @@ def test_no_copy_local_mapping_revokes_on_mutation_deletion_and_symlink(tmp_path
 
 
 @pytest.mark.skipif(os.name != "nt", reason="exercises the Windows file fingerprint")
+@pytest.mark.parametrize("canonical_name", [False, True], ids=["short-name", "vault-name"])
 def test_windows_local_mapping_poll_uses_fingerprint_without_rehashing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, canonical_name: bool
 ) -> None:
     data = _safetensors(b"local model")
     digest = digest_bytes(data)
-    local = tmp_path / "model.safetensors"
+    local = tmp_path / (digest if canonical_name else "model.safetensors")
     local.write_bytes(data)
     vault = AssetVault(tmp_path / "vault")
     mapping = vault.verify_p2p_local_file(

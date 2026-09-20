@@ -687,7 +687,8 @@ def change_token(descriptor: int) -> int:
     ):
         _raise_last_error()
     request = _ReadFileUsnData(2, 4)
-    buffer = ctypes.create_string_buffer(128)
+    # A USN record includes up to a 255-character UTF-16 filename.
+    buffer = ctypes.create_string_buffer(4096)
     returned = wintypes.DWORD()
     if not _kernel32.DeviceIoControl(
         handle,
@@ -699,11 +700,13 @@ def change_token(descriptor: int) -> int:
         ctypes.byref(returned),
         None,
     ):
-        return result.ChangeTime
+        _raise_last_error()
     major_version = int.from_bytes(buffer.raw[4:6], "little")
+    if major_version not in (2, 3, 4):
+        raise OSError(f"unsupported USN record version {major_version}")
     usn_offset = 24 if major_version == 2 else 40
-    if major_version not in (2, 3, 4) or returned.value < usn_offset + 8:
-        return result.ChangeTime
+    if returned.value < usn_offset + 8:
+        raise OSError("incomplete USN record")
     usn = int.from_bytes(buffer.raw[usn_offset : usn_offset + 8], "little", signed=True)
     return (usn << 64) | (result.ChangeTime & ((1 << 64) - 1))
 
