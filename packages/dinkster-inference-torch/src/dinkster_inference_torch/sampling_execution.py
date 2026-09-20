@@ -605,7 +605,14 @@ class SingleStreamLatentAdapter:
                 error=error,
             )
         self.validate(latent)
-        return SamplingExecutionInputs(latent, noise, cond, cfg, denoise_mask)
+        return SamplingExecutionInputs(
+            latent,
+            noise,
+            cond,
+            cfg,
+            denoise_mask,
+            family.single_stream_latent(),
+        )
 
     def finish(
         self,
@@ -613,10 +620,14 @@ class SingleStreamLatentAdapter:
         output: torch.Tensor,
         denoised: object | None,
     ) -> CustomSamplingResult[torch.Tensor]:
-        del inputs
         if denoised is not None and type(denoised) is not torch.Tensor:
             raise TypeError("single-stream denoised state must contain a torch.Tensor")
-        return CustomSamplingResult(output, denoised)
+        return CustomSamplingResult(
+            output,
+            None
+            if denoised is None
+            else latent_process_out(denoised, cast("Any", inputs.latent_context)),
+        )
 
 
 class SamplingDenoiserAdapter(Protocol):
@@ -642,8 +653,14 @@ class SamplingDenoiserAdapter(Protocol):
 class SamplingDenoiserExecution:
     evaluator: SamplingDenoiserAdapter
     conditioning_evaluation: ConditioningEvaluation[Any] | None = None
+    conditioning_payloads: Mapping[str, object] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    replica_group_size: int | None = None
+    distributed_evaluation: bool = False
     solver_options: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
     sampling: SamplingDescriptor | None = None
+    percent_to_sigma: Callable[[float], float] | None = None
     on_step_begin: Callable[[int], None] | None = None
     process_in: Callable[[torch.Tensor], torch.Tensor] | None = None
     process_out: Callable[[torch.Tensor], torch.Tensor] | None = None
@@ -669,6 +686,35 @@ class SamplingExecutionRegistration:
     prepare_guidance: (
         Callable[[object, SamplingExecutionInputs], SamplingExecutionInputs] | None
     ) = None
+    scheduled: Callable[[object, SamplingExecutionInvocation], CustomSamplingResult[Any]] | None = (
+        None
+    )
+
+
+@dataclass(frozen=True)
+class SamplingExecutionInvocation:
+    latent: CustomSamplingLatentValue
+    noise: CustomSamplingLatentValue
+    cond: CustomSamplingCondValue
+    cfg: CustomSamplingCfgValue
+    request: CustomSamplingRequest[torch.Tensor]
+    seed: int
+    guidance: object | None
+    denoise_mask: CustomSamplingLatentValue | None
+    inpaint: object | None
+    context_windows: ContextWindowsSpec | None
+    on_step: StepCallback | None
+    on_state: SamplingStateCallback | None
+    compute_dtype: torch.dtype | None
+    device: torch.device | str | None
+    capture_denoised: bool
+    cancelled: Callable[[], bool]
+    options: Mapping[str, object]
+
+
+class DistributedGuidanceAdmission(Protocol):
+    request: CustomSamplingRequest[torch.Tensor]
+    plan: SamplingGuidancePlan
 
 
 class SamplingExecutionRuntime(Protocol):
@@ -690,6 +736,15 @@ class SamplingExecutionRuntime(Protocol):
     ) -> None: ...
 
     def sampling_sigma_space(self, sampling_shift: float | None = None) -> SigmaSpace: ...
+
+    def admit_distributed_guidance(
+        self,
+        request: CustomSamplingRequest[torch.Tensor],
+        *,
+        cond: object,
+        cfg: CustomSamplingCfgValue,
+        executor: GuidanceExecutor | None,
+    ) -> DistributedGuidanceAdmission | None: ...
 
 
 @overload
@@ -835,6 +890,31 @@ def sampling_execution(
         raise SamplingCancelled("sampling cancelled")
     owner = cast("SamplingExecutionRuntime", runtime)
     registration = owner.sampling_execution_registration
+    if registration.scheduled is not None and (
+        type(cond) is ConditioningCarrier or adapter_options.get("scheduled") is not None
+    ):
+        return registration.scheduled(
+            owner,
+            SamplingExecutionInvocation(
+                latent,
+                noise,
+                cond,
+                cfg,
+                request,
+                seed,
+                guidance,
+                denoise_mask,
+                inpaint,
+                context_windows,
+                on_step,
+                on_state,
+                compute_dtype,
+                device,
+                capture_denoised,
+                cancelled,
+                MappingProxyType(dict(adapter_options)),
+            ),
+        )
     adapter_context = SamplingAdapterContext(
         guidance,
         inpaint,
@@ -866,6 +946,18 @@ def sampling_execution(
         request,
         error=owner.sampling_error,
     )
+    executor = registration.guidance_executor(owner)
+    admission = owner.admit_distributed_guidance(
+        request,
+        cond=inputs.cond,
+        cfg=cast("CustomSamplingCfgValue", inputs.cfg),
+        executor=executor,
+    )
+    admitted_plan = None
+    if admission is not None:
+        request = admission.request
+        sampler = request.sampler
+        admitted_plan = admission.plan
     space = owner.sampling_sigma_space(sampling_shift)
     schedule = build_custom_sampling_schedule(
         request.sigmas,
@@ -896,8 +988,11 @@ def sampling_execution(
     )
     if registration.prepare_guidance is not None:
         inputs = registration.prepare_guidance(owner, inputs)
-    executor = registration.guidance_executor(owner)
-    plan = compile_guidance_plan(inputs.cond, inputs.cfg, sampler, executor)
+    plan = (
+        compile_guidance_plan(inputs.cond, inputs.cfg, sampler, executor)
+        if admitted_plan is None
+        else admitted_plan
+    )
     adapter_context = replace(
         adapter_context,
         inputs=inputs,
@@ -911,6 +1006,28 @@ def sampling_execution(
         cancelled=cancelled,
     )
     denoiser_execution = registration.denoiser(owner, compute_dtype, adapter_context)
+    if denoiser_execution.conditioning_payloads:
+        known_lanes = {condition.id for condition in plan.conditions}
+        unknown_lanes = set(denoiser_execution.conditioning_payloads) - known_lanes
+        if unknown_lanes:
+            raise owner.sampling_error(
+                "conditioning adapter replaced unknown lanes: " + ", ".join(sorted(unknown_lanes))
+            )
+        plan = replace(
+            plan,
+            conditions=tuple(
+                replace(
+                    condition,
+                    conditioning=cast(
+                        "Any",
+                        denoiser_execution.conditioning_payloads.get(
+                            condition.id, condition.conditioning
+                        ),
+                    ),
+                )
+                for condition in plan.conditions
+            ),
+        )
     adapter = denoiser_execution.evaluator
     evaluator_identity = adapter.evaluator_identity
     resolved_evaluator_identity: Callable[[GuidanceRole], str]
@@ -940,6 +1057,18 @@ def sampling_execution(
         if on_state is not None:
             on_state(event)
 
+    replica_evaluator_factory = None
+    if denoiser_execution.replica_group_size is not None:
+        from .distributed import DistributedGuidanceEvaluator
+
+        group_size = denoiser_execution.replica_group_size
+
+        def distributed_replicas(evaluate: ReplicaEvaluator) -> ReplicaEvaluator:
+            return DistributedGuidanceEvaluator(
+                evaluate, guidance_group_size=group_size
+            ).evaluate_request
+
+        replica_evaluator_factory = distributed_replicas
     denoiser = guided_denoiser(
         evaluation,
         input=inputs.latent,
@@ -951,6 +1080,8 @@ def sampling_execution(
             on_step=on_step,
             on_state=report_state,
         ),
+        replica_evaluator_factory=replica_evaluator_factory,
+        distributed_evaluation=denoiser_execution.distributed_evaluation,
     )
     output = run_denoise(
         denoiser,
@@ -967,7 +1098,11 @@ def sampling_execution(
         seed=seed,
         noise_kind=sampler.noise,
         noise_sampler=noise_sampler,
-        percent_to_sigma=space.percent_to_sigma,
+        percent_to_sigma=(
+            space.percent_to_sigma
+            if denoiser_execution.percent_to_sigma is None
+            else denoiser_execution.percent_to_sigma
+        ),
         device=device,
         on_step=on_step,
         on_step_begin=denoiser_execution.on_step_begin,

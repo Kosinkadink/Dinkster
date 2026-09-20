@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, NoReturn, TypeVar, cast
 
 import dinkster_inference
+import dinkster_inference_torch.sampling_execution as sampling_engine
 import dinkster_inference_torch.wiring as wiring
 import pytest
 import torch
@@ -1503,8 +1504,8 @@ class TestSample:
             )
             return output
 
-        monkeypatch.setattr(wiring, "brownian_step_noise", capture_step_noise)
-        monkeypatch.setattr(wiring, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_engine, "brownian_step_noise", capture_step_noise)
+        monkeypatch.setattr(sampling_engine, "run_denoise", capture_run)
         result = custom.sample_custom(
             latent,
             noise=noise,
@@ -1876,7 +1877,7 @@ class TestSample:
             )
             original_validate_layout(evaluation, conditioning, layout)
 
-        monkeypatch.setattr(wiring, "guided_denoiser", capture_guided_denoiser)
+        monkeypatch.setattr(sampling_engine, "guided_denoiser", capture_guided_denoiser)
         monkeypatch.setattr(
             wiring.FluxWindowConditioningEvaluation,
             "validate_layout",
@@ -2401,7 +2402,7 @@ class TestSample:
             captured.append(guided)
             return guided
 
-        monkeypatch.setattr(wiring, "guided_denoiser", capture)
+        monkeypatch.setattr(sampling_engine, "guided_denoiser", capture)
         latent = tiny_latent()
         cond = runtime.encode_text("layout positive")
         uncond = runtime.encode_text("layout negative")
@@ -2482,7 +2483,7 @@ class TestSample:
             captured.append(guided)
             return guided
 
-        monkeypatch.setattr(wiring, "guided_denoiser", capture)
+        monkeypatch.setattr(sampling_engine, "guided_denoiser", capture)
         cond = Conditioning(
             torch.zeros(1, 2, TINY_T5.d_model), torch.zeros(1, TINY_CLIP.hidden_size)
         )
@@ -2521,7 +2522,7 @@ class TestSample:
             captured.append(guided)
             return guided
 
-        monkeypatch.setattr(wiring, "guided_denoiser", capture)
+        monkeypatch.setattr(sampling_engine, "guided_denoiser", capture)
         cond = declare_text_conditioning(
             Conditioning(torch.zeros(1, 2, TINY_T5.d_model), torch.zeros(1, TINY_CLIP.hidden_size)),
             2,

@@ -30,6 +30,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import replace
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 
 import torch
@@ -183,7 +184,13 @@ from .sampling_execution import (
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
+    SamplingExecutionInvocation,
+    SamplingExecutionRegistration,
     SingleStreamCustomSamplingCfg,
+    SingleStreamLatentAdapter,
     brownian_step_noise,
     build_custom_sampling_schedule,
     compile_guidance_plan,
@@ -192,6 +199,7 @@ from .sampling_execution import (
     narrow_single_stream_custom_sampling,
     resolve_custom_sampling_request,
     run_ksampler_as_custom,
+    sampling_execution,
 )
 from .sampling_runtime import SingleStreamSamplingRuntime
 from .scheduled import encode_text_scheduled
@@ -278,6 +286,281 @@ def _flux_sigma_space(family: ModelFamily) -> SigmaSpace:
     return FluxFlowSigmas(shift=family.sampling.shift)
 
 
+class _FluxSamplingDenoiser:
+    evaluator_identity = "dinkster.flux.conditioning.v1"
+
+    def __init__(
+        self,
+        evaluation: FluxDenoiser | FluxWindowConditioningEvaluation[FluxCondition],
+    ) -> None:
+        self.evaluation = evaluation
+
+    def prepare_conditioning(self, value: object, _role: GuidanceRole) -> object:
+        return self.evaluation.prepare_conditioning(value)
+
+    def evaluate_conditioning(
+        self, latent: torch.Tensor, sigma: float, condition: object
+    ) -> torch.Tensor:
+        return self.evaluation.evaluate_conditioning(latent, sigma, cast("Any", condition))
+
+    def evaluate_conditioning_batch(
+        self,
+        latent: torch.Tensor,
+        sigma: float,
+        conditions: tuple[object, ...],
+    ) -> tuple[torch.Tensor, ...]:
+        return self.evaluation.evaluate_conditioning_batch(latent, sigma, cast("Any", conditions))
+
+    def batchable(self, conditions: tuple[object, ...]) -> bool:
+        return self.evaluation.batchable(cast("Any", conditions))
+
+
+def _validate_flux_latent(latent: torch.Tensor) -> None:
+    if latent.ndim != 4:
+        raise WiringError("Flux latent must have shape [batch,channels,height,width]")
+
+
+def _flux_denoiser(
+    runtime: object,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserExecution:
+    owner = cast("FluxRuntime", runtime)
+    if (
+        context.inputs is None
+        or context.device is None
+        or context.plan is None
+        or context.request is None
+        or context.sampler is None
+        or context.schedule is None
+    ):
+        raise RuntimeError("Flux sampling context is unresolved")
+    execution_device = torch.device(context.device)
+    unknown = set(context.options) - {"window_plan", "scheduled"}
+    if unknown:
+        raise WiringError(
+            "Flux sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+        )
+    if context.options.get("scheduled") is not None:
+        raise WiringError("scheduled Flux conditioning requires a ConditioningCarrier")
+    window_plan = context.options.get("window_plan")
+    latent = context.inputs.latent
+    prepared_window_plan = None
+    window_plan_error: BaseException | None = None
+    try:
+        if window_plan is not None and type(window_plan) is not CompositeWindowPlan:
+            raise WiringError("invalid-window-plan: expected an exact CompositeWindowPlan")
+        if window_plan is not None:
+            prepared_window_plan = prepare_flux_window_plan(
+                window_plan,
+                latent_height=latent.shape[-2],
+                latent_width=latent.shape[-1],
+                patch_size=owner.assembled.diffusion.config.patch_size,
+            )
+    except FluxWindowError as error:
+        window_plan_error = WiringError(str(error))
+    except BaseException as error:
+        window_plan_error = error
+    requested_distributed = distributed_sampling_config()
+    window_mode_requested = requested_distributed is not None and requested_distributed.mode in (
+        "auto",
+        "window",
+    )
+    window_distributed = (
+        window_mode_requested
+        and prepared_window_plan is not None
+        and len(prepared_window_plan.windows) >= 2
+    )
+    distributed_config = None
+    if not window_mode_requested and window_plan_error is not None:
+        raise window_plan_error
+    if window_mode_requested:
+        distributed_config = ensure_process_group()
+        assert distributed_config is not None
+        if window_preflight_failed(window_plan_error is not None, execution_device):
+            if window_plan_error is not None:
+                raise window_plan_error from None
+            raise WiringError("peer flux window preflight failed")
+        if window_route_mismatch(window_distributed, execution_device):
+            raise WiringError("distributed ranks disagree on Flux window route eligibility")
+    patch_size = owner.assembled.diffusion.config.patch_size
+    replacements: dict[str, object] = {}
+    bound_conditions = []
+    for condition in context.plan.conditions:
+        if condition.conditioning is None:
+            bound_conditions.append(condition)
+            continue
+        bound = bind_flux_layout(
+            condition.conditioning,
+            latent_height=latent.shape[-2],
+            latent_width=latent.shape[-1],
+            patch_size=patch_size,
+        )
+        replacements[condition.id] = bound
+        bound_conditions.append(replace(condition, conditioning=cast("Any", bound)))
+    bound_plan = replace(context.plan, conditions=tuple(bound_conditions))
+    conditioning_evaluation: ConditioningEvaluation[Any]
+    if prepared_window_plan is None:
+        evaluator: FluxDenoiser | FluxWindowConditioningEvaluation[FluxCondition] = FluxDenoiser(
+            owner.assembled.diffusion,
+            guidance=context.guidance,
+            compute_dtype=compute_dtype,
+        )
+        conditioning_evaluation = ConditioningEvaluation(
+            lambda value, _role: evaluator.prepare_conditioning(value),
+            evaluator.evaluate_conditioning,
+            evaluator.batchable,
+            evaluator.evaluate_conditioning_batch,
+            evaluator_identity=lambda _role: "dinkster.flux.conditioning.v1",
+            standard_activation_memory_factor=owner.family.memory_factor,
+            layout=conditioning_layout,
+            fused_layout=flux_fused_layout,
+            token_transforms=conditioning_token_transforms,
+            validate_layout=lambda condition, layout: validate_flux_layout(
+                condition,
+                layout,
+                latent_height=latent.shape[-2],
+                latent_width=latent.shape[-1],
+                patch_size=patch_size,
+            ),
+        )
+    else:
+        window_evaluation = FluxWindowConditioningEvaluation(
+            prepared_window_plan,
+            tuple(
+                FluxDenoiser(
+                    owner.assembled.diffusion,
+                    guidance=context.guidance,
+                    compute_dtype=compute_dtype,
+                    image_grid_indices=(window.height_indices, window.width_indices),
+                )
+                for window in prepared_window_plan.windows
+            ),
+        )
+        evaluation: (
+            FluxWindowConditioningEvaluation[FluxCondition]
+            | DistributedFluxWindowEvaluation[FluxCondition]
+        ) = window_evaluation
+        if window_distributed:
+            assert distributed_config is not None
+            manifest_error: BaseException | None = None
+            manifest = None
+            try:
+                lanes = tuple(
+                    condition.conditioning
+                    for condition in bound_plan.conditions
+                    if condition.conditioning is not None
+                )
+                token_counts = tuple(declared_token_count(lane) for lane in lanes)
+                if not token_counts or any(count is None for count in token_counts):
+                    raise WiringError(
+                        "windowed distributed execution requires declared conditioning"
+                    )
+                manifest = build_flux_window_manifest(
+                    runtime_identity=owner.runtime_identity,
+                    config=distributed_config,
+                    prepared_plan=prepared_window_plan,
+                    text_token_counts=cast("tuple[int, ...]", token_counts),
+                    sampler_id=context.sampler.id,
+                    sampler_options=context.request.options,
+                    seed=context.seed,
+                    pre_offset_sigmas=context.request.sigmas,
+                    sigmas=context.schedule.sigmas,
+                )
+            except BaseException as error:
+                manifest_error = error
+            if window_preflight_failed(manifest_error is not None, execution_device):
+                if manifest_error is not None:
+                    raise manifest_error
+                raise WiringError("peer flux window preflight failed")
+            assert manifest is not None
+            transport = WindowDigestConsensusTransport(distributed_config, execution_device)
+            if transport.physical_ranks != tuple(range(distributed_config.world_size)):
+                raise WiringError("window consensus group differs from the collective group")
+            evaluation = DistributedFluxWindowEvaluation(
+                window_evaluation,
+                prove_manifest_consensus(manifest, rank=transport.rank, transport=transport),
+            )
+        evaluator = cast("Any", evaluation)
+
+        def prepare_window_conditioning(value: object, _role: GuidanceRole) -> object:
+            try:
+                return evaluation.prepare_conditioning(value)
+            except FluxWindowError as error:
+                raise WiringError(str(error)) from None
+
+        conditioning_evaluation = ConditioningEvaluation(
+            prepare_window_conditioning,
+            evaluation.evaluate_conditioning,
+            evaluation.batchable,
+            evaluation.evaluate_conditioning_batch,
+            evaluator_identity=lambda _role: "dinkster.flux.conditioning.v1",
+            standard_activation_memory_factor=owner.family.memory_factor,
+            layout=conditioning_layout,
+            token_transforms=conditioning_token_transforms,
+            validate_layout=evaluation.validate_layout,
+            inner_calls=evaluation.inner_calls,
+        )
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", _FluxSamplingDenoiser(evaluator)),
+        conditioning_evaluation=conditioning_evaluation,
+        conditioning_payloads=MappingProxyType(replacements),
+        distributed_evaluation=window_distributed,
+    )
+
+
+def _flux_device(runtime: object) -> torch.device:
+    return module_compute_device(cast("FluxRuntime", runtime).assembled.diffusion)
+
+
+def _flux_compute_dtype(runtime: object) -> torch.dtype:
+    owner = cast("FluxRuntime", runtime)
+    return owner.assembled.compute_dtype("diffusion") or torch.bfloat16
+
+
+def _flux_scheduled(
+    runtime: object,
+    invocation: SamplingExecutionInvocation,
+) -> CustomSamplingResult[torch.Tensor]:
+    from .scheduled_sampling import ScheduledSamplingOptions, sample_flux_scheduled_custom
+
+    owner = cast("FluxRuntime", runtime)
+    unknown = set(invocation.options) - {"window_plan", "scheduled"}
+    if unknown:
+        raise WiringError(
+            "Flux sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+        )
+    scheduled = invocation.options.get("scheduled")
+    if scheduled is None:
+        scheduled = ScheduledSamplingOptions()
+    elif type(scheduled) is not ScheduledSamplingOptions:
+        raise TypeError("scheduled must be an exact ScheduledSamplingOptions or None")
+    window_plan = invocation.options.get("window_plan")
+    if window_plan is not None and type(window_plan) is not CompositeWindowPlan:
+        raise WiringError("invalid-window-plan: expected an exact CompositeWindowPlan")
+    return sample_flux_scheduled_custom(
+        owner,
+        invocation.latent,
+        noise=invocation.noise,
+        cond=invocation.cond,
+        cfg=invocation.cfg,
+        request=invocation.request,
+        seed=invocation.seed,
+        guidance=cast("FluxGuidance", invocation.guidance),
+        denoise_mask=invocation.denoise_mask,
+        inpaint=cast("InpaintConditioning[torch.Tensor] | None", invocation.inpaint),
+        context_windows=invocation.context_windows,
+        window_plan=window_plan,
+        on_step=invocation.on_step,
+        on_state=invocation.on_state,
+        resolver=scheduled.resolver,
+        cancelled=scheduled.cancelled,
+        compute_dtype=invocation.compute_dtype,
+        device=invocation.device,
+        capture_denoised=invocation.capture_denoised,
+    )
+
+
 class FluxRuntime(SingleStreamSamplingRuntime):
     """FamilyRuntime[torch.Tensor] over an assembled classic Flux.
 
@@ -297,6 +580,14 @@ class FluxRuntime(SingleStreamSamplingRuntime):
     sampling_error = WiringError
     sampling_compute_dtype = torch.bfloat16
     supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=SingleStreamLatentAdapter(_validate_flux_latent),
+        denoiser=_flux_denoiser,
+        device=_flux_device,
+        compute_dtype=_flux_compute_dtype,
+        flow=True,
+        scheduled=_flux_scheduled,
+    )
 
     def __init__(
         self,
@@ -779,6 +1070,8 @@ class FluxRuntime(SingleStreamSamplingRuntime):
             on_state=report_state,
         )
         return CustomSamplingResult(output, captured[-1] if captured else None)
+
+    sample_custom = cast("Any", sampling_execution)  # noqa: F811
 
     def sample_scheduled(
         self,
