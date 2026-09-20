@@ -179,8 +179,10 @@ def test_comfy_model_roots_preserve_every_category_root_with_safe_ids(
     )
     monkeypatch.setattr(
         comfy_compose,
-        "comfy_python",
-        lambda _root, _explicit=None: "/comfy/python",
+        "_comfy_python_selection",
+        lambda _root, _explicit=None: comfy_compose._ComfyPythonSelection(
+            "/comfy/python", "current Python"
+        ),
     )
     monkeypatch.setattr(
         comfy_compose,
@@ -239,8 +241,10 @@ def test_comfy_model_roots_rejects_unusable_probe_data(
     )
     monkeypatch.setattr(
         comfy_compose,
-        "comfy_python",
-        lambda _root, _explicit=None: "/comfy/python",
+        "_comfy_python_selection",
+        lambda _root, _explicit=None: comfy_compose._ComfyPythonSelection(
+            "/comfy/python", "current Python"
+        ),
     )
     monkeypatch.setattr(comfy_compose, "dinkster_pythonpath", lambda _manifest: "")
     monkeypatch.setattr(comfy_compose, "preflight_interpreter", lambda _python: (3, 12))
@@ -281,6 +285,102 @@ def test_comfy_blake3_preflight_is_exact_isolated_and_bounded(
         "check": False,
         "shell": False,
     }
+
+
+def test_comfy_python_selection_reports_resolution_step(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster.comfy_compose import _comfy_python_selection
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    monkeypatch.delenv("DINKSTER_COMFYUI_PYTHON", raising=False)
+    assert _comfy_python_selection(root, "/cli/python") == ("/cli/python", "--comfy-python")
+
+    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/env/python")
+    assert _comfy_python_selection(root) == ("/env/python", "DINKSTER_COMFYUI_PYTHON")
+
+    monkeypatch.delenv("DINKSTER_COMFYUI_PYTHON")
+    venv_python = root / "venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("")
+    assert _comfy_python_selection(root) == (
+        str(venv_python),
+        "<comfy-root>/venv/bin/python",
+    )
+
+    venv_python.unlink()
+    assert _comfy_python_selection(root) == (sys.executable, "current Python")
+
+
+@pytest.mark.parametrize("missing", [None, "einops"])
+def test_comfy_requirements_probe_with_fake_interpreter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing: str | None,
+) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    requirements = root / "requirements.txt"
+    requirements.write_text("einops\n")
+    captured: dict[str, object] = {}
+
+    def fake_run(command: object, **kwargs: object) -> SimpleNamespace:
+        captured["command"] = command
+        captured.update(kwargs)
+        return SimpleNamespace(
+            returncode=0 if missing is None else 1,
+            stdout="{}" if missing is None else json.dumps({"missing": missing}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(comfy_compose.subprocess, "run", fake_run)
+    selection = comfy_compose._ComfyPythonSelection("/fake/python", "--comfy-python")
+
+    if missing is None:
+        comfy_compose._probe_comfy_requirements(root, selection)
+    else:
+        with pytest.raises(CompositionError) as caught:
+            comfy_compose._probe_comfy_requirements(root, selection)
+        assert str(caught.value) == (
+            "ComfyUI requirement module 'einops' is unavailable in interpreter "
+            "'/fake/python' selected by --comfy-python"
+        )
+
+    command = captured.pop("command")
+    assert isinstance(command, tuple)
+    assert command[:3] == ("/fake/python", "-I", "-c")
+    assert "packages_distributions" in command[3]
+    assert command[4] == str(requirements)
+    assert captured == {
+        "capture_output": True,
+        "text": True,
+        "timeout": 60,
+        "check": False,
+        "shell": False,
+    }
+
+
+def test_comfy_requirements_probe_executes_imports(tmp_path: Path) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    requirements = root / "requirements.txt"
+    selection = comfy_compose._ComfyPythonSelection(sys.executable, "current Python")
+
+    requirements.write_text("json\n")
+    comfy_compose._probe_comfy_requirements(root, selection)
+
+    requirements.write_text("definitely-missing-comfy-requirement\n")
+    with pytest.raises(CompositionError) as caught:
+        comfy_compose._probe_comfy_requirements(root, selection)
+    assert "definitely_missing_comfy_requirement" in str(caught.value)
+    assert sys.executable in str(caught.value)
+    assert "current Python" in str(caught.value)
 
 
 @pytest.mark.parametrize("stderr", ["No module named 'blake3'", "broken native extension"])
@@ -339,7 +439,16 @@ def test_comfy_compat_specs_probe_selected_interpreter_once_with_legacy(
     legacy.mkdir()
     calls: list[str] = []
     monkeypatch.setattr(comfy_compose, "preflight_interpreter", lambda _python: (3, 12))
-    monkeypatch.setattr(comfy_compose, "_probe_comfy_blake3", calls.append)
+    monkeypatch.setattr(
+        comfy_compose,
+        "_probe_comfy_requirements",
+        lambda _root, selection: calls.append(f"requirements:{selection.interpreter}"),
+    )
+    monkeypatch.setattr(
+        comfy_compose,
+        "_probe_comfy_blake3",
+        lambda interpreter: calls.append(f"blake3:{interpreter}"),
+    )
 
     specs = comfy_compose.comfy_compat_specs(
         root,
@@ -350,7 +459,10 @@ def test_comfy_compat_specs_probe_selected_interpreter_once_with_legacy(
     assert len(specs) == 3
     assert Path(specs[0].manifest).name == "dinkster-pack.toml"
     assert specs[0].in_process is True
-    assert calls == ["/selected/comfy/python"]
+    assert calls == [
+        "requirements:/selected/comfy/python",
+        "blake3:/selected/comfy/python",
+    ]
 
 
 def write_sampling_host_manifest(directory: Path) -> Path:

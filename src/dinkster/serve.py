@@ -1618,6 +1618,7 @@ def main(argv: list[str] | None = None) -> None:
         redaction_roots.append(("<library>", Path(args.library_root)))
 
     model_roots = ()
+    comfy_requirements_checked = False
     if args.library_root and args.comfy_root:
         try:
             model_roots = comfy_model_roots(
@@ -1625,6 +1626,7 @@ def main(argv: list[str] | None = None) -> None:
                 python=args.comfy_python or None,
                 comfy_args=effective_comfy_args,
             )
+            comfy_requirements_checked = True
         except CompositionError as exc:
             raise SystemExit(str(exc)) from exc
 
@@ -1710,23 +1712,27 @@ def main(argv: list[str] | None = None) -> None:
             default_pack_failures[pack_id] = exc
     if not args.no_default_packs:
         specs.extend(model_pack_specs())
-    compat_specs = (
-        comfy_compat_specs(
-            args.comfy_root or None,
-            python=args.comfy_python or None,
-            legacy_packs=args.legacy_pack,
-            asset_vault=(Path(args.library_root) / "vault" if args.library_root else None),
-            mounts_snapshot=mounts_snapshot,
-            aimdo=aimdo,
-            memory_budgets=memory_budgets,
-            reserve_vram=reserve_vram,
-            comfy_args=effective_comfy_args,
-            multi_device_cuda_indices=args.multi_gpu_devices,
-            single_job_multi_gpu=single_job_multi_gpu,
+    try:
+        compat_specs = (
+            comfy_compat_specs(
+                args.comfy_root or None,
+                python=args.comfy_python or None,
+                _requirements_checked=comfy_requirements_checked,
+                legacy_packs=args.legacy_pack,
+                asset_vault=(Path(args.library_root) / "vault" if args.library_root else None),
+                mounts_snapshot=mounts_snapshot,
+                aimdo=aimdo,
+                memory_budgets=memory_budgets,
+                reserve_vram=reserve_vram,
+                comfy_args=effective_comfy_args,
+                multi_device_cuda_indices=args.multi_gpu_devices,
+                single_job_multi_gpu=single_job_multi_gpu,
+            )
+            if args.comfy_root or not args.no_default_packs
+            else []
         )
-        if args.comfy_root or not args.no_default_packs
-        else []
-    )
+    except CompositionError as exc:
+        raise SystemExit(str(exc)) from exc
     if not args.comfy_root:
         specs.extend(replace(spec, require_catalog=True) for spec in compat_specs)
     resolved_default_pack_count = len(specs)
