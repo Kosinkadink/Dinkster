@@ -166,22 +166,27 @@ after installation, stop that registry with Ctrl+C.
 
 ## Browser frontend and native generation
 
-The backend serves JSON, not HTML. Keep `dinkster-serve` running on loopback,
-then clone the companion frontend and run its preview proxy from that checkout:
+For a source checkout, the default launcher serves the built companion frontend
+and engine on one loopback origin. Build the sibling frontend once, prepare the
+local installation, and launch:
 
 ```sh
+cd ../Dinkster-Frontend
 pnpm install --frozen-lockfile
 pnpm --filter @dinkster/app build
-DINKSTER_NATIVE_BACKEND=http://127.0.0.1:3639 pnpm --filter @dinkster/app preview
+cd ../Dinkster
+uv run --no-sync dinkster setup
+uv run --no-sync dinkster
 ```
 
-In PowerShell, set `$env:DINKSTER_NATIVE_BACKEND =
-'http://127.0.0.1:3639'` before the preview command. Open the URL printed by
-Vite. If the backend uses another port, put that loopback URL in
-`DINKSTER_NATIVE_BACKEND`. Do not expose the backend directly to the Internet;
-read [authentication](auth.md) before configuring any shared access. The
+The browser opens at `http://127.0.0.1:3639`; the application and API share
+that origin. `dinkster setup` creates the default library and pack roots, and
+the launch prepares missing or stale catalogs. See the
+[browser editor quickstart](quickstart.md) for platform notes and the first
+image steps. Do not expose the engine directly to the Internet; read
+[authentication](auth.md) before configuring shared access. The
 [frontend installation guide](https://github.com/Kosinkadink/Dinkster-Frontend/blob/main/docs/desktop.md)
-documents platform details and production proxying.
+documents the unreleased Desktop application separately.
 
 For native generation, install a supported PyTorch execution environment using
 the [runtime setup instructions](../packages/dinkster-inference-torch/README.md).
