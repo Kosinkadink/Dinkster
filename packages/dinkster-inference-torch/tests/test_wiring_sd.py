@@ -1869,9 +1869,14 @@ class TestSample:
         extension_samplers: Registry[Any] = Registry()
         for descriptor in builtin_samplers():
             extension_samplers.register(descriptor)
+        euler = next(
+            descriptor
+            for descriptor in torch_sampler_registry()
+            if descriptor.id == "dinkster.euler"
+        )
         extension_samplers.register(
             replace(
-                builtin_samplers()[0],
+                euler,
                 id="ext.euler_scaled",
                 display_name="Ext Euler",
                 aliases=(),
@@ -2233,12 +2238,14 @@ class TestSample:
                 return 0
 
         builtin_heun = next(
-            descriptor for descriptor in builtin_samplers() if descriptor.id == "dinkster.heun"
+            descriptor
+            for descriptor in torch_sampler_registry()
+            if descriptor.id == "dinkster.heun"
         )
         spoofed_samplers: Registry[Any] = Registry()
         for descriptor in builtin_samplers():
             spoofed_samplers.register(
-                replace(descriptor, make=EqualitySpoof(descriptor.make))
+                replace(descriptor, make=EqualitySpoof(builtin_heun.make))
                 if descriptor.id == "dinkster.heun"
                 else descriptor
             )
