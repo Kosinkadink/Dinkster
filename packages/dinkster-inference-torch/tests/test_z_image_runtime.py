@@ -30,8 +30,8 @@ from dinkster_inference_torch import (
     z_image_control_resource_digest,
 )
 from dinkster_inference_torch import module_residency as residency_mod
+from dinkster_inference_torch import sampling_execution as sampling_execution_mod
 from dinkster_inference_torch import z_image_control as control_mod
-from dinkster_inference_torch import z_image_runtime as runtime_mod
 from dinkster_inference_torch.denoise import prepare_noise
 from dinkster_inference_torch.operations import INITLESS
 from dinkster_inference_torch.schedules import torch_scheduler_registry
@@ -351,6 +351,42 @@ def test_z_image_runtime_ksampler_and_custom_sampling_are_bit_identical() -> Non
     assert custom.denoised_output is not None
 
 
+def test_z_image_sampling_paths_reject_unknown_adapter_options() -> None:
+    model = RecordingZImage(value=0.0)
+    assembled = type("Assembled", (), {"family": Z_IMAGE, "diffusion": model})()
+    runtime = object.__new__(ZImageRuntime)
+    runtime.assembled = cast("Any", assembled)
+    runtime._runtime_identity = "test-z-image"  # pyright: ignore[reportPrivateUsage]
+    runtime._samplers = torch_sampler_registry()  # pyright: ignore[reportPrivateUsage]
+    runtime._schedulers = torch_scheduler_registry()  # pyright: ignore[reportPrivateUsage]
+    runtime._guidance = None  # pyright: ignore[reportPrivateUsage]
+    latent = torch.zeros((1, 16, 2, 2))
+    condition = Conditioning(torch.zeros((1, 3, 2560)), None)
+    sampler = runtime._samplers.get("dinkster.euler")  # pyright: ignore[reportPrivateUsage]
+    assert sampler is not None
+
+    with pytest.raises(ZImageRuntimeError, match="adapter options: bogus_option"):
+        runtime.sample_custom(
+            latent,
+            noise=torch.zeros_like(latent),
+            cond=condition,
+            request=CustomSamplingRequest(sampler, (), (1.0, 0.0)),
+            compute_dtype=torch.float32,
+            bogus_option=True,
+        )
+    with pytest.raises(ZImageRuntimeError, match="adapter options: bogus_option"):
+        runtime.sample(
+            latent,
+            cond=condition,
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=1,
+            compute_dtype=torch.float32,
+            bogus_option=True,
+        )
+    assert not model.calls
+
+
 def test_z_image_runtime_refuses_unknown_control_site_before_execution() -> None:
     model = RecordingZImage(value=0.0)
     assembled = type("Assembled", (), {"family": Z_IMAGE, "diffusion": model})()
@@ -413,7 +449,7 @@ def test_z_image_runtime_realizes_site_lane_gains_and_binds_identity(
         return cast("torch.Tensor", kwargs["latent"])
 
     monkeypatch.setattr(ZImageDenoiser, "set_control_gain_row", capture_row)
-    monkeypatch.setattr(runtime_mod, "run_denoise", capture_run)
+    monkeypatch.setattr(sampling_execution_mod, "run_denoise", capture_run)
     gain = ContributionGain(
         DirectGainTableCurve((1.0, 0.5, 0.0)),
         2.0,

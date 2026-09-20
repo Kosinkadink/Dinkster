@@ -184,6 +184,17 @@ def test_runtime_refuses_unsupported_modes_and_shapes() -> None:
         sample(inpaint=cast("Any", object()))
     with pytest.raises(Ideogram4RuntimeError, match="context windows"):
         sample(context_windows=cast("Any", object()))
+    with pytest.raises(Ideogram4RuntimeError, match="adapter options: bogus_option"):
+        sample(bogus_option=True)
+    with pytest.raises(Ideogram4RuntimeError, match="adapter options: bogus_option"):
+        runtime.sample(
+            latent,
+            cond=condition(),
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=1,
+            bogus_option=True,
+        )
 
 
 def test_denoiser_converts_flow_output_at_the_runtime_boundary() -> None:

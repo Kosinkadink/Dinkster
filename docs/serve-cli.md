@@ -428,10 +428,9 @@ proxy, which refuses private, loopback, link-local, reserved, and otherwise
 non-global addresses before connecting to a validated address. TLS remains
 end-to-end between the worker client and the destination through HTTP CONNECT.
 Packs in one worker group share the union of origins granted to its members.
-
-For the installed partner pack, `--comfy-api-base` automatically grants that
-URL's exact origin. Any separate signed-transfer origins still require explicit
-`dinkster-nodes-partner=HTTPS_ORIGIN` grants.
+The remote-node catalog and job gateway origins are granted from
+`--remote-catalog-base` and `--remote-gateway-base`; signed-transfer origins
+returned by the gateway still require explicit grants.
 
 ## Memory and aimdo
 

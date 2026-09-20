@@ -58,7 +58,6 @@ from dinkster_inference_torch import (
     prepare_noise,
     tensor_to_payload_binding,
 )
-from dinkster_inference_torch import flux2_runtime as runtime_mod
 from dinkster_inference_torch import sampling_execution as sampling_execution_mod
 from dinkster_inference_torch.schedules import (
     _endpoints,  # pyright: ignore[reportPrivateUsage]
@@ -311,6 +310,34 @@ def test_flux2_runtime_samples_in_family_flow_space_with_shift_override(
     assert shifts == [2.02, 1.18452766]
 
 
+def test_flux2_sampling_paths_reject_unknown_adapter_options() -> None:
+    model = RecordingFlux(value=0.0)
+    runtime = _bare_runtime(model)
+    latent = torch.zeros((1, 128, 2, 2))
+    condition = Conditioning(torch.zeros((1, 3, 8)), None)
+    sampler = runtime._samplers.get("dinkster.euler")  # pyright: ignore[reportPrivateUsage]
+    assert sampler is not None
+
+    with pytest.raises(Flux2RuntimeError, match="adapter options: bogus_option"):
+        runtime.sample_custom(
+            latent,
+            noise=torch.zeros_like(latent),
+            cond=condition,
+            request=CustomSamplingRequest(sampler, (), (1.0, 0.0)),
+            bogus_option=True,
+        )
+    with pytest.raises(Flux2RuntimeError, match="adapter options: bogus_option"):
+        runtime.sample(
+            latent,
+            cond=condition,
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=1,
+            bogus_option=True,
+        )
+    assert not model.calls
+
+
 def test_flux2_runtime_sample_delegates_ksampler_composition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -378,8 +405,8 @@ def test_flux2_runtime_sample_delegates_ksampler_composition(
     assert kwargs["on_state"] == states.append
     assert kwargs["sample_custom_kwargs"] == {
         "sampling_shift": 1.18452766,
-        "_compute_dtype": torch.float32,
-        "_device": "cpu",
+        "compute_dtype": torch.float32,
+        "device": "cpu",
     }
     assert kwargs["error"] is Flux2RuntimeError
 
@@ -551,8 +578,8 @@ def test_flux2_custom_sampling_uses_exact_sigmas_noise_options_and_denoised_stat
         )
         return output
 
-    monkeypatch.setattr(runtime_mod, "brownian_step_noise", capture_step_noise)
-    monkeypatch.setattr(runtime_mod, "run_denoise", capture_run)
+    monkeypatch.setattr(sampling_execution_mod, "brownian_step_noise", capture_step_noise)
+    monkeypatch.setattr(sampling_execution_mod, "run_denoise", capture_run)
     result = runtime.sample_custom(
         latent,
         noise=noise,

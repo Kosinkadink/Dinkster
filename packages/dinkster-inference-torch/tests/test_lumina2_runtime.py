@@ -378,6 +378,17 @@ def test_custom_sampling_refuses_wrong_shapes_and_unsupported_modes() -> None:
     unknown = replace(euler, id="test.missing", aliases=())
     with pytest.raises(Lumina2RuntimeError, match="unknown sampler"):
         sample(request=CustomSamplingRequest(unknown, (), (1.0, 0.0)))
+    with pytest.raises(Lumina2RuntimeError, match="adapter options: bogus_option"):
+        sample(bogus_option=True)
+    with pytest.raises(Lumina2RuntimeError, match="adapter options: bogus_option"):
+        runtime.sample(
+            latent,
+            cond=conditioning(),
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=1,
+            bogus_option=True,
+        )
     assert not model.calls
 
 

@@ -37,6 +37,7 @@ from .qwen_image_text import QwenImageLanguageModel
 from .sampling_execution import (
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
     SamplingExecutionRegistration,
     SingleStreamLatentAdapter,
     sampling_execution,
@@ -130,14 +131,16 @@ def _krea2_denoiser(
     runtime: object,
     compute_dtype: torch.dtype,
     context: SamplingAdapterContext,
-) -> SamplingDenoiserAdapter:
+) -> SamplingDenoiserExecution:
     owner = cast("Krea2DiffusionRuntime", runtime)
     if context.options:
         names = ", ".join(sorted(context.options))
         raise Krea2RuntimeError(f"Krea 2 sampling does not accept adapter options: {names}")
-    return cast(
-        "SamplingDenoiserAdapter",
-        _Krea2Denoiser(owner.assembled.diffusion, compute_dtype=compute_dtype),
+    return SamplingDenoiserExecution(
+        cast(
+            "SamplingDenoiserAdapter",
+            _Krea2Denoiser(owner.assembled.diffusion, compute_dtype=compute_dtype),
+        )
     )
 
 

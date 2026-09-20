@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
+import json
 import uuid
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import replace
@@ -37,6 +39,7 @@ from dinkster_workers.boundary import write_frame
 
 IMAGE = TypeExpr.asset_of(TypeExpr.concrete("dinkster.image"))
 STRING = TypeExpr.concrete("core.string")
+RECORDED_GATEWAY_FIXTURE = Path(__file__).parent / "fixtures" / "gateway_session.json"
 
 
 def remote_schema(node_type: str = "dinkster.remote.image", version: int = 1) -> NodeSchema:
@@ -90,8 +93,9 @@ def config(base_url: str, cache: Path, *, token: str = "session-token") -> Remot
 
 
 class FakeGateway:
-    def __init__(self, *schemas: NodeSchema) -> None:
+    def __init__(self, *schemas: NodeSchema, recording: Mapping[str, object] | None = None) -> None:
         self.schemas = schemas or (remote_schema(),)
+        self.recording = recording
         self.epoch = 1
         self.catalog_etag = '"catalog-1"'
         self.epoch_etag = '"epoch-1"'
@@ -164,6 +168,11 @@ class FakeGateway:
             return web.Response(status=self.catalog_status)
         if request.headers.get("If-None-Match") == self.catalog_etag:
             return web.Response(status=304)
+        if self.recording is not None:
+            return web.json_response(
+                cast("dict[str, object]", self.recording["catalog"]),
+                headers={"ETag": self.catalog_etag},
+            )
         return web.json_response(
             catalog_payload(*self.schemas, epoch=self.epoch),
             headers={"ETag": self.catalog_etag},
@@ -209,6 +218,10 @@ class FakeGateway:
         body = cast("dict[str, object]", await request.json())
         self.submissions.append(body)
         self.idempotency_keys.append(request.headers.get("Idempotency-Key", ""))
+        if self.recording is not None:
+            return web.json_response(
+                cast("dict[str, object]", self.recording["submit"]), status=202
+            )
         if self.submit_failures:
             self.submit_failures -= 1
             return web.json_response(
@@ -256,6 +269,9 @@ class FakeGateway:
         if refused is not None:
             return refused
         self.polled.set()
+        if self.recording is not None:
+            encoded = json.dumps(self.recording["poll"]).replace("{base_url}", self.base_url)
+            return web.json_response(cast("dict[str, object]", json.loads(encoded)))
         if self.run_forever:
             return web.json_response({"jobId": "job-1", "state": "running"})
         return web.json_response(
@@ -276,7 +292,12 @@ class FakeGateway:
 
     async def _download(self, request: web.Request) -> web.Response:
         self.download_authorizations.append(request.headers.get("Authorization"))
-        data = self.preview_bytes if request.match_info["kind"] == "preview" else self.output_bytes
+        kind = request.match_info["kind"]
+        if self.recording is None:
+            data = self.preview_bytes if kind == "preview" else self.output_bytes
+        else:
+            assets = cast("Mapping[str, object]", self.recording["assets"])
+            data = base64.b64decode(cast("str", assets[kind]))
         return web.Response(body=data, content_type="image/png")
 
 
@@ -379,6 +400,44 @@ def test_catalog_cache_degrades_startup_and_epoch_reload_uses_etags(tmp_path: Pa
             replace(config("http://127.0.0.1:9", tmp_path / "missing"), request_timeout=0.05),
         )
         assert empty.snapshot.schemas == ()
+
+    asyncio.run(scenario())
+
+
+def test_recorded_gateway_catalog_submit_progress_and_digest_round_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recording = cast(
+        "dict[str, object]", json.loads(RECORDED_GATEWAY_FIXTURE.read_text(encoding="utf-8"))
+    )
+    assert recording["sourceCommit"] == "3bbf143bcd193ab508d7bb409b3dc61522d3f412"
+
+    async def scenario() -> None:
+        async with FakeGateway(recording=recording) as gateway:
+            runtime = await asyncio.to_thread(
+                RemoteRuntime, config(gateway.base_url, tmp_path / "catalog.json")
+            )
+            assert [entry.schema.node_type for entry in runtime.snapshot.schemas] == [
+                "dinkster.remote.nanobanana.image",
+                "dinkster.remote.seedance.video",
+            ]
+            vault = tmp_path / "output-vault"
+            monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault))
+            reports: list[tuple[str, Mapping[str, object], bytes | None]] = []
+            with use_reporter(lambda name, data, blob: reports.append((name, data, blob))):
+                result = await runtime.invoke(runtime.snapshot.schemas[0], {"prompt": "hello"})
+
+            assert len(gateway.submissions) == 1
+            assert gateway.submissions[0]["nodeType"] == "dinkster.remote.nanobanana.image"
+            assert gateway.submissions[0]["inputs"] == {"prompt": "hello"}
+            assert [entry[0] for entry in reports] == ["progress", "progress"]
+            assert [entry[1]["step"] for entry in reports] == [1, 2]
+            output = result["image"]
+            assert isinstance(output, AssetRef)
+            assets = cast("Mapping[str, object]", recording["assets"])
+            assert output.read_bytes() == base64.b64decode(cast("str", assets["output"]))
+            assert output.digest == digest_bytes(output.read_bytes())
+            assert AssetVault(vault).has(output.digest)
 
     asyncio.run(scenario())
 
@@ -544,9 +603,9 @@ def test_rotated_token_file_is_read_for_each_invocation(
 
 
 def test_remote_service_urls_require_https_outside_loopback() -> None:
-    defaults = RemoteConfig.from_env(
-        {"DINKSTER_REMOTE_CATALOG_BASE": "", "DINKSTER_REMOTE_GATEWAY_BASE": ""}
-    )
+    defaults = RemoteConfig.from_env({})
+    assert defaults.catalog_base == ""
+    assert defaults.gateway_base == ""
     assert defaults.request_timeout > 30
     assert RemoteRuntime(defaults).catalog.timeout == 5
     with pytest.raises(ValueError, match="must use HTTPS"):
