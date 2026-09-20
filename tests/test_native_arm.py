@@ -8021,7 +8021,7 @@ def test_load_runtime_passes_exact_sorted_split_source_kwargs(
     )
     paths = {role: Path(f"{role}.safetensors") for role in reversed(roles)}
     family_registry = object()
-    sampler_registry = object()
+    sampler_registry = Registry()
     monkeypatch.setattr(
         arm,
         "_inference_registries",
