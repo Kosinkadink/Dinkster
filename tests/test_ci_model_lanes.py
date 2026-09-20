@@ -29,7 +29,6 @@ ACCEPTANCE_CLOSURE_TEST = (
 ACCEPTANCE_SAMPLING_TEST = (
     ".evidence-source/packages/dinkster-acceptance/tests/test_acceptance_sampling.py"
 )
-TRAINING_SUITE = "packages/dinkster-training-torch/tests"
 VISION_SUITES = (
     "packages/dinkster-nodes-vision/tests/test_hed.py",
     "packages/dinkster-nodes-vision/tests/test_upscale.py",
@@ -243,7 +242,6 @@ def test_all_model_downloads_and_model_pytest_lanes_require_opt_in(enabled: str)
             "-m pytest" in command
             and RECEIPT_TEST not in command
             and ACCEPTANCE_CLOSURE_TEST not in command
-            and TRAINING_SUITE not in command
             and (not is_vision_execution or "env" in step)
         )
         if not (is_download or is_execution):
@@ -310,7 +308,7 @@ def test_model_lane_commands_artifact_pins_and_environments_match_reviewed_contr
     )
 
 
-def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
+def test_source_receipts_and_torch_typechecks_remain_hosted() -> None:
     retained = []
     for step in ACTION["runs"]["steps"]:
         if (
@@ -330,7 +328,7 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
         )
         if 'venv = ".venv-torch"' in path.read_text(encoding="utf-8")
     }
-    assert len(projects) == 4
+    assert len(projects) == 3
     assert {command for command in commands if "pyright -p" in command} == {
         (
             ".venv/bin/pyright -p .evidence-source/packages/dinkster-acceptance "
@@ -341,16 +339,6 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
         for project in projects
     }
     assert f".venv-torch/bin/python -m pytest -q {RECEIPT_TEST}" in commands
-    training_steps = [step for step in retained if TRAINING_SUITE in step.get("run", "")]
-    assert training_steps == [
-        {
-            "name": "Test training runtime",
-            "if": f"{MODEL_GROUP_ENV} == ''",
-            "shell": "bash",
-            "env": {"OMP_NUM_THREADS": "4", "MKL_NUM_THREADS": "4"},
-            "run": f".venv-torch/bin/python -m pytest -q {TRAINING_SUITE}",
-        }
-    ]
     assert {
         command
         for command in commands
@@ -367,7 +355,6 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
         "Verify source-generated parity receipts",
         "Test source-parity receipt generation",
         "Assert pinned CPU dispatch",
-        "Test training runtime",
     }
 
 

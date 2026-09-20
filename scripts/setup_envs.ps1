@@ -64,8 +64,7 @@ $CpuEditablePackages = @(
     "packages/dinkster-model-qwen-image",
     "packages/dinkster-model-triposplat",
     "packages/dinkster-nodes-vision",
-    "packages/dinkster-workers",
-    "packages/dinkster-training-torch[torch]"
+    "packages/dinkster-workers"
 )
 $GpuEditablePackages = @(
     "packages/dinkster-api",
@@ -86,8 +85,7 @@ $GpuEditablePackages = @(
     "packages/dinkster-compat-comfy",
     "packages/dinkster-model-ipadapter",
     "packages/dinkster-model-triposplat",
-    "packages/dinkster-model-wan",
-    "packages/dinkster-training-torch[torch]"
+    "packages/dinkster-model-wan"
 )
 $KitchenCpuWheel = "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
 $PreviousProject = [Environment]::GetEnvironmentVariable("UV_PROJECT", "Process")
@@ -192,13 +190,10 @@ try {
     Write-Host "  .venv\Scripts\python.exe -m pytest -q"
     Write-Host "  .venv\Scripts\pyright.exe -p packages\dinkster-inference-torch"
     Write-Host "  .venv-torch\Scripts\python.exe -m pytest -q packages\dinkster-inference-torch\tests"
-    Write-Host "  .venv\Scripts\pyright.exe -p packages\dinkster-training-torch"
-    Write-Host "  .venv-torch\Scripts\python.exe -m pytest -q packages\dinkster-training-torch\tests"
     if ($HasNvidiaGpu) {
         Write-Host '  $env:DINKSTER_ENABLE_GPU_TESTS = "1"'
         Write-Host '  $env:DINKSTER_VALIDATE_REFERENCE_GOLDENS = "1"'
         Write-Host "  .venv-gpu\Scripts\python.exe -m pytest -q packages\dinkster-inference-torch\tests"
-        Write-Host "  .venv-gpu\Scripts\python.exe -m pytest -q packages\dinkster-training-torch\tests"
         Write-Host "  Remove-Item Env:\DINKSTER_ENABLE_GPU_TESTS"
         Write-Host "  Remove-Item Env:\DINKSTER_VALIDATE_REFERENCE_GOLDENS"
     }

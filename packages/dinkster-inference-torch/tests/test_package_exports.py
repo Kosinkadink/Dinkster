@@ -50,13 +50,13 @@ def test_binding_table_matches_static_imports_and_eager_baseline() -> None:
     exports = vars(package)["_EXPORTS"]
     assert {name: target for name, target in exports.items() if target[1] is not None} == bindings
     # Pin the complete lazy public surface, including the solvers.euler alias.
-    assert len(bindings) == 853
+    assert len(bindings) == 868
     assert hashlib.sha256(json.dumps(bindings, sort_keys=True).encode()).hexdigest() == (
-        "925dcf77190c17b0d09d005f23287b90ca065fa3e276f7eb53ad4cdbab19f8de"
+        "668211a02e160de6ed774057b0fbbb0fad244b510ee864f3f2b3af9262dcf7c6"
     )
-    assert len(package.__all__) == 856
+    assert len(package.__all__) == 871
     assert hashlib.sha256(json.dumps(package.__all__).encode()).hexdigest() == (
-        "8498e209538626a286de7b92a3ac8e0325dcc4e86289cd5cd112e20943464534"
+        "2e5f8300d934569ae60bdf8650c1ad13201636eb2a66f1e371e90521a299319f"
     )
     assert set(package.__all__) == set(bindings)
     modules = {
@@ -89,7 +89,7 @@ def test_cold_package_and_dir_do_not_import_execution_dependencies() -> None:
         import dinkster_inference_torch as package
         names = dir(package)
         assert set(package.__all__) <= set(names)
-        assert len([name for name in names if not name.startswith('_')]) == 1020
+        assert len([name for name in names if not name.startswith('_')]) == 1035
         assert names == sorted(set(names))
         assert not any(name.startswith('dinkster_inference_torch.') for name in sys.modules)
         assert not hasattr(package, 'unknown_export')

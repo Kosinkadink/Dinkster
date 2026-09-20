@@ -942,6 +942,11 @@ from .minimax_h3 import (
     detect_minimax_h3,
     normalize_minimax_h3_conditioning,
 )
+from .minimax_h3_assembly import (
+    MiniMaxH3CommonComponentRole,
+    MiniMaxH3ModelAssemblyPlan,
+    plan_minimax_h3_common_component,
+)
 from .minimax_h3_conditioner import (
     MINIMAX_H3_CONDITIONER_CONFIG,
     MiniMaxH3ConditionerConfig,
@@ -957,6 +962,7 @@ from .minimax_h3_dit import (
     MiniMaxH3DiTExecutionRefusal,
     MiniMaxH3DiTLayout,
     MiniMaxH3DiTRole,
+    MiniMaxH3TimeEmbeddingKind,
     minimax_h3_dit_component_identity,
     minimax_h3_dit_layout,
     minimax_h3_dit_provider_facts,
@@ -1178,7 +1184,9 @@ from .qwen_image_text import (
     QWEN_IMAGE_TEXT_CONFIG,
     QwenImageTextConfig,
     detect_qwen_image_text_config,
+    format_qwen_image_prompt,
     qwen_image_text_layout,
+    select_qwen_image_output,
 )
 from .qwen_text import (
     ANIMA_QWEN3_06B_CONFIG,
@@ -2635,6 +2643,7 @@ __all__ = [
     "MINIMAX_H3_CONDITIONER_CONFIG",
     "MiniMaxH3AudioContent",
     "MiniMaxH3AudioReference",
+    "MiniMaxH3CommonComponentRole",
     "LatentPackLayout",
     "MiniMaxH3Sigmas",
     "MultiStreamLatent",
@@ -2658,6 +2667,7 @@ __all__ = [
     "MiniMaxH3ImageReference",
     "MiniMaxH3Keyframe",
     "MiniMaxH3KeyframeRole",
+    "MiniMaxH3ModelAssemblyPlan",
     "MiniMaxH3PresentationKind",
     "MiniMaxH3PresentationSegment",
     "MiniMaxH3REF2VARequest",
@@ -2665,6 +2675,7 @@ __all__ = [
     "MiniMaxH3ReferenceTokenGeometry",
     "MiniMaxH3T2VARequest",
     "MiniMaxH3Task",
+    "MiniMaxH3TimeEmbeddingKind",
     "MiniMaxH3TokenLayoutError",
     "MiniMaxH3TokenLayoutPlan",
     "MiniMaxH3TokenTag",
@@ -3049,6 +3060,7 @@ __all__ = [
     "detect_qwen_image_control",
     "detect_qwen_image_diffsynth",
     "detect_qwen_image_text_config",
+    "format_qwen_image_prompt",
     "detect_qwen3_moe_config",
     "detect_t5_config",
     "detect_qwen_text_config",
@@ -3199,6 +3211,7 @@ __all__ = [
     "plan_z_image_assembly",
     "plan_z_image_control",
     "plan_minimax_h3_dit_assembly",
+    "plan_minimax_h3_common_component",
     "plan_minimax_h3_token_layout",
     "validate_minimax_h3_guide_timeline",
     "plan_qwen_image_dit_assembly",
@@ -3271,6 +3284,7 @@ __all__ = [
     "t5_layout",
     "time_snr_shift",
     "select_krea2_output",
+    "select_qwen_image_output",
     "tokenize_prompt",
     "tokenize_flux2_dev_prompt",
     "tokenize_flux2_klein_prompt",

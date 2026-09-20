@@ -2616,17 +2616,19 @@ def test_library_startup_composes_without_pack_workers(
                     except aiohttp.ClientError:
                         pass
                     await asyncio.sleep(0.05)
-            expected = (
-                set()
-                if no_defaults
-                else {
-                    *await _default_pack_names(),
-                    "dinkster-nodes-training",
-                    "dinkster-training-worker",
-                }
-            )
+            expected = set() if no_defaults else {*await _default_pack_names(), "dinkster-training"}
             assert set(report["packs"]) == expected, report
-            assert all(pack["state"] == "announced" for pack in report["packs"].values()), report
+            assert all(
+                pack["state"] == "announced"
+                for name, pack in report["packs"].items()
+                if name != "dinkster-training"
+            ), report
+            if not no_defaults:
+                assert report["packs"]["dinkster-training"]["state"] == "failed"
+                assert (
+                    "distribution 'dinkster-nodes-training' is unavailable"
+                    in report["packs"]["dinkster-training"]["error"]
+                )
             output = log.read_text()
             assert "BLOCKED_EXECUTION_IMPORT" not in output, output
             server = bound_server(process.pid, output.splitlines())
