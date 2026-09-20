@@ -62,8 +62,8 @@ Under `--dev` the composition also serves:
 The gallery module's docstring lists the constructs the native wire cannot
 express yet (COLOR, union-of-lists); those are tracked in ROADMAP.md, never
 invented as wire fields here. Numeric bounds, seed controllers
-(controlAfterGenerate), multiline hints, and per-input display names ARE
-expressible since schema wire v11 and are exercised by the gallery nodes.
+(controlAfterGenerate), multiline hints, and per-input display names are
+expressible by the current schema and are exercised by the gallery nodes.
 `tests/test_gallery.py` pins the coverage.
 
 ## Learn more

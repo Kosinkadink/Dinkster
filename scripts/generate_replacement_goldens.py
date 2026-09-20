@@ -391,16 +391,15 @@ def _dynamic_schemas() -> dict[str, NodeSchema]:
     return {schema.node_type: schema for schema in (predecessor, target)}
 
 
-def build_goldens(*, wire_version: int | None = None) -> dict[str, dict[str, object]]:
+def build_goldens() -> dict[str, dict[str, object]]:
     """Filename -> JSON content, everything through the real encoders."""
     goldens: dict[str, dict[str, object]] = {}
     fixtures = [
         ("vocabulary.json", _vocabulary_schemas()),
         ("chain.json", _chain_schemas()),
         ("combo.json", _combo_schemas()),
+        ("dynamic.json", _dynamic_schemas()),
     ]
-    if wire_version is None or wire_version >= 28:
-        fixtures.append(("dynamic.json", _dynamic_schemas()))
     for name, schemas in fixtures:
         problems = validate_replacement_references(schemas)
         if problems:
@@ -409,14 +408,7 @@ def build_goldens(*, wire_version: int | None = None) -> dict[str, dict[str, obj
             )
         goldens[name] = {
             "schemas": [
-                schema_to_wire(schema, replacement_schemas=schemas)
-                if wire_version is None
-                else schema_to_wire(
-                    schema,
-                    wire_version=wire_version,
-                    replacement_schemas=schemas,
-                )
-                for schema in schemas.values()
+                schema_to_wire(schema, replacement_schemas=schemas) for schema in schemas.values()
             ]
         }
     return goldens

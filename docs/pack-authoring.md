@@ -382,7 +382,7 @@ documentation at 32 MiB per pack. Allowed assets are PNG, JPEG, WebP, GIF,
 SVG, MP4, and WebM. Invalid paths, locales, pages, references, or assets
 warn and drop only the affected content; they never stop the pack.
 
-Wire 42 adds only `hasDocs: true` to documented `/api/nodes` entries.
+Documented `/api/nodes` entries carry `hasDocs: true`.
 Descriptors are paged through
 `GET /api/docs?q=&kind=&pack=&id=&limit=&cursor=` and bodies are fetched by
 digest from `GET /api/packs/{packId}/docs/pages/{digest}` and
@@ -421,9 +421,9 @@ search-term arrays are non-empty. Unknown fields, invalid JSON, symlinks,
 and catalogs above 1 MiB warn and drop only that catalog; doctor reports a
 `docs.invalid` error. All catalogs together are capped at 16 MiB.
 
-Wire 44 lists surviving catalogs as
-`packs[packId].locales[locale] = "sha256:<hex>"`; the field is absent on
-older wires and when the pack has no valid catalogs. Fetch exact catalog
+The schema lists surviving catalogs as
+`packs[packId].locales[locale] = "sha256:<hex>"`; the field is absent when
+the pack has no valid catalogs. Fetch exact catalog
 bytes from `GET /api/packs/{packId}/locales/{digest}`. The digest is over
 the source bytes, which the server returns unchanged with immutable caching
 and ETag support. Frontends resolve each translated key independently:

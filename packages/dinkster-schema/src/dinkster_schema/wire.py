@@ -1266,7 +1266,7 @@ def type_expr_from_wire(wire: dict[str, Any], wire_version: int = SCHEMA_WIRE_VE
     kind = _expect_str(wire.get("kind"), "type.kind")
     if kind == "variable":
         if "types" in wire:
-            raise ValueError("type.types is not a wire-15 variable field; use allowed")
+            raise ValueError("type.types is not a variable field; use allowed")
         types = _expect_strings(wire.get("allowed", []), "type.allowed")
     else:
         if "allowed" in wire:

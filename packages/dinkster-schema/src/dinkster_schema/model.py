@@ -654,9 +654,9 @@ class NumberWidget:
     frontend to render that control. Absence of the descriptor means "no
     presentation metadata", and the frontend still renders a number editor
     by primitive type inference; it never means the input is widgetless
-    (pinned with the frontend, wire v11).
+    (pinned with the frontend).
 
-    Socket binding (frontend amendment, wire v11): this descriptor is only
+    Socket binding: this descriptor is only
     legal on concrete ``core.int``/``core.float`` inputs, and constraints
     are interpreted in the socket's domain - an int socket with a
     fractional min/max/step is malformed. Enforced by InputSpec, which is
@@ -788,11 +788,9 @@ class TextCompletions:
 class StringWidget:
     """Presentation request for a string editor.
 
-    Only legal on concrete ``core.string`` inputs (enforced by InputSpec,
-    frontend amendment, wire v11). Before wire v17, a single-line string
-    carried no descriptor and ``StringWidget`` could only mark multiline.
-    Wire v17 admits explicit ``multiline=False`` so a named representation
-    set can compose both one-line and multiline editors from the same closed
+    Only legal on concrete ``core.string`` inputs (enforced by InputSpec).
+    Explicit ``multiline=False`` lets a named representation set compose both
+    one-line and multiline editors from the same closed
     descriptor. Absence still means the original inferred one-line editor,
     and the default stays ``True`` so every existing declaration is unchanged.
     ``placeholder`` and ``completions`` are presentation-only.
