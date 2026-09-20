@@ -150,10 +150,12 @@ def test_profile_uses_caller_owned_verified_descriptor_after_path_replacement(
     )
     monkeypatch.setattr(
         output_profiles,
-        "default_component_registry",
+        "builtin_registries",
         lambda: SimpleNamespace(
-            detect=lambda *_args: (),
-            select_detected=lambda *_args: (_ for _ in ()).throw(ValueError("unknown")),
+            components=SimpleNamespace(
+                detect=lambda *_args: (),
+                select_detected=lambda *_args: (_ for _ in ()).throw(ValueError("unknown")),
+            )
         ),
     )
 
@@ -202,8 +204,8 @@ def test_model_only_profile_uses_component_mapping(
     )
     monkeypatch.setattr(
         output_profiles,
-        "default_component_registry",
-        lambda: _ModelRegistry(path),
+        "builtin_registries",
+        lambda: SimpleNamespace(components=_ModelRegistry(path)),
     )
 
     profile = output_profiles.probe_model_output_profile(_source(path))
@@ -453,10 +455,12 @@ def test_host_revalidates_file_before_reusing_selection(
     )
     monkeypatch.setattr(
         output_profiles,
-        "default_component_registry",
+        "builtin_registries",
         lambda: SimpleNamespace(
-            detect=lambda *_args: (),
-            select_detected=lambda *_args: (_ for _ in ()).throw(ValueError("unknown")),
+            components=SimpleNamespace(
+                detect=lambda *_args: (),
+                select_detected=lambda *_args: (_ for _ in ()).throw(ValueError("unknown")),
+            )
         ),
     )
     profile = output_profiles.probe_model_output_profile(_source(path))

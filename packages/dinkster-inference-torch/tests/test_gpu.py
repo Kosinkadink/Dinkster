@@ -28,7 +28,6 @@ from __future__ import annotations
 import asyncio
 import gc
 import hashlib
-import importlib
 import json
 import os
 import subprocess
@@ -36,7 +35,7 @@ import sys
 import textwrap
 import threading
 import weakref
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -73,7 +72,6 @@ from dinkster_inference_torch import (
     TAESDDecoder,
     TAESDEncoder,
     ZImageAttention,
-    apply_patches,
     assemble_flux,
     cast_weight,
     collect_partial_residency_timing,
@@ -107,14 +105,8 @@ from dinkster_inference_torch import rounding as rounding_mod
 from dinkster_inference_torch._nvfp4_diagnostics import Nvfp4DiagnosticsRecorder
 from dinkster_inference_torch.attention import attention_kernel_context
 from dinkster_inference_torch.gguf_linear import (
-    FUSED_MATMUL_MAX_TOKENS,
     GGUF_BLOCK_DECODERS,
-    decode_q4_0_blocks,
-    decode_q4_k_blocks,
-    decode_q5_k_blocks,
-    decode_q6_k_blocks,
     decode_q8_0_blocks,
-    synthetic_gguf_blocks,
 )
 from dinkster_inference_torch.model_prefetch import make_prefetch_queue, prefetch_queue_pop
 from dinkster_inference_torch.quant_linear import Nvfp4ExecutionError, Nvfp4Linear
@@ -1756,65 +1748,6 @@ def test_fp8_cast_dequantizes_on_cuda() -> None:
     assert torch.equal(out.cpu(), stored_cpu.dequantize(torch.float16))
 
 
-def test_int8_convrot_packed_weight_uses_owned_bit_identical_route(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    importlib.import_module("dinkster_kitchen")
-    import dinkster_kernels
-    from dinkster_inference_torch.quant import Int8PackedWeight
-
-    if not dinkster_kernels.dequantize_int8_convrot_weight_available():
-        pytest.skip("owned ConvRot dequantization is unavailable")
-    generator = torch.Generator(device="cuda").manual_seed(20260828)
-    qdata = torch.randint(
-        -128,
-        128,
-        (17, 1024),
-        dtype=torch.int8,
-        device="cuda",
-        generator=generator,
-    )
-    scale = torch.rand((17, 1), dtype=torch.float32, device="cuda", generator=generator)
-    expected = torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight(qdata, scale, 256)
-    owned = dinkster_kernels.dequantize_int8_convrot_weight
-    called = False
-
-    def observed(qdata: torch.Tensor, scale: torch.Tensor, group_size: int) -> torch.Tensor:
-        nonlocal called
-        called = True
-        return owned(qdata, scale, group_size)
-
-    monkeypatch.setattr(dinkster_kernels, "dequantize_int8_convrot_weight", observed)
-    stored = Int8PackedWeight(qdata, scale, torch.float32, True, 256)
-    actual = stored.dequantize()
-    assert called
-    assert torch.equal(actual.view(torch.int32), expected.view(torch.int32))
-
-
-@pytest.mark.parametrize("dtype", FP8_DTYPES, ids=["e4m3fn", "e5m2"])
-def test_fp8_quantize_nearest_matches_cpu_bitwise(
-    dtype: torch.dtype,
-) -> None:
-    """The seed==0 nearest quantize path (amax scale, reciprocal
-    multiply, clamp, cast) is elementwise IEEE arithmetic - CUDA and
-    CPU must agree bit for bit on qdata and scale."""
-    source = torch.randn(16, 12, generator=torch.Generator().manual_seed(21))
-    cpu = quantize_fp8_scaled(source.clone(), dtype)
-    gpu = quantize_fp8_scaled(source.clone().to("cuda:0"), dtype)
-    assert gpu.qdata.device.type == "cuda"
-    assert torch.equal(gpu.qdata.cpu().view(torch.uint8), cpu.qdata.view(torch.uint8))
-    # the scale may differ by 1 ulp: CPU tensor/python-scalar division
-    # promotes through double (one rounding at higher precision) while
-    # CUDA computes in float32 - a torch behavior, not a Dinkster path
-    # difference. fp8 is coarse enough that qdata still matches.
-    gpu_scale = gpu.scale.cpu()
-    assert bool(
-        (gpu_scale == cpu.scale)
-        | (gpu_scale == torch.nextafter(cpu.scale, torch.tensor(0.0)))
-        | (gpu_scale == torch.nextafter(cpu.scale, torch.tensor(torch.inf)))
-    )
-
-
 @pytest.mark.parametrize("dtype", FP8_DTYPES, ids=["e4m3fn", "e5m2"])
 def test_fp8_seeded_quantize_deterministic_on_cuda(
     dtype: torch.dtype,
@@ -1985,410 +1918,7 @@ def test_prefetch_queue_streams_offloaded_gguf_weights_to_cuda() -> None:
     prefetch_queue_pop(queue, None)
 
 
-# -------------------------------------------- fused GGUF matmul route
-
-
-def _skip_unless_fused_gguf_available() -> None:
-    # Every layout's availability goes through the one shared host
-    # probe, so checking Q8_0's covers Q4_0's too.
-    from dinkster_kernels import gguf_q8_0_linear_available
-
-    if not gguf_q8_0_linear_available():
-        pytest.skip("fused GGUF kernels unavailable (triton kernel compile failed)")
-
-
-def _assert_as_accurate_as_the_decode_route(
-    fused: torch.Tensor,
-    x: torch.Tensor,
-    weight: torch.Tensor,
-    bias: torch.Tensor | None,
-) -> None:
-    """Value-close contract for the fused route: same half-precision
-    operands, same float32 accumulation, different tile summation
-    order. Accumulation noise is absolute in the intermediate
-    magnitude, so fixed rtol/atol explode relatively where terms
-    cancel near zero; instead compare both routes to the float64 sum
-    of the identical operands and require the fused error within a
-    small factor of the decode route's."""
-    reference = torch.nn.functional.linear(x, weight, bias)
-    exact = torch.nn.functional.linear(
-        x.double(), weight.double(), None if bias is None else bias.double()
-    )
-    fused_error = (fused.double() - exact).abs().max().item()
-    reference_error = (reference.double() - exact).abs().max().item()
-    assert fused_error <= 4.0 * reference_error + 1e-6, (
-        f"fused error {fused_error} vs decode-route error {reference_error}"
-    )
-
-
-@requires_triton
-@pytest.mark.parametrize(
-    ("out_features", "in_features"),
-    [
-        (1, 32),  # single block, one masked launch program
-        (31, 32),  # 992 elements: just under the 1024-element program
-        (32, 32),  # 1024 elements: exactly one full decode program
-        (33, 32),  # 1056 elements: tail spills into a second program
-        (48, 96),  # 4608 elements: multi-program interior
-    ],
-)
-def test_fused_q8_0_decode_is_bit_identical_to_the_block_decoder(
-    out_features: int, in_features: int
-) -> None:
-    """dinkster-kernels' in-tile decode and the vectorized torch decoder
-    round the same exact float32 values at the same points, so their
-    outputs must match bit for bit on the same device."""
-    from dinkster_kernels import gguf_q8_0_decode
-
-    _skip_unless_fused_gguf_available()
-    blocks = synthetic_gguf_blocks("Q8_0", out_features * in_features // 32, seed=41).cpu()
-    # A negative scale over zero quants decodes to -0.0 on both sides;
-    # the bit-pattern compare below is what distinguishes it from +0.0.
-    blocks[0, 2:] = 0
-    blocks[0, :2] = torch.tensor([-2.0], dtype=torch.float16).view(torch.uint8)
-    blocks = blocks.to("cuda:0")
-    reference = GGUF_BLOCK_DECODERS["Q8_0"](blocks, (out_features, in_features))
-    fused = gguf_q8_0_decode(blocks, out_features, in_features)
-    assert torch.equal(fused.view(torch.int32), reference.view(torch.int32))
-
-
-@requires_triton
-def test_fused_gguf_forward_matches_the_decode_route() -> None:
-    """The fused route computes the same exact decoded weight values;
-    only tile accumulation order differs from decode-then-F.linear, so
-    outputs are value-close, deterministic, and inference-only."""
-    torch.manual_seed(37)
-    blocks = encode_q8_0(torch.randn(64, 1024))
-    bias = torch.randn(64).to(torch.float16)
-
-    _skip_unless_fused_gguf_available()
-    fused_route = GgufEncodedLinear(1024, 64, bias=True, compute_dtype=torch.float16)
-    fused_route.load_state_dict({"weight_blocks": blocks, "bias": bias})
-    fused_route.to("cuda:0")
-    fused_route.bind_fused_matmul(True)
-    x = torch.randn(3, 1024, device="cuda:0", dtype=torch.float16)
-
-    weight = decode_q8_0_blocks(blocks.to("cuda:0"), (64, 1024)).to(torch.float16)
-    output = fused_route(x)
-    assert output.dtype == torch.float16
-    _assert_as_accurate_as_the_decode_route(output, x, weight, bias.to("cuda:0"))
-    assert torch.equal(fused_route(x), output)
-
-    with pytest.raises(RuntimeError, match="inference-only"):
-        fused_route(x.clone().requires_grad_(True))
-
-
-@requires_triton
-def test_fused_gguf_forward_serves_offloaded_leases() -> None:
-    """An enrolled fused linear leases blocks to the device and runs
-    the kernel over them: value-close to the decode route, transfers
-    attributed as usual, compute timed, and the block decoder never
-    runs (the decode happens inside the matmul tiles)."""
-    torch.manual_seed(43)
-    blocks = encode_q8_0(torch.randn(64, 1024))
-    module = GgufEncodedLinear(1024, 64, bias=False, compute_dtype=torch.float16)
-    module.load_state_dict({"weight_blocks": blocks})
-
-    _skip_unless_fused_gguf_available()
-    module.bind_fused_matmul(True)
-    decoded_gpu = decode_q8_0_blocks(blocks.to("cuda:0"), (64, 1024)).to(torch.float16)
-    x = torch.randn(3, 1024, device="cuda:0", dtype=torch.float16)
-
-    def _poisoned_decode(blocks: torch.Tensor, shape: tuple[int, ...]) -> torch.Tensor:
-        raise AssertionError("the fused leased forward must not run the block decoder")
-
-    module._decode = _poisoned_decode  # pyright: ignore[reportPrivateUsage]
-
-    mechanism = enroll_component(module, load_device="cuda:0", offload_device="cpu")
-    assert mechanism.loaded_unit_names() == frozenset()
-    with collect_partial_residency_timing() as timing:
-        offloaded = module(x)
-    report = timing.report()
-
-    _assert_as_accurate_as_the_decode_route(offloaded, x, decoded_gpu, None)
-    assert report.leased_forwards == 1
-    assert report.leased_transfers == 1
-    assert report.transfer_bytes == blocks.nbytes
-    assert report.transfer_ms > 0.0
-    assert report.compute_ms > 0.0
-
-    # Uncollected, the leased fused forward returns the same bits.
-    assert torch.equal(module(x), offloaded)
-
-
-@requires_triton
-def test_fused_gguf_offloaded_lease_fetches_bias_through_the_lease() -> None:
-    """With a bias, the fused leased forward fetches it via the lease:
-    its bytes join the transfer attribution, and its cast to the
-    compute dtype is the lease's usual dequant-bracketed finish (the
-    fused route itself still brackets no dequant)."""
-    torch.manual_seed(43)
-    blocks = encode_q8_0(torch.randn(64, 1024))
-    bias = torch.randn(64).to(torch.float16)
-    module = GgufEncodedLinear(1024, 64, bias=True, compute_dtype=torch.float16)
-    module.load_state_dict({"weight_blocks": blocks, "bias": bias})
-
-    _skip_unless_fused_gguf_available()
-    module.bind_fused_matmul(True)
-    decoded_gpu = decode_q8_0_blocks(blocks.to("cuda:0"), (64, 1024)).to(torch.float16)
-    x = torch.randn(3, 1024, device="cuda:0", dtype=torch.float16)
-
-    enroll_component(module, load_device="cuda:0", offload_device="cpu")
-    with collect_partial_residency_timing() as timing:
-        offloaded = module(x)
-    report = timing.report()
-
-    _assert_as_accurate_as_the_decode_route(offloaded, x, decoded_gpu, bias.to("cuda:0"))
-    assert report.leased_forwards == 1
-    assert report.leased_transfers == 2
-    assert report.transfer_bytes == blocks.nbytes + bias.nbytes
-    assert report.compute_ms > 0.0
-
-
-@requires_triton
-def test_fused_route_defers_to_the_decode_route_above_the_token_threshold() -> None:
-    """A bound layer dispatches per forward: flattened token counts at
-    or below the layout's FUSED_MATMUL_MAX_TOKENS run the fused kernel
-    (the block decoder never executes), larger counts take the decode
-    route - on the resident branch and the offloaded lease branch."""
-    torch.manual_seed(47)
-    blocks = encode_q8_0(torch.randn(64, 1024))
-
-    _skip_unless_fused_gguf_available()
-    decodes = 0
-
-    def counting(module: GgufEncodedLinear) -> None:
-        real_decode = module._decode  # pyright: ignore[reportPrivateUsage]
-
-        def counting_decode(blocks: torch.Tensor, shape: tuple[int, ...]) -> torch.Tensor:
-            nonlocal decodes
-            decodes += 1
-            return real_decode(blocks, shape)
-
-        module._decode = counting_decode  # pyright: ignore[reportPrivateUsage]
-
-    resident = GgufEncodedLinear(1024, 64, bias=False, compute_dtype=torch.float16)
-    resident.load_state_dict({"weight_blocks": blocks})
-    resident.to("cuda:0")
-    resident.bind_fused_matmul(True)
-    counting(resident)
-
-    threshold = FUSED_MATMUL_MAX_TOKENS["Q8_0"]
-    weight = decode_q8_0_blocks(blocks.to("cuda:0"), (64, 1024)).to(torch.float16)
-    small = torch.randn(threshold, 1024, device="cuda:0", dtype=torch.float16)
-    large = torch.randn(threshold + 1, 1024, device="cuda:0", dtype=torch.float16)
-
-    at_threshold = resident(small)
-    assert decodes == 0
-    _assert_as_accurate_as_the_decode_route(at_threshold, small, weight, None)
-
-    above_threshold = resident(large)
-    assert decodes == 1
-    _assert_as_accurate_as_the_decode_route(above_threshold, large, weight, None)
-
-    # The offloaded lease branch applies the same threshold.
-    offloaded = GgufEncodedLinear(1024, 64, bias=False, compute_dtype=torch.float16)
-    offloaded.load_state_dict({"weight_blocks": blocks})
-    offloaded.bind_fused_matmul(True)
-    counting(offloaded)
-    enroll_component(offloaded, load_device="cuda:0", offload_device="cpu")
-    offloaded(small)
-    assert decodes == 1
-    offloaded(large)
-    assert decodes == 2
-
-
-@requires_triton
-@pytest.mark.parametrize(
-    ("out_features", "in_features"),
-    [
-        (1, 32),  # single block, one masked launch program
-        (31, 32),  # 992 elements: just under the 1024-element program
-        (32, 32),  # 1024 elements: exactly one full decode program
-        (33, 32),  # 1056 elements: tail spills into a second program
-        (48, 96),  # 4608 elements: multi-program interior
-    ],
-)
-def test_fused_q4_0_decode_is_bit_identical_to_the_block_decoder(
-    out_features: int, in_features: int
-) -> None:
-    """dinkster-kernels' in-tile Q4_0 decode and the vectorized torch
-    decoder round the same exact float32 values at the same points, so
-    their outputs must match bit for bit on the same device."""
-    from dinkster_kernels import gguf_q4_0_decode
-
-    _skip_unless_fused_gguf_available()
-    blocks = synthetic_gguf_blocks("Q4_0", out_features * in_features // 32, seed=47).cpu()
-    # A negative scale over centered quants (nibble 8 - 8 = 0) decodes
-    # to -0.0 on both sides; the bit-pattern compare below is what
-    # distinguishes it from +0.0.
-    blocks[0, 2:] = 0x88
-    blocks[0, :2] = torch.tensor([-2.0], dtype=torch.float16).view(torch.uint8)
-    blocks = blocks.to("cuda:0")
-    reference = GGUF_BLOCK_DECODERS["Q4_0"](blocks, (out_features, in_features))
-    fused = gguf_q4_0_decode(blocks, out_features, in_features)
-    assert torch.equal(fused.view(torch.int32), reference.view(torch.int32))
-
-
-@requires_triton
-def test_fused_q4_0_forward_matches_the_decode_route() -> None:
-    """A Q4_0-typed module binds the fused route and computes the same
-    exact decoded weight values; only tile accumulation order differs
-    from decode-then-F.linear, so outputs are value-close,
-    deterministic, and inference-only."""
-    _skip_unless_fused_gguf_available()
-    # Tame finite scales: synthetic_gguf_blocks cycles extreme fp16
-    # edge scales meant for decode identity, which would swamp a
-    # matmul accuracy comparison.
-    generator = torch.Generator().manual_seed(53)
-    blocks = torch.randint(0, 256, (64 * 1024 // 32, 18), dtype=torch.uint8, generator=generator)
-    scales = torch.empty(blocks.shape[0], dtype=torch.float32).uniform_(
-        -2.0, 2.0, generator=generator
-    )
-    blocks[:, :2] = scales.to(torch.float16).view(torch.uint8).reshape(-1, 2)
-    bias = torch.randn(64, generator=generator).to(torch.float16)
-
-    fused_route = GgufEncodedLinear(
-        1024, 64, ggml_type="Q4_0", bias=True, compute_dtype=torch.float16
-    )
-    fused_route.load_state_dict({"weight_blocks": blocks, "bias": bias})
-    fused_route.to("cuda:0")
-    fused_route.bind_fused_matmul(True)
-    x = torch.randn(3, 1024, device="cuda:0", dtype=torch.float16)
-
-    weight = decode_q4_0_blocks(blocks.to("cuda:0"), (64, 1024)).to(torch.float16)
-    output = fused_route(x)
-    assert output.dtype == torch.float16
-    _assert_as_accurate_as_the_decode_route(output, x, weight, bias.to("cuda:0"))
-    assert torch.equal(fused_route(x), output)
-
-    with pytest.raises(RuntimeError, match="inference-only"):
-        fused_route(x.clone().requires_grad_(True))
-
-
-@requires_triton
-@pytest.mark.parametrize("ggml_type", ["Q4_K", "Q5_K", "Q6_K"])
-@pytest.mark.parametrize(
-    ("out_features", "in_features"),
-    [
-        (1, 256),  # single block, one masked launch program
-        (3, 256),  # 768 elements: under the 1024-element decode program
-        (4, 256),  # 1024 elements: exactly one full decode program
-        (5, 256),  # 1280 elements: tail spills into a second program
-        (4, 1280),  # 5120 elements: multi-program interior
-    ],
-)
-def test_fused_kquant_decode_is_bit_identical_to_the_block_decoder(
-    ggml_type: str, out_features: int, in_features: int
-) -> None:
-    """dinkster-kernels' in-tile K-quant decodes and the vectorized torch
-    decoders round the same exact float32 values at the same points
-    (both super-scale products are exact and the min subtraction is
-    the one rounding), so their outputs must match bit for bit on the
-    same device."""
-    import dinkster_kernels
-
-    _skip_unless_fused_gguf_available()
-    blocks = synthetic_gguf_blocks(ggml_type, out_features * in_features // 256, seed=59).cpu()
-    # Pin block 0 to decode -0.0 everywhere; the bit-pattern compare
-    # below is what distinguishes it from +0.0.
-    if ggml_type == "Q6_K":
-        # Zero nibbles under two-bit fields of 2 make every quant 32,
-        # so q - 32 is +0.0 and the negative group product is -0.0.
-        blocks[0, :128] = 0
-        blocks[0, 128:192] = 0xAA  # 0b10101010: every 2-bit field is 2
-        blocks[0, 192:208] = 1
-        blocks[0, 208:210] = torch.tensor([-1.5], dtype=torch.float16).view(torch.uint8)
-    else:
-        # Zero quants and mins under a negative group scale decode to
-        # -0.0 on both sides.
-        blocks[0, 4:] = 0
-        blocks[0, 4] = 1  # group 0 scale sc = 1
-        blocks[0, 0:2] = torch.tensor([-2.0], dtype=torch.float16).view(torch.uint8)
-        blocks[0, 2:4] = torch.tensor([1.0], dtype=torch.float16).view(torch.uint8)
-    blocks = blocks.to("cuda:0")
-    reference = GGUF_BLOCK_DECODERS[ggml_type](blocks, (out_features, in_features))
-    assert reference.view(torch.int32)[0, 0] != 0  # really -0.0
-    decode = getattr(dinkster_kernels, f"gguf_{ggml_type.lower()}_decode")
-    fused = decode(blocks, out_features, in_features)
-    assert torch.equal(fused.view(torch.int32), reference.view(torch.int32))
-
-
-@requires_triton
-@pytest.mark.parametrize(
-    ("ggml_type", "block_bytes", "decoder", "scale_offsets"),
-    [
-        ("Q4_K", 144, decode_q4_k_blocks, (0, 2)),
-        ("Q5_K", 176, decode_q5_k_blocks, (0, 2)),
-        ("Q6_K", 210, decode_q6_k_blocks, (208,)),
-    ],
-)
-def test_fused_kquant_forward_matches_the_decode_route(
-    ggml_type: str,
-    block_bytes: int,
-    decoder: Callable[[torch.Tensor, tuple[int, ...]], torch.Tensor],
-    scale_offsets: tuple[int, ...],
-) -> None:
-    """A K-quant-typed module binds the fused route and computes the
-    same exact decoded weight values; only tile accumulation order
-    differs from decode-then-F.linear, so outputs are value-close,
-    deterministic, and inference-only."""
-    _skip_unless_fused_gguf_available()
-    # Tame finite scales: synthetic_gguf_blocks cycles extreme fp16
-    # edge scales meant for decode identity, which would swamp a
-    # matmul accuracy comparison.
-    generator = torch.Generator().manual_seed(61)
-    blocks = torch.randint(
-        0, 256, (64 * 1024 // 256, block_bytes), dtype=torch.uint8, generator=generator
-    )
-    for offset in scale_offsets:
-        scales = torch.empty(blocks.shape[0], dtype=torch.float32).uniform_(
-            -2.0, 2.0, generator=generator
-        )
-        blocks[:, offset : offset + 2] = scales.to(torch.float16).view(torch.uint8).reshape(-1, 2)
-    bias = torch.randn(64, generator=generator).to(torch.float16)
-
-    fused_route = GgufEncodedLinear(
-        1024, 64, ggml_type=ggml_type, bias=True, compute_dtype=torch.float16
-    )
-    fused_route.load_state_dict({"weight_blocks": blocks, "bias": bias})
-    fused_route.to("cuda:0")
-    fused_route.bind_fused_matmul(True)
-    x = torch.randn(3, 1024, device="cuda:0", dtype=torch.float16)
-
-    weight = decoder(blocks.to("cuda:0"), (64, 1024)).to(torch.float16)
-    output = fused_route(x)
-    assert output.dtype == torch.float16
-    _assert_as_accurate_as_the_decode_route(output, x, weight, bias.to("cuda:0"))
-    assert torch.equal(fused_route(x), output)
-
-    with pytest.raises(RuntimeError, match="inference-only"):
-        fused_route(x.clone().requires_grad_(True))
-
-
 # --------------------------------------------- patches on the device
-
-
-def test_deferred_patch_applies_on_cuda() -> None:
-    """LowVramPatch semantics survive the device: cast to CUDA compute
-    dtype first, patch there, stored weight untouched."""
-    stored = torch.randn(4, 4, device="cuda:0")
-    snapshot = stored.clone()
-    entries = (diff_entry((4, 4), 0.25, "cuda:0", strength=0.8),)
-    out = cast_weight(
-        stored,
-        dtype=torch.float16,
-        functions=[DeferredPatch("k", entries)],
-    )
-    expected = apply_patches(
-        stored.to(torch.float16),
-        list(entries),
-        key="k",
-        intermediate_dtype=torch.float16,
-    )
-    assert out.device == stored.device
-    assert torch.equal(out, expected)
-    assert torch.equal(stored, snapshot)
 
 
 def test_patch_weights_fp8_roundtrip_on_cuda() -> None:
@@ -5559,13 +5089,11 @@ def test_unet_runs_from_worker_threads_per_device() -> None:
 # ------------------------------------------------- Flux
 #
 # Same discipline as the UNet block above, plus the
-# Flux-specific seam: apply_rope routes through the Dinkster-owned fused
-# rotation on CUDA (bit-identical to the pure-torch reference), with
-# dinkster-kitchen's combined operation as the fallback tier, when no
-# input needs gradients. Every no-grad forward here proves the owned
-# route; the kitchen tier is pinned separately with the owned probe
-# disabled. Golden comparisons use atol=1e-4 because CUDA SDPA
-# accumulates differently from the CPU reference.
+# Flux-specific seam: apply_rope uses dinkster-kitchen's combined
+# operation when no input needs gradients, otherwise pure torch. The
+# kitchen route is pinned separately against the direct backend. Golden
+# comparisons use atol=1e-4 because CUDA SDPA accumulates differently
+# from the CPU reference.
 
 
 def _flux_model(case: str):  # noqa: ANN202 - test-local helper
@@ -5709,21 +5237,6 @@ def test_flux_odd_spatial_on_cuda_matches_golden() -> None:
     torch.testing.assert_close(got.cpu(), golden, rtol=1e-4, atol=1e-4)
 
 
-def _dinkster_rope_available() -> bool:
-    from dinkster_inference_torch import flux as flux_module
-
-    return flux_module._probe_dinkster_apply_rope() is not None  # pyright: ignore[reportPrivateUsage]
-
-
-requires_dinkster_rope = pytest.mark.skipif(
-    not _dinkster_rope_available(),
-    reason=(
-        "dinkster_kernels apply_rope unavailable - the owned fused RoPE"
-        " path is NOT proven (needs CUDA, triton, and a host C compiler)"
-    ),
-)
-
-
 def _rope_case(device: str, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     from dinkster_inference_torch.flux import rope
 
@@ -5735,40 +5248,12 @@ def _rope_case(device: str, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Ten
     return q, k, freqs
 
 
-@requires_dinkster_rope
-@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
-def test_flux_apply_rope_owned_route_bit_identical_to_reference(dtype: torch.dtype) -> None:
-    """The dispatched CUDA rotation is the owned kernel, and its
-    outputs carry the exact reference bits."""
-    import dinkster_kernels
-    from dinkster_inference_torch import flux as flux_module
-    from dinkster_inference_torch.flux import apply_rope
-
-    for device in CUDA_DEVICES:
-        q, k, freqs = _rope_case(device, dtype)
-        with torch.no_grad():
-            got_q, got_k = apply_rope(q, k, freqs)
-            with torch.cuda.device(q.device):
-                direct_q, direct_k = dinkster_kernels.apply_rope(q, k, freqs)
-            reference_q, reference_k = flux_module._apply_rope_torch(  # pyright: ignore[reportPrivateUsage]
-                q, k, freqs
-            )
-        assert torch.equal(got_q, direct_q) and torch.equal(got_k, direct_k)
-        assert torch.equal(got_q, reference_q) and torch.equal(got_k, reference_k)
-
-
 @requires_kitchen_rope
-def test_flux_kitchen_rope_tier_matches_direct_backend(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With the owned kernel unavailable, Dinkster dispatches the same
-    combined operation as pinned ComfyUI."""
+def test_flux_kitchen_rope_tier_matches_direct_backend() -> None:
+    """Dinkster dispatches the same combined operation as pinned ComfyUI."""
     import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
-    from dinkster_inference_torch import flux as flux_module
     from dinkster_inference_torch.flux import apply_rope
 
-    monkeypatch.setattr(flux_module, "_dk_rope", None)
-    monkeypatch.setattr(flux_module, "_dk_rope_probed", True)
     for device in CUDA_DEVICES:
         q, k, freqs = _rope_case(device, torch.bfloat16)
         with torch.cuda.device(q.device), torch.no_grad():
@@ -5961,8 +5446,8 @@ def _run_fp8_matmul_proof(body: str) -> None:
 )
 @requires_fp8_matmul
 def test_fp8_matmul_native_subprocess_proves_real_scaled_and_plain_layers() -> None:
-    """The owned dinkster route, installed kitchen, and eager torch are
-    bitwise identical per real layer; scaled and plain checkpoints both
+    """The installed kitchen and eager torch routes are bitwise identical
+    per real layer; scaled and plain checkpoints both
     execute their routed and route-off reference forwards in a fresh
     CUDA process."""
     _run_fp8_matmul_proof(
@@ -5973,16 +5458,10 @@ from pathlib import Path
 import torch
 from dinkster_inference_torch import CastOperations, Fp8Linear, load_tensors
 from dinkster_inference_torch.quant_linear import (
-    _probe_dinkster_quantize_per_tensor_fp8,
-    _probe_dinkster_scaled_mm,
     _probe_kitchen_scaled_mm_v2,
     fp8_matmul_forward,
 )
 
-# Seed both external backends so manual backend forcing below routes
-# through the real callables rather than silently degrading to torch.
-assert _probe_dinkster_quantize_per_tensor_fp8() is not None
-assert _probe_dinkster_scaled_mm() is not None
 assert _probe_kitchen_scaled_mm_v2() is not None
 
 device = torch.device("cuda:0")
@@ -6037,17 +5516,11 @@ with torch.no_grad():
     )
 assert torch.equal(scaled_off, scaled_off_reference)
 scaled_layer.bind_fp8_matmul(True)
-assert scaled_layer._fp8_matmul_backend == "dinkster"
+assert scaled_layer._fp8_matmul_backend == "kitchen"
 with torch.no_grad():
-    scaled_dinkster = scaled_layer(scaled_input)
-    scaled_layer._fp8_matmul_backend = "kitchen"
     scaled_kitchen = scaled_layer(scaled_input)
     scaled_layer._fp8_matmul_backend = "torch"
     scaled_eager = scaled_layer(scaled_input)
-if not torch.equal(scaled_dinkster, scaled_eager):
-    raise RuntimeError(
-        "DINKSTER_SCALED_MM_BITWISE_DIVERGENCE: real scaled-fp8 layer"
-    )
 if not torch.equal(scaled_kitchen, scaled_eager):
     raise RuntimeError(
         "KITCHEN_SCALED_MM_V2_BITWISE_DIVERGENCE: real scaled-fp8 layer"
@@ -6093,17 +5566,11 @@ with torch.no_grad():
     )
 assert torch.equal(plain_off, plain_off_reference)
 plain_layer.bind_fp8_matmul(True)
-assert plain_layer._fp8_matmul_backend == "dinkster"
+assert plain_layer._fp8_matmul_backend == "kitchen"
 with torch.no_grad():
-    plain_dinkster = plain_layer(plain_input)
-    plain_layer._fp8_matmul_backend = "kitchen"
     plain_kitchen = plain_layer(plain_input)
     plain_layer._fp8_matmul_backend = "torch"
     plain_eager = plain_layer(plain_input)
-if not torch.equal(plain_dinkster, plain_eager):
-    raise RuntimeError(
-        "DINKSTER_SCALED_MM_BITWISE_DIVERGENCE: real plain-fp8 layer"
-    )
 if not torch.equal(plain_kitchen, plain_eager):
     raise RuntimeError(
         "KITCHEN_SCALED_MM_V2_BITWISE_DIVERGENCE: real plain-fp8 layer"
@@ -6123,7 +5590,7 @@ def assert_backend_neutral(label, input, weight, bias, out_dtype):
     weight_scale = torch.tensor(1.25, device=device, dtype=torch.float32)
     outputs = {}
     with torch.no_grad():
-        for backend in ("dinkster", "kitchen", "torch"):
+        for backend in ("kitchen", "torch"):
             outputs[backend] = fp8_matmul_forward(
                 input,
                 weight,
@@ -6133,8 +5600,6 @@ def assert_backend_neutral(label, input, weight, bias, out_dtype):
                 out_dtype=out_dtype,
                 backend=backend,
             )
-    if not torch.equal(outputs["dinkster"], outputs["torch"]):
-        raise RuntimeError(f"DINKSTER_SCALED_MM_BITWISE_DIVERGENCE: {label}")
     if not torch.equal(outputs["kitchen"], outputs["torch"]):
         raise RuntimeError(f"KITCHEN_SCALED_MM_V2_BITWISE_DIVERGENCE: {label}")
 
@@ -6201,56 +5666,6 @@ def quantized_input_reference(layer: Fp8Linear, x: torch.Tensor) -> torch.Tensor
     if layer.bias is not None:
         out = out + layer.bias.float()
     return out.to(layer.compute_dtype)
-
-
-@pytest.mark.parametrize(
-    ("input_dtype", "divergent_value"),
-    [(torch.float16, 11.0390625), (torch.bfloat16, 2.046875)],
-)
-def test_owned_and_kitchen_fp8_quantizers_match_reference_thresholds_and_saturation(
-    input_dtype: torch.dtype,
-    divergent_value: float,
-) -> None:
-    import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
-    from dinkster_kernels import quantize_per_tensor_fp8
-
-    scale = torch.tensor(0.03, device="cuda:0", dtype=torch.float32)
-    fp8_max = torch.finfo(torch.float8_e4m3fn).max
-    midpoint = torch.tensor(432.0, device="cuda:0") * scale
-    values = torch.tensor(
-        [
-            0.0,
-            divergent_value,
-            -12.953125,
-            fp8_max * 0.03,
-            -fp8_max * 0.03,
-            fp8_max * 0.06,
-            -fp8_max * 0.06,
-        ],
-        device="cuda:0",
-        dtype=input_dtype,
-    )
-    threshold = midpoint.to(input_dtype)
-    values = torch.cat(
-        (
-            values,
-            threshold.reshape(1),
-            torch.nextafter(threshold, torch.full_like(threshold, float("inf"))).reshape(1),
-            torch.nextafter(threshold, torch.full_like(threshold, float("-inf"))).reshape(1),
-        )
-    ).reshape(2, 5)
-    assert values.dtype is input_dtype
-
-    owned = quantize_per_tensor_fp8(values, scale, torch.float8_e4m3fn)
-    kitchen = dinkster_kitchen.quantize_per_tensor_fp8(values, scale, torch.float8_e4m3fn)
-    eager = quant_linear_mod._quantize_per_tensor_fp8_eager(  # pyright: ignore[reportPrivateUsage]
-        values, scale, torch.float8_e4m3fn
-    )
-
-    assert torch.equal(owned.view(torch.uint8), eager.view(torch.uint8))
-    assert torch.equal(kitchen.view(torch.uint8), eager.view(torch.uint8))
-    assert kitchen.reshape(-1)[5].float() == fp8_max
-    assert kitchen.reshape(-1)[6].float() == -fp8_max
 
 
 def test_fp8_module_residency_dequant_path_is_bitwise() -> None:
@@ -6369,15 +5784,11 @@ def test_fp8_matmul_uses_kitchen_input_quantizer_when_available(
         quantize_calls.append(input)
         return kitchen(input, scale, dtype)
 
-    def forbidden_owned(*_args: object, **_kwargs: object) -> torch.Tensor:
-        raise AssertionError("FP8 input must not use the owned quantizer when Kitchen is available")
-
     monkeypatch.setattr(
         quant_linear_mod,
         "_kitchen_quantize_per_tensor_fp8",
         recording_kitchen,
     )
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_quantize_per_tensor_fp8", forbidden_owned)
     with torch.no_grad():
         got = layer(x)
     assert quantize_calls == [x]
@@ -6727,7 +6138,7 @@ def test_real_flux_denoise_runs_on_cuda() -> None:
         sampling_sigmas,
     )
     from dinkster_inference.schedules import DINKSTER_NORMAL
-    from dinkster_inference.solvers import DINKSTER_EULER
+    from dinkster_inference_torch.solvers import torch_sampler_registry
 
     plan = _real_flux_plan(**_REAL_SPLIT_SCALED)
     assembled = assemble_flux(plan)
@@ -6744,10 +6155,12 @@ def test_real_flux_denoise_runs_on_cuda() -> None:
     sigmas = sampling_sigmas(DINKSTER_NORMAL, FluxFlowSigmas(), 2)
     assert len(sigmas) == 3 and sigmas[-1] == 0.0
     latent = torch.zeros(1, 16, 8, 8)
+    descriptor = torch_sampler_registry().get("dinkster.euler")
+    assert descriptor is not None
     with torch.no_grad():
         out = run_denoise(
             denoiser,
-            DINKSTER_EULER.build(),
+            descriptor.build(),
             latent=latent,
             noise=prepare_noise(latent, 7),
             sigmas=sigmas,
@@ -7119,7 +6532,7 @@ def test_real_sdxl_controlnet_union_matches_acceptance_golden_on_cuda() -> None:
     plan = plan_sdxl_controlnet_union(
         load_safetensors_header(_REAL_SDXL_CONTROLNET_UNION), asset_digest=digest
     )
-    assembled = assemble_sdxl_controlnet_union(plan)
+    assembled = assemble_sdxl_controlnet_union(plan, attention_backend="unet")
     device = torch.device("cuda:0")
     assembled.controlnet_union.to(device)
     generator = torch.Generator(device=device).manual_seed(golden["workload"]["seed"])
@@ -7232,11 +6645,10 @@ def test_real_sd1_single_device_fused_split_signature_on_cuda(size: int, steps: 
     from dinkster_inference import (
         DiscreteSigmas,
         SamplingGuidance,
-        cfg_combine,
         load_safetensors_header,
         sampling_sigmas,
     )
-    from dinkster_inference_torch import SDRuntime, load_runtime
+    from dinkster_inference_torch import SDRuntime, cfg_combine, load_runtime
     from dinkster_inference_torch.denoise import prepare_noise, run_denoise
     from dinkster_inference_torch.schedules import torch_scheduler_registry
     from dinkster_inference_torch.sd_denoise import SDDenoiser

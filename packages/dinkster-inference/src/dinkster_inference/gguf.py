@@ -17,7 +17,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import BinaryIO, Literal, TypeAlias, cast
 
-from .catalog import builtin_families, builtin_family_registry
+from .catalog import builtin_families
 from .devices import BFLOAT16, FLOAT16, FLOAT32, DType
 from .registry import Registry
 from .t5_text import T5_XXL_CONFIG, T5TextDetectError, detect_t5_config
@@ -847,7 +847,9 @@ def map_gguf_diffusion_component(source: GGUFSource) -> GGUFComponentMap:
     if not admitted_families:
         raise GGUFMappingError(f"unsupported diffusion GGUF architecture {architecture!r}")
     shapes = _logical_shapes(source)
-    detection = builtin_family_registry().detect(_GeometrySource(shapes))
+    from .registries import builtin_registries
+
+    detection = builtin_registries().families.detect(_GeometrySource(shapes))
     detected_families = tuple(dict.fromkeys(item.family_id for item in detection.candidates))
     if len(detected_families) > 1:
         names = ", ".join(detected_families)
@@ -1027,13 +1029,8 @@ class GGUFWeightSource:
     the device without overcommit) and is normalized into the route
     facts. All three modes decode the same encoded blocks with the
     same math, so ``speed`` and ``balanced`` outputs are bit-identical.
-    ``memory`` additionally binds the fused packed-domain matmul by
-    default on capable CUDA hosts (recorded as
-    ``gguf.route.fused_matmul=auto``): eligible linear forwards at or
-    below per-layout token thresholds execute without materializing
-    the decoded weight and are value-close, not bit-identical, to the
-    decode route; ineligible layers, CPU execution, and larger token
-    counts keep the bit-identical decode route."""
+    ``memory`` decodes on each forward and remains bit-identical to the
+    reference decode route."""
 
     source: GGUFSource
     component_map: GGUFComponentMap
@@ -1122,7 +1119,6 @@ class GGUFWeightSource:
                 "gguf.route.device_capability=generic",
                 "gguf.route.compute_dtype=float32",
                 "gguf.route.accumulation_dtype=float32",
-                "gguf.route.fused_matmul=auto",
             )
         else:
             budget = "auto" if decoded_cache_budget is None else str(decoded_cache_budget)

@@ -675,8 +675,7 @@ def _fake_stored_source_pins(
         return True
 
     def unregister(ptr: int) -> bool:
-        registered.pop(ptr)
-        return True
+        return registered.pop(ptr, None) is not None
 
     def synchronize(device: torch.device | None = None) -> None:
         syncs.append(device)

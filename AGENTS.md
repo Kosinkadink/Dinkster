@@ -129,16 +129,6 @@ CUDA venv per the package README "GPU validation" section (on this host:
 `.venv-gpu-extras/pyheaders`). Do NOT defer GPU validation on a GPU machine
 (user directive, 2026-07).
 
-When `packages/dinkster-kernels` changes, its gates run on GPU machines only
-(the kernels need CUDA plus triton; elsewhere its tests skip and prove
-nothing):
-
-```
-.venv/bin/pyright -p packages/dinkster-kernels
-CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \
-  .venv-gpu/bin/python -m pytest -q packages/dinkster-kernels/tests
-```
-
 Torch testing policy (user directive, 2026-07-26): test/validation
 environments run torch >= 2.10. The `torch>=2.5` package floor is a
 backwards-compatibility promise for consumers, pinned to upstream ComfyUI's

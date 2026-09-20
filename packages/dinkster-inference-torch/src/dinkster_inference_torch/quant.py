@@ -18,8 +18,7 @@ dequantize-patch-requantize algorithm.
 INT8 likewise keeps qdata, scale, compute dtype, and ConvRot layout
 facts together so patched weights use Kitchen's seeded
 dequantize-patch-requantize path without changing their storage form.
-Dinkster's fused dequantization is preferred for supported CUDA weights;
-Kitchen remains the fallback.
+Kitchen performs ConvRot dequantization.
 
 Math, transcribed exactly:
 
@@ -86,25 +85,6 @@ class Int8PackedWeight:
         target = self.orig_dtype if dtype is None else dtype
         if not self.convrot:
             return self.qdata.to(dtype=target) * self.scale.to(dtype=target)
-        try:
-            kernels = cast(Any, importlib.import_module("dinkster_kernels"))
-            if bool(kernels.dequantize_int8_convrot_weight_available()) and bool(
-                kernels.dequantize_int8_convrot_weight_supported(
-                    self.qdata,
-                    self.scale,
-                    self.convrot_groupsize,
-                )
-            ):
-                value = kernels.dequantize_int8_convrot_weight(
-                    self.qdata,
-                    self.scale,
-                    self.convrot_groupsize,
-                )
-                return value.to(dtype=target)
-        except torch.OutOfMemoryError:
-            raise
-        except Exception:  # noqa: BLE001 - an optional accelerator is best-effort
-            pass
         try:
             importlib.import_module("dinkster_kitchen")
             value = torch.ops.dinkster_kitchen.dequantize_int8_convrot_weight(

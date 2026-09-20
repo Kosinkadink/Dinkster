@@ -679,6 +679,7 @@ def load_minimax_h3_model(
     diffusion_dtype: torch.dtype = torch.bfloat16,
     attention_policy: AttentionPolicy = "auto",
     attention_route_token: AttentionRouteToken | None = None,
+    attention_backend: AttentionRole,
 ) -> MiniMaxH3Model:
     """Verify and load one H3 DiT as an ordinary MODEL component."""
 
@@ -690,7 +691,9 @@ def load_minimax_h3_model(
         raise ValueError("MiniMax H3 model requires an expected identity")
     if diffusion_dtype not in (torch.bfloat16, torch.float32):
         raise TypeError("MiniMax H3 diffusion dtype must be bfloat16 or float32")
-    attention_selection = resolve_role_attention("flux", attention_policy, attention_route_token)
+    attention_selection = resolve_role_attention(
+        attention_backend, attention_policy, attention_route_token
+    )
     effective_attention_policy = attention_selection.status.requested_policy
     try:
         handle = asset.open()

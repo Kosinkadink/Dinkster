@@ -1,11 +1,10 @@
 ## Standalone native generation
 
-- The working native SD 1.5 path today is a SamplerCustomAdvanced graph served
-  with `--comfy-root`, as recorded in
-  [maintainer issue #114](https://github.com/Kosinkadink/comfy-vibe-station/issues/114).
-  Native-only generation without a ComfyUI checkout returns when that issue
-  lands. The graph uses native checkpoint, text-encode, empty-latent, sampler,
-  decode, and image-save nodes.
+- The default SD 1.5 workflow runs natively without a ComfyUI checkout. For the
+  bare `dinkster` launcher, set `DINKSTER_COMFYUI_PYTHON` to the Python
+  environment containing PyTorch and the native inference packages. The graph
+  uses native checkpoint, text-encode, empty-latent, sampler, decode, and
+  image-save nodes.
 - Pinned core ComfyUI schemas are advertised as import metadata, including
   KSampler and CLIPTextEncode. They are not additional executable node IDs.
   Unsupported or ambiguous imports refuse with node-specific diagnostics.

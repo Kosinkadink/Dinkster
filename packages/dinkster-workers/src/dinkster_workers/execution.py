@@ -66,6 +66,7 @@ class ExecutionContext:
     attention_policy: AttentionPolicy = "auto"
     attention_route_token: AttentionRouteToken | None = None
     extension_snapshot_digest: str | None = None
+    inference_registries: object | None = None
     preview_mode: PreviewMode = "off"
     preview_animation: PreviewAnimation = "ring"
     cancelled: Callable[[], bool] = _not_cancelled

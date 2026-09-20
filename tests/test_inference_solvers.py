@@ -38,10 +38,18 @@ from dinkster_inference import (
     SolverStateEvent,
     StepCallback,
     StepEvent,
-    builtin_sampler_registry,
-    builtin_samplers,
     builtin_scheduler_registry,
     builtin_schedulers,
+    resolve_options,
+    use_sampling_environment,
+)
+from dinkster_inference.registry import RegistryError
+from dinkster_inference.sampling import run_step_begin_solver
+from dinkster_inference.schedules import offset_first_sigma_for_snr
+from dinkster_inference.spaces import FlowSigmas
+from dinkster_inference_torch._portable_solvers import (
+    builtin_sampler_registry,
+    builtin_samplers,
     ddim,
     deis,
     dpm_2_ancestral,
@@ -56,22 +64,15 @@ from dinkster_inference import (
     euler_ancestral,
     euler_ancestral_cfg_pp,
     euler_cfg_pp,
-    prepare_rk_sigmas,
-    res4lyf_rk,
     res_multistep,
     res_multistep_ancestral,
     res_multistep_ancestral_cfg_pp,
     res_multistep_cfg_pp,
-    resolve_options,
     select_builtin_sampler,
     uni_pc,
     uni_pc_bh2,
-    use_sampling_environment,
 )
-from dinkster_inference.registry import RegistryError
-from dinkster_inference.sampling import run_step_begin_solver
-from dinkster_inference.schedules import offset_first_sigma_for_snr
-from dinkster_inference.spaces import FlowSigmas
+from dinkster_inference_torch.res4lyf_rk import prepare_rk_sigmas, res4lyf_rk
 from test_inference_sampling_math import Vec
 
 GOLDENS = json.loads((Path(__file__).parent / "goldens" / "sampling_goldens.json").read_text())
@@ -1482,7 +1483,7 @@ class TestCanonicalCatalogSnapshots:
                     assert spec == other_spec
 
     def test_nested_option_spec_poisoning_stays_isolated(self) -> None:
-        from dinkster_inference.solvers import DINKSTER_EULER_ANCESTRAL
+        from dinkster_inference_torch._portable_solvers import DINKSTER_EULER_ANCESTRAL
 
         spec = DINKSTER_EULER_ANCESTRAL.options[0]
         canonical_default = spec.default
@@ -1498,9 +1499,10 @@ class TestCanonicalCatalogSnapshots:
             object.__setattr__(spec, "default", canonical_default)
 
     def test_mutated_catalog_function_refuses_loudly(self) -> None:
-        from dinkster_inference.solvers import DINKSTER_HEUN
+        from dinkster_inference_torch._portable_solvers import DINKSTER_HEUN
 
         make = DINKSTER_HEUN.make
+        assert make is not None
         canonical_code = make.__code__
 
         def attacker(_options: object) -> object:

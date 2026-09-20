@@ -138,7 +138,7 @@ def plan_component_checkpoint(
     **source_slots: WeightSource | None,
 ) -> ComponentCheckpointPlan:
     """Resolve complete declared composition contracts from component detections."""
-    from .component_catalog import default_component_registry
+    from .registries import builtin_registries
 
     sources = {role: source for role, source in source_slots.items() if source is not None}
     if checkpoint is not None:
@@ -147,7 +147,7 @@ def plan_component_checkpoint(
         if role in sources:
             raise AssemblyError(f"checkpoint source slot {role!r} was supplied twice")
         sources[role] = source
-    registry = default_component_registry() if component_registry is None else component_registry
+    registry = builtin_registries().components if component_registry is None else component_registry
     detected: dict[str, tuple[DetectedComponents, ...]] = {}
     paths: dict[str, Path] = {}
     diagnostics: list[str] = []

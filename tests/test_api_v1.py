@@ -105,6 +105,7 @@ GOLDEN_V1_SURFACE = (
     "SamplerContribution",
     "SamplerDescriptor",
     "SamplerInfo",
+    "SchedulerDescriptor",
     "SamplingCancelled",
     "SamplingExecutionContext",
     "SolverFn",

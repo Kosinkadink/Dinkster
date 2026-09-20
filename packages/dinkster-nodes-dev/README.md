@@ -1,6 +1,6 @@
 # dinkster-nodes-dev
 
-`dinkster-nodes-dev` is test and demo scaffolding, not a user-facing node pack. It
+`dinkster-nodes-dev` is an ordinary node pack for test and demo scaffolding. It
 provides observable scheduling and lightweight numpy image operations so the
 engine, value boundary, renditions, lists, and mounted write gate can be
 exercised without torch or Pillow.
@@ -19,7 +19,7 @@ numpy in addition to `dinkster-api`.
 
 ## Use
 
-`DEV_NODES` contains the dev node classes and `register_dev_types` registers
+`PACK_NODES` contains the node classes and `register_dev_types` registers
 the `dev.image` numpy value type (codec, fingerprint, metadata, renditions)
 plus the gallery's marker and shared asset/save-target types.
 `Delay` is an async passthrough used to make concurrent scheduling visible:
@@ -33,9 +33,11 @@ result = asyncio.run(Delay.execute(value="ready", seconds=0.01))
 assert result == {"value": "ready"}
 ```
 
-`dinkster-serve` imports and composes this pack into its in-process core only when
-started with `--dev`. Without that flag, `dev.*` nodes and `dev.image` are
-absent from the user node surface.
+Compose the pack explicitly with its manifest:
+
+```console
+uv run dinkster-serve --pack packages/dinkster-nodes-dev/dinkster-pack.toml
+```
 
 ## The widget/socket gallery
 
@@ -49,13 +51,13 @@ server. It is a coverage surface, not semantics: nodes are passthroughs or
 trivial producers (`dev.gallery.exotic_out` is render-only by design; its
 union/wildcard outputs cannot be wrapped at execution).
 
-Under `--dev` the composition also serves:
+The pack also serves:
 
 - `/api/choices/dev.gallery.samplers` (populated) and
   `/api/choices/dev.gallery.empty` (legally empty) for the remote combos,
   enumerated from `combo_choices`;
 - the `dev-gallery` template (`gallery_template.json`, declared in
-  `dinkster-pack.toml` and shipped through the core packs table), a starter
+  `dinkster-pack.toml`), a starter
   document instantiating every gallery node with connected and
   unconnected examples of each socket variant.
 

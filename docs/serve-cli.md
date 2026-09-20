@@ -5,12 +5,11 @@ diagnostic host, then composes the installed default packs with their exact
 artifact provenance, each configured pack, and an optional ComfyUI
 compatibility surface. First-party packs may run in-process in the shared
 Dinkster environment; each `--pack` runs in its own worker process by default.
-The working native SD 1.5 path today is a SamplerCustomAdvanced graph served
-with `--comfy-root`, as recorded in
-[maintainer issue #114](https://github.com/Kosinkadink/comfy-vibe-station/issues/114).
-Native-only generation without a ComfyUI checkout returns when that issue
-lands. The execution interpreter must have Dinkster's torch runtime installed;
-`--comfy-python` can select it separately from the host.
+The default SD 1.5 workflow runs natively without a ComfyUI checkout. Its
+execution interpreter must contain PyTorch and the native inference packages.
+The bare `dinkster` launcher inherits that interpreter from
+`DINKSTER_COMFYUI_PYTHON`; advanced `dinkster-serve` launches can select it
+separately from the host with `--comfy-python`.
 This is a complete reference for every command-line argument, grounded in
 `src/dinkster/serve.py`.
 
@@ -233,6 +232,12 @@ then the serving process's interpreter.
 Interpreter for native or compat execution. The resolution chain is: CLI value,
 then the `DINKSTER_COMFYUI_PYTHON` environment variable, then the install's
 own venv when `--comfy-root` is set, then the current Python.
+
+When `--comfy-root` is set, this is also the interpreter used to import the
+compatibility layer. Composition checks the imports named by the install's
+`requirements.txt` before starting any compatibility worker. A failure names
+the first unavailable module, the selected interpreter, and the resolution
+step that selected it.
 
 ### CPU and Apple Silicon workers
 
@@ -590,20 +595,7 @@ Default: `1`.
 Concurrent jobs. Engine admission keeps hardware safe regardless of
 this value; the limit controls how many jobs run at once.
 
-## Dev and benchmark
-
-### --dev
-
-Default: off (flag).
-
-Dev-mode diagnostics and affordances: `cache_miss` events explaining
-why a node recomputed, per-invocation boundary cost logging on
-`dinkster.dev.boundary`, and pack hot reload/removal:
-
-- `POST /api/packs/{packId}/reload` -- restart that pack's worker and
-  swap its nodes on the live surface.
-- `DELETE /api/packs/{packId}` -- retract the pack's nodes and stop its
-  worker.
+## Development and benchmark
 
 ### --watch-packs
 
@@ -611,8 +603,8 @@ Default: off (flag).
 
 Hot-reload node packs on source changes. Polls each composed pack's
 source directory; when files change and settle, restarts that pack's
-worker and swaps its nodes. Requires `--dev` (same swap and failure
-semantics as `POST /api/packs/{packId}/reload`).
+worker and swaps its nodes. Also enables cache-miss events, boundary-cost
+logging, and the pack reload/removal API.
 
 ### --benchmark
 

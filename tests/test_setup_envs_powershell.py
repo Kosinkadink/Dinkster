@@ -162,7 +162,6 @@ def test_powershell_setup_isolates_root_sync_and_prints_runnable_gates() -> None
         ".venv\\Scripts\\python.exe -m pytest -q",
         ".venv-torch\\Scripts\\python.exe -m pytest -q packages\\dinkster-inference-torch\\tests",
         ".venv-torch\\Scripts\\python.exe -m pytest -q packages\\dinkster-training-torch\\tests",
-        ".venv-gpu\\Scripts\\python.exe -m pytest -q packages\\dinkster-kernels\\tests",
         ".venv-gpu\\Scripts\\python.exe -m pytest -q packages\\dinkster-inference-torch\\tests",
         ".venv-gpu\\Scripts\\python.exe -m pytest -q packages\\dinkster-training-torch\\tests",
     ):

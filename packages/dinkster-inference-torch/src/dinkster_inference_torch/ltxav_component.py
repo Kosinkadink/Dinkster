@@ -57,12 +57,6 @@ _IDENTITY_DTYPES: Mapping[torch.dtype, DType] = {
     torch.float16: FLOAT16,
     torch.float32: FLOAT32,
 }
-_ATTENTION_ROLES: Mapping[LTXAVStandaloneComponentRole, AttentionRole] = {
-    "diffusion": "flux",
-    "gemma3_12b": "qwen",
-    "gemma4_12b": "qwen",
-    "connectors": "flux",
-}
 
 
 class LTXAVAudioCodec(torch.nn.Module):
@@ -142,6 +136,7 @@ def load_ltxav_component(
     compute_dtype: torch.dtype,
     attention_policy: AttentionPolicy = "auto",
     attention_route_token: AttentionRouteToken | None = None,
+    attention_backend: AttentionRole | None = None,
 ) -> LTXAVLoadedComponent:
     """Verify, plan, identity-check, and strict-load one component."""
     if type(asset) is not AssetRef:
@@ -153,12 +148,11 @@ def load_ltxav_component(
         raise TypeError("LTX-2 component compute dtype must be bfloat16, float16, or float32")
     if expected_role == "duration_head" and compute_dtype is not torch.float32:
         raise TypeError("LTX-2 duration head requires float32 compute")
-    attention_role = _ATTENTION_ROLES.get(expected_role)
     attention_kernel = (
         None
-        if attention_role is None
+        if attention_backend is None
         else resolve_role_attention(
-            attention_role,
+            attention_backend,
             attention_policy,
             attention_route_token,
         ).kernel

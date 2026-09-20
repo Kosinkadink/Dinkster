@@ -395,7 +395,7 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
     (checkout,) = [step for step in preparation_steps if step.get("uses") == "actions/checkout@v4"]
     assert checkout["with"] == {
         "repository": "Kosinkadink/dinkster-evidence",
-        "ref": "983b5dc3b45e74410b55908a833e7769abe63dea",
+        "ref": "16d3d1dae062266232758b07cda181ca3ad881e3",
         "path": ".evidence-source",
         "clean": True,
         "persist-credentials": False,
@@ -425,6 +425,7 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
     for command in (
         "cp -R packages/dinkster-inference-torch .evidence-source/packages/",
         "cp -R scripts/comfyui_benchmark_nodes .evidence-source/scripts/",
+        "cp tools/workflow_benchmark*.py .evidence-source/tools/",
         'echo "DINKSTER_EVIDENCE_ROOT=$GITHUB_WORKSPACE/.evidence-source" >> "$GITHUB_ENV"',
         'echo "DINKSTER_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"',
     ):

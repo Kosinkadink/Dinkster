@@ -638,6 +638,44 @@ def test_serve_official_bootstrap_requires_persistent_library(
     assert "official resolver bootstrap requires --library-root" in capsys.readouterr().err
 
 
+def test_comfy_compat_composition_failure_exits_with_one_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import serve
+
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
+    message = (
+        "ComfyUI requirement module 'einops' is unavailable in interpreter "
+        "'/selected/python' selected by --comfy-python"
+    )
+
+    def fail_specs(*_args: object, **_kwargs: object) -> None:
+        raise serve.CompositionError(message)
+
+    monkeypatch.setattr(serve, "comfy_compat_specs", fail_specs)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dinkster-serve",
+            "--library-root",
+            "",
+            "--no-default-packs",
+            "--comfy-root",
+            str(comfy_root),
+            "--comfy-python",
+            "/selected/python",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as caught:
+        serve.main()
+
+    assert str(caught.value) == message
+
+
 def test_settings_gate_unknown_is_startup_parser_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1710,6 +1748,15 @@ def test_serve_rejects_removed_single_job_model_mode(monkeypatch: pytest.MonkeyP
         serve.main()
 
 
+def test_serve_rejects_removed_dev_argument(monkeypatch: pytest.MonkeyPatch) -> None:
+    from dinkster import serve
+
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--dev"])
+    with pytest.raises(SystemExit) as exc:
+        serve.main()
+    assert exc.value.code == 2
+
+
 def test_serve_single_job_and_replica_multi_gpu_are_mutually_exclusive(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2643,7 +2690,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
             # fetch; they are still ordinary first-party packs, not core.
             async with session.get(base + "/api/nodes") as resp:
                 data = await resp.json()
-            # A normal (non --dev) server never serves dev scaffolding.
+            # A server without the development manifest never serves its scaffolding.
             assert not any(t.startswith("dev.") for t in data["nodes"])
             # All packs land as live announcements after the epoch-1 core.
             async with asyncio.timeout(60):
@@ -3239,8 +3286,13 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
             "--library-root",
             str(library_root),
             "--allow-mount-changes",
-            # save_pgm is dev scaffolding: only --dev serves it.
-            "--dev",
+            "--pack",
+            str(
+                Path(__file__).parent.parent
+                / "packages"
+                / "dinkster-nodes-dev"
+                / "dinkster-pack.toml"
+            ),
             "--event-loop-stall-threshold",
             "4",
         ],
@@ -3280,6 +3332,14 @@ def test_serve_mounted_save_end_to_end(tmp_path: Path) -> None:
                                 break
                     except aiohttp.ClientError:
                         pass
+                    await asyncio.sleep(0.05)
+
+            async with asyncio.timeout(60):
+                while True:
+                    async with session.get(base + "/api/nodes?wire=43") as resp:
+                        nodes = (await resp.json())["nodes"]
+                    if "dev.image.save_pgm" in nodes:
+                        break
                     await asyncio.sleep(0.05)
 
             # Before any grant: the save refuses with the mount's name in

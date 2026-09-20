@@ -28,7 +28,6 @@ from dinkster_inference import (
     ScheduledPrompt,
     ScheduledPromptRoute,
     StepEvent,
-    cfg_combine,
     encode_conditioning_carrier,
 )
 from dinkster_inference_torch import (
@@ -37,6 +36,7 @@ from dinkster_inference_torch import (
     payload_binding_to_tensor,
 )
 from dinkster_inference_torch import scaled_patches as scaled_module
+from dinkster_inference_torch.cfg import cfg_combine
 from golden_files import platform_golden_path
 from test_denoise import tiny_cond, tiny_latent
 from test_regional import _carrier as regional_carrier

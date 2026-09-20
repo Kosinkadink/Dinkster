@@ -37,7 +37,7 @@ from dinkster_inference import (
     PatchOverlay,
     ReconstructionRecipe,
 )
-from dinkster_workers import KNOWN_ACCELERATORS, AcceleratorError
+from dinkster_workers import KNOWN_ACCELERATORS, AcceleratorError, current_execution_context
 from dinkster_workers.accelerator import ACCELERATOR_ENV
 
 from .memory_policy import native_memory_policy
@@ -1348,9 +1348,14 @@ class NativeRuntimeHandle:
             "vae": "vae",
         }
         if declared_components is not None:
-            from dinkster_inference.component_catalog import default_component_registry
-
-            descriptor = default_component_registry().get(runtime.family.id)
+            context = current_execution_context()
+            registries = cast(
+                "Any",
+                context.inference_registries
+                if context is not None and context.inference_registries is not None
+                else importlib.import_module("dinkster_inference").builtin_registries(),
+            )
+            descriptor = registries.components.get(runtime.family.id)
             role_by_component = {
                 component: role_by_component.get(component, component)
                 for component in declared_components

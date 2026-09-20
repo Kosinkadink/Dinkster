@@ -62,6 +62,7 @@ from dinkster.compose import (
 )
 
 TESTS_DIR = Path(__file__).parent
+DEV_PACK_MANIFEST = TESTS_DIR.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
 ATTENTION_PROVIDER = TESTS_DIR / "fixtures/attention_provider"
 WORKER_ENV = {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(TESTS_DIR)))}
 DEFAULT_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES, *IMAGE_NODES]
@@ -179,8 +180,10 @@ def test_comfy_model_roots_preserve_every_category_root_with_safe_ids(
     )
     monkeypatch.setattr(
         comfy_compose,
-        "comfy_python",
-        lambda _root, _explicit=None: "/comfy/python",
+        "_comfy_python_selection",
+        lambda _root, _explicit=None: comfy_compose._ComfyPythonSelection(
+            "/comfy/python", "current Python"
+        ),
     )
     monkeypatch.setattr(
         comfy_compose,
@@ -239,8 +242,10 @@ def test_comfy_model_roots_rejects_unusable_probe_data(
     )
     monkeypatch.setattr(
         comfy_compose,
-        "comfy_python",
-        lambda _root, _explicit=None: "/comfy/python",
+        "_comfy_python_selection",
+        lambda _root, _explicit=None: comfy_compose._ComfyPythonSelection(
+            "/comfy/python", "current Python"
+        ),
     )
     monkeypatch.setattr(comfy_compose, "dinkster_pythonpath", lambda _manifest: "")
     monkeypatch.setattr(comfy_compose, "preflight_interpreter", lambda _python: (3, 12))
@@ -281,6 +286,102 @@ def test_comfy_blake3_preflight_is_exact_isolated_and_bounded(
         "check": False,
         "shell": False,
     }
+
+
+def test_comfy_python_selection_reports_resolution_step(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster.comfy_compose import _comfy_python_selection
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    monkeypatch.delenv("DINKSTER_COMFYUI_PYTHON", raising=False)
+    assert _comfy_python_selection(root, "/cli/python") == ("/cli/python", "--comfy-python")
+
+    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/env/python")
+    assert _comfy_python_selection(root) == ("/env/python", "DINKSTER_COMFYUI_PYTHON")
+
+    monkeypatch.delenv("DINKSTER_COMFYUI_PYTHON")
+    venv_python = root / "venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("")
+    assert _comfy_python_selection(root) == (
+        str(venv_python),
+        "<comfy-root>/venv/bin/python",
+    )
+
+    venv_python.unlink()
+    assert _comfy_python_selection(root) == (sys.executable, "current Python")
+
+
+@pytest.mark.parametrize("missing", [None, "einops"])
+def test_comfy_requirements_probe_with_fake_interpreter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing: str | None,
+) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    requirements = root / "requirements.txt"
+    requirements.write_text("einops\n")
+    captured: dict[str, object] = {}
+
+    def fake_run(command: object, **kwargs: object) -> SimpleNamespace:
+        captured["command"] = command
+        captured.update(kwargs)
+        return SimpleNamespace(
+            returncode=0 if missing is None else 1,
+            stdout="{}" if missing is None else json.dumps({"missing": missing}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(comfy_compose.subprocess, "run", fake_run)
+    selection = comfy_compose._ComfyPythonSelection("/fake/python", "--comfy-python")
+
+    if missing is None:
+        comfy_compose._probe_comfy_requirements(root, selection)
+    else:
+        with pytest.raises(CompositionError) as caught:
+            comfy_compose._probe_comfy_requirements(root, selection)
+        assert str(caught.value) == (
+            "ComfyUI requirement module 'einops' is unavailable in interpreter "
+            "'/fake/python' selected by --comfy-python"
+        )
+
+    command = captured.pop("command")
+    assert isinstance(command, tuple)
+    assert command[:3] == ("/fake/python", "-I", "-c")
+    assert "packages_distributions" in command[3]
+    assert command[4] == str(requirements)
+    assert captured == {
+        "capture_output": True,
+        "text": True,
+        "timeout": 60,
+        "check": False,
+        "shell": False,
+    }
+
+
+def test_comfy_requirements_probe_executes_imports(tmp_path: Path) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    requirements = root / "requirements.txt"
+    selection = comfy_compose._ComfyPythonSelection(sys.executable, "current Python")
+
+    requirements.write_text("json\n")
+    comfy_compose._probe_comfy_requirements(root, selection)
+
+    requirements.write_text("definitely-missing-comfy-requirement\n")
+    with pytest.raises(CompositionError) as caught:
+        comfy_compose._probe_comfy_requirements(root, selection)
+    assert "definitely_missing_comfy_requirement" in str(caught.value)
+    assert sys.executable in str(caught.value)
+    assert "current Python" in str(caught.value)
 
 
 @pytest.mark.parametrize("stderr", ["No module named 'blake3'", "broken native extension"])
@@ -339,7 +440,16 @@ def test_comfy_compat_specs_probe_selected_interpreter_once_with_legacy(
     legacy.mkdir()
     calls: list[str] = []
     monkeypatch.setattr(comfy_compose, "preflight_interpreter", lambda _python: (3, 12))
-    monkeypatch.setattr(comfy_compose, "_probe_comfy_blake3", calls.append)
+    monkeypatch.setattr(
+        comfy_compose,
+        "_probe_comfy_requirements",
+        lambda _root, selection: calls.append(f"requirements:{selection.interpreter}"),
+    )
+    monkeypatch.setattr(
+        comfy_compose,
+        "_probe_comfy_blake3",
+        lambda interpreter: calls.append(f"blake3:{interpreter}"),
+    )
 
     specs = comfy_compose.comfy_compat_specs(
         root,
@@ -350,7 +460,10 @@ def test_comfy_compat_specs_probe_selected_interpreter_once_with_legacy(
     assert len(specs) == 3
     assert Path(specs[0].manifest).name == "dinkster-pack.toml"
     assert specs[0].in_process is True
-    assert calls == ["/selected/comfy/python"]
+    assert calls == [
+        "requirements:/selected/comfy/python",
+        "blake3:/selected/comfy/python",
+    ]
 
 
 def write_sampling_host_manifest(directory: Path) -> Path:
@@ -632,6 +745,75 @@ def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_registry_i
         )
         with pytest.raises(CompositionError, match="requires host contract"):
             composer.order_pack_entries((spec(contract_mismatch, "mismatch"),))
+    finally:
+        asyncio.run(composer.close())
+
+
+def test_pack_registry_providers_order_consumers_and_report_conflicts(tmp_path: Path) -> None:
+    digest = "sha256:" + "9" * 64
+
+    def spec(path: Path, name: str) -> PackSpec:
+        return PackSpec(
+            path,
+            packs={name: PackInfo(display_name=name, version="1.0.0", artifact_digest=digest)},
+        )
+
+    provider = write_contract_manifest(
+        tmp_path / "provider",
+        "provider",
+        '[pack.provides.registry]\n"dinkster.samplers" = ["provider.sampler"]\n'
+        '"dinkster.model-families" = ["provider.family"]\n',
+    )
+    consumer = write_contract_manifest(
+        tmp_path / "consumer",
+        "consumer",
+        '[pack.requirements.registry]\n"dinkster.samplers" = ["provider.sampler"]\n'
+        '"dinkster.model-families" = ["provider.family"]\n',
+    )
+    composer = ServingComposer()
+    try:
+        ordered = composer.order_pack_entries(
+            (spec(consumer, "consumer"), spec(provider, "provider"))
+        )
+        assert [Path(item.manifest) for item in ordered] == [provider, consumer]
+
+        duplicate = write_contract_manifest(
+            tmp_path / "duplicate",
+            "duplicate",
+            '[pack.provides.registry]\n"dinkster.samplers" = ["provider.sampler"]\n',
+        )
+        with pytest.raises(CompositionError, match="provided by both"):
+            composer.order_pack_entries((spec(provider, "provider"), spec(duplicate, "duplicate")))
+
+        builtin_collision = write_contract_manifest(
+            tmp_path / "builtin-collision",
+            "builtin-collision",
+            '[pack.provides.registry]\n"dinkster.samplers" = ["dinkster.euler"]\n',
+        )
+        with pytest.raises(CompositionError, match="dinkster-inference/1.*builtin-collision"):
+            composer.order_pack_entries((spec(builtin_collision, "builtin-collision"),))
+
+        alpha = write_contract_manifest(
+            tmp_path / "registry-alpha",
+            "registry-alpha",
+            '[pack.provides.registry]\n"dinkster.samplers" = ["alpha.sampler"]\n'
+            '[pack.requirements.registry]\n"dinkster.schedulers" = ["beta.scheduler"]\n',
+        )
+        beta = write_contract_manifest(
+            tmp_path / "registry-beta",
+            "registry-beta",
+            '[pack.provides.registry]\n"dinkster.schedulers" = ["beta.scheduler"]\n'
+            '[pack.requirements.registry]\n"dinkster.samplers" = ["alpha.sampler"]\n',
+        )
+        with pytest.raises(
+            CompositionError,
+            match=(
+                "dependency cycle: registry-alpha -> registry-beta, registry-beta -> registry-alpha"
+            ),
+        ):
+            composer.order_pack_entries(
+                (spec(alpha, "registry-alpha"), spec(beta, "registry-beta"))
+            )
     finally:
         asyncio.run(composer.close())
 
@@ -1161,6 +1343,8 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
         module_init = module_root.parent / "__init__.py"
         if distribution_id != pack_id and module_init in tracked_paths:
             artifact_paths.add(module_init)
+        if module_root.parent.name == "dinkster_nodes_vision":
+            artifact_paths.update(path for path in tracked_paths if path.parent == sidecar_root)
         artifact_paths.update(
             sidecar_root / filename
             for filename in compose._PACK_ARTIFACT_SIDECARS
@@ -1393,6 +1577,22 @@ def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
     assert source_digest == bundled_digest
 
 
+def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Path) -> None:
+    from dinkster import compose
+
+    source = Path(__file__).parent.parent / "packages/dinkster-nodes-vision"
+    copied = shutil.copytree(source, tmp_path / source.name)
+    manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
+    module = copied / "src/dinkster_nodes_vision/hed"
+    expected = compose._installed_pack_digest(manifest, module)
+    assert expected == ("sha256:6badee4196df5ec5e7e73ea7729229921d08353b9c98c1ed3ca0c5c79d73d9af")
+    license_file = manifest.parent / "MLSD_LICENSE"
+    license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
+    license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
+
+    assert compose._installed_pack_digest(manifest, module) == expected
+
+
 def test_default_pack_refuses_version_outside_suite_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1521,15 +1721,14 @@ def test_default_suite_package_matches_managed_lock() -> None:
     }
 
 
-def test_compose_dev_adds_scaffold_nodes() -> None:
-    """dev=True composes the dev pack's scaffolding in-process alongside
-    the default packs - and ONLY dev mode does. Both surfaces attribute to core."""
-    from dinkster_nodes_dev import DEV_NODES
+def test_compose_dev_pack_adds_scaffold_nodes() -> None:
+    """The development manifest composes its complete node surface."""
+    from dinkster_nodes_dev import PACK_NODES
 
     async def scenario() -> None:
-        composition = await compose_serving(dev=True)
+        composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
-            expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(DEV_NODES))
+            expected = set(build_schemas(DEFAULT_NODES)) | set(build_schemas(PACK_NODES))
             assert set(composition.schemas) == expected
             engine = composition.make_engine(lambda event: None)
             graph = Graph(nodes={"g": GraphNode("dev.image.gradient", {"width": 8, "height": 4})})
@@ -1541,11 +1740,11 @@ def test_compose_dev_adds_scaffold_nodes() -> None:
     asyncio.run(scenario())
 
 
-def test_conformance_proof_nodes_are_dev_only_and_absent_from_production_catalogs() -> None:
-    """The canonical recorder's executable probes never become user nodes."""
+def test_conformance_proof_nodes_follow_explicit_dev_pack_composition() -> None:
+    """Conformance probes appear only when the development pack is composed."""
 
     async def scenario() -> None:
-        dev = await compose_serving(dev=True)
+        dev = await compose_serving([DEV_PACK_MANIFEST])
         try:
             assert "dev.conformance.preview" in dev.schemas
             assert "dev.conformance.cancellable" in dev.schemas
@@ -1563,16 +1762,10 @@ def test_conformance_proof_nodes_are_dev_only_and_absent_from_production_catalog
         finally:
             await production.close()
 
-        manifest = (
-            Path(__file__).parent.parent / "packages" / "dinkster-nodes-dev" / "dinkster-pack.toml"
-        )
-        manifest_composition = await compose_serving([manifest])
+        manifest_composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             assert "dev.image.gradient" in manifest_composition.schemas
-            assert not any(
-                node_type.startswith("dev.conformance.")
-                for node_type in manifest_composition.schemas
-            )
+            assert "dev.conformance.preview" in manifest_composition.schemas
         finally:
             await manifest_composition.close()
 
@@ -1584,7 +1777,7 @@ def test_compose_dev_mode(caplog: pytest.LogCaptureFixture) -> None:
     render as one structured log line per crossing."""
 
     async def scenario() -> None:
-        composition = await compose_serving(dev=True)
+        composition = await compose_serving([DEV_PACK_MANIFEST], dev=True)
         try:
             events: list[object] = []
             engine = composition.make_engine(events.append)
@@ -1626,6 +1819,7 @@ def test_composed_layered_cache_reuses_disk_then_promotes_to_memory(tmp_path: Pa
 
         async def compose():
             return await compose_serving(
+                [DEV_PACK_MANIFEST],
                 include_default_packs=False,
                 dev=True,
                 cache_mode="layered",
@@ -1675,6 +1869,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             cache_disk_budget=1024**2,
         )
         try:
+            await composer.add_pack(DEV_PACK_MANIFEST)
             events: list[EngineEvent] = []
             engine = composer.composition.make_engine(events.append)
             graph = Graph(nodes={"g": GraphNode("dev.image.gradient", {"width": 8, "height": 4})})
@@ -1683,6 +1878,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             events.clear()
 
             staged = composer.spawn_empty()
+            await staged.add_pack(DEV_PACK_MANIFEST)
             old = composer.adopt(staged)
             await old.close()
             assert isinstance(engine.cache, LayeredCache)
@@ -1690,7 +1886,7 @@ def test_full_free_clears_memory_execution_cache_but_preserves_disk(
             assert isinstance(memory, MemoryLRUCache)
             assert len(memory) == 1
 
-            (local,) = await composer.full_free("maintenance-cache")
+            local = (await composer.full_free("maintenance-cache"))[0]
             assert local["status"] == "complete"
             consumers = cast("list[dict[str, object]]", local["consumers"])
             assert consumers[0] == {
@@ -3137,6 +3333,7 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
             cache_dir=tmp_path / "execution-cache",
         )
         try:
+            await composer.add_pack(DEV_PACK_MANIFEST)
             await composer.add_pack(manifest)
             events: list[EngineEvent] = []
             engine = composer.composition.make_engine(events.append)
@@ -3155,7 +3352,9 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
             await engine.run(graph, ["load"])
             await asyncio.sleep(0.05)
 
-            local, worker = await composer.full_free("maintenance-composed")
+            results = await composer.full_free("maintenance-composed")
+            local = results[0]
+            worker = next(row for row in results[1:] if row["worker"] == "memorypack")
             assert local["status"] == "complete"
             assert worker["worker"] == "memorypack"
             assert worker["status"] == "complete"
@@ -3181,7 +3380,9 @@ def test_serving_composer_full_free_releases_live_worker_without_startup_guard(
 
             live_worker = composer._records["memorypack"].worker
             await live_worker.close()
-            local, missing = await composer.full_free("maintenance-missing")
+            results = await composer.full_free("maintenance-missing")
+            local = results[0]
+            missing = next(row for row in results[1:] if row["worker"] == "memorypack")
             assert local["status"] == "complete"
             assert missing == {
                 "worker": "memorypack",
