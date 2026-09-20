@@ -492,7 +492,7 @@ def test_model_job_runs_only_in_trusted_full_validation(
         )
         and repository == "Kosinkadink/Dinkster"
     )
-    assert job["runs-on"] == ["self-hosted", "linux", "x64", "gpu"]
+    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "cpu-golden-avx2"]
     assert job["needs"] == "validation-plan"
     for name, hosted in JOBS.items():
         if name not in {"model-tests", "model-tests-gate", "validation-plan"}:

@@ -200,12 +200,12 @@ acceptance sampling and the benchmark loader; HED, upscale and EfficientSAM;
 Depth Anything V2, DETR and RT-DETR; BiRefNet and Depth Anything V3; and SAM
 3.1. Every vision test is selected from the single
 `packages/dinkster-nodes-vision/tests` tree. All six groups may run
-concurrently on runners carrying the `gpu` label; the remaining CPU-only full
-validation jobs retain the generic Linux labels and can use RipperPC and
-LesserRipperPC. The model suites still execute with CPU Torch and the pinned
-AVX2 dispatch. `model-tests-gate` requires every group to pass. The contract
-test asserts the complete suite manifest so a suite cannot be silently omitted
-or assigned twice. Each group uses the same composite action with
+concurrently on runners carrying the `cpu-golden-avx2` label; the remaining
+CPU-only full validation jobs retain the generic Linux labels and can use
+RipperPC and LesserRipperPC. The model suites still execute with CPU Torch and
+the pinned AVX2 dispatch. `model-tests-gate` requires every group to pass. The
+contract test asserts the complete suite manifest so a suite cannot be silently
+omitted or assigned twice. Each group uses the same composite action with
 `run-model-tests: "true"` and the existing read-only identity and evidence
 deploy keys.
 

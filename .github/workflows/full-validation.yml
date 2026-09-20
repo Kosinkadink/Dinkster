@@ -233,7 +233,7 @@ jobs:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true' && github.repository == 'Kosinkadink/Dinkster'
     name: model-tests (${{ matrix.name }})
-    runs-on: [self-hosted, linux, x64, gpu]
+    runs-on: [self-hosted, Linux, X64, cpu-golden-avx2]
     permissions:
       contents: read
     strategy:
