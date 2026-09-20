@@ -7808,6 +7808,7 @@ def test_registry_runtime_threads_identity_and_enables_compute_following_storage
 ) -> None:
     arm = _native_arm()
     registry = object()
+    family_registry = object()
     digest = "sha256:" + "a" * 64
     captured: dict[str, object] = {}
     inference = SimpleNamespace(load_safetensors_header=lambda path: ("header", path))
@@ -7834,6 +7835,11 @@ def test_registry_runtime_threads_identity_and_enables_compute_following_storage
         "_sampler_registry",
         lambda _inference, _digest: (registry, ("proof_a",), digest),
     )
+    monkeypatch.setattr(
+        arm,
+        "_inference_registries",
+        lambda *_args: SimpleNamespace(families=family_registry),
+    )
 
     checkpoint_path = Path("checkpoint.safetensors")
     assert arm._load_runtime(checkpoint_path, "expected", False, digest) == "runtime"
@@ -7843,6 +7849,7 @@ def test_registry_runtime_threads_identity_and_enables_compute_following_storage
         "storage_dtype_follows_compute": True,
         "fp8_matmul": False,
         "sampler_registry": registry,
+        "family_registry": family_registry,
         "registry_token": digest,
         "extension_behavior_hash": "a" * 64,
     }
@@ -7855,7 +7862,6 @@ def test_load_runtime_passes_exact_sorted_split_source_kwargs(
     arm = _native_arm()
     captured: dict[str, object] = {}
     inference = SimpleNamespace(
-        builtin_sampler_registry=lambda: object(),
         load_safetensors_header=lambda path: ("header", path),
     )
     real_import = importlib.import_module
@@ -7879,6 +7885,16 @@ def test_load_runtime_passes_exact_sorted_split_source_kwargs(
         ),
     )
     paths = {role: Path(f"{role}.safetensors") for role in reversed(roles)}
+    family_registry = object()
+    sampler_registry = object()
+    monkeypatch.setattr(
+        arm,
+        "_inference_registries",
+        lambda *_args: SimpleNamespace(
+            families=family_registry,
+            samplers=sampler_registry,
+        ),
+    )
 
     assert arm._load_runtime(paths, "expected", True) == "runtime"
     expected_roles = tuple(sorted(roles))
@@ -7887,12 +7903,14 @@ def test_load_runtime_passes_exact_sorted_split_source_kwargs(
         "expected_identity",
         "storage_dtype_follows_compute",
         "fp8_matmul",
+        "family_registry",
     )
     for role in expected_roles:
         assert captured[role] == ("header", paths[role])
     assert captured["expected_identity"] == "expected"
     assert captured["storage_dtype_follows_compute"] is True
     assert captured["fp8_matmul"] is True
+    assert captured["family_registry"] is family_registry
 
 
 @pytest.mark.parametrize("has_guidance", [False, True])
@@ -7901,6 +7919,7 @@ def test_load_runtime_only_passes_guidance_executor_for_guidance_generation(
 ) -> None:
     arm = _native_arm()
     registry = object()
+    family_registry = object()
     digest = "sha256:" + "b" * 64
     contribution = object()
     generation = SimpleNamespace(
@@ -7934,6 +7953,11 @@ def test_load_runtime_only_passes_guidance_executor_for_guidance_generation(
     resolved = Path("checkpoint.resolved.safetensors")
     monkeypatch.setattr(arm, "resolve_weight_source", lambda _path: resolved)
     monkeypatch.setattr(arm, "_sampler_registry", lambda *_args: (registry, ("proof",), digest))
+    monkeypatch.setattr(
+        arm,
+        "_inference_registries",
+        lambda *_args: SimpleNamespace(families=family_registry),
+    )
     checkpoint_path = Path("checkpoint.safetensors")
     assert arm._load_runtime(checkpoint_path, "expected", False, digest) == "runtime"
     expected = {
@@ -7942,6 +7966,7 @@ def test_load_runtime_only_passes_guidance_executor_for_guidance_generation(
         "storage_dtype_follows_compute": True,
         "fp8_matmul": False,
         "sampler_registry": registry,
+        "family_registry": family_registry,
         "registry_token": digest,
         "extension_behavior_hash": "b" * 64,
     }
