@@ -65,8 +65,8 @@ defaults:
 
 ```json
 {
-  "downloadsEnabled": true,
-  "seedingEnabled": true,
+  "downloadsEnabled": false,
+  "seedingEnabled": false,
   "scope": "lan-and-internet",
   "internetUploadBytesPerSecond": 5242880,
   "internetDownloadBytesPerSecond": 0,

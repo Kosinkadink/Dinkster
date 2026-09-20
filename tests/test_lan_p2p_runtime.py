@@ -1139,7 +1139,10 @@ def test_controller_maps_trusted_resolver_snapshot_to_global_download_and_tombst
         )
         manager = Manager()
         controller._manager = cast("P2PSidecarManager", manager)
-        controller._settings = default_p2p_settings()
+        controller._settings = {
+            **default_p2p_settings(),
+            "downloadsEnabled": True,
+        }
 
         await controller.reconcile()
         assert manager.reconciliations == [()]

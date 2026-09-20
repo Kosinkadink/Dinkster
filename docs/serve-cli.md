@@ -829,7 +829,7 @@ both flags false. Bootstrap never changes P2P settings, saved opt-outs,
 ### --disable-p2p
 
 Disable peer-to-peer downloads and background seeding at startup. Fresh settings
-otherwise enable both on LAN and Internet; existing saved opt-outs are preserved.
+leave both off; existing saved choices are preserved.
 This override does not modify saved settings or grant settings-write access.
 
 ### --allow-settings-changes

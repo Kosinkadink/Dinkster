@@ -111,6 +111,7 @@ def _peer(
 def _global_settings(**changes: object) -> dict[str, object]:
     return {
         **default_p2p_settings(),
+        "downloadsEnabled": True,
         "seedingEnabled": True,
         "scope": "lan-and-internet",
         **changes,

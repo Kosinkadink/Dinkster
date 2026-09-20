@@ -35,8 +35,8 @@ class P2PSettingsError(ValueError):
 
 def default_p2p_settings() -> dict[str, object]:
     return {
-        "downloadsEnabled": True,
-        "seedingEnabled": True,
+        "downloadsEnabled": False,
+        "seedingEnabled": False,
         "scope": "lan-and-internet",
         "internetUploadBytesPerSecond": 5_242_880,
         "internetDownloadBytesPerSecond": 0,
