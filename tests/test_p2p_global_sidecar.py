@@ -412,6 +412,24 @@ def test_global_seed_surfaces_unavailable_change_token_at_final_admission(
         cast(Any, controller)._add(lease, ())
 
 
+def test_global_seed_manager_surfaces_unavailable_change_token(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    lease = _seed_lease(tmp_path)
+    manager = P2PSidecarManager(vault_root=tmp_path / "vault")
+
+    def fail_mapping(*_args: object, **_kwargs: object) -> P2PLocalFileMapping:
+        raise OSError("USN change token unavailable")
+
+    monkeypatch.setattr(AssetVault, "verify_p2p_local_file", fail_mapping)
+    with pytest.raises(
+        P2PManagerError,
+        match="global seed mapping is not safe and current: USN change token unavailable",
+    ):
+        cast(Any, manager)._verify_global_seed(lease)
+
+
 def test_six_hour_limit_and_durable_ratio_budget_stop_global_announcement(tmp_path: Path) -> None:
     overlong = _seed_lease(tmp_path, expires_at=time.time() + MAX_GLOBAL_LEASE_SECONDS + 60)
     rejecting = SidecarRuntime(
