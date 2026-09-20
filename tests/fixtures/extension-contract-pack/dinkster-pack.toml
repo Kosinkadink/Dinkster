@@ -1,15 +1,15 @@
 [pack]
 name = "dinkster-extension-contract-fixture"
-namespaces = ["dev"]
-requires = ["numpy>=1.26"]
+namespaces = ["fixture"]
 
 [pack.contracts]
 host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
 
 [pack.entry]
-nodes = "dinkster_nodes_dev:EXTENSION_CONTRACT_NODES"
-types = "dinkster_nodes_dev:register_dev_types"
+nodes = "extension_contract_pack:NODES"
+
+[pack.sandbox]
 
 [pack.extension]
 privileges = ["schema", "server", "frontend"]
@@ -18,19 +18,19 @@ capabilities = ["routes"]
 [[pack.extension.routes]]
 id = "extension-contract"
 method = "GET"
-handler = "dinkster_nodes_dev:extension_contract_policy"
+handler = "extension_contract_pack:route"
 request = {}
 response = { message = "string" }
 
 [[pack.extension.events]]
-name = "dev.extension-contract.executed"
+name = "fixture.extension-contract.executed"
 payload = { height = "integer", mean = "number", width = "integer" }
 
 [[pack.extension.frontend-modules]]
 id = "dinkster-extension-contract-fixture.frontend"
-module = "./src/dinkster_nodes_dev/extension-contract.js"
+module = "./frontend.js"
 privileges = ["app-workflow", "event-consumer"]
 contributions = [
-  { id = "dinkster-extension-contract-fixture.event", kind = "eventConsumer", event = "dev.extension-contract.executed" },
+  { id = "dinkster-extension-contract-fixture.event", kind = "eventConsumer", event = "fixture.extension-contract.executed" },
   { id = "dinkster-extension-contract-fixture.status", kind = "hostUi" },
 ]

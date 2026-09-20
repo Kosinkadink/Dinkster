@@ -89,7 +89,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-native/src/dinkster_native/native_arm.py",
-      "line": 16713,
+      "line": 15906,
       "column": 26,
       "issue": 120
     },
@@ -97,7 +97,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-native/src/dinkster_native/native_arm.py",
-      "line": 18862,
+      "line": 18055,
       "column": 30,
       "issue": 120
     },
@@ -129,7 +129,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 1986,
+      "line": 1929,
       "column": 59,
       "issue": 120
     },
@@ -137,7 +137,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 2544,
+      "line": 2487,
       "column": 32,
       "issue": 120
     },
@@ -145,7 +145,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 4491,
+      "line": 4433,
       "column": 28,
       "issue": 120
     },

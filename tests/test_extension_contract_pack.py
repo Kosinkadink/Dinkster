@@ -11,12 +11,12 @@ from pathlib import Path
 
 import aiohttp
 import pytest
-from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+from dinkster_graph import Graph, GraphNode, graph_to_wire
 
 ROOT = Path(__file__).parent.parent
-PACK = ROOT / "packages" / "dinkster-nodes-dev" / "extension-contract-pack.toml"
+PACK = ROOT / "tests" / "fixtures" / "extension-contract-pack" / "dinkster-pack.toml"
 PACK_ID = "dinkster-extension-contract-fixture"
-EVENT = "dev.extension-contract.executed"
+EVENT = "fixture.extension-contract.executed"
 ROUTE = f"/api/extensions/{PACK_ID}/routes/extension-contract"
 
 
@@ -45,7 +45,13 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
             str(PACK),
         ],
         cwd=tmp_path,
-        env={**os.environ, "DINKSTER_SERVING_PYTHON": sys.executable},
+        env={
+            **os.environ,
+            "DINKSTER_SERVING_PYTHON": sys.executable,
+            "PYTHONPATH": os.pathsep.join(
+                filter(None, (str(PACK.parent), os.environ.get("PYTHONPATH")))
+            ),
+        },
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -61,8 +67,7 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
                         async with session.get(base + "/api/nodes?wire=43") as response:
                             catalog = await response.json()
                         if (
-                            "dev.image.gradient" in catalog.get("nodes", {})
-                            and "dev.extension.contract" in catalog["nodes"]
+                            "fixture.extension.contract" in catalog.get("nodes", {})
                             and "composing" not in catalog
                         ):
                             break
@@ -99,9 +104,8 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
             async with session.ws_connect(base + "/api/events?clientId=extension-contract") as ws:
                 graph = Graph(
                     nodes={
-                        "gradient": GraphNode("dev.image.gradient", {"width": 13, "height": 7}),
                         "proof": GraphNode(
-                            "dev.extension.contract", {"image": Link("gradient", "image")}
+                            "fixture.extension.contract", {"width": 13, "height": 7}
                         ),
                     }
                 )

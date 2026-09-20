@@ -64,7 +64,7 @@ resolution (not model weights or coverage inputs), it runs
 path-based unit subset:
 
 - `tests/test_extension_contract_pack.py`: a real CPU server composed with only
-  the ordinary extension fixture pack, proving its custom value, typed route,
+  the ordinary extension fixture pack, proving its custom node, typed route,
   typed event, frontend snapshot module, and execution event end to end.
 - `tests/test_extension_factory_guard.py`: exact registry-factory,
   assembly-builder, and descriptor-catalog sites with separate non-increasing

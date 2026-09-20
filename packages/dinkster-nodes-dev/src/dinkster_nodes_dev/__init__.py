@@ -9,12 +9,6 @@ with ``--pack`` when these nodes are needed.
 from dinkster_api.v1 import TypeRegistry
 
 from .conformance import CONFORMANCE_NODES
-from .extension_contract import (
-    CONTRACT_EVENT_NAME,
-    EXTENSION_CONTRACT_NODES,
-    ExtensionContractProof,
-    extension_contract_policy,
-)
 from .gallery import (
     GALLERY_NODES,
     GalleryAssets,
@@ -65,13 +59,10 @@ def register_dev_types(registry: TypeRegistry) -> None:
 __all__ = [
     "DEV_IMAGE",
     "CONFORMANCE_NODES",
-    "CONTRACT_EVENT_NAME",
-    "EXTENSION_CONTRACT_NODES",
     "GALLERY_NODES",
     "PACK_NODES",
     "BlendImages",
     "Delay",
-    "ExtensionContractProof",
     "GalleryAssets",
     "GalleryExoticOut",
     "GalleryLists",
@@ -86,7 +77,6 @@ __all__ = [
     "InvertImage",
     "SaveImagePGM",
     "combo_choices",
-    "extension_contract_policy",
     "register_dev_types",
     "register_gallery_types",
 ]

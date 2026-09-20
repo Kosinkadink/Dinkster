@@ -12,8 +12,8 @@ export const frontendExtension = {
           { kind: 'status', key: 'route', tone: routeMessage.endsWith('ready') ? 'success' : 'neutral', text: routeMessage },
           { kind: 'status', key: 'event', live: 'polite', tone: latest ? 'success' : 'neutral',
             text: latest
-              ? `Custom dev.image execution: ${latest.data.width} x ${latest.data.height} (mean ${latest.data.mean.toFixed(3)})`
-              : 'Waiting for custom dev.image execution' },
+              ? `Custom fixture execution: ${latest.data.width} x ${latest.data.height} (mean ${latest.data.mean.toFixed(3)})`
+              : 'Waiting for custom fixture execution' },
         ],
       },
     }), 0, 'Extension contract proof');
