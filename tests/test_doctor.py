@@ -1026,6 +1026,31 @@ def test_broken_entry_is_a_finding_not_a_crash(tmp_path: Path) -> None:
     assert "kaboom" in unresolvable[0].message
 
 
+@pytest.mark.parametrize(
+    ("types_entry", "source"),
+    [
+        ("healthy_nodes:not_callable", HEALTHY_NODES + "\nnot_callable = 42\n"),
+        (
+            "healthy_nodes:register_broken_types",
+            HEALTHY_NODES
+            + "\ndef register_broken_types(registry):\n    raise RuntimeError('broken types')\n",
+        ),
+    ],
+)
+def test_types_entry_failures_are_actionable(tmp_path: Path, types_entry: str, source: str) -> None:
+    manifest_text = HEALTHY_MANIFEST.replace(
+        'types = "healthy_nodes:register_types"', f'types = "{types_entry}"'
+    )
+    manifest = write_pack(tmp_path / "broken-types", manifest_text, "healthy_nodes", source)
+
+    report = diagnose(manifest)
+
+    failed = [finding for finding in report.findings if finding.code == "entry.types-failed"]
+    assert len(failed) == 1
+    assert failed[0].severity == "error"
+    assert failed[0].fix
+
+
 @pytest.mark.parametrize("scope", EXTENSION_SCOPES)
 def test_every_extension_entry_scope_must_resolve(tmp_path: Path, scope: str) -> None:
     valid_manifest_text = HEALTHY_MANIFEST + (

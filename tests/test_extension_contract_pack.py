@@ -11,7 +11,7 @@ from pathlib import Path
 
 import aiohttp
 import pytest
-from dinkster_graph import Graph, GraphNode, graph_to_wire
+from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
 
 ROOT = Path(__file__).parent.parent
 PACK = ROOT / "tests" / "fixtures" / "extension-contract-pack" / "dinkster-pack.toml"
@@ -68,6 +68,7 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
                             catalog = await response.json()
                         if (
                             "fixture.extension.contract" in catalog.get("nodes", {})
+                            and "fixture.extension.value" in catalog.get("nodes", {})
                             and "composing" not in catalog
                         ):
                             break
@@ -104,8 +105,10 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
             async with session.ws_connect(base + "/api/events?clientId=extension-contract") as ws:
                 graph = Graph(
                     nodes={
+                        "value": GraphNode("fixture.extension.value", {"width": 13, "height": 7}),
                         "proof": GraphNode(
-                            "fixture.extension.contract", {"width": 13, "height": 7}
+                            "fixture.extension.contract",
+                            {"sample": Link("value", "sample")},
                         ),
                     }
                 )
