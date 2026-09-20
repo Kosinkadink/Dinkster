@@ -16,5 +16,6 @@
   { "kind": "workflowImporter", "implemented": false },
   { "kind": "editor", "implemented": true },
   { "kind": "editorBinding", "implemented": true },
-  { "kind": "panel", "implemented": true }
+  { "kind": "panel", "implemented": true },
+  { "kind": "virtualNode", "implemented": true }
 ]
