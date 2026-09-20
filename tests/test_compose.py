@@ -57,7 +57,6 @@ from dinkster.compose import (
     compose_serving,
     default_pack_spec,
     default_pack_specs,
-    openai_generation_pack_spec,
     resolve_manifest_path,
 )
 
@@ -1306,7 +1305,7 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
         ),
         (
             "dinkster-nodes-remote",
-            "sha256:90d9f773f7711972cbb8d0465013d86470bf963ab2a94da2566a0863f31f09cd",
+            "sha256:21e7bf193ff9c19c964b8f1897864da8fc309398ee4f7d1ab77ba9d644faf15e",
         ),
     ],
 )
@@ -2387,66 +2386,6 @@ def test_pack_spec_validates_aimdo_mode(tmp_path: Path) -> None:
         PackSpec(manifest, execution_config={"": "value"})
 
 
-def test_openai_pack_scopes_secrets_and_hashes_only_execution_behavior() -> None:
-    secret = "not-for-diagnostics"
-    first = openai_generation_pack_spec(
-        base_url="https://api.example.test/v1",
-        model="model-a",
-        api_key=secret,
-        compatibility="openai",
-        stream=True,
-        timeout_s=30.0,
-    )
-    other_key = openai_generation_pack_spec(
-        base_url="https://api.example.test/v1",
-        model="model-a",
-        api_key="other-secret",
-        compatibility="openai",
-        stream=True,
-        timeout_s=30.0,
-    )
-    other_model = openai_generation_pack_spec(
-        base_url="https://api.example.test/v1",
-        model="model-b",
-        api_key=secret,
-        compatibility="openai",
-        stream=True,
-        timeout_s=30.0,
-    )
-    assert first.env["DINKSTER_OPENAI_API_KEY"] == secret
-    assert secret not in repr(first)
-    assert secret not in repr(first.execution_config)
-    manifest = load_manifest(first.manifest)
-    composer = ServingComposer()
-    assert first.packs is not None
-    assert other_key.packs is not None
-    assert other_model.packs is not None
-    first_identity = composer._execution_identity(manifest, first.packs, first)
-    assert first_identity == composer._execution_identity(manifest, other_key.packs, other_key)
-    assert first_identity != composer._execution_identity(manifest, other_model.packs, other_model)
-
-
-def test_openai_pack_refuses_invalid_configuration_before_launch() -> None:
-    with pytest.raises(ValueError, match="must not contain credentials"):
-        openai_generation_pack_spec(
-            base_url="https://user:secret@example.test/v1",
-            model="model",
-            api_key="",
-            compatibility="openai",
-            stream=True,
-            timeout_s=30.0,
-        )
-    with pytest.raises(ValueError, match="API key must be a string"):
-        openai_generation_pack_spec(
-            base_url="https://example.test/v1",
-            model="model",
-            api_key=None,  # type: ignore[arg-type]
-            compatibility="openai",
-            stream=True,
-            timeout_s=30.0,
-        )
-
-
 def test_pack_spec_validates_single_job_mode(tmp_path: Path) -> None:
     from dinkster.compose import PackSpec
 
@@ -2851,7 +2790,6 @@ def test_serving_composer_starts_ordered_cuda_replica_workers(
 @pytest.mark.usefixtures("unrestricted_cuda_devices")
 def test_serving_composer_sets_pure_ulysses_sequence_geometry(tmp_path: Path) -> None:
     from dinkster_values import TypeRegistry
-    from dinkster_workers import load_manifest
 
     from dinkster.compose import PackSpec, ServingComposer, _SingleJobWorkerPool
 

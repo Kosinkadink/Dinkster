@@ -18,7 +18,7 @@ by a family runtime.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Literal, Protocol, cast, overload
 
@@ -44,6 +44,7 @@ from dinkster_inference import (
     PreparedMultiStreamConditioning,
     Registry,
     SamplerDescriptor,
+    SamplingDescriptor,
     SamplingExecutionContext,
     SamplingGuidance,
     SamplingSegment,
@@ -528,6 +529,11 @@ class SamplingAdapterContext:
     inpaint: object | None
     context_windows: ContextWindowsSpec | None
     options: Mapping[str, object]
+    inputs: SamplingExecutionInputs | None = None
+    sampler: SamplerDescriptor[Any] | None = None
+    request: CustomSamplingRequest[torch.Tensor] | None = None
+    schedule: SamplingSchedule | None = None
+    plan: SamplingGuidancePlan | None = None
 
 
 class SamplingLatentAdapter(Protocol):
@@ -605,7 +611,7 @@ class SingleStreamLatentAdapter:
 
 
 class SamplingDenoiserAdapter(Protocol):
-    evaluator_identity: str
+    evaluator_identity: str | Callable[[GuidanceRole], str]
     evaluate_conditioning_batch: Callable[
         [torch.Tensor, float, tuple[object, ...]],
         tuple[torch.Tensor, ...],
@@ -624,12 +630,23 @@ class SamplingDenoiserAdapter(Protocol):
 
 
 @dataclass(frozen=True)
+class SamplingDenoiserExecution:
+    evaluator: SamplingDenoiserAdapter
+    solver_options: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
+    sampling: SamplingDescriptor | None = None
+    on_step_begin: Callable[[int], None] | None = None
+
+
+@dataclass(frozen=True)
 class SamplingExecutionRegistration:
     latent: SamplingLatentAdapter
-    denoiser: Callable[[object, torch.dtype, SamplingAdapterContext], SamplingDenoiserAdapter]
+    denoiser: Callable[[object, torch.dtype, SamplingAdapterContext], SamplingDenoiserExecution]
     device: Callable[[object], torch.device | str | None]
     compute_dtype: Callable[[object], torch.dtype]
     flow: bool
+    prepare_guidance: (
+        Callable[[object, SamplingExecutionInputs], SamplingExecutionInputs] | None
+    ) = None
 
 
 class SamplingExecutionRuntime(Protocol):
@@ -832,15 +849,36 @@ def sampling_execution(
         seed=seed,
         device=device,
     )
+    if registration.prepare_guidance is not None:
+        inputs = registration.prepare_guidance(owner, inputs)
     executor = owner._guidance  # pyright: ignore[reportPrivateUsage]
     plan = compile_guidance_plan(inputs.cond, inputs.cfg, sampler, executor)
-    adapter = registration.denoiser(owner, compute_dtype, adapter_context)
+    adapter_context = replace(
+        adapter_context,
+        inputs=inputs,
+        sampler=sampler,
+        request=request,
+        schedule=schedule,
+        plan=plan,
+    )
+    denoiser_execution = registration.denoiser(owner, compute_dtype, adapter_context)
+    adapter = denoiser_execution.evaluator
+    evaluator_identity = adapter.evaluator_identity
+    resolved_evaluator_identity: Callable[[GuidanceRole], str]
+    if isinstance(evaluator_identity, str):
+        identity = evaluator_identity
+
+        def resolved_evaluator_identity(_role: GuidanceRole, /) -> str:
+            return identity
+
+    else:
+        resolved_evaluator_identity = evaluator_identity
     evaluation = ConditioningEvaluation(
         adapter.prepare_conditioning,
         adapter.evaluate_conditioning,
         adapter.batchable,
         adapter.evaluate_conditioning_batch,
-        evaluator_identity=lambda _role: adapter.evaluator_identity,
+        evaluator_identity=resolved_evaluator_identity,
         standard_activation_memory_factor=owner.family.memory_factor,
     )
     report_state: SamplingStateCallback | None
@@ -863,18 +901,20 @@ def sampling_execution(
     )
     output = run_denoise(
         denoiser,
-        request.build_solver(),
+        request.build_solver(**cast("Any", denoiser_execution.solver_options)),
         latent=inputs.latent,
         noise=inputs.noise,
         sigmas=schedule.sigmas,
         initial_sigma=schedule.initial_sigma,
         family=owner.family,
+        sampling=denoiser_execution.sampling,
         seed=seed,
         noise_kind=sampler.noise,
         noise_sampler=noise_sampler,
         percent_to_sigma=space.percent_to_sigma,
         device=device,
         on_step=on_step,
+        on_step_begin=denoiser_execution.on_step_begin,
         on_state=report_state,
         denoise_mask=inputs.denoise_mask,
     )
