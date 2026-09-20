@@ -639,6 +639,44 @@ def test_serve_official_bootstrap_requires_persistent_library(
     assert "official resolver bootstrap requires --library-root" in capsys.readouterr().err
 
 
+def test_comfy_compat_composition_failure_exits_with_one_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import serve
+
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
+    message = (
+        "ComfyUI requirement module 'einops' is unavailable in interpreter "
+        "'/selected/python' selected by --comfy-python"
+    )
+
+    def fail_specs(*_args: object, **_kwargs: object) -> None:
+        raise serve.CompositionError(message)
+
+    monkeypatch.setattr(serve, "comfy_compat_specs", fail_specs)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dinkster-serve",
+            "--library-root",
+            "",
+            "--no-default-packs",
+            "--comfy-root",
+            str(comfy_root),
+            "--comfy-python",
+            "/selected/python",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as caught:
+        serve.main()
+
+    assert str(caught.value) == message
+
+
 def test_settings_gate_unknown_is_startup_parser_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
