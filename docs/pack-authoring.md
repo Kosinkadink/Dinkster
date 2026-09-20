@@ -738,8 +738,8 @@ uv run dinkster-serve --pack path/to/dinkster-pack.toml   # isolated worker, rep
 ```
 
 Each `--pack` runs in its own process and attributes its nodes on
-`/api/nodes`. Add `--dev` for boundary-cost diagnostics and cache-miss
-explanations while developing.
+`/api/nodes`. Add `--watch-packs` for live reload, boundary-cost diagnostics,
+and cache-miss explanations while developing.
 
 Test your nodes directly - they are plain classmethods over plain values:
 

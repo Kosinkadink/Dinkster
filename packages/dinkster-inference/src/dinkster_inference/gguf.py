@@ -1029,13 +1029,8 @@ class GGUFWeightSource:
     the device without overcommit) and is normalized into the route
     facts. All three modes decode the same encoded blocks with the
     same math, so ``speed`` and ``balanced`` outputs are bit-identical.
-    ``memory`` additionally binds the fused packed-domain matmul by
-    default on capable CUDA hosts (recorded as
-    ``gguf.route.fused_matmul=auto``): eligible linear forwards at or
-    below per-layout token thresholds execute without materializing
-    the decoded weight and are value-close, not bit-identical, to the
-    decode route; ineligible layers, CPU execution, and larger token
-    counts keep the bit-identical decode route."""
+    ``memory`` decodes on each forward and remains bit-identical to the
+    reference decode route."""
 
     source: GGUFSource
     component_map: GGUFComponentMap
@@ -1124,7 +1119,6 @@ class GGUFWeightSource:
                 "gguf.route.device_capability=generic",
                 "gguf.route.compute_dtype=float32",
                 "gguf.route.accumulation_dtype=float32",
-                "gguf.route.fused_matmul=auto",
             )
         else:
             budget = "auto" if decoded_cache_budget is None else str(decoded_cache_budget)

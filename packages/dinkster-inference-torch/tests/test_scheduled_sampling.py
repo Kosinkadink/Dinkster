@@ -39,7 +39,6 @@ from dinkster_inference import (
     StepEvent,
     TokenLayoutDescriptor,
     TokenSegmentDescriptor,
-    cfg_combine,
     encode_conditioning_carrier,
 )
 from dinkster_inference_torch import (
@@ -57,6 +56,7 @@ from dinkster_inference_torch import (
     torch_scheduler_registry,
 )
 from dinkster_inference_torch import scheduled_sampling as scheduled_module
+from dinkster_inference_torch.cfg import cfg_combine
 from dinkster_inference_torch.denoise import DenoiseError
 from dinkster_inference_torch.scheduled import _carrier
 from dinkster_inference_torch.scheduled_sampling import (
