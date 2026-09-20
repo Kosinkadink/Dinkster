@@ -81,7 +81,19 @@ def _detector(
 def control_component_descriptors() -> tuple[ComponentDescriptor, ...]:
     return tuple(
         ControlComponentDescriptor(
-            family=replace(family, id=identifier, display_name=title, aliases=()),
+            family=replace(
+                family,
+                id=identifier,
+                display_name=title,
+                aliases=(),
+                engine=replace(
+                    family.engine,
+                    attention_backends=(
+                        (("controlnet", "unet"),) if role == "controlnet_union" else ()
+                    ),
+                    attention_requires_route=role == "controlnet_union",
+                ),
+            ),
             detector=_detector(normalize, role),
             roles=("controlnet",),
             text_encoder_roles=(),
@@ -91,8 +103,6 @@ def control_component_descriptors() -> tuple[ComponentDescriptor, ...]:
             default_diffusion_dtype=FLOAT16,
             requires_base=requires_base,
             hint_channels=hint_channels,
-            attention_roles=(("controlnet",) if role == "controlnet_union" else ()),
-            attention_requires_route=role == "controlnet_union",
         )
         for family, identifier, title, normalize, role, loader, requires_base, hint_channels in (
             (

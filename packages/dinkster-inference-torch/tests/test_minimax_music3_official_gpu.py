@@ -123,6 +123,7 @@ def _load_official(path_key: str) -> tuple[Any, Any]:
         expected_role=role,
         expected_identity=identity,
         compute_dtype=compute_dtype,
+        attention_backend=cast("Any", {"diffusion": "flux", "text": "qwen"}.get(role)),
     )
     assert loaded.plan == plan
     assert loaded.runtime_identity == identity

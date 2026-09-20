@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import math
 import wave
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import dinkster_training_torch.export as training_export
+import dinkster_training_torch.trainer as training_trainer
 import pytest
 import torch
 from dinkster_assets import digest_bytes
@@ -28,7 +31,11 @@ from dinkster_training_torch import (
 )
 from dinkster_training_torch.attachment import resolve_lora_targets
 from dinkster_training_torch.export import LoraExportSource
-from dinkster_training_torch.trainer import MiniMaxMusic3RandomnessPolicy
+from dinkster_training_torch.trainer import (
+    MiniMaxMusic3RandomnessPolicy,
+    default_minimax_music3_data_source_factory,
+    default_minimax_music3_model_factory,
+)
 
 _NATIVE_IDENTITY = "native:dinkster.minimax_music3:" + "1" * 64
 
@@ -313,6 +320,48 @@ def test_config_round_trip_and_identity_exclude_runtime_locations(tmp_path: Path
             config,
             dataset=replace(config.dataset, text_compute_dtype="bfloat16"),
         )
+
+
+def test_production_factories_forward_registered_attention_backends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = MiniMaxMusic3TrainingConfig.from_mapping(_config_mapping(tmp_path))
+    model = _model_factory(config)
+    calls: list[tuple[str, str | None]] = []
+
+    def load_component(
+        path: Path,
+        *,
+        asset: object,
+        expected_role: str,
+        expected_identity: str,
+        compute_dtype: torch.dtype,
+        attention_backend: str | None = None,
+    ) -> object:
+        del path, asset, expected_identity, compute_dtype
+        calls.append((expected_role, attention_backend))
+        return SimpleNamespace(module=model, tokenizer=object())
+
+    marker = object()
+
+    def dataset_source(
+        settings: object,
+        dav_factory: object,
+        rvq_factory: object,
+        text_factory: Callable[[], object],
+        *,
+        device: torch.device,
+    ) -> object:
+        del settings, dav_factory, rvq_factory, device
+        text_factory()
+        return marker
+
+    monkeypatch.setattr(training_trainer, "load_minimax_music3_component", load_component)
+    monkeypatch.setattr(training_trainer, "MiniMaxMusic3DatasetSource", dataset_source)
+
+    assert default_minimax_music3_model_factory(config) is model
+    assert default_minimax_music3_data_source_factory(config) is marker
+    assert calls == [("diffusion", "flux"), ("text", "qwen")]
 
 
 def test_config_rejects_recipe_artifact_and_dataset_drift(tmp_path: Path) -> None:
