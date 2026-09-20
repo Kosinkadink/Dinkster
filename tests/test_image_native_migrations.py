@@ -26,8 +26,8 @@ from dinkster_schema import (
     validate_replacement_references,
 )
 
-# Generated from commit 681f529b5eb80554d28ef836016bf78a7c4654f3 at schema wire 26.
-FIXTURE = Path(__file__).parent / "fixtures" / "image_native_v1_wire26.json.zlib.b85"
+# Generated from commit 681f529b5eb80554d28ef836016bf78a7c4654f3.
+FIXTURE = Path(__file__).parent / "fixtures" / "image_native_v1.json.zlib.b85"
 FIXTURE_SHA256 = "5cec48d215446308d1ae6c857e1cd87edff9de7fbd218a2dad403fe5bfcda52f"
 
 CASE_COUNTS = {

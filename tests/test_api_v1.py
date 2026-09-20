@@ -167,7 +167,6 @@ GOLDEN_V1_SURFACE = (
     "ValueTransform",
     "WidgetRepresentation",
     "WidgetRepresentations",
-    "SCHEMA_WIRE_SERVE_VERSIONS",
     "SCHEMA_WIRE_VERSION",
     "output_descriptor_entries",
     "schema_from_wire",

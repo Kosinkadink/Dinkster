@@ -427,7 +427,7 @@ def test_exact_primary_and_local_route_matrix(tmp_path: Path) -> None:
         )
         try:
             for route in (
-                "/api/nodes?wire=7",
+                "/api/nodes",
                 "/api/choices/model",
                 "/api/composition",
                 "/api/templates",

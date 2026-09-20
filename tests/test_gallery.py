@@ -87,7 +87,7 @@ def test_gallery_widget_wire_coverage() -> None:
         composition = await compose_serving(dev=True)
         try:
             wire = schema_to_wire(composition.schemas["dev.gallery.widgets"])
-            assert wire["schemaVersion"] == SCHEMA_WIRE_VERSION == 40
+            assert wire["schemaVersion"] == SCHEMA_WIRE_VERSION == 1
             assert wire["searchTerms"] == ["gallery", "widget zoo", "kitchen sink"]
 
             static = _entry(wire, "combo_static")["widget"]

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import json
 from typing import Any, cast
 
 import pytest
@@ -9,13 +8,9 @@ from dinkster_assets import AssetRef, digest_bytes
 from dinkster_compat_comfy import CompatError, CompatTranslation
 from dinkster_compat_comfy.translate import translate_node
 from dinkster_schema import (
-    SCHEMA_WIRE_SERVE_VERSIONS,
-    SCHEMA_WIRE_VERSION,
     AssetWidget,
-    InputFamilySpec,
     InputSpec,
     NodeSchema,
-    SchemaWireVersionRequirement,
     SourceFilenameSpec,
     TypeExpr,
     WidgetRepresentation,
@@ -97,87 +92,6 @@ def test_source_filename_model_is_frozen_strict_and_signature_significant() -> N
     assert schema_signature(presentation_only) == schema_signature(without_binding)
 
 
-def test_source_filename_wire22_roundtrip_and_recursive_wire21_downgrade() -> None:
-    assert SCHEMA_WIRE_VERSION == 40
-    assert SCHEMA_WIRE_SERVE_VERSIONS == (
-        22,
-        23,
-        24,
-        25,
-        26,
-        27,
-        28,
-        29,
-        30,
-        31,
-        32,
-        33,
-        34,
-        35,
-        36,
-        37,
-        38,
-        39,
-        40,
-        41,
-        42,
-        43,
-        44,
-        45,
-    )
-    schema = _schema(listed=True)
-    wire22 = schema_to_wire(schema, wire_version=22)
-    entry22 = cast("list[dict[str, Any]]", wire22["interface"])[0]
-    assert entry22["sourceFilename"] == {
-        "kind": "media/image",
-        "category": "input",
-    }
-    assert cast("dict[str, Any]", entry22["widget"])["allowUpload"] is True
-    assert schema_from_wire(wire22) == schema
-
-    scalar = _schema()
-    for predecessor in (21,):
-        listed_wire = schema_to_wire(schema, wire_version=predecessor)
-        listed_entry = cast("list[dict[str, Any]]", listed_wire["interface"])[0]
-        assert "sourceFilename" not in listed_entry
-        assert listed_entry["type"] == {
-            "kind": "list",
-            "element": {"kind": "concrete", "types": ["dinkster.asset"]},
-        }
-        assert "widget" not in listed_entry
-        assert schema_from_wire(listed_wire) == dataclasses.replace(
-            schema,
-            inputs=(
-                dataclasses.replace(
-                    schema.inputs[0],
-                    source_filename=None,
-                    widget=None,
-                ),
-            ),
-        )
-
-        scalar_wire = schema_to_wire(scalar, wire_version=predecessor)
-        scalar_entry = cast("list[dict[str, Any]]", scalar_wire["interface"])[0]
-        assert scalar_entry["widget"] == {
-            "type": "ASSET",
-            "accept": ["image/png", "image/jpeg", "image/webp"],
-            "kind": "media/image",
-        }
-        assert schema_from_wire(scalar_wire) == dataclasses.replace(
-            scalar,
-            inputs=(
-                dataclasses.replace(
-                    scalar.inputs[0],
-                    source_filename=None,
-                    widget=AssetWidget(
-                        accept=("image/png", "image/jpeg", "image/webp"),
-                        kind="media/image",
-                    ),
-                ),
-            ),
-        )
-
-
 def _model3d_schema() -> NodeSchema:
     return NodeSchema(
         node_type="test.source-filename-model3d",
@@ -197,44 +111,20 @@ def _model3d_schema() -> NodeSchema:
     )
 
 
-def test_model3d_source_filename_wire25_roundtrip() -> None:
+def test_model3d_source_filename_roundtrip() -> None:
     schema = _model3d_schema()
-    wire = schema_to_wire(schema, wire_version=25)
-    assert wire["schemaVersion"] == 25
+    wire = schema_to_wire(schema)
+    assert wire["schemaVersion"] == 1
     entry = cast("list[dict[str, Any]]", wire["interface"])[0]
     assert entry["sourceFilename"] == {"kind": "media/model3d", "category": "input"}
     assert cast("dict[str, Any]", entry["widget"])["kind"] == "media/model3d"
     assert schema_from_wire(wire) == schema
 
 
-def test_model3d_source_filename_downgrades_below_wire25() -> None:
-    schema = _model3d_schema()
-    for predecessor in range(15, 25):
-        with pytest.raises(SchemaWireVersionRequirement) as excinfo:
-            schema_to_wire(schema, wire_version=predecessor)
-        assert excinfo.value.required_version == 25
-        assert "media/model3d source filename requires schema wire 25" in str(excinfo.value)
-
-
-def test_model3d_source_filename_downgrades_inside_dynamic_entries() -> None:
-    schema = dataclasses.replace(
-        _model3d_schema(),
-        inputs=(),
-        input_families=(InputFamilySpec("models", template=_model3d_schema().inputs),),
-    )
-    assert schema_from_wire(schema_to_wire(schema)) == schema
-    for predecessor in range(15, 25):
-        with pytest.raises(SchemaWireVersionRequirement) as excinfo:
-            schema_to_wire(schema, wire_version=predecessor)
-        assert excinfo.value.required_version == 25
-
-
 def test_signature_basis_covers_model3d_and_keeps_prior_signatures() -> None:
-    # The signature basis moved from wire 22 to wire 25 so media/model3d
-    # bindings can join identity. Everything v23-v25 added beyond v22 is
-    # stripped or popped from the signature material, so this pre-model3d
-    # signature must never move; a change here means cache keys drifted.
-    assert schema_signature(_schema()) == "bfa8d5253d0207d1d42cebc1d487e81077557464"
+    # This pre-model3d signature must never move; a change here means cache
+    # keys drifted.
+    assert schema_signature(_schema()) == "a5f4d7ad940047fe84496c165b176c88b40dead2"
     model3d = schema_signature(_model3d_schema())
     assert model3d != schema_signature(_schema())
     image_bound = dataclasses.replace(
@@ -252,30 +142,6 @@ def test_signature_basis_covers_model3d_and_keeps_prior_signatures() -> None:
         ),
     )
     assert model3d != schema_signature(image_bound)
-
-
-def test_model3d_source_filename_rejected_when_smuggled_below_wire25() -> None:
-    wire = schema_to_wire(_model3d_schema())
-    for predecessor in (22, 23, 24):
-        smuggled = json.loads(json.dumps(wire))
-        smuggled["schemaVersion"] = predecessor
-        with pytest.raises(ValueError, match="requires schema wire 25"):
-            schema_from_wire(smuggled)
-
-
-def test_non_upload_list_asset_widget_refuses_in_model_and_predecessor_wire() -> None:
-    asset_list = TypeExpr.list_of(TypeExpr.concrete("dinkster.asset"))
-    with pytest.raises(ValueError, match="asset widget requires a concrete"):
-        InputSpec("source", asset_list, widget=AssetWidget(kind="media/image"))
-
-    for wire_version in (21,):
-        malformed = schema_to_wire(_schema(listed=True))
-        malformed["schemaVersion"] = wire_version
-        entry = cast("list[dict[str, Any]]", malformed["interface"])[0]
-        entry.pop("sourceFilename")
-        cast("dict[str, Any]", entry["widget"]).pop("allowUpload")
-        with pytest.raises(ValueError, match="asset widget requires a concrete"):
-            schema_from_wire(malformed)
 
 
 def test_list_asset_widget_representations_cannot_bypass_source_binding() -> None:
@@ -338,9 +204,9 @@ def test_typed_asset_upload_widget_requires_source_binding() -> None:
     )
 
 
-def test_source_filename_wire22_golden_is_encoder_authored() -> None:
-    assert schema_to_wire(_schema(listed=True), wire_version=22) == {
-        "schemaVersion": 22,
+def test_source_filename_golden_is_encoder_authored() -> None:
+    assert schema_to_wire(_schema(listed=True)) == {
+        "schemaVersion": 1,
         "nodeType": "test.source-filename",
         "version": 1,
         "displayName": "",
@@ -366,29 +232,6 @@ def test_source_filename_wire22_golden_is_encoder_authored() -> None:
             }
         ],
     }
-
-
-def test_source_filename_decoder_refuses_wire19_and_malformed_wire22() -> None:
-    wire = schema_to_wire(_schema())
-    wire["schemaVersion"] = 19
-    with pytest.raises(ValueError, match="unsupported schemaVersion"):
-        schema_from_wire(wire)
-
-    for field, value, message in (
-        ("kind", "model/checkpoint", "source filename kind"),
-        ("category", "inputs", "source filename category"),
-    ):
-        malformed = schema_to_wire(_schema())
-        entry = cast("list[dict[str, Any]]", malformed["interface"])[0]
-        cast("dict[str, Any]", entry["sourceFilename"])[field] = value
-        with pytest.raises(ValueError, match=message):
-            schema_from_wire(malformed)
-
-    malformed_upload = schema_to_wire(_schema())
-    entry = cast("list[dict[str, Any]]", malformed_upload["interface"])[0]
-    cast("dict[str, Any]", entry["widget"])["allowUpload"] = 1
-    with pytest.raises(ValueError, match="allowUpload must be a boolean"):
-        schema_from_wire(malformed_upload)
 
 
 def _source_node(config: dict[str, object], *, input_is_list: bool = False) -> type:

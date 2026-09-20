@@ -716,25 +716,6 @@ def test_native_clip_text_encode_schema_is_text_clip_in_conditioning_out() -> No
             },
         ],
     }
-    wire18 = schema_to_wire(schema, wire_version=18)
-    text18 = next(entry for entry in wire18["interface"] if entry["id"] == "text")  # type: ignore[union-attr]
-    assert text18["widget"] == {
-        "type": "REPRESENTATIONS",
-        "default": "multiline",
-        "userSwitchable": True,
-        "representations": [
-            {
-                "id": "single-line",
-                "displayName": "Single line",
-                "widget": {"type": "STRING", "multiline": False},
-            },
-            {
-                "id": "multiline",
-                "displayName": "Multiline",
-                "widget": {"type": "STRING", "multiline": True},
-            },
-        ],
-    }
     assert schema_signature(schema) != "40d9a01d8cbfcb2965e38d468014dc119da21fe9"
 
 
@@ -1442,7 +1423,7 @@ def test_compat_ksampler_schema_is_generation_owner_schema() -> None:
     assert [out.type.types for out in schema.outputs] == [("dinkster.latent",)]
 
     wire = schema_to_wire(schema)
-    assert wire["schemaVersion"] == 40
+    assert wire["schemaVersion"] == 1
     interface = {item["id"]: item for item in wire["interface"]}  # type: ignore[index]
     assert interface["seed"]["widget"] == {
         "type": "NUMBER",

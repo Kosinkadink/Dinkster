@@ -164,9 +164,7 @@ from .solve import (
     resolved_type_id,
 )
 from .wire import (
-    SCHEMA_WIRE_SERVE_VERSIONS,
     SCHEMA_WIRE_VERSION,
-    SchemaWireVersionRequirement,
     schema_from_wire,
     schema_signature,
     schema_to_wire,
@@ -192,9 +190,7 @@ __all__ = [
     "PROGRESS_EVENT",
     "RESERVED_INPUT_IDS",
     "RESERVED_NAMESPACES",
-    "SCHEMA_WIRE_SERVE_VERSIONS",
     "SCHEMA_WIRE_VERSION",
-    "SchemaWireVersionRequirement",
     "VARIANT_KEY_PATTERN",
     "AbsentOutput",
     "AbsentPolicy",

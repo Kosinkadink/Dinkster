@@ -125,9 +125,9 @@ router-generated 404 and 405 responses remain available after authentication.
 | `memory:read` | all `/memory` routes, including shed and lease mutation; v1 has no separate memory control verb |
 | `cache:read` | all `/cache` routes, including trim; v1 has no separate cache control verb |
 
-Catalog GETs require authentication but no capability: `/api/nodes` (including
-`?wire=`), `/api/workers`, `/api/extensions/snapshot`, choices, composition,
-templates, pack icons/blueprints/template bodies, and diagnostics.
+Catalog GETs require authentication but no capability: `/api/nodes`,
+`/api/workers`, `/api/extensions/snapshot`, choices, composition, templates,
+pack icons/blueprints/template bodies, and diagnostics.
 `/api/health` remains unauthenticated for ingress probes.
 
 `settings:write` composes with `--allow-settings-changes`: the capability says

@@ -40,11 +40,9 @@ Raw cache inspection requires a separate provenance/freshness/auth/eviction
 design. Rich preview descriptions require a future reviewed wire contract.
 Region-interior targets require stable planner identities.
 
-## Served wire versions
+## Schema catalog
 
-Every version in `SCHEMA_WIRE_SERVE_VERSIONS` carries the wire-16 preview
-and lazy fields. `/api/nodes?wire=` selects the highest common version the
-server encodes and refuses disjoint sets with a machine-readable 406.
-Production catalogs exclude the `dev.conformance.*` proof nodes. No service,
-route, event, cache-peek, renderer-dispatch, HTML/CSS/URL, or durable
-runtime-preview surface is part of this contract.
+The schema catalog carries preview and lazy fields. Production catalogs exclude
+the `dev.conformance.*` proof nodes. No service, route, event, cache-peek,
+renderer-dispatch, HTML/CSS/URL, or durable runtime-preview surface is part of
+this contract.

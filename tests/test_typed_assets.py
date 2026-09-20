@@ -833,5 +833,5 @@ def test_wire_v12_round_trips_asset_schemas() -> None:
             raise NotImplementedError
 
     wire = schema_to_wire(Loader.schema())
-    assert wire["schemaVersion"] == 40
+    assert wire["schemaVersion"] == 1
     assert schema_from_wire(wire) == Loader.schema()

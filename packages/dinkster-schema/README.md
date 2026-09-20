@@ -1,5 +1,10 @@
 # dinkster-schema
 
+Before public release, the schema wire contract is revised in place and only
+version 1 is served or accepted. Compatibility across wire versions begins at
+public release; after that point, a wire change will add a new version with an
+explicit compatibility decoder and a documented support window.
+
 `dinkster-schema` is the typed, V3-native node interface model and node-authoring
 surface. It depends only on `dinkster-values`; graph validation, workers, the
 engine, the extension API, and protocol layers consume its schemas rather than
@@ -48,7 +53,7 @@ plain Python values; workers own envelope and transport details.
 
 ## Stored output descriptors
 
-Schema wire 39 adds `NodeSchema.output_descriptors`. Its `OutputDescriptorsSpec`
+`NodeSchema.output_descriptors` and its `OutputDescriptorsSpec`
 names a required top-level `core.string` input containing JSON:
 
 ```json
@@ -75,14 +80,13 @@ and returns a mapping keyed by those IDs, rather than using the static
 and a revisioned host-owned model probe. The descriptor is catalog metadata,
 not a worker activation request or an assertion that a runtime is installed.
 
-Non-default alpha or mask policies on inputs, outputs, or descriptor choices
-require wire 40. Older-wire encoding refuses these schemas, including policies
-inside nested input families, combos, and slots. Default policies remain omitted
-and preserve legacy signatures.
+Non-default alpha or mask policies are supported on inputs, outputs, descriptor
+choices, nested input families, combos, and slots. Default policies remain
+omitted from signatures.
 
 ## Input-family combo options
 
-Schema wire 43 lets a `ComboWidget` declare an `InputFamilyOptionSource`.
+A `ComboWidget` can declare an `InputFamilyOptionSource`.
 The frontend builds the combo choices from that dynamic input family's member
 descriptors: each member suffix is the stable stored option value, while its
 occurrence-authored display name is an editable label. Native graphs contain
@@ -119,8 +123,7 @@ execution without treating it as an estimate or cached result. If the input is
 connected, its upstream execution provenance remains authoritative.
 
 Known-value declarations are presentation metadata: they do not affect schema
-signatures, submitted graphs, or cache keys. The declaration joins schema wire
-version 34; older encoders reject schemas that use it.
+signatures, submitted graphs, or cache keys.
 
 ## Pre-execution output representations
 
@@ -137,10 +140,7 @@ float values in `[0, 1]`. It excludes alpha masks, metadata, video, and audio.
 
 `applies` may limit the promise to required dynamic-combo options using the
 same mapping and validation rules as `MirrorSpec.applies`. Elaboration strips
-a covered scope and removes an uncovered representation. The declaration
-joins schema wire version 31; encoders refuse the whole schema below 31, while
-decoders reject a declaration carried by a payload that claims an older wire
-version.
+a covered scope and removes an uncovered representation.
 
 ## GLSL mirrors
 
@@ -179,11 +179,6 @@ keys; schema construction rejects anything else. Elaboration resolves the
 scope against the consumed combo choices: a covered variant keeps the mirror
 with `applies` stripped, an uncovered variant elaborates with no mirror, so
 an elaborated schema never carries `applies`.
-
-`applies` joins the wire at schema wire version 30. Serving a scoped mirror
-without its scope would overclaim coverage, so encoding at wire 29 or below
-withholds the whole mirror rather than just the field; unscoped mirrors still
-ride wire 29.
 
 Estimates render at the preview's pixel dimensions, which may differ from the
 authoritative output's. Parameters denominated in output pixels (for example
