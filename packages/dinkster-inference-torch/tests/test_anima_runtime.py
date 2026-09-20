@@ -56,7 +56,7 @@ from dinkster_inference_torch import (
     enroll_assembled,
     materialize_anima_conditioning,
 )
-from dinkster_inference_torch import anima_runtime as runtime_mod
+from dinkster_inference_torch import sampling_execution as execution_mod
 from dinkster_inference_torch.sampling_execution import run_ksampler_as_custom
 from dinkster_inference_torch.schedules import (
     custom_beta_sigmas,
@@ -378,6 +378,17 @@ def test_sample_custom_refuses_multistream_shapes_and_unsupported_modes() -> Non
         sample(request=CustomSamplingRequest(unknown, (), (1.0, 0.0)))
     with pytest.raises(AnimaRuntimeError, match="exact AnimaConditioning"):
         sample(cond=Conditioning(torch.zeros((1, 512, 1024)), None))
+    with pytest.raises(AnimaRuntimeError, match="adapter options: bogus_option"):
+        sample(bogus_option=True)
+    with pytest.raises(AnimaRuntimeError, match="adapter options: bogus_option"):
+        runtime.sample(
+            latent,
+            cond=condition,
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=1,
+            bogus_option=True,
+        )
     assert not model.calls
 
 
@@ -490,7 +501,7 @@ def test_split_diffusion_sample_forwards_per_run_guidance_transforms(
         compute_dtype=torch.float32,
     )
     captured: list[SamplingGuidance[Conditioning[torch.Tensor]] | None] = []
-    real_plan = runtime_mod.compile_guidance_plan
+    real_plan = execution_mod.compile_guidance_plan
 
     def capture_plan(*args: Any, **kwargs: Any) -> Any:
         captured.append(args[1])
@@ -502,9 +513,9 @@ def test_split_diffusion_sample_forwards_per_run_guidance_transforms(
     def fake_run_denoise(*_args: Any, **kwargs: Any) -> Any:
         return kwargs["latent"]
 
-    monkeypatch.setattr(runtime_mod, "compile_guidance_plan", capture_plan)
-    monkeypatch.setattr(runtime_mod, "guided_denoiser", fake_denoiser)
-    monkeypatch.setattr(runtime_mod, "run_denoise", fake_run_denoise)
+    monkeypatch.setattr(execution_mod, "compile_guidance_plan", capture_plan)
+    monkeypatch.setattr(execution_mod, "guided_denoiser", fake_denoiser)
+    monkeypatch.setattr(execution_mod, "run_denoise", fake_run_denoise)
     transforms = (
         (
             "ext",
