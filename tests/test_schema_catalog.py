@@ -1064,7 +1064,7 @@ def test_inference_declarations_compose_without_materializing_sampling_worker(
             result = await engine.run(
                 Graph(nodes={"sample": GraphNode("dinkster.ksampler", {})}), ["sample"]
             )
-            assert result.outputs["sample"]["value"].resolve() == 0.0
+            assert result.outputs["sample"]["value"].resolve() == 3.0
             assert workers[1].cold
         finally:
             await composer.close()

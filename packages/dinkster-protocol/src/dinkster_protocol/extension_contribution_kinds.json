@@ -1,0 +1,20 @@
+[
+  { "kind": "widgetKind", "implemented": true },
+  { "kind": "widgetView", "implemented": true },
+  { "kind": "previewRenderer", "implemented": true },
+  { "kind": "textEditorExtension", "implemented": true },
+  { "kind": "menu", "implemented": true },
+  { "kind": "command", "implemented": true },
+  { "kind": "keybinding", "implemented": true },
+  { "kind": "setting", "implemented": true },
+  { "kind": "canvasLayer", "implemented": false },
+  { "kind": "nodeDecoration", "implemented": false },
+  { "kind": "hostUi", "implemented": true },
+  { "kind": "searchProvider", "implemented": true },
+  { "kind": "workflowObserver", "implemented": false },
+  { "kind": "eventConsumer", "implemented": true },
+  { "kind": "workflowImporter", "implemented": false },
+  { "kind": "editor", "implemented": true },
+  { "kind": "editorBinding", "implemented": true },
+  { "kind": "panel", "implemented": true }
+]

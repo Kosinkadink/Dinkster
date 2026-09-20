@@ -142,6 +142,7 @@ jobs:
         if: matrix.os == 'linux' && matrix.python-version == '3.12'
         with:
           version: 10.31.0
+          dest: ${{ runner.tool_cache }}/setup-pnpm
       - uses: actions/setup-node@v4
         if: matrix.os == 'linux' && matrix.python-version == '3.12'
         with:
@@ -205,7 +206,7 @@ jobs:
   torch-cpu:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, Linux, X64, cpu-golden-avx2]
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
@@ -231,14 +232,38 @@ jobs:
   model-tests:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true' && github.repository == 'Kosinkadink/Dinkster'
-    runs-on: [self-hosted, linux, x64]
+    name: model-tests (${{ matrix.name }})
+    runs-on: [self-hosted, Linux, X64, cpu-golden-avx2]
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: inference and IPAdapter
+            group: inference
+            suites: inference-torch,model-ipadapter
+          - name: acceptance and benchmark
+            group: acceptance
+            suites: acceptance-sampling,benchmark-loader
+          - name: HED, upscale and EfficientSAM
+            group: vision-fast
+            suites: hed,upscale,efficient-sam
+          - name: Depth Anything V2, DETR and RT-DETR
+            group: vision-detection
+            suites: depth-anything-v2,detr,rtdetr
+          - name: BiRefNet and Depth Anything V3
+            group: vision-large
+            suites: birefnet,depth-anything-v3
+          - name: SAM 3.1
+            group: vision-sam
+            suites: sam31
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
+      DINKSTER_MODEL_TEST_GROUP: ${{ matrix.group }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -249,6 +274,14 @@ jobs:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "true"
+
+  model-tests-gate:
+    needs: [validation-plan, model-tests]
+    if: always() && needs.validation-plan.outputs.run-heavy == 'true' && github.repository == 'Kosinkadink/Dinkster'
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - name: Verify every model-test group passed
+        run: test '${{ needs.model-tests.result }}' = success
 
   coverage:
     # Branch-coverage floor (docs/testing.md): a ratchet, not a target.

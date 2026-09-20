@@ -27,7 +27,11 @@ def canonical_path(monkeypatch: pytest.MonkeyPatch) -> None:
     def identity(path: Path, **_kwargs: object) -> Path:
         return path
 
+    def missing_evidence(_path: Path, key: str) -> Path:
+        raise golden_files.GoldenVariantNotFoundError(f"no evidence golden for {key}")
+
     monkeypatch.setattr(golden_files, "platform_golden_path", identity)
+    monkeypatch.setattr(golden_files, "fetch_platform_golden", missing_evidence)
 
 
 def _write(path: Path, document: dict[str, object]) -> Path:

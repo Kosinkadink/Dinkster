@@ -6,6 +6,7 @@ one-way dependencies. Node execution is boundary-first - same venv, another venv
 or another machine are just different `Worker` transports. Everything on a graph
 edge is a typed value envelope, so caching and transport are location-independent.
 
+- Launch the browser editor: [docs/quickstart.md](docs/quickstart.md)
 - End-user backend and Desktop installation: [docs/install.md](docs/install.md)
 - What is supported today: [SUPPORTED.md index](SUPPORTED.md)
 - Architecture and design rationale: [DESIGN.md](DESIGN.md)

@@ -1162,6 +1162,8 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
         module_init = module_root.parent / "__init__.py"
         if distribution_id != pack_id and module_init in tracked_paths:
             artifact_paths.add(module_init)
+        if module_root.parent.name == "dinkster_nodes_vision":
+            artifact_paths.update(path for path in tracked_paths if path.parent == sidecar_root)
         artifact_paths.update(
             sidecar_root / filename
             for filename in compose._PACK_ARTIFACT_SIDECARS
@@ -1857,11 +1859,25 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
     async def scenario() -> None:
         manifest = write_iso_manifest(tmp_path)
         composition = await compose_serving([manifest], worker_env=WORKER_ENV)
+        published_schemas = {
+            node_type: schema
+            for node_type, schema in composition.schemas.items()
+            if node_type.startswith("iso.") or node_type == "std.math.add_ints"
+        }
+        published_packs = {
+            pack_id: replace(info, comfy_aliases=None, comfy_groups=None)
+            for pack_id, info in composition.packs.items()
+            if pack_id in {"isopack", "dinkster-nodes-foundation"}
+        }
         app = create_app(
             composition.make_engine,
-            composition.schemas,
-            packs=composition.packs,
-            node_packs=composition.node_packs,
+            published_schemas,
+            packs=published_packs,
+            node_packs={
+                node_type: pack_id
+                for node_type, pack_id in composition.node_packs.items()
+                if node_type in published_schemas
+            },
             choices=composition.choices,
             lazy_choices=composition.lazy_choices,
         )
@@ -1887,6 +1903,17 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
             }
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
             assert data["nodes"]["std.math.add_ints"]["pack"] == "dinkster-nodes-foundation"
+            blob_size = next(
+                item
+                for item in data["nodes"]["iso.blob_out"]["interface"]
+                if item["role"] == "input" and item["id"] == "size"
+            )
+            assert blob_size["widget"] == {
+                "type": "isopack.size",
+                "min": 1,
+                "max": 12,
+                "unit": "bytes",
+            }
 
             # The in-process media-io pack's lazy device route serves per
             # fetch: no capture provider configured means an empty list,
@@ -1901,13 +1928,14 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                 nodes={
                     "g": GraphNode("std.math.add_ints", {"a": 2, "b": 3}),
                     "c": GraphNode("iso.chatty", {"value": "hi"}),
+                    "b": GraphNode("iso.blob_out", {"size": 3}),
                 }
             )
             body = {
                 "clientId": "c1",
                 "jobId": "j1",
                 "graph": graph_to_wire(graph),
-                "targets": ["g", "c"],
+                "targets": ["g", "c", "b"],
             }
             resp = await client.post("/api/jobs", json=body)
             assert resp.status == 202, await resp.text()
@@ -1918,8 +1946,56 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                     break
                 await asyncio.sleep(0.05)
             assert status.get("state") == "completed", status
+
+            value_url = "/api/values?clientId=c1&jobId=j1&nodeId=b&outputId=blob"
+            discovery = await client.get(value_url)
+            assert discovery.status == 200, await discovery.text()
+            value_data = await discovery.json()
+            assert value_data["descriptor"]["typeId"] == "iso.blob"
+            assert value_data["renditions"] == [
+                {
+                    "kind": "summary",
+                    "mime": "text/plain",
+                    "default": True,
+                    "cacheKey": "summary/1",
+                    "version": "1",
+                    "parameters": ["prefix"],
+                    "defaults": {"prefix": "blob"},
+                    "limits": {"prefixLength": 32},
+                }
+            ]
+            rendered = await client.get(value_url + "&rendition=summary/1&prefix=pack")
+            assert rendered.status == 200, await rendered.text()
+            assert rendered.content_type == "text/plain"
+            assert await rendered.read() == b"pack:3:xxx"
         finally:
             await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_serving_composer_replaces_and_retracts_pack_renditions(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        try:
+            manifest = write_iso_manifest(tmp_path)
+            await composer.add_pack(manifest)
+            registry = composer.composition._registry
+            original = registry.renditions_of("iso.blob")
+            assert len(original) == 1
+            assert original[0].kind == "summary"
+            assert original[0].relay_owner == "isopack"
+
+            await composer.reload_pack("isopack")
+            reloaded = registry.renditions_of("iso.blob")
+            assert len(reloaded) == 1
+            assert reloaded[0].relay_owner == "isopack"
+            assert reloaded[0].render_async is not original[0].render_async
+
+            await composer.remove_pack("isopack")
+            assert registry.renditions_of("iso.blob") == ()
+        finally:
+            await composer.close()
 
     asyncio.run(scenario())
 

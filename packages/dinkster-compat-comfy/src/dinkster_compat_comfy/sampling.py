@@ -11,6 +11,7 @@ from dinkster_native import native as native_implementation
 from dinkster_native.native import SCHEDULED_HOOKS_KEY, ScheduledHooks
 from dinkster_native.native_arm import GenerationKSampler as _GenerationKSampler
 from dinkster_native.native_arm import GenerationKSamplerAdvanced as _GenerationKSamplerAdvanced
+from dinkster_native.native_residency import NativeRuntimeHandle
 
 from . import comfy_execution
 
@@ -97,6 +98,22 @@ class KSampler(_GenerationKSampler):
         max_fused_lanes: int = 2,
         segment: SamplingSegment | None = None,
     ) -> Mapping[str, object]:
+        if isinstance(model, NativeRuntimeHandle):
+            return super().execute(
+                model=model,
+                seed=seed,
+                steps=steps,
+                cfg=cfg,
+                sampler_name=sampler_name,
+                scheduler=scheduler,
+                positive=positive,
+                negative=negative,
+                latent_image=latent_image,
+                denoise=denoise,
+                conditioning_batching=conditioning_batching,
+                max_fused_lanes=max_fused_lanes,
+                segment=segment,
+            )
         del segment
         _require_default_conditioning_batching(conditioning_batching, max_fused_lanes)
         for name, value, low, high in (
@@ -145,6 +162,24 @@ class KSamplerAdvanced(_GenerationKSamplerAdvanced):
         conditioning_batching: object = "auto",
         max_fused_lanes: int = 2,
     ) -> Mapping[str, object]:
+        if isinstance(model, NativeRuntimeHandle):
+            return super().execute(
+                model=model,
+                add_noise=add_noise,
+                noise_seed=noise_seed,
+                steps=steps,
+                cfg=cfg,
+                sampler_name=sampler_name,
+                scheduler=scheduler,
+                positive=positive,
+                negative=negative,
+                latent_image=latent_image,
+                start_at_step=start_at_step,
+                end_at_step=end_at_step,
+                return_with_leftover_noise=return_with_leftover_noise,
+                conditioning_batching=conditioning_batching,
+                max_fused_lanes=max_fused_lanes,
+            )
         _require_default_conditioning_batching(conditioning_batching, max_fused_lanes)
         for name, value, low, high in (
             ("noise_seed", noise_seed, 0, cls.MAX_SEED),

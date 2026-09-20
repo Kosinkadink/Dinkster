@@ -40,6 +40,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from dinkster_protocol.extension_contribution_kinds import (
+    IMPLEMENTED_FRONTEND_CONTRIBUTION_KINDS,
+)
 from dinkster_schema import claim_covers, reserved_root
 from packaging.requirements import InvalidRequirement, Requirement
 
@@ -1086,6 +1089,38 @@ def _probe_findings(report: dict[str, Any], pack_name: str) -> list[Finding]:
     return findings
 
 
+def _check_extension_consumers(manifest: PackManifest) -> list[Finding]:
+    findings: list[Finding] = []
+    implemented_kinds = frozenset(IMPLEMENTED_FRONTEND_CONTRIBUTION_KINDS)
+    declared_kinds = {
+        contribution.kind
+        for module in manifest.extension.frontend_modules
+        for contribution in module.contributions
+    }
+    for kind in sorted(declared_kinds - implemented_kinds):
+        findings.append(
+            Finding(
+                severity="warning",
+                code="extension.contribution-unconsumed",
+                message=f"pack '{manifest.name}' declares contribution kind '{kind}', "
+                "but no runtime consumer implements it",
+                fix="remove the contribution until a frontend registration door "
+                "implements this kind",
+            )
+        )
+    for capability in sorted(set(manifest.extension.capabilities) - {"routes"}):
+        findings.append(
+            Finding(
+                severity="warning",
+                code="extension.capability-unconsumed",
+                message=f"pack '{manifest.name}' declares capability '{capability}', "
+                "but no runtime consumer implements it",
+                fix="remove the capability until a backend runtime consumer implements it",
+            )
+        )
+    return findings
+
+
 def diagnose_static(pack_root: Path | str, manifest: PackManifest) -> StaticDoctorReport:
     """Check an extracted pack tree without importing or executing pack code.
 
@@ -1107,6 +1142,7 @@ def diagnose_static(pack_root: Path | str, manifest: PackManifest) -> StaticDoct
     findings.extend(_check_blueprints(manifest))
     findings.extend(_check_assets(manifest))
     findings.extend(_check_templates(manifest))
+    findings.extend(_check_extension_consumers(manifest))
     findings.extend(_scan_sources(manifest))
     return StaticDoctorReport(
         report_version=DOCTOR_REPORT_VERSION,
