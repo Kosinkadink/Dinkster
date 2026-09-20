@@ -5,12 +5,11 @@ diagnostic host, then composes the installed default packs with their exact
 artifact provenance, each configured pack, and an optional ComfyUI
 compatibility surface. First-party packs may run in-process in the shared
 Dinkster environment; each `--pack` runs in its own worker process by default.
-The working native SD 1.5 path today is a SamplerCustomAdvanced graph served
-with `--comfy-root`, as recorded in
-[maintainer issue #114](https://github.com/Kosinkadink/comfy-vibe-station/issues/114).
-Native-only generation without a ComfyUI checkout returns when that issue
-lands. The execution interpreter must have Dinkster's torch runtime installed;
-`--comfy-python` can select it separately from the host.
+The default SD 1.5 workflow runs natively without a ComfyUI checkout. Its
+execution interpreter must contain PyTorch and the native inference packages.
+The bare `dinkster` launcher inherits that interpreter from
+`DINKSTER_COMFYUI_PYTHON`; advanced `dinkster-serve` launches can select it
+separately from the host with `--comfy-python`.
 This is a complete reference for every command-line argument, grounded in
 `src/dinkster/serve.py`.
 
