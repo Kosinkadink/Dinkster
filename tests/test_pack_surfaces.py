@@ -59,6 +59,7 @@ def test_frontend_contribution_vocabulary_is_the_supported_set() -> None:
         "editor",
         "editorBinding",
         "panel",
+        "virtualNode",
     )
 
 
@@ -109,10 +110,16 @@ def test_frontend_consumer_and_pack_event_reject_the_same_invalid_names(event_na
 def test_event_names_do_not_relax_frontend_contribution_ids() -> None:
     from dinkster_protocol.frontend_modules import FrontendContribution
 
+    assert FrontendContribution("example.note", "virtualNode").to_wire() == {
+        "id": "example.note",
+        "kind": "virtualNode",
+    }
     with pytest.raises(ValueError, match="frontend id"):
         FrontendContribution("example.some_consumer", "eventConsumer", "example.some_event")
     with pytest.raises(ValueError, match="only eventConsumer"):
         FrontendContribution("example.consumer", "hostUi", "example.some_event")
+    with pytest.raises(ValueError, match="unknown frontend contribution kind"):
+        FrontendContribution("example.future", "futureKind")
 
 
 def test_catalog_snapshot_and_module_do_not_activate_worker(preview_manifest: Path) -> None:

@@ -8,6 +8,8 @@
 - Installed packs can publish snapshot-selected immutable JavaScript modules.
   Snapshot and module reads do not start execution workers. Frontend privileges
   and controls do not grant or remove backend node execution ownership.
+- Frontend modules can declare virtual node kinds for frontend-owned document
+  nodes that compatible editors keep out of backend execution requests.
 - Doctor warns when a pack declares a frontend contribution kind or extension
   capability for which no runtime consumer exists.
 - Isolated packs can publish value renditions whose metadata, parameter
