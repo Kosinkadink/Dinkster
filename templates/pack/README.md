@@ -37,7 +37,7 @@ touching your pack directory):
 DINKSTER=path/to/Dinkster
 uv run --project "$DINKSTER" pytest tests          # from this pack's root
 uv run --project "$DINKSTER" dinkster-doctor .        # the publish gate
-uv run --project "$DINKSTER" dinkster-serve --pack ./dinkster-pack.toml --dev
+uv run --project "$DINKSTER" dinkster-serve --pack ./dinkster-pack.toml --watch-packs
 ```
 
 `dinkster doctor` must come back healthy before you ship: it verifies the

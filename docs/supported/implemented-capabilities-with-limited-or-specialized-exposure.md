@@ -113,10 +113,8 @@ compositions, optional workers, or compatibility boundaries described below.
   Q4_K, Q5_K, or Q6_K - else `speed`): `speed` (tensors dequantize to
   float32 once at load), `memory` (opt-in; eligible linear weights stay
   encoded as raw quantized blocks in the checkpoint's layout at a fraction
-  of the weight memory; on capable CUDA hosts, half-compute layers
-  default-bind the fused matmul route described below and are value-close
-  within its token threshold, while all other layers and forwards dequantize
-  on each forward with bit-identical outputs), and `balanced`
+  of the weight memory and dequantize on each forward with bit-identical
+  outputs), and `balanced`
   (encoded residency plus a
   budgeted sticky cache of decoded weights, so layers within the byte budget
   skip the per-forward decode; the budget is an explicit byte count or auto,
@@ -144,16 +142,6 @@ compositions, optional workers, or compatibility boundaries described below.
   aimdo-managed module-residency leases, proving whether copy and decode
   work overlapped compute or stalled it, and split transferred bytes and
   move counts between mechanism-prefetched and lease-started copies.
-  A fused matmul route for every encoded-resident layout - Q4_0,
-  Q4_K, Q5_K, Q6_K, and Q8_0 (`bind_fused_matmul`,
-  CUDA with triton only) executes encoded-resident linear forwards in
-  the packed domain, decoding blocks inside the matmul tiles instead of
-  materializing the weight; outputs are value-close (not bit-identical)
-  to the decode route and the route is inference-only. Memory-residency
-  layers bind it by default on capable hosts; a bound layer executes
-  fused only at or below a measured per-layout token threshold
-  (`FUSED_MATMUL_MAX_TOKENS`), and CPU-block forwards, larger token
-  counts, and ineligible layers stay on the bit-identical decode route
 - Native GGUF text-encoder loading through the Python inference API: T5-XXL
   (Flux, LTXV) and UMT5-XXL (Wan 2.1/2.2) from llama.cpp `t5`/`t5encoder`
   exports such as the city96 encoder GGUFs, in F32/F16/BF16 and
@@ -163,9 +151,7 @@ compositions, optional workers, or compatibility boundaries described below.
   `speed` dequantizes to float32 at load and casts to the text dtype;
   `memory` (opt-in) keeps the encoder's projection Linears encoded as raw
   quantized blocks in the checkpoint's layout at a fraction of the weight
-  memory, executing fused packed-domain matmuls below per-layout token
-  thresholds on capable CUDA hosts (value-close conditioning) and
-  decoding on forward everywhere else (bit-identical conditioning);
+  memory and decodes on forward (bit-identical conditioning);
   `balanced` adds the budgeted decoded-weight cache over the same
   encoded residency. GGUF text sources carry
   no `spiece_model` tensor, so Wan assembly substitutes the vendored

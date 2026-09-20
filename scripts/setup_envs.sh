@@ -82,7 +82,6 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     -e packages/dinkster-assets \
     -e packages/dinkster-caches \
     -e packages/dinkster-inference \
-    -e packages/dinkster-kernels \
     -e packages/dinkster-memory \
     -e packages/dinkster-graph \
     -e packages/dinkster-engine \
@@ -182,7 +181,6 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         -e packages/dinkster-inference \
         -e packages/dinkster-graph \
         -e packages/dinkster-engine \
-        -e packages/dinkster-kernels \
         -e packages/dinkster-memory \
         -e packages/dinkster-native \
         -e packages/dinkster-inference-torch \
@@ -220,10 +218,7 @@ echo "  .venv/bin/pyright -p packages/dinkster-training-torch"
 echo "  .venv-torch/bin/python -m pytest -q packages/dinkster-training-torch/tests"
 echo "  .venv/bin/pyright -p packages/dinkster-nodes-vision"
 echo "  .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests"
-echo "GPU machines additionally (dinkster-kernels resolves against .venv-gpu):"
-echo "  .venv/bin/pyright -p packages/dinkster-kernels"
-echo '  CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \'
-echo "    .venv-gpu/bin/python -m pytest -q packages/dinkster-kernels/tests"
+echo "GPU machines additionally:"
 echo '  DINKSTER_ENABLE_GPU_TESTS=1 DINKSTER_VALIDATE_REFERENCE_GOLDENS=1 \'
 echo '  CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \'
 echo "    .venv-gpu/bin/python -m pytest -q packages/dinkster-inference-torch/tests"

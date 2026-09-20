@@ -43,7 +43,6 @@ torch = [
     "dinkster-aimdo==0.5.5.post2",
     "sentencepiece==0.2.1",
     "tokenizers==0.23.1",
-    "dinkster-kernels",
 ]
 
 [build-system]
@@ -56,7 +55,6 @@ packages = ["src/dinkster_inference_torch"]
 [tool.uv.sources]
 dinkster-assets = { workspace = true }
 dinkster-inference = { workspace = true }
-dinkster-kernels = { workspace = true }
 dinkster-memory = { workspace = true }
 
 # Typing gate: the root pyright excludes this package (its venv is

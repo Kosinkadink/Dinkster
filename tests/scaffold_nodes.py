@@ -8,7 +8,7 @@ tests use the component pack node sets to pin what a real user surface contains.
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 from dinkster_api.v1 import TypeRegistry
-from dinkster_nodes_dev import DEV_NODES, register_dev_types
+from dinkster_nodes_dev import PACK_NODES, register_dev_types
 from dinkster_nodes_dev import combo_choices as dev_combo_choices
 from dinkster_nodes_foundation import FOUNDATION_NODES, register_foundation_types
 from dinkster_nodes_image import IMAGE_NODES, image_choices, register_image_types
@@ -19,7 +19,7 @@ from dinkster_nodes_media_io import (
     register_media_types,
 )
 
-SCAFFOLD_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES, *IMAGE_NODES, *DEV_NODES]
+SCAFFOLD_NODES = [*FOUNDATION_NODES, *MEDIA_IO_NODES, *IMAGE_NODES, *PACK_NODES]
 
 
 def scaffold_choices() -> Mapping[str, Sequence[str]]:

@@ -429,7 +429,7 @@ developers can *see* what the defaults cost them. Tooling is first-class, and it
 is the carrot that replaces ComfyUI's stick (where the only feedback is users
 reporting breakage):
 
-- **Dev mode (`--dev`)** turns the boundary's natural observability into
+- **Pack watch mode (`--watch-packs`)** turns the boundary's natural observability into
   per-invocation diagnostics: execute vs serialization vs transfer time,
   transport per edge, payload sizes, fallback-codec hits, fingerprinting cost,
   cache-miss explanations - everything the engine already knows, surfaced as

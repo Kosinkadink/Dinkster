@@ -755,8 +755,6 @@ def test_batch_norm2d_factory_preserves_eval_variants(
 def test_plain_fp8_matmul_synthesizes_scale_one_call_shape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_probed", True)
-    monkeypatch.setattr(quant_linear_mod, "_dinkster_scaled_mm", None)
     monkeypatch.setattr(quant_linear_mod, "_kitchen_probed", True)
     monkeypatch.setattr(quant_linear_mod, "_kitchen_scaled_mm_v2", None)
     seen: dict[str, object] = {}

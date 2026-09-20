@@ -1,9 +1,8 @@
 # Pack manifest (DESIGN 3.6): what this pack is, declared as data.
 #
-# Dev scaffolding, deliberately separate from the first-party default packs:
-# exist for demos, engine tests, and the write-path E2E, and must never
-# appear on a user's node surface. dinkster-serve composes them in-process
-# only under --dev; the default packs stay user-facing.
+# Development scaffolding, deliberately separate from the first-party default
+# packs. Compose this ordinary pack explicitly when its examples and probes
+# are needed.
 
 [pack]
 name = "dinkster-nodes-dev"
@@ -22,9 +21,7 @@ nodes = "dinkster_nodes_dev:PACK_NODES"
 types = "dinkster_nodes_dev:register_dev_types"
 choices = "dinkster_nodes_dev:combo_choices"
 
-# The widget/socket gallery's starter document. When dinkster-serve composes
-# this pack in-process (--dev) the same file ships through the core packs
-# table; this declaration keeps the manifest path equivalent.
+# The widget/socket gallery's starter document.
 [[pack.templates]]
 id = "dev-gallery"
 name = "Widget & Socket Gallery"
