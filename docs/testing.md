@@ -54,8 +54,8 @@ by the fast checks.
 `.github/workflows/full-validation.yml` runs on every main push, daily at
 10:23 UTC (03:23 Pacific daylight time / 02:23 Pacific standard time), and
 manual dispatch. It retains the Python 3.12 Linux suite, both Python 3.12
-Windows shards, branch coverage with the 80% floor, model tests, all five
-torch CPU attempts and their final gate, translation coverage, artifact
+Windows shards, branch coverage with the 80% floor, model tests, one
+torch CPU job, translation coverage, artifact
 smoke checks and the macOS descriptor test. Select a branch in Actions'
 "Run workflow" menu, or pass the dispatch ref explicitly:
 
@@ -69,8 +69,13 @@ selected branch must contain the workflow. The daily audit uses main.
 
 Both workflows use Python 3.12 only. Package requirements and the dependency
 lock continue to support Python 3.13. Heavy jobs run independently; the
-torch CPU attempt chain selects a CPU matching its golden-data contract,
-not a serialization limit.
+torch CPU job asserts its golden-data CPU contract and fails on mismatch,
+without retry jobs or an aggregate.
+
+Linux ARM64 artifact smoke and release installation are **not run** until
+Dinkster goes public ([ruling](https://github.com/Kosinkadink/comfy-vibe-station/issues/162)).
+Their matrices retain self-hosted Linux x64, Windows x64 and macOS ARM64;
+the unavailable Linux ARM64 leg is neither a pass nor a failure.
 
 ## Coverage
 
@@ -120,11 +125,11 @@ targets because their inputs come from outside.
 
 ## CPU checks and dedicated model tests
 
-The CPU retry jobs never acquire or execute model weights. All five
-`torch-cpu-try*` callers pass `run-model-tests: "false"` to
+The single `torch-cpu` job never acquires or executes model weights. It
+passes `run-model-tests: "false"` to
 `.github/actions/torch-cpu-suite`. The action defaults to false as well.
 Environment setup, pinned source downloads, source-parity receipts and their
-tests, and all eleven Torch/vision pyright projects remain in these jobs. The
+tests, and all eleven Torch/vision pyright projects remain in this job. The
 nine vision package suites also run without their artifact
 environment variables, so their weight-dependent cases skip while synthetic
 input validation, preprocessing, batching, cache, fallback, tiling, and
@@ -134,7 +139,7 @@ architecture tests still run. The packages are `dinkster-vision-hed`,
 `dinkster-vision-birefnet`, `dinkster-vision-depth-anything-v3`, and
 `dinkster-vision-sam31`.
 
-The CPU retry jobs exclude all pinned model-weight acquisitions, the combined
+The CPU job excludes all pinned model-weight acquisitions, the combined
 `dinkster-inference-torch` and `dinkster-model-ipadapter` test lane, each vision
 suite's second real-artifact run, and
 `tests/test_benchmark_inference.py::test_minimax_h3_identities_are_accepted_by_the_production_dit_loader`.
@@ -173,6 +178,8 @@ on it.
 
 The runner must have an AuthenticAMD CPU with AVX2 and **without AVX-512**,
 `MKL_CBWR` unset, and sufficient disk/RAM for the pinned CPU workloads.
+The `torch-cpu` job checks the vendor and instruction flags before checkout
+or dependency setup and fails with the required CPU golden contract on mismatch.
 A GPU-equipped machine still runs CPU parity with Torch 2.13.0+cpu and the
 existing AVX2 dispatch pins; this does not switch to GPU goldens. Checkouts
 clean the workspace and do not persist credentials. Deploy keys live in
