@@ -559,7 +559,7 @@ def test_serving_policy_derives_pack_grants_and_proxied_egress(
         manifest_path,
         env={
             "DINKSTER_ASSET_VAULT": str(vault),
-            "DINKSTER_COMFY_API_BASE": "https://api.example.test",
+            "DINKSTER_REMOTE_GATEWAY_BASE": "https://api.example.test",
             "DINKSTER_OPENAI_BASE_URL": "https://llm.example.test/v1",
         },
         aimdo="auto",
@@ -568,8 +568,8 @@ def test_serving_policy_derives_pack_grants_and_proxied_egress(
     try:
         assert launcher is not None
         assert launcher.policy.egress_allowlist == (
-            "https://api.example.test",
             "https://llm.example.test",
+            "https://api.example.test",
         )
         assert launcher.policy.gpu is True
         assert set(launcher.policy.ro_binds) >= {

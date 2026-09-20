@@ -209,7 +209,7 @@ executes = ["schema-owner.generate"]
 [[pack.generation-providers]]
 choice = "schema-owner.generation.providers"
 node = "schema-owner.generate"
-label = "Configured OpenAI-compatible service"
+label = "Hosted text service"
 
 [pack.entry]
 nodes = "generation_provider:NODES"
