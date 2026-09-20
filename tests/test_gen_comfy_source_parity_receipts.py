@@ -15,6 +15,32 @@ pytest.importorskip("torch")
 from tools import gen_comfy_source_parity_receipts as generator  # noqa: E402
 
 
+def test_controlnet_loader_trace_registry_supports_builtin_assembly_construction() -> None:
+    source_calls: list[dict[str, object]] = []
+
+    class SourceControlNetLoader:
+        def load_controlnet(self, name: str) -> tuple[object]:
+            source_calls.append(
+                {"path": name, "role": "controlnet", "selection": "sdxl_control_lora"}
+            )
+            return (generator._SourceControlNet(),)  # pyright: ignore[reportPrivateUsage]
+
+    source, native = generator._controlnet_loader_trace(  # pyright: ignore[reportPrivateUsage]
+        SourceControlNetLoader,
+        source_calls,
+    )
+
+    assert source["returnedControl"] is True
+    assert native["returnedControl"] is True
+    assert native["calls"] == [
+        {
+            "path": "models/controlnet/fixture-control-lora.safetensors",
+            "role": "controlnet",
+            "selection": "sdxl_control_lora",
+        }
+    ]
+
+
 def test_adapter_hint_snapshot_preserves_rgb_until_runtime_normalization() -> None:
     import dinkster_inference_torch
 
