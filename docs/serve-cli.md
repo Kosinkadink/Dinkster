@@ -234,6 +234,12 @@ Interpreter for native or compat execution. The resolution chain is: CLI value,
 then the `DINKSTER_COMFYUI_PYTHON` environment variable, then the install's
 own venv when `--comfy-root` is set, then the current Python.
 
+When `--comfy-root` is set, this is also the interpreter used to import the
+compatibility layer. Composition checks the imports named by the install's
+`requirements.txt` before starting any compatibility worker. A failure names
+the first unavailable module, the selected interpreter, and the resolution
+step that selected it.
+
 ### CPU and Apple Silicon workers
 
 Workers select from their own PyTorch capabilities: CUDA/ROCm, XPU, MPS,
