@@ -720,6 +720,41 @@ def test_no_copy_local_mapping_revokes_on_mutation_deletion_and_symlink(tmp_path
         )
 
 
+@pytest.mark.skipif(os.name != "nt", reason="exercises the Windows file fingerprint")
+def test_windows_local_mapping_poll_uses_fingerprint_without_rehashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = _safetensors(b"local model")
+    digest = digest_bytes(data)
+    local = tmp_path / "model.safetensors"
+    local.write_bytes(data)
+    vault = AssetVault(tmp_path / "vault")
+    mapping = vault.verify_p2p_local_file(
+        digest,
+        len(data),
+        local.resolve(),
+        P2P_FORMAT_POLICY_VERSION,
+    )
+    full_reads = 0
+
+    def count_full_read(_handle: object) -> str:
+        nonlocal full_reads
+        full_reads += 1
+        return digest
+
+    monkeypatch.setattr(storage_module, "_hash_handle", count_full_read)
+    unchanged = mapping.is_current()
+    assert unchanged
+    assert full_reads == 0
+
+    verified = local.stat()
+    local.write_bytes(data[:-1] + b"X")
+    os.utime(local, ns=(verified.st_atime_ns, verified.st_mtime_ns))
+    changed = mapping.is_current()
+    assert not changed
+    assert full_reads == 0
+
+
 def test_corrupt_resume_state_fails_closed_without_truncating_partial(tmp_path: Path) -> None:
     data = _safetensors()
     vault = AssetVault(tmp_path / "vault")

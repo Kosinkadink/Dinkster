@@ -44,7 +44,7 @@ from dinkster_nodes_media_io import MEDIA_IO_NODES
 from dinkster_protocol import GRAPH_COMPILERS_SURFACE, KeyedContribution, extension_behavior_hash
 from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
-from dinkster_values import TypeRegistry
+from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
 
@@ -2191,6 +2191,55 @@ def test_serving_composer_replaces_and_retracts_pack_renditions(tmp_path: Path) 
 
             await composer.remove_pack("isopack")
             assert registry.renditions_of("iso.blob") == ()
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.usefixtures("unrestricted_cuda_devices")
+@pytest.mark.parametrize("replica_cuda_indices", [(), (0, 1)], ids=["lazy", "replica-pool"])
+def test_cold_catalog_pack_renditions_relay_through_composed_registry(
+    tmp_path: Path, replica_cuda_indices: tuple[int, ...]
+) -> None:
+    async def scenario() -> None:
+        manifest = write_iso_manifest(tmp_path)
+        environment = {**os.environ, **WORKER_ENV}
+        assert prepare_catalog(manifest, environment=environment).ok
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        try:
+            await composer.add_pack(
+                PackSpec(
+                    manifest,
+                    require_catalog=True,
+                    replica_cuda_indices=replica_cuda_indices,
+                )
+            )
+            worker = composer._records["isopack"].worker
+            assert worker.cold
+
+            registry = composer.composition._registry
+            spec = registry.renditions_of("iso.blob")[0]
+            metadata = {"size": 3}
+            assert await registry.rendition_mime(spec, metadata) == "text/plain"
+            mime, parameters = await registry.resolve_rendition(spec, metadata, {"prefix": "pack"})
+            assert (mime, parameters) == ("text/plain", {"prefix": "pack"})
+            value = Value(
+                type_id="iso.blob",
+                fingerprint="iso-blob-test",
+                meta=ValueMeta(metadata),
+                payload=EncodedPayload(
+                    "iso.blob",
+                    default_encode({"n": 3, "data": "xxx"}),
+                    None,
+                ),
+            )
+            rendition = await registry.render_async(
+                value,
+                "summary",
+                parameters,
+            )
+            assert (rendition.mime, rendition.data) == ("text/plain", b"pack:3:xxx")
         finally:
             await composer.close()
 

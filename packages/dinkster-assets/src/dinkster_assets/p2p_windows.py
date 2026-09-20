@@ -65,6 +65,7 @@ _ERROR_NOT_SUPPORTED = 50
 _ERROR_LOCK_VIOLATION = 33
 _LOCKFILE_FAIL_IMMEDIATELY = 0x00000001
 _LOCKFILE_EXCLUSIVE_LOCK = 0x00000002
+_FSCTL_READ_FILE_USN_DATA = 0x000900EB
 _FSCTL_SET_SPARSE = 0x000900C4
 _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
@@ -169,6 +170,13 @@ class _FileIdBothDirectoryInformation(ctypes.Structure):
         ("ShortName", wintypes.WCHAR * 12),
         ("FileId", ctypes.c_longlong),
         ("FileName", wintypes.WCHAR * 1),
+    ]
+
+
+class _ReadFileUsnData(ctypes.Structure):
+    _fields_ = [
+        ("MinMajorVersion", wintypes.WORD),
+        ("MaxMajorVersion", wintypes.WORD),
     ]
 
 
@@ -668,16 +676,36 @@ def raw_file_handle(descriptor: int) -> int:
     return msvcrt.get_osfhandle(descriptor)
 
 
-def change_time(descriptor: int) -> int:
+def change_token(descriptor: int) -> int:
     result = _FileBasicInformation()
+    handle = _handle(raw_file_handle(descriptor))
     if not _kernel32.GetFileInformationByHandleEx(
-        _handle(raw_file_handle(descriptor)),
+        handle,
         _FILE_BASIC_INFO,
         ctypes.byref(result),
         ctypes.sizeof(result),
     ):
         _raise_last_error()
-    return result.ChangeTime
+    request = _ReadFileUsnData(2, 4)
+    buffer = ctypes.create_string_buffer(128)
+    returned = wintypes.DWORD()
+    if not _kernel32.DeviceIoControl(
+        handle,
+        _FSCTL_READ_FILE_USN_DATA,
+        ctypes.byref(request),
+        ctypes.sizeof(request),
+        buffer,
+        len(buffer),
+        ctypes.byref(returned),
+        None,
+    ):
+        return result.ChangeTime
+    major_version = int.from_bytes(buffer.raw[4:6], "little")
+    usn_offset = 24 if major_version == 2 else 40
+    if major_version not in (2, 3, 4) or returned.value < usn_offset + 8:
+        return result.ChangeTime
+    usn = int.from_bytes(buffer.raw[usn_offset : usn_offset + 8], "little", signed=True)
+    return (usn << 64) | (result.ChangeTime & ((1 << 64) - 1))
 
 
 def flush(handle: int) -> None:
