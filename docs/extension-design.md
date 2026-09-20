@@ -325,7 +325,8 @@ errors); lifecycle-managed background producers (no import-time daemon
 threads, report-08); capability discovery. **Binary media channels
 (versioned framing, MIME, correlation, backpressure) and upload/transcoding
 are a later media-specific slice** (VHS's 24-byte header hack is the
-cautionary tale).
+cautionary tale). Current server capability status is listed in the
+[capability status table](supported/pack-routes-events-and-frontend-modules.md#extension-capability-status).
 
 Frontend design covers stable node schema, IDs, manifest fields, event
 correlation, widget registration, render layers, menus, graph transactions,

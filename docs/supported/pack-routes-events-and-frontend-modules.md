@@ -30,15 +30,18 @@ implemented and the cited frontend test exercises its registration or use.
 `Declared and unconsumed` means manifests may declare the contribution, but no
 frontend activation door consumes it.
 
+Frontend proof paths were checked at Dinkster-Frontend commit
+`50321360d62f855469a9e8401dc1a34a9cd6e7c8`.
+
 | Contribution kind | Status | Proof |
 |---|---|---|
 | `widgetKind` | Works | `Dinkster-Frontend/packages/core/test/extensions.test.ts` |
-| `widgetView` | Works | `Dinkster-Frontend/packages/e2e/tests/extensions.spec.ts` |
+| `widgetView` | Works | `Dinkster-Frontend/packages/app/test/extension-world.test.ts` |
 | `previewRenderer` | Works | `Dinkster-Frontend/packages/app/test/extension-world.test.ts` |
 | `textEditorExtension` | Works | `Dinkster-Frontend/packages/core/test/extensions.test.ts` |
 | `menu` | Works | `Dinkster-Frontend/packages/core/test/extensions.test.ts` |
 | `command` | Works | `Dinkster-Frontend/packages/app/test/extension-world.test.ts` |
-| `keybinding` | Works | Consumer: `Dinkster-Frontend/packages/core/src/extensions/host.ts`; registry behavior: `Dinkster-Frontend/packages/app/test/settings.test.ts` (no dedicated contribution-registration test) |
+| `keybinding` | Works | World-to-registry: `Dinkster-Frontend/packages/app/test/extension-world.test.ts` (`projects a pack keybinding through the selected extension world`) |
 | `setting` | Works | `Dinkster-Frontend/packages/core/test/extensions.test.ts` |
 | `canvasLayer` | Declared and unconsumed | - |
 | `nodeDecoration` | Declared and unconsumed | - |
