@@ -76,6 +76,7 @@ class ExtensionContractProof(Node):
             display_name="Extension Contract Proof",
             inputs=(InputSpec("sample", TypeExpr.concrete(VALUE_TYPE)),),
             outputs=(OutputSpec("mean", TypeExpr.concrete("core.float")),),
+            idempotent=False,
         )
 
     @classmethod
