@@ -30,6 +30,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import replace
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 
 import torch
@@ -45,11 +46,8 @@ from dinkster_inference import (
     CompositeWindowPlan,
     Conditioning,
     ConditioningCarrier,
-    ContextWindowsSpec,
     ContinuousEDMSigmas,
     ContributionGain,
-    CustomSamplingRequest,
-    CustomSamplingResult,
     DirectGainTableCurve,
     DiscreteSigmas,
     DType,
@@ -89,7 +87,6 @@ from dinkster_inference import (
     realize_gain_table,
     realize_sampling_timeline,
     require_realized_sampling_step,
-    sampling_execution_context,
     wired_runtime_family_ids,
 )
 from dinkster_inference.assembly import (
@@ -148,12 +145,11 @@ from .controlnet import (
     compile_sd_effect_mask,
 )
 from .denoise import (
+    DenoiseError,
     FluxCondition,
     FluxDenoiser,
-    FluxGuidance,
     latent_process_in,
     prepare_noise,
-    run_denoise,
 )
 from .distributed import distributed_sampling_config, ensure_process_group
 from .flux2_runtime import Flux2Runtime
@@ -179,19 +175,19 @@ from .lumina2_runtime import Lumina2Runtime
 from .operations import module_compute_device
 from .qwen_image_runtime import QwenImageRuntime
 from .qwen_text import OvisTextEncoder
+from .regional import flux_grouped_region_evaluator
 from .sampling_execution import (
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
-    SingleStreamCustomSamplingCfg,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    custom_denoised_callback,
-    guided_denoiser,
-    narrow_single_stream_custom_sampling,
-    resolve_custom_sampling_request,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
+    SamplingExecutionInputs,
+    SamplingExecutionRegistration,
+    SingleStreamLatentAdapter,
     run_ksampler_as_custom,
+    sampling_execution,
 )
 from .sampling_runtime import SingleStreamSamplingRuntime
 from .scheduled import encode_text_scheduled
@@ -218,7 +214,7 @@ from .wan21_runtime import Wan21Runtime
 from .z_image_runtime import ZImageRuntime
 
 if TYPE_CHECKING:
-    from .scheduled_sampling import ScheduledPatchResolver, ScheduledSamplingOptions
+    from .scheduled_sampling import ScheduledPatchResolver
 
 
 class WiringError(ValueError):
@@ -278,6 +274,408 @@ def _flux_sigma_space(family: ModelFamily) -> SigmaSpace:
     return FluxFlowSigmas(shift=family.sampling.shift)
 
 
+class _FluxSamplingDenoiser:
+    evaluator_identity = "dinkster.flux.conditioning.v1"
+
+    def __init__(
+        self,
+        evaluation: FluxDenoiser | FluxWindowConditioningEvaluation[FluxCondition],
+    ) -> None:
+        self.evaluation = evaluation
+
+    def prepare_conditioning(self, value: object, _role: GuidanceRole) -> object:
+        return self.evaluation.prepare_conditioning(value)
+
+    def evaluate_conditioning(
+        self, latent: torch.Tensor, sigma: float, condition: object
+    ) -> torch.Tensor:
+        return self.evaluation.evaluate_conditioning(latent, sigma, cast("Any", condition))
+
+    def evaluate_conditioning_batch(
+        self,
+        latent: torch.Tensor,
+        sigma: float,
+        conditions: tuple[object, ...],
+    ) -> tuple[torch.Tensor, ...]:
+        return self.evaluation.evaluate_conditioning_batch(latent, sigma, cast("Any", conditions))
+
+    def batchable(self, conditions: tuple[object, ...]) -> bool:
+        return self.evaluation.batchable(cast("Any", conditions))
+
+
+def _validate_flux_latent(latent: torch.Tensor) -> None:
+    if latent.ndim != 4:
+        raise WiringError("Flux latent must have shape [batch,channels,height,width]")
+
+
+class _FluxLatentAdapter(SingleStreamLatentAdapter):
+    def prepare(
+        self,
+        runtime: object,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs:
+        scheduled_request = (
+            type(cond) is ConditioningCarrier or context.options.get("scheduled") is not None
+        )
+        if not scheduled_request:
+            return super().prepare(
+                runtime,
+                family,
+                latent=latent,
+                noise=noise,
+                cond=cond,
+                cfg=cfg,
+                denoise_mask=denoise_mask,
+                context=context,
+                error=error,
+            )
+        from .scheduled_sampling import ScheduledSamplingError, narrow_scheduled_values
+
+        owner = cast("FluxRuntime", runtime)
+        executor = owner.sampling_execution_registration.guidance_executor(owner)
+        if executor is not None and executor.registry.active:
+            raise ScheduledSamplingError("guidance-extensions")
+        if cfg is not None and cfg.transforms:
+            raise ScheduledSamplingError("guidance-extensions")
+        if context.guidance is not None and owner.assembled.diffusion.guidance_in is None:
+            raise DenoiseError(
+                "guidance was given but this Flux model has no guidance"
+                " embedder (schnell); pass guidance=None"
+            )
+
+        latent, noise, cond, cfg, denoise_mask = narrow_scheduled_values(
+            family.id,
+            latent=latent,
+            noise=noise,
+            cond=cond,
+            cfg=cfg,
+            denoise_mask=denoise_mask,
+        )
+        self.validate(latent)
+        return SamplingExecutionInputs(
+            latent,
+            noise,
+            cond,
+            cfg,
+            denoise_mask,
+            family.single_stream_latent(),
+        )
+
+
+def _flux_scheduled_denoiser(
+    owner: FluxRuntime,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserExecution:
+    from .scheduled_sampling import (
+        ScheduledConditioningDenoiser,
+        ScheduledSamplingOptions,
+        prepare_scheduled_carriers,
+        validate_unconditional_carrier,
+    )
+
+    if (
+        context.inputs is None
+        or context.device is None
+        or context.plan is None
+        or context.request is None
+        or context.schedule is None
+    ):
+        raise RuntimeError("scheduled Flux sampling context is unresolved")
+    scheduled = context.options.get("scheduled")
+    if scheduled is None:
+        scheduled = ScheduledSamplingOptions()
+    elif type(scheduled) is not ScheduledSamplingOptions:
+        raise TypeError("scheduled must be an exact ScheduledSamplingOptions or None")
+    unknown = set(context.options) - {"scheduled", "window_plan"}
+    if unknown:
+        raise WiringError(
+            "Flux sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+        )
+    executor = owner.sampling_execution_registration.guidance_executor(owner)
+    if executor is not None and executor.registry.active:
+        raise RuntimeError("scheduled guidance was admitted after validation")
+    if context.inputs.cfg is not None and context.inputs.cfg.transforms:
+        raise RuntimeError("scheduled guidance transforms were admitted after validation")
+    if context.inputs.denoise_mask is not None:
+        raise WiringError(f"scheduled-sampling:denoise-mask: {owner.family.id}")
+    if context.inpaint is not None:
+        raise WiringError(f"scheduled-sampling:inpaint: {owner.family.id}")
+    if context.context_windows is not None:
+        raise WiringError(f"scheduled-sampling:context-windows: {owner.family.id}")
+    if context.options.get("window_plan") is not None:
+        raise WiringError(f"scheduled-sampling:window-plan: {owner.family.id}")
+    if context.guidance == "disabled":
+        raise WiringError(f"scheduled-sampling:distilled-guidance: {owner.family.id}")
+    validate_unconditional_carrier(context.plan)
+    device = torch.device(context.device)
+    realized_timeline = (
+        None
+        if context.request.timeline is None
+        else realize_sampling_timeline(
+            context.request.timeline,
+            tuple(float(sigma) for sigma in context.schedule.sigmas),
+        )
+    )
+    space = owner.sampling_sigma_space()
+    conditional, unconditional, patch_sets, materialized_plan = prepare_scheduled_carriers(
+        owner,
+        context.inputs.latent,
+        context.plan,
+        resolver=scheduled.resolver,
+        device=device,
+        cancel=context.cancelled,
+        timeline=realized_timeline,
+        space=space,
+    )
+    evaluator = ScheduledConditioningDenoiser(
+        conditional,
+        unconditional,
+        family=owner.family,
+        space=space,
+        model=owner.assembled.diffusion,
+        evaluate=flux_grouped_region_evaluator(
+            owner.assembled.diffusion,
+            guidance=context.guidance,
+            compute_dtype=compute_dtype,
+        ),
+        patch_sets=patch_sets,
+        compute_dtype=compute_dtype,
+        device=device,
+        cancel=context.cancelled,
+    )
+    replacements = MappingProxyType(
+        {
+            condition.id: condition.conditioning
+            for condition in materialized_plan.conditions
+            if condition.conditioning is not None
+        }
+    )
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", evaluator),
+        conditioning_evaluation=ConditioningEvaluation(
+            evaluator.prepare_conditioning,
+            evaluator.evaluate_conditioning,
+            evaluator.batchable,
+            evaluator.evaluate_conditioning_batch,
+            evaluator_identity=lambda _role: f"{owner.family.id}.scheduled-conditioning.v1",
+            standard_activation_memory_factor=owner.family.memory_factor,
+        ),
+        conditioning_payloads=replacements,
+        solver_options=MappingProxyType({"realized_timeline": realized_timeline}),
+        defer_callback_cancellation=scheduled.resolver is not None,
+        close=evaluator.close,
+    )
+
+
+def _flux_denoiser(
+    runtime: object,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserExecution:
+    owner = cast("FluxRuntime", runtime)
+    if (
+        context.inputs is None
+        or context.device is None
+        or context.plan is None
+        or context.request is None
+        or context.sampler is None
+        or context.schedule is None
+    ):
+        raise RuntimeError("Flux sampling context is unresolved")
+    if type(context.inputs.cond) is ConditioningCarrier:
+        return _flux_scheduled_denoiser(owner, compute_dtype, context)
+    execution_device = torch.device(context.device)
+    unknown = set(context.options) - {"window_plan", "scheduled"}
+    if unknown:
+        raise WiringError(
+            "Flux sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+        )
+    if context.options.get("scheduled") is not None:
+        raise WiringError("scheduled Flux conditioning requires a ConditioningCarrier")
+    window_plan = context.options.get("window_plan")
+    latent = context.inputs.latent
+    prepared_window_plan = None
+    window_plan_error: BaseException | None = None
+    try:
+        if window_plan is not None and type(window_plan) is not CompositeWindowPlan:
+            raise WiringError("invalid-window-plan: expected an exact CompositeWindowPlan")
+        if window_plan is not None:
+            prepared_window_plan = prepare_flux_window_plan(
+                window_plan,
+                latent_height=latent.shape[-2],
+                latent_width=latent.shape[-1],
+                patch_size=owner.assembled.diffusion.config.patch_size,
+            )
+    except FluxWindowError as error:
+        window_plan_error = WiringError(str(error))
+    except BaseException as error:
+        window_plan_error = error
+    requested_distributed = distributed_sampling_config()
+    window_mode_requested = requested_distributed is not None and requested_distributed.mode in (
+        "auto",
+        "window",
+    )
+    window_distributed = (
+        window_mode_requested
+        and prepared_window_plan is not None
+        and len(prepared_window_plan.windows) >= 2
+    )
+    distributed_config = None
+    if not window_mode_requested and window_plan_error is not None:
+        raise window_plan_error
+    if window_mode_requested:
+        distributed_config = ensure_process_group()
+        assert distributed_config is not None
+        if window_preflight_failed(window_plan_error is not None, execution_device):
+            if window_plan_error is not None:
+                raise window_plan_error from None
+            raise WiringError("peer flux window preflight failed")
+        if window_route_mismatch(window_distributed, execution_device):
+            raise WiringError("distributed ranks disagree on Flux window route eligibility")
+    patch_size = owner.assembled.diffusion.config.patch_size
+    replacements: dict[str, object] = {}
+    bound_conditions = []
+    for condition in context.plan.conditions:
+        if condition.conditioning is None:
+            bound_conditions.append(condition)
+            continue
+        bound = bind_flux_layout(
+            condition.conditioning,
+            latent_height=latent.shape[-2],
+            latent_width=latent.shape[-1],
+            patch_size=patch_size,
+        )
+        replacements[condition.id] = bound
+        bound_conditions.append(replace(condition, conditioning=cast("Any", bound)))
+    bound_plan = replace(context.plan, conditions=tuple(bound_conditions))
+    conditioning_evaluation: ConditioningEvaluation[Any]
+    if prepared_window_plan is None:
+        evaluator: FluxDenoiser | FluxWindowConditioningEvaluation[FluxCondition] = FluxDenoiser(
+            owner.assembled.diffusion,
+            guidance=context.guidance,
+            compute_dtype=compute_dtype,
+        )
+        conditioning_evaluation = ConditioningEvaluation(
+            lambda value, _role: evaluator.prepare_conditioning(value),
+            evaluator.evaluate_conditioning,
+            evaluator.batchable,
+            evaluator.evaluate_conditioning_batch,
+            evaluator_identity=lambda _role: "dinkster.flux.conditioning.v1",
+            standard_activation_memory_factor=owner.family.memory_factor,
+            layout=conditioning_layout,
+            fused_layout=flux_fused_layout,
+            token_transforms=conditioning_token_transforms,
+            validate_layout=lambda condition, layout: validate_flux_layout(
+                condition,
+                layout,
+                latent_height=latent.shape[-2],
+                latent_width=latent.shape[-1],
+                patch_size=patch_size,
+            ),
+        )
+    else:
+        window_evaluation = FluxWindowConditioningEvaluation(
+            prepared_window_plan,
+            tuple(
+                FluxDenoiser(
+                    owner.assembled.diffusion,
+                    guidance=context.guidance,
+                    compute_dtype=compute_dtype,
+                    image_grid_indices=(window.height_indices, window.width_indices),
+                )
+                for window in prepared_window_plan.windows
+            ),
+        )
+        evaluation: (
+            FluxWindowConditioningEvaluation[FluxCondition]
+            | DistributedFluxWindowEvaluation[FluxCondition]
+        ) = window_evaluation
+        if window_distributed:
+            assert distributed_config is not None
+            manifest_error: BaseException | None = None
+            manifest = None
+            try:
+                lanes = tuple(
+                    condition.conditioning
+                    for condition in bound_plan.conditions
+                    if condition.conditioning is not None
+                )
+                token_counts = tuple(declared_token_count(lane) for lane in lanes)
+                if not token_counts or any(count is None for count in token_counts):
+                    raise WiringError(
+                        "windowed distributed execution requires declared conditioning"
+                    )
+                manifest = build_flux_window_manifest(
+                    runtime_identity=owner.runtime_identity,
+                    config=distributed_config,
+                    prepared_plan=prepared_window_plan,
+                    text_token_counts=cast("tuple[int, ...]", token_counts),
+                    sampler_id=context.sampler.id,
+                    sampler_options=context.request.options,
+                    seed=context.seed,
+                    pre_offset_sigmas=context.request.sigmas,
+                    sigmas=context.schedule.sigmas,
+                )
+            except BaseException as error:
+                manifest_error = error
+            if window_preflight_failed(manifest_error is not None, execution_device):
+                if manifest_error is not None:
+                    raise manifest_error
+                raise WiringError("peer flux window preflight failed")
+            assert manifest is not None
+            transport = WindowDigestConsensusTransport(distributed_config, execution_device)
+            if transport.physical_ranks != tuple(range(distributed_config.world_size)):
+                raise WiringError("window consensus group differs from the collective group")
+            evaluation = DistributedFluxWindowEvaluation(
+                window_evaluation,
+                prove_manifest_consensus(manifest, rank=transport.rank, transport=transport),
+            )
+        evaluator = cast("Any", evaluation)
+
+        def prepare_window_conditioning(value: object, _role: GuidanceRole) -> object:
+            try:
+                return evaluation.prepare_conditioning(value)
+            except FluxWindowError as error:
+                raise WiringError(str(error)) from None
+
+        conditioning_evaluation = ConditioningEvaluation(
+            prepare_window_conditioning,
+            evaluation.evaluate_conditioning,
+            evaluation.batchable,
+            evaluation.evaluate_conditioning_batch,
+            evaluator_identity=lambda _role: "dinkster.flux.conditioning.v1",
+            standard_activation_memory_factor=owner.family.memory_factor,
+            layout=conditioning_layout,
+            token_transforms=conditioning_token_transforms,
+            validate_layout=evaluation.validate_layout,
+            inner_calls=evaluation.inner_calls,
+        )
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", _FluxSamplingDenoiser(evaluator)),
+        conditioning_evaluation=conditioning_evaluation,
+        conditioning_payloads=MappingProxyType(replacements),
+        distributed_evaluation=window_distributed,
+    )
+
+
+def _flux_device(runtime: object) -> torch.device:
+    return module_compute_device(cast("FluxRuntime", runtime).assembled.diffusion)
+
+
+def _flux_compute_dtype(runtime: object) -> torch.dtype:
+    owner = cast("FluxRuntime", runtime)
+    return owner.assembled.compute_dtype("diffusion") or torch.bfloat16
+
+
 class FluxRuntime(SingleStreamSamplingRuntime):
     """FamilyRuntime[torch.Tensor] over an assembled classic Flux.
 
@@ -297,6 +695,13 @@ class FluxRuntime(SingleStreamSamplingRuntime):
     sampling_error = WiringError
     sampling_compute_dtype = torch.bfloat16
     supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=_FluxLatentAdapter(_validate_flux_latent),
+        denoiser=_flux_denoiser,
+        device=_flux_device,
+        compute_dtype=_flux_compute_dtype,
+        flow=True,
+    )
 
     def __init__(
         self,
@@ -464,321 +869,7 @@ class FluxRuntime(SingleStreamSamplingRuntime):
     def supports_distilled_guidance(self) -> bool:
         return self.assembled.diffusion.config.guidance_embed
 
-    def sample_custom(
-        self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: FluxGuidance = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        window_plan: CompositeWindowPlan | None = None,
-        scheduled: ScheduledSamplingOptions | None = None,
-        compute_dtype: torch.dtype | None = None,
-        device: torch.device | str | None = None,
-        capture_denoised: bool = True,
-    ) -> CustomSamplingResult[torch.Tensor]:
-        if scheduled is not None or type(cond) is ConditioningCarrier:
-            from .scheduled_sampling import ScheduledSamplingOptions, sample_flux_scheduled_custom
-
-            if scheduled is None:
-                scheduled = ScheduledSamplingOptions()
-            elif type(scheduled) is not ScheduledSamplingOptions:
-                raise TypeError("scheduled must be an exact ScheduledSamplingOptions or None")
-
-            return sample_flux_scheduled_custom(
-                self,
-                latent,
-                noise=noise,
-                cond=cond,
-                cfg=cfg,
-                request=request,
-                seed=seed,
-                guidance=guidance,
-                denoise_mask=denoise_mask,
-                inpaint=inpaint,
-                context_windows=context_windows,
-                window_plan=window_plan,
-                on_step=on_step,
-                on_state=on_state,
-                resolver=scheduled.resolver,
-                cancelled=scheduled.cancelled,
-                compute_dtype=compute_dtype,
-                device=device,
-                capture_denoised=capture_denoised,
-            )
-        latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
-            self.family.id,
-            latent=latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            denoise_mask=denoise_mask,
-            error=WiringError,
-        )
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=WiringError
-        )
-        requested_distributed = distributed_sampling_config()
-        model_device = module_compute_device(self.assembled.diffusion)
-        execution_device = model_device if device is None else torch.device(device)
-        prepared_window_plan = None
-        window_plan_error: BaseException | None = None
-        try:
-            if window_plan is not None and type(window_plan) is not CompositeWindowPlan:
-                raise WiringError("invalid-window-plan: expected an exact CompositeWindowPlan")
-            if window_plan is not None and latent.ndim != 4:
-                raise WiringError(
-                    "window-tensor-declaration-mismatch: Flux windows require"
-                    " a [batch, channels, height, width] latent"
-                )
-            if window_plan is not None:
-                prepared_window_plan = prepare_flux_window_plan(
-                    window_plan,
-                    latent_height=latent.shape[-2],
-                    latent_width=latent.shape[-1],
-                    patch_size=self.assembled.diffusion.config.patch_size,
-                )
-        except FluxWindowError as error:
-            window_plan_error = WiringError(str(error))
-        except BaseException as error:
-            window_plan_error = error
-        window_mode_requested = requested_distributed is not None and (
-            requested_distributed.mode == "auto" or requested_distributed.mode == "window"
-        )
-        window_distributed = requested_distributed is not None and (
-            requested_distributed.mode in ("auto", "window")
-            and prepared_window_plan is not None
-            and len(prepared_window_plan.windows) >= 2
-        )
-        distributed_config = None
-        if not window_mode_requested and window_plan_error is not None:
-            raise window_plan_error
-        if window_mode_requested:
-            distributed_config = ensure_process_group()
-            assert distributed_config is not None
-            if window_preflight_failed(window_plan_error is not None, execution_device):
-                if window_plan_error is not None:
-                    raise window_plan_error from None
-                raise WiringError("peer flux window preflight failed")
-            if window_route_mismatch(window_distributed, execution_device):
-                raise WiringError("distributed ranks disagree on Flux window route eligibility")
-        if compute_dtype is None:
-            compute_dtype = self.assembled.compute_dtype("diffusion") or torch.bfloat16
-        admission = None
-        if window_distributed:
-            assert distributed_config is not None
-        elif requested_distributed is not None:
-            admission = self.admit_distributed_guidance(
-                request,
-                cond=cond,
-                cfg=cfg,
-                executor=self._guidance,
-            )
-            if admission is not None:
-                request = admission.request
-                sampler = request.sampler
-        space = self._space
-        schedule = build_custom_sampling_schedule(
-            request.sigmas,
-            space,
-            sampler,
-            flow=is_flow_parameterization(self.family.sampling.parameterization),
-        )
-        step_noise = brownian_step_noise(
-            sampler, schedule, latent, seed=seed, device=execution_device
-        )
-        guidance_plan = (
-            compile_guidance_plan(cond, cfg, sampler, self._guidance)
-            if admission is None
-            else admission.plan
-        )
-        patch_size = self.assembled.diffusion.config.patch_size
-        bound_cond = bind_flux_layout(
-            guidance_plan.conditions[0].conditioning,
-            latent_height=latent.shape[-2],
-            latent_width=latent.shape[-1],
-            patch_size=patch_size,
-        )
-        bound_uncond = bind_flux_layout(
-            guidance_plan.conditions[1].conditioning,
-            latent_height=latent.shape[-2],
-            latent_width=latent.shape[-1],
-            patch_size=patch_size,
-        )
-        guidance_plan = replace(
-            guidance_plan,
-            conditions=(
-                replace(
-                    guidance_plan.conditions[0],
-                    conditioning=cast(Any, bound_cond),
-                ),
-                replace(
-                    guidance_plan.conditions[1],
-                    conditioning=cast(Any, bound_uncond),
-                ),
-            ),
-        )
-        report_state: SamplingStateCallback | None
-        captured: list[torch.Tensor]
-        if capture_denoised:
-            report_state, captured = custom_denoised_callback(self.family, on_state)
-        else:
-            report_state, captured = on_state, []
-        if prepared_window_plan is None:
-            evaluator = FluxDenoiser(
-                self.assembled.diffusion,
-                guidance=guidance,
-                compute_dtype=compute_dtype,
-            )
-            denoiser = guided_denoiser(
-                ConditioningEvaluation(
-                    lambda value, _role: evaluator.prepare_conditioning(value),
-                    evaluator.evaluate_conditioning,
-                    evaluator.batchable,
-                    evaluator.evaluate_conditioning_batch,
-                    evaluator_identity=lambda _role: "dinkster.flux.conditioning.v1",
-                    standard_activation_memory_factor=self.family.memory_factor,
-                    layout=conditioning_layout,
-                    fused_layout=flux_fused_layout,
-                    token_transforms=conditioning_token_transforms,
-                    validate_layout=lambda condition, layout: validate_flux_layout(
-                        condition,
-                        layout,
-                        latent_height=latent.shape[-2],
-                        latent_width=latent.shape[-1],
-                        patch_size=patch_size,
-                    ),
-                ),
-                input=latent,
-                executor=self._guidance if admission is None else None,
-                plan=guidance_plan,
-                execution=sampling_execution_context(schedule.sigmas, seed, on_step, report_state),
-                replica_evaluator_factory=(
-                    None if admission is None else admission.replica_evaluator_factory
-                ),
-                distributed_evaluation=window_distributed,
-            )
-        else:
-            window_evaluation: FluxWindowConditioningEvaluation[FluxCondition] = (
-                FluxWindowConditioningEvaluation(
-                    prepared_window_plan,
-                    tuple(
-                        FluxDenoiser(
-                            self.assembled.diffusion,
-                            guidance=guidance,
-                            compute_dtype=compute_dtype,
-                            image_grid_indices=(window.height_indices, window.width_indices),
-                        )
-                        for window in prepared_window_plan.windows
-                    ),
-                )
-            )
-            evaluation: (
-                FluxWindowConditioningEvaluation[FluxCondition]
-                | DistributedFluxWindowEvaluation[FluxCondition]
-            ) = window_evaluation
-            if window_distributed:
-                assert distributed_config is not None
-                manifest_error: BaseException | None = None
-                manifest = None
-                try:
-                    lanes = tuple(
-                        condition.conditioning
-                        for condition in guidance_plan.conditions
-                        if condition.conditioning is not None
-                    )
-                    token_counts = tuple(declared_token_count(lane) for lane in lanes)
-                    if not token_counts or any(count is None for count in token_counts):
-                        raise WiringError(
-                            "windowed distributed execution requires declared conditioning"
-                        )
-                    manifest = build_flux_window_manifest(
-                        runtime_identity=self.runtime_identity,
-                        config=distributed_config,
-                        prepared_plan=prepared_window_plan,
-                        text_token_counts=cast("tuple[int, ...]", token_counts),
-                        sampler_id=sampler.id,
-                        sampler_options=request.options,
-                        seed=seed,
-                        pre_offset_sigmas=request.sigmas,
-                        sigmas=schedule.sigmas,
-                    )
-                except BaseException as error:
-                    manifest_error = error
-                if window_preflight_failed(manifest_error is not None, execution_device):
-                    if manifest_error is not None:
-                        raise manifest_error
-                    raise WiringError("peer flux window preflight failed")
-                assert manifest is not None
-                transport = WindowDigestConsensusTransport(distributed_config, execution_device)
-                if transport.physical_ranks != tuple(range(distributed_config.world_size)):
-                    raise WiringError("window consensus group differs from the collective group")
-                consensus_token = prove_manifest_consensus(
-                    manifest,
-                    rank=transport.rank,
-                    transport=transport,
-                )
-                evaluation = DistributedFluxWindowEvaluation(window_evaluation, consensus_token)
-            try:
-                denoiser = guided_denoiser(
-                    ConditioningEvaluation(
-                        lambda value, _role: evaluation.prepare_conditioning(value),
-                        evaluation.evaluate_conditioning,
-                        evaluation.batchable,
-                        evaluation.evaluate_conditioning_batch,
-                        evaluator_identity=lambda _role: "dinkster.flux.conditioning.v1",
-                        standard_activation_memory_factor=self.family.memory_factor,
-                        layout=conditioning_layout,
-                        token_transforms=conditioning_token_transforms,
-                        validate_layout=evaluation.validate_layout,
-                        inner_calls=evaluation.inner_calls,
-                    ),
-                    input=latent,
-                    executor=self._guidance if admission is None else None,
-                    plan=guidance_plan,
-                    execution=sampling_execution_context(
-                        schedule.sigmas, seed, on_step, report_state
-                    ),
-                    replica_evaluator_factory=(
-                        None if admission is None else admission.replica_evaluator_factory
-                    ),
-                    distributed_evaluation=window_distributed,
-                )
-            except FluxWindowError as error:
-                raise WiringError(str(error)) from None
-        output = run_denoise(
-            denoiser,
-            request.build_solver(),
-            latent=latent,
-            noise=noise,
-            sigmas=schedule.sigmas,
-            initial_sigma=schedule.initial_sigma,
-            family=self.family,
-            seed=seed,
-            noise_kind=sampler.noise,
-            noise_sampler=step_noise,
-            percent_to_sigma=space.percent_to_sigma,
-            device=execution_device,
-            denoise_mask=denoise_mask,
-            on_step=on_step,
-            on_state=report_state,
-        )
-        return CustomSamplingResult(output, captured[-1] if captured else None)
+    sample_custom = cast("Any", sampling_execution)  # noqa: F811
 
     def sample_scheduled(
         self,
@@ -830,7 +921,8 @@ class FluxRuntime(SingleStreamSamplingRuntime):
             on_step=on_step,
             on_state=on_state,
             sample_custom_kwargs={
-                "scheduled": ScheduledSamplingOptions(resolver, cancelled),
+                "scheduled": ScheduledSamplingOptions(resolver, None),
+                "cancelled": cancelled,
                 "compute_dtype": compute_dtype,
                 "device": device,
                 "capture_denoised": False,
@@ -885,6 +977,598 @@ def _sd_control_gain(
     return SDControlGain(lane_ids, values, row.effect_mask_digests)
 
 
+def _validate_sd_latent(latent: torch.Tensor) -> None:
+    if latent.ndim != 4:
+        raise WiringError("SD latent must have shape [batch,channels,height,width]")
+
+
+class _SDLatentAdapter(SingleStreamLatentAdapter):
+    def prepare(
+        self,
+        runtime: object,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs:
+        scheduled_request = (
+            type(cond) is ConditioningCarrier or context.options.get("scheduled") is not None
+        )
+        if not scheduled_request:
+            return super().prepare(
+                runtime,
+                family,
+                latent=latent,
+                noise=noise,
+                cond=cond,
+                cfg=cfg,
+                denoise_mask=denoise_mask,
+                context=context,
+                error=error,
+            )
+        from .scheduled_sampling import ScheduledSamplingError, narrow_scheduled_values
+
+        owner = cast("SDRuntime", runtime)
+        executor = owner.sampling_execution_registration.guidance_executor(owner)
+        if executor is not None and executor.registry.active:
+            raise ScheduledSamplingError("guidance-extensions")
+        if cfg is not None and cfg.transforms:
+            raise ScheduledSamplingError("guidance-extensions")
+        control = context.options.get("control")
+        if control is not None:
+            raise ScheduledSamplingError("control", family.id)
+        contributions = context.options.get("sd15_attention_contributions", ())
+        if type(contributions) is not tuple or contributions:
+            raise ScheduledSamplingError("attention-contributions", family.id)
+        if context.guidance is not None:
+            raise ScheduledSamplingError("distilled-guidance", family.id)
+        if (
+            denoise_mask is not None
+            or context.inpaint is not None
+            or owner.assembled.diffusion.config.in_channels == 9
+        ):
+            raise ScheduledSamplingError("scheduled-sd-inpaint")
+        if context.context_windows is not None:
+            raise ScheduledSamplingError("context-windows", family.id)
+        latent, noise, cond, cfg, denoise_mask = narrow_scheduled_values(
+            family.id,
+            latent=latent,
+            noise=noise,
+            cond=cond,
+            cfg=cfg,
+            denoise_mask=denoise_mask,
+        )
+        self.validate(latent)
+        return SamplingExecutionInputs(
+            latent,
+            noise,
+            cond,
+            cfg,
+            denoise_mask,
+            family.single_stream_latent(),
+        )
+
+
+def _sd_scheduled_denoiser(
+    owner: SDRuntime,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserExecution:
+    from .scheduled_sampling import (
+        ScheduledConditioningDenoiser,
+        ScheduledSamplingError,
+        ScheduledSamplingOptions,
+        prepare_scheduled_carriers,
+        validate_unconditional_carrier,
+    )
+
+    if (
+        context.inputs is None
+        or context.device is None
+        or context.plan is None
+        or context.request is None
+        or context.schedule is None
+    ):
+        raise RuntimeError("scheduled SD sampling context is unresolved")
+    inputs = context.inputs
+    scheduled = context.options.get("scheduled")
+    if scheduled is None:
+        scheduled = ScheduledSamplingOptions()
+    elif type(scheduled) is not ScheduledSamplingOptions:
+        raise TypeError("scheduled must be an exact ScheduledSamplingOptions or None")
+    unknown = set(context.options) - {"scheduled", "control", "sd15_attention_contributions"}
+    if unknown:
+        raise WiringError(
+            "SD sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+        )
+    if context.inputs.denoise_mask is not None:
+        raise ScheduledSamplingError("denoise-mask", owner.family.id)
+    if context.inpaint is not None:
+        raise ScheduledSamplingError("scheduled-sd-inpaint")
+    if context.context_windows is not None:
+        raise ScheduledSamplingError("context-windows", owner.family.id)
+    if context.options.get("control") is not None:
+        raise ScheduledSamplingError("scheduled-sd-control")
+    contributions = context.options.get("sd15_attention_contributions", ())
+    if contributions:
+        raise ScheduledSamplingError("scheduled-sd-attention")
+    validate_unconditional_carrier(context.plan)
+    device = torch.device(context.device)
+    realized_timeline = (
+        None
+        if context.request.timeline is None
+        else realize_sampling_timeline(
+            context.request.timeline,
+            tuple(float(sigma) for sigma in context.schedule.sigmas),
+        )
+    )
+    conditional, unconditional, patch_sets, materialized_plan = prepare_scheduled_carriers(
+        owner,
+        inputs.latent,
+        context.plan,
+        resolver=scheduled.resolver,
+        device=device,
+        cancel=context.cancelled,
+        timeline=realized_timeline,
+        space=owner.sampling_sigma_space(),
+    )
+
+    adm = None
+    if owner.assembled.diffusion.config.adm_in_channels is not None:
+
+        def resolve_adm(region: Any, role: GuidanceRole) -> torch.Tensor | None:
+            return owner._adm(  # pyright: ignore[reportPrivateUsage]
+                region.conditioning,
+                inputs.latent,
+                negative=role is GuidanceRole.UNCONDITIONAL,
+            )
+
+        adm = resolve_adm
+
+    from . import scheduled_sampling as scheduled_module
+
+    evaluator = ScheduledConditioningDenoiser(
+        conditional,
+        unconditional,
+        family=owner.family,
+        space=owner.sampling_sigma_space(),
+        model=owner.assembled.diffusion,
+        evaluate=scheduled_module.sd_grouped_region_evaluator(
+            owner.assembled.diffusion,
+            owner.sampling_sigma_space(),
+            parameterization=owner.sampling.parameterization,
+            adm=adm,
+            compute_dtype=compute_dtype,
+        ),
+        patch_sets=patch_sets,
+        compute_dtype=compute_dtype,
+        device=device,
+        cancel=context.cancelled,
+    )
+    replacements = MappingProxyType(
+        {
+            condition.id: condition.conditioning
+            for condition in materialized_plan.conditions
+            if condition.conditioning is not None
+        }
+    )
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", evaluator),
+        conditioning_evaluation=ConditioningEvaluation(
+            evaluator.prepare_conditioning,
+            evaluator.evaluate_conditioning,
+            evaluator.batchable,
+            evaluator.evaluate_conditioning_batch,
+            evaluator_identity=lambda _role: f"{owner.family.id}.scheduled-conditioning.v1",
+            standard_activation_memory_factor=owner.family.memory_factor,
+        ),
+        conditioning_payloads=replacements,
+        solver_options=MappingProxyType({"realized_timeline": realized_timeline}),
+        sampling=owner.sampling,
+        percent_to_sigma=owner._percent_to_sigma,  # pyright: ignore[reportPrivateUsage]
+        close=evaluator.close,
+    )
+
+
+def _sd_denoiser(
+    runtime: object,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserExecution:
+    owner = cast("SDRuntime", runtime)
+    if (
+        context.inputs is None
+        or context.device is None
+        or context.plan is None
+        or context.request is None
+        or context.sampler is None
+        or context.schedule is None
+    ):
+        raise RuntimeError("SD sampling context is unresolved")
+    if type(context.inputs.cond) is ConditioningCarrier:
+        return _sd_scheduled_denoiser(owner, compute_dtype, context)
+    unknown = set(context.options) - {"scheduled", "control", "sd15_attention_contributions"}
+    if unknown:
+        raise WiringError(
+            "SD sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+        )
+    if context.options.get("scheduled") is not None:
+        raise WiringError("scheduled SD conditioning requires a ConditioningCarrier")
+    control = context.options.get("control")
+    controls: tuple[SDControlConditioning, ...] = ()
+    control_sites = SD15_CONTROL_RESIDUAL_SITES
+    if control is not None:
+        if type(control) is not SDControlConditioning:
+            raise TypeError("control must be an exact SDControlConditioning or None")
+        control = _snapshot_sd_control_conditioning(control)
+        newest_to_oldest: list[SDControlConditioning] = []
+        current: SDControlConditioning | None = control
+        while current is not None:
+            newest_to_oldest.append(current)
+            current = current.previous
+        controls = tuple(reversed(newest_to_oldest))
+        sdxl_control = tuple(
+            type(current.model) in (SDXLControlLoRA, SDXLControlNet, SDXLControlNetUnion)
+            for current in controls
+        )
+        if any(sdxl_control) and not all(sdxl_control):
+            raise WiringError("control chain mixes SD1.5 and SDXL providers")
+        if all(sdxl_control):
+            if owner.family.engine.controlnet_profile != "sdxl":
+                raise WiringError("SDXL control providers require the registered SDXL profile")
+            control_sites = SDXL_CONTROL_RESIDUAL_SITES
+        elif owner.family.engine.controlnet_profile != "sd15":
+            raise WiringError("SD1.5 control providers require the registered SD1.5 profile")
+        for current in controls:
+            if current.gain is not None and (
+                current.application.strength != 1.0
+                or current.application.window.start_percent != 0.0
+                or current.application.window.end_percent != 1.0
+            ):
+                raise WiringError(
+                    "explicit ControlNet gain requires application strength 1.0 and the full"
+                    " [0, 1] window; set the application to identity or fold the intended"
+                    " scaling/window into the gain keyframes"
+                )
+    contributions = context.options.get("sd15_attention_contributions", ())
+    if type(contributions) is not tuple or any(
+        type(contribution) is not SD15IPAdapterConditioning for contribution in contributions
+    ):
+        raise TypeError("sd15_attention_contributions must be an exact tuple")
+    ipadapter = owner._ipadapter_executions(contributions)  # pyright: ignore[reportPrivateUsage]
+    inputs = context.inputs
+    sigmas = context.schedule.sigmas
+    control_effect_fields = tuple(
+        tuple(
+            compile_sd_effect_mask(
+                source,
+                latent_height=inputs.latent.shape[2],
+                latent_width=inputs.latent.shape[3],
+            )
+            for source in current.effect_masks
+        )
+        for current in controls
+    )
+    if any(
+        source.mask.shape[0] not in (1, inputs.latent.shape[0])
+        for current in controls
+        for source in current.effect_masks
+    ):
+        raise WiringError(
+            "mask_layout_mismatch: effect-mask batch must be one or equal latent batch"
+        )
+    off_grid_control = bool(controls) and context.sampler.id in {
+        "dinkster.dpm_fast",
+        "dinkster.dpm_adaptive",
+    }
+    realized_timeline = (
+        None
+        if context.request.timeline is None
+        else realize_sampling_timeline(
+            context.request.timeline,
+            tuple(float(sigma) for sigma in sigmas),
+        )
+    )
+    plan = context.plan
+    admit_extra_lanes = plan.needs_unconditional or plan.has_strategy
+    admitted = [True] + [
+        condition.conditioning is not None and admit_extra_lanes
+        for condition in plan.conditions[1:]
+    ]
+    control_lane_ids = tuple(
+        "positive"
+        if condition.role is GuidanceRole.CONDITIONAL
+        else "negative"
+        if condition.role is GuidanceRole.UNCONDITIONAL
+        else "empty"
+        for condition, admit in zip(plan.conditions, admitted, strict=True)
+        if admit
+    )
+    control_tables = []
+    constant_control_gains: tuple[float, ...] | None = None
+    constant_control_gain_rows: tuple[SDControlGain, ...] | None = None
+    structured_control_gains = False
+    control_facts: tuple[str, ...] = ()
+    if controls and len(sigmas) > 1:
+        timeline = (
+            realized_timeline.executed
+            if realized_timeline is not None
+            else executed_sampling_timeline(tuple(float(sigma) for sigma in sigmas))
+        )
+        fact_parts: list[str] = []
+        off_grid_gains: list[float] = []
+        off_grid_gain_rows: list[SDControlGain] = []
+        for index, current in enumerate(controls):
+            gain = current.gain
+            if gain is None:
+                start_sigma = owner._percent_to_sigma(  # pyright: ignore[reportPrivateUsage]
+                    current.application.window.start_percent
+                )
+                end_sigma = owner._percent_to_sigma(  # pyright: ignore[reportPrivateUsage]
+                    current.application.window.end_percent
+                )
+                gain = ContributionGain(
+                    DirectGainTableCurve(
+                        tuple(
+                            current.application.strength
+                            if end_sigma <= sigma <= start_sigma
+                            else 0.0
+                            for sigma in sigmas[:-1]
+                        )
+                    ),
+                    1.0,
+                )
+            _validate_sd_control_gain_keys(gain, control_lane_ids, control_sites)
+            if (gain.site_gains or gain.lane_gains) and plan.has_strategy:
+                raise WiringError(
+                    "unsupported_control_partition: SD1.5 site/lane gains require the "
+                    "builtin guidance lane plan"
+                )
+            table = realize_gain_table(gain, timeline)
+            fields = control_effect_fields[index]
+            resolved_digests = tuple(field.compiled.input_digest for field in fields)
+            required_digests = tuple(
+                dict.fromkeys(digest for row in table.rows for digest in row.effect_mask_digests)
+            )
+            if resolved_digests != required_digests:
+                raise WiringError(
+                    "mask_role_mismatch: realized effect-mask declarations must resolve "
+                    "exactly in first-use order"
+                )
+            effective_gains = tuple(row.timeline_gain * row.global_gain for row in table.rows)
+            gain_rows = tuple(
+                _sd_control_gain(row, control_lane_ids, control_sites) for row in table.rows
+            )
+            structured_control_gains = structured_control_gains or bool(
+                gain.site_gains or gain.lane_gains or required_digests
+            )
+            if off_grid_control:
+                full_window = (
+                    current.application.window.start_percent == 0.0
+                    and current.application.window.end_percent == 1.0
+                )
+                if not full_window or any(value != gain_rows[0] for value in gain_rows[1:]):
+                    raise WiringError(
+                        f"sampler {context.sampler.id} supports only constant ControlNet gain over"
+                        " the full application window because its internal evaluation timeline"
+                        " does not map to executed sigma rows"
+                    )
+                off_grid_gains.append(effective_gains[0])
+                off_grid_gain_rows.append(gain_rows[0])
+            control_tables.append(table)
+            prefix = f"control[{index}]"
+            fact_parts.extend(
+                (
+                    f"{prefix}.child={current.application.child_id}",
+                    f"{prefix}.model={current.model_digest}",
+                    f"{prefix}.hint={current.hint_digest}",
+                    *(
+                        ()
+                        if current.application.mode is None
+                        else (
+                            f"{prefix}.mode.provider={current.application.mode.provider}",
+                            f"{prefix}.mode.token={current.application.mode.token}",
+                        )
+                    ),
+                    *(f"{prefix}.{fact}" for fact in contribution_gain_slot_facts(gain, table)),
+                    *(
+                        fact
+                        for mask_index, field in enumerate(fields)
+                        for fact in (
+                            f"{prefix}.effect_mask[{mask_index}].source="
+                            f"{field.compiled.source_digest}",
+                            f"{prefix}.effect_mask[{mask_index}].field={field.compiled.digest}",
+                            f"{prefix}.effect_mask[{mask_index}].layout="
+                            f"{field.compiled.layout_digest}",
+                            f"{prefix}.effect_mask[{mask_index}].transform="
+                            f"{field.compiled.transform_digest}",
+                        )
+                    ),
+                )
+            )
+        if off_grid_control:
+            if structured_control_gains:
+                constant_control_gain_rows = tuple(off_grid_gain_rows)
+            else:
+                constant_control_gains = tuple(off_grid_gains)
+        control_facts = tuple(fact_parts)
+    admitted_sources = [
+        condition.conditioning
+        for condition, admit in zip(plan.conditions, admitted, strict=True)
+        if admit
+    ]
+    token_counts = [
+        declared_token_count(source) if isinstance(source, Conditioning) else None
+        for source in admitted_sources
+    ]
+    declared_counts = [count for count in token_counts if count is not None]
+    if len(declared_counts) == len(token_counts):
+        repeats = cross_attn_repeat(declared_counts)
+        target_counts = (
+            [math.lcm(*declared_counts)] * len(declared_counts)
+            if repeats is not None
+            else declared_counts
+        )
+    else:
+        target_counts = [0 if count is None else count for count in token_counts]
+    bound_sources = [
+        bind_sd_layout(source, target_count)
+        for source, target_count in zip(admitted_sources, target_counts, strict=True)
+    ]
+    bound_iter = iter(bound_sources)
+    replacements = MappingProxyType(
+        {
+            condition.id: next(bound_iter)
+            for condition, admit in zip(plan.conditions, admitted, strict=True)
+            if admit
+        }
+    )
+    is_inpaint = owner.assembled.diffusion.config.in_channels == 9
+    inpaint = cast("InpaintConditioning[torch.Tensor] | None", context.inpaint)
+    evaluator = SDDenoiser(
+        owner.assembled.diffusion,
+        owner.sampling_sigma_space(),
+        parameterization=owner.sampling.parameterization,
+        inpaint_mask=(
+            inpaint.mask if inpaint is not None else inputs.denoise_mask if is_inpaint else None
+        ),
+        inpaint_masked_image=(
+            latent_process_in(
+                inpaint.masked_image if inpaint is not None else inputs.latent,
+                owner.family.single_stream_latent(),
+            )
+            if is_inpaint
+            else None
+        ),
+        control_model=(
+            None
+            if not controls
+            else controls[0].model
+            if len(controls) == 1
+            else tuple(current.model for current in controls)
+        ),
+        control_hint=(
+            None
+            if not controls
+            else controls[0].hint
+            if len(controls) == 1
+            else tuple(current.hint for current in controls)
+        ),
+        control_mode=(
+            None
+            if not controls
+            else controls[0].application.mode
+            if len(controls) == 1
+            else tuple(current.application.mode for current in controls)
+        ),
+        control_effect_masks=control_effect_fields,
+        ipadapter=ipadapter,
+        compute_dtype=compute_dtype,
+    )
+    if constant_control_gains is not None:
+        if len(constant_control_gains) == 1:
+            evaluator.set_control_gain(constant_control_gains[0])
+        else:
+            evaluator.set_control_gains(constant_control_gains)
+    elif constant_control_gain_rows is not None:
+        evaluator.set_control_gain_rows(constant_control_gain_rows)
+
+    def prepare_conditioning(
+        value: object, role: GuidanceRole
+    ) -> tuple[torch.Tensor, torch.Tensor | None, str]:
+        if not isinstance(value, Conditioning):
+            raise WiringError("SD guidance lane requires Conditioning")
+        return evaluator.prepare_conditioning(
+            value,
+            adm=owner._adm(  # pyright: ignore[reportPrivateUsage]
+                value,
+                inputs.latent,
+                negative=role is not GuidanceRole.CONDITIONAL,
+            ),
+            lane_id=(
+                "positive"
+                if role is GuidanceRole.CONDITIONAL
+                else "negative"
+                if role is GuidanceRole.UNCONDITIONAL
+                else "empty"
+            ),
+        )
+
+    evaluator_identity = "dinkster.sd.conditioning.v1"
+    if control_facts:
+        digest = hashlib.sha256("\n".join((*control_facts, "")).encode()).hexdigest()
+        evaluator_identity += f":intervention-plan={digest}"
+    evaluator_identity = owner._extend_ipadapter_evaluator_identity(  # pyright: ignore[reportPrivateUsage]
+        evaluator_identity, contributions
+    )
+    conditioning = ConditioningEvaluation(
+        prepare_conditioning,
+        evaluator.evaluate_conditioning,
+        evaluator.batchable,
+        evaluator.evaluate_conditioning_batch,
+        evaluate_batch_attention=evaluator.evaluate_conditioning_batch_attention,
+        evaluator_identity=lambda _role: evaluator_identity,
+        standard_activation_memory_factor=owner.family.memory_factor,
+        layout=conditioning_layout,
+        token_transforms=conditioning_token_transforms,
+        validate_layout=lambda condition, layout: validate_sd_layout(
+            condition[:2],
+            layout,
+            repeat_limit=CROSS_ATTN_REPEAT_LIMIT,
+        ),
+    )
+
+    def apply_control_step(index: int) -> None:
+        anchor = control_tables[0].rows[index]
+        require_realized_sampling_step(index, anchor.sigma, anchor.progress)
+        if structured_control_gains:
+            evaluator.set_control_gain_rows(
+                tuple(
+                    _sd_control_gain(table.rows[index], control_lane_ids, control_sites)
+                    for table in control_tables
+                )
+            )
+        elif len(control_tables) == 1:
+            row = control_tables[0].rows[index]
+            evaluator.set_control_gain(row.timeline_gain * row.global_gain)
+        else:
+            evaluator.set_control_gains(
+                tuple(
+                    table.rows[index].timeline_gain * table.rows[index].global_gain
+                    for table in control_tables
+                )
+            )
+
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", evaluator),
+        conditioning_evaluation=conditioning,
+        conditioning_payloads=replacements,
+        solver_options=MappingProxyType({"realized_timeline": realized_timeline}),
+        sampling=owner.sampling,
+        percent_to_sigma=owner._percent_to_sigma,  # pyright: ignore[reportPrivateUsage]
+        on_step_begin=(apply_control_step if control_tables and not off_grid_control else None),
+        inpaint_noise=(
+            prepare_noise(inputs.latent, context.seed + 1)
+            if context.sampler.random_inpaint_noise
+            else None
+        ),
+    )
+
+
+def _sd_device(runtime: object) -> torch.device:
+    return cast("SDRuntime", runtime)._compute_device  # pyright: ignore[reportPrivateUsage]
+
+
+def _sd_compute_dtype(runtime: object) -> torch.dtype:
+    owner = cast("SDRuntime", runtime)
+    return owner.assembled.compute_dtype("diffusion") or torch.float16
+
+
 class SDRuntime(SingleStreamSamplingRuntime):
     """FamilyRuntime[torch.Tensor] over an assembled SD 1.5 / SDXL
     base / SDXL refiner.
@@ -910,6 +1594,13 @@ class SDRuntime(SingleStreamSamplingRuntime):
     sampling_error = WiringError
     sampling_compute_dtype = torch.float16
     supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=_SDLatentAdapter(_validate_sd_latent, admit_perp_neg=True),
+        denoiser=_sd_denoiser,
+        device=_sd_device,
+        compute_dtype=_sd_compute_dtype,
+        flow=False,
+    )
 
     def __init__(
         self,
@@ -1172,517 +1863,7 @@ class SDRuntime(SingleStreamSamplingRuntime):
     def supports_inpaint(self) -> bool:
         return self.assembled.diffusion.config.in_channels == 9
 
-    def sample_custom(
-        self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: float | None = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        sd15_attention_contributions: tuple[SD15IPAdapterConditioning, ...] = (),
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        control: SDControlConditioning | None = None,
-        compute_dtype: torch.dtype | None = None,
-        device: torch.device | str | None = None,
-        scheduled: ScheduledSamplingOptions | None = None,
-        capture_denoised: bool = True,
-    ) -> CustomSamplingResult[torch.Tensor]:
-        if scheduled is not None or type(cond) is ConditioningCarrier:
-            from .scheduled_sampling import ScheduledSamplingOptions, sample_sd_scheduled_custom
-
-            if scheduled is None:
-                scheduled = ScheduledSamplingOptions()
-            elif type(scheduled) is not ScheduledSamplingOptions:
-                raise TypeError("scheduled must be an exact ScheduledSamplingOptions or None")
-
-            return sample_sd_scheduled_custom(
-                self,
-                latent,
-                noise=noise,
-                cond=cond,
-                cfg=cfg,
-                request=request,
-                seed=seed,
-                guidance=guidance,
-                denoise_mask=denoise_mask,
-                inpaint=inpaint,
-                context_windows=context_windows,
-                control=control,
-                attention_contributions=sd15_attention_contributions,
-                on_step=on_step,
-                on_state=on_state,
-                resolver=scheduled.resolver,
-                cancelled=scheduled.cancelled,
-                compute_dtype=compute_dtype,
-                device=device,
-                capture_denoised=capture_denoised,
-            )
-        latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
-            self.family.id,
-            latent=latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            denoise_mask=denoise_mask,
-            error=WiringError,
-            admit_perp_neg=True,
-        )
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=WiringError
-        )
-        return self._sample_custom_single_stream(
-            latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            sampler=sampler,
-            request=request,
-            seed=seed,
-            denoise_mask=denoise_mask,
-            inpaint=inpaint,
-            control=control,
-            sd15_attention_contributions=sd15_attention_contributions,
-            on_step=on_step,
-            on_state=on_state,
-            compute_dtype=compute_dtype,
-            device=device,
-            capture_denoised=capture_denoised,
-        )
-
-    def _sample_custom_single_stream(
-        self,
-        latent: torch.Tensor,
-        *,
-        noise: torch.Tensor,
-        cond: Conditioning[torch.Tensor],
-        cfg: SingleStreamCustomSamplingCfg,
-        sampler: SamplerDescriptor[Any],
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        denoise_mask: torch.Tensor | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        control: SDControlConditioning | None = None,
-        sd15_attention_contributions: tuple[SD15IPAdapterConditioning, ...] = (),
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        compute_dtype: torch.dtype | None = None,
-        device: torch.device | str | None = None,
-        capture_denoised: bool = True,
-    ) -> CustomSamplingResult[torch.Tensor]:
-        ipadapter = self._ipadapter_executions(sd15_attention_contributions)
-        controls: tuple[SDControlConditioning, ...] = ()
-        control_sites = SD15_CONTROL_RESIDUAL_SITES
-        if control is not None:
-            if type(control) is not SDControlConditioning:
-                raise TypeError("control must be an exact SDControlConditioning or None")
-            control = _snapshot_sd_control_conditioning(control)
-            newest_to_oldest: list[SDControlConditioning] = []
-            current: SDControlConditioning | None = control
-            while current is not None:
-                newest_to_oldest.append(current)
-                current = current.previous
-            controls = tuple(reversed(newest_to_oldest))
-            sdxl_control = tuple(
-                type(current.model) in (SDXLControlLoRA, SDXLControlNet, SDXLControlNetUnion)
-                for current in controls
-            )
-            if any(sdxl_control) and not all(sdxl_control):
-                raise WiringError("control chain mixes SD1.5 and SDXL providers")
-            if all(sdxl_control):
-                if self.family.engine.controlnet_profile != "sdxl":
-                    raise WiringError("SDXL control providers require the registered SDXL profile")
-                control_sites = SDXL_CONTROL_RESIDUAL_SITES
-            elif self.family.engine.controlnet_profile != "sd15":
-                raise WiringError("SD1.5 control providers require the registered SD1.5 profile")
-            for current in controls:
-                if current.gain is not None and (
-                    current.application.strength != 1.0
-                    or current.application.window.start_percent != 0.0
-                    or current.application.window.end_percent != 1.0
-                ):
-                    raise WiringError(
-                        "explicit ControlNet gain requires application strength 1.0 and the full"
-                        " [0, 1] window; set the application to identity or fold the intended"
-                        " scaling/window into the gain keyframes"
-                    )
-        control_effect_fields = tuple(
-            tuple(
-                compile_sd_effect_mask(
-                    source,
-                    latent_height=latent.shape[2],
-                    latent_width=latent.shape[3],
-                )
-                for source in current.effect_masks
-            )
-            for current in controls
-        )
-        if any(
-            source.mask.shape[0] not in (1, latent.shape[0])
-            for current in controls
-            for source in current.effect_masks
-        ):
-            raise WiringError(
-                "mask_layout_mismatch: effect-mask batch must be one or equal latent batch"
-            )
-        is_inpaint = self.assembled.diffusion.config.in_channels == 9
-        off_grid_control = bool(controls) and sampler.id in {
-            "dinkster.dpm_fast",
-            "dinkster.dpm_adaptive",
-        }
-        execution_device = self._compute_device if device is None else torch.device(device)
-        if compute_dtype is None:
-            compute_dtype = self.assembled.compute_dtype("diffusion") or torch.float16
-        admission = self.admit_distributed_guidance(
-            request,
-            cond=cond,
-            cfg=cfg,
-            executor=self._guidance,
-        )
-        if admission is not None:
-            request = admission.request
-            sampler = request.sampler
-        schedule = build_custom_sampling_schedule(
-            request.sigmas,
-            self._space,
-            sampler,
-            flow=False,
-        )
-        sigmas = schedule.sigmas
-        realized_timeline = (
-            None
-            if request.timeline is None
-            else realize_sampling_timeline(
-                request.timeline,
-                tuple(float(sigma) for sigma in sigmas),
-            )
-        )
-        plan = (
-            compile_guidance_plan(cond, cfg, sampler, self._guidance)
-            if admission is None
-            else admission.plan
-        )
-        admit_extra_lanes = plan.needs_unconditional or plan.has_strategy
-        admitted = [True] + [
-            condition.conditioning is not None and admit_extra_lanes
-            for condition in plan.conditions[1:]
-        ]
-        control_lane_ids = tuple(
-            "positive"
-            if condition.role is GuidanceRole.CONDITIONAL
-            else "negative"
-            if condition.role is GuidanceRole.UNCONDITIONAL
-            else "empty"
-            for condition, admit in zip(plan.conditions, admitted, strict=True)
-            if admit
-        )
-        control_tables = []
-        constant_control_gains: tuple[float, ...] | None = None
-        constant_control_gain_rows: tuple[SDControlGain, ...] | None = None
-        structured_control_gains = False
-        control_facts: tuple[str, ...] = ()
-        if controls and len(sigmas) > 1:
-            timeline = (
-                realized_timeline.executed
-                if realized_timeline is not None
-                else executed_sampling_timeline(tuple(float(sigma) for sigma in sigmas))
-            )
-            fact_parts: list[str] = []
-            off_grid_gains: list[float] = []
-            off_grid_gain_rows: list[SDControlGain] = []
-            for index, current in enumerate(controls):
-                gain = current.gain
-                if gain is None:
-                    start_sigma = self._percent_to_sigma(current.application.window.start_percent)
-                    end_sigma = self._percent_to_sigma(current.application.window.end_percent)
-                    gain = ContributionGain(
-                        DirectGainTableCurve(
-                            tuple(
-                                current.application.strength
-                                if end_sigma <= sigma <= start_sigma
-                                else 0.0
-                                for sigma in sigmas[:-1]
-                            )
-                        ),
-                        1.0,
-                    )
-                _validate_sd_control_gain_keys(gain, control_lane_ids, control_sites)
-                if (gain.site_gains or gain.lane_gains) and plan.has_strategy:
-                    raise WiringError(
-                        "unsupported_control_partition: SD1.5 site/lane gains require the "
-                        "builtin guidance lane plan"
-                    )
-                table = realize_gain_table(gain, timeline)
-                fields = control_effect_fields[index]
-                resolved_digests = tuple(field.compiled.input_digest for field in fields)
-                required_digests = tuple(
-                    dict.fromkeys(
-                        digest for row in table.rows for digest in row.effect_mask_digests
-                    )
-                )
-                if resolved_digests != required_digests:
-                    raise WiringError(
-                        "mask_role_mismatch: realized effect-mask declarations must resolve "
-                        "exactly in first-use order"
-                    )
-                effective_gains = tuple(row.timeline_gain * row.global_gain for row in table.rows)
-                gain_rows = tuple(
-                    _sd_control_gain(row, control_lane_ids, control_sites) for row in table.rows
-                )
-                structured_control_gains = structured_control_gains or bool(
-                    gain.site_gains or gain.lane_gains or required_digests
-                )
-                if off_grid_control:
-                    full_window = (
-                        current.application.window.start_percent == 0.0
-                        and current.application.window.end_percent == 1.0
-                    )
-                    if not full_window or any(value != gain_rows[0] for value in gain_rows[1:]):
-                        raise WiringError(
-                            f"sampler {sampler.id} supports only constant ControlNet gain over the"
-                            " full application window because its internal evaluation timeline"
-                            " does not map to executed sigma rows"
-                        )
-                    off_grid_gains.append(effective_gains[0])
-                    off_grid_gain_rows.append(gain_rows[0])
-                control_tables.append(table)
-                prefix = f"control[{index}]"
-                fact_parts.extend(
-                    (
-                        f"{prefix}.child={current.application.child_id}",
-                        f"{prefix}.model={current.model_digest}",
-                        f"{prefix}.hint={current.hint_digest}",
-                        *(
-                            ()
-                            if current.application.mode is None
-                            else (
-                                f"{prefix}.mode.provider={current.application.mode.provider}",
-                                f"{prefix}.mode.token={current.application.mode.token}",
-                            )
-                        ),
-                        *(f"{prefix}.{fact}" for fact in contribution_gain_slot_facts(gain, table)),
-                        *(
-                            fact
-                            for mask_index, field in enumerate(fields)
-                            for fact in (
-                                f"{prefix}.effect_mask[{mask_index}].source="
-                                f"{field.compiled.source_digest}",
-                                f"{prefix}.effect_mask[{mask_index}].field={field.compiled.digest}",
-                                f"{prefix}.effect_mask[{mask_index}].layout="
-                                f"{field.compiled.layout_digest}",
-                                f"{prefix}.effect_mask[{mask_index}].transform="
-                                f"{field.compiled.transform_digest}",
-                            )
-                        ),
-                    )
-                )
-            if off_grid_control:
-                if structured_control_gains:
-                    constant_control_gain_rows = tuple(off_grid_gain_rows)
-                else:
-                    constant_control_gains = tuple(off_grid_gains)
-            control_facts = tuple(fact_parts)
-        admitted_sources = [
-            condition.conditioning
-            for condition, admit in zip(plan.conditions, admitted, strict=True)
-            if admit
-        ]
-        token_counts = [
-            declared_token_count(source) if isinstance(source, Conditioning) else None
-            for source in admitted_sources
-        ]
-        declared_counts = [count for count in token_counts if count is not None]
-        if len(declared_counts) == len(token_counts):
-            repeats = cross_attn_repeat(declared_counts)
-            target_counts = (
-                [math.lcm(*declared_counts)] * len(declared_counts)
-                if repeats is not None
-                else declared_counts
-            )
-        else:
-            target_counts = [0 if count is None else count for count in token_counts]
-        bound_sources = [
-            bind_sd_layout(source, target_count)
-            for source, target_count in zip(admitted_sources, target_counts, strict=True)
-        ]
-        bound_iter = iter(bound_sources)
-        plan = replace(
-            plan,
-            conditions=tuple(
-                replace(condition, conditioning=cast(Any, next(bound_iter))) if admit else condition
-                for condition, admit in zip(plan.conditions, admitted, strict=True)
-            ),
-        )
-        evaluator = SDDenoiser(
-            self.assembled.diffusion,
-            self._space,
-            parameterization=self.sampling.parameterization,
-            inpaint_mask=(
-                inpaint.mask if inpaint is not None else denoise_mask if is_inpaint else None
-            ),
-            inpaint_masked_image=(
-                latent_process_in(
-                    inpaint.masked_image if inpaint is not None else latent,
-                    self.family.single_stream_latent(),
-                )
-                if is_inpaint
-                else None
-            ),
-            control_model=(
-                None
-                if not controls
-                else controls[0].model
-                if len(controls) == 1
-                else tuple(current.model for current in controls)
-            ),
-            control_hint=(
-                None
-                if not controls
-                else controls[0].hint
-                if len(controls) == 1
-                else tuple(current.hint for current in controls)
-            ),
-            control_mode=(
-                None
-                if not controls
-                else controls[0].application.mode
-                if len(controls) == 1
-                else tuple(current.application.mode for current in controls)
-            ),
-            control_effect_masks=control_effect_fields,
-            ipadapter=ipadapter,
-            compute_dtype=compute_dtype,
-        )
-        if constant_control_gains is not None:
-            if len(constant_control_gains) == 1:
-                evaluator.set_control_gain(constant_control_gains[0])
-            else:
-                evaluator.set_control_gains(constant_control_gains)
-        elif constant_control_gain_rows is not None:
-            evaluator.set_control_gain_rows(constant_control_gain_rows)
-
-        def prepare_conditioning(
-            value: object, role: GuidanceRole
-        ) -> tuple[torch.Tensor, torch.Tensor | None, str]:
-            if not isinstance(value, Conditioning):
-                raise WiringError("SD guidance lane requires Conditioning")
-            return evaluator.prepare_conditioning(
-                value,
-                adm=self._adm(
-                    value,
-                    latent,
-                    negative=role is not GuidanceRole.CONDITIONAL,
-                ),
-                lane_id=(
-                    "positive"
-                    if role is GuidanceRole.CONDITIONAL
-                    else "negative"
-                    if role is GuidanceRole.UNCONDITIONAL
-                    else "empty"
-                ),
-            )
-
-        evaluator_identity = "dinkster.sd.conditioning.v1"
-        if control_facts:
-            digest = hashlib.sha256("\n".join((*control_facts, "")).encode()).hexdigest()
-            evaluator_identity += f":intervention-plan={digest}"
-        if sd15_attention_contributions:
-            evaluator_identity = self._extend_ipadapter_evaluator_identity(
-                evaluator_identity,
-                sd15_attention_contributions,
-            )
-        conditioning = ConditioningEvaluation(
-            prepare_conditioning,
-            evaluator.evaluate_conditioning,
-            evaluator.batchable,
-            evaluator.evaluate_conditioning_batch,
-            evaluate_batch_attention=evaluator.evaluate_conditioning_batch_attention,
-            evaluator_identity=lambda _role: evaluator_identity,
-            standard_activation_memory_factor=self.family.memory_factor,
-            layout=conditioning_layout,
-            token_transforms=conditioning_token_transforms,
-            validate_layout=lambda condition, layout: validate_sd_layout(
-                condition[:2],
-                layout,
-                repeat_limit=CROSS_ATTN_REPEAT_LIMIT,
-            ),
-        )
-        report_state: SamplingStateCallback | None
-        captured: list[torch.Tensor]
-        if capture_denoised:
-            report_state, captured = custom_denoised_callback(self.family, on_state)
-        else:
-            report_state, captured = on_state, []
-        denoiser = guided_denoiser(
-            conditioning,
-            input=latent,
-            executor=self._guidance,
-            plan=plan,
-            execution=sampling_execution_context(sigmas, seed, on_step, report_state),
-            replica_evaluator_factory=(
-                None if admission is None else admission.replica_evaluator_factory
-            ),
-        )
-
-        def apply_control_step(index: int) -> None:
-            anchor = control_tables[0].rows[index]
-            require_realized_sampling_step(index, anchor.sigma, anchor.progress)
-            if structured_control_gains:
-                evaluator.set_control_gain_rows(
-                    tuple(
-                        _sd_control_gain(table.rows[index], control_lane_ids, control_sites)
-                        for table in control_tables
-                    )
-                )
-            elif len(control_tables) == 1:
-                row = control_tables[0].rows[index]
-                evaluator.set_control_gain(row.timeline_gain * row.global_gain)
-            else:
-                evaluator.set_control_gains(
-                    tuple(
-                        table.rows[index].timeline_gain * table.rows[index].global_gain
-                        for table in control_tables
-                    )
-                )
-
-        output = run_denoise(
-            denoiser,
-            request.build_solver(realized_timeline=realized_timeline),
-            latent=latent,
-            noise=noise,
-            # The reference's DDIM inpaint draw (comfy/samplers.py:988-989
-            # @ b78cec87) is a plain full-shape randn at seed + 1 with no
-            # batch-index involvement.
-            inpaint_noise=(
-                prepare_noise(latent, seed + 1) if sampler.random_inpaint_noise else None
-            ),
-            sigmas=sigmas,
-            initial_sigma=schedule.initial_sigma,
-            family=self.family,
-            sampling=self.sampling,
-            seed=seed,
-            noise_kind=sampler.noise,
-            percent_to_sigma=self._percent_to_sigma,
-            device=execution_device,
-            on_step=on_step,
-            on_step_begin=(apply_control_step if control_tables and not off_grid_control else None),
-            on_state=report_state,
-            denoise_mask=denoise_mask,
-        )
-        return CustomSamplingResult(output, captured[-1] if captured else None)
+    sample_custom = cast("Any", sampling_execution)  # noqa: F811
 
     def sample_scheduled(
         self,

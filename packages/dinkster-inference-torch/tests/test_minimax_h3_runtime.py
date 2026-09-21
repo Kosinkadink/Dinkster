@@ -64,9 +64,15 @@ from dinkster_inference_torch import (
     prepare_noise,
     unpack_latent_streams,
 )
+from dinkster_inference_torch import sampling_execution as sampling_execution_module
 from dinkster_inference_torch.attention import builtin_sdpa_kernel
 from dinkster_inference_torch.brownian import BrownianTreeNoise
-from dinkster_inference_torch.denoise import prepare_noise_from_generator, run_sampler_engine
+from dinkster_inference_torch.denoise import (
+    PackedInpaintConfiguration,
+    _InpaintDenoiser,  # pyright: ignore[reportPrivateUsage]
+    prepare_noise_from_generator,
+    run_sampler_engine,
+)
 from dinkster_inference_torch.distributed import DistributedSamplingConfig
 from dinkster_inference_torch.guidance import ConditioningValidationPath, GuidedDenoiser
 from dinkster_inference_torch.minimax_h3_conditioning import MiniMaxH3ConditionerInputs
@@ -285,6 +291,31 @@ def test_h3_token_masks_pool_odd_video_patches_audio_features_and_quantize_up() 
     torch.testing.assert_close(masks.by_role("audio"), expected_audio.expand_as(audio).contiguous())
 
 
+def _h3_inpaint_denoiser(
+    inner: object,
+    *,
+    raw_mask: torch.Tensor,
+    token_mask: torch.Tensor,
+    latent: torch.Tensor,
+    noise: torch.Tensor,
+    video_elements: int,
+) -> _InpaintDenoiser:
+    return _InpaintDenoiser(
+        cast("Any", inner),
+        mask=raw_mask.to(device=latent.device, dtype=torch.float32),
+        latent=latent.to(dtype=torch.float32),
+        noise=noise.to(device=latent.device, dtype=torch.float32),
+        parameterization=Parameterization.FLOW,
+        packed=PackedInpaintConfiguration(
+            token_mask,
+            video_elements,
+            MINIMAX_H3_SIGMAS.video.shift,
+            MINIMAX_H3_SIGMAS.audio_shift,
+            MINIMAX_H3_SIGMAS.audio_scale,
+        ),
+    )
+
+
 def test_h3_inpaint_denoiser_uses_token_input_and_raw_output_masks() -> None:
     class PairDenoiser:
         def __init__(self) -> None:
@@ -306,14 +337,13 @@ def test_h3_inpaint_denoiser_uses_token_input_and_raw_output_masks() -> None:
     token_mask = torch.tensor((0.50, 1.00, 0.40, 0.80)).reshape(1, 1, 4)
     latent = torch.tensor((10.0, 20.0, 30.0, 40.0)).reshape(1, 1, 4)
     noise = torch.tensor((1.0, 2.0, 3.0, 4.0)).reshape(1, 1, 4)
-    wrapped = h3_runtime_module._MiniMaxH3InpaintDenoiser(  # pyright: ignore[reportPrivateUsage]
+    wrapped = _h3_inpaint_denoiser(
         inner,
         raw_mask=raw_mask,
         token_mask=token_mask,
         latent=latent,
         noise=noise,
         video_elements=2,
-        sigmas=MINIMAX_H3_SIGMAS,
     )
     x = torch.tensor((5.0, 6.0, 7.0, 8.0)).reshape(1, 1, 4)
     sigma = 0.5
@@ -360,18 +390,22 @@ def test_h3_inpaint_denoiser_keeps_fixed_inputs_resident(
             del sigma
             return x, x
 
-    wrapped = h3_runtime_module._MiniMaxH3InpaintDenoiser(  # pyright: ignore[reportPrivateUsage]
+    wrapped = _h3_inpaint_denoiser(
         PairDenoiser(),
         raw_mask=torch.full((1, 1, 4), 0.5, dtype=torch.float64),
         token_mask=torch.full((1, 1, 4), 0.75, dtype=torch.float64),
         latent=torch.ones((1, 1, 4), dtype=torch.float32),
         noise=torch.zeros((1, 1, 4), dtype=torch.float64),
         video_elements=2,
-        sigmas=MINIMAX_H3_SIGMAS,
     )
     assert all(
         tensor.device == torch.device("cpu") and tensor.dtype == torch.float32
-        for tensor in (wrapped.raw_mask, wrapped.token_mask, wrapped.latent, wrapped.noise)
+        for tensor in (
+            wrapped.mask,
+            cast("PackedInpaintConfiguration", wrapped.packed).token_mask,
+            wrapped.latent,
+            wrapped.noise,
+        )
     )
 
     def refuse_transfer(*_args: object, **_kwargs: object) -> torch.Tensor:
@@ -609,14 +643,14 @@ def test_h3_conditioning_carries_and_compiles_the_declared_global_layout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: list[GuidedDenoiser] = []
-    original = h3_runtime_module.guided_denoiser
+    original = sampling_execution_module.guided_denoiser
 
     def capture(*args: Any, **kwargs: Any) -> GuidedDenoiser:
         guided = original(*args, **kwargs)
         captured.append(guided)
         return guided
 
-    monkeypatch.setattr(h3_runtime_module, "guided_denoiser", capture)
+    monkeypatch.setattr(sampling_execution_module, "guided_denoiser", capture)
     target = _target()
     prepared = runtime_fixture.conditioner_runtime.condition(
         MiniMaxH3T2VARequest("declared rows"),
@@ -1179,20 +1213,20 @@ def test_cfgpp_receives_synthetic_or_real_unconditional_prediction(
         replace(prepared, context=torch.full_like(prepared.context, 5.0)) if real_uncond else None
     )
     uncond_records: list[tuple[torch.Tensor, float, torch.Tensor]] = []
-    original_call = h3_runtime_module._MiniMaxH3InpaintDenoiser.call_with_uncond  # pyright: ignore[reportPrivateUsage]
+    original_call = _InpaintDenoiser.call_with_uncond
 
     def record_call(
         self: Any,
         x: torch.Tensor,
         sigma: float,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        model_input = self._input(x, sigma)
+        model_input = self._input(x, sigma)[0]
         combined, uncond = original_call(self, x, sigma)
         uncond_records.append((model_input, sigma, uncond))
         return combined, uncond
 
     monkeypatch.setattr(
-        h3_runtime_module._MiniMaxH3InpaintDenoiser,  # pyright: ignore[reportPrivateUsage]
+        _InpaintDenoiser,
         "call_with_uncond",
         record_call,
     )
@@ -1627,7 +1661,9 @@ def test_distributed_h3_single_lane_reaches_replica_evaluation_without_receipt(
     def evaluate(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("distributed evaluation reached")
 
-    monkeypatch.setattr(h3_runtime_module, "DistributedGuidanceEvaluator", evaluate)
+    monkeypatch.setattr(
+        "dinkster_inference_torch.distributed.DistributedGuidanceEvaluator", evaluate
+    )
     with pytest.raises(RuntimeError, match="distributed evaluation reached"):
         runtime_fixture.fl2va_runtime.sample_multistream(
             target,
@@ -1643,7 +1679,10 @@ def test_distributed_h3_single_lane_reaches_replica_evaluation_without_receipt(
         )
 
     assert runtime_fixture.fl2va.calls == []
-    assert span_events == []
+    assert [(event.operation, event.phase) for event in span_events] == [
+        ("prepare", "begin"),
+        ("prepare", "end"),
+    ]
 
 
 def test_distributed_h3_guidance_admits_unmeasured_ref2va_model(
@@ -1672,7 +1711,9 @@ def test_distributed_h3_guidance_admits_unmeasured_ref2va_model(
     def evaluate(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("distributed evaluation reached")
 
-    monkeypatch.setattr(h3_runtime_module, "DistributedGuidanceEvaluator", evaluate)
+    monkeypatch.setattr(
+        "dinkster_inference_torch.distributed.DistributedGuidanceEvaluator", evaluate
+    )
     with pytest.raises(RuntimeError, match="distributed evaluation reached"):
         runtime_fixture.ref2va_runtime.sample_multistream(
             target,
@@ -1729,7 +1770,7 @@ def test_distributed_h3_guidance_uses_the_generic_lane_evaluator(
         "dinkster_inference_torch.minimax_h3_runtime.ensure_process_group", lambda: config
     )
     monkeypatch.setattr(
-        "dinkster_inference_torch.minimax_h3_runtime.DistributedGuidanceEvaluator",
+        "dinkster_inference_torch.distributed.DistributedGuidanceEvaluator",
         FakeReplicas,
     )
 
@@ -1814,7 +1855,7 @@ def test_distributed_h3_guidance_emits_the_non_distributed_step_events(
         "dinkster_inference_torch.minimax_h3_runtime.ensure_process_group", lambda: config
     )
     monkeypatch.setattr(
-        "dinkster_inference_torch.minimax_h3_runtime.DistributedGuidanceEvaluator",
+        "dinkster_inference_torch.distributed.DistributedGuidanceEvaluator",
         LocalReplicas,
     )
 
@@ -1877,7 +1918,7 @@ def test_sequence_mode_admits_progress_callbacks_and_both_model_roles(
     assert runtime_fixture.ref2va.calls == []
 
 
-def test_sample_moves_cpu_seeded_noise_and_latent_to_the_model_device(
+def test_sample_forwards_model_device_to_the_engine(
     runtime_fixture: RuntimeFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     target = _target()
@@ -1898,15 +1939,13 @@ def test_sample_moves_cpu_seeded_noise_and_latent_to_the_model_device(
         latent = kwargs["latent"]
         assert isinstance(noise, torch.Tensor)
         assert isinstance(latent, torch.Tensor)
-        assert noise.device == torch.device("meta")
+        assert noise.device == torch.device("cpu")
         assert noise.dtype == torch.float32
-        assert latent.device == torch.device("meta")
+        assert latent.device == torch.device("cpu")
         assert kwargs["device"] == torch.device("meta")
         raise NoiseReached
 
-    monkeypatch.setattr(
-        "dinkster_inference_torch.minimax_h3_runtime.run_sampler_engine", capture_engine
-    )
+    monkeypatch.setattr("dinkster_inference_torch.denoise.run_sampler_engine", capture_engine)
     with pytest.raises(NoiseReached):
         runtime_fixture.fl2va_runtime.sample_multistream(
             target,
@@ -1952,9 +1991,7 @@ def test_ddim_inpaint_noise_is_generated_from_the_packed_latent(
         assert torch.equal(actual, expected)
         raise NoiseReached
 
-    monkeypatch.setattr(
-        "dinkster_inference_torch.minimax_h3_runtime.run_sampler_engine", capture_engine
-    )
+    monkeypatch.setattr("dinkster_inference_torch.denoise.run_sampler_engine", capture_engine)
     with pytest.raises(NoiseReached):
         runtime_fixture.fl2va_runtime.sample_multistream(
             target,

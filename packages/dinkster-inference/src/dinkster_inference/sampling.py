@@ -876,6 +876,12 @@ def sampling_environment_cancellation() -> Callable[[], bool]:
     return _not_cancelled if environment is None else environment.cancelled
 
 
+def sampling_environment_extension_ids() -> tuple[str, ...]:
+    """Extension namespaces installed by the ambient sampling environment."""
+    environment = _sampling_environment.get()
+    return () if environment is None else environment.extension_ids
+
+
 def sampling_cancellation_is_trusted() -> bool:
     """True when the ambient sampling environment's cancellation check
     executes no caller code: the environment is absent, carries the
@@ -1576,6 +1582,7 @@ __all__ = [
     "catalog_value_is_canonical",
     "resolve_options",
     "sampling_cancellation_is_trusted",
+    "sampling_environment_extension_ids",
     "sampling_execution_context",
     "solver_sampling_cache",
     "use_additional_sampling_cancellation",
