@@ -16,7 +16,6 @@ dependencies = [
     "dinkster-assets",
     "dinkster-image-document",
     "pillow>=10",
-    "dinkster-p2p",
     "pyobjc-framework-Network>=12.2.2; sys_platform == 'darwin'",
     "pyobjc-framework-libdispatch>=12.2.2; sys_platform == 'darwin'",
     "zeroconf>=0.147",
@@ -43,4 +42,3 @@ dinkster-memory = { workspace = true }
 dinkster-caches = { workspace = true }
 dinkster-assets = { workspace = true }
 dinkster-image-document = { workspace = true }
-dinkster-p2p = { workspace = true }

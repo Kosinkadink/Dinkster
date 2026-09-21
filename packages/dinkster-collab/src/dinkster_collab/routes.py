@@ -488,8 +488,8 @@ async def handle_append_op(request: web.Request) -> web.Response:
     body = await _json_body(request)
     protocol = body.get("protocolVersion")
     if protocol != PROTOCOL_VERSION:
-        # Same posture as ?wire= on /api/nodes: an unsupported version is
-        # a loud, machine-readable refusal, never a silent reinterpretation.
+        # An unsupported version is a loud, machine-readable refusal, never a
+        # silent reinterpretation.
         return _error(
             406,
             {

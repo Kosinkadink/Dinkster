@@ -5,6 +5,10 @@ namespaces = ["fixture"]
 [pack.contracts]
 host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
+inference = "dinkster-inference/1"
+
+[pack.provides.registry]
+"dinkster.model-families" = ["fixture.toy-image"]
 
 [pack.entry]
 nodes = "extension_contract_pack:NODES"
@@ -13,8 +17,9 @@ types = "extension_contract_pack:register_types"
 [pack.sandbox]
 
 [pack.extension]
-privileges = ["schema", "server", "frontend"]
-capabilities = ["routes"]
+inference = "extension_contract_pack:register_inference"
+privileges = ["schema", "server", "frontend", "inference"]
+capabilities = ["model-family-registration", "routes"]
 
 [[pack.extension.routes]]
 id = "extension-contract"
@@ -30,8 +35,9 @@ payload = { height = "integer", mean = "number", width = "integer" }
 [[pack.extension.frontend-modules]]
 id = "dinkster-extension-contract-fixture.frontend"
 module = "./frontend.js"
-privileges = ["app-workflow", "event-consumer"]
+privileges = ["app-workflow", "event-consumer", "graph-editor-canvas"]
 contributions = [
   { id = "dinkster-extension-contract-fixture.event", kind = "eventConsumer", event = "fixture.extension-contract.executed" },
   { id = "dinkster-extension-contract-fixture.status", kind = "hostUi" },
+  { id = "dinkster-extension-contract-fixture.canvas", kind = "canvasLayer" },
 ]

@@ -502,3 +502,12 @@ def test_model_family_memory_factor_validation() -> None:
     base = _family("dinkster.x", "k", specificity=1)
     with pytest.raises(ValueError):
         ModelFamily(**{**base.__dict__, "memory_factor": 0.0})
+
+
+@pytest.mark.parametrize(
+    "reference", ("missing_separator", ":attribute", "module:", "module:bad name")
+)
+def test_model_family_worker_reference_validation(reference: str) -> None:
+    base = _family("dinkster.x", "k", specificity=1)
+    with pytest.raises(ValueError, match="must name a module:attribute"):
+        ModelFamily(**{**base.__dict__, "denoiser": reference})

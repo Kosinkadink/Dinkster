@@ -16,8 +16,8 @@
   normalization, MIME selection, and rendering remain pack-owned while being
   available through the host value API.
 - Packs can publish validated locale catalogs for node, blueprint, and guide
-  text. Catalog descriptors are available on schema wire 44, and their exact
-  digest-addressed JSON bytes are served as immutable pack resources.
+  text. Their exact digest-addressed JSON bytes are served as immutable pack
+  resources.
 - The opt-in `dinkster-video-preview` pack initializes bounded VHS-style VIDEO
   metadata, exposes its preview policy, and supplies a declared event consumer
   and host-rendered metadata status for compatible frontends.
@@ -67,7 +67,7 @@ create a runtime door by itself.
 | `background-jobs` | Declared and unconsumed | No extension capability consumer |
 | `downloads` | Declared and unconsumed | No extension capability consumer |
 | `filesystem` | Declared and unconsumed | No extension capability consumer |
-| `model-family-registration` | Declared and unconsumed | No pack-facing model-family registration door; adding one requires a core edit |
+| `model-family-registration` | Works | `InferenceContribution` merges pack families, components, and assemblies in the torch worker; `tests/test_extension_contract_pack.py` |
 | `routes` | Works | `tests/test_pack_surfaces.py` |
 
 The generated contribution vocabulary and doctor diagnostics keep declared

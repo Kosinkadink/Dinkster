@@ -1,0 +1,234 @@
+{
+  "format": "dinkster-workflow",
+  "formatVersion": 1,
+  "lineage": "starter-minimax-music3",
+  "root": "g0",
+  "graphs": {
+    "g0": {
+      "id": "g0",
+      "name": "MiniMax Music 3 Starter",
+      "nodes": {
+        "model": {
+          "id": "model",
+          "type": "dinkster.load_diffusion_model",
+          "values": {
+            "diffusion_model": "minimax_music3_dit_fp16.safetensors"
+          }
+        },
+        "clip": {
+          "id": "clip",
+          "type": "dinkster.load_clip",
+          "values": {
+            "text_encoder": "minimax_music3_text_encoder_pruned_int8_convrot.safetensors",
+            "type": "minimax"
+          }
+        },
+        "vae": {
+          "id": "vae",
+          "type": "dinkster.load_vae",
+          "values": {
+            "vae": "minimax_music3_dav.safetensors"
+          }
+        },
+        "condition": {
+          "id": "condition",
+          "type": "dinkster.minimax_music3_text_encode",
+          "values": {
+            "caption": "warm cinematic instrumental",
+            "lyrics": ""
+          }
+        },
+        "latent": {
+          "id": "latent",
+          "type": "dinkster.empty_minimax_music3_latent_audio",
+          "values": {
+            "seconds": 30.0,
+            "batch_size": 1
+          }
+        },
+        "sampler": {
+          "id": "sampler",
+          "type": "dinkster.ksampler",
+          "values": {
+            "seed": 91,
+            "steps": 20,
+            "cfg": 1.5,
+            "sampler_name": "dinkster.euler",
+            "scheduler": "dinkster.simple",
+            "denoise": 1.0,
+            "conditioning_batching": "auto",
+            "max_fused_lanes": 2
+          }
+        },
+        "decode": {
+          "id": "decode",
+          "type": "dinkster.vae_decode_audio",
+          "values": {}
+        },
+        "save": {
+          "id": "save",
+          "type": "dinkster.save_audio",
+          "values": {
+            "target": {
+              "mount": "output",
+              "prefix": "minimax-music3"
+            }
+          }
+        }
+      },
+      "links": {
+        "l1": {
+          "id": "l1",
+          "from": {
+            "node": "clip",
+            "port": "clip"
+          },
+          "to": {
+            "node": "condition",
+            "port": "clip"
+          }
+        },
+        "l2": {
+          "id": "l2",
+          "from": {
+            "node": "model",
+            "port": "model"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "model"
+          }
+        },
+        "l3": {
+          "id": "l3",
+          "from": {
+            "node": "condition",
+            "port": "conditioning"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "positive"
+          }
+        },
+        "l4": {
+          "id": "l4",
+          "from": {
+            "node": "condition",
+            "port": "conditioning"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "negative"
+          }
+        },
+        "l5": {
+          "id": "l5",
+          "from": {
+            "node": "latent",
+            "port": "latent"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "latent_image"
+          }
+        },
+        "l6": {
+          "id": "l6",
+          "from": {
+            "node": "sampler",
+            "port": "latent"
+          },
+          "to": {
+            "node": "decode",
+            "port": "samples"
+          }
+        },
+        "l7": {
+          "id": "l7",
+          "from": {
+            "node": "vae",
+            "port": "vae"
+          },
+          "to": {
+            "node": "decode",
+            "port": "vae"
+          }
+        },
+        "l8": {
+          "id": "l8",
+          "from": {
+            "node": "decode",
+            "port": "audio"
+          },
+          "to": {
+            "node": "save",
+            "port": "audio"
+          }
+        }
+      },
+      "nets": {},
+      "reroutes": {},
+      "nextOrdinal": 17
+    }
+  },
+  "view": {
+    "graphs": {
+      "g0": {
+        "nodes": {
+          "model": {
+            "position": {
+              "x": 40,
+              "y": 80
+            }
+          },
+          "clip": {
+            "position": {
+              "x": 40,
+              "y": 380
+            }
+          },
+          "vae": {
+            "position": {
+              "x": 40,
+              "y": 680
+            }
+          },
+          "condition": {
+            "position": {
+              "x": 380,
+              "y": 80
+            }
+          },
+          "latent": {
+            "position": {
+              "x": 380,
+              "y": 380
+            }
+          },
+          "sampler": {
+            "position": {
+              "x": 720,
+              "y": 80
+            }
+          },
+          "decode": {
+            "position": {
+              "x": 1060,
+              "y": 80
+            }
+          },
+          "save": {
+            "position": {
+              "x": 1400,
+              "y": 80
+            }
+          }
+        }
+      }
+    }
+  },
+  "meta": {
+    "title": "MiniMax Music 3 Starter",
+    "family": "dinkster.minimax_music3"
+  }
+}

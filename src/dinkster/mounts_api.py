@@ -123,7 +123,13 @@ class MountService:
         atomically - the durable record under the live table."""
         if self._config_path is None:
             return
-        text = dump_mounts(self.table.config_defs())
+        mounts = self.table.config_defs()
+        configured_ids = {mount.id for mount in mounts}
+        selected = self.table.output_mount
+        text = dump_mounts(
+            mounts,
+            output_mount=selected if selected in configured_ids else None,
+        )
         tmp = self._config_path.with_name(self._config_path.name + f".tmp-{os.getpid()}")
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_text(text, "utf-8")
@@ -233,7 +239,12 @@ class MountService:
 
 async def handle_mounts_list(request: web.Request) -> web.Response:
     service = request.app[MOUNTS_KEY]
-    return web.json_response({"mounts": service.table.descriptors()})
+    return web.json_response(
+        {
+            "mounts": service.table.descriptors(),
+            "outputMount": service.table.output_mount,
+        }
+    )
 
 
 async def handle_mount_folder(request: web.Request) -> web.Response:
@@ -412,11 +423,34 @@ async def handle_mount_remove(request: web.Request) -> web.Response:
             f"mount {mount_id!r} is derived from server configuration "
             f"(source {source!r}); re-point the configuration instead",
         )
-    service.table.remove(mount_id)
+    try:
+        service.table.remove(mount_id)
+    except MountsError as exc:
+        return _json_error(409, str(exc))
     service.persist()
     service.refresh_resolution_store()
     service.publish(request.app)
     return web.json_response({"removed": mount_id})
+
+
+async def handle_output_mount_update(request: web.Request) -> web.Response:
+    service = request.app[MOUNTS_KEY]
+    if not service.allow_changes:
+        return _json_error(403, "mount-changes-disabled")
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        return _json_error(400, f"invalid JSON: {exc}")
+    mount_id = body.get("id") if isinstance(body, dict) else None
+    if not isinstance(mount_id, str):
+        return _json_error(400, "id must be a mount id")
+    try:
+        service.table.select_output_mount(mount_id)
+        service.persist()
+    except MountsError as exc:
+        return _json_error(400, str(exc))
+    service.publish(request.app)
+    return web.json_response({"outputMount": mount_id})
 
 
 def add_mount_routes(app: web.Application, service: MountService) -> None:
@@ -424,5 +458,6 @@ def add_mount_routes(app: web.Application, service: MountService) -> None:
     app.router.add_get("/api/mounts", handle_mounts_list)
     app.router.add_get("/api/mounts/{mountId}/list", handle_mount_folder)
     app.router.add_get("/api/mounts/{mountId}/entries", handle_mount_entries)
+    app.router.add_put("/api/mounts/output", handle_output_mount_update)
     app.router.add_post("/api/mounts", handle_mount_add)
     app.router.add_delete("/api/mounts/{mountId}", handle_mount_remove)

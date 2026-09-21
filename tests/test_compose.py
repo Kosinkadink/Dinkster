@@ -1293,19 +1293,19 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "sha256:85dd36f2bb7ccbd94a7d8ce769a72dd8974b83183a9db31fa68cb91f98f3fc8f",
+            "sha256:a77107ea1863d2f414819c88116fc6c82bcf147d038afb2a047cee7fd3632d65",
         ),
         (
             "dinkster-nodes-media-io",
-            "sha256:6fe365fabc7a5b853b66b4d67f77e575ae918b6cedd903a6c461f74c591a31d0",
+            "sha256:ede7937f78e83d0365316dcab7fc20a585abaf04fb1e351599adf560f59feefd",
         ),
         (
             "dinkster-nodes-image",
-            "sha256:3d126cbf7fb4daa775c517885b96a93f0dff10aafed69facd48c834189405039",
+            "sha256:cbf2b73dd6e454bbea3c3266a51486817a9cbbf55e9d3ed61fbedd29573ce688",
         ),
         (
             "dinkster-nodes-remote",
-            "sha256:21e7bf193ff9c19c964b8f1897864da8fc309398ee4f7d1ab77ba9d644faf15e",
+            "sha256:0c90459042759de51d09a1977593195535facf3b4c4e1ad5632ae6e721469d4b",
         ),
     ],
 )
@@ -3212,9 +3212,7 @@ def test_comfy_host_types_register_save_target_runtime_values() -> None:
     from dinkster_nodes_media_io import SaveImage
 
     advertised_default = SaveImage.schema().inputs[1].default
-    assert registry.wrap(SAVE_TARGET_TYPE, advertised_default).resolve() == SaveTarget(
-        mount="comfy-output", prefix="ComfyUI"
-    )
+    assert advertised_default is None
 
     with pytest.raises(AssetError, match="unknown keys"):
         registry.wrap(

@@ -14,7 +14,7 @@ inference = "dinkster-inference/1"
 dinkster-nodes-media-io = ">=0.0.1,<1"
 
 [pack.requirements.registry]
-"dinkster.model-families" = ["dinkster.wan21"]
+"dinkster.model-families" = ["dinkster.wan21", "dinkster.wan22"]
 "dinkster.samplers" = ["dinkster.ar_video", "dinkster.uni_pc"]
 "dinkster.schedulers" = ["dinkster.simple"]
 
@@ -23,3 +23,27 @@ dinkster-nodes-media-io = ">=0.0.1,<1"
 
 [pack.entry]
 nodes = "dinkster_model_wan:WAN_MODEL_NODES"
+
+# BEGIN GENERATED STARTER TEMPLATES
+
+[[pack.templates]]
+id = "wan21"
+name = "Wan 2.1"
+description = "Starter native workflow for Wan 2.1."
+family = "dinkster.wan21"
+tags = ["starter", "family", "dinkster.wan21"]
+models = ["wan2.1_t2v_14B_fp8_scaled.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "wan_2.1_vae.safetensors"]
+file = "src/dinkster_model_wan/templates/wan21.json"
+thumbnail = "src/dinkster_model_wan/templates/wan21.png"
+
+[[pack.templates]]
+id = "wan22"
+name = "Wan 2.2"
+description = "Starter native workflow for Wan 2.2."
+family = "dinkster.wan22"
+tags = ["starter", "family", "dinkster.wan22"]
+models = ["wan2.2_ti2v_5B_fp16.safetensors", "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "wan_2.1_vae.safetensors"]
+file = "src/dinkster_model_wan/templates/wan22.json"
+thumbnail = "src/dinkster_model_wan/templates/wan22.png"
+
+# END GENERATED STARTER TEMPLATES

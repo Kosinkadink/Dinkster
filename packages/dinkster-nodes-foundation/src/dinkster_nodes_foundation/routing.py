@@ -71,6 +71,7 @@ class RouteSwitchByName(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.route.switch_by_name",
+            editor_role="named-route-switch",
             display_name="Route Switch by Name",
             category="routing",
             inputs=(

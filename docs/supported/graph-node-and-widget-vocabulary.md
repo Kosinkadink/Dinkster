@@ -15,6 +15,9 @@
   visibility groups for top-level widgets;
   after-generate modes fixed/increment/decrement/randomize;
   exact integer bounds from signed 64-bit minimum through unsigned 64-bit maximum
+- Node schemas can declare presentation-only editor roles and JSON-safe custom
+  widget descriptors. Clients use these declarations without matching node IDs;
+  native video trim and crop declare their exact `VIDEO_EDIT` features.
 - Values: core.int, core.float, core.string, core.combo, core.boolean,
   core.absent, immutable linear or monotone-cubic `dinkster.curve`, ordered
   `dinkster.layers`, strict versioned `dinkster.compositor`, parametric `list<T>` and
