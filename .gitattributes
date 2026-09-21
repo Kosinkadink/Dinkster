@@ -1,4 +1,5 @@
 *.gz -text
+*.png -text
 *.json text eol=lf
 *.md text eol=lf
 *.py text eol=lf

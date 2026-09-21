@@ -14,7 +14,8 @@
   sampling surfaces. Explicit `comfy.EmptyLatentImage` graphs retain their
   legacy `comfy.LATENT` contract
 - Routes: health/auth, node catalog, extension/composition diagnostics,
-  choices, pack assets/templates, jobs (status, cancellation, event
+  choices, pack assets/templates, including family/model metadata and
+  immutable template thumbnails, jobs (status, cancellation, event
   replay), values, queue control, live WebSocket events, settings, memory
   governance, cache trim/export; asset library and history routes when a
   library root is configured, including classified bounded latent upload

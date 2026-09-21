@@ -50,7 +50,6 @@ from dinkster_inference import (
     Registry,
     SamplingCancelled,
     SamplingSegment,
-    builtin_families,
     extend_runtime_identity,
     require_inference_component_handle,
 )
@@ -1162,25 +1161,12 @@ def _accept_custom_sampling(_request: object, **_kwargs: object) -> None:
 
 
 def test_native_arm_sources_have_zero_literal_family_gates() -> None:
-    family_ids = frozenset(family.id for family in builtin_families())
-    findings: list[str] = []
-    for path in NATIVE_ARM_SOURCES:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.Compare, ast.Dict, ast.IfExp, ast.Match, ast.Set)):
-                continue
-            literals = {
-                child.value
-                for child in ast.walk(node)
-                if isinstance(child, ast.Constant)
-                and isinstance(child.value, str)
-                and child.value in family_ids
-            }
-            findings.extend(
-                f"{path.relative_to(REPO_ROOT)}:{node.lineno}: {literal}"
-                for literal in sorted(literals)
-            )
-    assert findings == [], "literal family gates remain:\n" + "\n".join(findings)
+    from family_gate_scanner import family_literal_gates
+
+    findings = tuple(
+        finding for path in NATIVE_ARM_SOURCES for finding in family_literal_gates(path, REPO_ROOT)
+    )
+    assert findings == (), "literal family gates remain:\n" + "\n".join(findings)
 
 
 def test_native_arm_source_modules_stay_below_size_limit() -> None:
