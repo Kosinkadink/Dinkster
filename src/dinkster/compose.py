@@ -1970,6 +1970,59 @@ def _pack_provider_identity(manifest: PackManifest, spec: PackSpec) -> str:
     return identity
 
 
+def order_pack_entries_by_requirements(
+    entries: Sequence[PackSpec | Path | str],
+) -> tuple[PackSpec, ...]:
+    """Order packs by manifest-declared pack dependencies only, never raising.
+
+    serve uses this as the degraded ordering path when full contract
+    resolution fails for the candidate set: a pack that declares a dependency
+    must still compose after the pack providing it (nodes-image after
+    nodes-media-io), so one broken pack cannot be allowed to validate a
+    consumer against a dependency that merely sorts later. Unlike
+    order_pack_entries, capability/provider/version resolution is skipped
+    entirely; unreadable manifests, unknown dependencies, and dependency
+    cycles keep the entry in its given position instead of refusing the set.
+    """
+    specs = tuple(
+        entry if isinstance(entry, PackSpec) else PackSpec(manifest=entry) for entry in entries
+    )
+    names: list[str | None] = []
+    dependencies: list[set[str]] = []
+    for spec in specs:
+        try:
+            manifest = load_manifest(resolve_manifest_path(spec.manifest))
+        except Exception:
+            names.append(None)
+            dependencies.append(set())
+            continue
+        names.append(canonical_name(manifest.name))
+        dependencies.append({canonical_name(item.pack) for item in manifest.dependencies})
+    wanted = {name for name in names if name is not None}
+    ordered: list[PackSpec] = []
+    emitted: set[str] = set()
+    remaining = list(range(len(specs)))
+    while remaining:
+        selection = next(
+            (
+                index
+                for index in remaining
+                if names[index] is None
+                or all(dep not in wanted or dep in emitted for dep in dependencies[index])
+            ),
+            None,
+        )
+        if selection is None:
+            # Dependency cycle: compose cycle members in given order so each
+            # one still reports its own contract failure independently.
+            selection = remaining[0]
+        ordered.append(specs[selection])
+        if names[selection] is not None:
+            emitted.add(str(names[selection]))
+        remaining.remove(selection)
+    return tuple(ordered)
+
+
 def _builtin_registry_providers() -> dict[str, dict[str, str]]:
     provider = PACK_INFERENCE_CONTRACT
     registries = builtin_registries()
