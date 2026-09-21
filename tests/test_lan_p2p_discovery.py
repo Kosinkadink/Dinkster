@@ -68,6 +68,9 @@ def test_server_and_plugin_lan_policies_match_at_network_boundaries() -> None:
         "192.168.50.255",
         "192.168.51.1",
         "10.0.0.1",
+        "100.64.0.2",
+        "169.254.1.2",
+        "8.8.8.8",
         "127.0.0.1",
         "not-an-address",
     )
