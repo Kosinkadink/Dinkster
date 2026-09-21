@@ -82,7 +82,7 @@ class PackSettingField:
             if self.multiple_of is not None:
                 quotient = result / self.multiple_of
                 if not math.isfinite(quotient) or not math.isclose(
-                    quotient, round(quotient), abs_tol=1e-12
+                    quotient, round(quotient), rel_tol=0.0, abs_tol=1e-12
                 ):
                     raise ValueError(f"value must be a multiple of {self.multiple_of}")
         return result

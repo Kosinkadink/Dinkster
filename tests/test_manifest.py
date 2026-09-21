@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -704,6 +705,36 @@ def test_pack_frontend_assets_reject_symlinks(tmp_path: Path) -> None:
         load_manifest(path)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="NTFS junction behavior is Windows-specific")
+def test_pack_frontend_assets_reject_junction_escape(tmp_path: Path) -> None:
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "theme.css").write_text("body {}", encoding="utf-8")
+    junction = frontend / "linked"
+    completed = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        pytest.skip(f"junctions unavailable: {completed.stderr.strip()}")
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "test"\n[pack.entry]\nnodes = "test_pack:NODES"\n'
+        '[pack.frontend]\nassets = "frontend"\n',
+        encoding="utf-8",
+    )
+
+    try:
+        with pytest.raises(ManifestError, match="must not escape the asset directory"):
+            load_manifest(path)
+    finally:
+        junction.rmdir()
+
+
 def test_pack_settings_rejects_non_object_schema(tmp_path: Path) -> None:
     (tmp_path / "settings.json").write_text('{"type":"string"}', encoding="utf-8")
     path = tmp_path / "dinkster-pack.toml"
@@ -723,6 +754,7 @@ def test_pack_settings_rejects_non_object_schema(tmp_path: Path) -> None:
         {"type": "number", "title": "Scale", "default": 1, "multipleOf": 0},
         {"type": "number", "title": "Scale", "default": 1, "minimum": 10**1000},
         {"type": "number", "title": "Scale", "default": 1, "multipleOf": 1e-323},
+        {"type": "number", "title": "Scale", "default": 1.0000000001, "multipleOf": 1e-9},
         {"type": "integer", "title": "Count", "default": 2**53},
     ),
 )
