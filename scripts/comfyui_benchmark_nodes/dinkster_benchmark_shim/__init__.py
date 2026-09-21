@@ -54,6 +54,7 @@ import subprocess
 import sys
 import threading
 import time
+import wave
 from pathlib import Path
 
 import comfy.model_management
@@ -64,6 +65,7 @@ import torch
 from aiohttp import web
 from comfy_execution.progress import ProgressRegistry
 from comfy_execution.utils import get_executing_context
+from PIL import Image
 from server import PromptServer
 
 _LOCK = threading.Lock()
@@ -388,6 +390,12 @@ class DinksterBenchmarkSink:
                     spatial_stride=None,
                 )
                 capture["audio_sample_rate"] = audio["sample_rate"]
+                capture["raw_outputs"] = _capture_raw_outputs(
+                    images,
+                    audio["waveform"],
+                    audio["sample_rate"],
+                    output_dir,
+                )
             if conditioning is not None:
                 capture["text_context"] = _capture_quality_tensor(
                     conditioning[0][0],
@@ -666,6 +674,46 @@ def _capture_nested_tensor(value, output_dir: Path, stem: str):
             spatial_stride=None,
         )
         for role, tensor in zip(roles, tensors, strict=True)
+    }
+
+
+def _capture_raw_outputs(images, waveform, sample_rate: int, output_dir: Path):
+    frames = {}
+    for label, index in (
+        ("first", 0),
+        ("middle", int(images.shape[0]) // 2),
+        ("last", int(images.shape[0]) - 1),
+    ):
+        path = output_dir / f"frame_{label}.png"
+        pixels = (
+            images[index]
+            .detach()
+            .to(device="cpu", dtype=torch.float32)
+            .clamp(0.0, 1.0)
+            .mul(255.0)
+            .round()
+            .to(dtype=torch.uint8)
+            .numpy()
+        )
+        Image.fromarray(pixels, mode="RGB").save(path)
+        frames[label] = {**_quality_file(path), "frame_index": index}
+
+    audio_path = output_dir / "audio.wav"
+    audio = waveform[0].detach().to(device="cpu", dtype=torch.float32).clamp(-1.0, 1.0)
+    pcm = (audio.mul(32767.0).round().to(dtype=torch.int16).numpy().T).astype("<i2", copy=False)
+    with wave.open(str(audio_path), "wb") as output:
+        output.setnchannels(int(pcm.shape[1]))
+        output.setsampwidth(2)
+        output.setframerate(sample_rate)
+        output.writeframes(pcm.tobytes())
+    return {
+        "frames": frames,
+        "audio": {
+            **_quality_file(audio_path),
+            "channels": int(pcm.shape[1]),
+            "sample_rate": sample_rate,
+            "sample_width_bytes": 2,
+        },
     }
 
 
