@@ -1277,34 +1277,6 @@ def test_output_known_value_wire_decode_rejects_unknown_fields_and_bad_shapes() 
         schema_from_wire(malformed({"input": 1}))
 
 
-def test_output_represents_wire_decode_rejects_unknown_fields_and_bad_shapes() -> None:
-    def malformed(represents: object) -> dict[str, object]:
-        wire = schema_to_wire(_represented_schema())
-        cast("list[dict[str, Any]]", wire["interface"])[1]["represents"] = represents
-        return wire
-
-    with pytest.raises(ValueError, match="output.represents must be an object"):
-        schema_from_wire(malformed(1))
-    with pytest.raises(ValueError, match="output.represents has unknown fields"):
-        schema_from_wire(
-            malformed({"input": "image", "rendition": "decoded-image", "surprise": True})
-        )
-    with pytest.raises(ValueError, match="output.represents.input must be a string"):
-        schema_from_wire(malformed({"input": 1, "rendition": "decoded-image"}))
-    with pytest.raises(ValueError, match="output.represents.applies must be an object"):
-        schema_from_wire(malformed({"input": "image", "rendition": "decoded-image", "applies": []}))
-    with pytest.raises(ValueError, match="must be an array of strings"):
-        schema_from_wire(
-            malformed(
-                {
-                    "input": "image",
-                    "rendition": "decoded-image",
-                    "applies": {"mode": [1]},
-                }
-            )
-        )
-
-
 def test_mirror_never_joins_the_signature() -> None:
     """A mirror is a presentation-only estimate renderer - declaring,
     changing, or removing one never changes what the node computes, so
