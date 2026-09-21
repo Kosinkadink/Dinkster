@@ -45,7 +45,7 @@ def test_qwen_image_artifact_manifest_pins_official_immutable_graph() -> None:
     manifest = load_manifest(MANIFEST_PATH)
     validate_manifest(manifest)
     assert manifest["schema"] == 1
-    assert manifest["artifact_root"] == "/home/kosin/ComfyUI-Shared/models"
+    assert manifest["artifact_root"] == "models"
     assert manifest["provider"] == {
         "api_url": (
             "https://huggingface.co/api/models/Comfy-Org/Qwen-Image_ComfyUI/"
@@ -172,7 +172,7 @@ def test_verify_receipts_uses_one_descriptor_for_digests_header_and_roles(
             os.close(fd)
         artifact["bytes"] = path.stat().st_size
         artifact["header_sha256"] = canonical_header_digest(expected_header)
-    manifest["artifact_root"] = str(root)
+    manifest["artifact_root"] = "models"
     manifest["storage_receipt"] = {
         "after_free_bytes": 1,
         "before_free_bytes": 1,

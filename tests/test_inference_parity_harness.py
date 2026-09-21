@@ -1542,7 +1542,9 @@ def test_sdxl_inpaint_engine_and_manifest_pins_refuse_substitution() -> None:
     workload = next(item for item in manifest["workloads"] if item["id"] == "W0-SDXL-INPAINT")
     interpreter = workload["preflight"]["interpreter"]["path"]
     for engine in ("comfyui", "dinkster"):
-        assert workload["engines"][engine]["python"] == interpreter
+        assert workload["engines"][engine]["python"].format(
+            root="/comfyui", comfyui="/comfyui"
+        ) == (interpreter.format(root="/comfyui"))
         adapter = workload["engines"][engine]["adapter"]
         assert f"tools/inference_parity/{adapter}" in workload["preflight"]["source_files"]
     assert workload["acceptance_manifest"]["path"] == acceptance_path.name

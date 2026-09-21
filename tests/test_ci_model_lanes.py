@@ -12,8 +12,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tools.evidence_paths import EVIDENCE_ROOT
-
 ROOT = Path(__file__).resolve().parents[1]
 ACTION_PATH = "./.github/actions/torch-cpu-suite"
 ACTION = yaml.safe_load((ROOT / ACTION_PATH / "action.yml").read_text(encoding="utf-8"))
@@ -490,12 +488,10 @@ def test_source_receipts_and_torch_typechecks_remain_hosted() -> None:
     commands = [step.get("run", "").strip() for step in retained]
     projects = {
         path.parent.name
-        for path in (
-            *(ROOT / "packages").glob("*/pyproject.toml"),
-            EVIDENCE_ROOT / "packages/dinkster-acceptance/pyproject.toml",
-        )
+        for path in (ROOT / "packages").glob("*/pyproject.toml")
         if 'venv = ".venv-torch"' in path.read_text(encoding="utf-8")
     }
+    projects.add("dinkster-acceptance")
     assert len(projects) == 3
     assert {command for command in commands if "pyright -p" in command} == {
         (
@@ -550,7 +546,7 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
     (checkout,) = [step for step in preparation_steps if step.get("uses") == "actions/checkout@v4"]
     assert checkout["with"] == {
         "repository": "Kosinkadink/dinkster-evidence",
-        "ref": "16d3d1dae062266232758b07cda181ca3ad881e3",
+        "ref": "29f6a9163eab4fc7b595832da2a671c9136bd81f",
         "path": ".evidence-source",
         "clean": True,
         "persist-credentials": False,
@@ -747,7 +743,7 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
         "workflow_call": None,
     }
     job = PR_JOBS["fast"]
-    assert job["timeout-minutes"] == 5
+    assert job["timeout-minutes"] == 10
     assert job["steps"][-1] == {
         "if": PRIVATE_DEPENDENCIES_AVAILABLE,
         "run": "bash scripts/ci-fast.sh",

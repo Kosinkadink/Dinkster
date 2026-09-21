@@ -144,6 +144,19 @@ def test_powershell_setup_limits_force_and_has_no_private_installer() -> None:
     assert "install_dinkster_aimdo.py" not in setup
 
 
+def test_setup_scripts_skip_optional_acceptance_package_when_absent() -> None:
+    powershell = POWERSHELL_SETUP.read_text()
+    posix = POSIX_SETUP.read_text()
+    notice = "dinkster-evidence not found - skipping optional dinkster-acceptance"
+
+    assert 'if [ -d "$acceptance_package" ]; then' in posix
+    assert posix.count('if [ "$install_acceptance" = 1 ]; then') == 2
+    assert notice in posix
+    assert "$InstallAcceptance = Test-Path $AcceptancePackage -PathType Container" in powershell
+    assert powershell.count("if ($InstallAcceptance) {") == 2
+    assert notice in powershell
+
+
 def test_powershell_setup_isolates_root_sync_and_prints_runnable_gates() -> None:
     setup = POWERSHELL_SETUP.read_text()
     sync = setup.split('Write-Host "==> .venv (torch-free root env)"', 1)[1].split(
@@ -152,7 +165,7 @@ def test_powershell_setup_isolates_root_sync_and_prints_runnable_gates() -> None
 
     assert '[Environment]::SetEnvironmentVariable("UV_PROJECT", $null, "Process")' in sync
     assert '"UV_PROJECT_ENVIRONMENT", $RootEnvironment, "Process"' in sync
-    assert 'Invoke-Native "uv" @("sync", "--project", $RepoRoot, "--all-packages")' in sync
+    assert '"sync", "--project", $RepoRoot, "--python", "3.12", "--all-packages"' in sync
     assert "$PreviousProject" not in sync
     cleanup = setup.rsplit("finally {", 1)[1]
     assert '"UV_PROJECT", $PreviousProject, "Process"' in cleanup
@@ -226,7 +239,7 @@ def test_powershell_setup_root_sync_ignores_cwd_and_ambient_uv_target(tmp_path: 
         "project=",
         f"environment={REPO_ROOT / '.venv'}",
     ]
-    assert lines[2].startswith(f"args=sync --project {REPO_ROOT} --all-packages")
+    assert lines[2].startswith(f"args=sync --project {REPO_ROOT} --python 3.12 --all-packages")
     assert restore_probe.read_text().splitlines() == [
         str(tmp_path / "wrong-project"),
         str(tmp_path / "wrong-environment"),
