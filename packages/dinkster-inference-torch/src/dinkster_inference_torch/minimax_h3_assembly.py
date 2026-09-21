@@ -547,15 +547,15 @@ def _build_diffusion(
 ) -> MiniMaxH3DiT:
     if layout.config != MINIMAX_H3_CONFIG:
         raise MiniMaxH3SplitAssemblyError("diffusion builder requires exact H3 layout")
-    # The patch projections and final layer compute at float32 over any
-    # storage (the DiT patchifies at float32), so their layers always
-    # own a float32 compute dtype. The component loader preserves
-    # explicitly float32-owned members instead of rounding them to the
-    # component compute dtype the way initless members round.
+    # The reference computes patch projections and the final layer at
+    # float32, but projects and refines its float16 text encoder output
+    # before joining the bfloat16 diffusion stream.
     fp32_operations = CastOperations(torch.float32)
+    text_operations = CastOperations(torch.float16)
     return assemble_minimax_h3_dit(
         operations=operations,
         fp32_operations=fp32_operations,
+        text_operations=text_operations,
         time_embedding_kind=layout.time_embedding_kind,
         attention_selection=attention_selection,
     )

@@ -922,10 +922,12 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         *,
         operations: Operations = INITLESS,
         fp32_operations: Operations | None = None,
+        text_operations: Operations | None = None,
         time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve",
     ) -> None:
         super().__init__()
         fp32_operations = operations if fp32_operations is None else fp32_operations
+        text_operations = operations if text_operations is None else text_operations
         if time_embedding_kind not in ("curve", "mlp"):
             raise ValueError("time_embedding_kind must be curve or mlp")
         self.config = config
@@ -938,7 +940,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         self.audio_patch_proj = fp32_operations.linear(
             config.audio_latent_channels, config.hidden_width
         )
-        self.condition_proj = operations.linear(config.text_width, config.hidden_width)
+        self.condition_proj = text_operations.linear(config.text_width, config.hidden_width)
         if time_embedding_kind == "curve":
             self.register_buffer("adaln_t_table", torch.empty(1000, _TIME_EMBED_DIM))
         else:
@@ -950,7 +952,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
             config,
             exclude_packed_attention_modifiers(attention_kernel),
             provider_evidence,
-            operations=operations,
+            operations=text_operations,
             rotary_dim=rotary_dim,
         )
         adaln_operations = fp32_operations if time_embedding_kind == "curve" else operations
@@ -1510,15 +1512,15 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
             update = layout.audio_update.to(video.device)
             all_audio_rows[~update] = condition_audio
             all_audio_rows[update] = target_audio_rows
-        video_embeddings = self.video_patch_proj(all_video_rows).to(context.dtype)
-        audio_embeddings = self.audio_patch_proj(all_audio_rows).to(context.dtype)
+        video_embeddings = self.video_patch_proj(all_video_rows).to(video.dtype)
+        audio_embeddings = self.audio_patch_proj(all_audio_rows).to(video.dtype)
         text_embeddings = self.preprocess_text_embeddings(context)[0]
 
         hidden = torch.empty(
             1,
             layout.sequence_length,
             self.config.hidden_width,
-            dtype=context.dtype,
+            dtype=video.dtype,
             device=video.device,
         )
         video_offset = 0
@@ -1538,8 +1540,8 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
             time_embedding = self._curve_time_embedding(unique_times, video.device)
         else:
             time_values = torch.tensor(unique_times, dtype=torch.float32, device=video.device)
-            time_embedding = self.time_embedder(time_values).to(context.dtype)
-        rope_table = self._rope_table(layout.position_ids, video.device, context.dtype)
+            time_embedding = self.time_embedder(time_values).to(video.dtype)
+        rope_table = self._rope_table(layout.position_ids, video.device, video.dtype)
         if sequence_sharding is not None:
             shard = sequence_sharding.shard
             hidden = hidden[:, shard.start : shard.stop]
@@ -1580,7 +1582,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
             expected_hidden = (1, layout.sequence_length, self.config.hidden_width)
             if tuple(hidden.shape) != expected_hidden:
                 raise ValueError(f"sequence gather must return shape {expected_hidden}")
-            if hidden.dtype != context.dtype or hidden.device != video.device:
+            if hidden.dtype != video.dtype or hidden.device != video.device:
                 raise ValueError("sequence gather must preserve the hidden dtype and device")
         else:
             queue = make_prefetch_queue(self.blocks)
@@ -1642,6 +1644,7 @@ def assemble_minimax_h3_dit(
     *,
     operations: Operations = INITLESS,
     fp32_operations: Operations | None = None,
+    text_operations: Operations | None = None,
     time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve",
     attention_selection: AttentionSelection,
 ) -> MiniMaxH3DiT:
@@ -1653,6 +1656,7 @@ def assemble_minimax_h3_dit(
         evidence,
         operations=operations,
         fp32_operations=fp32_operations,
+        text_operations=text_operations,
         time_embedding_kind=time_embedding_kind,
     )
 

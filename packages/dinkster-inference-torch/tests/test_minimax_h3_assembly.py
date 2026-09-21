@@ -632,25 +632,23 @@ def test_artifact_verification_does_not_read_payload(
         )
 
 
-def test_diffusion_builder_always_binds_fp32_operations(
+def test_diffusion_builder_binds_reference_split_precision_operations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The float32-computed layers (patch projections, final layer) own
-    CastOperations(float32) no matter which operations the loader picked
-    for the rest of the DiT: a pure-bf16 checkpoint picks initless
-    operations, and initless fp32 layers would round their float32
-    storage down to bf16 and reject the DiT's float32 patchify rows."""
-    selected: tuple[object, object] | None = None
+    """Reference-owned float32 and float16 islands do not inherit the
+    loader's bfloat16 diffusion operations."""
+    selected: tuple[object, object, object] | None = None
 
     def capture(
         *,
         operations: object,
         fp32_operations: object,
+        text_operations: object,
         time_embedding_kind: str,
         attention_selection: object,
     ) -> object:
         nonlocal selected
-        selected = operations, fp32_operations
+        selected = operations, fp32_operations, text_operations
         assert time_embedding_kind == "curve"
         assert attention_selection is selected_attention
         return torch.nn.Identity()
@@ -669,6 +667,8 @@ def test_diffusion_builder_always_binds_fp32_operations(
         assert selected[0] is operations
         assert isinstance(selected[1], CastOperations)
         assert selected[1].dtype is torch.float32
+        assert isinstance(selected[2], CastOperations)
+        assert selected[2].dtype is torch.float16
 
 
 def test_verified_diffusion_declares_route_materialization_ceilings(
