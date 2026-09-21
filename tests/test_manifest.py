@@ -701,7 +701,7 @@ def test_pack_frontend_assets_reject_symlinks(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(ManifestError, match="must not escape the asset directory"):
+    with pytest.raises(ManifestError, match="must not contain symlinks"):
         load_manifest(path)
 
 
