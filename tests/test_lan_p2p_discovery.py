@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import pytest
+from dinkster_p2p import lan_interfaces as plugin_lan_interfaces
 from dinkster_server import (
     LAN_P2P_SERVICE_TYPE,
     LanInterface,
@@ -71,6 +72,10 @@ def test_lan_interfaces_excludes_public_loopback_down_and_point_to_point() -> No
                 "down": [address("10.1.0.2", "255.255.0.0")],
                 "tunnel": [address("100.64.1.2", "255.255.255.255")],
             },
+        ),
+        patch(
+            "dinkster_server.lan_discovery.p2p_plugin",
+            return_value=SimpleNamespace(lan_interfaces=plugin_lan_interfaces),
         ),
     ):
         assert lan_interfaces() == (

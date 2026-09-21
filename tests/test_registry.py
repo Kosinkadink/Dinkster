@@ -133,7 +133,12 @@ def test_release_templates_ride_the_record() -> None:
         path="templates/starter.json",
         description="a starting point",
         tags=("video",),
+        family="dinkster.video",
+        models=("model.safetensors",),
         assets=("model-a",),
+        thumbnail_digest=artifact_digest(b"thumbnail"),
+        thumbnail_media_type="image/png",
+        thumbnail_path="templates/starter.png",
     )
     bare = Release("img-tools", "1.0.0", DIGEST_A, "alice", (), ())
     with_template = replace(bare, templates=(template,))
@@ -146,6 +151,54 @@ def test_release_templates_ride_the_record() -> None:
     verdict = admit(sub, grants, releases)
     release = record_acceptance(sub, verdict, accepted_review(), grants, releases)
     assert release.templates == (template,)
+
+
+def test_template_catalog_is_versioned_latest_deterministic_and_digest_verified() -> None:
+    old = ReleaseTemplate(
+        id="z-old",
+        name="Old",
+        digest=artifact_digest(b"old"),
+        path="templates/old.json",
+    )
+    body = b'{"format":"dinkster-workflow"}'
+    starter = ReleaseTemplate(
+        id="starter",
+        name="Starter",
+        digest=artifact_digest(body),
+        path="templates/starter.json",
+        description="Start here",
+        tags=("starter",),
+        family="dinkster.image",
+        models=("model.safetensors",),
+        thumbnail_digest=artifact_digest(b"thumbnail"),
+        thumbnail_media_type="image/png",
+        thumbnail_path="templates/starter.png",
+    )
+    releases = ReleaseIndex(
+        (
+            Release("z-pack", "1.0.0", DIGEST_A, "alice", (), (), (old,)),
+            Release("a-pack", "1.0.0", DIGEST_A, "alice", (), (), (starter,)),
+            Release("z-pack", "2.0.0", DIGEST_B, "alice", (), (), (starter,)),
+        )
+    )
+
+    catalog = releases.template_catalog()
+    assert catalog["catalogVersion"] == 1
+    rows = catalog["templates"]
+    assert isinstance(rows, list)
+    assert [(row["pack"], row["id"]) for row in rows] == [
+        ("a-pack", "starter"),
+        ("z-pack", "starter"),
+    ]
+    assert rows[0]["models"] == ["model.safetensors"]
+    assert rows[0]["thumbnail"] == {
+        "digest": artifact_digest(b"thumbnail"),
+        "mediaType": "image/png",
+    }
+    assert "path" not in rows[0]
+    starter.verify_body(body)
+    with pytest.raises(RegistryError, match="does not match"):
+        starter.verify_body(b"changed")
 
 
 # ---------------------------------------------------------------------------
