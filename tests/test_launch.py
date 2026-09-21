@@ -10,7 +10,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_mount
 
-from dinkster import launch, setup
+from dinkster import launch, serve, setup
 from dinkster.cli import main as cli_main
 from dinkster.frontend import install_frontend
 
@@ -74,7 +74,7 @@ def test_bare_cli_launches_one_origin_and_opens_browser(
     browser_calls: list[str] = []
 
     monkeypatch.setattr(launch, "discover_frontend_bundle", lambda: bundle)
-    monkeypatch.setattr(launch.serve, "main", lambda argv: serve_calls.append(argv))
+    monkeypatch.setattr(serve, "main", lambda argv: serve_calls.append(argv))
     monkeypatch.setattr(launch, "_open_browser_when_ready", lambda url: browser_calls.append(url))
 
     class ImmediateThread:
@@ -143,7 +143,7 @@ def test_no_browser_and_vite_proxy_are_the_only_alternate_launch_controls(
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
     setup.main([])
     calls: list[list[str]] = []
-    monkeypatch.setattr(launch.serve, "main", lambda argv: calls.append(argv))
+    monkeypatch.setattr(serve, "main", lambda argv: calls.append(argv))
     monkeypatch.setattr(
         launch.webbrowser,
         "open",

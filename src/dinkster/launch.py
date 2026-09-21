@@ -9,7 +9,6 @@ import urllib.error
 import urllib.request
 import webbrowser
 
-from . import serve
 from .frontend import discover_frontend_bundle
 from .setup import default_roots
 
@@ -82,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
     url = f"http://127.0.0.1:{args.port}"
     print(f"Dinkster is available at {url}", flush=True)
     print("Checking pack catalogs...", flush=True)
+    from . import serve
+
     if not args.no_browser:
         threading.Thread(target=_open_browser_when_ready, args=(url,), daemon=True).start()
     serve.main(serve_args)
