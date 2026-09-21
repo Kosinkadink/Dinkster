@@ -170,17 +170,6 @@ ALLOWED: dict[str, set[str]] = {
     # Model-backed vision providers execute stable owner schemas through the
     # pack-author door and stay independent of the host scheduler.
     "dinkster_nodes_vision": {"dinkster_api", "dinkster_inference_torch"},
-    # Per-model vision wheel inputs contain only manifests and model metadata;
-    # the shared dinkster_nodes_vision namespace owns their executable code.
-    "dinkster_vision_birefnet": set(),
-    "dinkster_vision_depth_anything_v2": set(),
-    "dinkster_vision_depth_anything_v3": set(),
-    "dinkster_vision_detr": set(),
-    "dinkster_vision_efficient_sam": set(),
-    "dinkster_vision_hed": set(),
-    "dinkster_vision_rtdetr": set(),
-    "dinkster_vision_sam31": set(),
-    "dinkster_vision_upscale": set(),
     # Dev scaffolding is a pack like any other: the same door, nothing more.
     "dinkster_nodes_dev": {"dinkster_api"},
     # Training nodes are thin adapters over a host-bound service protocol;
