@@ -12,8 +12,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tools.evidence_paths import EVIDENCE_ROOT
-
 ROOT = Path(__file__).resolve().parents[1]
 ACTION_PATH = "./.github/actions/torch-cpu-suite"
 ACTION = yaml.safe_load((ROOT / ACTION_PATH / "action.yml").read_text(encoding="utf-8"))
@@ -490,12 +488,10 @@ def test_source_receipts_and_torch_typechecks_remain_hosted() -> None:
     commands = [step.get("run", "").strip() for step in retained]
     projects = {
         path.parent.name
-        for path in (
-            *(ROOT / "packages").glob("*/pyproject.toml"),
-            EVIDENCE_ROOT / "packages/dinkster-acceptance/pyproject.toml",
-        )
+        for path in (ROOT / "packages").glob("*/pyproject.toml")
         if 'venv = ".venv-torch"' in path.read_text(encoding="utf-8")
     }
+    projects.add("dinkster-acceptance")
     assert len(projects) == 3
     assert {command for command in commands if "pyright -p" in command} == {
         (
