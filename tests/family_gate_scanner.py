@@ -6,7 +6,7 @@ from pathlib import Path
 
 from dinkster_inference import builtin_families
 
-EXTERNAL_PROOF_FAMILY_IDS = frozenset({"test.toy-image"})
+EXTERNAL_PROOF_FAMILY_IDS = frozenset({"fixture.toy-image", "test.toy-image"})
 NEW_FAMILY_REGISTRATION_PATHS = frozenset(
     {
         "docs/new-model-family.md",
