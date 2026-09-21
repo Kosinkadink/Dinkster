@@ -2265,7 +2265,7 @@ def test_media_save_image_schema_is_save_target_widget_assets_out() -> None:
     target = schema.inputs[1]
     assert target.type.types == ("dinkster.save_target",)
     assert target.required is False
-    assert target.default == {"mount": "comfy-output", "prefix": "ComfyUI"}
+    assert target.default is None
     assert target.widget == SaveTargetWidget()
     images_out, assets_out = schema.outputs
     assert images_out.id == "images"
