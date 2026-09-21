@@ -1357,7 +1357,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         return self._receipt_identity
 
     def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
-        return MINIMAX_H3_SIGMAS
+        return MINIMAX_H3_SIGMAS.video
 
     def adapt_multistream_latent(
         self,

@@ -252,6 +252,20 @@ def test_h3_vae_runtimes_expose_mask_geometry(runtime_fixture: RuntimeFixture) -
     assert runtime_fixture.audio_runtime.latent_mask_mapping is MINIMAX_H3_AUDIO_MASK_MAPPING
 
 
+def test_h3_sampling_uses_reference_float32_video_sigmas(
+    runtime_fixture: RuntimeFixture,
+) -> None:
+    space = runtime_fixture.fl2va_runtime.sampling_sigma_space()
+    assert space is MINIMAX_H3_SIGMAS.video
+    scheduler = torch_scheduler_registry().get("simple")
+    assert scheduler is not None
+    sigmas = sampling_sigmas(scheduler, space, 20, denoise=1.0)
+    assert sigmas[2] == 0.9908256530761719
+    assert sigmas[3] == 0.9855073094367981
+    assert sigmas[8] == 0.9473683834075928
+    assert sigmas[19] == 0.3870967924594879
+
+
 def test_h3_token_masks_pool_odd_video_patches_audio_features_and_quantize_up() -> None:
     video_channel = torch.tensor(
         (
