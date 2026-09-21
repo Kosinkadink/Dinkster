@@ -5,7 +5,7 @@ description = "Dinkster server: job queue (policy above the engine), native prot
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.10",
-    "dinkster-identity==0.1.0",
+    "dinkster-token-verifier @ https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/v0.1.1/dinkster_token_verifier-0.1.1-py3-none-any.whl#sha256=b10f09c26c113016b1633701c73958d6dbe41f7dca318d5677e449ec04a643ae",
     "dinkster-schema",
     "dinkster-values",
     "dinkster-graph",
@@ -32,7 +32,6 @@ allow-direct-references = true
 packages = ["src/dinkster_server"]
 
 [tool.uv.sources]
-dinkster-identity = { git = "https://github.com/Kosinkadink/dinkster-identity.git", rev = "67b84c769c7add627c738245553c932772610b34" }
 dinkster-schema = { workspace = true }
 dinkster-values = { workspace = true }
 dinkster-graph = { workspace = true }

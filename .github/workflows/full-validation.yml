@@ -99,9 +99,6 @@ jobs:
       - uses: ./.github/actions/prepare-validation-inputs
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-      - uses: ./.github/actions/configure-dinkster-identity
-        with:
-          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -143,7 +140,7 @@ jobs:
         run: uv run --locked pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
         env:
           DINKSTER_CATALOG_WIRE_OUTPUT: ${{ runner.temp }}/default-catalog.json
-      - uses: ./.github/actions/configure-dinkster-identity
+      - uses: ./.github/actions/configure-private-repository
         if: matrix.os == 'linux' && matrix.python-version == '3.12'
         with:
           repository: Kosinkadink/Dinkster-Frontend
@@ -184,9 +181,6 @@ jobs:
         with:
           clean: true
           persist-credentials: false
-      - uses: ./.github/actions/configure-dinkster-identity
-        with:
-          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
@@ -215,13 +209,6 @@ jobs:
         with:
           clean: true
           persist-credentials: false
-      # The smoke gate validates the locked default install, and that install
-      # set needs the private dinkster-identity git dependency that
-      # dinkster-server pulls, so this job configures the same read-only
-      # deploy key as every other installing job (comfy-vibe-station#256).
-      - uses: ./.github/actions/configure-dinkster-identity
-        with:
-          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -253,7 +240,6 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/torch-cpu-suite
         with:
-          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "false"
 
@@ -300,7 +286,6 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/torch-cpu-suite
         with:
-          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "true"
 
@@ -328,9 +313,6 @@ jobs:
       - uses: ./.github/actions/prepare-validation-inputs
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-      - uses: ./.github/actions/configure-dinkster-identity
-        with:
-          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
@@ -357,9 +339,6 @@ jobs:
       - uses: ./.github/actions/prepare-validation-inputs
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-      - uses: ./.github/actions/configure-dinkster-identity
-        with:
-          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"

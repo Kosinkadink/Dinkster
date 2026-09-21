@@ -47,7 +47,7 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     commands = "\n".join(step.get("run", "") for step in build["steps"])
     assert "scripts/build_release.py" in commands
     assert '--tag "$GITHUB_REF_NAME"' in commands
-    assert "--identity-root .release/identity" in commands
+    assert "--identity-root" not in commands
     assert "uvx twine check dist/*.whl" in commands
     assert "pnpm --filter @dinkster/app build" in commands
     frontend_checkout = next(
@@ -58,14 +58,10 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     )
     assert frontend_checkout["with"]["ref"] == "${{ steps.frontend.outputs.ref }}"
     assert frontend_checkout["with"]["persist-credentials"] is False
-    identity_checkout = next(
-        step
+    assert all(
+        step.get("with", {}).get("repository") != "Kosinkadink/dinkster-identity"
         for step in build["steps"]
-        if step.get("uses") == "actions/checkout@v4"
-        and step.get("with", {}).get("repository") == "Kosinkadink/dinkster-identity"
     )
-    assert identity_checkout["with"]["ref"] == "${{ steps.identity.outputs.ref }}"
-    assert identity_checkout["with"]["persist-credentials"] is False
 
 
 def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
@@ -96,7 +92,6 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     assert "from dinkster_frontend import bundle_path" in command
     assert all(
         step.get("uses") != "./.github/actions/configure-dinkster-identity"
-        or step.get("if") == "matrix.os == 'linux'"
         for step in workflow["jobs"]["install"]["steps"]
     )
 
@@ -159,8 +154,7 @@ def test_repository_versions_match_first_release_tag() -> None:
     frontend = json.loads((ROOT / "scripts/release_sources.json").read_text(encoding="utf-8"))
     assert frontend["repository"] == "Kosinkadink/Dinkster-Frontend"
     assert len(frontend["commit"]) == 40
-    assert frontend["identityRepository"] == "Kosinkadink/dinkster-identity"
-    assert len(frontend["identityCommit"]) == 40
+    assert set(frontend) == {"repository", "commit"}
 
 
 def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path) -> None:
