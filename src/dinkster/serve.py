@@ -151,6 +151,7 @@ from .compose import (
     default_pack_ids,
     default_pack_spec,
     model_pack_specs,
+    order_pack_entries_by_requirements,
     resolve_manifest_path,
     training_pack_specs,
 )
@@ -303,6 +304,29 @@ def _is_standard_vision_pack(spec: PackSpec) -> bool:
         and len(spec.packs) == 1
         and next(iter(spec.packs)).startswith("dinkster-vision-")
     )
+
+
+def _order_default_pack_specs(
+    composer: ServingComposer, specs: Sequence[PackSpec | Path | str], default_count: int
+) -> tuple[PackSpec, ...]:
+    """Return the default packs in provider-before-consumer order.
+
+    Full contract resolution is authoritative when it succeeds. When it
+    raises (one broken pack must not take the ordering down with it), the
+    defaults still compose in manifest-requirement order: composing them in
+    load order validates a pack before a declared dependency that sorts
+    later, so dinkster-nodes-image would fail its media-io requirement
+    against a dinkster-nodes-media-io that has not announced yet.
+    """
+    try:
+        return composer.order_pack_entries(specs[:default_count])
+    except CompositionError as error:
+        core_logger("serve").warning(
+            "default pack contract ordering failed (%s); composing defaults in "
+            "manifest requirement order",
+            error,
+        )
+        return order_pack_entries_by_requirements(specs[:default_count])
 
 
 def detect_native_compute_dtypes(executing_cuda_indices: Sequence[int] = ()) -> frozenset[str]:
@@ -1901,13 +1925,9 @@ def main(argv: list[str] | None = None) -> None:
             cache_disk_budget=args.execution_cache_disk_budget,
             composition_mode="development" if args.watch_packs else "production",
         )
-        try:
-            ordered_defaults = composer.order_pack_entries(specs[:resolved_default_pack_count])
-        except CompositionError:
-            # Incremental add_pack calls report each broken default independently.
-            pass
-        else:
-            specs[:resolved_default_pack_count] = ordered_defaults
+        specs[:resolved_default_pack_count] = list(
+            _order_default_pack_specs(composer, specs, resolved_default_pack_count)
+        )
         composer_ref.append(composer)
         composer.validate_specs(specs)
         if args.prepare_stale_catalogs:
