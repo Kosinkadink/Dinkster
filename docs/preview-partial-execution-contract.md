@@ -19,10 +19,9 @@ and missing-asset preflight remain graph-wide.
 
 ## Preview-marked final outputs
 
-Schema wire 16 may carry `preview: true` on an ordinary output entry or an
+The current schema may carry `preview: true` on an ordinary output entry or an
 output-family declaration. Omission and `false` decode to false; every other
-JSON type is malformed. Encoders omit false. Wire 15 neither emits nor
-interprets the field. An output-family marker propagates to every elaborated
+JSON type is malformed. Encoders omit false. An output-family marker propagates to every elaborated
 ordinary member. The marker is final-output discovery metadata only and is
 recursively removed from computation signatures. It never selects targets,
 schedules output-level work, changes a cache key, chooses a renderer, or
@@ -40,11 +39,9 @@ Raw cache inspection requires a separate provenance/freshness/auth/eviction
 design. Rich preview descriptions require a future reviewed wire contract.
 Region-interior targets require stable planner identities.
 
-## Served wire versions
+## Schema catalog
 
-Every version in `SCHEMA_WIRE_SERVE_VERSIONS` carries the wire-16 preview
-and lazy fields. `/api/nodes?wire=` selects the highest common version the
-server encodes and refuses disjoint sets with a machine-readable 406.
-Production catalogs exclude the `dev.conformance.*` proof nodes. No service,
-route, event, cache-peek, renderer-dispatch, HTML/CSS/URL, or durable
-runtime-preview surface is part of this contract.
+The schema catalog carries preview and lazy fields. Production catalogs exclude
+the `dev.conformance.*` proof nodes. No service, route, event, cache-peek,
+renderer-dispatch, HTML/CSS/URL, or durable runtime-preview surface is part of
+this contract.

@@ -36,7 +36,6 @@ from .replace import (
 )
 from .wire import (
     SCHEMA_WIRE_VERSION,
-    replacement_requires_schema_wire_28,
     schema_from_wire,
     schema_to_wire,
 )
@@ -136,7 +135,9 @@ class ComfyGroupSourceSchema:
     wire_version: int
 
     def __post_init__(self) -> None:
-        wire = schema_to_wire(self.schema, wire_version=self.wire_version)
+        if self.wire_version != SCHEMA_WIRE_VERSION:
+            raise ValueError(f"unsupported schemaVersion: {self.wire_version!r}")
+        wire = schema_to_wire(self.schema)
         try:
             decoded = schema_from_wire(cast("dict[str, Any]", wire))
         except ValueError as exc:
@@ -280,7 +281,7 @@ def _schema_from_wire(value: object, where: str) -> ComfyGroupSourceSchema:
     try:
         schema = schema_from_wire(schema_wire)
         wire_version = cast("int", schema_wire.get("schemaVersion"))
-        canonical = schema_to_wire(schema, wire_version=wire_version)
+        canonical = schema_to_wire(schema)
     except (AttributeError, KeyError, OverflowError, TypeError, ValueError) as exc:
         raise ValueError(f"{where} is invalid: {exc}") from None
     if canonical != schema_wire:
@@ -480,17 +481,9 @@ def _record_to_wire(record: ComfyGroupRecord) -> dict[str, object]:
 def comfy_group_registry_to_wire(
     registry: ComfyGroupRegistry,
     *,
-    wire_version: int = SCHEMA_WIRE_VERSION,
     schemas: Mapping[str, NodeSchema] | None = None,
 ) -> dict[str, object]:
     records = registry.records
-    if wire_version < 28:
-        records = tuple(
-            record
-            for record in records
-            if (carrier := schemas.get(record.carrier) if schemas is not None else None) is not None
-            and not replacement_requires_schema_wire_28(carrier, record.replacement, schemas)
-        )
     used_group_types = frozenset(record.pattern.group_type for record in records)
     used_source_types = frozenset(
         node.source.node_type for record in records for _local_id, node in record.pattern.nodes
@@ -498,12 +491,12 @@ def comfy_group_registry_to_wire(
     return {
         "format": registry.format,
         "sourceSchemas": [
-            schema_to_wire(snapshot.schema, wire_version=snapshot.wire_version)
+            schema_to_wire(snapshot.schema)
             for snapshot in registry.source_schemas
             if snapshot.schema.node_type in used_source_types
         ],
         "groupSchemas": [
-            schema_to_wire(snapshot.schema, wire_version=snapshot.wire_version)
+            schema_to_wire(snapshot.schema)
             for snapshot in registry.group_schemas
             if snapshot.schema.node_type in used_group_types
         ],

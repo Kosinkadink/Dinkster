@@ -190,8 +190,8 @@ def test_registry_requires_exact_record_identity_and_confidence_contract() -> No
         dataclasses.replace(record.source, revision="main")
 
 
-def test_source_schema_requires_a_lossless_decodable_wire_version() -> None:
-    with pytest.raises(ValueError, match="decodable wire version"):
+def test_source_schema_rejects_an_unsupported_wire_version() -> None:
+    with pytest.raises(ValueError, match="unsupported schemaVersion: 15"):
         ComfyAliasSourceSchema(SOURCE_SCHEMA, 15)
 
 

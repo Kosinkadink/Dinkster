@@ -186,7 +186,7 @@ No findings; the frozen v1 surface is pinned by `tests/test_api_v1.py`.
 - fixed: decoder coerced untrusted fields (`bool()`/`str()`/`int()` -
   `"false"` decoded to True); every field is now shape-validated,
   bool/int cross-typing rejected. Encoder output and
-  SCHEMA_WIRE_VERSION (12) unchanged - decode strictness only.
+  schema identity were unchanged by that historical fix.
 - fixed: widget-socket binding now enforced for BooleanWidget,
   ComboWidget, AssetWidget, SaveTargetWidget (previously only
   Number/String); no node-pack schema violated the new checks.

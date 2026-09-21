@@ -626,8 +626,8 @@ the pinned contract."""
 
 CONTROL_AFTER_GENERATE: frozenset[str] = frozenset({"fixed", "increment", "decrement", "randomize"})
 
-# The largest integer a JSON double represents exactly. Schema wire 33 carries
-# larger integer constraints as canonical decimal strings.
+# The largest integer a JSON double represents exactly. Larger integer
+# constraints use canonical decimal strings.
 _JSON_SAFE_INT = 2**53 - 1
 _DECIMAL_WIRE_INT_MIN = -(2**63)
 _DECIMAL_WIRE_INT_MAX = 2**64 - 1
@@ -643,8 +643,7 @@ class NumberWidget:
     number and out-of-range stored values are the frontend's diagnostic to
     surface, never a schema error. Absent min/max means unbounded. Integer
     constraints through signed 64-bit minimum and unsigned 64-bit maximum are
-    lossless on schema wire 33; older schema wires omit constraints outside
-    the JSON-double-safe range.
+    lossless as canonical decimal strings outside the JSON-double-safe range.
 
     ``display`` is an explicit editor presentation when present. Bounds and
     step are independent constraints: they never imply a slider or any other
@@ -655,9 +654,9 @@ class NumberWidget:
     frontend to render that control. Absence of the descriptor means "no
     presentation metadata", and the frontend still renders a number editor
     by primitive type inference; it never means the input is widgetless
-    (pinned with the frontend, wire v11).
+    (pinned with the frontend).
 
-    Socket binding (frontend amendment, wire v11): this descriptor is only
+    Socket binding: this descriptor is only
     legal on concrete ``core.int``/``core.float`` inputs, and constraints
     are interpreted in the socket's domain - an int socket with a
     fractional min/max/step is malformed. Enforced by InputSpec, which is
@@ -789,11 +788,9 @@ class TextCompletions:
 class StringWidget:
     """Presentation request for a string editor.
 
-    Only legal on concrete ``core.string`` inputs (enforced by InputSpec,
-    frontend amendment, wire v11). Before wire v17, a single-line string
-    carried no descriptor and ``StringWidget`` could only mark multiline.
-    Wire v17 admits explicit ``multiline=False`` so a named representation
-    set can compose both one-line and multiline editors from the same closed
+    Only legal on concrete ``core.string`` inputs (enforced by InputSpec).
+    Explicit ``multiline=False`` lets a named representation set compose both
+    one-line and multiline editors from the same closed
     descriptor. Absence still means the original inferred one-line editor,
     and the default stays ``True`` so every existing declaration is unchanged.
     ``placeholder`` and ``completions`` are presentation-only.
