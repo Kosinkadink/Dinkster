@@ -95,6 +95,15 @@ jobs:
           - os: macos
             labels: [self-hosted, macos, arm64]
     steps:
+      - name: Expose Git Bash on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bashDirectory = Join-Path $env:ProgramFiles 'Git/bin'
+          if (-not (Test-Path (Join-Path $bashDirectory 'bash.exe') -PathType Leaf)) {
+            throw 'Git Bash is required for the release install check'
+          }
+          $bashDirectory >> $env:GITHUB_PATH
       - uses: actions/checkout@v4
         with:
           clean: true

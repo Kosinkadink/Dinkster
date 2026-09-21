@@ -72,6 +72,13 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
             {"os": "macos", "labels": ["self-hosted", "macos", "arm64"]},
         ]
     }
+    bootstrap = workflow["jobs"]["install"]["steps"][0]
+    assert bootstrap["name"] == "Expose Git Bash on Windows"
+    assert bootstrap["if"] == "runner.os == 'Windows'"
+    assert bootstrap["shell"] == "pwsh"
+    assert "Git/bin" in bootstrap["run"]
+    assert "bash.exe" in bootstrap["run"]
+    assert "GITHUB_PATH" in bootstrap["run"]
     command = next(
         step["run"]
         for step in workflow["jobs"]["install"]["steps"]
