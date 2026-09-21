@@ -37,3 +37,49 @@ jobs:
           python-version: "3.12"
       - run: uv sync --locked --all-packages
       - run: bash scripts/ci-fast.sh
+
+  engine-tests:
+    name: engine tests (${{ matrix.name }})
+    runs-on: [self-hosted, Linux, X64, cpu-golden-avx2]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: inference and IPAdapter, shard 1
+            group: inference
+            pytest-args: -p tools.pytest_file_shard --file-shard 1/2
+          - name: inference and IPAdapter, shard 2
+            group: inference
+            pytest-args: -p tools.pytest_file_shard --file-shard 2/2
+          - name: HED, upscale and EfficientSAM
+            group: vision-fast
+            pytest-args: ""
+          - name: Depth Anything V2, DETR and RT-DETR
+            group: vision-detection
+            pytest-args: ""
+          - name: BiRefNet and Depth Anything V3
+            group: vision-large
+            pytest-args: ""
+          - name: SAM 3.1
+            group: vision-sam
+            pytest-args: ""
+    env:
+      ATEN_CPU_CAPABILITY: avx2
+      ONEDNN_MAX_CPU_ISA: AVX2
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+      DINKSTER_MODEL_TEST_GROUP: ${{ matrix.group }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+      - uses: ./.github/actions/torch-cpu-suite
+        with:
+          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
+          run-model-tests: "true"
+          pytest-args: ${{ matrix.pytest-args }}
