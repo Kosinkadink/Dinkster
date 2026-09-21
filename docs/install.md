@@ -8,6 +8,9 @@ exact backend release from its wheel set and constraints file. Desktop builds
 are not yet available; see the
 [Desktop guide](https://github.com/Kosinkadink/Dinkster-Frontend/blob/main/docs/desktop.md)
 for the current platform boundaries.
+Until that repository becomes public, the guide requires repository access;
+authenticated users can make a local copy with
+`gh repo clone Kosinkadink/Dinkster-Frontend`.
 
 ## Inspect a wheel release
 
