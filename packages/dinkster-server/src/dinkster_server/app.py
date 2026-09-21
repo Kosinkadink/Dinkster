@@ -792,6 +792,46 @@ class PackLocaleCatalogAsset:
 
 
 @dataclass(frozen=True)
+class UnavailableInferenceProvider:
+    """One registry entry a pack's manifest declared it would provide on the
+    inference surface but could not materialize. ``available`` is always False:
+    the row exists to explain a name a saved workflow already carries, never to
+    offer it for execution."""
+
+    registry: str
+    id: str
+
+    def to_wire(self) -> dict[str, object]:
+        return {"registry": self.registry, "id": self.id, "available": False}
+
+
+@dataclass(frozen=True)
+class PackInferenceUnavailable:
+    """A composed pack whose ``[pack.extension]`` inference surface did not
+    materialize because no native sampling worker is live.
+
+    The pack's nodes, routes, events, choices and renditions are unaffected;
+    only its samplers, schedulers, graph compilers and guidance strategies are
+    absent. One record per degraded pack, never per node."""
+
+    reason: str
+    entry: str
+    """The pack's declared ``[pack.extension]`` inference entry point."""
+    worker: str = "dinkster.ksampler"
+    """The native worker whose absence degraded the surface."""
+    providers: tuple[UnavailableInferenceProvider, ...] = ()
+    """Registry ids the manifest declared it would provide, each unavailable."""
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "reason": self.reason,
+            "entry": self.entry,
+            "worker": self.worker,
+            "providers": [provider.to_wire() for provider in self.providers],
+        }
+
+
+@dataclass(frozen=True)
 class PackInfo:
     """One entry of the /api/nodes packs table: authoritative pack identity
     plus author-declared presentation (a compact badge for node headers).
@@ -851,6 +891,11 @@ class PackInfo:
     rules are never copied into native node schemas or execution surfaces."""
     comfy_groups: ComfyGroupRegistry | None = None
     """Maintained ComfyUI group patterns, separate from executable schemas."""
+    inference_unavailable: PackInferenceUnavailable | None = None
+    """Set when this pack's ``[pack.extension]`` inference surface degraded
+    because no native sampling worker is live. Its other surfaces are served
+    normally. Never identity: absent from schema signatures and execution
+    identity, and omitted from the wire when the surface is healthy."""
 
     def to_wire(
         self,
@@ -939,6 +984,11 @@ class PackInfo:
                 groups,
                 schemas=schemas,
             )
+        if self.inference_unavailable is not None:
+            # One inline record per degraded pack: it is a handful of strings,
+            # so it needs no lazy endpoint, and it must ride the table the
+            # client already refetches on every schema change.
+            wire["inferenceUnavailable"] = self.inference_unavailable.to_wire()
         return wire
 
 
@@ -2555,8 +2605,18 @@ async def handle_diagnostics(request: web.Request) -> web.Response:
     """Instance-level schema diagnostics: problems only visible with the
     complete schema mapping plus classified compat translation skips.
     Advisory, mirroring the frontend's stance: diagnostics render and force
-    review, they never make anything unloadable."""
+    review, they never make anything unloadable.
+
+    ``packInferenceUnavailable`` carries one entry per pack whose inference
+    surface degraded because no native sampling worker is live. It is derived
+    from the packs table, so a pack that ships forty samplers still produces
+    one message, never forty."""
     state = request.app[STATE_KEY]
+    degraded_packs = {
+        pack_id: info.inference_unavailable
+        for pack_id, info in state.packs.items()
+        if info.inference_unavailable is not None
+    }
     return web.json_response(
         {
             "replacementProblems": [
@@ -2571,6 +2631,10 @@ async def handle_diagnostics(request: web.Request) -> web.Response:
                     "extensionSnapshotDigest": state.engine.extension_snapshot_digest,
                 }
                 for (pack_id, node_id), diagnostic in sorted(state.compat_skips.items())
+            ],
+            "packInferenceUnavailable": [
+                {"packId": pack_id, **detail.to_wire()}
+                for pack_id, detail in sorted(degraded_packs.items())
             ],
         }
     )
