@@ -89,7 +89,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-native/src/dinkster_native/nodes_conditioning.py",
-      "line": 387,
+      "line": 389,
       "column": 30,
       "issue": 120
     },
