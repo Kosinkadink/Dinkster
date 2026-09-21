@@ -385,6 +385,27 @@ def test_missing_manifest_is_one_clear_error(tmp_path: Path) -> None:
     assert report.findings[0].fix  # diagnostics carry the fix
 
 
+@pytest.mark.parametrize(
+    "declaration",
+    (
+        '[pack.frontend]\nassets = "missing"\n',
+        '[pack.settings]\nschema = "missing.json"\n',
+    ),
+)
+def test_doctor_rejects_missing_pack_frontend_or_settings_files(
+    tmp_path: Path, declaration: str
+) -> None:
+    manifest = HEALTHY_MANIFEST + declaration
+    manifest_path = write_pack(
+        tmp_path / "missing-pack-data", manifest, "healthy_nodes", HEALTHY_NODES
+    )
+
+    report = diagnose(manifest_path)
+
+    assert not report.ok
+    assert codes(report) == {"manifest.invalid"}
+
+
 def test_invalid_icon_is_a_publish_gate_error(tmp_path: Path) -> None:
     """The loader warn-and-drops a bad [pack.presentation] icon; doctor is
     the publish gate, so the same validator verdict surfaces as an error
