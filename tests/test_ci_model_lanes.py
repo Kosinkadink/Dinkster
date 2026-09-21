@@ -620,7 +620,11 @@ def test_pr_workflow_keeps_fast_validation_bounded_and_training_isolated() -> No
     assert "ruff check ." in script
     assert "uv run --locked pyright" in script
     assert re.findall(r"tests/\S+\.py", script) == [
+        "tests/test_extension_contract_pack.py",
+        "tests/test_extension_factory_guard.py",
+        "tests/test_family_registration_gates.py",
         "tests/test_schema.py",
+        "tests/test_schema_current_contracts.py",
         "tests/test_values.py",
         "tests/test_graph.py",
         "tests/test_graph_wire.py",
@@ -645,9 +649,17 @@ def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path
     assert refresh == {
         "name": "Refresh tracked files with current attributes",
         "if": "matrix.os == 'windows'",
-        "shell": "bash",
-        "run": "git rm -r --cached -q .\ngit reset --hard -q HEAD\n",
+        "shell": "pwsh",
+        "run": (
+            "git rm -r --cached -q .\n"
+            "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
+            "git reset --hard -q HEAD\n"
+        ),
     }
+    repair_commands = "\n".join(
+        line for line in refresh["run"].splitlines() if line.startswith("git ")
+    )
+    assert repair_commands == "git rm -r --cached -q .\ngit reset --hard -q HEAD"
 
     clone = tmp_path / "checkout"
     subprocess.run(
@@ -701,13 +713,13 @@ def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path
     assert status.stdout == ""
 
     subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", refresh["run"]],
+        ["bash", "-e", "-o", "pipefail", "-c", repair_commands],
         cwd=clone,
         check=True,
     )
     assert license_file.read_bytes() == lf_bytes
     subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", refresh["run"]],
+        ["bash", "-e", "-o", "pipefail", "-c", repair_commands],
         cwd=clone,
         check=True,
     )

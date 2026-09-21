@@ -2808,7 +2808,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
                     await asyncio.sleep(0.05)
             # Default packs may already have announced by the first
             # fetch; they are still ordinary first-party packs, not core.
-            async with session.get(base + "/api/nodes?wire=43") as resp:
+            async with session.get(base + "/api/nodes") as resp:
                 data = await resp.json()
             # A server without the development manifest never serves its scaffolding.
             assert not any(t.startswith("dev.") for t in data["nodes"])
@@ -2816,7 +2816,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
             async with asyncio.timeout(60):
                 while True:
                     assert process.poll() is None, "serve process died"
-                    async with session.get(base + "/api/nodes?wire=43") as resp:
+                    async with session.get(base + "/api/nodes") as resp:
                         data = await resp.json()
                     if "iso.chatty" in data["nodes"] and "composing" not in data:
                         break
@@ -2830,7 +2830,7 @@ def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
             assert data["nodes"]["dinkster.image.resize"]["pack"] == "dinkster-nodes-image"
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
             named_route = data["nodes"]["dinkster.route.switch_by_name"]
-            assert named_route["schemaVersion"] == 43
+            assert named_route["schemaVersion"] == 1
             assert named_route["interface"][0]["widget"] == {
                 "type": "COMBO",
                 "optionSource": {"inputFamily": "values"},
@@ -2905,10 +2905,6 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
                         assert payload["packs"][pack_id][key]["records"]
                 # CI passes this real HTTP response to the frontend validator.
                 if output := os.environ.get("DINKSTER_CATALOG_WIRE_OUTPUT"):
-                    if wire := os.environ.get("DINKSTER_CATALOG_WIRE_VERSION"):
-                        response = await client.get(f"/api/nodes?wire={wire}")
-                        assert response.status == 200
-                        payload = await response.json()
                     Path(output).write_text(json.dumps(payload), encoding="utf-8")
             finally:
                 await client.close()
@@ -2985,7 +2981,7 @@ def test_unavailable_default_pack_is_reported_after_diagnostic_host_binds(
                 async with asyncio.timeout(10):
                     while "composing" in await (await client.get("/api/composition")).json():
                         await asyncio.sleep(0)
-                nodes = await (await client.get("/api/nodes?wire=43")).json()
+                nodes = await (await client.get("/api/nodes")).json()
                 assert missing_node not in nodes["nodes"]
                 assert nodes["nodes"][present_node]["pack"] == surviving_pack
                 health = await (await client.get("/api/health")).json()

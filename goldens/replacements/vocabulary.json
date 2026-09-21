@@ -1,7 +1,7 @@
 {
   "schemas": [
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "fixture.legacy",
       "version": 1,
       "displayName": "",
@@ -101,7 +101,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "fixture.modern",
       "version": 1,
       "displayName": "",
@@ -306,7 +306,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "fixture.alternate",
       "version": 1,
       "displayName": "",

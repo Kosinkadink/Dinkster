@@ -1,6 +1,10 @@
 # Schema wire 15: recursive dynamic entries (co-pinned contract)
 
-Contract of record for the joint backend/frontend schema wire 15 grammar.
+Historical design record. The released implementation now serves one pre-public
+wire contract numbered 1; the version numbers and rollout sequence below do not
+describe active negotiation behavior.
+
+Historical record of the joint backend/frontend schema wire 15 grammar.
 Co-pinned 2026-07-28 between backend coordinator
 `T-019f9e5d-d2e8-7173-8d6b-88a91bf66880` and frontend coordinator
 `T-019f9e58-7a96-7412-89f1-3bb237db21d9`. The frontend proposal of record
@@ -199,12 +203,8 @@ type/normalization rules carry over.
 - Excluded from wire 15: `accept_all_inputs`, `lazy`, `rawLink`, dynamic
   output nesting. All remain loud skips/deferrals with ledgered triggers.
 - `SCHEMA_WIRE_VERSION` bumps 14 -> 15 in the backend schema-foundation
-  slice. The existing single-version negotiation contract is unchanged:
-  the server serves exactly one wire version, a stale `?wire=14` request
-  gets the loud machine-readable 406, never a silent downgrade or lossy
-  conversion. Like v13 -> v14, the bump rotates all signatures/caches
-  once; frontend decoder adoption lands in lockstep before the shared
-  server restarts onto the bumped commit.
+  design. The current server ignores historical `wire` query values and serves
+  wire 1; clients reject any non-1 payload at decode time.
 
 ## Implementation plan
 

@@ -33,7 +33,7 @@ import re
 from typing import Any, Literal, cast
 
 from dinkster_schema.wire import (
-    SCHEMA_WIRE_SERVE_VERSIONS,
+    SCHEMA_WIRE_VERSION,
     type_expr_from_wire,
     type_expr_to_wire,
 )
@@ -67,7 +67,7 @@ BINDING_MODES: frozenset[str] = frozenset({"zip", "cross", "broadcast"})
 OUTPUT_MODES: frozenset[str] = frozenset({"gather", "compact", "state", "flatten"})
 
 JsonObject = dict[str, Any]
-_TYPE_EXPR_WIRE_VERSION = max(SCHEMA_WIRE_SERVE_VERSIONS)
+_TYPE_EXPR_WIRE_VERSION = SCHEMA_WIRE_VERSION
 
 
 class GraphWireError(ValueError):

@@ -36,7 +36,6 @@ from dinkster_schema import (
     OutputCountSpec,
     OutputFamilySpec,
     OutputSpec,
-    SchemaWireVersionRequirement,
     SlotValue,
     SlotVariant,
     TypeExpr,
@@ -438,7 +437,7 @@ def test_slots_round_trip_through_wire() -> None:
     assert schema_from_wire(wire) == STYLIZE_SCHEMA
 
 
-def test_slot_type_binding_round_trips_only_on_wire_32() -> None:
+def test_slot_type_binding_round_trips() -> None:
     wire = schema_to_wire(MATCHED_SCHEMA)
     entry = next(
         item
@@ -448,17 +447,6 @@ def test_slot_type_binding_round_trips_only_on_wire_32() -> None:
     assert entry["typeTemplateId"] == "T"
     assert schema_from_wire(wire) == MATCHED_SCHEMA
 
-    for predecessor in (29, 30, 31):
-        with pytest.raises(SchemaWireVersionRequirement) as required:
-            schema_to_wire(MATCHED_SCHEMA, wire_version=predecessor)
-        assert required.value.required_version == 32
-
-    for predecessor in (29, 30, 31):
-        wire["schemaVersion"] = predecessor
-        with pytest.raises(ValueError, match="requires schema wire 32"):
-            schema_from_wire(wire)
-
-    wire["schemaVersion"] = 32
     entry["typeTemplateId"] = ""
     with pytest.raises(ValueError, match="must be a non-empty string"):
         schema_from_wire(wire)
