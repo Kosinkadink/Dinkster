@@ -136,6 +136,7 @@ from .p2p_grants import (
     SeedGrantV1,
     public_swarm_grant_id,
 )
+from .p2p_plugin import P2PLanInterface, P2PPluginRegistration, p2p_plugin, register_p2p_plugin
 from .p2p_storage import (
     P2P_FORMAT_POLICY_VERSION,
     P2P_PARTIAL_RETENTION_SECONDS,
@@ -245,6 +246,8 @@ __all__ = [
     "P2PGrantReconciler",
     "P2PGrantReconciliation",
     "P2PGrantSnapshot",
+    "P2PLanInterface",
+    "P2PPluginRegistration",
     "PUBLIC_ACQUISITION_RECEIPT_VERSION",
     "RESOLVER_FETCH_TIMEOUT",
     "RESOLVER_INDEX_MAX_BYTES",
@@ -361,12 +364,14 @@ __all__ = [
     "parse_mounts",
     "parse_latent_asset",
     "parse_resolver_index",
+    "p2p_plugin",
     "validate_vae_hint_field",
     "valid_vae_hint",
     "probe_file",
     "probe_handle",
     "rank_transport_candidates",
     "register_asset_type",
+    "register_p2p_plugin",
     "register_save_target_type",
     "register_audio_value_type",
     "bind_audio_value",

@@ -35,6 +35,26 @@ through the service's `/v1` HTTP contract. Artifact helpers build, verify, and
 unpack deterministic archives; install models provide lockfiles, plans, and
 generation-based activation.
 
+## Template catalog
+
+`ReleaseIndex.template_catalog()` is the version 1 payload served by
+`GET /index/templates`. It lists templates from each pack's latest accepted
+immutable version in `(pack, template id)` order. Every row contains `pack`,
+`version`, `id`, `name`, and the workflow `digest`; optional `description`,
+`tags`, `family`, `models`, `assets`, and `thumbnail` metadata are copied from
+the admitted release record. Template bodies and thumbnails are fetched from
+the immutable versioned routes:
+
+```text
+/index/packs/{pack}/versions/{version}/templates/{id}
+/index/packs/{pack}/versions/{version}/templates/{id}/thumbnail
+```
+
+Services call `ReleaseTemplate.verify_body()` before returning workflow bytes.
+Clients reject unknown `catalogVersion` values, may cache the descriptor list,
+and treat versioned bodies and thumbnails as immutable. Listing metadata never
+contains internal artifact member paths.
+
 ## Learn more
 
 See the [registry repository](https://github.com/Kosinkadink/dinkster-registry)

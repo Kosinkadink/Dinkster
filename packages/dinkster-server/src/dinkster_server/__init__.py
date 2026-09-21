@@ -98,6 +98,11 @@ from .p2p_activity import (
     P2PTransfer,
     P2PTransferNotFound,
 )
+from .p2p_plugin import (
+    P2PSettingsError,
+    default_p2p_settings,
+    normalize_p2p_settings,
+)
 from .paging import decode_cursor, encode_cursor
 from .peers import PeerClient, PeerError, PeerLease, PeerUngoverned
 from .queue import TERMINAL_STATES, Job, JobKey, JobQueue, JobState
@@ -157,6 +162,7 @@ __all__ = [
     "P2PProviderConflict",
     "P2PProviderError",
     "P2PProviderUnavailable",
+    "P2PSettingsError",
     "P2PSeedAuthorization",
     "P2PTotals",
     "P2PTransfer",
@@ -235,6 +241,7 @@ __all__ = [
     "TokenAuthenticator",
     "create_app",
     "decode_cursor",
+    "default_p2p_settings",
     "detect_network_cost",
     "default_runtime_dir",
     "encode_binary_event",
@@ -245,6 +252,7 @@ __all__ = [
     "job_to_wire",
     "lan_interfaces",
     "load_settings",
+    "normalize_p2p_settings",
     "load_authenticator",
     "peer_asset_sources",
     "principal_for",
