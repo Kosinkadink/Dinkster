@@ -331,7 +331,7 @@ def test_pack_registry_provider_orders_consumer_and_executes_declared_sampler(
             await composer.add_pack(
                 PackSpec(_host_manifest(tmp_path / "host"), trust_reserved=True)
             )
-            digest = "sha256:" + "4" * 64
+            digest = "blake3:" + "4" * 64
             provider_spec = PackSpec(
                 provider,
                 packs={
@@ -348,7 +348,7 @@ def test_pack_registry_provider_orders_consumer_and_executes_declared_sampler(
                     "proof_b": PackInfo(
                         display_name="Proof B",
                         version="2.0.0",
-                        artifact_digest="sha256:" + "5" * 64,
+                        artifact_digest="blake3:" + "5" * 64,
                     )
                 },
             )

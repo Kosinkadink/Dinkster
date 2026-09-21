@@ -91,7 +91,41 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     assert "from dinkster_frontend import bundle_path" in command
     assert all(
         step.get("uses") != "./.github/actions/configure-dinkster-identity"
+        or step.get("if") == "matrix.os == 'linux'"
         for step in workflow["jobs"]["install"]["steps"]
+    )
+
+
+def test_linux_release_install_exercises_the_pinned_registry_service() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["install"]["steps"]
+    registry_checkout = next(
+        step
+        for step in steps
+        if step.get("uses") == "actions/checkout@v4"
+        and step.get("with", {}).get("repository") == "Kosinkadink/dinkster-registry"
+    )
+    assert registry_checkout["if"] == "matrix.os == 'linux'"
+    assert registry_checkout["with"] == {
+        "clean": True,
+        "repository": "Kosinkadink/dinkster-registry",
+        "ref": "5d844ae53616f88756a98eb6dc3aa73fefb92622",
+        "path": "registry",
+        "persist-credentials": False,
+    }
+    registry_install = next(
+        step for step in steps if step.get("name") == "Install the independent loopback registry"
+    )
+    assert registry_install["if"] == "matrix.os == 'linux'"
+    assert registry_install["run"].splitlines()[-1] == "uv sync --project registry --frozen"
+    wheel_install = next(
+        step for step in steps if step.get("name") == "Install and launch from wheels"
+    )
+    assert 'if [ "$RUNNER_OS" = Linux ]; then' in wheel_install["run"]
+    assert "scripts/verify_release_install.py" in wheel_install["run"]
+    assert (
+        '--registry-command "$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"'
+        in wheel_install["run"]
     )
 
 
@@ -116,7 +150,7 @@ def test_release_version_matches_every_workspace_project(tmp_path: Path) -> None
 
 def test_repository_versions_match_first_release_tag() -> None:
     assert release_version(ROOT, "v0.0.1") == "0.0.1"
-    assert len(workspace_projects(ROOT)) == 36
+    assert len(workspace_projects(ROOT)) == 33
     frontend = json.loads((ROOT / "scripts/release_sources.json").read_text(encoding="utf-8"))
     assert frontend["repository"] == "Kosinkadink/Dinkster-Frontend"
     assert len(frontend["commit"]) == 40

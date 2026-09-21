@@ -25,10 +25,10 @@ edge is a typed value envelope, so caching and transport are location-independen
   healthy by this repo's own suite. `uv run dinkster-doctor <pack-dir>` is the
   pack linter and publish gate.
 - Companion frontend: [Dinkster-Frontend](https://github.com/Kosinkadink/Dinkster-Frontend)
+  (repository access is required until its planned public release)
 - Receipts, parity tooling, benchmarks, acceptance package, and hardware records:
   [dinkster-evidence](https://github.com/Kosinkadink/dinkster-evidence)
-- Research notes:
-  [workspace research](https://github.com/Kosinkadink/comfy-vibe-station/tree/main/notes/research)
+  (private maintainer repository; access is required)
 
 Status: pre-release. One private backend source archive is available; no
 Desktop release exists. See [installation](docs/install.md) for prerequisites,

@@ -43,6 +43,10 @@ if (-not $EvidenceRoot) {
     $EvidenceRoot = Join-Path $RepoRoot "../dinkster-evidence"
 }
 $AcceptancePackage = Join-Path $EvidenceRoot "packages/dinkster-acceptance"
+$InstallAcceptance = Test-Path $AcceptancePackage -PathType Container
+if (-not $InstallAcceptance) {
+    Write-Host "==> dinkster-evidence not found - skipping optional dinkster-acceptance"
+}
 
 $CpuEditablePackages = @(
     "packages/dinkster-api",
@@ -64,8 +68,7 @@ $CpuEditablePackages = @(
     "packages/dinkster-model-qwen-image",
     "packages/dinkster-model-triposplat",
     "packages/dinkster-nodes-vision",
-    "packages/dinkster-workers",
-    "packages/dinkster-training-torch[torch]"
+    "packages/dinkster-workers"
 )
 $GpuEditablePackages = @(
     "packages/dinkster-api",
@@ -86,8 +89,7 @@ $GpuEditablePackages = @(
     "packages/dinkster-compat-comfy",
     "packages/dinkster-model-ipadapter",
     "packages/dinkster-model-triposplat",
-    "packages/dinkster-model-wan",
-    "packages/dinkster-training-torch[torch]"
+    "packages/dinkster-model-wan"
 )
 $KitchenCpuWheel = "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
 $PreviousProject = [Environment]::GetEnvironmentVariable("UV_PROJECT", "Process")
@@ -111,7 +113,9 @@ try {
     [Environment]::SetEnvironmentVariable(
         "UV_PROJECT_ENVIRONMENT", $RootEnvironment, "Process"
     )
-    Invoke-Native "uv" @("sync", "--project", $RepoRoot, "--all-packages")
+    Invoke-Native "uv" @(
+        "sync", "--project", $RepoRoot, "--python", "3.12", "--all-packages"
+    )
     [Environment]::SetEnvironmentVariable("UV_PROJECT_ENVIRONMENT", $null, "Process")
 
     Write-Host "==> .venv-torch (CPU torch test env)"
@@ -127,14 +131,17 @@ try {
         "pytest", "packaging", "numpy>=1.26", "scipy>=1.11",
         "simpleeval==1.0.3", "onnxruntime==1.29.0",
         "opencv-python-headless==5.0.0.93", "pillow==12.0.0",
-        "safetensors==0.8.0", "transformers==5.16.1", $KitchenCpuWheel,
+        "safetensors==0.8.0", "sentencepiece==0.2.1", "transformers==5.16.1",
+        $KitchenCpuWheel,
         "dinkster-aimdo==0.5.5.post2"
     ) + (Get-EditableArguments $CpuEditablePackages)
     Invoke-Native "uv" (@("pip", "install", "--python", $TorchPython) + $CpuDependencies)
-    Invoke-Native "uv" @(
-        "pip", "install", "--python", $TorchPython,
-        "--no-deps", "--no-sources", "-e", $AcceptancePackage
-    )
+    if ($InstallAcceptance) {
+        Invoke-Native "uv" @(
+            "pip", "install", "--python", $TorchPython,
+            "--no-deps", "--no-sources", "-e", $AcceptancePackage
+        )
+    }
     Invoke-Native $TorchPython @(
         "-c",
         "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'"
@@ -173,10 +180,12 @@ try {
             "triton-windows==3.7.1.post27"
         ) + (Get-EditableArguments $GpuEditablePackages)
         Invoke-Native "uv" (@("pip", "install", "--python", $GpuPython) + $GpuDependencies)
-        Invoke-Native "uv" @(
-            "pip", "install", "--python", $GpuPython,
-            "--no-deps", "--no-sources", "-e", $AcceptancePackage
-        )
+        if ($InstallAcceptance) {
+            Invoke-Native "uv" @(
+                "pip", "install", "--python", $GpuPython,
+                "--no-deps", "--no-sources", "-e", $AcceptancePackage
+            )
+        }
         Invoke-Native $GpuPython @(
             "-c",
             "import torch, triton; assert torch.__version__ == '2.13.0+cu130'; assert triton.__version__ == '3.7.1'"
@@ -192,13 +201,10 @@ try {
     Write-Host "  .venv\Scripts\python.exe -m pytest -q"
     Write-Host "  .venv\Scripts\pyright.exe -p packages\dinkster-inference-torch"
     Write-Host "  .venv-torch\Scripts\python.exe -m pytest -q packages\dinkster-inference-torch\tests"
-    Write-Host "  .venv\Scripts\pyright.exe -p packages\dinkster-training-torch"
-    Write-Host "  .venv-torch\Scripts\python.exe -m pytest -q packages\dinkster-training-torch\tests"
     if ($HasNvidiaGpu) {
         Write-Host '  $env:DINKSTER_ENABLE_GPU_TESTS = "1"'
         Write-Host '  $env:DINKSTER_VALIDATE_REFERENCE_GOLDENS = "1"'
         Write-Host "  .venv-gpu\Scripts\python.exe -m pytest -q packages\dinkster-inference-torch\tests"
-        Write-Host "  .venv-gpu\Scripts\python.exe -m pytest -q packages\dinkster-training-torch\tests"
         Write-Host "  Remove-Item Env:\DINKSTER_ENABLE_GPU_TESTS"
         Write-Host "  Remove-Item Env:\DINKSTER_VALIDATE_REFERENCE_GOLDENS"
     }

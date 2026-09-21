@@ -437,12 +437,10 @@ def _cmd_publish(args: argparse.Namespace) -> None:
             digest = build_artifact(manifest_path.parent, archive)
         except ArtifactError as exc:
             raise RegistryPublishError(str(exc)) from exc
-        verdict = publish_release(registry, archive, digest, args.version)
+        verdict = publish_release(registry, archive, manifest.name, args.version)
     for finding in verdict.findings:
         print(f"{finding.code}: {finding.message}")
-    if verdict.state == "rejected":
-        raise SystemExit(1)
-    print(f"published {manifest.name} {args.version} {digest}")
+    print(f"submitted {manifest.name} {args.version} {digest} as candidate {verdict.candidate_id}")
 
 
 def _claims_from_manifests(installer: Installer, target: Lockfile) -> Lockfile:
@@ -986,11 +984,7 @@ def _cmd_search(args: argparse.Namespace) -> None:
         print(f"no packs {what} on {registry.label}")
         return
     for entry in page.packs:
-        plural = "" if entry.versions == 1 else "s"
-        print(
-            f"{entry.pack}@{entry.latest_version}  "
-            f"publisher {entry.publisher}  ({entry.versions} version{plural})"
-        )
+        print(f"{entry.pack}@{entry.latest_version}  publisher {entry.publisher}")
     if page.cursor:
         print(f"more results: rerun with --cursor {page.cursor}")
 
@@ -1078,7 +1072,7 @@ def _cmd_archive(args: argparse.Namespace) -> None:
 
 def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
     from .comfy_compose import comfy_compat_specs
-    from .compose import default_pack_specs, training_pack_specs
+    from .compose import default_pack_specs
     from .serve import _default_pack_venv_root, _prepare_default_pack, _with_remote_config
 
     specs = (
@@ -1087,8 +1081,6 @@ def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
         else _installer(args).packs_for_serving()
     )
     default_count = len(specs)
-    if args.defaults and args.library_root:
-        specs = (*specs, *training_pack_specs(Path(args.library_root) / "training.sqlite"))
     for index, spec in enumerate(specs):
         if args.defaults and "dinkster-nodes-remote" in (spec.packs or {}):
             spec = _with_remote_config(
