@@ -29,6 +29,8 @@ from dinkster_protocol import (
     SamplerRegistrySnapshot,
 )
 
+from .component_registry import ComponentDescriptor
+from .families import ModelFamily
 from .graph_compilers import (
     GraphCompilerDescriptor,
     InferenceGraphCompileError,
@@ -39,10 +41,14 @@ from .guidance import GuidanceContractError, GuidanceContribution
 from .registries import InferenceRegistries, builtin_registries
 from .registries import merge as merge_registries
 from .registry import Registry
+from .runtime import AssemblyRegistration
 from .sampling import OptionSpec, SamplerDescriptor, SchedulerDescriptor
 
 INFERENCE_SAMPLERS_SURFACE = "inference.samplers"
 INFERENCE_SCHEDULERS_SURFACE = "inference.schedulers"
+INFERENCE_FAMILIES_SURFACE = "inference.families"
+INFERENCE_COMPONENTS_SURFACE = "inference.components"
+INFERENCE_ASSEMBLIES_SURFACE = "inference.assemblies"
 SAMPLER_CATALOG_ENV = "DINKSTER_INFERENCE_CATALOG"
 _CATALOG_FORMAT = "dinkster.sampler-catalog-v1"
 
@@ -72,6 +78,9 @@ class InferenceContribution:
     schedulers: tuple[SchedulerDescriptor, ...] = ()
     guidance: GuidanceContribution[Any] | None = None
     graph_compilers: tuple[GraphCompilerDescriptor, ...] = ()
+    families: tuple[ModelFamily, ...] = ()
+    components: tuple[ComponentDescriptor, ...] = ()
+    assemblies: tuple[AssemblyRegistration, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -79,6 +88,9 @@ class InferenceContribution:
             and not self.schedulers
             and self.guidance is None
             and not self.graph_compilers
+            and not self.families
+            and not self.components
+            and not self.assemblies
         ):
             raise ValueError("inference contribution must be nonempty")
         samplers = cast("object", self.samplers)
@@ -100,6 +112,15 @@ class InferenceContribution:
         GraphCompilerRegistrySnapshot(
             tuple(graph_compiler_declaration(item) for item in self.graph_compilers)
         )
+        for name, values, expected in (
+            ("families", self.families, ModelFamily),
+            ("components", self.components, ComponentDescriptor),
+            ("assemblies", self.assemblies, AssemblyRegistration),
+        ):
+            if not isinstance(cast("object", values), tuple) or not all(
+                isinstance(item, expected) for item in cast("tuple[object, ...]", values)
+            ):
+                raise TypeError(f"{name} must contain {expected.__name__} values")
 
 
 @dataclass(frozen=True)
@@ -288,6 +309,46 @@ def scheduler_declaration(descriptor: SchedulerDescriptor) -> KeyedContribution:
         id=descriptor.id,
         aliases=descriptor.aliases,
         behavior_metadata=(("displayName", descriptor.display_name),),
+    )
+
+
+def family_declaration(family: ModelFamily) -> KeyedContribution:
+    """Project a family registration onto its pack-owned identity facts."""
+    return KeyedContribution(
+        surface_id=INFERENCE_FAMILIES_SURFACE,
+        id=family.id,
+        aliases=family.aliases,
+        behavior_metadata=(
+            ("denoiser", family.denoiser),
+            ("displayName", family.display_name),
+            ("latentCodec", family.latent_codec),
+            ("loader", family.loader),
+            ("specificity", family.specificity),
+            ("textEncoder", family.text_encoder),
+        ),
+    )
+
+
+def component_declaration(descriptor: ComponentDescriptor) -> KeyedContribution:
+    """Project a component registration onto its worker execution paths."""
+    return KeyedContribution(
+        surface_id=INFERENCE_COMPONENTS_SURFACE,
+        id=descriptor.id,
+        aliases=descriptor.aliases,
+        behavior_metadata=(
+            ("loader", descriptor.loader),
+            ("runtimeClass", descriptor.runtime_class),
+        ),
+    )
+
+
+def assembly_declaration(registration: AssemblyRegistration) -> KeyedContribution:
+    """Project an assembly registration onto its worker loader path."""
+    return KeyedContribution(
+        surface_id=INFERENCE_ASSEMBLIES_SURFACE,
+        id=registration.id,
+        aliases=registration.aliases,
+        behavior_metadata=(("loader", registration.load),),
     )
 
 
@@ -539,11 +600,23 @@ def _materialize_inference_generation(
                     contribution.graph_compilers, key=lambda item: (item.order, item.id)
                 )
             )
+            produced_families = tuple(
+                family_declaration(family) for family in contribution.families
+            )
+            produced_components = tuple(
+                component_declaration(descriptor) for descriptor in contribution.components
+            )
+            produced_assemblies = tuple(
+                assembly_declaration(registration) for registration in contribution.assemblies
+            )
             declarations = (
                 sampler_declarations
                 + scheduler_declarations
                 + produced_guidance
                 + produced_compilers
+                + produced_families
+                + produced_components
+                + produced_assemblies
             )
             guidance.extend(produced_guidance)
             graph_compilers.extend(contribution.graph_compilers)
@@ -715,6 +788,9 @@ def sampler_choice_values(snapshot: SamplerRegistrySnapshot) -> tuple[str, ...]:
 
 
 __all__ = [
+    "INFERENCE_ASSEMBLIES_SURFACE",
+    "INFERENCE_COMPONENTS_SURFACE",
+    "INFERENCE_FAMILIES_SURFACE",
     "INFERENCE_SAMPLERS_SURFACE",
     "INFERENCE_SCHEDULERS_SURFACE",
     "KeyedContribution",
@@ -736,5 +812,8 @@ __all__ = [
     "sampler_choice_values",
     "sampler_declaration",
     "scheduler_declaration",
+    "family_declaration",
+    "component_declaration",
+    "assembly_declaration",
     "write_sampler_catalog",
 ]

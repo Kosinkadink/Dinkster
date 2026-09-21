@@ -82,6 +82,7 @@ class FlattenLayers(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.layers.flatten",
+            editor_role="layers-flatten",
             display_name="Flatten Layers",
             category="image/compositor",
             inputs=(
@@ -109,6 +110,7 @@ class EditLayers(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.layers.edit",
+            editor_role="layers-edit",
             display_name="Edit Layers",
             category="image/compositor",
             description=(

@@ -293,9 +293,11 @@ with aliases, validators (extension/magic-byte), role metadata, recursive
 enumeration, duplicate policy, safe path handles (no raw path-table mutation),
 and state-dict loading that accepts already-loaded data.
 
-This section specifies the target architecture, not a running pack door.
-`model-family-registration` is declared as capability metadata but has no
-pack-facing registration path. Current capability status is listed in
+Packs register families, components, and assemblies together through
+`InferenceContribution`. The worker merges them with built-ins before detection
+or loading, and composition requires the `model-family-registration` capability.
+Pack authors follow the [new model-family checklist](new-model-family.md).
+Current capability status is listed in
 [Pack routes, events, and frontend modules](supported/pack-routes-events-and-frontend-modules.md#extension-capability-status).
 
 ### 3.10 ControlNet pipeline contract (core)
@@ -407,9 +409,9 @@ in [comfy-vibe-station#120](https://github.com/Kosinkadink/comfy-vibe-station/is
 - **S8. Image ControlNet pipeline** (3.10). Proof: first-party ControlNet pack.
 - **S9. Storage providers + ArtifactStore + compile contracts** (3.3, 3.9
   artifacts). Proof: one quantized-storage pack.
-- **S10. Model-family registration** (3.9), proposed and not available through
-  a pack-facing door. Its proof target is the **simplest genuinely out-of-tree
-  architecture** - a video model is an integration program, not a demo.
+- **S10. Model-family registration** (3.9) ships through the inference
+  contribution contract. The ordinary extension-contract fixture proves an
+  out-of-tree family, component, assembly, detector, and both sampler surfaces.
 - **S11. Sampler checkpoints (envelope) + SamplingDriver + trajectory
   middleware** (rest of 3.6). Proof: stateful sampler resume; one full-loop
   driver under supervision.
