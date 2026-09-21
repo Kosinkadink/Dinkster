@@ -29,6 +29,14 @@ cd "$(dirname "$0")/.."
 
 os=$(uname -s)
 evidence_root=${DINKSTER_EVIDENCE_ROOT:-"$PWD/../dinkster-evidence"}
+acceptance_package="$evidence_root/packages/dinkster-acceptance"
+
+if [ -d "$acceptance_package" ]; then
+    install_acceptance=1
+else
+    install_acceptance=0
+    echo "==> dinkster-evidence not found - skipping optional dinkster-acceptance"
+fi
 
 FORCE=0
 for arg in "$@"; do
@@ -49,7 +57,7 @@ fi
 
 # ---------------------------------------------------------------- .venv
 echo "==> .venv (torch-free root env)"
-UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --project "$PWD" --all-packages
+UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --project "$PWD" --python 3.12 --all-packages
 
 # ---------------------------------------------------------- .venv-torch
 echo "==> .venv-torch (CPU torch test env)"
@@ -95,8 +103,10 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     -e packages/dinkster-nodes-vision \
     -e packages/dinkster-workers \
     -e 'packages/dinkster-training-torch[torch]'
-uv pip install --python .venv-torch/bin/python --no-deps --no-sources \
-    -e "$evidence_root/packages/dinkster-acceptance"
+if [ "$install_acceptance" = 1 ]; then
+    uv pip install --python .venv-torch/bin/python --no-deps --no-sources \
+        -e "$acceptance_package"
+fi
 
 # The direct PyPI URL forces the device-agnostic wheel in the CPU environment;
 # the platform wheels contain accelerator-specific native extensions.
@@ -191,8 +201,10 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         -e packages/dinkster-model-triposplat \
         -e packages/dinkster-model-wan \
         -e 'packages/dinkster-training-torch[torch]'
-    uv pip install --python .venv-gpu/bin/python --no-deps --no-sources \
-        -e "$evidence_root/packages/dinkster-acceptance"
+    if [ "$install_acceptance" = 1 ]; then
+        uv pip install --python .venv-gpu/bin/python --no-deps --no-sources \
+            -e "$acceptance_package"
+    fi
 
 else
     echo "==> no NVIDIA GPU detected - skipping .venv-gpu (the GPU gate"
