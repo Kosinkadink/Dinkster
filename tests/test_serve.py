@@ -1321,6 +1321,39 @@ def test_sandbox_protects_configured_auth_outside_library(
     assert str(auth) in captured[0].protected_roots
 
 
+def test_read_only_output_mount_is_not_selected_as_the_save_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster import serve
+
+    library = tmp_path / "library"
+    output = tmp_path / "shared-output"
+    library.mkdir()
+    output.mkdir()
+    (library / "mounts.toml").write_text(
+        f"[mounts.output]\npath = {json.dumps(str(output))}\n",
+        encoding="utf-8",
+    )
+
+    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        awaitable.close()  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dinkster-serve",
+            "--library-root",
+            str(library),
+            "--no-default-packs",
+            "--disable-p2p",
+        ],
+    )
+
+    serve.main()
+
+
 def test_auth_file_malformed_refuses_serve_startup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

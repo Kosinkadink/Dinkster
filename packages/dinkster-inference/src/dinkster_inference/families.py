@@ -145,10 +145,26 @@ class ModelFamily:
     memory_factor: float = 1.0
     aliases: tuple[str, ...] = ()
     engine: EngineProperties = field(default_factory=EngineProperties)
+    denoiser: str | None = None
+    text_encoder: str | None = None
+    latent_codec: str | None = None
+    loader: str | None = None
 
     def __post_init__(self) -> None:
         if self.memory_factor <= 0:
             raise ValueError("memory_factor must be positive")
+        for name, reference in (
+            ("denoiser", self.denoiser),
+            ("text_encoder", self.text_encoder),
+            ("latent_codec", self.latent_codec),
+            ("loader", self.loader),
+        ):
+            if reference is not None and (
+                reference.count(":") != 1
+                or not all(reference.split(":"))
+                or any(char.isspace() for char in reference)
+            ):
+                raise ValueError(f"family {name} must name a module:attribute")
 
     def single_stream_latent(self) -> LatentDescriptor:
         """The family's latent for single-stream execution paths.

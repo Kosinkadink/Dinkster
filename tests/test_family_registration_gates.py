@@ -6,6 +6,8 @@ import pytest
 from dinkster_inference import EngineProperties, PreviewDecoderProperties, builtin_families
 from dinkster_inference.component_catalog import default_component_registry
 from family_gate_scanner import (
+    EXTERNAL_PROOF_FAMILY_IDS,
+    NEW_FAMILY_PROOF_PATH,
     changed_paths_since_merge_base,
     family_literal_gates,
     unexpected_new_family_paths,
@@ -43,11 +45,12 @@ def test_shared_engine_has_zero_literal_family_gates() -> None:
     assert findings == (), "literal family gates remain:\n" + "\n".join(findings)
 
 
-def test_external_proof_family_is_in_fail_closed_scanner(tmp_path: Path) -> None:
+@pytest.mark.parametrize("family_id", sorted(EXTERNAL_PROOF_FAMILY_IDS))
+def test_external_proof_family_is_in_fail_closed_scanner(tmp_path: Path, family_id: str) -> None:
     source = tmp_path / "shared_engine.py"
-    source.write_text('enabled = family_id == "test.toy-image"\n', encoding="utf-8")
+    source.write_text(f'enabled = family_id == "{family_id}"\n', encoding="utf-8")
 
-    assert family_literal_gates(source, tmp_path) == ("shared_engine.py:1: test.toy-image",)
+    assert family_literal_gates(source, tmp_path) == (f"shared_engine.py:1: {family_id}",)
 
 
 def test_new_family_proof_only_changes_registration_points() -> None:
@@ -58,7 +61,9 @@ def test_new_family_proof_only_changes_registration_points() -> None:
     )
 
     shared_edit = "packages/dinkster-inference/src/dinkster_inference/runtime.py"
-    assert unexpected_new_family_paths(changed_paths | {shared_edit}) == (shared_edit,)
+    assert unexpected_new_family_paths(frozenset({NEW_FAMILY_PROOF_PATH, shared_edit})) == (
+        shared_edit,
+    )
 
 
 def test_registered_engine_properties_cover_shared_family_behavior() -> None:

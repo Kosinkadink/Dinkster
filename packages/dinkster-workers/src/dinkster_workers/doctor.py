@@ -944,6 +944,36 @@ def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Find
                 descriptor_id = declaration.get("id")
                 if isinstance(surface_id, str) and isinstance(descriptor_id, str):
                     contributions.append((surface_id, descriptor_id))
+    family_surfaces = {
+        "inference.families",
+        "inference.components",
+        "inference.assemblies",
+    }
+    capabilities = set(manifest.extension.capabilities)
+    if any(surface in family_surfaces for surface, _descriptor_id in contributions) and (
+        "model-family-registration" not in capabilities
+    ):
+        findings.append(
+            Finding(
+                severity="error",
+                code="extension.capability-required",
+                message=f"pack {manifest.name!r} contributes model family registrations "
+                "without the model-family-registration capability",
+                fix="declare model-family-registration in [pack.extension] capabilities",
+            )
+        )
+    if "model-family-registration" in capabilities and not any(
+        surface == "inference.families" for surface, _descriptor_id in contributions
+    ):
+        findings.append(
+            Finding(
+                severity="error",
+                code="extension.capability-unused",
+                message=f"pack {manifest.name!r} declares model-family-registration "
+                "but contributes no model family",
+                fix="return a family registration or remove the capability",
+            )
+        )
     for provider in unmatched_registry_providers(manifest.provides, contributions):
         findings.append(
             Finding(
@@ -1150,7 +1180,9 @@ def _check_extension_consumers(manifest: PackManifest) -> list[Finding]:
                 "implements this kind",
             )
         )
-    for capability in sorted(set(manifest.extension.capabilities) - {"routes"}):
+    for capability in sorted(
+        set(manifest.extension.capabilities) - {"model-family-registration", "routes"}
+    ):
         findings.append(
             Finding(
                 severity="warning",

@@ -3732,6 +3732,7 @@ class LoadLatent(Node):
         latent = TypeExpr.concrete("dinkster.latent")
         return NodeSchema(
             node_type="dinkster.load_latent",
+            editor_role="latent-source",
             display_name="Load Latent",
             category="latent",
             aliases=("LoadLatent",),

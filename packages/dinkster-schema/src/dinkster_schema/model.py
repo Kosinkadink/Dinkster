@@ -849,7 +849,7 @@ WidgetDescriptor = (
     | CurveWidget
     | CompositorWidget
 )
-"""One closed input presentation descriptor."""
+"""One input presentation descriptor."""
 
 
 def _widget_value_domain(widget: WidgetDescriptor) -> str:
@@ -2051,6 +2051,8 @@ class NodeSchema:
     display_name: str = ""
     category: str = ""
     description: str = ""
+    editor_role: str | None = None
+    """Frontend capability role. Presentation metadata only."""
     inputs: tuple[InputSpec, ...] = ()
     outputs: tuple[OutputSpec, ...] = ()
     input_families: tuple[InputFamilySpec, ...] = ()
@@ -2156,6 +2158,10 @@ class NodeSchema:
     def __post_init__(self) -> None:
         if not self.node_type:
             raise ValueError("node_type is required")
+        if self.editor_role is not None and (
+            not isinstance(cast("object", self.editor_role), str) or not self.editor_role
+        ):
+            raise ValueError(f"{self.node_type}: editor_role must be a non-empty string")
         if self.chunk_safe is not None:
             inputs, outputs = self.chunk_safe
             inputs, outputs = tuple(inputs), tuple(outputs)
