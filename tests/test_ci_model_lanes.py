@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -844,3 +845,44 @@ def test_destructive_disk_reclaim_never_runs_on_self_hosted(environment: str) ->
     assert _condition_matches(steps[0]["if"], {"runner.environment": environment}) == (
         environment == "github-hosted"
     )
+
+
+def test_full_validation_pytest_and_demo_jobs_are_timeout_bounded() -> None:
+    pytest_or_demo = {
+        name
+        for name, job in JOBS.items()
+        if any(
+            "pytest" in str(step.get("run", ""))
+            or "dinkster demo" in str(step.get("run", ""))
+            or step.get("uses") == ACTION_PATH
+            for step in job["steps"]
+        )
+    }
+    assert pytest_or_demo == {
+        "test",
+        "p2p-descriptor-macos",
+        "p2p-artifact-smoke",
+        "torch-cpu",
+        "model-tests",
+        "coverage",
+        "translation-coverage",
+    }
+    test_job = JOBS["test"]
+    assert test_job["timeout-minutes"] == "${{ matrix.timeout-minutes }}"
+    assert [row["timeout-minutes"] for row in test_job["strategy"]["matrix"]["include"]] == [
+        60,
+        60,
+        30,
+    ]
+    assert JOBS["p2p-descriptor-macos"]["timeout-minutes"] == 15
+    assert JOBS["p2p-artifact-smoke"]["timeout-minutes"] == 15
+    assert JOBS["torch-cpu"]["timeout-minutes"] == 45
+    assert JOBS["model-tests"]["timeout-minutes"] == 60
+    assert JOBS["coverage"]["timeout-minutes"] == 60
+    assert JOBS["translation-coverage"]["timeout-minutes"] == 15
+    # A hung pytest run self-identifies the stuck test through pytest's
+    # bundled faulthandler_timeout before the job bound releases the runner;
+    # it is diagnostic only and never skips or fails a test
+    # (comfy-vibe-station#245).
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert config["tool"]["pytest"]["ini_options"]["faulthandler_timeout"] == 600
