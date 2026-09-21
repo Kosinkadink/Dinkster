@@ -195,18 +195,18 @@ wheel from PyPI. macOS does not use Aimdo. Models are
 not bundled; consult [supported models](supported/model-families-native-execution.md)
 before downloading.
 
-The bare launcher inherits `DINKSTER_COMFYUI_PYTHON` as the native execution
+The bare launcher inherits `DINKSTER_EXECUTION_PYTHON` as the native execution
 interpreter. Point it at the Python environment containing PyTorch and the
 native inference packages:
 
 ```sh
-DINKSTER_COMFYUI_PYTHON=/absolute/path/to/pytorch-venv/bin/python uv run --no-sync dinkster
+DINKSTER_EXECUTION_PYTHON=/absolute/path/to/pytorch-venv/bin/python uv run --no-sync dinkster
 ```
 
 In PowerShell, set the variable first, then run the same bare command:
 
 ```powershell
-$env:DINKSTER_COMFYUI_PYTHON = 'C:\absolute\path\to\pytorch-venv\Scripts\python.exe'
+$env:DINKSTER_EXECUTION_PYTHON = 'C:\absolute\path\to\pytorch-venv\Scripts\python.exe'
 uv run --no-sync dinkster
 ```
 
@@ -216,12 +216,12 @@ The bare launcher prepares missing or stale default-pack catalogs itself. The
 server refuses to bind when a required catalog cannot be prepared. Native SD
 1.5 generation runs through the default workflow without a ComfyUI checkout or
 `--comfy-root`. Advanced `dinkster serve` launches may select the same
-interpreter with `--comfy-python`; see the
+interpreter with `--execution-python`; see the
 [complete server reference](serve-cli.md).
 
-With `--comfy-root`, `--comfy-python` selects the compatibility interpreter as
+With `--comfy-root`, `--execution-python` selects the compatibility interpreter as
 well as the native execution interpreter. If the flag is absent, selection
-continues through `DINKSTER_COMFYUI_PYTHON`, `<comfy-root>/venv/bin/python`, and
+continues through `DINKSTER_EXECUTION_PYTHON`, `<comfy-root>/venv/bin/python`, and
 then the serving process's Python. Before compatibility packs compose, Dinkster
 checks that interpreter against the install's `requirements.txt`; a failure
 names the unavailable module, interpreter path, and selecting step.

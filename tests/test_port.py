@@ -649,3 +649,27 @@ def test_cli_refuses_bad_names_and_dirty_output(
 
     assert main([str(tmp_path / "missing"), "--name", "ok-pack"]) == 1
     assert "does not exist" in capsys.readouterr().err
+
+
+def test_retired_comfy_python_flag_exits_naming_the_replacement(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pack = write_pack(tmp_path, "retired_flag_pack", SCALAR_PACK)
+    with pytest.raises(SystemExit, match="2"):
+        main([str(pack), "--name", "ok-pack", "--comfy-python", "/x/python"])
+    assert "--comfy-python is retired; pass --execution-python instead" in capsys.readouterr().err
+
+
+def test_retired_comfy_python_env_exits_naming_the_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pack = write_pack(tmp_path, "retired_env_pack", SCALAR_PACK)
+    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/x/python")
+    with pytest.raises(SystemExit, match="2"):
+        main([str(pack), "--name", "ok-pack"])
+    assert (
+        "DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead"
+        in capsys.readouterr().err
+    )

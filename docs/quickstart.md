@@ -74,13 +74,13 @@ then point the native worker at that PyTorch environment when launching. POSIX
 shells can set the interpreter for the command:
 
 ```sh
-DINKSTER_COMFYUI_PYTHON=/absolute/path/to/pytorch-venv/bin/python uv run dinkster
+DINKSTER_EXECUTION_PYTHON=/absolute/path/to/pytorch-venv/bin/python uv run dinkster
 ```
 
 In PowerShell, set the environment variable before launching:
 
 ```powershell
-$env:DINKSTER_COMFYUI_PYTHON = 'C:\absolute\path\to\pytorch-venv\Scripts\python.exe'
+$env:DINKSTER_EXECUTION_PYTHON = 'C:\absolute\path\to\pytorch-venv\Scripts\python.exe'
 uv run dinkster
 ```
 

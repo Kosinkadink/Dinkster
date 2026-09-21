@@ -773,7 +773,7 @@ uv run dinkster-port path/to/legacy_pack --name my-pack \
 
 The legacy pack is imported in a disposable probe subprocess, never in
 the CLI's process, under the ComfyUI install's own interpreter
-(`--comfy-python`, else `$DINKSTER_COMFYUI_PYTHON`, else
+(`--execution-python`, else `$DINKSTER_EXECUTION_PYTHON`, else
 `<comfy-root>/venv/bin/python` - packs import torch and friends). For
 v1 mappings the probe runs the same loader and translate.py rules the
 compat worker runs, so the generated schemas can never drift from what
