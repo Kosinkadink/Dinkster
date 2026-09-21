@@ -223,6 +223,8 @@ _FLUX2_SAMPLING_EXECUTION = SamplingExecutionRegistration(
     device=_flux2_device,
     compute_dtype=_flux2_compute_dtype,
     flow=True,
+    forbidden_options=frozenset({"_compute_dtype", "_device"}),
+    forbidden_options_message="Flux2 KSampler does not accept private compute placement arguments",
 )
 
 
@@ -291,15 +293,6 @@ class Flux2Runtime(SingleStreamSamplingRuntime):
         return self.assembled.diffusion.guidance_in is not None
 
     sample_custom = sampling_execution
-
-    def _ksampler_kwargs(self, kwargs: dict[str, object]) -> dict[str, object]:
-        if "_compute_dtype" in kwargs or "_device" in kwargs:
-            raise TypeError("Flux2 KSampler does not accept private compute placement arguments")
-        return {
-            "compute_dtype": kwargs.pop("compute_dtype", torch.bfloat16),
-            "device": kwargs.pop("device", None),
-            **kwargs,
-        }
 
     def decode_latent(self, latent: torch.Tensor) -> torch.Tensor:
         return self.codec.decode(latent)
@@ -413,16 +406,6 @@ class Flux2DiffusionRuntime(SingleStreamSamplingRuntime):
     supports_distilled_guidance = Flux2Runtime.supports_distilled_guidance  # pyright: ignore[reportIncompatibleMethodOverride]
 
     sample_custom = sampling_execution
-
-    def _ksampler_kwargs(self, kwargs: dict[str, object]) -> dict[str, object]:
-        if "_compute_dtype" in kwargs or "_device" in kwargs:
-            raise TypeError("Flux2 KSampler does not accept private compute placement arguments")
-        params = next(self.assembled.diffusion.parameters())
-        return {
-            "compute_dtype": kwargs.pop("compute_dtype", params.dtype),
-            "device": kwargs.pop("device", module_compute_device(self.assembled.diffusion)),
-            **kwargs,
-        }
 
 
 __all__ = [

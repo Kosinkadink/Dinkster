@@ -501,8 +501,8 @@ def test_flux2_diffusion_runtime_registers_module_dtype_and_device(
     )
     assert seen["runtime"] is runtime
     assert seen["latent"] is latent
-    assert seen["compute_dtype"] is torch.bfloat16
-    assert seen["device"] == next(model.parameters()).device
+    assert "compute_dtype" not in seen
+    assert "device" not in seen
     assert seen["sampling_shift"] == 2.5
     registration = runtime.sampling_execution_registration
     assert registration.compute_dtype(runtime) is torch.bfloat16

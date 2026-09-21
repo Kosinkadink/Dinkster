@@ -517,7 +517,10 @@ class GenerationBasicScheduler(Node):
         )
         build_sigmas = _bind_sampling_shift(runtime.custom_sampling_sigmas, sampling_shift)
         return cls.outputs(
-            sigmas=_CustomSigmasValue(build_sigmas(scheduler_id, steps, denoise, device=device))
+            sigmas=_CustomSigmasValue(
+                build_sigmas(scheduler_id, steps, denoise, device=device),
+                source_scheduler_id=scheduler_id,
+            )
         )
 
 

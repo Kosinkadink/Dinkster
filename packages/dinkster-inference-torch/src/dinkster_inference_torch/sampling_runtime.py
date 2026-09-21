@@ -48,11 +48,14 @@ from .denoise import (
 from .guidance import GuidanceExecutor, ReplicaEvaluator
 from .parameterizations import noise_scaling
 from .sampling_execution import (
+    CustomSamplingCapabilities,
     CustomSamplingCfgValue,
+    SamplingExecutionRegistration,
     SamplingGuidancePlan,
     compile_guidance_plan,
     resolve_custom_sampling_request,
     run_ksampler_as_custom,
+    validate_sampling_options,
 )
 from .schedules import (
     custom_beta_sigmas,
@@ -78,6 +81,7 @@ class SamplingRuntime(ABC):
 
     _samplers: Registry[SamplerDescriptor[Any]]
     _schedulers: Registry[SchedulerDescriptor]
+    sampling_execution_registration: SamplingExecutionRegistration
     sampling_error: ClassVar[type[Exception]] = ValueError
     supports_sampling_shift: ClassVar[bool] = False
 
@@ -139,11 +143,32 @@ class SamplingRuntime(ABC):
         guidance: FluxGuidance = None,
     ) -> None:
         self._validate_sampling_guidance(guidance)
-        if has_inpaint and not self.supports_inpaint:
+        capabilities: CustomSamplingCapabilities = self.sampling_execution_registration.capabilities
+        if has_inpaint and not capabilities.supports_inpaint(self):
             raise self.sampling_error("model does not support inpaint conditioning")
-        if has_context_windows and not self.supports_context_windows:
+        if has_context_windows and not capabilities.supports_context_windows(self):
             raise self.sampling_error("model does not support context windows")
-        resolve_custom_sampling_request(self._samplers, request, error=self.sampling_error)
+        sampler, _request = resolve_custom_sampling_request(
+            self._samplers, request, error=self.sampling_error
+        )
+        for restriction in capabilities.restrictions:
+            if not restriction.when(self):
+                continue
+            refused = (
+                restriction.required_sampler_id is not None
+                and sampler.id != restriction.required_sampler_id
+                or restriction.forbidden_sampler_id == sampler.id
+                or restriction.refuses_denoise_mask
+                and has_denoise_mask
+                or restriction.refuses_inpaint
+                and has_inpaint
+                or restriction.refuses_context_windows
+                and has_context_windows
+                or restriction.refuses_guidance
+                and guidance is not None
+            )
+            if refused:
+                raise self.sampling_error(restriction.message)
 
     @abstractmethod
     def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
@@ -272,14 +297,6 @@ class SingleStreamSamplingRuntime(SamplingRuntime):
     def family(self) -> ModelFamily:
         raise NotImplementedError
 
-    def _ksampler_kwargs(self, kwargs: dict[str, object]) -> dict[str, object]:
-        defaults: dict[str, object] = {}
-        if self.supports_denoised_capture:
-            defaults["capture_denoised"] = False
-        if self.sampling_compute_dtype is not None:
-            defaults.update(compute_dtype=self.sampling_compute_dtype, device=None)
-        return {**defaults, **kwargs}
-
     def sample(
         self,
         latent: torch.Tensor,
@@ -302,7 +319,8 @@ class SingleStreamSamplingRuntime(SamplingRuntime):
         sampling_shift: float | None = None,
         **kwargs: object,
     ) -> torch.Tensor:
-        extra = self._ksampler_kwargs(kwargs)
+        extra = dict(kwargs)
+        validate_sampling_options(self, extra)
         schedule_device = cast("torch.device | str | None", extra.pop("schedule_device", None))
         if self.supports_sampling_shift:
             extra["sampling_shift"] = sampling_shift
@@ -474,14 +492,6 @@ class MultiStreamSamplingRuntime(SamplingRuntime):
             lambda stream: torch.zeros_like(stream, dtype=torch.float32, device="cpu")
         )
 
-    def _ksampler_kwargs(
-        self, scheduler_id: str, noise_inds: Sequence[int] | None, kwargs: dict[str, object]
-    ) -> dict[str, object]:
-        defaults: dict[str, object] = {}
-        if self.supports_denoised_capture:
-            defaults["capture_denoised"] = False
-        return {**defaults, **kwargs}
-
     def _ksampler_schedulers(self, scheduler_id: str) -> Registry[SchedulerDescriptor]:
         return self._schedulers
 
@@ -544,7 +554,8 @@ class MultiStreamSamplingRuntime(SamplingRuntime):
         sampling_shift: float | None = None,
         **kwargs: object,
     ) -> MultiStreamLatent[torch.Tensor]:
-        extra = self._ksampler_kwargs(scheduler_id, noise_inds, kwargs)
+        extra = dict(kwargs)
+        validate_sampling_options(self, extra)
         schedule_device = cast("torch.device | str | None", extra.pop("schedule_device", None))
         if type(latent) is not MultiStreamLatent:
             raise TypeError("latent must be an exact MultiStreamLatent")

@@ -2622,11 +2622,7 @@ def test_sample_custom_captures_the_last_denoised_state_with_unscaled_audio() ->
     )
 
 
-def test_ksampler_sugar_skips_the_state_capture_evaluations_of_uni_pc() -> None:
-    # UniPC evaluates the denoiser extra times when a state callback is
-    # installed, so the KSampler surface must not install one just to
-    # capture denoised output - and the extra decomposed-path evaluations
-    # must not perturb the trajectory.
+def test_ksampler_sugar_matches_custom_state_capture_for_uni_pc() -> None:
     runtime, conditioner, dit = _context_mean_runtime()
     target = _target()
     prepared = _condition_t2va(conditioner, target)
@@ -2665,7 +2661,7 @@ def test_ksampler_sugar_skips_the_state_capture_evaluations_of_uni_pc() -> None:
     )
     custom_calls = len(dit.calls)
 
-    assert sugar_calls < custom_calls
+    assert sugar_calls == custom_calls
     output = result.output
     assert type(output) is MultiStreamLatent
     assert torch.equal(output.by_role("video"), expected.by_role("video"))

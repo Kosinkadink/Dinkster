@@ -265,6 +265,7 @@ def test_control_coerce_requires_exact_application() -> None:
         (NOISE_TYPE_ID, NoiseSelection(None)),
         (NOISE_TYPE_ID, NoiseSelection(2**64 - 1)),
         (SIGMAS_TYPE_ID, SigmaSchedule((1.0, 0.5, 0.0))),
+        (SIGMAS_TYPE_ID, SigmaSchedule((1.0, 0.0), "dinkster.simple")),
         (SIGMAS_TYPE_ID, SigmaSchedule(())),
         (SAMPLER_TYPE_ID, BuiltinSamplerSelection("dinkster.euler", ())),
         (
@@ -303,6 +304,7 @@ def test_sampling_settings_cross_independent_registries_without_residency(
         (SIGMAS_TYPE_ID, {"values": [float("nan")]}),
         (SIGMAS_TYPE_ID, {"values": [True]}),
         (SIGMAS_TYPE_ID, {"values": "abc"}),
+        (SIGMAS_TYPE_ID, {"values": [1.0, 0.0], "source_scheduler_id": ""}),
         (SAMPLER_TYPE_ID, {"sampler_id": "dinkster.euler", "options": [["eta", {}]]}),
         (SAMPLER_TYPE_ID, {"sampler_id": "dinkster.euler", "options": [["eta", 1, 2]]}),
         (SAMPLER_TYPE_ID, {"sampler_id": "dinkster.euler", "options": [["eta", 1], ["eta", 2]]}),

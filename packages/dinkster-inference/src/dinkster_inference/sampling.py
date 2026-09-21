@@ -1205,10 +1205,15 @@ class CustomSamplingRequest(Generic[TensorT]):
     sigmas: tuple[float, ...]
     cache: SamplingCache[TensorT] | None = field(default=None, repr=False)
     timeline: SamplingTimelineSchedule | None = field(default=None, repr=False)
+    source_scheduler_id: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.sampler) is not SamplerDescriptor:
             raise TypeError("custom sampling requires an exact SamplerDescriptor")
+        if self.source_scheduler_id is not None and (
+            type(self.source_scheduler_id) is not str or not self.source_scheduler_id
+        ):
+            raise TypeError("custom sampling source scheduler id must be None or a nonempty string")
         cache = self.cache
         if cache is None:
             cache = cast("SamplingCache[TensorT] | None", _sampling_cache.get())
