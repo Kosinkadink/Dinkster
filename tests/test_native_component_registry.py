@@ -53,6 +53,14 @@ class DerivedRuntime(SyntheticRuntime):
     pass
 
 
+def test_single_clip_schema_includes_native_flux_recipe() -> None:
+    from dinkster_compat_comfy.native import LoadClip
+
+    schema = LoadClip.schema()
+    assert "flux" in LoadClip.CLIP_TYPES
+    assert schema.inputs[1].widget == ComboWidget(options=LoadClip.CLIP_TYPES)
+
+
 def test_dual_clip_schema_registers_ordered_assets_and_legacy_alias() -> None:
     from dinkster_compat_comfy.native import NATIVE_NODES, LoadDualClip
 
