@@ -1,0 +1,32 @@
+[pack]
+name = "dinkster-degraded-sampler-fixture"
+namespaces = ["degraded"]
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "degraded_sampler_pack:NODES"
+
+[pack.sandbox]
+
+[pack.extension]
+privileges = ["schema", "server", "inference"]
+capabilities = ["routes"]
+inference = "degraded_sampler_pack:register_inference"
+
+[[pack.extension.routes]]
+id = "degraded-sampler"
+method = "GET"
+handler = "degraded_sampler_pack:route"
+request = {}
+response = { message = "string" }
+
+[[pack.extension.events]]
+name = "degraded.sampler.executed"
+payload = { steps = "integer" }
+
+[pack.provides.registry]
+"dinkster.samplers" = ["degraded.fast_solver"]
+"dinkster.schedulers" = ["degraded.stepped_schedule"]

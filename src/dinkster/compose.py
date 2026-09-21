@@ -4423,20 +4423,26 @@ class ServingComposer:
             getattr(records[entry.extension_id].worker, "catalog", None) is not None
             for entry in entries
         ):
-            return entries, {
-                entry.extension_id: tuple(
-                    KeyedContribution(
-                        surface_id=item["surface_id"],
-                        id=item["id"],
-                        aliases=tuple(item["aliases"]),
-                        behavior_metadata=tuple(tuple(pair) for pair in item["behavior_metadata"]),
+            return (
+                entries,
+                {
+                    entry.extension_id: tuple(
+                        KeyedContribution(
+                            surface_id=item["surface_id"],
+                            id=item["id"],
+                            aliases=tuple(item["aliases"]),
+                            behavior_metadata=tuple(
+                                tuple(pair) for pair in item["behavior_metadata"]
+                            ),
+                        )
+                        for item in records[entry.extension_id].worker.catalog.declarations[
+                            "inferenceContributions"
+                        ]
                     )
-                    for item in records[entry.extension_id].worker.catalog.declarations[
-                        "inferenceContributions"
-                    ]
-                )
-                for entry in entries
-            }, {}
+                    for entry in entries
+                },
+                {},
+            )
         candidate_key = f"candidate:{uuid.uuid4().hex}"
         write_sampler_catalog(self._sampler_catalog_path, candidate_key, entries)
         try:
@@ -4471,7 +4477,7 @@ class ServingComposer:
                 "inference worker extension set does not match the staged generation: "
                 f"expected {expected_ids}, got {tuple(by_extension)}"
             )
-        return entries, by_extension
+        return entries, by_extension, {}
 
     async def call_pack_route(
         self, pack: str, route: PackRoute, data: Mapping[str, object], snapshot_digest: str

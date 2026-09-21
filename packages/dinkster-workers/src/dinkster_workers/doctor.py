@@ -944,6 +944,24 @@ def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Find
                 descriptor_id = declaration.get("id")
                 if isinstance(surface_id, str) and isinstance(descriptor_id, str):
                     contributions.append((surface_id, descriptor_id))
+    if manifest.extension is not None and manifest.extension.entries.inference is not None:
+        # Doctor sees one pack in isolation, so it cannot know whether the host it
+        # runs on composes a sampling worker. It can name the requirement, which is
+        # the explanation an author needs when the pack's samplers are absent from
+        # a host that loaded the native inference pack's worker differently.
+        findings.append(
+            Finding(
+                severity="info",
+                code="inference.worker-required",
+                message=f"pack {manifest.name!r} declares an inference surface "
+                f"({manifest.extension.entries.inference}); its samplers, schedulers, "
+                "graph compilers and guidance strategies need a host that composes a "
+                "live native dinkster.ksampler worker",
+                fix="install the native inference pack on the serving host; without it "
+                "the pack still composes its nodes, routes and events and reports its "
+                "inference surface unavailable",
+            )
+        )
     for provider in unmatched_registry_providers(manifest.provides, contributions):
         findings.append(
             Finding(
