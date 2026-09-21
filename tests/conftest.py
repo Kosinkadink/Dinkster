@@ -29,10 +29,9 @@ def installed_default_catalogs(tmp_path_factory: pytest.TempPathFactory) -> None
     from dinkster_workers.catalog import read_catalog
 
     from dinkster.comfy_compose import comfy_compat_specs
-    from dinkster.compose import default_pack_specs, training_pack_specs
+    from dinkster.compose import default_pack_specs
 
-    journal = tmp_path_factory.mktemp("training-catalog") / "training.sqlite"
-    for spec in (*default_pack_specs(), *comfy_compat_specs(), *training_pack_specs(journal)):
+    for spec in (*default_pack_specs(), *comfy_compat_specs()):
         report = diagnose(
             spec.manifest, environment={**(spec.env or {}), "CUDA_VISIBLE_DEVICES": ""}
         )

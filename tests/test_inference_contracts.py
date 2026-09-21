@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+import dinkster_inference
 import pytest
 from dinkster_inference import (
     FLOAT16,
@@ -49,6 +50,23 @@ from dinkster_inference import (
     filter_prefix,
     replace_prefix,
 )
+
+
+def test_training_contract_is_public_from_package_root() -> None:
+    names = {
+        "MiniMaxH3CommonComponentRole",
+        "MiniMaxH3ConditionerConfig",
+        "MiniMaxH3DiTRole",
+        "MiniMaxH3ModelAssemblyPlan",
+        "MiniMaxH3TimeEmbeddingKind",
+        "QWEN_IMAGE_TEXT_CONFIG",
+        "format_qwen_image_prompt",
+        "plan_minimax_h3_common_component",
+        "select_qwen_image_output",
+    }
+    assert names <= set(dinkster_inference.__all__)
+    assert all(hasattr(dinkster_inference, name) for name in names)
+
 
 # --- devices ---------------------------------------------------------------
 

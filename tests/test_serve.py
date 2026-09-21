@@ -760,7 +760,6 @@ def test_serve_official_bootstrap_configuration_preserves_p2p_off_and_permission
 
     monkeypatch.setattr(serve.ResolverSubscriptionStore, "bootstrap_official", bootstrap)
     monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
-    monkeypatch.setattr(serve, "training_pack_specs", lambda _path: ())
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--library-root", str(tmp_path), *flags])
     serve.main()
@@ -2379,7 +2378,7 @@ def test_unprepared_library_catalog_fails_before_api_binding(
     from dinkster.compose import CompositionError, PackSpec
 
     manifest = write_iso_manifest(tmp_path / "unprepared")
-    training = PackSpec(manifest, require_catalog=True)
+    pack = PackSpec(manifest, require_catalog=True)
     attempted = False
 
     def run_app(awaitable: object, **_kwargs: object) -> None:
@@ -2393,12 +2392,19 @@ def test_unprepared_library_catalog_fails_before_api_binding(
 
     monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
     monkeypatch.setattr(serve, "comfy_compat_specs", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(serve, "training_pack_specs", lambda _journal: (training,))
+    monkeypatch.setattr(serve, "_resolve_pack_argument", lambda _path: pack)
     monkeypatch.setattr(serve.web, "run_app", run_app)
     monkeypatch.setattr(
         sys,
         "argv",
-        ["dinkster-serve", "--library-root", str(tmp_path), "--disable-p2p"],
+        [
+            "dinkster-serve",
+            "--library-root",
+            str(tmp_path),
+            "--disable-p2p",
+            "--pack",
+            "fixture",
+        ],
     )
 
     serve.main()
@@ -2868,15 +2874,7 @@ def test_library_startup_composes_without_pack_workers(
                     except aiohttp.ClientError:
                         pass
                     await asyncio.sleep(0.05)
-            expected = (
-                set()
-                if no_defaults
-                else {
-                    *await _default_pack_names(),
-                    "dinkster-nodes-training",
-                    "dinkster-training-worker",
-                }
-            )
+            expected = set() if no_defaults else set(await _default_pack_names())
             assert set(report["packs"]) == expected, report
             assert all(pack["state"] == "announced" for pack in report["packs"].values()), report
             output = log.read_text()
