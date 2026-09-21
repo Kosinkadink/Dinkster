@@ -290,6 +290,7 @@ class GlslShader(Node):
         }
         return NodeSchema(
             node_type="dinkster.image.glsl_shader",
+            editor_role="glsl",
             display_name="GLSL Shader",
             category="image/shader",
             description=(

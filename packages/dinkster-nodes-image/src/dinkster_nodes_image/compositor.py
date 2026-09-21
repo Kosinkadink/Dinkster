@@ -303,6 +303,7 @@ class CreateLayeredImage(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.image.create_layered",
+            editor_role="compositor",
             display_name="Create Layered Image",
             category="image/compositor",
             inputs=(

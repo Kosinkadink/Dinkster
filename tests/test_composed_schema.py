@@ -65,9 +65,9 @@ def test_custom_widget_descriptor_copies_nested_json_and_rejects_nonfinite_numbe
     stops: list[JsonValue] = ["#112233"]
     descriptor = CustomWidgetDescriptor("example.gradient", {"stops": stops})
     stops.append("#abcdef")
-    assert descriptor.params == {"stops": ["#112233"]}
+    assert descriptor.params == {"stops": ("#112233",)}
 
-    with pytest.raises(ValueError, match="must be finite JSON data"):
+    with pytest.raises(ValueError, match="must be JSON-safe"):
         CustomWidgetDescriptor("example.gradient", {"minimum": float("nan")})
 
 

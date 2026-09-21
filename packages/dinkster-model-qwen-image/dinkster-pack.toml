@@ -23,3 +23,17 @@ dinkster-nodes-media-io = ">=0.0.1,<1"
 
 [pack.entry]
 nodes = "dinkster_model_qwen_image:QWEN_IMAGE_MODEL_NODES"
+
+# BEGIN GENERATED STARTER TEMPLATES
+
+[[pack.templates]]
+id = "qwen-image"
+name = "Qwen Image"
+description = "Starter native workflow for Qwen Image."
+family = "dinkster.qwen_image"
+tags = ["starter", "family", "dinkster.qwen_image"]
+models = ["qwen_image_fp8_e4m3fn.safetensors", "qwen_2.5_vl_7b_fp8_scaled.safetensors", "qwen_image_vae.safetensors"]
+file = "src/dinkster_model_qwen_image/templates/qwen-image.json"
+thumbnail = "src/dinkster_model_qwen_image/templates/qwen-image.png"
+
+# END GENERATED STARTER TEMPLATES

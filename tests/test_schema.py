@@ -10,6 +10,7 @@ from dinkster_schema import (
     ComboWidget,
     CompositorWidget,
     CurveWidget,
+    CustomWidgetDescriptor,
     Deprecation,
     InputSpec,
     MultiComboWidget,
@@ -28,6 +29,7 @@ from dinkster_schema import (
     type_expr_from_wire,
     type_expr_to_wire,
 )
+from dinkster_values import CustomWidgetDescriptor as ValuesCustomWidgetDescriptor
 
 SCHEMA = NodeSchema(
     node_type="test.node",
@@ -40,6 +42,10 @@ SCHEMA = NodeSchema(
     ),
     outputs=(OutputSpec("out", TypeExpr.concrete("core.int")),),
 )
+
+
+def test_schema_reexports_custom_widget_descriptor() -> None:
+    assert CustomWidgetDescriptor is ValuesCustomWidgetDescriptor
 
 
 def test_wire_roundtrip_uses_only_version_one() -> None:
