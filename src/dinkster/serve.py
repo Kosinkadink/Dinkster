@@ -1755,6 +1755,8 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit(str(exc)) from exc
     if not args.comfy_root:
         specs.extend(replace(spec, require_catalog=True) for spec in compat_specs)
+    else:
+        specs.extend(compat_specs)
     resolved_default_pack_count = len(specs)
     installer: Installer | None = None
     if args.install_root:
@@ -1763,8 +1765,6 @@ def main(argv: list[str] | None = None) -> None:
         installer = Installer(Path(args.install_root))
         specs.extend(installer.packs_for_serving())
     specs.extend(args.pack)
-    if args.comfy_root:
-        specs.extend(compat_specs)
     default_pack_venv_root = _default_pack_venv_root(args.library_root)
     default_pack_accelerator = resolve_accelerator()
 
