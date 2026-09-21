@@ -8,6 +8,9 @@ exact backend release from its wheel set and constraints file. Desktop builds
 are not yet available; see the
 [Desktop guide](https://github.com/Kosinkadink/Dinkster-Frontend/blob/main/docs/desktop.md)
 for the current platform boundaries.
+Until that repository becomes public, the guide requires repository access;
+authenticated users can make a local copy with
+`gh repo clone Kosinkadink/Dinkster-Frontend`.
 
 ## Inspect a wheel release
 
@@ -52,25 +55,57 @@ to the Internet; read [authentication](auth.md) before configuring shared
 access.
 
 For native generation, build the execution environments from the Dinkster
-repository root:
+repository root with `./scripts/setup_envs.sh`, or
+`.\scripts\setup_envs.ps1` on Windows. The scripts require `uv` and create
+`.venv-torch` for CPU execution and for MPS execution on macOS Apple Silicon.
+On Linux and Windows with a detected NVIDIA GPU, they also create `.venv-gpu`
+for CUDA execution. A `dinkster-evidence` sibling checkout is not required.
+When it is present, the scripts also install its optional `dinkster-acceptance`
+package; otherwise they print a skip notice and complete normally. Set
+`DINKSTER_EXECUTION_PYTHON` to the selected environment's Python when launching:
 
-```sh
-./scripts/setup_envs.sh
+| Platform | Execution interpreter |
+| --- | --- |
+| Linux CUDA | `$PWD/.venv-gpu/bin/python` |
+| Windows CUDA | `$PWD\.venv-gpu\Scripts\python.exe` |
+| Linux/macOS CPU or macOS Apple Silicon MPS | `$PWD/.venv-torch/bin/python` |
+| Windows CPU | `$PWD\.venv-torch\Scripts\python.exe` |
+
+The [torch package README](../packages/dinkster-inference-torch/README.md)
+contains contributor test and validation details; it is not required for the
+first-image setup.
+
+## Model folders
+
+`dinkster setup` creates `<DINKSTER_HOME>/library/mounts.toml`, which defaults
+to `~/.dinkster/library/mounts.toml` on Linux and macOS and
+`%USERPROFILE%\.dinkster\library\mounts.toml` on Windows. Download model files
+into a folder you control and grant that folder read-only access with an
+absolute path:
+
+```toml
+[mounts.models]
+path = "/home/name/Models"
+mode = "read"
+priority = 0
 ```
 
-On Windows, run `.\scripts\setup_envs.ps1` instead. The script requires `uv`
-and creates `.venv-torch` for CPU execution plus `.venv-gpu` when it detects an
-NVIDIA GPU. A `dinkster-evidence` sibling checkout is not required. When it is
-present, the script also installs its optional `dinkster-acceptance` package;
-otherwise the script prints a skip notice and completes normally. Launch with
-the CPU execution environment on Linux or macOS using:
+For Windows, forward slashes avoid TOML backslash escaping:
 
-```sh
-DINKSTER_EXECUTION_PYTHON="$PWD/.venv-torch/bin/python" uv run --no-sync dinkster
+```toml
+[mounts.models]
+path = "C:/Users/name/Models"
+mode = "read"
+priority = 0
 ```
 
-For other platforms and accelerators, follow the
-[runtime setup instructions](../packages/dinkster-inference-torch/README.md).
+Mount ids must start with a lowercase letter or digit and may contain lowercase
+letters, digits, and hyphens. `mode` is `read` or `readwrite`; model folders
+should use `read`. Lower `priority` values are considered first when more than
+one mount can supply an asset. Keep the `[settings]` and `[mounts.output]`
+sections that setup created, restart Dinkster after editing the file, and wait
+for the folder scan. Mounted files then appear under **Browse** in asset
+pickers such as `Load Checkpoint`.
 
 ## Release maintainers
 
