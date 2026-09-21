@@ -8,6 +8,7 @@ from dinkster_inference import EngineProperties, PreviewDecoderProperties, built
 from dinkster_inference.component_catalog import default_component_registry
 
 ROOT = Path(__file__).resolve().parents[1]
+EXTERNAL_PROOF_FAMILY_IDS = frozenset({"test.toy-image"})
 SHARED_ENGINE_FILES = (
     "packages/dinkster-inference/src/dinkster_inference/assembly.py",
     "packages/dinkster-inference/src/dinkster_inference/component_catalog.py",
@@ -49,7 +50,7 @@ def _family_literal_gates(path: Path, family_ids: frozenset[str]) -> tuple[str, 
 
 
 def test_shared_engine_has_zero_literal_family_gates() -> None:
-    family_ids = frozenset(family.id for family in builtin_families())
+    family_ids = frozenset(family.id for family in builtin_families()) | EXTERNAL_PROOF_FAMILY_IDS
     findings = tuple(
         finding
         for relative_path in SHARED_ENGINE_FILES
