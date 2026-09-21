@@ -630,6 +630,7 @@ def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path
             "git rm -r --cached -q .\n"
             "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
             "git reset --hard -q HEAD\n"
+            "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
         ),
     }
     repair_commands = "\n".join(
