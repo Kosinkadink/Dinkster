@@ -60,6 +60,7 @@ __all__ = [
     "MountTable",
     "MountsError",
     "dump_mounts",
+    "load_output_mount",
     "load_mounts",
     "parse_mounts",
 ]
@@ -70,6 +71,7 @@ MOUNT_MODES = ("read", "readwrite")
 MOUNT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 """The mount id grammar - shared with save targets, which name mounts."""
 _ENTRY_KEYS = frozenset({"path", "mode", "priority"})
+_SETTINGS_KEYS = frozenset({"output-mount"})
 
 
 class MountsError(Exception):
@@ -117,7 +119,8 @@ class EmbeddingNameIndex:
         snapshot = cast("dict[str, object]", loaded) if isinstance(loaded, dict) else {}
         if (
             not isinstance(loaded, dict)
-            or set(snapshot) != {"mounts"}
+            or "mounts" not in snapshot
+            or set(snapshot) - {"mounts", "outputMount"}
             or not isinstance(snapshot["mounts"], list)
         ):
             raise MountsError(f"malformed configured mounts snapshot {path}")
@@ -282,18 +285,29 @@ class ReadyMountSnapshot:
     refs: tuple[AssetRef, ...]
 
 
-def parse_mounts(text: str, source: str = "mounts config") -> tuple[MountDef, ...]:
-    """Decode and validate mounts config text. Order follows the file."""
+def _parse_mount_config(text: str, source: str) -> tuple[tuple[MountDef, ...], str | None]:
     try:
         data: dict[str, object] = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise MountsError(f"{source}: invalid TOML: {exc}") from exc
-    unknown_top = set(data) - {"mounts"}
+    unknown_top = set(data) - {"settings", "mounts"}
     if unknown_top:
         raise MountsError(
             f"{source}: unknown top-level keys {sorted(unknown_top)} "
-            f"(everything lives under [mounts.<id>])"
+            f"(expected [settings] or [mounts.<id>])"
         )
+    settings_raw = data.get("settings", {})
+    if not isinstance(settings_raw, dict):
+        raise MountsError(f"{source}: 'settings' must be a table")
+    settings = cast("dict[object, object]", settings_raw)
+    unknown_settings = {str(key) for key in settings} - _SETTINGS_KEYS
+    if unknown_settings:
+        raise MountsError(f"{source}: [settings]: unknown keys {sorted(unknown_settings)}")
+    output_mount = settings.get("output-mount")
+    if output_mount is not None and (
+        not isinstance(output_mount, str) or not MOUNT_ID_PATTERN.match(output_mount)
+    ):
+        raise MountsError(f"{source}: [settings]: 'output-mount' must be a mount id")
     tables = data.get("mounts", {})
     if not isinstance(tables, dict):
         raise MountsError(f"{source}: 'mounts' must be a table of mounts")
@@ -333,7 +347,19 @@ def parse_mounts(text: str, source: str = "mounts config") -> tuple[MountDef, ..
             )
         except MountsError as exc:
             raise MountsError(f"{where}: {exc}") from None
-    return tuple(mounts)
+    if output_mount is not None:
+        selected = next((mount for mount in mounts if mount.id == output_mount), None)
+        if selected is None:
+            raise MountsError(f"{source}: output mount {output_mount!r} is not configured")
+        if selected.mode != "readwrite":
+            raise MountsError(f"{source}: output mount {output_mount!r} must be readwrite")
+    return tuple(mounts), output_mount
+
+
+def parse_mounts(text: str, source: str = "mounts config") -> tuple[MountDef, ...]:
+    """Decode and validate mounts config text. Order follows the file."""
+    mounts, _ = _parse_mount_config(text, source)
+    return mounts
 
 
 def load_mounts(path: Path) -> tuple[MountDef, ...]:
@@ -344,16 +370,29 @@ def load_mounts(path: Path) -> tuple[MountDef, ...]:
     return parse_mounts(path.read_text("utf-8"), str(path))
 
 
+def load_output_mount(path: Path) -> str | None:
+    """Read the configured default output mount, if one is selected."""
+    if not path.is_file():
+        return None
+    _, output_mount = _parse_mount_config(path.read_text("utf-8"), str(path))
+    return output_mount
+
+
 def _toml_string(value: str) -> str:
     """A TOML basic string. JSON string escaping is a subset of TOML's
     basic-string escapes, so this is exact, including Windows paths."""
     return json.dumps(value)
 
 
-def dump_mounts(mounts: Sequence[MountDef]) -> str:
+def dump_mounts(mounts: Sequence[MountDef], *, output_mount: str | None = None) -> str:
     """Deterministic config text (sorted by id); ``parse_mounts`` of the
     output round-trips exactly. Default mode and priority are omitted."""
     chunks: list[str] = []
+    if output_mount is not None:
+        selected = next((mount for mount in mounts if mount.id == output_mount), None)
+        if selected is None or selected.mode != "readwrite":
+            raise MountsError("output mount must name a configured readwrite mount")
+        chunks.append(f"[settings]\noutput-mount = {_toml_string(output_mount)}")
     for mount in sorted(mounts, key=lambda entry: entry.id):
         lines = [
             f"[mounts.{mount.id}]",
@@ -399,11 +438,30 @@ class MountTable:
         snapshot_path: Path | str | None = None,
         *,
         index_root: Path | str | None = None,
+        output_mount: str | None = None,
     ) -> None:
         self._rows: dict[str, _MountRow] = {}
         self._lock = threading.RLock()
         self._snapshot_path = Path(snapshot_path) if snapshot_path is not None else None
         self._index_root = Path(index_root) if index_root is not None else None
+        self._output_mount = output_mount
+
+    @property
+    def output_mount(self) -> str | None:
+        with self._lock:
+            return self._output_mount
+
+    def select_output_mount(self, mount_id: str, *, require_config: bool = True) -> None:
+        with self._lock:
+            row = self._rows.get(mount_id)
+            if row is None:
+                raise MountsError(f"unknown mount: {mount_id!r}")
+            if row.mount.mode != "readwrite":
+                raise MountsError(f"mount {mount_id!r} is not writable")
+            if require_config and row.source != "config":
+                raise MountsError(f"mount {mount_id!r} is not persisted in mounts.toml")
+            self._output_mount = mount_id
+        self.write_snapshot()
 
     def add(self, mount: MountDef, *, source: str = "config", kind: str = "") -> None:
         """Register a mount (state "pending"; call ``scan`` to catalog it).
@@ -425,6 +483,8 @@ class MountTable:
         referencing its assets stay valid (identity is the digest); they
         just stop being materializable here until re-granted."""
         with self._lock:
+            if self._output_mount == mount_id:
+                raise MountsError(f"mount {mount_id!r} is the selected output mount")
             row = self._rows.pop(mount_id, None)
         if row is None:
             raise MountsError(f"unknown mount: {mount_id!r}")
@@ -753,7 +813,7 @@ class MountTable:
                 )
                 if row.library is not None
             ]
-            serialized = json.dumps({"mounts": rows}, indent=1)
+            serialized = json.dumps({"mounts": rows, "outputMount": self._output_mount}, indent=1)
             tmp = self._snapshot_path.with_name(
                 self._snapshot_path.name + f".tmp-{os.getpid()}-{threading.get_ident()}"
             )

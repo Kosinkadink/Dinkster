@@ -848,6 +848,11 @@ dependencies = [
 collab = [
     { name = "dinkster-collab" },
 ]
+default = [
+    { name = "dinkster-collab" },
+    { name = "dinkster-nodes-training" },
+    { name = "dinkster-supervisor" },
+]
 supervisor = [
     { name = "dinkster-supervisor" },
 ]
@@ -877,6 +882,7 @@ requires-dist = [
     { name = "dinkster-caches", editable = "packages/dinkster-caches" },
     { name = "dinkster-collab", editable = "packages/dinkster-collab" },
     { name = "dinkster-collab", marker = "extra == 'collab'", editable = "packages/dinkster-collab" },
+    { name = "dinkster-collab", marker = "extra == 'default'", editable = "packages/dinkster-collab" },
     { name = "dinkster-compat-comfy", editable = "packages/dinkster-compat-comfy" },
     { name = "dinkster-engine", editable = "packages/dinkster-engine" },
     { name = "dinkster-graph", editable = "packages/dinkster-graph" },
@@ -894,12 +900,14 @@ requires-dist = [
     { name = "dinkster-nodes-remote", editable = "packages/dinkster-nodes-remote" },
     { name = "dinkster-nodes-std", editable = "packages/dinkster-nodes-std" },
     { name = "dinkster-nodes-training", editable = "packages/dinkster-nodes-training" },
+    { name = "dinkster-nodes-training", marker = "extra == 'default'", editable = "packages/dinkster-nodes-training" },
     { name = "dinkster-p2p", git = "https://github.com/Kosinkadink/dinkster-p2p.git?rev=16bf38c30a47fdde4f6b63e00d63fb2d8cb5ff5e" },
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
     { name = "dinkster-registry", editable = "packages/dinkster-registry" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
     { name = "dinkster-server", editable = "packages/dinkster-server" },
     { name = "dinkster-supervisor", editable = "packages/dinkster-supervisor" },
+    { name = "dinkster-supervisor", marker = "extra == 'default'", editable = "packages/dinkster-supervisor" },
     { name = "dinkster-supervisor", marker = "extra == 'supervisor'", editable = "packages/dinkster-supervisor" },
     { name = "dinkster-training-worker", editable = "packages/dinkster-training-worker" },
     { name = "dinkster-values", editable = "packages/dinkster-values" },
@@ -907,7 +915,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "pillow", specifier = ">=10" },
 ]
-provides-extras = ["collab", "supervisor"]
+provides-extras = ["default", "collab", "supervisor"]
 
 [package.metadata.requires-dev]
 angle = [

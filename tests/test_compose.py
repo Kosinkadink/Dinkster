@@ -1297,7 +1297,7 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
         ),
         (
             "dinkster-nodes-media-io",
-            "sha256:3aa82d98f846359378cc6bb045b50c39026e98feb8389b289910d4273588346a",
+            "sha256:ede7937f78e83d0365316dcab7fc20a585abaf04fb1e351599adf560f59feefd",
         ),
         (
             "dinkster-nodes-image",
@@ -3212,9 +3212,7 @@ def test_comfy_host_types_register_save_target_runtime_values() -> None:
     from dinkster_nodes_media_io import SaveImage
 
     advertised_default = SaveImage.schema().inputs[1].default
-    assert registry.wrap(SAVE_TARGET_TYPE, advertised_default).resolve() == SaveTarget(
-        mount="comfy-output", prefix="ComfyUI"
-    )
+    assert advertised_default is None
 
     with pytest.raises(AssetError, match="unknown keys"):
         registry.wrap(

@@ -456,6 +456,7 @@ class _QwenImageLatentAdapter:
 
     def prepare(
         self,
+        runtime: object,
         family: ModelFamily,
         *,
         latent: CustomSamplingLatentValue,
@@ -467,6 +468,7 @@ class _QwenImageLatentAdapter:
         error: type[Exception],
     ) -> SamplingExecutionInputs:
         inputs = self._single_stream.prepare(
+            runtime,
             family,
             latent=latent,
             noise=noise,
@@ -484,8 +486,10 @@ class _QwenImageLatentAdapter:
         self,
         inputs: SamplingExecutionInputs,
         output: torch.Tensor,
-        denoised: torch.Tensor | None,
+        denoised: object | None,
     ) -> CustomSamplingResult[torch.Tensor]:
+        if denoised is not None and type(denoised) is not torch.Tensor:
+            raise TypeError("Qwen Image denoised state must contain a torch.Tensor")
         return CustomSamplingResult(output, denoised)
 
 
@@ -946,7 +950,7 @@ class QwenImageDiffusionRuntime(FlowSamplingRuntime):
     _diffusion_device = QwenImageRuntime._diffusion_device  # pyright: ignore[reportPrivateUsage]
     _sigma_space = QwenImageRuntime._sigma_space  # pyright: ignore[reportPrivateUsage]
     check_custom_sampling = QwenImageRuntime.check_custom_sampling
-    sample_custom = QwenImageRuntime.sample_custom
+    sample_custom = sampling_execution
 
     def _sampling_sigma_space(self, sampling_shift: float | None) -> FlowSigmas | FluxFlowSigmas:
         return self._sigma_space()

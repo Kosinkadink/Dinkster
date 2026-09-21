@@ -48,6 +48,14 @@ def h3_component_candidate(
     return H3ComponentCandidate(source, path, artifact_role, digest, size)
 
 
+def _h3_dit_role(path: Path) -> MiniMaxH3DiTRole:
+    """Use FL2VA for architecture-identical DiTs unless the artifact declares REF2VA."""
+    name = path.name.casefold()
+    if "ref2va" in name:
+        return "ref2va-dit"
+    return "fl2va-dit"
+
+
 def detect_h3_components(
     source: WeightSource, path: Path, *, bind_asset_identity: bool = True
 ) -> tuple[tuple[str, Any], ...]:
@@ -55,6 +63,18 @@ def detect_h3_components(
         return ()
     detected: list[tuple[str, Any]] = []
     context = NativePlanningContext(torch_version="detection", dinkster_kitchen_version="detection")
+    dit_role = _h3_dit_role(path)
+    try:
+        plan_minimax_h3_model_assembly(
+            source,
+            role=dit_role,
+            path=path,
+            context=context,
+        )
+    except (TypeError, ValueError):
+        pass
+    else:
+        detected.append(("diffusion", h3_component_candidate(source, path, dit_role)))
     for role in MINIMAX_H3_SPLIT_COMMON_ROLES:
         try:
             plan_minimax_h3_common_component(source, role=role, path=path, context=context)

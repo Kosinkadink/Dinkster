@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -619,4 +620,159 @@ def test_schema_only_claims_must_be_owned_and_body_free(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(ManifestError, match="cannot declare.*bodies"):
+        load_manifest(path)
+
+
+def test_pack_frontend_assets_and_settings_are_validated_and_immutable(tmp_path: Path) -> None:
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    (frontend / "badge.png").write_bytes(b"\x89PNG\r\nfixture")
+    (frontend / "theme.css").write_bytes(b".pack { color: #123; }\n")
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "enabled": {"type": "boolean", "title": "Enabled", "default": True},
+            "strength": {
+                "type": "number",
+                "title": "Strength",
+                "description": "Rendering strength",
+                "default": 0.5,
+                "minimum": 0,
+                "maximum": 1,
+            },
+        },
+        "required": ["enabled", "strength"],
+    }
+    (tmp_path / "settings.schema.json").write_text(json.dumps(schema), encoding="utf-8")
+    path = write_manifest(tmp_path / "dinkster-pack.toml")
+    path.write_text(
+        '[pack]\nname = "test"\n[pack.entry]\nnodes = "test_pack:NODES"\n'
+        '[pack.frontend]\nassets = "./frontend/"\n'
+        '[pack.settings]\nschema = "./settings.schema.json"\n',
+        encoding="utf-8",
+    )
+
+    manifest = load_manifest(path)
+
+    assert [(asset.path, asset.media_type) for asset in manifest.frontend_assets] == [
+        ("badge.png", "image/png"),
+        ("theme.css", "text/css"),
+    ]
+    assert manifest.settings_schema is not None
+    assert manifest.settings_schema.defaults == {"enabled": True, "strength": 0.5}
+    (frontend / "theme.css").write_bytes(b"changed")
+    assert manifest.frontend_assets[1].data == b".pack { color: #123; }\n"
+
+
+@pytest.mark.parametrize(
+    ("declaration", "message"),
+    (
+        ('[pack.frontend]\nassets = "./missing/"\n', "is not a directory"),
+        ('[pack.frontend]\nassets = "../outside/"\n', "must not escape"),
+        ('[pack.settings]\nschema = "./missing.json"\n', "is not a file"),
+    ),
+)
+def test_pack_frontend_and_settings_reject_missing_or_escaping_paths(
+    tmp_path: Path, declaration: str, message: str
+) -> None:
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        f'[pack]\nname = "test"\n{declaration}[pack.entry]\nnodes = "test_pack:NODES"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ManifestError, match=message):
+        load_manifest(path)
+
+
+def test_pack_frontend_assets_reject_symlinks(tmp_path: Path) -> None:
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    target = tmp_path / "target.css"
+    target.write_text("body {}", encoding="utf-8")
+    try:
+        (frontend / "theme.css").symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "test"\n[pack.entry]\nnodes = "test_pack:NODES"\n'
+        '[pack.frontend]\nassets = "frontend"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError, match="must not escape the asset directory"):
+        load_manifest(path)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="NTFS junction behavior is Windows-specific")
+def test_pack_frontend_assets_reject_junction_escape(tmp_path: Path) -> None:
+    frontend = tmp_path / "frontend"
+    frontend.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "theme.css").write_text("body {}", encoding="utf-8")
+    junction = frontend / "linked"
+    completed = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(outside)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        pytest.skip(f"junctions unavailable: {completed.stderr.strip()}")
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "test"\n[pack.entry]\nnodes = "test_pack:NODES"\n'
+        '[pack.frontend]\nassets = "frontend"\n',
+        encoding="utf-8",
+    )
+
+    try:
+        with pytest.raises(ManifestError, match="must not escape the asset directory"):
+            load_manifest(path)
+    finally:
+        junction.rmdir()
+
+
+def test_pack_settings_rejects_non_object_schema(tmp_path: Path) -> None:
+    (tmp_path / "settings.json").write_text('{"type":"string"}', encoding="utf-8")
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "test"\n[pack.entry]\nnodes = "test_pack:NODES"\n'
+        '[pack.settings]\nschema = "settings.json"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ManifestError, match="closed object"):
+        load_manifest(path)
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        {"type": "string", "title": "Label", "default": "x", "minimum": 1},
+        {"type": "number", "title": "Scale", "default": 1, "multipleOf": 0},
+        {"type": "number", "title": "Scale", "default": 1, "minimum": 10**1000},
+        {"type": "number", "title": "Scale", "default": 1, "multipleOf": 1e-323},
+        {"type": "number", "title": "Scale", "default": 1.0000000001, "multipleOf": 1e-9},
+        {"type": "integer", "title": "Count", "default": 2**53},
+    ),
+)
+def test_pack_settings_rejects_inapplicable_or_unsafe_constraints(
+    tmp_path: Path, field: dict[str, object]
+) -> None:
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"value": field},
+        "required": ["value"],
+    }
+    (tmp_path / "settings.json").write_text(json.dumps(schema), encoding="utf-8")
+    path = tmp_path / "dinkster-pack.toml"
+    path.write_text(
+        '[pack]\nname = "test"\n[pack.entry]\nnodes = "test_pack:NODES"\n'
+        '[pack.settings]\nschema = "settings.json"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ManifestError, match="invalid settings.schema"):
         load_manifest(path)
