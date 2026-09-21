@@ -13,6 +13,41 @@ from pathlib import Path
 import pytest
 
 PACKAGE = Path(__file__).parents[1] / "src" / "dinkster_inference_torch"
+TRAINING_EXPORTS = frozenset(
+    {
+        "AttentionGuidanceContext",
+        "MiniMaxH3AudioVAE",
+        "MiniMaxH3ConditionerModel",
+        "MiniMaxH3DiTConditioning",
+        "MiniMaxH3KeyframeLatent",
+        "MiniMaxH3ReferenceKind",
+        "MiniMaxH3ReferenceLatents",
+        "MiniMaxH3VideoVAE",
+        "MiniMaxH3VideoVAEConfig",
+        "MiniMaxMusic3TextModel",
+        "QwenImageLanguageModel",
+        "QwenImageTextModel",
+        "SD15AttentionExecutionContext",
+        "Wan21Model",
+        "Wan21MultiTalkExecution",
+        "Wan21TextRuntime",
+        "Wan22VAE",
+        "WanAttentionBlock",
+        "WanVAE",
+        "WanVAEConfig",
+        "assemble_minimax_h3_dit",
+        "bind_fp8_matmul_layer",
+        "load_tensors",
+        "minimax_h3_audio_vae_runtime_identity",
+        "minimax_h3_conditioner_runtime_identity",
+        "minimax_h3_video_vae_runtime_identity",
+        "plan_minimax_h3_model_assembly",
+        "select_attention",
+        "simple_schedule",
+        "tokenize_music_prompt",
+        "worker_planning_context",
+    }
+)
 
 
 def _run(source: str) -> None:
@@ -50,13 +85,13 @@ def test_binding_table_matches_static_imports_and_eager_baseline() -> None:
     exports = vars(package)["_EXPORTS"]
     assert {name: target for name, target in exports.items() if target[1] is not None} == bindings
     # Pin the complete lazy public surface, including the solvers.euler alias.
-    assert len(bindings) == 853
+    assert len(bindings) == 868
     assert hashlib.sha256(json.dumps(bindings, sort_keys=True).encode()).hexdigest() == (
-        "925dcf77190c17b0d09d005f23287b90ca065fa3e276f7eb53ad4cdbab19f8de"
+        "668211a02e160de6ed774057b0fbbb0fad244b510ee864f3f2b3af9262dcf7c6"
     )
-    assert len(package.__all__) == 856
+    assert len(package.__all__) == 871
     assert hashlib.sha256(json.dumps(package.__all__).encode()).hexdigest() == (
-        "8498e209538626a286de7b92a3ac8e0325dcc4e86289cd5cd112e20943464534"
+        "2e5f8300d934569ae60bdf8650c1ad13201636eb2a66f1e371e90521a299319f"
     )
     assert set(package.__all__) == set(bindings)
     modules = {
@@ -71,6 +106,13 @@ def test_binding_table_matches_static_imports_and_eager_baseline() -> None:
     package_entries = {entry.name for entry in PACKAGE.iterdir()}
     collisions = {name for name in bindings if f"{name}.py" in package_entries}
     assert collisions == {"component_publisher"}
+
+
+def test_training_contract_is_public_from_package_root() -> None:
+    import dinkster_inference_torch as package
+
+    assert TRAINING_EXPORTS <= set(package.__all__)
+    assert all(hasattr(package, name) for name in TRAINING_EXPORTS)
 
 
 def test_cold_package_and_dir_do_not_import_execution_dependencies() -> None:
@@ -89,7 +131,7 @@ def test_cold_package_and_dir_do_not_import_execution_dependencies() -> None:
         import dinkster_inference_torch as package
         names = dir(package)
         assert set(package.__all__) <= set(names)
-        assert len([name for name in names if not name.startswith('_')]) == 1020
+        assert len([name for name in names if not name.startswith('_')]) == 1035
         assert names == sorted(set(names))
         assert not any(name.startswith('dinkster_inference_torch.') for name in sys.modules)
         assert not hasattr(package, 'unknown_export')
