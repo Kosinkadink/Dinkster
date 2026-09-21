@@ -4168,6 +4168,8 @@ def register_native_types(registry: TypeRegistry) -> None:
         "comfy.SHAPE_SUBDIVIDES",
         "comfy.TIMESTEPS_RANGE",
         "comfy.VOXEL",
+        "dinkster.context-windows",
+        "dinkster.inpaint-conditioning",
         "dinkster.latent-operation",
     ):
         if type_id not in registry:
