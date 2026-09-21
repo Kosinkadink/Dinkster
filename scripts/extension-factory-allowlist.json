@@ -129,7 +129,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 1962,
+      "line": 1968,
       "column": 59,
       "issue": 120
     },
@@ -137,7 +137,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 2520,
+      "line": 2526,
       "column": 32,
       "issue": 120
     },
@@ -145,7 +145,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 4471,
+      "line": 4495,
       "column": 28,
       "issue": 120
     },

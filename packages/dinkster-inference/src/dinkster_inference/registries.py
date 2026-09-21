@@ -70,6 +70,12 @@ def merge(
             samplers.register(descriptor)
         for descriptor in contribution.schedulers:
             schedulers.register(descriptor)
+        for family in contribution.families:
+            families.register(family)
+        for descriptor in contribution.components:
+            components.register(descriptor)
+        for registration in contribution.assemblies:
+            assemblies.register(registration)
     return InferenceRegistries(samplers, schedulers, families, components, assemblies)
 
 

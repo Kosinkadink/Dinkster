@@ -6,15 +6,32 @@ from pathlib import Path
 
 from dinkster_inference import builtin_families
 
-EXTERNAL_PROOF_FAMILY_IDS = frozenset({"test.toy-image"})
+EXTERNAL_PROOF_FAMILY_IDS = frozenset({"fixture.toy-image", "test.toy-image"})
 NEW_FAMILY_REGISTRATION_PATHS = frozenset(
     {
         ".github/workflows/ci.yml",
         ".github/workflows/full-validation.yml",
+        "docs/extension-design.md",
         "docs/new-model-family.md",
+        "docs/supported/pack-routes-events-and-frontend-modules.md",
+        "packages/dinkster-api/src/dinkster_api/v1.py",
+        "packages/dinkster-inference/src/dinkster_inference/__init__.py",
+        "packages/dinkster-inference/src/dinkster_inference/extensions.py",
+        "packages/dinkster-inference/src/dinkster_inference/families.py",
+        "packages/dinkster-inference/src/dinkster_inference/registries.py",
         "packages/dinkster-inference-torch/tests/test_new_family_checklist.py",
+        "packages/dinkster-workers/src/dinkster_workers/doctor.py",
+        "scripts/extension-factory-allowlist.json",
+        "src/dinkster/compose.py",
         "tests/family_gate_scanner.py",
+        "tests/fixtures/extension-contract-pack/dinkster-pack.toml",
+        "tests/fixtures/extension-contract-pack/extension_contract_pack.py",
+        "tests/test_api_v1.py",
+        "tests/test_doctor.py",
+        "tests/test_extension_contract_pack.py",
         "tests/test_family_registration_gates.py",
+        "tests/test_inference_contracts.py",
+        "tests/test_inference_extensions.py",
         "tests/test_native_arm.py",
     }
 )

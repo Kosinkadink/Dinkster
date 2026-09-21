@@ -76,14 +76,20 @@ from dinkster_engine import (
 )
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, TypedLiteral, top_level_node_id
 from dinkster_inference import (
+    INFERENCE_ASSEMBLIES_SURFACE,
+    INFERENCE_COMPONENTS_SURFACE,
+    INFERENCE_FAMILIES_SURFACE,
     INFERENCE_SAMPLERS_SURFACE,
     INFERENCE_SCHEDULERS_SURFACE,
     SAMPLER_CATALOG_ENV,
     Registry,
     RegistryError,
     SamplerExtensionEntry,
+    assembly_declaration,
     builtin_registries,
     builtin_sampler_snapshot,
+    component_declaration,
+    family_declaration,
     register_inference_types,
     registry_choice_values,
     remove_sampler_catalog_record,
@@ -4369,11 +4375,12 @@ class ServingComposer:
         )
         if not entries:
             return (), {}
+        by_extension: dict[str, tuple[KeyedContribution, ...]]
         if all(
             getattr(records[entry.extension_id].worker, "catalog", None) is not None
             for entry in entries
         ):
-            return entries, {
+            by_extension = {
                 entry.extension_id: tuple(
                     KeyedContribution(
                         surface_id=item["surface_id"],
@@ -4387,45 +4394,62 @@ class ServingComposer:
                 )
                 for entry in entries
             }
-        worker = self._sampling_worker(topology)
-        if worker is None:
-            raise CompositionError(
-                "inference extensions require a live native dinkster.ksampler worker"
-            )
-        candidate_key = f"candidate:{uuid.uuid4().hex}"
-        write_sampler_catalog(self._sampler_catalog_path, candidate_key, entries)
-        try:
-            try:
-                returned = await worker.materialize_inference_generation(candidate_key)
-            except Exception as exc:
-                if "multiple guidance strategies were materialized" in str(exc):
-                    owners = ", ".join(entry.extension_id for entry in entries)
-                    raise CompositionError(
-                        "exclusive extension surface inference:inference.guidance.strategy "
-                        f"has multiple contributors: {owners}"
-                    ) from exc
-                raise CompositionError(f"inference extension activation failed: {exc}") from exc
-        finally:
-            try:
-                await worker.release_inference_generation(candidate_key)
-            except Exception:
-                # Preserve the activation error, if any; closing the worker is
-                # the rollback backstop when explicit candidate release fails.
-                pass
-            remove_sampler_catalog_record(self._sampler_catalog_path, candidate_key)
-        by_extension: dict[str, tuple[KeyedContribution, ...]] = {}
-        for extension_id, contributions in returned:
-            if extension_id in by_extension:
+        else:
+            worker = self._sampling_worker(topology)
+            if worker is None:
                 raise CompositionError(
-                    f"inference worker returned extension {extension_id!r} more than once"
+                    "inference extensions require a live native dinkster.ksampler worker"
                 )
-            by_extension[extension_id] = contributions
-        expected_ids = tuple(entry.extension_id for entry in entries)
-        if tuple(by_extension) != expected_ids:
-            raise CompositionError(
-                "inference worker extension set does not match the staged generation: "
-                f"expected {expected_ids}, got {tuple(by_extension)}"
-            )
+            candidate_key = f"candidate:{uuid.uuid4().hex}"
+            write_sampler_catalog(self._sampler_catalog_path, candidate_key, entries)
+            try:
+                try:
+                    returned = await worker.materialize_inference_generation(candidate_key)
+                except Exception as exc:
+                    if "multiple guidance strategies were materialized" in str(exc):
+                        owners = ", ".join(entry.extension_id for entry in entries)
+                        raise CompositionError(
+                            "exclusive extension surface inference:inference.guidance.strategy "
+                            f"has multiple contributors: {owners}"
+                        ) from exc
+                    raise CompositionError(f"inference extension activation failed: {exc}") from exc
+            finally:
+                try:
+                    await worker.release_inference_generation(candidate_key)
+                except Exception:
+                    # Preserve the activation error, if any; closing the worker is
+                    # the rollback backstop when explicit candidate release fails.
+                    pass
+                remove_sampler_catalog_record(self._sampler_catalog_path, candidate_key)
+            by_extension = {}
+            for extension_id, contributions in returned:
+                if extension_id in by_extension:
+                    raise CompositionError(
+                        f"inference worker returned extension {extension_id!r} more than once"
+                    )
+                by_extension[extension_id] = contributions
+            expected_ids = tuple(entry.extension_id for entry in entries)
+            if tuple(by_extension) != expected_ids:
+                raise CompositionError(
+                    "inference worker extension set does not match the staged generation: "
+                    f"expected {expected_ids}, got {tuple(by_extension)}"
+                )
+        family_surfaces = {
+            INFERENCE_FAMILIES_SURFACE,
+            INFERENCE_COMPONENTS_SURFACE,
+            INFERENCE_ASSEMBLIES_SURFACE,
+        }
+        for entry in entries:
+            declaration = records[entry.extension_id].extension
+            assert declaration is not None
+            if (
+                any(item.surface_id in family_surfaces for item in by_extension[entry.extension_id])
+                and "model-family-registration" not in declaration.capabilities
+            ):
+                raise CompositionError(
+                    f"pack {entry.extension_id!r} contributes model family registrations "
+                    "without the model-family-registration capability"
+                )
         return entries, by_extension
 
     async def call_pack_route(
@@ -4471,8 +4495,27 @@ class ServingComposer:
         for declaration in builtin_sampler_snapshot().samplers:
             sampler_registry.register(declaration)
         scheduler_registry: Registry[KeyedContribution] = Registry()
-        for descriptor in builtin_registries().schedulers:
+        registries = builtin_registries()
+        for descriptor in registries.schedulers:
             scheduler_registry.register(scheduler_declaration(descriptor))
+        family_registry: Registry[KeyedContribution] = Registry()
+        for family_id in registries.families.ids():
+            family = registries.families.get(family_id)
+            assert family is not None
+            family_registry.register(family_declaration(family))
+        component_registry: Registry[KeyedContribution] = Registry()
+        for descriptor in registries.components:
+            component_registry.register(component_declaration(descriptor))
+        assembly_registry: Registry[KeyedContribution] = Registry()
+        for registration in registries.assemblies:
+            assembly_registry.register(assembly_declaration(registration))
+        keyed_registries = {
+            INFERENCE_SAMPLERS_SURFACE: ("sampler", sampler_registry),
+            INFERENCE_SCHEDULERS_SURFACE: ("scheduler", scheduler_registry),
+            INFERENCE_FAMILIES_SURFACE: ("family", family_registry),
+            INFERENCE_COMPONENTS_SURFACE: ("component", component_registry),
+            INFERENCE_ASSEMBLIES_SURFACE: ("assembly", assembly_registry),
+        }
         surfaces: dict[
             tuple[ExtensionScope, str],
             tuple[CompositionMode, list[str]],
@@ -4563,7 +4606,14 @@ class ServingComposer:
                         CompositionMode.EXCLUSIVE
                         if surface_id == GUIDANCE_SURFACES[2]
                         else CompositionMode.KEYED_REGISTRY
-                        if surface_id in (INFERENCE_SAMPLERS_SURFACE, INFERENCE_SCHEDULERS_SURFACE)
+                        if surface_id
+                        in (
+                            INFERENCE_SAMPLERS_SURFACE,
+                            INFERENCE_SCHEDULERS_SURFACE,
+                            INFERENCE_FAMILIES_SURFACE,
+                            INFERENCE_COMPONENTS_SURFACE,
+                            INFERENCE_ASSEMBLIES_SURFACE,
+                        )
                         else CompositionMode.ORDERED_LIST
                         if surface_id == GRAPH_COMPILERS_SURFACE
                         else CompositionMode.WRAPPER_CHAIN
@@ -4590,6 +4640,9 @@ class ServingComposer:
                 if contribution.surface_id not in (
                     INFERENCE_SAMPLERS_SURFACE,
                     INFERENCE_SCHEDULERS_SURFACE,
+                    INFERENCE_FAMILIES_SURFACE,
+                    INFERENCE_COMPONENTS_SURFACE,
+                    INFERENCE_ASSEMBLIES_SURFACE,
                     GRAPH_COMPILERS_SURFACE,
                     *GUIDANCE_SURFACES,
                 ):
@@ -4602,19 +4655,14 @@ class ServingComposer:
                         f"extension {name!r} contribution {contribution.id!r} is outside "
                         f"the pack's declared namespaces ({', '.join(record.claims)})"
                     )
-                if contribution.surface_id == INFERENCE_SAMPLERS_SURFACE:
+                registry_entry = keyed_registries.get(contribution.surface_id)
+                if registry_entry is not None:
+                    registry_name, registry = registry_entry
                     try:
-                        sampler_registry.register(contribution)
+                        registry.register(contribution)
                     except RegistryError as exc:
                         raise CompositionError(
-                            f"extension {name!r} sampler registry collision: {exc}"
-                        ) from exc
-                if contribution.surface_id == INFERENCE_SCHEDULERS_SURFACE:
-                    try:
-                        scheduler_registry.register(contribution)
-                    except RegistryError as exc:
-                        raise CompositionError(
-                            f"extension {name!r} scheduler registry collision: {exc}"
+                            f"extension {name!r} {registry_name} registry collision: {exc}"
                         ) from exc
             info = record.delta.packs.get(name)
             if info is None:

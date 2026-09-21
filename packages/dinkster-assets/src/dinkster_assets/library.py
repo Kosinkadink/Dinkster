@@ -483,11 +483,32 @@ class LocalAssetLibrary:
             raise AssetError(f"no asset cataloged at virtual path: {virtual_path!r}")
         return entry.ref(resolver=self)
 
+    def refresh_writes(self) -> None:
+        """Publish valid writer-sidecar rows into the live catalog."""
+        for relative, row in load_write_records(self._root).items():
+            path = self._root / relative
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            digest, size, mtime_ns = row.get("digest"), row.get("size"), row.get("mtimeNs")
+            if (
+                not isinstance(digest, str)
+                or not isinstance(size, int)
+                or not isinstance(mtime_ns, int)
+                or (stat.st_size, stat.st_mtime_ns) != (size, mtime_ns)
+            ):
+                continue
+            record = AssetVerificationRecord.from_json(digest, row.get("verification"))
+            self._publish_entry(path, relative, size, digest, record)
+
     def entries(self) -> tuple[AssetEntry, ...]:
+        self.refresh_writes()
         with self._lock:
             return self._catalog.entries()
 
     def list_folder(self, prefix: str = "") -> FolderListing:
+        self.refresh_writes()
         with self._lock:
             return self._catalog.list_folder(prefix)
 
