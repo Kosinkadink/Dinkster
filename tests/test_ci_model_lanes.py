@@ -615,7 +615,7 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
         "workflow_call": None,
     }
     job = PR_JOBS["fast"]
-    assert job["timeout-minutes"] == 5
+    assert job["timeout-minutes"] == 10
     assert job["steps"][-1] == {"run": "bash scripts/ci-fast.sh"}
     preparation = [
         step

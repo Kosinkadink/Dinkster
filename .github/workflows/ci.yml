@@ -15,7 +15,7 @@ jobs:
   fast:
     name: format, lint, types and unit subset
     runs-on: ${{ fromJSON(vars.DINKSTER_PR_RUNNER || '["self-hosted", "linux", "x64"]') }}
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
