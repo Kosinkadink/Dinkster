@@ -243,6 +243,7 @@ async def handle_mounts_list(request: web.Request) -> web.Response:
         {
             "mounts": service.table.descriptors(),
             "outputMount": service.table.output_mount,
+            "mountChangesAllowed": service.allow_changes,
         }
     )
 

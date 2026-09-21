@@ -673,7 +673,9 @@ def test_mounts_read_surface(tmp_path: Path) -> None:
         client = await make_client(MountService(table))
         resp = await client.get("/api/mounts")
         assert resp.status == 200
-        (row,) = (await resp.json())["mounts"]
+        listing = await resp.json()
+        assert listing["mountChangesAllowed"] is False
+        (row,) = listing["mounts"]
         assert (row["id"], row["state"], row["entryCount"]) == ("pics", "ready", 3)
 
         # Folder navigation.
@@ -1145,6 +1147,9 @@ def test_mount_grant_and_revoke_at_runtime(tmp_path: Path) -> None:
     async def scenario() -> None:
         client = await make_client(service)
         ws = await client.ws_connect("/api/events?clientId=c1")
+
+        listing = await (await client.get("/api/mounts")).json()
+        assert listing["mountChangesAllowed"] is True
 
         resp = await client.post(
             "/api/mounts",
