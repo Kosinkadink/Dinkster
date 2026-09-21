@@ -798,7 +798,7 @@ def test_comfy_compat_composition_failure_exits_with_one_message(
     comfy_root.mkdir()
     message = (
         "ComfyUI requirement module 'einops' is unavailable in interpreter "
-        "'/selected/python' selected by --comfy-python"
+        "'/selected/python' selected by --execution-python"
     )
 
     def fail_specs(*_args: object, **_kwargs: object) -> None:
@@ -815,7 +815,7 @@ def test_comfy_compat_composition_failure_exits_with_one_message(
             "--no-default-packs",
             "--comfy-root",
             str(comfy_root),
-            "--comfy-python",
+            "--execution-python",
             "/selected/python",
         ],
     )
@@ -824,6 +824,33 @@ def test_comfy_compat_composition_failure_exits_with_one_message(
         serve.main()
 
     assert str(caught.value) == message
+
+
+def test_retired_comfy_python_flag_exits_naming_the_replacement(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+
+    monkeypatch.delenv("DINKSTER_COMFYUI_PYTHON", raising=False)
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--comfy-python", "/x/python"])
+    with pytest.raises(SystemExit, match="2"):
+        serve.main()
+    assert "--comfy-python is retired; pass --execution-python instead" in capsys.readouterr().err
+
+
+def test_retired_comfy_python_env_exits_naming_the_replacement(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+
+    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/x/python")
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve"])
+    with pytest.raises(SystemExit, match="2"):
+        serve.main()
+    assert (
+        "DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead"
+        in capsys.readouterr().err
+    )
 
 
 def test_settings_gate_unknown_is_startup_parser_error(

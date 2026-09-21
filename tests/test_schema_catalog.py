@@ -248,7 +248,7 @@ def test_default_doctor_prepares_native_catalogs(monkeypatch: pytest.MonkeyPatch
     from dinkster.installer import InstallError
 
     monkeypatch.setattr(compose, "default_pack_specs", lambda: ())
-    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", sys.executable)
+    monkeypatch.setenv("DINKSTER_EXECUTION_PYTHON", sys.executable)
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
     args = Namespace(defaults=True, library_root="", accelerator="cpu")
     # First-party internal imports remain doctor findings, not invalid schemas.

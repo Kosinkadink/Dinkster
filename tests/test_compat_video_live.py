@@ -60,8 +60,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 COMPAT_MANIFEST = REPO_ROOT / "packages" / "dinkster-compat-comfy" / "dinkster-pack.toml"
 
 
-def _comfy_python() -> str:
-    explicit = os.environ.get("DINKSTER_COMFYUI_PYTHON", "")
+def _execution_python() -> str:
+    explicit = os.environ.get("DINKSTER_EXECUTION_PYTHON", "")
     if explicit:
         return explicit
     candidate = Path(COMFY_ROOT) / "venv" / "bin" / "python"
@@ -219,7 +219,7 @@ def test_pinned_core_video_workflows_cross_the_compat_boundary(tmp_path: Path) -
         worker = IsolatedWorker(
             COMPAT_MANIFEST,
             registry,
-            python=_comfy_python(),
+            python=_execution_python(),
             extra_env={
                 "DINKSTER_COMFYUI_ROOT": COMFY_ROOT,
                 "DINKSTER_COMFY_NODES": ",".join((*VIDEO_NODE_IDS, *REQUIRED_ARM_NODE_IDS)),

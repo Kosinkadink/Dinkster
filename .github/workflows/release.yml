@@ -1,46 +1,21 @@
-name: Private backend release
+name: Versioned wheel release
 
 on:
-  workflow_dispatch:
-    inputs:
-      publish:
-        description: Publish after validation (main only)
-        type: boolean
-        default: false
+  push:
+    tags:
+      - "v*.*.*"
 
 permissions:
   contents: read
 
 concurrency:
-  group: dinkster-backend-release
+  group: wheel-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  authorize:
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - uses: actions/github-script@v7
-        env:
-          PUBLISH: ${{ inputs.publish }}
-        with:
-          script: |
-            const repo = await github.rest.repos.get(context.repo);
-            if (repo.data.full_name !== 'Kosinkadink/Dinkster' || !repo.data.private) {
-              throw new Error('Release publication requires the private Kosinkadink/Dinkster repository');
-            }
-            if (process.env.PUBLISH !== 'true') return;
-            if (context.ref !== 'refs/heads/main') {
-              throw new Error('Refusing publication from a non-main branch');
-            }
-
-  validation:
-    needs: authorize
-    uses: ./.github/workflows/full-validation.yml
-    secrets: inherit
-
   build:
-    needs: validation
     runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,21 +23,67 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/configure-dinkster-identity
         with:
+          repository: Kosinkadink/Dinkster-Frontend
+          deploy-key: ${{ secrets.DINKSTER_FRONTEND_READ_KEY }}
+      - name: Select the pinned frontend source
+        id: frontend
+        run: |
+          echo "ref=$(python3 -c 'import json; print(json.load(open("scripts/release_sources.json"))["commit"])')" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          repository: Kosinkadink/Dinkster-Frontend
+          ref: ${{ steps.frontend.outputs.ref }}
+          path: .release/frontend
+          persist-credentials: false
+      - uses: ./.github/actions/configure-dinkster-identity
+        with:
           deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+      - name: Select the pinned identity source
+        id: identity
+        run: |
+          echo "ref=$(python3 -c 'import json; print(json.load(open("scripts/release_sources.json"))["identityCommit"])')" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          repository: Kosinkadink/dinkster-identity
+          ref: ${{ steps.identity.outputs.ref }}
+          path: .release/identity
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.31.0
+          dest: ${{ runner.tool_cache }}/setup-pnpm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: .release/frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: .release/frontend
+      - run: pnpm --filter @dinkster/app build
+        working-directory: .release/frontend
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: '3.12'
-      - run: uv run --no-project --python 3.12 scripts/build_release.py
+          python-version: "3.12"
+      - name: Build the complete release contract
+        run: |
+          uv run --no-project --python 3.12 scripts/build_release.py \
+            --tag "$GITHUB_REF_NAME" \
+            --frontend-root .release/frontend \
+            --frontend-dist .release/frontend/packages/app/dist \
+            --identity-root .release/identity
+          uvx twine check dist/*.whl
       - uses: actions/upload-artifact@v4
         with:
-          name: backend-release
+          name: wheel-release
           path: dist/
           if-no-files-found: error
+
   install:
     needs: build
     runs-on: ${{ matrix.labels }}
-    env:
-      UV_PYTHON: "3.12"
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -80,97 +101,57 @@ jobs:
         run: |
           $bashDirectory = Join-Path $env:ProgramFiles 'Git/bin'
           if (-not (Test-Path (Join-Path $bashDirectory 'bash.exe') -PathType Leaf)) {
-            throw 'Git Bash is required for validation input preparation'
+            throw 'Git Bash is required for the release install check'
           }
           $bashDirectory >> $env:GITHUB_PATH
-      - uses: actions/download-artifact@v4
-        with:
-          name: backend-release
-          path: ${{ runner.temp }}/dist
-      - uses: astral-sh/setup-uv@v5
-        with:
-          version: latest
-          ignore-empty-workdir: true
-      - name: Extract the archive and its dependency access action
-        shell: bash
-        working-directory: ${{ runner.temp }}
-        run: |
-          uv run --no-project --python 3.12 python -m zipfile -e dist/dinkster-backend-${GITHUB_SHA}.zip clean-install
-          mkdir -p "$GITHUB_WORKSPACE/.release-dependency-access"
-          cp clean-install/dinkster-backend-${GITHUB_SHA}/.github/actions/configure-dinkster-identity/{action.yml,agent.cjs} "$GITHUB_WORKSPACE/.release-dependency-access/"
-      - uses: ./.release-dependency-access
-        with:
-          repository: Kosinkadink/dinkster-registry
-          deploy-key: ${{ secrets.DINKSTER_REGISTRY_READ_KEY }}
       - uses: actions/checkout@v4
         with:
           clean: true
-          repository: Kosinkadink/dinkster-registry
-          ref: 772dd2a230e50dcc4f05c513c3f27279e0a6a652
-          path: registry
           persist-credentials: false
-      - name: Install the independent loopback registry
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel-release
+          path: ${{ runner.temp }}/dinkster-release
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install and launch from wheels
         shell: bash
-        env:
-          GIT_CONFIG_COUNT: "2"
-          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/Kosinkadink/Dinkster.insteadOf
-          GIT_CONFIG_VALUE_0: https://github.com/Kosinkadink/Dinkster
-          GIT_CONFIG_KEY_1: credential.helper
-          GIT_CONFIG_VALUE_1: ""
         run: |
-          trap 'unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1' EXIT
-          uv sync --project registry --all-packages --frozen
-      - name: Install from the archive without a checkout
-        shell: bash
-        working-directory: ${{ runner.temp }}
-        run: |
-          uv run --no-project --python 3.12 clean-install/dinkster-backend-${GITHUB_SHA}/scripts/install.py
-          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster demo
-          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-serve --help
-          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-pack --help
-          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-installs --help
-          registry_command="$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry-sqlite"
+          uv venv --python 3.12 "$RUNNER_TEMP/dinkster-release-venv"
+          python="$RUNNER_TEMP/dinkster-release-venv/bin/python"
           if [ "$RUNNER_OS" = Windows ]; then
-            registry_command="$GITHUB_WORKSPACE/registry/.venv/Scripts/dinkster-registry-sqlite.exe"
+            python="$RUNNER_TEMP/dinkster-release-venv/Scripts/python.exe"
           fi
-          uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync python clean-install/dinkster-backend-${GITHUB_SHA}/scripts/verify_release_install.py clean-install/dinkster-backend-${GITHUB_SHA} --registry-command "$registry_command"
-  publish:
+          uv pip install --python "$python" \
+            --no-deps \
+            --require-hashes \
+            --find-links "$RUNNER_TEMP/dinkster-release" \
+            --requirement "$RUNNER_TEMP/dinkster-release/constraints.txt"
+          "$python" -m dinkster.cli --help
+          "$python" -c "from dinkster_frontend import bundle_path; assert bundle_path().joinpath('index.html').is_file()"
+
+  release:
     needs: install
-    if: inputs.publish && github.ref == 'refs/heads/main'
     runs-on: [self-hosted, linux, x64]
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: backend-release
-          path: ${{ runner.temp }}/dist
+          name: wheel-release
+          path: dist
       - uses: actions/github-script@v7
         with:
           script: |
-            const fs = require('node:fs');
-            const dist = require('node:path').join(process.env.RUNNER_TEMP, 'dist');
-            const repo = await github.rest.repos.get(context.repo);
-            if (repo.data.full_name !== 'Kosinkadink/Dinkster' || !repo.data.private) {
-              throw new Error('Refusing public or foreign release publication');
+            try {
+              await github.rest.repos.getReleaseByTag({ ...context.repo, tag: context.ref.replace('refs/tags/', '') });
+              core.setFailed('Refusing to overwrite an existing release');
+            } catch (error) {
+              if (error.status !== 404) throw error;
             }
-            const manifest = JSON.parse(fs.readFileSync(`${dist}/backend-release.json`, 'utf8'));
-            if (manifest.repository !== repo.data.full_name || manifest.commit !== context.sha ||
-                manifest.releaseTag !== `backend-${context.sha}`) {
-              throw new Error('Release manifest does not match the selected main commit');
-            }
-            const release = await github.rest.repos.createRelease({
-              ...context.repo, tag_name: manifest.releaseTag,
-              target_commitish: context.sha, name: manifest.releaseTag, draft: true,
-              prerelease: true,
-              body: `Private backend installer from [source](https://github.com/${context.repo.owner}/${context.repo.repo}/commit/${context.sha}). Download the ZIP and SHA256SUMS, then follow docs/install.md inside the archive. Requires uv and Internet access. The pinned identity dependency is bundled; no Git credentials are needed after download. No models or GPU runtime are bundled.`,
-            });
-            for (const name of fs.readdirSync(dist)) {
-              await github.rest.repos.uploadReleaseAsset({
-                ...context.repo, release_id: release.data.id, name,
-                data: fs.readFileSync(`${dist}/${name}`),
-              });
-            }
-            await github.rest.repos.updateRelease({
-              ...context.repo, release_id: release.data.id, draft: false,
-            });
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: dist/*

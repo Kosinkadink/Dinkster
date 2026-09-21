@@ -2,7 +2,7 @@
 interpreter, driven by a Dinkster engine whose interpreter has no torch.
 
 Skipped unless DINKSTER_COMFYUI_ROOT points at a ComfyUI installation with a
-``venv/`` (or DINKSTER_COMFYUI_PYTHON names the interpreter). What it proves:
+``venv/`` (or DINKSTER_EXECUTION_PYTHON names the interpreter). What it proves:
 
 - the compat pack bootstraps inside the child (hazard H5: the engine
   process imports neither ComfyUI nor torch);
@@ -86,8 +86,8 @@ INFERENCE_PARITY_RECORDS = Path(
 COMPAT_MANIFEST = REPO_ROOT / "packages" / "dinkster-compat-comfy" / "dinkster-pack.toml"
 
 
-def comfy_python() -> str:
-    explicit = os.environ.get("DINKSTER_COMFYUI_PYTHON", "")
+def execution_python() -> str:
+    explicit = os.environ.get("DINKSTER_EXECUTION_PYTHON", "")
     if explicit:
         return explicit
     venv_python = Path(COMFY_ROOT) / "venv" / "bin" / "python"
@@ -302,7 +302,7 @@ Path(os.environ["DINKSTER_RESULT_PATH"]).write_text(
         }
     )
     completed = subprocess.run(
-        [comfy_python(), "-c", script],
+        [execution_python(), "-c", script],
         cwd=COMFY_ROOT,
         env=env,
         capture_output=True,
@@ -336,7 +336,7 @@ def test_aimdo_bootstrap_precedes_real_comfy_torch_import(tmp_path: Path) -> Non
         worker = IsolatedWorker(
             manifest,
             registry,
-            python=comfy_python(),
+            python=execution_python(),
             aimdo_init=aimdo_init,
             extra_env={
                 "DINKSTER_COMFYUI_ROOT": COMFY_ROOT,
@@ -384,7 +384,7 @@ def test_real_worker_comfy_args_parse_supplied_value_and_explicit_defaults(
         worker = IsolatedWorker(
             manifest,
             registry,
-            python=comfy_python(),
+            python=execution_python(),
             comfy_args=comfy_args,
             extra_env={
                 "DINKSTER_COMFYUI_ROOT": COMFY_ROOT,
@@ -544,7 +544,7 @@ def test_real_comfy_latent_nodes_flow_through_torchless_engine() -> None:
         worker = IsolatedWorker(
             COMPAT_MANIFEST,
             registry,
-            python=comfy_python(),
+            python=execution_python(),
             extra_env={
                 "DINKSTER_COMFYUI_ROOT": COMFY_ROOT,
                 "DINKSTER_COMFY_NODES": "EmptyLatentImage,LatentUpscale",
@@ -625,7 +625,7 @@ def test_real_comfy_image_renders_png_in_torchless_engine() -> None:
         worker = IsolatedWorker(
             COMPAT_MANIFEST,
             registry,
-            python=comfy_python(),
+            python=execution_python(),
             extra_env={
                 "DINKSTER_COMFYUI_ROOT": COMFY_ROOT,
                 "DINKSTER_COMFY_NODES": "EmptyImage",
@@ -685,7 +685,7 @@ def test_real_comfy_mask_renders_png_in_torchless_engine() -> None:
         worker = IsolatedWorker(
             COMPAT_MANIFEST,
             registry,
-            python=comfy_python(),
+            python=execution_python(),
             extra_env={
                 "DINKSTER_COMFYUI_ROOT": COMFY_ROOT,
                 "DINKSTER_COMFY_NODES": "SolidMask",
@@ -854,8 +854,8 @@ def test_daemon_runs_classic_sd15_controlnet_on_the_native_arm(tmp_path: Path) -
             str(library_root),
             "--comfy-root",
             COMFY_ROOT,
-            "--comfy-python",
-            comfy_python(),
+            "--execution-python",
+            execution_python(),
             "--aimdo",
             "off",
             "--strict-packs",
@@ -1183,7 +1183,7 @@ def _composed_compat_specs(
 ) -> list[PackSpec]:
     generation, spec = comfy_compat_specs(
         COMFY_ROOT,
-        python=comfy_python(),
+        python=execution_python(),
         comfy_nodes=comfy_nodes,
     )
     return [
@@ -1903,7 +1903,7 @@ print(json.dumps({
 """
     env = {**os.environ, "PYTHONPATH": dinkster_pythonpath()}
     completed = subprocess.run(
-        [comfy_python(), "-c", code],
+        [execution_python(), "-c", code],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -2069,7 +2069,7 @@ def pinned_worker(device: int) -> IsolatedWorker:
     return IsolatedWorker(
         COMPAT_MANIFEST,
         registry,
-        python=comfy_python(),
+        python=execution_python(),
         extra_env={
             "DINKSTER_COMFYUI_ROOT": COMFY_ROOT,
             # sd_branch is all-native, loader included (see the comment
@@ -2242,7 +2242,7 @@ def test_serving_composer_runs_concurrent_jobs_on_cuda_replicas() -> None:
     async def scenario() -> None:
         specs = comfy_compat_specs(
             COMFY_ROOT,
-            python=comfy_python(),
+            python=execution_python(),
             comfy_nodes=("CLIPTextEncode",),
             multi_device_cuda_indices=(0, 1),
         )
@@ -2297,7 +2297,7 @@ def test_sd15_single_job_guidance_matches_split_reference_golden(
     async def execute(single_job: bool) -> tuple[bytes, bytes]:
         specs = comfy_compat_specs(
             COMFY_ROOT,
-            python=comfy_python(),
+            python=execution_python(),
             comfy_nodes=(
                 "CLIPTextEncode",
                 "CreateHookLora",
@@ -2499,7 +2499,7 @@ def test_current_upstream_async_pack_executes_and_times_out() -> None:
         composition = await compose_serving(
             comfy_compat_specs(
                 COMFY_ROOT,
-                python=comfy_python(),
+                python=execution_python(),
                 comfy_nodes=["EmptyImage"],
                 legacy_packs=[testing_pack],
             )
@@ -2563,7 +2563,7 @@ def test_current_upstream_async_lazy_check_executes() -> None:
         composition = await compose_serving(
             comfy_compat_specs(
                 COMFY_ROOT,
-                python=comfy_python(),
+                python=execution_python(),
                 comfy_nodes=["EmptyImage"],
                 legacy_packs=[testing_pack],
             )
@@ -2621,7 +2621,7 @@ def test_composed_server_serves_comfy_compat_with_provenance() -> None:
     async def scenario() -> None:
         specs = comfy_compat_specs(
             COMFY_ROOT,
-            python=comfy_python(),
+            python=execution_python(),
             comfy_nodes=["EmptyLatentImage", "LatentUpscale"],
             legacy_packs=[RGTHREE_PACK] if with_legacy else (),
         )
@@ -2731,7 +2731,7 @@ def test_unmodified_rgthree_pack_runs_in_quarantine(tmp_path: Path) -> None:
         worker = IsolatedWorker(
             LEGACY_MANIFEST,
             registry,
-            python=comfy_python(),
+            python=execution_python(),
             extra_env={
                 "DINKSTER_COMFYUI_ROOT": COMFY_ROOT,
                 "DINKSTER_LEGACY_PACKS": RGTHREE_PACK,
@@ -2810,7 +2810,7 @@ def test_real_v3_nodes_execute_through_compat() -> None:
         worker = IsolatedWorker(
             COMPAT_MANIFEST,
             registry,
-            python=comfy_python(),
+            python=execution_python(),
             extra_env={
                 "DINKSTER_COMFYUI_ROOT": COMFY_ROOT,
                 "DINKSTER_COMFY_NODES": "StringConcatenate,StringLength",
@@ -2856,7 +2856,7 @@ def test_comfy_switch_catalog_and_pruning() -> None:
         worker = IsolatedWorker(
             COMPAT_MANIFEST,
             registry,
-            python=comfy_python(),
+            python=execution_python(),
             extra_env={
                 "DINKSTER_COMFYUI_ROOT": COMFY_ROOT,
                 "PYTHONPATH": dinkster_pythonpath(),
@@ -3011,7 +3011,7 @@ def test_resize_image_mask_defaults_to_native_semantics_end_to_end() -> None:
         composition = await compose_serving(
             comfy_compat_specs(
                 COMFY_ROOT,
-                python=comfy_python(),
+                python=execution_python(),
                 comfy_nodes=["ResizeImageMaskNode", "EmptyImage", "SolidMask", "MaskToImage"],
             )
         )

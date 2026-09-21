@@ -206,8 +206,8 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --locked --package dinkster-p2p
-      - run: uv run --locked --package dinkster-p2p pytest -q tests/test_p2p_artifact_smoke.py
+      - run: uv sync --locked
+      - run: uv run --locked pytest -q tests/test_p2p_artifact_smoke.py
 
   # Intel oneMKL and AMD AVX-512 MLAS dispatch differ from the CPU goldens.
   # Require the golden CPU contract before installing or running the suite.

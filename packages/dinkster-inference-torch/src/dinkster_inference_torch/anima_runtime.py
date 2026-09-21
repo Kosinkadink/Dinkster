@@ -351,6 +351,7 @@ class _AnimaLatentAdapter:
 
     def prepare(
         self,
+        runtime: object,
         family: ModelFamily,
         *,
         latent: CustomSamplingLatentValue,
@@ -365,6 +366,7 @@ class _AnimaLatentAdapter:
             names = ", ".join(sorted(context.options))
             raise AnimaRuntimeError(f"Anima sampling does not accept adapter options: {names}")
         inputs = self.inner.prepare(
+            runtime,
             family,
             latent=latent,
             noise=noise,
@@ -389,8 +391,10 @@ class _AnimaLatentAdapter:
         self,
         inputs: SamplingExecutionInputs,
         output: torch.Tensor,
-        denoised: torch.Tensor | None,
+        denoised: object | None,
     ) -> CustomSamplingResult[torch.Tensor]:
+        if denoised is not None and type(denoised) is not torch.Tensor:
+            raise TypeError("Anima denoised state must contain a torch.Tensor")
         return self.inner.finish(inputs, output, denoised)
 
 

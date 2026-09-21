@@ -92,8 +92,8 @@ __all__ = [
     "ComfyModelRoot",
     "comfy_compat_specs",
     "comfy_model_roots",
-    "comfy_python",
     "dinkster_pythonpath",
+    "execution_python",
     "find_compat_manifest",
     "legacy_pack_info",
     "register_comfy_host_types",
@@ -133,7 +133,7 @@ class ComfyModelRoot(NamedTuple):
     path: Path
 
 
-class _ComfyPythonSelection(NamedTuple):
+class _ExecutionPythonSelection(NamedTuple):
     interpreter: str
     step: str
 
@@ -270,22 +270,39 @@ def find_native_manifest() -> Path:
     return manifest
 
 
-def _comfy_python_selection(comfy_root: Path, explicit: str | None = None) -> _ComfyPythonSelection:
-    """Resolve the compat interpreter and retain the selecting configuration step."""
+RETIRED_EXECUTION_PYTHON_ENV = "DINKSTER_COMFYUI_PYTHON"
+RETIRED_EXECUTION_PYTHON_ENV_MESSAGE = (
+    "DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead"
+)
+RETIRED_EXECUTION_PYTHON_FLAG_MESSAGE = "--comfy-python is retired; pass --execution-python instead"
+
+
+def _reject_retired_execution_python_env() -> None:
+    """The pre-rename environment variable is retired without an alias; a set
+    but ignored variable would silently run the wrong interpreter."""
+    if RETIRED_EXECUTION_PYTHON_ENV in os.environ:
+        raise CompositionError(RETIRED_EXECUTION_PYTHON_ENV_MESSAGE)
+
+
+def _execution_python_selection(
+    comfy_root: Path, explicit: str | None = None
+) -> _ExecutionPythonSelection:
+    """Resolve the execution-arm interpreter and retain the selecting configuration step."""
+    _reject_retired_execution_python_env()
     if explicit:
-        return _ComfyPythonSelection(explicit, "--comfy-python")
-    env = os.environ.get("DINKSTER_COMFYUI_PYTHON", "")
+        return _ExecutionPythonSelection(explicit, "--execution-python")
+    env = os.environ.get("DINKSTER_EXECUTION_PYTHON", "")
     if env:
-        return _ComfyPythonSelection(env, "DINKSTER_COMFYUI_PYTHON")
+        return _ExecutionPythonSelection(env, "DINKSTER_EXECUTION_PYTHON")
     venv_python = comfy_root / "venv" / "bin" / "python"
     if venv_python.exists():
-        return _ComfyPythonSelection(str(venv_python), "<comfy-root>/venv/bin/python")
-    return _ComfyPythonSelection(sys.executable, "current Python")
+        return _ExecutionPythonSelection(str(venv_python), "<comfy-root>/venv/bin/python")
+    return _ExecutionPythonSelection(sys.executable, "current Python")
 
 
-def comfy_python(comfy_root: Path, explicit: str | None = None) -> str:
+def execution_python(comfy_root: Path, explicit: str | None = None) -> str:
     """The interpreter used by legacy and compatibility children."""
-    return _comfy_python_selection(comfy_root, explicit).interpreter
+    return _execution_python_selection(comfy_root, explicit).interpreter
 
 
 _COMFY_REQUIREMENTS_SCRIPT = r"""
@@ -333,7 +350,7 @@ print("{}")
 """
 
 
-def _probe_comfy_requirements(comfy_root: Path, selection: _ComfyPythonSelection) -> None:
+def _probe_comfy_requirements(comfy_root: Path, selection: _ExecutionPythonSelection) -> None:
     requirements = comfy_root / "requirements.txt"
     if not requirements.is_file():
         return
@@ -480,7 +497,7 @@ def comfy_model_roots(
     """
     root = Path(comfy_root).resolve()
     manifest = find_compat_manifest("dinkster-pack.toml")
-    selection = _comfy_python_selection(root, python)
+    selection = _execution_python_selection(root, python)
     interpreter = selection.interpreter
     try:
         preflight_interpreter(interpreter)
@@ -594,6 +611,7 @@ def comfy_compat_specs(
     optionally filters the v1 translation (DINKSTER_COMFY_NODES) - mostly a
     test/bring-up knob.
     """
+    _reject_retired_execution_python_env()
     root = Path(comfy_root) if comfy_root is not None else None
     if root is not None and not root.is_dir():
         raise CompositionError(f"ComfyUI root not found: {root}")
@@ -612,15 +630,15 @@ def comfy_compat_specs(
             ),
         )
     selection = (
-        _comfy_python_selection(root, python)
+        _execution_python_selection(root, python)
         if root is not None
-        else _ComfyPythonSelection(
-            python or os.environ.get("DINKSTER_COMFYUI_PYTHON") or sys.executable,
+        else _ExecutionPythonSelection(
+            python or os.environ.get("DINKSTER_EXECUTION_PYTHON") or sys.executable,
             (
-                "--comfy-python"
+                "--execution-python"
                 if python
-                else "DINKSTER_COMFYUI_PYTHON"
-                if os.environ.get("DINKSTER_COMFYUI_PYTHON")
+                else "DINKSTER_EXECUTION_PYTHON"
+                if os.environ.get("DINKSTER_EXECUTION_PYTHON")
                 else "current Python"
             ),
         )
