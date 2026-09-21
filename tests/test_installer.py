@@ -1755,7 +1755,7 @@ def test_cli_reproduce_refuses_bad_stamps(
     # unavailable bytes with un-refetchable provenance
     ghost = _stamped_workflow(
         tmp_path / "ghost.json",
-        {"ghost": {"artifactDigest": "sha256:" + "0" * 64, "source": "registry"}},
+        {"ghost": {"artifactDigest": "blake3:" + "0" * 64, "source": "registry"}},
     )
     with pytest.raises(SystemExit):
         run_cli("--root", root, "reproduce", "--no-venv", "--yes", str(ghost))
@@ -1810,9 +1810,9 @@ def test_publish_preflight_refuses_and_no_preflight_submits(
     monkeypatch.setattr(manager, "diagnose", lambda *_args, **_kwargs: report)
     submitted: list[str] = []
 
-    def publish(_registry, _archive, digest: str, _version: str) -> PublishVerdict:
-        submitted.append(digest)
-        return PublishVerdict("accepted", ())
+    def publish(_registry, _archive, pack_name: str, _version: str) -> PublishVerdict:
+        submitted.append(pack_name)
+        return PublishVerdict("queued", (), "candidate-1")
 
     monkeypatch.setattr(manager, "publish_release", publish)
     with pytest.raises(SystemExit) as refusal:
@@ -1838,44 +1838,10 @@ def test_publish_preflight_refuses_and_no_preflight_submits(
         str(pack),
     )
     assert len(submitted) == 1
-    assert f"published demo 1.2.3 {submitted[0]}" in capsys.readouterr().out
-
-
-def test_publish_admission_rejection_surfaces_registry_findings_verbatim(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from dinkster import manager
-    from dinkster.registries import PublishFinding, PublishVerdict
-
-    pack = write_pack(tmp_path / "demo", "demo")
-    monkeypatch.setattr(
-        manager,
-        "publish_release",
-        lambda *_args, **_kwargs: PublishVerdict(
-            "rejected",
-            (
-                PublishFinding("registry.doctor-failed", "pack import failed"),
-                PublishFinding("registry.namespace-denied", "claim is not granted"),
-            ),
-        ),
-    )
-    with pytest.raises(SystemExit) as refusal:
-        run_cli(
-            "--registry",
-            "https://registry.invalid",
-            "publish",
-            "--version",
-            "1.0.0",
-            "--no-preflight",
-            str(pack),
-        )
-    assert refusal.value.code == 1
-    assert capsys.readouterr().out.splitlines() == [
-        "registry.doctor-failed: pack import failed",
-        "registry.namespace-denied: claim is not granted",
-    ]
+    output = capsys.readouterr().out
+    assert submitted == ["demo"]
+    assert "submitted demo 1.2.3 blake3:" in output
+    assert output.rstrip().endswith("as candidate candidate-1")
 
 
 def test_publish_usage_error_exits_two(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -2098,7 +2064,7 @@ def _serve_artifacts(
     (path, Authorization header) per request. Caller must shutdown()."""
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
+        def respond(self) -> None:
             requests.append((self.path, self.headers.get("Authorization")))
             blob = files.get(self.path)
             if blob is None:
@@ -2110,6 +2076,12 @@ def _serve_artifacts(
             self.end_headers()
             self.wfile.write(blob)
 
+        def do_GET(self) -> None:
+            self.respond()
+
+        def do_POST(self) -> None:
+            self.respond()
+
         def log_message(self, format: str, *args: object) -> None:
             pass  # keep test output clean
 
@@ -2118,33 +2090,45 @@ def _serve_artifacts(
     return server
 
 
-def test_http_registry_fetcher_is_content_addressed(tmp_path: Path) -> None:
-    """The real fetcher asks for exactly /artifacts/<hex>.zip - the digest
-    is the whole request, so there is nothing to resolve and nothing a
-    server can substitute that verification would not catch. Failures
-    (404, refused connection) surface as InstallError; a token rides as a
-    bearer header; non-http endpoints refuse at construction."""
+def _download_ticket(entry: LockedPack) -> bytes:
+    return json.dumps(
+        {
+            "packName": entry.pack,
+            "version": entry.version,
+            "artifactDigest": entry.artifact_digest,
+            "url": f"/v1/artifacts/{entry.artifact_digest}",
+            "requiredHeaders": {},
+        }
+    ).encode()
+
+
+def test_http_registry_fetcher_uses_verified_download_ticket(tmp_path: Path) -> None:
+    """The fetcher acquires a ticket for the exact locked release and then
+    downloads bytes that the installer independently verifies."""
     installer = make_installer(tmp_path)
     demo = write_pack(tmp_path / "demo", "demo")
     entry, archive = lock_local_pack(demo, installer.artifacts_dir)
     data = archive.read_bytes()
-    hex_digest = entry.artifact_digest.partition(":")[2]
     release = replace(entry, source="registry", version="1.0.0")
 
     requests: list[tuple[str, str | None]] = []
-    server = _serve_artifacts({f"/artifacts/{hex_digest}.zip": data}, requests)
+    ticket_path = "/v1/packs/demo/versions/1.0.0/download-tickets"
+    artifact_path = f"/v1/artifacts/{release.artifact_digest}"
+    server = _serve_artifacts(
+        {ticket_path: _download_ticket(release), artifact_path: data}, requests
+    )
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
         fetch = http_registry_fetcher(endpoint + "/")  # trailing slash normalized
         assert fetch(release) == data
-        assert requests == [(f"/artifacts/{hex_digest}.zip", None)]
+        assert requests == [(ticket_path, None), (artifact_path, None)]
 
         authed = http_registry_fetcher(endpoint, token="s3cret")
         assert authed(release) == data
-        assert requests[-1] == (f"/artifacts/{hex_digest}.zip", "Bearer s3cret")
+        assert requests[-2:] == [(ticket_path, "Bearer s3cret"), (artifact_path, None)]
 
-        missing = replace(release, artifact_digest="sha256:" + "0" * 64)
-        with pytest.raises(InstallError, match="registry download of demo .* failed"):
+        missing = replace(release, artifact_digest="blake3:" + "0" * 64)
+        with pytest.raises(InstallError, match=r"registry download of demo@1\.0\.0 .* failed"):
             fetch(missing)
     finally:
         server.shutdown()
@@ -2183,7 +2167,12 @@ def test_cli_restore_downloads_registry_sources(
     assert "cannot be re-acquired" in err and "--registry" in err
 
     requests: list[tuple[str, str | None]] = []
-    server = _serve_artifacts({f"/artifacts/{hex_digest}.zip": data}, requests)
+    locked = Lockfile.from_record_json(json.dumps(document["lockfile"])).packs[0]
+    ticket_path = f"/v1/packs/{locked.pack}/versions/{locked.version}/download-tickets"
+    artifact_path = f"/v1/artifacts/{locked.artifact_digest}"
+    server = _serve_artifacts(
+        {ticket_path: _download_ticket(locked), artifact_path: data}, requests
+    )
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
         fresh = tmp_path / "fresh-root"
@@ -2201,10 +2190,16 @@ def test_cli_restore_downloads_registry_sources(
         assert "re-acquire demo from registry" in out
         assert "re-acquired demo: digest verified" in out
         assert "activated generation 1" in out
-        assert requests == [(f"/artifacts/{hex_digest}.zip", None)]
+        assert requests == [(ticket_path, None), (artifact_path, None)]
 
         # a lying server: different bytes refuse, nothing activates
-        lying = _serve_artifacts({f"/artifacts/{hex_digest}.zip": b"different bytes entirely"}, [])
+        lying = _serve_artifacts(
+            {
+                ticket_path: _download_ticket(locked),
+                artifact_path: b"different bytes entirely",
+            },
+            [],
+        )
         try:
             bad_root = tmp_path / "bad-root"
             with pytest.raises(SystemExit):
@@ -2382,10 +2377,11 @@ def test_parse_registry_spec_grammar() -> None:
     from dinkster.registries import parse_registry_spec
 
     assert parse_registry_spec("img-tools@1.0.0") == ("img-tools", "1.0.0")
+    assert parse_registry_spec("img-tools@1.0rc1") == ("img-tools", "1.0rc1")
     assert parse_registry_spec("img.tools@2.10.3") == ("img-tools", "2.10.3")  # canonicalized
     for not_a_spec in (
         "demo",  # no version
-        "demo@1.0",  # not major.minor.patch
+        "demo@1.0+local",  # local versions are not public registry versions
         "demo@v1.0.0",  # not a strict version
         "Demo@1.0.0",  # the name grammar is lowercase
         "./demo@1.0.0",  # explicit path escape hatch
@@ -2398,11 +2394,10 @@ def test_parse_registry_spec_grammar() -> None:
 
 def _release_record(entry: LockedPack, **overrides: object) -> bytes:
     record: dict[str, object] = {
-        "pack": entry.pack,
+        "packName": entry.pack,
         "version": entry.version,
-        "artifactDigest": entry.artifact_digest,
-        "publisher": entry.publisher,
-        "claims": list(entry.claims),
+        "artifact": {"digest": entry.artifact_digest},
+        "publishedBy": {"principalId": entry.publisher},
         "nodeTypes": [f"{entry.pack}.node"],
     }
     record.update(overrides)
@@ -2420,18 +2415,20 @@ def test_resolve_release_is_exact_or_refusal(tmp_path: Path) -> None:
     demo = write_pack(tmp_path / "demo", "demo")
     entry, _ = lock_local_pack(demo, installer.artifacts_dir)
     release = replace(entry, version="1.0.0", publisher="acme")
-    good = "/index/packs/demo/versions/1.0.0"
+    good = "/v1/packs/demo/versions/1.0.0"
 
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(
         {
             good: _release_record(release),
-            "/index/packs/demo/versions/2.0.0": _release_record(release, version="9.9.9"),
-            "/index/packs/demo/versions/3.0.0": _release_record(
-                release, version="3.0.0", artifactDigest="md5:1"
+            "/v1/packs/demo/versions/2.0.0": _release_record(release, version="9.9.9"),
+            "/v1/packs/demo/versions/3.0.0": _release_record(
+                release, version="3.0.0", artifact={"digest": "md5:1"}
             ),
-            "/index/packs/demo/versions/4.0.0": b"not json",
-            "/index/packs/demo/versions/5.0.0": _release_record(release, publisher=7),
+            "/v1/packs/demo/versions/4.0.0": b"not json",
+            "/v1/packs/demo/versions/5.0.0": _release_record(
+                release, publishedBy={"principalId": 7}
+            ),
         },
         requests,
     )
@@ -2467,22 +2464,18 @@ def test_browse_packs_pages_the_index_and_refuses_malformed(tmp_path: Path) -> N
     from dinkster.registries import NamedRegistry, browse_packs
 
     page_one = {
-        "packs": [
-            {"pack": "img-tools", "publisher": "acme", "latestVersion": "2.0.0", "versions": 2}
-        ],
-        "cursor": "abc",
+        "items": [{"name": "img-tools", "owner": {"slug": "acme"}, "latestVersion": "2.0.0"}],
+        "nextCursor": "abc",
     }
     page_two = {
-        "packs": [
-            {"pack": "vid-tools", "publisher": "acme", "latestVersion": "1.0.0", "versions": 1}
-        ]
+        "items": [{"name": "vid-tools", "owner": {"slug": "acme"}, "latestVersion": "1.0.0"}]
     }
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(
         {
-            "/index/packs?q=tools&limit=1": json.dumps(page_one).encode(),
-            "/index/packs?q=tools&limit=1&cursor=abc": json.dumps(page_two).encode(),
-            "/index/packs?limit=50": json.dumps({"packs": "nope"}).encode(),
+            "/v1/packs?q=tools&limit=1": json.dumps(page_one).encode(),
+            "/v1/packs?q=tools&limit=1&cursor=abc": json.dumps(page_two).encode(),
+            "/v1/packs?limit=50": json.dumps({"items": "nope"}).encode(),
         },
         requests,
     )
@@ -2493,14 +2486,13 @@ def test_browse_packs_pages_the_index_and_refuses_malformed(tmp_path: Path) -> N
         first = browse_packs(registry, query="tools", limit=1)
         assert [entry.pack for entry in first.packs] == ["img-tools"]
         assert first.packs[0].latest_version == "2.0.0"
-        assert first.packs[0].versions == 2
         assert first.cursor == "abc"
 
         second = browse_packs(registry, query="tools", limit=1, cursor=first.cursor)
         assert [entry.pack for entry in second.packs] == ["vid-tools"]
         assert second.cursor == ""  # listing complete
 
-        with pytest.raises(InstallError, match="without a packs list"):
+        with pytest.raises(InstallError, match="without an items list"):
             browse_packs(registry)
         with pytest.raises(InstallError, match="failed: HTTP 404"):
             browse_packs(registry, query="missing-page")
@@ -2577,10 +2569,14 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
     demo = write_pack(tmp_path / "demo", "demo")
     entry, archive = lock_local_pack(demo, installer.artifacts_dir)
     data = archive.read_bytes()
-    hex_digest = entry.artifact_digest.partition(":")[2]
+    release = replace(entry, source="registry:corp")
+    ticket_path = f"/v1/packs/{release.pack}/versions/{release.version}/download-tickets"
+    artifact_path = f"/v1/artifacts/{release.artifact_digest}"
 
     requests: list[tuple[str, str | None]] = []
-    server = _serve_artifacts({f"/artifacts/{hex_digest}.zip": data}, requests)
+    server = _serve_artifacts(
+        {ticket_path: _download_ticket(release), artifact_path: data}, requests
+    )
     try:
         endpoint = f"http://127.0.0.1:{server.server_port}"
         monkeypatch.setenv("CORP_TOKEN", "corp-secret")
@@ -2593,21 +2589,21 @@ def test_routing_fetcher_dispatches_on_recorded_provenance(
         )
         fetch = routing_registry_fetcher(config, None)
 
-        assert fetch(replace(entry, source="registry:corp")) == data
-        assert requests[-1][1] == "Bearer corp-secret"
-        assert fetch(replace(entry, source="registry")) == data  # default
-        assert fetch(replace(entry, source=f"registry:{endpoint}")) == data
-        assert requests[-1][1] == "Bearer corp-secret"  # endpoint matches corp
+        assert fetch(release) == data
+        assert requests[-2:] == [(ticket_path, "Bearer corp-secret"), (artifact_path, None)]
+        assert fetch(replace(release, source="registry")) == data  # default
+        assert fetch(replace(release, source=f"registry:{endpoint}")) == data
+        assert requests[-2:] == [(ticket_path, "Bearer corp-secret"), (artifact_path, None)]
 
         with pytest.raises(InstallError, match="registry 'ghost'.*not configured.*corp"):
-            fetch(replace(entry, source="registry:ghost"))
+            fetch(replace(release, source="registry:ghost"))
     finally:
         server.shutdown()
 
     from dinkster.registries import RegistryConfig
 
     with pytest.raises(InstallError, match="names no specific registry"):
-        routing_registry_fetcher(RegistryConfig(), None)(replace(entry, source="registry"))
+        routing_registry_fetcher(RegistryConfig(), None)(replace(release, source="registry"))
 
 
 def test_cli_install_resolves_pack_version_from_named_registry(
@@ -2623,13 +2619,15 @@ def test_cli_install_resolves_pack_version_from_named_registry(
     entry, archive = lock_local_pack(demo, scratch.artifacts_dir)
     data = archive.read_bytes()
     release = replace(entry, version="1.0.0", publisher="acme")
-    hex_digest = entry.artifact_digest.partition(":")[2]
+    ticket_path = "/v1/packs/demo/versions/1.0.0/download-tickets"
+    artifact_path = f"/v1/artifacts/{entry.artifact_digest}"
 
     requests: list[tuple[str, str | None]] = []
     server = _serve_artifacts(
         {
-            "/index/packs/demo/versions/1.0.0": _release_record(release),
-            f"/artifacts/{hex_digest}.zip": data,
+            "/v1/packs/demo/versions/1.0.0": _release_record(release),
+            ticket_path: _download_ticket(release),
+            artifact_path: data,
         },
         requests,
     )
@@ -2654,8 +2652,9 @@ def test_cli_install_resolves_pack_version_from_named_registry(
         assert locked.artifact_digest == entry.artifact_digest
         # both the index lookup and the artifact download carried the credential
         assert [(path, auth) for path, auth in requests] == [
-            ("/index/packs/demo/versions/1.0.0", "Bearer corp-secret"),
-            (f"/artifacts/{hex_digest}.zip", "Bearer corp-secret"),
+            ("/v1/packs/demo/versions/1.0.0", "Bearer corp-secret"),
+            (ticket_path, "Bearer corp-secret"),
+            (artifact_path, None),
         ]
 
         with pytest.raises(SystemExit):

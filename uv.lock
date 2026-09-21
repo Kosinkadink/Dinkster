@@ -1517,11 +1517,17 @@ name = "dinkster-registry"
 version = "0.0.1"
 source = { editable = "packages/dinkster-registry" }
 dependencies = [
+    { name = "blake3" },
     { name = "dinkster-schema" },
+    { name = "packaging" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "dinkster-schema", editable = "packages/dinkster-schema" }]
+requires-dist = [
+    { name = "blake3", specifier = ">=0.4" },
+    { name = "dinkster-schema", editable = "packages/dinkster-schema" },
+    { name = "packaging", specifier = ">=24" },
+]
 
 [[package]]
 name = "dinkster-schema"
