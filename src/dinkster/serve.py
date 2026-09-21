@@ -1652,9 +1652,11 @@ def main(argv: list[str] | None = None) -> None:
                 sandbox_mounts.append(mount)
                 redaction_roots.append((f"<mount:{model_root.mount_id}>", model_root.path))
         if mount_table.output_mount is None:
-            if mount_table.get("output") is not None:
+            output_mount = mount_table.get("output")
+            comfy_output_mount = mount_table.get("comfy-output")
+            if output_mount is not None and output_mount.mode == "readwrite":
                 mount_table.select_output_mount("output")
-            elif mount_table.get("comfy-output") is not None:
+            elif comfy_output_mount is not None and comfy_output_mount.mode == "readwrite":
                 mount_table.select_output_mount("comfy-output", require_config=False)
         mount_service = MountService(
             mount_table, mounts_config, allow_changes=args.allow_mount_changes

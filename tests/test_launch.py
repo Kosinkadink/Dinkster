@@ -49,12 +49,14 @@ def test_setup_reuses_an_existing_mount_for_the_default_output_path(
     monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
     library, _ = setup.default_roots()
     library.mkdir(parents=True)
-    existing = MountDef("existing-output", library / "output", "readwrite")
+    existing = MountDef("existing-output", library / "output", "read")
     (library / "mounts.toml").write_text(dump_mounts((existing,)), "utf-8")
 
     setup.main([])
 
-    assert load_mounts(library / "mounts.toml") == (existing,)
+    assert load_mounts(library / "mounts.toml") == (
+        MountDef("existing-output", library / "output", "readwrite"),
+    )
     assert load_output_mount(library / "mounts.toml") == "existing-output"
 
 

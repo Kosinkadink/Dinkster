@@ -28,11 +28,26 @@ def main(argv: list[str] | None = None) -> int:
     output_root.mkdir(parents=True, exist_ok=True)
     mounts_path = library_root / "mounts.toml"
     mounts = list(load_mounts(mounts_path))
-    if not any(mount.id == "output" or mount.path == output_root for mount in mounts):
-        mounts.append(MountDef(id="output", path=output_root, mode="readwrite"))
-    default_output_mount = next(
-        mount.id for mount in mounts if mount.id == "output" or mount.path == output_root
+    default_output_index = next(
+        (
+            index
+            for index, mount in enumerate(mounts)
+            if mount.id == "output" or mount.path == output_root
+        ),
+        None,
     )
+    if default_output_index is None:
+        mounts.append(MountDef(id="output", path=output_root, mode="readwrite"))
+        default_output_index = len(mounts) - 1
+    elif mounts[default_output_index].mode != "readwrite":
+        mount = mounts[default_output_index]
+        mounts[default_output_index] = MountDef(
+            id=mount.id,
+            path=mount.path,
+            mode="readwrite",
+            priority=mount.priority,
+        )
+    default_output_mount = mounts[default_output_index].id
     output_mount = load_output_mount(mounts_path) or default_output_mount
     mounts_path.write_text(dump_mounts(mounts, output_mount=output_mount), "utf-8")
     Installer(install_root)
