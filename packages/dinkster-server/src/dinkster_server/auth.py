@@ -701,7 +701,7 @@ _CATALOG_PATHS = frozenset(
         "/api/extensions/snapshot",
     }
 )
-_CATALOG_PREFIXES = ("/api/choices/", "/api/packs/")
+_CATALOG_PREFIXES = ("/api/choices/", "/api/packs/", "/packs/")
 
 
 def required_capability(method: str, path: str) -> str | object | None:
