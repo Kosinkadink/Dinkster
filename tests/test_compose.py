@@ -1293,15 +1293,15 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:bd961acec9597f23a764a7c20a5054a81ca6284655d2a366ec296679f541eff7",
+            "blake3:4b2babc83d81f1275238b69031fd1c8a5e5aed07065ed75b56fc432c23a8f064",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:b488d997b2b3ed69494f654648b8976fc8142f4c8fb12a35f74b011701d7f755",
+            "blake3:b33ba8c8d16f1e637b39f1fe0de863131b32c6eff898c63440907e50217a99bd",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:c101d7403b38a6915a5f5a796b29d1d6a5771695ca1e33b31d154f62e351f7a2",
+            "blake3:2f872d26be5cf8dc3a592384e22fe3d227f516e93f1313d49dc8a3354bbad3cb",
         ),
         (
             "dinkster-nodes-remote",
