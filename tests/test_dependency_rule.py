@@ -282,14 +282,15 @@ def test_one_way_dependencies() -> None:
 def test_server_uses_the_published_token_verifier_wheel() -> None:
     wheel_url = (
         "https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/"
-        "v0.1.0/dinkster_token_verifier-0.1.0-py3-none-any.whl"
+        "v0.1.1/dinkster_token_verifier-0.1.1-py3-none-any.whl"
     )
-    wheel_hash = "sha256:707cde6d82a26678e886817543959981295eb841e24cba6b0e06578c978f0d5e"
+    wheel_hash = "sha256:b10f09c26c113016b1633701c73958d6dbe41f7dca318d5677e449ec04a643ae"
+    pinned_url = f"{wheel_url}#sha256={wheel_hash.removeprefix('sha256:')}"
     server_project = tomllib.loads(
         (REPO_ROOT / "packages/dinkster-server/pyproject.toml").read_text(encoding="utf-8")
     )
-    assert "dinkster-token-verifier==0.1.0" in server_project["project"]["dependencies"]
-    assert server_project["tool"]["uv"]["sources"]["dinkster-token-verifier"] == {"url": wheel_url}
+    assert f"dinkster-token-verifier @ {pinned_url}" in server_project["project"]["dependencies"]
+    assert "dinkster-token-verifier" not in server_project["tool"]["uv"]["sources"]
     assert "dinkster-identity" not in server_project["tool"]["uv"]["sources"]
 
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))

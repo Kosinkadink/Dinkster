@@ -1428,7 +1428,7 @@ requires-dist = [
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
-    { name = "dinkster-token-verifier", url = "https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/v0.1.0/dinkster_token_verifier-0.1.0-py3-none-any.whl" },
+    { name = "dinkster-token-verifier", url = "https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/v0.1.1/dinkster_token_verifier-0.1.1-py3-none-any.whl" },
     { name = "dinkster-values", editable = "packages/dinkster-values" },
     { name = "pillow", specifier = ">=10" },
     { name = "pyobjc-framework-libdispatch", marker = "sys_platform == 'darwin'", specifier = ">=12.2.2" },
@@ -1449,8 +1449,8 @@ requires-dist = [{ name = "aiohttp", specifier = ">=3.10" }]
 
 [[package]]
 name = "dinkster-token-verifier"
-version = "0.1.0"
-source = { url = "https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/v0.1.0/dinkster_token_verifier-0.1.0-py3-none-any.whl" }
+version = "0.1.1"
+source = { url = "https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/v0.1.1/dinkster_token_verifier-0.1.1-py3-none-any.whl" }
 dependencies = [
     { name = "httpx" },
     { name = "joserfc" },
@@ -1458,7 +1458,7 @@ dependencies = [
     { name = "pydantic" },
 ]
 wheels = [
-    { url = "https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/v0.1.0/dinkster_token_verifier-0.1.0-py3-none-any.whl", hash = "sha256:707cde6d82a26678e886817543959981295eb841e24cba6b0e06578c978f0d5e" },
+    { url = "https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/v0.1.1/dinkster_token_verifier-0.1.1-py3-none-any.whl", hash = "sha256:b10f09c26c113016b1633701c73958d6dbe41f7dca318d5677e449ec04a643ae" },
 ]
 
 [package.metadata]
