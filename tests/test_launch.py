@@ -6,6 +6,7 @@ from pathlib import Path
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_mount
 
 from dinkster import launch, setup
 from dinkster.cli import main as cli_main
@@ -19,8 +20,27 @@ def test_setup_creates_the_default_launch_roots(tmp_path: Path, monkeypatch, cap
 
     library, packs = setup.default_roots()
     assert library.is_dir()
+    assert (library / "output").is_dir()
+    assert load_mounts(library / "mounts.toml") == (
+        MountDef(id="output", path=library / "output", mode="readwrite"),
+    )
+    assert load_output_mount(library / "mounts.toml") == "output"
     assert (packs / "generations").is_dir()
     assert "Run `dinkster`" in capsys.readouterr().out
+
+
+def test_setup_preserves_a_selected_alternate_output_mount(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
+    setup.main([])
+    library, _ = setup.default_roots()
+    alternate = library / "renders"
+    alternate.mkdir()
+    mounts = (*load_mounts(library / "mounts.toml"), MountDef("renders", alternate, "readwrite"))
+    (library / "mounts.toml").write_text(dump_mounts(mounts, output_mount="renders"), "utf-8")
+
+    setup.main([])
+
+    assert load_output_mount(library / "mounts.toml") == "renders"
 
 
 def test_bare_cli_launches_one_origin_and_opens_browser(
@@ -59,6 +79,7 @@ def test_bare_cli_launches_one_origin_and_opens_browser(
     assert args[args.index("--frontend-root") + 1] == str(bundle)
     assert "--prepare-stale-catalogs" in args
     assert "--disable-p2p" in args
+    assert "--allow-mount-changes" in args
     assert "--comfy-python" not in args
 
 

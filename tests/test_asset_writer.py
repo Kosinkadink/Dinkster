@@ -313,6 +313,19 @@ def test_written_digest_resolves_before_any_rescan(tmp_path: Path) -> None:
     assert library.resolve(ref.digest) == root / "fresh_00001.bin"
 
 
+def test_written_asset_is_listed_before_any_rescan(tmp_path: Path) -> None:
+    writer, root = make_writer(tmp_path)
+    library = LocalAssetLibrary(root, namespace="mounts/out")
+    library.scan()
+
+    writer.save_bytes({"mount": "out", "prefix": "fresh"}, b"hot", suffix=".bin")
+
+    assert [entry.virtual_path for entry in library.entries()] == ["mounts/out/fresh_00001.bin"]
+    assert [entry.virtual_path for entry in library.list_folder("mounts/out").entries] == [
+        "mounts/out/fresh_00001.bin"
+    ]
+
+
 def test_scan_absorbs_and_prunes_sidecar(tmp_path: Path) -> None:
     writer, root = make_writer(tmp_path)
     library = LocalAssetLibrary(root, namespace="mounts/out")
