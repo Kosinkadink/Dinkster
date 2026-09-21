@@ -186,7 +186,9 @@ def test_every_cpu_composite_caller_declares_its_model_test_allocation() -> None
 def test_torch_cpu_has_one_contract_guard_and_an_unconditional_suite() -> None:
     assert [name for name in JOBS if name.startswith("torch-cpu")] == ["torch-cpu"]
     job = JOBS["torch-cpu"]
-    assert set(job) == {"needs", "if", "runs-on", "env", "steps"}
+    # timeout-minutes bounds the whole job (comfy-vibe-station#245); the exact
+    # value is pinned in test_full_validation_pytest_and_demo_jobs_are_timeout_bounded
+    assert set(job) == {"needs", "if", "runs-on", "env", "timeout-minutes", "steps"}
     assert job["needs"] == "validation-plan"
     assert job["if"] == "needs.validation-plan.outputs.run-heavy == 'true'"
     assert job["runs-on"] == ["self-hosted", "Linux", "X64", "cpu-golden-avx2"]
