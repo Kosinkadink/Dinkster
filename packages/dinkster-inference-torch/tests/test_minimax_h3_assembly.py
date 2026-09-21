@@ -668,8 +668,7 @@ def test_diffusion_builder_binds_reference_split_precision_operations(
         assert selected[0] is operations
         assert isinstance(selected[1], CastOperations)
         assert selected[1].dtype is torch.float32
-        assert isinstance(selected[2], CastOperations)
-        assert selected[2].dtype is torch.float32
+        assert selected[2] is operations
 
 
 def test_verified_diffusion_declares_route_materialization_ceilings(

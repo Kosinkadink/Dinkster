@@ -1485,7 +1485,9 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 ),
                 seed=seed,
             )
-            context = model.preprocess_text_embeddings(prepared.context.to(device))
+            context = model.preprocess_text_embeddings(
+                prepared.context.to(device=device, dtype=self._compute_dtype)
+            )
             return lane_identity, context, dit
 
         def prepare_conditioning(

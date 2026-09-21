@@ -548,14 +548,14 @@ def _build_diffusion(
 ) -> MiniMaxH3DiT:
     if layout.config != MINIMAX_H3_CONFIG:
         raise MiniMaxH3SplitAssemblyError("diffusion builder requires exact H3 layout")
-    # The reference computes patch projections, text projection and
-    # refinement, and the final layer at float32 before joining the
-    # bfloat16 diffusion stream.
+    # The reference computes patch projections and the final layer at
+    # float32, while text projection and refinement use the selected
+    # diffusion dtype.
     fp32_operations = CastOperations(torch.float32)
     return assemble_minimax_h3_dit(
         operations=operations,
         fp32_operations=fp32_operations,
-        text_operations=fp32_operations,
+        text_operations=operations,
         time_embedding_kind=layout.time_embedding_kind,
         attention_selection=attention_selection,
     )

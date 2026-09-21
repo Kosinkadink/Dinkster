@@ -1292,8 +1292,10 @@ def test_h3_prepares_each_guidance_lane_once_for_a_multistep_run(
     target = _target()
     prepared = _condition_t2va(conditioner, target)
     negative = replace(prepared, context=torch.full_like(prepared.context, 5.0))
+    preprocessed_dtypes: list[torch.dtype] = []
 
     def mark_preprocessed(context: torch.Tensor) -> torch.Tensor:
+        preprocessed_dtypes.append(context.dtype)
         return context + 7.0
 
     monkeypatch.setattr(
@@ -1324,6 +1326,7 @@ def test_h3_prepares_each_guidance_lane_once_for_a_multistep_run(
     )
     assert calls == 2
     assert set(dit.calls) == {7.0, 12.0}
+    assert preprocessed_dtypes == [torch.bfloat16, torch.bfloat16]
 
 
 def test_h3_zero_denoise_validates_guidance_lanes_before_return() -> None:
