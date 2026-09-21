@@ -11,9 +11,6 @@ inputs:
   pytest-args:
     description: Additional pytest arguments for the inference and IPAdapter suites
     default: ""
-  identity-deploy-key:
-    description: Read-only dinkster-identity deploy key
-    required: true
   evidence-deploy-key:
     description: Read-only dinkster-evidence deploy key
     required: true
@@ -30,9 +27,6 @@ runs:
       with:
         evidence-deploy-key: ${{ inputs.evidence-deploy-key }}
         coverage: "false"
-    - uses: ./.github/actions/configure-dinkster-identity
-      with:
-        deploy-key: ${{ inputs.identity-deploy-key }}
     - uses: astral-sh/setup-uv@v5
       with:
         python-version: "3.12"
