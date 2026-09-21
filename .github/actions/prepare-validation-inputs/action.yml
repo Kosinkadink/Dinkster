@@ -19,7 +19,7 @@ runs:
           throw 'Git Bash is required for validation input preparation'
         }
         $bashDirectory >> $env:GITHUB_PATH
-    - uses: ./.github/actions/configure-dinkster-identity
+    - uses: ./.github/actions/configure-private-repository
       with:
         repository: Kosinkadink/dinkster-evidence
         deploy-key: ${{ inputs.evidence-deploy-key }}

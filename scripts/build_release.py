@@ -119,33 +119,6 @@ def build_frontend_wheel(
     return wheels[0]
 
 
-def build_identity_wheel(
-    root: Path, identity_root: Path, expected_commit: str, output: Path, uv: str
-) -> Path:
-    name, version = project_metadata(identity_root / "pyproject.toml")
-    lock = tomllib.loads((root / "uv.lock").read_text(encoding="utf-8"))
-    identity = next(package for package in lock["package"] if package["name"] == name)
-    source = identity["source"].get("git", "")
-    match = re.fullmatch(
-        r"https://github.com/Kosinkadink/dinkster-identity.git\?rev=([0-9a-f]{40})#\1", source
-    )
-    if (
-        name != "dinkster-identity"
-        or version != identity["version"]
-        or match is None
-        or match[1] != expected_commit
-        or git_head(identity_root) != expected_commit
-    ):
-        raise ValueError("identity source does not match the locked release dependency")
-    subprocess.run(
-        [uv, "build", "--wheel", "--out-dir", str(output), str(identity_root)], check=True
-    )
-    wheels = sorted(output.glob(f"dinkster_identity-{version}-*.whl"))
-    if len(wheels) != 1:
-        raise ValueError("identity build did not produce exactly one wheel")
-    return wheels[0]
-
-
 def build_source_archive(root: Path, version: str, output: Path) -> Path:
     archive = output / f"dinkster-source-{version}.zip"
     with tempfile.TemporaryDirectory(prefix="dinkster-source-") as directory:
@@ -181,8 +154,6 @@ def write_constraints(root: Path, output: Path, wheels: list[Path], uv: str) -> 
                 "--no-dev",
                 "--no-emit-project",
                 "--no-emit-workspace",
-                "--no-emit-package",
-                "dinkster-identity",
                 "--no-annotate",
                 "--no-header",
                 "--output-file",
@@ -206,7 +177,6 @@ def build(
     tag: str,
     frontend_root: Path,
     frontend_dist: Path,
-    identity_root: Path,
     *,
     uv: str = "uv",
 ) -> dict[str, object]:
@@ -219,9 +189,8 @@ def build(
         check=True,
     )
     build_frontend_wheel(frontend_root, frontend_dist, version, sources["commit"], output, uv)
-    build_identity_wheel(root, identity_root, sources["identityCommit"], output, uv)
     wheels = sorted(output.glob("*.whl"))
-    expected = set(workspace_projects(root)) | {"dinkster-frontend", "dinkster-identity"}
+    expected = set(workspace_projects(root)) | {"dinkster-frontend"}
     actual = {wheel_metadata(wheel)[0] for wheel in wheels}
     if actual != expected:
         missing = sorted(expected - actual)
@@ -253,7 +222,6 @@ if __name__ == "__main__":
     parser.add_argument("--tag", required=True)
     parser.add_argument("--frontend-root", type=Path, required=True)
     parser.add_argument("--frontend-dist", type=Path, required=True)
-    parser.add_argument("--identity-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=Path("dist"))
     parser.add_argument("--uv", default="uv")
     args = parser.parse_args()
@@ -263,6 +231,5 @@ if __name__ == "__main__":
         args.tag,
         args.frontend_root.resolve(),
         args.frontend_dist.resolve(),
-        args.identity_root.resolve(),
         uv=args.uv,
     )
