@@ -57,11 +57,11 @@ the evidence repository. Generation fails if the evidence checkout or its
 
 ## Pull requests and full validation
 
-`.github/workflows/ci.yml` runs one job with a five-minute limit. After
-installing the locked workspace and fetching pinned evidence for type
-resolution (not model weights or coverage inputs), it runs
-`bash scripts/ci-fast.sh`: Ruff format, Ruff lint, Pyright, and this fixed
-path-based unit subset:
+`.github/workflows/ci.yml` runs a fast job with a ten-minute limit alongside
+the engine-test matrix. After installing the locked workspace and fetching
+pinned evidence for type resolution (not model weights or coverage inputs),
+the fast job runs `bash scripts/ci-fast.sh`: Ruff format, Ruff lint, Pyright,
+and this fixed path-based unit subset:
 
 - `tests/test_extension_contract_pack.py`: a real CPU server composed with only
   the ordinary extension fixture pack, proving two custom nodes linked through
