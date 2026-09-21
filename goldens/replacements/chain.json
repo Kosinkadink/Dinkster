@@ -1,7 +1,7 @@
 {
   "schemas": [
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "fixture.chain-a",
       "version": 1,
       "displayName": "",
@@ -50,7 +50,7 @@
       "searchVisibility": "deprecated"
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "fixture.chain-b",
       "version": 1,
       "displayName": "",
@@ -127,7 +127,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "fixture.chain-c",
       "version": 1,
       "displayName": "",

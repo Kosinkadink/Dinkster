@@ -132,7 +132,7 @@
               ],
               "ioBound": true,
               "nodeType": "dinkster.remote.nanobanana.image",
-              "schemaVersion": 40,
+              "schemaVersion": 1,
               "searchTerms": [
                 "gemini image",
                 "nano banana",
@@ -141,7 +141,7 @@
               ],
               "version": 1
             },
-            "signature": "1d26b8b66e1193264c0dfa9886eac4ba34c9765c"
+            "signature": "1370facbdac3655642711aba0e458ad78ada5927"
           }
         },
         "sunset": null
@@ -304,7 +304,7 @@
               ],
               "ioBound": true,
               "nodeType": "dinkster.remote.seedance.video",
-              "schemaVersion": 40,
+              "schemaVersion": 1,
               "searchTerms": [
                 "seedance",
                 "text to video",
@@ -313,13 +313,13 @@
               ],
               "version": 1
             },
-            "signature": "84c26c45841ba54c9ea323fe62c293d1ddeea0b6"
+            "signature": "114cea86a0678e16087b6d1d26cce04eaac79501"
           }
         },
         "sunset": null
       }
     },
-    "schemaWire": 40
+    "schemaWire": 1
   },
   "poll": {
     "jobId": "recorded-job-1",

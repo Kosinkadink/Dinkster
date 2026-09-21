@@ -482,7 +482,7 @@ def test_protocol_version_and_validation_refusals() -> None:
                 json={"scope": "local", "documentId": "d", "snapshot": None},
             )
             sid = (await resp.json())["sessionId"]
-            # Unsupported protocolVersion: loud 406, same posture as ?wire=.
+            # Unsupported protocolVersion is a loud 406 refusal.
             resp = await client.post(
                 f"/api/sessions/{sid}/ops", json=op_body("a", 0, protocolVersion=2)
             )

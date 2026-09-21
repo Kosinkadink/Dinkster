@@ -138,7 +138,42 @@ class ReleaseTemplate:
     path: str
     description: str = ""
     tags: tuple[str, ...] = ()
+    family: str = ""
+    models: tuple[str, ...] = ()
     assets: tuple[str, ...] = ()
+    thumbnail_digest: str = ""
+    thumbnail_media_type: str = ""
+    thumbnail_path: str = ""
+
+    def descriptor(self, pack: str, version: str) -> dict[str, object]:
+        """Versioned public catalog descriptor; internal artifact paths stay private."""
+        row: dict[str, object] = {
+            "pack": pack,
+            "version": version,
+            "id": self.id,
+            "name": self.name,
+            "digest": self.digest,
+        }
+        if self.description:
+            row["description"] = self.description
+        if self.tags:
+            row["tags"] = list(self.tags)
+        if self.family:
+            row["family"] = self.family
+        if self.models:
+            row["models"] = list(self.models)
+        if self.assets:
+            row["assets"] = list(self.assets)
+        if self.thumbnail_digest:
+            row["thumbnail"] = {
+                "digest": self.thumbnail_digest,
+                "mediaType": self.thumbnail_media_type,
+            }
+        return row
+
+    def verify_body(self, data: bytes) -> None:
+        if artifact_digest(data) != self.digest:
+            raise RegistryError(f"template {self.id!r} body does not match {self.digest}")
 
     def record(self) -> dict[str, object]:
         """The canonical record payload - one serializer, shared by the
@@ -151,7 +186,12 @@ class ReleaseTemplate:
             "path": self.path,
             "description": self.description,
             "tags": list(self.tags),
+            "family": self.family,
+            "models": list(self.models),
             "assets": list(self.assets),
+            "thumbnailDigest": self.thumbnail_digest,
+            "thumbnailMediaType": self.thumbnail_media_type,
+            "thumbnailPath": self.thumbnail_path,
         }
 
 
@@ -230,6 +270,20 @@ class ReleaseIndex:
 
     def releases(self) -> tuple[Release, ...]:
         return tuple(self._by_key.values())
+
+    def template_catalog(self) -> dict[str, object]:
+        """Deterministic v1 catalog over each pack's latest immutable release."""
+        latest: dict[str, Release] = {}
+        for release in self._by_key.values():
+            current = latest.get(release.pack)
+            if current is None or Version.parse(current.version) < Version.parse(release.version):
+                latest[release.pack] = release
+        templates = [
+            template.descriptor(release.pack, release.version)
+            for release in sorted(latest.values(), key=lambda item: item.pack)
+            for template in sorted(release.templates, key=lambda item: item.id)
+        ]
+        return {"catalogVersion": 1, "templates": templates}
 
 
 # ---------------------------------------------------------------------------

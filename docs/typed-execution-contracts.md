@@ -1762,9 +1762,8 @@ when alpha is absent. Create-if-missing appends opaque alpha; preserve and
 drop do not change the input array. Drop declares intentional loss, rather
 than asking the engine to truncate channels before node code runs. Policies
 apply to list elements too. Optional `mask_polarity` and `mask_semantic`
-declare mask expectations. Schema wire 40 exposes these as `alphaPolicy`,
-`maskPolarity`, and `maskSemantic`; older requested wire versions omit them
-without preventing execution. Nondefault policies affect schema identity.
+declare mask expectations. The schema wire exposes these as `alphaPolicy`,
+`maskPolarity`, and `maskSemantic`. Nondefault policies affect schema identity.
 
 The `value_diagnostics` event carries `detail.diagnostics`. Each entry has
 `code` and `nodeId`. Unexpected alpha loss includes `outputId` and the

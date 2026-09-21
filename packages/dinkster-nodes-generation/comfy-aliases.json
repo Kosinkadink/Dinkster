@@ -2,7 +2,7 @@
   "format": "dinkster-comfy-alias/1",
   "sourceSchemas": [
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.CLIPSetLastLayer",
       "version": 1,
       "displayName": "CLIPSetLastLayer",
@@ -59,7 +59,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.T5TokenizerOptions",
       "version": 1,
       "displayName": "T5TokenizerOptions",
@@ -133,7 +133,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.CLIPTextEncodeControlnet",
       "version": 1,
       "displayName": "CLIPTextEncodeControlnet",
@@ -198,7 +198,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ControlNetLoader",
       "version": 1,
       "displayName": "ControlNetLoader",
@@ -240,7 +240,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ControlNetApply",
       "version": 1,
       "displayName": "ControlNetApply",
@@ -318,7 +318,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ControlNetApplyAdvanced",
       "version": 1,
       "displayName": "ControlNetApplyAdvanced",
@@ -464,7 +464,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.SetUnionControlNetType",
       "version": 1,
       "displayName": "Set Union ControlNet Type",
@@ -528,7 +528,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ConditioningCombine",
       "version": 1,
       "displayName": "ConditioningCombine",
@@ -574,7 +574,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ConditioningAverage",
       "version": 1,
       "displayName": "ConditioningAverage",
@@ -638,7 +638,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ConditioningConcat",
       "version": 1,
       "displayName": "ConditioningConcat",
@@ -684,7 +684,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ConditioningMultiply",
       "version": 1,
       "displayName": "ConditioningMultiply",
@@ -737,7 +737,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ConditioningSetArea",
       "version": 1,
       "displayName": "ConditioningSetArea",
@@ -862,7 +862,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ConditioningSetAreaPercentage",
       "version": 1,
       "displayName": "ConditioningSetAreaPercentage",
@@ -987,7 +987,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ConditioningSetAreaPercentageVideo",
       "version": 1,
       "displayName": "ConditioningSetAreaPercentageVideo",
@@ -1148,7 +1148,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ConditioningSetMask",
       "version": 1,
       "displayName": "ConditioningSetMask",
@@ -1231,7 +1231,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ConditioningSetTimestepRange",
       "version": 1,
       "displayName": "ConditioningSetTimestepRange",
@@ -1302,7 +1302,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ConditioningZeroOut",
       "version": 1,
       "displayName": "ConditioningZeroOut",
@@ -1337,7 +1337,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentAdd",
       "version": 1,
       "displayName": "LatentAdd",
@@ -1383,7 +1383,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentSubtract",
       "version": 1,
       "displayName": "LatentSubtract",
@@ -1429,7 +1429,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentInterpolate",
       "version": 1,
       "displayName": "LatentInterpolate",
@@ -1493,7 +1493,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentBlend",
       "version": 1,
       "displayName": "LatentBlend",
@@ -1557,7 +1557,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentMultiply",
       "version": 1,
       "displayName": "LatentMultiply",
@@ -1610,7 +1610,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentRotate",
       "version": 1,
       "displayName": "LatentRotate",
@@ -1666,7 +1666,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentFlip",
       "version": 1,
       "displayName": "LatentFlip",
@@ -1720,7 +1720,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentCrop",
       "version": 1,
       "displayName": "LatentCrop",
@@ -1827,7 +1827,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentUpscale",
       "version": 1,
       "displayName": "LatentUpscale",
@@ -1939,7 +1939,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentUpscaleBy",
       "version": 1,
       "displayName": "LatentUpscaleBy",
@@ -2014,7 +2014,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentComposite",
       "version": 1,
       "displayName": "LatentComposite",
@@ -2114,7 +2114,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentCompositeMasked",
       "version": 1,
       "displayName": "Latent Composite Masked",
@@ -2219,7 +2219,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentConcat",
       "version": 1,
       "displayName": "LatentConcat",
@@ -2288,7 +2288,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentCut",
       "version": 1,
       "displayName": "LatentCut",
@@ -2379,7 +2379,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentCutToBatch",
       "version": 1,
       "displayName": "LatentCutToBatch",
@@ -2452,7 +2452,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentFromBatch",
       "version": 1,
       "displayName": "LatentFromBatch",
@@ -2521,7 +2521,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.RepeatLatentBatch",
       "version": 1,
       "displayName": "RepeatLatentBatch",
@@ -2573,7 +2573,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentBatchSeedBehavior",
       "version": 1,
       "displayName": "LatentBatchSeedBehavior",
@@ -2627,7 +2627,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentBatch",
       "version": 1,
       "displayName": "Batch Latents (DEPRECATED)",
@@ -2676,7 +2676,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.BatchLatentsNode",
       "version": 1,
       "displayName": "Batch Latents",
@@ -2721,7 +2721,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.RebatchLatents",
       "version": 1,
       "displayName": "Rebatch Latents",
@@ -2779,7 +2779,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.SetLatentNoiseMask",
       "version": 1,
       "displayName": "SetLatentNoiseMask",
@@ -2825,7 +2825,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ReplaceVideoLatentFrames",
       "version": 1,
       "displayName": "Replace Video Latent Frames",
@@ -2892,7 +2892,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentApplyOperation",
       "version": 1,
       "displayName": "LatentApplyOperation",
@@ -2938,7 +2938,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentOperationTonemapReinhard",
       "version": 1,
       "displayName": "LatentOperationTonemapReinhard",
@@ -2980,7 +2980,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentOperationSharpen",
       "version": 1,
       "displayName": "LatentOperationSharpen",
@@ -3061,7 +3061,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LatentApplyOperationCFG",
       "version": 1,
       "displayName": "LatentApplyOperationCFG",
@@ -3110,7 +3110,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ModelSamplingAuraFlow",
       "version": 1,
       "displayName": "ModelSamplingAuraFlow",
@@ -3166,7 +3166,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.EmptySD3LatentImage",
       "version": 1,
       "displayName": "EmptySD3LatentImage",
@@ -3243,7 +3243,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ChromaRadianceOptions",
       "version": 1,
       "displayName": "ChromaRadianceOptions",
@@ -3364,7 +3364,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.EmptyChromaRadianceLatentImage",
       "version": 1,
       "displayName": "EmptyChromaRadianceLatentImage",
@@ -3441,7 +3441,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ConditioningMultiCombine",
       "version": 1,
       "displayName": "ConditioningMultiCombine",
@@ -3732,7 +3732,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ConditioningSetMaskAndCombine",
       "version": 1,
       "displayName": "ConditioningSetMaskAndCombine",
@@ -3887,7 +3887,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ConditioningSetMaskAndCombine3",
       "version": 1,
       "displayName": "ConditioningSetMaskAndCombine3",
@@ -4093,7 +4093,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ConditioningSetMaskAndCombine4",
       "version": 1,
       "displayName": "ConditioningSetMaskAndCombine4",
@@ -4350,7 +4350,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ConditioningSetMaskAndCombine5",
       "version": 1,
       "displayName": "ConditioningSetMaskAndCombine5",
@@ -4658,7 +4658,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.ConditioningCombineMultiple+",
       "version": 1,
       "displayName": "ConditioningCombineMultiple+",
@@ -4737,7 +4737,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.SD3NegativeConditioning+",
       "version": 1,
       "displayName": "SD3NegativeConditioning+",
@@ -4790,7 +4790,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.GenerateNoise",
       "version": 1,
       "displayName": "GenerateNoise",
@@ -4990,7 +4990,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.InjectNoiseToLatent",
       "version": 1,
       "displayName": "InjectNoiseToLatent",
@@ -5124,7 +5124,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-inspire-pack.ScheduledCFGGuider //Inspire",
       "version": 1,
       "displayName": "ScheduledCFGGuider //Inspire",
@@ -5262,7 +5262,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.CheckpointLoaderKJ",
       "version": 1,
       "displayName": "CheckpointLoaderKJ",
@@ -5418,7 +5418,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.DiffusionModelLoaderKJ",
       "version": 1,
       "displayName": "DiffusionModelLoaderKJ",
@@ -5566,7 +5566,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.rgthree-comfy.Lora Loader Stack (rgthree)",
       "version": 1,
       "displayName": "Lora Loader Stack (rgthree)",
@@ -5769,7 +5769,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-easy-use.easy fullLoader",
       "version": 1,
       "displayName": "easy fullLoader",
@@ -6228,7 +6228,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-easy-use.easy a1111Loader",
       "version": 1,
       "displayName": "easy a1111Loader",
@@ -6507,7 +6507,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-easy-use.easy comfyLoader",
       "version": 1,
       "displayName": "easy comfyLoader",
@@ -6774,7 +6774,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-easy-use.easy fluxLoader",
       "version": 1,
       "displayName": "easy fluxLoader",
@@ -7044,7 +7044,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-easy-use.easy hunyuanDiTLoader",
       "version": 1,
       "displayName": "easy hunyuanDiTLoader",
@@ -7294,7 +7294,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.was-node-suite-comfyui.Checkpoint Loader (Simple)",
       "version": 1,
       "displayName": "Checkpoint Loader (Simple)",
@@ -7366,7 +7366,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.was-node-suite-comfyui.Load Lora",
       "version": 1,
       "displayName": "Load Lora",
@@ -7489,7 +7489,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.was-node-suite-comfyui.Lora Loader",
       "version": 1,
       "displayName": "Lora Loader",
@@ -7612,7 +7612,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-custom-scripts.LoraLoader|pysssss",
       "version": 1,
       "displayName": "LoraLoader|pysssss",
@@ -7751,7 +7751,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-custom-scripts.CheckpointLoader|pysssss",
       "version": 1,
       "displayName": "CheckpointLoader|pysssss",
@@ -7839,7 +7839,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.efficiency-nodes-comfyui.Efficient Loader",
       "version": 1,
       "displayName": "Efficient Loader",
@@ -8177,7 +8177,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.CFGOverride",
       "version": 1,
       "displayName": "CFGOverride",
@@ -8266,7 +8266,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.RescaleCFG",
       "version": 1,
       "displayName": "RescaleCFG",
@@ -8321,7 +8321,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ModelSamplingSD3",
       "version": 1,
       "displayName": "ModelSamplingSD3",
@@ -8376,7 +8376,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.EmptyTrellis2LatentStructure",
       "version": 1,
       "displayName": "EmptyTrellis2LatentStructure",
@@ -8417,7 +8417,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.Trellis2Conditioning",
       "version": 1,
       "displayName": "Trellis2Conditioning",
@@ -8476,7 +8476,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.Pixal3DConditioning",
       "version": 1,
       "displayName": "Pixal3DConditioning",
@@ -8553,7 +8553,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.VaeDecodeStructureTrellis2",
       "version": 1,
       "displayName": "VaeDecodeStructureTrellis2",
@@ -8621,7 +8621,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.Trellis2ShapeStage",
       "version": 1,
       "displayName": "Trellis2ShapeStage",
@@ -8698,7 +8698,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.Trellis2UpsampleStage",
       "version": 1,
       "displayName": "Trellis2UpsampleStage",
@@ -8807,7 +8807,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.VaeDecodeShapeTrellis",
       "version": 1,
       "displayName": "VaeDecodeShapeTrellis",
@@ -8866,7 +8866,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.Trellis2TextureStage",
       "version": 1,
       "displayName": "Trellis2TextureStage",
@@ -8943,7 +8943,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.VaeDecodeTextureTrellis",
       "version": 1,
       "displayName": "VaeDecodeTextureTrellis",
@@ -9003,7 +9003,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LoadMoGeModel",
       "version": 1,
       "displayName": "LoadMoGeModel",
@@ -9045,7 +9045,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.MoGeInference",
       "version": 1,
       "displayName": "MoGeInference",
@@ -9169,7 +9169,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.MoGeGeometryToFOV",
       "version": 1,
       "displayName": "MoGeGeometryToFOV",
@@ -9253,7 +9253,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LoadBackgroundRemovalModel",
       "version": 1,
       "displayName": "LoadBackgroundRemovalModel",
@@ -9295,7 +9295,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.RemoveBackground",
       "version": 1,
       "displayName": "RemoveBackground",
@@ -9344,7 +9344,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageCropToMask",
       "version": 1,
       "displayName": "ImageCropToMask",
@@ -9474,7 +9474,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.MaskPreview",
       "version": 1,
       "displayName": "MaskPreview",
@@ -9509,7 +9509,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.VoxelToMesh",
       "version": 1,
       "displayName": "VoxelToMesh",
@@ -9580,7 +9580,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.GetMeshInfo",
       "version": 1,
       "displayName": "GetMeshInfo",
@@ -9625,7 +9625,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.RemeshMesh",
       "version": 1,
       "displayName": "RemeshMesh",
@@ -9829,7 +9829,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.DecimateMesh",
       "version": 1,
       "displayName": "DecimateMesh",
@@ -9900,7 +9900,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.MeshSmoothNormals",
       "version": 1,
       "displayName": "MeshSmoothNormals",
@@ -9952,7 +9952,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.UnwrapMesh",
       "version": 1,
       "displayName": "UnwrapMesh",
@@ -10057,7 +10057,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.PaintMesh",
       "version": 1,
       "displayName": "PaintMesh",
@@ -10103,7 +10103,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.BakeTextureFromVoxel",
       "version": 1,
       "displayName": "BakeTextureFromVoxel",
@@ -10197,7 +10197,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.BakeNormalMapFromMesh",
       "version": 1,
       "displayName": "BakeNormalMapFromMesh",
@@ -10289,7 +10289,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.BakeAmbientOcclusion",
       "version": 1,
       "displayName": "BakeAmbientOcclusion",
@@ -10420,7 +10420,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.RenderUVAtlas",
       "version": 1,
       "displayName": "RenderUVAtlas",
@@ -10472,7 +10472,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ApplyTextureToMesh",
       "version": 1,
       "displayName": "ApplyTextureToMesh",
@@ -10562,7 +10562,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.MeshToFile3D",
       "version": 1,
       "displayName": "MeshToFile3D",
@@ -10597,7 +10597,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.KSampler",
       "version": 1,
       "displayName": "KSampler",
@@ -10836,7 +10836,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.UNETLoader",
       "version": 1,
       "displayName": "UNETLoader",
@@ -10900,7 +10900,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.VAEEncodeTiled",
       "version": 1,
       "displayName": "VAEEncodeTiled",
@@ -11027,7 +11027,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.VAEDecodeTiled",
       "version": 1,
       "displayName": "VAEDecodeTiled",
@@ -11154,7 +11154,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.SeedVR2Preprocess",
       "version": 1,
       "displayName": "Pre-Process SeedVR2 Input",
@@ -11191,7 +11191,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.SeedVR2PostProcessing",
       "version": 1,
       "displayName": "Post-Process SeedVR2 Output",
@@ -11262,7 +11262,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.SeedVR2Conditioning",
       "version": 1,
       "displayName": "Apply SeedVR2 Conditioning",
@@ -11325,7 +11325,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.SeedVR2TemporalChunk",
       "version": 1,
       "displayName": "Split SeedVR2 Latent",
@@ -11432,7 +11432,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.SeedVR2TemporalMerge",
       "version": 1,
       "displayName": "Merge SeedVR2 Latents",

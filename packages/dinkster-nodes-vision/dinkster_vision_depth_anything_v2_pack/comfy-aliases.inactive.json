@@ -2,7 +2,7 @@
   "format": "dinkster-comfy-alias/1",
   "sourceSchemas": [
     {
-      "schemaVersion": 37,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.DepthAnythingV2Preprocessor",
       "version": 1,
       "displayName": "DepthAnythingV2Preprocessor",
@@ -76,7 +76,7 @@
       ]
     },
     {
-      "schemaVersion": 37,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.AIO_Preprocessor",
       "version": 1,
       "displayName": "AIO_Preprocessor",

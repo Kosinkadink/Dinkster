@@ -84,7 +84,7 @@
     "comfy.WAN_CAMERA_EMBEDDING",
     "comfy.WEBCAM"
   ],
-  "schemaWireVersion": 40,
+  "schemaWireVersion": 1,
   "schemas": {
     "comfy.APG": {
       "aliases": [
@@ -181,7 +181,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ARVideoI2V": {
@@ -322,7 +322,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AddLayer": {
@@ -597,7 +597,7 @@
         }
       ],
       "nodeType": "comfy.AddLayer",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AddNoise": {
@@ -668,7 +668,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AddTextPrefix": {
@@ -725,7 +725,7 @@
         }
       ],
       "nodeType": "comfy.AddTextPrefix",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AddTextSuffix": {
@@ -782,7 +782,7 @@
         }
       ],
       "nodeType": "comfy.AddTextSuffix",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AdjustBrightness": {
@@ -836,7 +836,7 @@
         }
       ],
       "nodeType": "comfy.AdjustBrightness",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AdjustContrast": {
@@ -890,7 +890,7 @@
         }
       ],
       "nodeType": "comfy.AdjustContrast",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AlignYourStepsScheduler": {
@@ -969,7 +969,7 @@
         }
       ],
       "nodeType": "comfy.AlignYourStepsScheduler",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AnimaLLLiteApply": {
@@ -1094,7 +1094,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ApplyTextureToMesh": {
@@ -1184,7 +1184,7 @@
         }
       ],
       "nodeType": "comfy.ApplyTextureToMesh",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AudioAdjustVolume": {
@@ -1237,7 +1237,7 @@
         }
       ],
       "nodeType": "comfy.AudioAdjustVolume",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AudioConcat": {
@@ -1303,7 +1303,7 @@
         }
       ],
       "nodeType": "comfy.AudioConcat",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AudioEncoderEncode": {
@@ -1349,7 +1349,7 @@
         }
       ],
       "nodeType": "comfy.AudioEncoderEncode",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AudioEncoderLoader": {
@@ -1391,7 +1391,7 @@
         }
       ],
       "nodeType": "comfy.AudioEncoderLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AudioEqualizer3Band": {
@@ -1556,7 +1556,7 @@
         }
       ],
       "nodeType": "comfy.AudioEqualizer3Band",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.AudioMerge": {
@@ -1624,7 +1624,7 @@
         }
       ],
       "nodeType": "comfy.AudioMerge",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BakeAmbientOcclusion": {
@@ -1764,7 +1764,7 @@
         }
       ],
       "nodeType": "comfy.BakeAmbientOcclusion",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BakeNormalMapFromMesh": {
@@ -1861,7 +1861,7 @@
         }
       ],
       "nodeType": "comfy.BakeNormalMapFromMesh",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BakeTextureFromVoxel": {
@@ -1958,7 +1958,7 @@
         }
       ],
       "nodeType": "comfy.BakeTextureFromVoxel",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BasicGuider": {
@@ -2007,7 +2007,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BasicScheduler": {
@@ -2106,7 +2106,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BatchImagesNode": {
@@ -2151,7 +2151,7 @@
         }
       ],
       "nodeType": "comfy.BatchImagesNode",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BatchLatentsNode": {
@@ -2196,7 +2196,7 @@
         }
       ],
       "nodeType": "comfy.BatchLatentsNode",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BatchMasksNode": {
@@ -2241,7 +2241,7 @@
         }
       ],
       "nodeType": "comfy.BatchMasksNode",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BerniniConditioning": {
@@ -2456,7 +2456,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BetaSamplingScheduler": {
@@ -2549,7 +2549,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BlockSparseAttention": {
@@ -2798,7 +2798,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BuildJsonPromptIdeogram": {
@@ -2987,7 +2987,7 @@
         }
       ],
       "nodeType": "comfy.BuildJsonPromptIdeogram",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.BuildPoseFile": {
@@ -3754,7 +3754,7 @@
         }
       ],
       "nodeType": "comfy.BuildPoseFile",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CFGGuider": {
@@ -3833,7 +3833,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CFGNorm": {
@@ -3902,7 +3902,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CFGOverride": {
@@ -3995,7 +3995,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CFGZeroStar": {
@@ -4033,7 +4033,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPAttentionMultiply": {
@@ -4147,7 +4147,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPLoader": {
@@ -4247,7 +4247,7 @@
         }
       ],
       "nodeType": "comfy.CLIPLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPMergeAdd": {
@@ -4296,7 +4296,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPMergeSimple": {
@@ -4363,7 +4363,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPMergeSubtract": {
@@ -4430,7 +4430,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPSave": {
@@ -4471,7 +4471,7 @@
         "gpu"
       ],
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPSetLastLayer": {
@@ -4528,7 +4528,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPTextEncode": {
@@ -4579,7 +4579,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPTextEncodeControlnet": {
@@ -4644,7 +4644,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPTextEncodeFlux": {
@@ -4732,7 +4732,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPTextEncodeHiDream": {
@@ -4834,7 +4834,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPTextEncodeHunyuanDiT": {
@@ -4904,7 +4904,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPTextEncodeKandinsky5": {
@@ -4974,7 +4974,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPTextEncodeLumina2": {
@@ -5050,7 +5050,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPTextEncodePixArtAlpha": {
@@ -5138,7 +5138,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPTextEncodeSD3": {
@@ -5244,7 +5244,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPTextEncodeSDXL": {
@@ -5418,7 +5418,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPTextEncodeSDXLRefiner": {
@@ -5524,7 +5524,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPVisionEncode": {
@@ -5592,7 +5592,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CLIPVisionLoader": {
@@ -5634,7 +5634,7 @@
         }
       ],
       "nodeType": "comfy.CLIPVisionLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Canny": {
@@ -5705,7 +5705,7 @@
         }
       ],
       "nodeType": "comfy.Canny",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CaseConverter": {
@@ -5765,7 +5765,7 @@
         }
       ],
       "nodeType": "comfy.CaseConverter",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CenterCropImages": {
@@ -5837,7 +5837,7 @@
         }
       ],
       "nodeType": "comfy.CenterCropImages",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CheckpointLoader": {
@@ -5931,7 +5931,7 @@
         }
       ],
       "nodeType": "comfy.CheckpointLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CheckpointLoaderSimple": {
@@ -5987,7 +5987,7 @@
         }
       ],
       "nodeType": "comfy.CheckpointLoaderSimple",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CheckpointSave": {
@@ -6050,7 +6050,7 @@
         "gpu"
       ],
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ChromaRadianceOptions": {
@@ -6171,7 +6171,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ColorToRGBInt": {
@@ -6230,7 +6230,7 @@
         }
       ],
       "nodeType": "comfy.ColorToRGBInt",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ColorTransfer": {
@@ -6355,7 +6355,7 @@
         }
       ],
       "nodeType": "comfy.ColorTransfer",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CombineHooks2": {
@@ -6401,7 +6401,7 @@
         }
       ],
       "nodeType": "comfy.CombineHooks2",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CombineHooks4": {
@@ -6469,7 +6469,7 @@
         }
       ],
       "nodeType": "comfy.CombineHooks4",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CombineHooks8": {
@@ -6581,7 +6581,7 @@
         }
       ],
       "nodeType": "comfy.CombineHooks8",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ComfyAndNode": {
@@ -6623,7 +6623,7 @@
         }
       ],
       "nodeType": "comfy.ComfyAndNode",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ComfyMathExpression": {
@@ -6732,7 +6732,7 @@
         }
       ],
       "nodeType": "comfy.ComfyMathExpression",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ComfyNotNode": {
@@ -6764,7 +6764,7 @@
         }
       ],
       "nodeType": "comfy.ComfyNotNode",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ComfyNumberConvert": {
@@ -6813,7 +6813,7 @@
         }
       ],
       "nodeType": "comfy.ComfyNumberConvert",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ComfyOrNode": {
@@ -6855,7 +6855,7 @@
         }
       ],
       "nodeType": "comfy.ComfyOrNode",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningAverage": {
@@ -6919,7 +6919,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningAverage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningCombine": {
@@ -6965,7 +6965,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningCombine",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningConcat": {
@@ -7011,7 +7011,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningConcat",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningMultiply": {
@@ -7064,7 +7064,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningMultiply",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningSetArea": {
@@ -7189,7 +7189,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningSetArea",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningSetAreaPercentage": {
@@ -7314,7 +7314,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningSetAreaPercentage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningSetAreaPercentageVideo": {
@@ -7475,7 +7475,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningSetAreaPercentageVideo",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningSetAreaStrength": {
@@ -7528,7 +7528,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningSetAreaStrength",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningSetDefaultCombine": {
@@ -7585,7 +7585,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningSetDefaultCombine",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningSetMask": {
@@ -7668,7 +7668,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningSetMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningSetProperties": {
@@ -7773,7 +7773,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningSetProperties",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningSetPropertiesAndCombine": {
@@ -7889,7 +7889,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningSetPropertiesAndCombine",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningSetTimestepRange": {
@@ -7960,7 +7960,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningSetTimestepRange",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningStableAudio": {
@@ -8052,7 +8052,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningStableAudio",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningTimestepsRange": {
@@ -8132,7 +8132,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningTimestepsRange",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConditioningZeroOut": {
@@ -8167,7 +8167,7 @@
         }
       ],
       "nodeType": "comfy.ConditioningZeroOut",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ContextWindowsManual": {
@@ -8405,7 +8405,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ControlNetApply": {
@@ -8483,7 +8483,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ControlNetApplyAdvanced": {
@@ -8629,7 +8629,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ControlNetApplySD3": {
@@ -8775,7 +8775,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ControlNetInpaintingAliMamaApply": {
@@ -8934,7 +8934,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ControlNetLoader": {
@@ -8976,7 +8976,7 @@
         }
       ],
       "nodeType": "comfy.ControlNetLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConvertArrayToString": {
@@ -9029,7 +9029,7 @@
         }
       ],
       "nodeType": "comfy.ConvertArrayToString",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ConvertDictionaryToString": {
@@ -9082,7 +9082,7 @@
         }
       ],
       "nodeType": "comfy.ConvertDictionaryToString",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CosmosImageToVideoLatent": {
@@ -9213,7 +9213,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CosmosPredict2ImageToVideoLatent": {
@@ -9344,7 +9344,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CreateBoundingBoxes": {
@@ -9479,7 +9479,7 @@
       ],
       "nodeType": "comfy.CreateBoundingBoxes",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CreateCameraInfo": {
@@ -9899,7 +9899,7 @@
         }
       ],
       "nodeType": "comfy.CreateCameraInfo",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CreateHookKeyframe": {
@@ -9970,7 +9970,7 @@
         }
       ],
       "nodeType": "comfy.CreateHookKeyframe",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CreateHookKeyframesFromFloats": {
@@ -10067,7 +10067,7 @@
         }
       ],
       "nodeType": "comfy.CreateHookKeyframesFromFloats",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CreateHookKeyframesInterpolated": {
@@ -10226,7 +10226,7 @@
         }
       ],
       "nodeType": "comfy.CreateHookKeyframesInterpolated",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CreateHookLora": {
@@ -10315,7 +10315,7 @@
         }
       ],
       "nodeType": "comfy.CreateHookLora",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CreateHookLoraModelOnly": {
@@ -10386,7 +10386,7 @@
         }
       ],
       "nodeType": "comfy.CreateHookLoraModelOnly",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CreateHookModelAsLora": {
@@ -10475,7 +10475,7 @@
         }
       ],
       "nodeType": "comfy.CreateHookModelAsLora",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CreateHookModelAsLoraModelOnly": {
@@ -10546,7 +10546,7 @@
         }
       ],
       "nodeType": "comfy.CreateHookModelAsLoraModelOnly",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CreateList": {
@@ -10593,7 +10593,7 @@
         }
       ],
       "nodeType": "comfy.CreateList",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CreateVideo": {
@@ -10701,7 +10701,7 @@
         }
       ],
       "nodeType": "comfy.CreateVideo",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CropByBBoxes": {
@@ -10831,7 +10831,7 @@
         }
       ],
       "nodeType": "comfy.CropByBBoxes",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CropMask": {
@@ -10938,7 +10938,7 @@
         }
       ],
       "nodeType": "comfy.CropMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CurveEditor": {
@@ -10997,7 +10997,7 @@
         }
       ],
       "nodeType": "comfy.CurveEditor",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.CustomCombo": {
@@ -11175,7 +11175,7 @@
         }
       ],
       "nodeType": "comfy.CustomCombo",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.DA3GeometryToMesh": {
@@ -11310,7 +11310,7 @@
         }
       ],
       "nodeType": "comfy.DA3GeometryToMesh",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.DA3Inference": {
@@ -11454,7 +11454,7 @@
         }
       ],
       "nodeType": "comfy.DA3Inference",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.DA3Render": {
@@ -11611,7 +11611,7 @@
         }
       ],
       "nodeType": "comfy.DA3Render",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.DecimateMesh": {
@@ -11752,7 +11752,7 @@
         }
       ],
       "nodeType": "comfy.DecimateMesh",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.DiffControlNetLoader": {
@@ -11808,7 +11808,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.DifferentialDiffusion": {
@@ -11864,7 +11864,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.DiffusersLoader": {
@@ -11919,7 +11919,7 @@
         }
       ],
       "nodeType": "comfy.DiffusersLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.DisableNoise": {
@@ -11943,7 +11943,7 @@
         }
       ],
       "nodeType": "comfy.DisableNoise",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.DrawBBoxes": {
@@ -11996,7 +11996,7 @@
         }
       ],
       "nodeType": "comfy.DrawBBoxes",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.DualCFGGuider": {
@@ -12124,7 +12124,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.DualCLIPLoader": {
@@ -12233,7 +12233,7 @@
         }
       ],
       "nodeType": "comfy.DualCLIPLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.DualModelGuider": {
@@ -12326,7 +12326,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EasyCache": {
@@ -12439,7 +12439,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyARVideoLatent": {
@@ -12534,7 +12534,7 @@
         }
       ],
       "nodeType": "comfy.EmptyARVideoLatent",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyAceStep1.5LatentAudio": {
@@ -12594,7 +12594,7 @@
         }
       ],
       "nodeType": "comfy.EmptyAceStep1.5LatentAudio",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyAceStepLatentAudio": {
@@ -12654,7 +12654,7 @@
         }
       ],
       "nodeType": "comfy.EmptyAceStepLatentAudio",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyAudio": {
@@ -12734,7 +12734,7 @@
         }
       ],
       "nodeType": "comfy.EmptyAudio",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyChromaRadianceLatentImage": {
@@ -12811,7 +12811,7 @@
         }
       ],
       "nodeType": "comfy.EmptyChromaRadianceLatentImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyCosmosLatentVideo": {
@@ -12906,7 +12906,7 @@
         }
       ],
       "nodeType": "comfy.EmptyCosmosLatentVideo",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyFlux2LatentImage": {
@@ -12983,7 +12983,7 @@
         }
       ],
       "nodeType": "comfy.EmptyFlux2LatentImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyHiDreamO1LatentImage": {
@@ -13060,7 +13060,7 @@
         }
       ],
       "nodeType": "comfy.EmptyHiDreamO1LatentImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyHunyuanImageLatent": {
@@ -13137,7 +13137,7 @@
         }
       ],
       "nodeType": "comfy.EmptyHunyuanImageLatent",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyHunyuanLatentVideo": {
@@ -13232,7 +13232,7 @@
         }
       ],
       "nodeType": "comfy.EmptyHunyuanLatentVideo",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyHunyuanVideo15Latent": {
@@ -13327,7 +13327,7 @@
         }
       ],
       "nodeType": "comfy.EmptyHunyuanVideo15Latent",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyImage": {
@@ -13422,7 +13422,7 @@
         }
       ],
       "nodeType": "comfy.EmptyImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyLTXVLatentVideo": {
@@ -13517,7 +13517,7 @@
         }
       ],
       "nodeType": "comfy.EmptyLTXVLatentVideo",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyLatentAudio": {
@@ -13577,7 +13577,7 @@
         }
       ],
       "nodeType": "comfy.EmptyLatentAudio",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyLatentHunyuan3Dv2": {
@@ -13636,7 +13636,7 @@
         }
       ],
       "nodeType": "comfy.EmptyLatentHunyuan3Dv2",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyLatentImage": {
@@ -13716,7 +13716,7 @@
         }
       ],
       "nodeType": "comfy.EmptyLatentImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyMiniMaxH3LatentAV": {
@@ -13795,7 +13795,7 @@
         }
       ],
       "nodeType": "comfy.EmptyMiniMaxH3LatentAV",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyMiniMaxMusic3LatentAudio": {
@@ -13854,7 +13854,7 @@
         }
       ],
       "nodeType": "comfy.EmptyMiniMaxMusic3LatentAudio",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyMochiLatentVideo": {
@@ -13949,7 +13949,7 @@
         }
       ],
       "nodeType": "comfy.EmptyMochiLatentVideo",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyQwenImageLayeredLatentImage": {
@@ -14044,7 +14044,7 @@
         }
       ],
       "nodeType": "comfy.EmptyQwenImageLayeredLatentImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptySD3LatentImage": {
@@ -14121,7 +14121,7 @@
         }
       ],
       "nodeType": "comfy.EmptySD3LatentImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.EmptyTrellis2LatentStructure": {
@@ -14163,7 +14163,7 @@
         }
       ],
       "nodeType": "comfy.EmptyTrellis2LatentStructure",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Epsilon Scaling": {
@@ -14220,7 +14220,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ExponentialScheduler": {
@@ -14299,7 +14299,7 @@
         }
       ],
       "nodeType": "comfy.ExponentialScheduler",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ExtendIntermediateSigmas": {
@@ -14407,7 +14407,7 @@
         }
       ],
       "nodeType": "comfy.ExtendIntermediateSigmas",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FeatherMask": {
@@ -14514,7 +14514,7 @@
         }
       ],
       "nodeType": "comfy.FeatherMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.File3DToSplat": {
@@ -14555,7 +14555,7 @@
         }
       ],
       "nodeType": "comfy.File3DToSplat",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FillHoles": {
@@ -14657,7 +14657,7 @@
         }
       ],
       "nodeType": "comfy.FillHoles",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FlipSigmas": {
@@ -14692,7 +14692,7 @@
         }
       ],
       "nodeType": "comfy.FlipSigmas",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Flux2Scheduler": {
@@ -14769,7 +14769,7 @@
         }
       ],
       "nodeType": "comfy.Flux2Scheduler",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FluxDisableGuidance": {
@@ -14804,7 +14804,7 @@
         }
       ],
       "nodeType": "comfy.FluxDisableGuidance",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FluxGuidance": {
@@ -14857,7 +14857,7 @@
         }
       ],
       "nodeType": "comfy.FluxGuidance",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FluxKVCache": {
@@ -14896,7 +14896,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FluxKontextImageScale": {
@@ -14931,7 +14931,7 @@
         }
       ],
       "nodeType": "comfy.FluxKontextImageScale",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FluxKontextMultiReferenceLatentMethod": {
@@ -14988,7 +14988,7 @@
         }
       ],
       "nodeType": "comfy.FluxKontextMultiReferenceLatentMethod",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FrameInterpolate": {
@@ -15051,7 +15051,7 @@
         }
       ],
       "nodeType": "comfy.FrameInterpolate",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FrameInterpolationModelLoader": {
@@ -15094,7 +15094,7 @@
         }
       ],
       "nodeType": "comfy.FrameInterpolationModelLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FreSca": {
@@ -15192,7 +15192,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FreeU": {
@@ -15306,7 +15306,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.FreeU_V2": {
@@ -15420,7 +15420,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.GITSScheduler": {
@@ -15498,7 +15498,7 @@
         }
       ],
       "nodeType": "comfy.GITSScheduler",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.GLIGENLoader": {
@@ -15540,7 +15540,7 @@
         }
       ],
       "nodeType": "comfy.GLIGENLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.GLIGENTextBoxApply": {
@@ -15688,7 +15688,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.GLSLShader": {
@@ -15915,7 +15915,7 @@
         }
       ],
       "nodeType": "comfy.GLSLShader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.GenerateTracks": {
@@ -16200,7 +16200,7 @@
         }
       ],
       "nodeType": "comfy.GenerateTracks",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Get3DComponents": {
@@ -16240,7 +16240,7 @@
         }
       ],
       "nodeType": "comfy.Get3DComponents",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.GetICLoRAParameters": {
@@ -16279,7 +16279,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.GetImageSize": {
@@ -16334,7 +16334,7 @@
         }
       ],
       "nodeType": "comfy.GetImageSize",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.GetMeshInfo": {
@@ -16379,7 +16379,7 @@
         }
       ],
       "nodeType": "comfy.GetMeshInfo",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.GetSplatCount": {
@@ -16424,7 +16424,7 @@
         }
       ],
       "nodeType": "comfy.GetSplatCount",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.GetVideoComponents": {
@@ -16500,7 +16500,7 @@
         }
       ],
       "nodeType": "comfy.GetVideoComponents",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.GrowMask": {
@@ -16566,7 +16566,7 @@
         }
       ],
       "nodeType": "comfy.GrowMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.HiDreamO1PatchSeamSmoothing": {
@@ -16724,7 +16724,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.HiDreamO1ReferenceImages": {
@@ -16901,7 +16901,7 @@
         }
       ],
       "nodeType": "comfy.HiDreamO1ReferenceImages",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Hunyuan3Dv2Conditioning": {
@@ -16946,7 +16946,7 @@
         }
       ],
       "nodeType": "comfy.Hunyuan3Dv2Conditioning",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Hunyuan3Dv2ConditioningMultiView": {
@@ -17024,7 +17024,7 @@
         }
       ],
       "nodeType": "comfy.Hunyuan3Dv2ConditioningMultiView",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.HunyuanImageToVideo": {
@@ -17186,7 +17186,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.HunyuanRefinerLatent": {
@@ -17282,7 +17282,7 @@
         }
       ],
       "nodeType": "comfy.HunyuanRefinerLatent",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.HunyuanVideo15ImageToVideo": {
@@ -17455,7 +17455,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.HunyuanVideo15LatentUpscaleWithModel": {
@@ -17578,7 +17578,7 @@
         }
       ],
       "nodeType": "comfy.HunyuanVideo15LatentUpscaleWithModel",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.HunyuanVideo15SuperResolution": {
@@ -17710,7 +17710,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.HyperTile": {
@@ -17815,7 +17815,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.HypernetworkLoader": {
@@ -17889,7 +17889,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Ideogram4Scheduler": {
@@ -18002,7 +18002,7 @@
         }
       ],
       "nodeType": "comfy.Ideogram4Scheduler",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageAddNoise": {
@@ -18073,7 +18073,7 @@
         }
       ],
       "nodeType": "comfy.ImageAddNoise",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageBatch": {
@@ -18119,7 +18119,7 @@
         }
       ],
       "nodeType": "comfy.ImageBatch",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageBlend": {
@@ -18206,7 +18206,7 @@
         }
       ],
       "nodeType": "comfy.ImageBlend",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageBlur": {
@@ -18277,7 +18277,7 @@
         }
       ],
       "nodeType": "comfy.ImageBlur",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageColorToMask": {
@@ -18331,7 +18331,7 @@
         }
       ],
       "nodeType": "comfy.ImageColorToMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageCompare": {
@@ -18379,7 +18379,7 @@
       ],
       "nodeType": "comfy.ImageCompare",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageCompositeMasked": {
@@ -18484,7 +18484,7 @@
         }
       ],
       "nodeType": "comfy.ImageCompositeMasked",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageCompositor": {
@@ -18544,7 +18544,7 @@
       ],
       "nodeType": "comfy.ImageCompositor",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageCrop": {
@@ -18651,7 +18651,7 @@
         }
       ],
       "nodeType": "comfy.ImageCrop",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageCropToMask": {
@@ -18789,7 +18789,7 @@
         }
       ],
       "nodeType": "comfy.ImageCropToMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageCropV2": {
@@ -18841,7 +18841,7 @@
         }
       ],
       "nodeType": "comfy.ImageCropV2",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageDeduplication": {
@@ -18902,7 +18902,7 @@
         }
       ],
       "nodeType": "comfy.ImageDeduplication",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageFlip": {
@@ -18956,7 +18956,7 @@
         }
       ],
       "nodeType": "comfy.ImageFlip",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageFromBatch": {
@@ -19025,7 +19025,7 @@
         }
       ],
       "nodeType": "comfy.ImageFromBatch",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageGrid": {
@@ -19139,7 +19139,7 @@
         }
       ],
       "nodeType": "comfy.ImageGrid",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageHistogram": {
@@ -19214,7 +19214,7 @@
         }
       ],
       "nodeType": "comfy.ImageHistogram",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageInvert": {
@@ -19249,7 +19249,7 @@
         }
       ],
       "nodeType": "comfy.ImageInvert",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageMergeTileList": {
@@ -19338,7 +19338,7 @@
         }
       ],
       "nodeType": "comfy.ImageMergeTileList",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageOnlyCheckpointLoader": {
@@ -19400,7 +19400,7 @@
         }
       ],
       "nodeType": "comfy.ImageOnlyCheckpointLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageOnlyCheckpointSave": {
@@ -19463,7 +19463,7 @@
         "gpu"
       ],
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImagePadForOutpaint": {
@@ -19599,7 +19599,7 @@
         }
       ],
       "nodeType": "comfy.ImagePadForOutpaint",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageQuantize": {
@@ -19675,7 +19675,7 @@
         }
       ],
       "nodeType": "comfy.ImageQuantize",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageRGBToYUV": {
@@ -19730,7 +19730,7 @@
         }
       ],
       "nodeType": "comfy.ImageRGBToYUV",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageRotate": {
@@ -19786,7 +19786,7 @@
         }
       ],
       "nodeType": "comfy.ImageRotate",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageScale": {
@@ -19898,7 +19898,7 @@
         }
       ],
       "nodeType": "comfy.ImageScale",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageScaleBy": {
@@ -19973,7 +19973,7 @@
         }
       ],
       "nodeType": "comfy.ImageScaleBy",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageScaleToMaxDimension": {
@@ -20049,7 +20049,7 @@
         }
       ],
       "nodeType": "comfy.ImageScaleToMaxDimension",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageScaleToTotalPixels": {
@@ -20142,7 +20142,7 @@
         }
       ],
       "nodeType": "comfy.ImageScaleToTotalPixels",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageSharpen": {
@@ -20234,7 +20234,7 @@
         }
       ],
       "nodeType": "comfy.ImageSharpen",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageStitch": {
@@ -20355,7 +20355,7 @@
         }
       ],
       "nodeType": "comfy.ImageStitch",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageToMask": {
@@ -20411,7 +20411,7 @@
         }
       ],
       "nodeType": "comfy.ImageToMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageUpscaleWithModel": {
@@ -20460,7 +20460,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ImageYUVToRGB": {
@@ -20517,7 +20517,7 @@
         }
       ],
       "nodeType": "comfy.ImageYUVToRGB",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.InpaintModelConditioning": {
@@ -20632,7 +20632,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.InstructPixToPixConditioning": {
@@ -20723,7 +20723,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.InvertMask": {
@@ -20758,7 +20758,7 @@
         }
       ],
       "nodeType": "comfy.InvertMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.JoinAudioChannels": {
@@ -20804,7 +20804,7 @@
         }
       ],
       "nodeType": "comfy.JoinAudioChannels",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.JoinImageWithAlpha": {
@@ -20850,7 +20850,7 @@
         }
       ],
       "nodeType": "comfy.JoinImageWithAlpha",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.JsonExtractString": {
@@ -20904,7 +20904,7 @@
         }
       ],
       "nodeType": "comfy.JsonExtractString",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.KSampler": {
@@ -21144,7 +21144,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.KSamplerAdvanced": {
@@ -21428,7 +21428,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.KSamplerSelect": {
@@ -21514,7 +21514,7 @@
         }
       ],
       "nodeType": "comfy.KSamplerSelect",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Kandinsky5ImageToVideo": {
@@ -21686,7 +21686,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.KarrasScheduler": {
@@ -21784,7 +21784,7 @@
         }
       ],
       "nodeType": "comfy.KarrasScheduler",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXAVTextEncoderLoader": {
@@ -21864,7 +21864,7 @@
         }
       ],
       "nodeType": "comfy.LTXAVTextEncoderLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVAddGuide": {
@@ -22027,7 +22027,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVAudioVAEDecode": {
@@ -22079,7 +22079,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVAudioVAEEncode": {
@@ -22131,7 +22131,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVAudioVAELoader": {
@@ -22174,7 +22174,7 @@
         }
       ],
       "nodeType": "comfy.LTXVAudioVAELoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVConcatAVLatent": {
@@ -22220,7 +22220,7 @@
         }
       ],
       "nodeType": "comfy.LTXVConcatAVLatent",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVConditioning": {
@@ -22294,7 +22294,7 @@
         }
       ],
       "nodeType": "comfy.LTXVConditioning",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVContextWindows": {
@@ -22487,7 +22487,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVCropGuides": {
@@ -22564,7 +22564,7 @@
         }
       ],
       "nodeType": "comfy.LTXVCropGuides",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVDualCFGGuider": {
@@ -22662,7 +22662,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVDurationPredictor": {
@@ -22787,7 +22787,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVEmptyLatentAudio": {
@@ -22880,7 +22880,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVImgToVideo": {
@@ -23059,7 +23059,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVImgToVideoInplace": {
@@ -23149,7 +23149,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVLatentUpsampler": {
@@ -23209,7 +23209,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVModalityGuidance": {
@@ -23304,7 +23304,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVPreprocess": {
@@ -23357,7 +23357,7 @@
         }
       ],
       "nodeType": "comfy.LTXVPreprocess",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVReferenceAudio": {
@@ -23522,7 +23522,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVScheduler": {
@@ -23644,7 +23644,7 @@
         }
       ],
       "nodeType": "comfy.LTXVScheduler",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVSeparateAVLatent": {
@@ -23689,7 +23689,7 @@
         }
       ],
       "nodeType": "comfy.LTXVSeparateAVLatent",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LTXVSpatioTemporalGuidance": {
@@ -23801,7 +23801,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LaplaceScheduler": {
@@ -23918,7 +23918,7 @@
         }
       ],
       "nodeType": "comfy.LaplaceScheduler",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentAdd": {
@@ -23964,7 +23964,7 @@
         }
       ],
       "nodeType": "comfy.LatentAdd",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentApplyOperation": {
@@ -24010,7 +24010,7 @@
         }
       ],
       "nodeType": "comfy.LatentApplyOperation",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentApplyOperationCFG": {
@@ -24059,7 +24059,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentBatch": {
@@ -24105,7 +24105,7 @@
         }
       ],
       "nodeType": "comfy.LatentBatch",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentBatchSeedBehavior": {
@@ -24159,7 +24159,7 @@
         }
       ],
       "nodeType": "comfy.LatentBatchSeedBehavior",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentBlend": {
@@ -24223,7 +24223,7 @@
         }
       ],
       "nodeType": "comfy.LatentBlend",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentComposite": {
@@ -24323,7 +24323,7 @@
         }
       ],
       "nodeType": "comfy.LatentComposite",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentCompositeMasked": {
@@ -24428,7 +24428,7 @@
         }
       ],
       "nodeType": "comfy.LatentCompositeMasked",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentConcat": {
@@ -24497,7 +24497,7 @@
         }
       ],
       "nodeType": "comfy.LatentConcat",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentCrop": {
@@ -24604,7 +24604,7 @@
         }
       ],
       "nodeType": "comfy.LatentCrop",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentCut": {
@@ -24695,7 +24695,7 @@
         }
       ],
       "nodeType": "comfy.LatentCut",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentCutToBatch": {
@@ -24768,7 +24768,7 @@
         }
       ],
       "nodeType": "comfy.LatentCutToBatch",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentFlip": {
@@ -24822,7 +24822,7 @@
         }
       ],
       "nodeType": "comfy.LatentFlip",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentFromBatch": {
@@ -24891,7 +24891,7 @@
         }
       ],
       "nodeType": "comfy.LatentFromBatch",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentInterpolate": {
@@ -24955,7 +24955,7 @@
         }
       ],
       "nodeType": "comfy.LatentInterpolate",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentMultiply": {
@@ -25008,7 +25008,7 @@
         }
       ],
       "nodeType": "comfy.LatentMultiply",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentOperationSharpen": {
@@ -25089,7 +25089,7 @@
         }
       ],
       "nodeType": "comfy.LatentOperationSharpen",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentOperationTonemapReinhard": {
@@ -25131,7 +25131,7 @@
         }
       ],
       "nodeType": "comfy.LatentOperationTonemapReinhard",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentRotate": {
@@ -25187,7 +25187,7 @@
         }
       ],
       "nodeType": "comfy.LatentRotate",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentSubtract": {
@@ -25233,7 +25233,7 @@
         }
       ],
       "nodeType": "comfy.LatentSubtract",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentUpscale": {
@@ -25345,7 +25345,7 @@
         }
       ],
       "nodeType": "comfy.LatentUpscale",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentUpscaleBy": {
@@ -25420,7 +25420,7 @@
         }
       ],
       "nodeType": "comfy.LatentUpscaleBy",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LatentUpscaleModelLoader": {
@@ -25462,7 +25462,7 @@
         }
       ],
       "nodeType": "comfy.LatentUpscaleModelLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LayersFromBoundingBoxes": {
@@ -25585,7 +25585,7 @@
         }
       ],
       "nodeType": "comfy.LayersFromBoundingBoxes",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LazyCache": {
@@ -25698,7 +25698,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadAudio": {
@@ -25750,7 +25750,7 @@
         }
       ],
       "nodeType": "comfy.LoadAudio",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadBackgroundRemovalModel": {
@@ -25793,7 +25793,7 @@
         }
       ],
       "nodeType": "comfy.LoadBackgroundRemovalModel",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadDA3Model": {
@@ -25856,7 +25856,7 @@
         }
       ],
       "nodeType": "comfy.LoadDA3Model",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadImage": {
@@ -25915,7 +25915,7 @@
         }
       ],
       "nodeType": "comfy.LoadImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadImageDataSetFromFolder": {
@@ -25961,7 +25961,7 @@
         }
       ],
       "nodeType": "comfy.LoadImageDataSetFromFolder",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadImageMask": {
@@ -26031,7 +26031,7 @@
         }
       ],
       "nodeType": "comfy.LoadImageMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadImageOutput": {
@@ -26090,7 +26090,7 @@
         }
       ],
       "nodeType": "comfy.LoadImageOutput",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadImageTextDataSetFromFolder": {
@@ -26149,7 +26149,7 @@
         }
       ],
       "nodeType": "comfy.LoadImageTextDataSetFromFolder",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadLatent": {
@@ -26184,7 +26184,7 @@
         }
       ],
       "nodeType": "comfy.LoadLatent",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadMediaPipeFaceLandmarker": {
@@ -26227,7 +26227,7 @@
         }
       ],
       "nodeType": "comfy.LoadMediaPipeFaceLandmarker",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadMoGeModel": {
@@ -26269,7 +26269,7 @@
         }
       ],
       "nodeType": "comfy.LoadMoGeModel",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadTrainingDataset": {
@@ -26321,7 +26321,7 @@
         }
       ],
       "nodeType": "comfy.LoadTrainingDataset",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadVideo": {
@@ -26369,7 +26369,7 @@
         }
       ],
       "nodeType": "comfy.LoadVideo",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadVideoDataSetFromFolder": {
@@ -26415,7 +26415,7 @@
         }
       ],
       "nodeType": "comfy.LoadVideoDataSetFromFolder",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoadVideoTextDataSetFromFolder": {
@@ -26474,7 +26474,7 @@
         }
       ],
       "nodeType": "comfy.LoadVideoTextDataSetFromFolder",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoraLoader": {
@@ -26585,7 +26585,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoraLoaderBypass": {
@@ -26703,7 +26703,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoraLoaderBypassModelOnly": {
@@ -26777,7 +26777,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoraLoaderModelOnly": {
@@ -26844,7 +26844,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoraModelLoader": {
@@ -26926,7 +26926,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LoraSave": {
@@ -27036,7 +27036,7 @@
         "gpu"
       ],
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LossGraphNode": {
@@ -27080,7 +27080,7 @@
       ],
       "nodeType": "comfy.LossGraphNode",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.LotusConditioning": {
@@ -27104,7 +27104,7 @@
         }
       ],
       "nodeType": "comfy.LotusConditioning",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Mahiro": {
@@ -27142,7 +27142,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MakeTrainingDataset": {
@@ -27246,7 +27246,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ManualSigmas": {
@@ -27286,7 +27286,7 @@
         }
       ],
       "nodeType": "comfy.ManualSigmas",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MaskComposite": {
@@ -27391,7 +27391,7 @@
         }
       ],
       "nodeType": "comfy.MaskComposite",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MaskPreview": {
@@ -27427,7 +27427,7 @@
       ],
       "nodeType": "comfy.MaskPreview",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MaskToImage": {
@@ -27462,7 +27462,7 @@
         }
       ],
       "nodeType": "comfy.MaskToImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MediaPipeFaceLandmarker": {
@@ -27600,7 +27600,7 @@
         }
       ],
       "nodeType": "comfy.MediaPipeFaceLandmarker",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MediaPipeFaceMask": {
@@ -27717,7 +27717,7 @@
         }
       ],
       "nodeType": "comfy.MediaPipeFaceMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MediaPipeFaceMeshVisualize": {
@@ -27955,7 +27955,7 @@
         }
       ],
       "nodeType": "comfy.MediaPipeFaceMeshVisualize",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MergeImageLists": {
@@ -27997,7 +27997,7 @@
         }
       ],
       "nodeType": "comfy.MergeImageLists",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MergeMeshes": {
@@ -28042,7 +28042,7 @@
         }
       ],
       "nodeType": "comfy.MergeMeshes",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MergeSplat": {
@@ -28087,7 +28087,7 @@
         }
       ],
       "nodeType": "comfy.MergeSplat",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MergeTextLists": {
@@ -28126,7 +28126,7 @@
         }
       ],
       "nodeType": "comfy.MergeTextLists",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MeshSmoothNormals": {
@@ -28180,7 +28180,7 @@
         }
       ],
       "nodeType": "comfy.MeshSmoothNormals",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MeshTextureToImage": {
@@ -28255,7 +28255,7 @@
         }
       ],
       "nodeType": "comfy.MeshTextureToImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MeshToFile3D": {
@@ -28290,7 +28290,7 @@
         }
       ],
       "nodeType": "comfy.MeshToFile3D",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MiniMaxH3AddGuide": {
@@ -28405,7 +28405,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MiniMaxH3FunControlNetApply": {
@@ -28556,7 +28556,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MiniMaxH3ImageToVideo": {
@@ -28708,7 +28708,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MiniMaxH3ReferenceToVideo": {
@@ -28955,7 +28955,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MiniMaxH3SigmaShift": {
@@ -29029,7 +29029,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MiniMaxMusic3TextEncode": {
@@ -29183,7 +29183,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MoGeGeometryToFOV": {
@@ -29269,7 +29269,7 @@
         }
       ],
       "nodeType": "comfy.MoGeGeometryToFOV",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MoGeInference": {
@@ -29401,7 +29401,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MoGePanoramaInference": {
@@ -29523,7 +29523,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MoGePointMapToMesh": {
@@ -29626,7 +29626,7 @@
         }
       ],
       "nodeType": "comfy.MoGePointMapToMesh",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MoGeRender": {
@@ -29684,7 +29684,7 @@
         }
       ],
       "nodeType": "comfy.MoGeRender",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelAttentionBackend": {
@@ -29740,7 +29740,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelComputeDtype": {
@@ -29800,7 +29800,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeAdd": {
@@ -29849,7 +29849,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeAuraflow": {
@@ -30672,7 +30672,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeBlocks": {
@@ -30775,7 +30775,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeCosmos14B": {
@@ -31580,7 +31580,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeCosmos7B": {
@@ -32241,7 +32241,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeCosmosPredict2_14B": {
@@ -33028,7 +33028,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeCosmosPredict2_2B": {
@@ -33671,7 +33671,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeFlux1": {
@@ -34854,7 +34854,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeKrea2": {
@@ -35587,7 +35587,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeLTXV": {
@@ -36230,7 +36230,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeMochiPreview": {
@@ -37233,7 +37233,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeQwenImage": {
@@ -38470,7 +38470,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeSD1": {
@@ -39059,7 +39059,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeSD2": {
@@ -39648,7 +39648,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeSD35_Large": {
@@ -40489,7 +40489,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeSD3_2B": {
@@ -41078,7 +41078,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeSDXL": {
@@ -41559,7 +41559,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeSimple": {
@@ -41626,7 +41626,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeSubtract": {
@@ -41693,7 +41693,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelMergeWAN2_1": {
@@ -42570,7 +42570,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelNoiseScale": {
@@ -42627,7 +42627,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelPatchLoader": {
@@ -42669,7 +42669,7 @@
         }
       ],
       "nodeType": "comfy.ModelPatchLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelSamplingAuraFlow": {
@@ -42725,7 +42725,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelSamplingContinuousEDM": {
@@ -42823,7 +42823,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelSamplingContinuousV": {
@@ -42917,7 +42917,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelSamplingDiscrete": {
@@ -42991,7 +42991,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelSamplingFlux": {
@@ -43103,7 +43103,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelSamplingLTXV": {
@@ -43188,7 +43188,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelSamplingSD3": {
@@ -43244,7 +43244,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelSamplingStableCascade": {
@@ -43300,7 +43300,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ModelSave": {
@@ -43341,7 +43341,7 @@
         "gpu"
       ],
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Morphology": {
@@ -43418,7 +43418,7 @@
         }
       ],
       "nodeType": "comfy.Morphology",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.MultiGPU_WorkUnits": {
@@ -43473,7 +43473,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.NAGuidance": {
@@ -43568,7 +43568,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.NormalizeImages": {
@@ -43642,7 +43642,7 @@
         }
       ],
       "nodeType": "comfy.NormalizeImages",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.NormalizeVideoLatentStart": {
@@ -43715,7 +43715,7 @@
         }
       ],
       "nodeType": "comfy.NormalizeVideoLatentStart",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.OpticalFlowLoader": {
@@ -43758,7 +43758,7 @@
         }
       ],
       "nodeType": "comfy.OpticalFlowLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.OptimalStepsScheduler": {
@@ -43837,7 +43837,7 @@
         }
       ],
       "nodeType": "comfy.OptimalStepsScheduler",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PaintMesh": {
@@ -43883,7 +43883,7 @@
         }
       ],
       "nodeType": "comfy.PaintMesh",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PairConditioningCombine": {
@@ -43961,7 +43961,7 @@
         }
       ],
       "nodeType": "comfy.PairConditioningCombine",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PairConditioningSetDefaultCombine": {
@@ -44050,7 +44050,7 @@
         }
       ],
       "nodeType": "comfy.PairConditioningSetDefaultCombine",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PairConditioningSetProperties": {
@@ -44176,7 +44176,7 @@
         }
       ],
       "nodeType": "comfy.PairConditioningSetProperties",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PairConditioningSetPropertiesAndCombine": {
@@ -44324,7 +44324,7 @@
         }
       ],
       "nodeType": "comfy.PairConditioningSetPropertiesAndCombine",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PatchModelAddDownscale": {
@@ -44494,7 +44494,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PerpNeg": {
@@ -44562,7 +44562,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PerpNegGuider": {
@@ -44671,7 +44671,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PerturbedAttentionGuidance": {
@@ -44728,7 +44728,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PhotoMakerEncode": {
@@ -44805,7 +44805,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PhotoMakerLoader": {
@@ -44847,7 +44847,7 @@
         }
       ],
       "nodeType": "comfy.PhotoMakerLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PiDConditioning": {
@@ -44935,7 +44935,7 @@
         }
       ],
       "nodeType": "comfy.PiDConditioning",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Pixal3DConditioning": {
@@ -45016,7 +45016,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PolyexponentialScheduler": {
@@ -45114,7 +45114,7 @@
         }
       ],
       "nodeType": "comfy.PolyexponentialScheduler",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PorterDuffImageComposite": {
@@ -45227,7 +45227,7 @@
         }
       ],
       "nodeType": "comfy.PorterDuffImageComposite",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Preview3D": {
@@ -45286,7 +45286,7 @@
       ],
       "nodeType": "comfy.Preview3D",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Preview3DAdvanced": {
@@ -45440,7 +45440,7 @@
       ],
       "nodeType": "comfy.Preview3DAdvanced",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PreviewAny": {
@@ -45473,7 +45473,7 @@
       ],
       "nodeType": "comfy.PreviewAny",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PreviewAudio": {
@@ -45509,7 +45509,7 @@
       ],
       "nodeType": "comfy.PreviewAudio",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PreviewGaussianSplat": {
@@ -45661,7 +45661,7 @@
       ],
       "nodeType": "comfy.PreviewGaussianSplat",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PreviewImage": {
@@ -45697,7 +45697,7 @@
       ],
       "nodeType": "comfy.PreviewImage",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PreviewPointCloud": {
@@ -45846,7 +45846,7 @@
       ],
       "nodeType": "comfy.PreviewPointCloud",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PrimitiveBoolean": {
@@ -45881,7 +45881,7 @@
         }
       ],
       "nodeType": "comfy.PrimitiveBoolean",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PrimitiveBoundingBox": {
@@ -45973,7 +45973,7 @@
         }
       ],
       "nodeType": "comfy.PrimitiveBoundingBox",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PrimitiveFloat": {
@@ -46012,7 +46012,7 @@
         }
       ],
       "nodeType": "comfy.PrimitiveFloat",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PrimitiveInt": {
@@ -46047,7 +46047,7 @@
         }
       ],
       "nodeType": "comfy.PrimitiveInt",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PrimitiveString": {
@@ -46086,7 +46086,7 @@
         }
       ],
       "nodeType": "comfy.PrimitiveString",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.PrimitiveStringMultiline": {
@@ -46125,7 +46125,7 @@
         }
       ],
       "nodeType": "comfy.PrimitiveStringMultiline",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.QuadrupleCLIPLoader": {
@@ -46221,7 +46221,7 @@
         }
       ],
       "nodeType": "comfy.QuadrupleCLIPLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.QwenImageDiffsynthControlnet": {
@@ -46321,7 +46321,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RTDETR_detect": {
@@ -46498,7 +46498,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RandomCropImages": {
@@ -46587,7 +46587,7 @@
         }
       ],
       "nodeType": "comfy.RandomCropImages",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RandomNoise": {
@@ -46628,7 +46628,7 @@
         }
       ],
       "nodeType": "comfy.RandomNoise",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RebatchImages": {
@@ -46686,7 +46686,7 @@
         }
       ],
       "nodeType": "comfy.RebatchImages",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RebatchLatents": {
@@ -46744,7 +46744,7 @@
         }
       ],
       "nodeType": "comfy.RebatchLatents",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RecordAudio": {
@@ -46779,7 +46779,7 @@
         }
       ],
       "nodeType": "comfy.RecordAudio",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ReferenceLatent": {
@@ -46825,7 +46825,7 @@
         }
       ],
       "nodeType": "comfy.ReferenceLatent",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ReferenceTimbreAudio": {
@@ -46871,7 +46871,7 @@
         }
       ],
       "nodeType": "comfy.ReferenceTimbreAudio",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RegexExtract": {
@@ -47003,7 +47003,7 @@
         }
       ],
       "nodeType": "comfy.RegexExtract",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RegexMatch": {
@@ -47096,7 +47096,7 @@
         }
       ],
       "nodeType": "comfy.RegexMatch",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RegexReplace": {
@@ -47224,7 +47224,7 @@
         }
       ],
       "nodeType": "comfy.RegexReplace",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RemeshMesh": {
@@ -47475,7 +47475,7 @@
         }
       ],
       "nodeType": "comfy.RemeshMesh",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RemoveBackground": {
@@ -47526,7 +47526,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RenderMesh": {
@@ -47670,7 +47670,7 @@
         }
       ],
       "nodeType": "comfy.RenderMesh",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RenderSplat": {
@@ -47909,7 +47909,7 @@
         }
       ],
       "nodeType": "comfy.RenderSplat",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RenderUVAtlas": {
@@ -47962,7 +47962,7 @@
         }
       ],
       "nodeType": "comfy.RenderUVAtlas",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RenormCFG": {
@@ -48038,7 +48038,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RepeatImageBatch": {
@@ -48090,7 +48090,7 @@
         }
       ],
       "nodeType": "comfy.RepeatImageBatch",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RepeatLatentBatch": {
@@ -48142,7 +48142,7 @@
         }
       ],
       "nodeType": "comfy.RepeatLatentBatch",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ReplaceText": {
@@ -48216,7 +48216,7 @@
         }
       ],
       "nodeType": "comfy.ReplaceText",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ReplaceVideoLatentFrames": {
@@ -48283,7 +48283,7 @@
         }
       ],
       "nodeType": "comfy.ReplaceVideoLatentFrames",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RescaleCFG": {
@@ -48339,7 +48339,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ResizeAndPadImage": {
@@ -48453,7 +48453,7 @@
         }
       ],
       "nodeType": "comfy.ResizeAndPadImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ResizeImageMaskNode": {
@@ -48792,7 +48792,7 @@
         }
       ],
       "nodeType": "comfy.ResizeImageMaskNode",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ResizeImagesByLongerEdge": {
@@ -48846,7 +48846,7 @@
         }
       ],
       "nodeType": "comfy.ResizeImagesByLongerEdge",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ResizeImagesByShorterEdge": {
@@ -48900,7 +48900,7 @@
         }
       ],
       "nodeType": "comfy.ResizeImagesByShorterEdge",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ResolutionBucket": {
@@ -48970,7 +48970,7 @@
         }
       ],
       "nodeType": "comfy.ResolutionBucket",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ResolutionSelector": {
@@ -49081,7 +49081,7 @@
         }
       ],
       "nodeType": "comfy.ResolutionSelector",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.RotateMesh": {
@@ -49262,7 +49262,7 @@
         }
       ],
       "nodeType": "comfy.RotateMesh",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SAM3DBody_FaceExpression": {
@@ -49438,7 +49438,7 @@
         }
       ],
       "nodeType": "comfy.SAM3DBody_FaceExpression",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SAM3DBody_Loader": {
@@ -49473,7 +49473,7 @@
         }
       ],
       "nodeType": "comfy.SAM3DBody_Loader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SAM3DBody_Predict": {
@@ -49596,7 +49596,7 @@
         }
       ],
       "nodeType": "comfy.SAM3DBody_Predict",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SAM3DBody_Render": {
@@ -50183,7 +50183,7 @@
         }
       ],
       "nodeType": "comfy.SAM3DBody_Render",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SAM3DBody_Smooth": {
@@ -50297,7 +50297,7 @@
         }
       ],
       "nodeType": "comfy.SAM3DBody_Smooth",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SAM3_Detect": {
@@ -50479,7 +50479,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SAM3_TrackPreview": {
@@ -50556,7 +50556,7 @@
       ],
       "nodeType": "comfy.SAM3_TrackPreview",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SAM3_TrackToMask": {
@@ -50610,7 +50610,7 @@
         }
       ],
       "nodeType": "comfy.SAM3_TrackToMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SAM3_VideoTrack": {
@@ -50745,7 +50745,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SCAIL2ColoredMask": {
@@ -50856,7 +50856,7 @@
         }
       ],
       "nodeType": "comfy.SCAIL2ColoredMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SDPoseDrawKeypoints": {
@@ -51005,7 +51005,7 @@
         }
       ],
       "nodeType": "comfy.SDPoseDrawKeypoints",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SDPoseFaceBBoxes": {
@@ -51072,7 +51072,7 @@
         }
       ],
       "nodeType": "comfy.SDPoseFaceBBoxes",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SDPoseKeypointExtractor": {
@@ -51169,7 +51169,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SDTurboScheduler": {
@@ -51242,7 +51242,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SD_4XUpscale_Conditioning": {
@@ -51356,7 +51356,7 @@
         }
       ],
       "nodeType": "comfy.SD_4XUpscale_Conditioning",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SUPIRApply": {
@@ -51505,7 +51505,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SV3D_Conditioning": {
@@ -51656,7 +51656,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SVD_img2vid_Conditioning": {
@@ -51843,7 +51843,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerARVideo": {
@@ -51885,7 +51885,7 @@
         }
       ],
       "nodeType": "comfy.SamplerARVideo",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerCustom": {
@@ -52037,7 +52037,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerCustomAdvanced": {
@@ -52126,7 +52126,7 @@
         }
       ],
       "nodeType": "comfy.SamplerCustomAdvanced",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerDPMAdaptative": {
@@ -52339,7 +52339,7 @@
         }
       ],
       "nodeType": "comfy.SamplerDPMAdaptative",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerDPMPP_2M_SDE": {
@@ -52440,7 +52440,7 @@
         }
       ],
       "nodeType": "comfy.SamplerDPMPP_2M_SDE",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerDPMPP_2S_Ancestral": {
@@ -52500,7 +52500,7 @@
         }
       ],
       "nodeType": "comfy.SamplerDPMPP_2S_Ancestral",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerDPMPP_3M_SDE": {
@@ -52582,7 +52582,7 @@
         }
       ],
       "nodeType": "comfy.SamplerDPMPP_3M_SDE",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerDPMPP_SDE": {
@@ -52683,7 +52683,7 @@
         }
       ],
       "nodeType": "comfy.SamplerDPMPP_SDE",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerER_SDE": {
@@ -52784,7 +52784,7 @@
         }
       ],
       "nodeType": "comfy.SamplerER_SDE",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerEulerAncestral": {
@@ -52846,7 +52846,7 @@
         }
       ],
       "nodeType": "comfy.SamplerEulerAncestral",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerEulerAncestralCFGPP": {
@@ -52906,7 +52906,7 @@
         }
       ],
       "nodeType": "comfy.SamplerEulerAncestralCFGPP",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerEulerCFGpp": {
@@ -52950,7 +52950,7 @@
         }
       ],
       "nodeType": "comfy.SamplerEulerCFGpp",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerLCM": {
@@ -53031,7 +53031,7 @@
         }
       ],
       "nodeType": "comfy.SamplerLCM",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerLCMUpscale": {
@@ -53115,7 +53115,7 @@
         }
       ],
       "nodeType": "comfy.SamplerLCMUpscale",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerLMS": {
@@ -53157,7 +53157,7 @@
         }
       ],
       "nodeType": "comfy.SamplerLMS",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerSASolver": {
@@ -53331,7 +53331,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplerSEEDS2": {
@@ -53434,7 +53434,7 @@
         }
       ],
       "nodeType": "comfy.SamplerSEEDS2",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SamplingPercentToSigma": {
@@ -53503,7 +53503,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Save3DAdvanced": {
@@ -53673,7 +53673,7 @@
       ],
       "nodeType": "comfy.Save3DAdvanced",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveAnimatedPNG": {
@@ -53761,7 +53761,7 @@
       ],
       "nodeType": "comfy.SaveAnimatedPNG",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveAnimatedWEBP": {
@@ -53880,7 +53880,7 @@
       ],
       "nodeType": "comfy.SaveAnimatedWEBP",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveAudio": {
@@ -53932,7 +53932,7 @@
       ],
       "nodeType": "comfy.SaveAudio",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveAudioAdvanced": {
@@ -54050,7 +54050,7 @@
       ],
       "nodeType": "comfy.SaveAudioAdvanced",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveAudioMP3": {
@@ -54122,7 +54122,7 @@
       ],
       "nodeType": "comfy.SaveAudioMP3",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveAudioOpus": {
@@ -54196,7 +54196,7 @@
       ],
       "nodeType": "comfy.SaveAudioOpus",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveGLB": {
@@ -54252,7 +54252,7 @@
       ],
       "nodeType": "comfy.SaveGLB",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveGaussianSplat": {
@@ -54420,7 +54420,7 @@
       ],
       "nodeType": "comfy.SaveGaussianSplat",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveImage": {
@@ -54470,7 +54470,7 @@
       ],
       "nodeType": "comfy.SaveImage",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveImageAdvanced": {
@@ -54744,7 +54744,7 @@
       ],
       "nodeType": "comfy.SaveImageAdvanced",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveImageDataSetToFolder": {
@@ -54829,7 +54829,7 @@
       ],
       "nodeType": "comfy.SaveImageDataSetToFolder",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveImageTextDataSetToFolder": {
@@ -54930,7 +54930,7 @@
       ],
       "nodeType": "comfy.SaveImageTextDataSetToFolder",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveLatent": {
@@ -54978,7 +54978,7 @@
       ],
       "nodeType": "comfy.SaveLatent",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveLoRA": {
@@ -55034,7 +55034,7 @@
       ],
       "nodeType": "comfy.SaveLoRA",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SavePointCloud": {
@@ -55199,7 +55199,7 @@
       ],
       "nodeType": "comfy.SavePointCloud",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveSVGNode": {
@@ -55252,7 +55252,7 @@
       ],
       "nodeType": "comfy.SaveSVGNode",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveText": {
@@ -55330,7 +55330,7 @@
       ],
       "nodeType": "comfy.SaveText",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveTrainingDataset": {
@@ -55412,7 +55412,7 @@
       ],
       "nodeType": "comfy.SaveTrainingDataset",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveVideo": {
@@ -55932,7 +55932,7 @@
       ],
       "nodeType": "comfy.SaveVideo",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SaveWEBM": {
@@ -56041,7 +56041,7 @@
       ],
       "nodeType": "comfy.SaveWEBM",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ScaleROPE": {
@@ -56193,7 +56193,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SeedNode": {
@@ -56232,7 +56232,7 @@
         }
       ],
       "nodeType": "comfy.SeedNode",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SeedVR2Conditioning": {
@@ -56293,7 +56293,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SeedVR2PostProcessing": {
@@ -56363,7 +56363,7 @@
         }
       ],
       "nodeType": "comfy.SeedVR2PostProcessing",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SeedVR2Preprocess": {
@@ -56399,7 +56399,7 @@
         }
       ],
       "nodeType": "comfy.SeedVR2Preprocess",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SeedVR2TemporalChunk": {
@@ -56502,7 +56502,7 @@
         }
       ],
       "nodeType": "comfy.SeedVR2TemporalChunk",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SeedVR2TemporalMerge": {
@@ -56560,7 +56560,7 @@
         }
       ],
       "nodeType": "comfy.SeedVR2TemporalMerge",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SelectCLIPDevice": {
@@ -56617,7 +56617,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SelectModelDevice": {
@@ -56674,7 +56674,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SelectVAEDevice": {
@@ -56730,7 +56730,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SelfAttentionGuidance": {
@@ -56805,7 +56805,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SenseNovaSamplingOptions": {
@@ -56859,7 +56859,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SetClipHooks": {
@@ -56934,7 +56934,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SetFirstSigma": {
@@ -56987,7 +56987,7 @@
         }
       ],
       "nodeType": "comfy.SetFirstSigma",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SetHookKeyframes": {
@@ -57033,7 +57033,7 @@
         }
       ],
       "nodeType": "comfy.SetHookKeyframes",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SetLatentNoiseMask": {
@@ -57079,7 +57079,7 @@
         }
       ],
       "nodeType": "comfy.SetLatentNoiseMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SetUnionControlNetType": {
@@ -57143,7 +57143,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ShuffleDataset": {
@@ -57203,7 +57203,7 @@
         }
       ],
       "nodeType": "comfy.ShuffleDataset",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ShuffleImageTextDataset": {
@@ -57292,7 +57292,7 @@
         }
       ],
       "nodeType": "comfy.ShuffleImageTextDataset",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ShuffleVideoDataset": {
@@ -57352,7 +57352,7 @@
         }
       ],
       "nodeType": "comfy.ShuffleVideoDataset",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ShuffleVideoTextDataset": {
@@ -57440,7 +57440,7 @@
         }
       ],
       "nodeType": "comfy.ShuffleVideoTextDataset",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SkipLayerGuidanceDiT": {
@@ -57586,7 +57586,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SkipLayerGuidanceDiTSimple": {
@@ -57696,7 +57696,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SkipLayerGuidanceSD3": {
@@ -57807,7 +57807,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SolidMask": {
@@ -57885,7 +57885,7 @@
         }
       ],
       "nodeType": "comfy.SolidMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SplatToFile3D": {
@@ -57941,7 +57941,7 @@
         }
       ],
       "nodeType": "comfy.SplatToFile3D",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SplatToMesh": {
@@ -58110,7 +58110,7 @@
         }
       ],
       "nodeType": "comfy.SplatToMesh",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SplitAudioChannels": {
@@ -58155,7 +58155,7 @@
         }
       ],
       "nodeType": "comfy.SplitAudioChannels",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SplitImageToTileList": {
@@ -58244,7 +58244,7 @@
         }
       ],
       "nodeType": "comfy.SplitImageToTileList",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SplitImageWithAlpha": {
@@ -58289,7 +58289,7 @@
         }
       ],
       "nodeType": "comfy.SplitImageWithAlpha",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SplitSigmas": {
@@ -58351,7 +58351,7 @@
         }
       ],
       "nodeType": "comfy.SplitSigmas",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.SplitSigmasDenoise": {
@@ -58414,7 +58414,7 @@
         }
       ],
       "nodeType": "comfy.SplitSigmasDenoise",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StableCascade_EmptyLatentImage": {
@@ -58520,7 +58520,7 @@
         }
       ],
       "nodeType": "comfy.StableCascade_EmptyLatentImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StableCascade_StageB_Conditioning": {
@@ -58566,7 +58566,7 @@
         }
       ],
       "nodeType": "comfy.StableCascade_StageB_Conditioning",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StableCascade_StageC_VAEEncode": {
@@ -58644,7 +58644,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StableCascade_SuperResolutionControlnet": {
@@ -58713,7 +58713,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StableZero123_Conditioning": {
@@ -58882,7 +58882,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StableZero123_Conditioning_Batched": {
@@ -59089,7 +59089,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StringCompare": {
@@ -59176,7 +59176,7 @@
         }
       ],
       "nodeType": "comfy.StringCompare",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StringConcatenate": {
@@ -59246,7 +59246,7 @@
         }
       ],
       "nodeType": "comfy.StringConcatenate",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StringContains": {
@@ -59313,7 +59313,7 @@
         }
       ],
       "nodeType": "comfy.StringContains",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StringFormat": {
@@ -59397,7 +59397,7 @@
         }
       ],
       "nodeType": "comfy.StringFormat",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StringLength": {
@@ -59436,7 +59436,7 @@
         }
       ],
       "nodeType": "comfy.StringLength",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StringReplace": {
@@ -59505,7 +59505,7 @@
         }
       ],
       "nodeType": "comfy.StringReplace",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StringSubstring": {
@@ -59566,7 +59566,7 @@
         }
       ],
       "nodeType": "comfy.StringSubstring",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StringTrim": {
@@ -59625,7 +59625,7 @@
         }
       ],
       "nodeType": "comfy.StringTrim",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StripWhitespace": {
@@ -59665,7 +59665,7 @@
         }
       ],
       "nodeType": "comfy.StripWhitespace",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StyleModelApply": {
@@ -59762,7 +59762,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.StyleModelLoader": {
@@ -59804,7 +59804,7 @@
         }
       ],
       "nodeType": "comfy.StyleModelLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.T5TokenizerOptions": {
@@ -59878,7 +59878,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TCFG": {
@@ -59916,7 +59916,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TemporalScoreRescaling": {
@@ -59994,7 +59994,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextEncodeAceStepAudio": {
@@ -60082,7 +60082,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextEncodeAceStepAudio1.5": {
@@ -60452,7 +60452,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextEncodeBooguEdit": {
@@ -60581,7 +60581,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextEncodeHunyuanVideo_ImageToVideo": {
@@ -60665,7 +60665,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextEncodeJoyImageEdit": {
@@ -60751,7 +60751,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextEncodeMageFlowEdit": {
@@ -60945,7 +60945,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextEncodeQwenImageEdit": {
@@ -61021,7 +61021,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextEncodeQwenImageEditPlus": {
@@ -61119,7 +61119,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextEncodeZImageOmni": {
@@ -61241,7 +61241,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextGenerate": {
@@ -61514,7 +61514,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextGenerateLTX2Prompt": {
@@ -61787,7 +61787,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextOverlay": {
@@ -61925,7 +61925,7 @@
         }
       ],
       "nodeType": "comfy.TextOverlay",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextToLowercase": {
@@ -61965,7 +61965,7 @@
         }
       ],
       "nodeType": "comfy.TextToLowercase",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TextToUppercase": {
@@ -62005,7 +62005,7 @@
         }
       ],
       "nodeType": "comfy.TextToUppercase",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ThresholdMask": {
@@ -62058,7 +62058,7 @@
         }
       ],
       "nodeType": "comfy.ThresholdMask",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TomePatchModel": {
@@ -62114,7 +62114,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TorchCompileModel": {
@@ -62172,7 +62172,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TrainLoraNode": {
@@ -62588,7 +62588,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TransformSplat": {
@@ -62785,7 +62785,7 @@
         }
       ],
       "nodeType": "comfy.TransformSplat",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Trellis2Conditioning": {
@@ -62845,7 +62845,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Trellis2ShapeStage": {
@@ -62923,7 +62923,7 @@
         }
       ],
       "nodeType": "comfy.Trellis2ShapeStage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Trellis2TextureStage": {
@@ -63000,7 +63000,7 @@
         }
       ],
       "nodeType": "comfy.Trellis2TextureStage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Trellis2UpsampleStage": {
@@ -63111,7 +63111,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TrimAudioDuration": {
@@ -63181,7 +63181,7 @@
         }
       ],
       "nodeType": "comfy.TrimAudioDuration",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TrimVideoLatent": {
@@ -63233,7 +63233,7 @@
         }
       ],
       "nodeType": "comfy.TrimVideoLatent",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TripleCLIPLoader": {
@@ -63311,7 +63311,7 @@
         }
       ],
       "nodeType": "comfy.TripleCLIPLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TripoSplatConditioning": {
@@ -63393,7 +63393,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TripoSplatPreprocessImage": {
@@ -63476,7 +63476,7 @@
         }
       ],
       "nodeType": "comfy.TripoSplatPreprocessImage",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TripoSplatSamplingPreview": {
@@ -63622,7 +63622,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.TruncateText": {
@@ -63680,7 +63680,7 @@
         }
       ],
       "nodeType": "comfy.TruncateText",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.UNETLoader": {
@@ -63737,7 +63737,7 @@
         }
       ],
       "nodeType": "comfy.UNETLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.UNetCrossAttentionMultiply": {
@@ -63851,7 +63851,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.UNetSelfAttentionMultiply": {
@@ -63965,7 +63965,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.UNetTemporalAttentionMultiply": {
@@ -64079,7 +64079,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.USOStyleReference": {
@@ -64139,7 +64139,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.UnwrapMesh": {
@@ -64250,7 +64250,7 @@
         }
       ],
       "nodeType": "comfy.UnwrapMesh",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.UpscaleModelLoader": {
@@ -64292,7 +64292,7 @@
         }
       ],
       "nodeType": "comfy.UpscaleModelLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VAEDecode": {
@@ -64343,7 +64343,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VAEDecodeAudio": {
@@ -64392,7 +64392,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VAEDecodeAudioTiled": {
@@ -64477,7 +64477,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VAEDecodeHunyuan3D": {
@@ -64562,7 +64562,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VAEDecodeTiled": {
@@ -64689,7 +64689,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VAEDecodeTripoSplat": {
@@ -64775,7 +64775,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VAEEncode": {
@@ -64824,7 +64824,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VAEEncodeAudio": {
@@ -64873,7 +64873,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VAEEncodeForInpaint": {
@@ -64951,7 +64951,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VAEEncodeTiled": {
@@ -65078,7 +65078,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VAELoader": {
@@ -65120,7 +65120,7 @@
         }
       ],
       "nodeType": "comfy.VAELoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VAESave": {
@@ -65161,7 +65161,7 @@
         "gpu"
       ],
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VOIDInpaintConditioning": {
@@ -65337,7 +65337,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VOIDQuadmaskPreprocess": {
@@ -65391,7 +65391,7 @@
         }
       ],
       "nodeType": "comfy.VOIDQuadmaskPreprocess",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VOIDSampler": {
@@ -65415,7 +65415,7 @@
         }
       ],
       "nodeType": "comfy.VOIDSampler",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VOIDWarpedNoise": {
@@ -65535,7 +65535,7 @@
         }
       ],
       "nodeType": "comfy.VOIDWarpedNoise",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VOIDWarpedNoiseSource": {
@@ -65571,7 +65571,7 @@
         }
       ],
       "nodeType": "comfy.VOIDWarpedNoiseSource",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VPScheduler": {
@@ -65669,7 +65669,7 @@
         }
       ],
       "nodeType": "comfy.VPScheduler",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VaeDecodeShapeTrellis": {
@@ -65728,7 +65728,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VaeDecodeStructureTrellis2": {
@@ -65796,7 +65796,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VaeDecodeTextureTrellis": {
@@ -65857,7 +65857,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Video Slice": {
@@ -65942,7 +65942,7 @@
         }
       ],
       "nodeType": "comfy.Video Slice",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VideoCrop": {
@@ -65998,7 +65998,7 @@
       ],
       "nodeType": "comfy.VideoCrop",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VideoFrameSample": {
@@ -66091,7 +66091,7 @@
         }
       ],
       "nodeType": "comfy.VideoFrameSample",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VideoLinearCFGGuidance": {
@@ -66149,7 +66149,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VideoRandomTemporalCrop": {
@@ -66220,7 +66220,7 @@
         }
       ],
       "nodeType": "comfy.VideoRandomTemporalCrop",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VideoTemporalCrop": {
@@ -66292,7 +66292,7 @@
         }
       ],
       "nodeType": "comfy.VideoTemporalCrop",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VideoTriangleCFGGuidance": {
@@ -66350,7 +66350,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VideoTrim": {
@@ -66418,7 +66418,7 @@
       ],
       "nodeType": "comfy.VideoTrim",
       "outputNode": true,
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VoxelToMesh": {
@@ -66490,7 +66490,7 @@
         }
       ],
       "nodeType": "comfy.VoxelToMesh",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.VoxelToMeshBasic": {
@@ -66543,7 +66543,7 @@
         }
       ],
       "nodeType": "comfy.VoxelToMeshBasic",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Wan22FunControlToVideo": {
@@ -66716,7 +66716,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.Wan22ImageToVideoLatent": {
@@ -66836,7 +66836,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanAnimate2Cache": {
@@ -66915,7 +66915,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanAnimate2ToVideo": {
@@ -67267,7 +67267,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanAnimateToVideo": {
@@ -67562,7 +67562,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanCameraEmbedding": {
@@ -67790,7 +67790,7 @@
         }
       ],
       "nodeType": "comfy.WanCameraEmbedding",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanCameraImageToVideo": {
@@ -67974,7 +67974,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanContextWindowsManual": {
@@ -68166,7 +68166,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanDancerEncodeAudio": {
@@ -68248,7 +68248,7 @@
         }
       ],
       "nodeType": "comfy.WanDancerEncodeAudio",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanDancerPadKeyframes": {
@@ -68351,7 +68351,7 @@
         }
       ],
       "nodeType": "comfy.WanDancerPadKeyframes",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanDancerPadKeyframesList": {
@@ -68463,7 +68463,7 @@
         }
       ],
       "nodeType": "comfy.WanDancerPadKeyframesList",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanDancerVideo": {
@@ -68657,7 +68657,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanFirstLastFrameToVideo": {
@@ -68852,7 +68852,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanFunControlToVideo": {
@@ -69036,7 +69036,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanFunInpaintToVideo": {
@@ -69220,7 +69220,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanHuMoImageToVideo": {
@@ -69393,7 +69393,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanImageToVideo": {
@@ -69566,7 +69566,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanInfiniteTalkToVideo": {
@@ -69875,7 +69875,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanMoveConcatTrack": {
@@ -69921,7 +69921,7 @@
         }
       ],
       "nodeType": "comfy.WanMoveConcatTrack",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanMoveTrackToVideo": {
@@ -70124,7 +70124,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanMoveTracksFromCoords": {
@@ -70186,7 +70186,7 @@
         }
       ],
       "nodeType": "comfy.WanMoveTracksFromCoords",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanMoveVisualizeTracks": {
@@ -70303,7 +70303,7 @@
         }
       ],
       "nodeType": "comfy.WanMoveVisualizeTracks",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanPhantomSubjectToVideo": {
@@ -70475,7 +70475,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanSCAILToVideo": {
@@ -70816,7 +70816,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanSoundImageToVideo": {
@@ -71011,7 +71011,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanSoundImageToVideoExtend": {
@@ -71153,7 +71153,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanTrackToVideo": {
@@ -71379,7 +71379,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanUni3CControlnetApply": {
@@ -71505,7 +71505,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WanVaceToVideo": {
@@ -71717,7 +71717,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WebcamCapture": {
@@ -71800,7 +71800,7 @@
         }
       ],
       "nodeType": "comfy.WebcamCapture",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.WeldVertices": {
@@ -71871,7 +71871,7 @@
         }
       ],
       "nodeType": "comfy.WeldVertices",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.ZImageFunControlnet": {
@@ -71982,7 +71982,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.unCLIPCheckpointLoader": {
@@ -72054,7 +72054,7 @@
         }
       ],
       "nodeType": "comfy.unCLIPCheckpointLoader",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.unCLIPConditioning": {
@@ -72136,7 +72136,7 @@
         }
       ],
       "nodeType": "comfy.unCLIPConditioning",
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     },
     "comfy.wanBlockSwap": {
@@ -72174,7 +72174,7 @@
       "occupies": [
         "gpu"
       ],
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "version": 1
     }
   },

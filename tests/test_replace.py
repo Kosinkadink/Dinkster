@@ -800,68 +800,6 @@ def test_replacements_never_join_the_signature() -> None:
     assert schema_signature(SUCCESSOR) == schema_signature(bare)
 
 
-def test_wire_27_omits_dynamic_and_migration_rules_without_hiding_the_schema() -> None:
-    dynamic_rule = _rule(
-        ReplacementCase.build(
-            "new.node",
-            slot_variants={"policy": "tolerance_color"},
-        )
-    )
-    migration_rule = ReplacementRule(
-        from_type="new.node",
-        migration=ReplacementMigration(("legacy",)),
-        cases=(ReplacementCase.build("new.node"),),
-    )
-    dynamic = dataclasses.replace(
-        SUCCESSOR,
-        replacements=(*SUCCESSOR.replacements, dynamic_rule, migration_rule),
-    )
-    wire = schema_to_wire(dynamic)
-    assert wire["schemaVersion"] == 40
-    assert wire["replacements"][1]["cases"][0]["slotVariants"] == {  # type: ignore[index]
-        "policy": "tolerance_color"
-    }
-    assert wire["replacements"][2]["migration"] == {  # type: ignore[index]
-        "historicalInputs": ["legacy"]
-    }
-    assert schema_from_wire(wire) == dynamic
-    for version in (26, 27):
-        downgraded_wire = schema_to_wire(dynamic, wire_version=version)
-        assert downgraded_wire["nodeType"] == "new.node"
-        assert downgraded_wire["replacements"] == [rule_to_wire(SUCCESSOR.replacements[0])]
-
-    downgraded = dict(wire)
-    downgraded["schemaVersion"] = 27
-    with pytest.raises(ValueError, match="slotVariants require schema wire 28"):
-        schema_from_wire(downgraded)
-    migration_only = schema_to_wire(dataclasses.replace(dynamic, replacements=(migration_rule,)))
-    migration_only["schemaVersion"] = 27
-    with pytest.raises(ValueError, match="migration requires schema wire 28"):
-        schema_from_wire(migration_only)
-    assert schema_signature(dynamic) == schema_signature(
-        dataclasses.replace(dynamic, replacements=())
-    )
-
-
-def test_wire_27_omits_rules_that_target_open_dynamic_slots() -> None:
-    dynamic_rule = _rule(
-        ReplacementCase.build(
-            "new.open-slot",
-            inputs={"source": MappingSource.copy("picture")},
-        )
-    )
-    target = NodeSchema(
-        node_type="new.open-slot",
-        slots=(DynamicSlotSpec("source", slot_type=INT),),
-        replacements=(dynamic_rule,),
-    )
-
-    assert schema_to_wire(target)["replacements"] == [rule_to_wire(dynamic_rule)]
-    predecessor = schema_to_wire(target, wire_version=27)
-    assert predecessor["nodeType"] == target.node_type
-    assert "replacements" not in predecessor
-
-
 # -- cross-schema reference checks ----------------------------------------------
 
 

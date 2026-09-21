@@ -4,7 +4,6 @@ Shape is designed to be near-isomorphic to Dinkster-Frontend's normalized
 NodeSchema model: one ordered interface list, real output ids, structured
 type expressions, and an explicit schemaVersion field.
 
-Pre-1.0 this format is unstable and revised in place (hazard H7).
 """
 
 from __future__ import annotations
@@ -65,165 +64,30 @@ from .model import (
     WidgetRepresentation,
     WidgetRepresentations,
 )
-from .replace import ReplacementCase, ReplacementRule, rule_from_wire, rule_to_wire
+from .replace import rule_from_wire, rule_to_wire
 
-# v45: optional native execution dispatch affinity
-# v44: optional pack locale catalog descriptors
-# v43: COMBO options derived from stable dynamic input-family member ids
-# v42: optional per-node hasDocs presentation marker
-# v41: chunkSafe, acceptsStream, and recursive stream type expressions
-# v40: alpha/mask policies on inputs, outputs, and output descriptor choices
-# v39: stored output descriptors, revisioned asset probes, and acceptsStorage inputs
-# v38: presentation-only hidden inputs
-# v37: strict COMPOSITOR widget descriptor
-# v36: schema-declared STRING completion candidates and dynamic-family sources
-# v35: strict CURVE widget descriptor
-# v34: typed primitive outputs known from an identity input before execution
-# v33: unsafe integer NUMBER constraints use canonical decimal strings
-# v32: closed DynamicSlot variant may bind a node-level type variable
-# v31: output rendition represented by a selected asset before execution
-# v30: mirror applicability (combo values a mirror covers); a mirror carrying
-#      it is omitted below v30 so older clients never over-apply the mirror
-# v29: mirror declaration (frontend-renderable preview estimates)
-# v28: replacement cases may select dynamic target variants
-# v27: reserved by the paired frontend schema contract
-# v26: output-family cardinality bound to a stored core.int literal
-# v25: media/model3d source-filename kind (3D model uploads)
-# v24: emitsPreviews live-preview capability flag
-# v23: labels, info, and explicit folder paths for static combo options
-# v22: source-filename execution binding and upload-enabled ASSET presentation
-# v21: distinct list<core.combo> MULTI_COMBO descriptor
-# v20: remote combo timeout, retry, refresh, and control-after-refresh policy;
-#      /api/nodes serves frozen v19 without them
-# v19: round, placeholder, dynamicPrompts, combo control-after-generate,
-#      and COLOR presentation; /api/nodes serves frozen v18 without them
-# v18: explicit closed numeric display presentation
-# v17: named finite widget representations and explicit single-line strings
-# v16: true-only recursive lazy input and final-output preview metadata
-# v15: recursive dynamic input entries, family templates, dynamic combos,
-#      and open dynamic slots
-# v14: core.combo socket identity replaces and retires v13's comboSource
-#      output capability marker; ComboWidget's descriptor shape is unchanged
-# (v13: comboSource output presentation marker (retired by v14);
-#  v12: "asset" TypeExpr kind (typed assets: recursive element expression
-#  mirroring "list"; runtime ids grow asset<...>);
-#  v11: NUMBER widget kind (min/max/step + control-after-generate), STRING
-#  widget kind (multiline hint), per-input displayName;
-#  v10: BOOLEAN widget kind (custom toggle labels on core.boolean inputs);
-#  v9: COMBO widget kind (static options and/or remote choice route);
-#  v8: searchTerms discovery keywords (node-search matching, never resolution);
-#  v7: optional namespaced asset kind on ASSET widgets;
-#  v6: dynamicSlot interface role + slotChoices on elaborated schemas;
-#  v5: SAVE_TARGET widget kind; v4: typed input widget descriptors)
-SCHEMA_WIRE_VERSION = 40
-SCHEMA_WIRE_SERVE_VERSIONS = (
-    22,
-    23,
-    24,
-    25,
-    26,
-    27,
-    28,
-    29,
-    30,
-    31,
-    32,
-    33,
-    34,
-    35,
-    36,
-    37,
-    38,
-    39,
-    40,
-    41,
-    42,
-    43,
-    44,
-    45,
-)
-_SCHEMA_WIRE_ENCODE_VERSIONS = (
-    15,
-    16,
-    17,
-    18,
-    19,
-    20,
-    21,
-    22,
-    23,
-    24,
-    25,
-    26,
-    27,
-    28,
-    29,
-    30,
-    31,
-    32,
-    33,
-    34,
-    35,
-    36,
-    37,
-    38,
-    39,
-    40,
-    41,
-    42,
-    43,
-    44,
-    45,
-)
-_SCHEMA_WIRE_DECODE_VERSIONS = (
-    21,
-    22,
-    23,
-    24,
-    25,
-    26,
-    27,
-    28,
-    29,
-    30,
-    31,
-    32,
-    33,
-    34,
-    35,
-    36,
-    37,
-    38,
-    39,
-    40,
-    41,
-    42,
-    43,
-    44,
-    45,
-)
-
+SCHEMA_WIRE_VERSION = 1
 _JSON_SAFE_INT = 2**53 - 1
 _DECIMAL_WIRE_INT_MIN = -(2**63)
 _DECIMAL_WIRE_INT_MAX = 2**64 - 1
-_CANONICAL_DECIMAL_INT = re.compile(r"^-?(?:0|[1-9][0-9]*)$")
+_CANONICAL_DECIMAL_INT = re.compile("^-?(?:0|[1-9][0-9]*)$")
 
 
 def _number_constraint_to_wire(value: int | float, wire_version: int) -> int | float | str | None:
     if isinstance(value, int) and abs(value) > _JSON_SAFE_INT:
-        return str(value) if wire_version >= 33 else None
+        return str(value)
     return value
 
 
 def _number_constraint_from_wire(value: object, field: str, wire_version: int) -> int | float:
     if isinstance(value, str):
-        if wire_version < 33 or _CANONICAL_DECIMAL_INT.fullmatch(value) is None:
+        if _CANONICAL_DECIMAL_INT.fullmatch(value) is None:
             raise ValueError(f"NUMBER widget {field} must be a number")
         decoded = int(value)
         if abs(decoded) <= _JSON_SAFE_INT:
             raise ValueError(
-                f"NUMBER widget {field} decimal string must encode an integer outside the "
-                "JSON-double-safe range"
+                f"NUMBER widget {field} decimal string must encode an integer "
+                "outside the JSON-double-safe range"
             )
         if not _DECIMAL_WIRE_INT_MIN <= decoded <= _DECIMAL_WIRE_INT_MAX:
             raise ValueError(f"NUMBER widget {field} decimal string is outside the supported range")
@@ -238,73 +102,9 @@ def _number_constraint_from_wire(value: object, field: str, wire_version: int) -
     return value
 
 
-class SchemaWireVersionRequirement(ValueError):
-    """A schema feature cannot be represented at the requested wire version."""
-
-    code = "schema-wire-required"
-
-    def __init__(self, feature: str, required_version: int) -> None:
-        self.required_version = required_version
-        super().__init__(f"{feature} requires schema wire {required_version}")
-
-
-def _case_uses_dynamic_input_paths(
-    carrier: NodeSchema,
-    case: ReplacementCase,
-    schemas: Mapping[str, NodeSchema] | None,
-) -> bool:
-    helper_types = dict(case.nodes or ())
-
-    def target_schema(address: str) -> tuple[NodeSchema | None, str]:
-        if case.nodes is not None and ":" in address:
-            local_id, input_id = address.split(":")
-            node_type = helper_types[local_id].type
-        else:
-            node_type = case.to
-            input_id = address
-        if node_type == carrier.node_type:
-            return carrier, input_id
-        if schemas is None:
-            return None, input_id
-        return schemas.get(node_type), input_id
-
-    def is_dynamic_target(address: str) -> bool:
-        schema, input_id = target_schema(address)
-        if schema is None:
-            # A predecessor encoding without publication context cannot prove
-            # that a cross-schema target address is static.
-            return True
-        return input_id not in frozenset(spec.id for spec in schema.inputs)
-
-    for address, _mapping in case.inputs:
-        if is_dynamic_target(address):
-            return True
-    for link in case.links:
-        if is_dynamic_target(link.to):
-            return True
-    return any(
-        is_dynamic_target(f"{local_id}:{input_id}")
-        for local_id, node in case.nodes or ()
-        for input_id, _ in node.values
-    )
-
-
-def replacement_requires_schema_wire_28(
-    carrier: NodeSchema,
-    rule: ReplacementRule,
-    schemas: Mapping[str, NodeSchema] | None = None,
-) -> bool:
-    return rule.migration is not None or any(
-        case.slot_variants or _case_uses_dynamic_input_paths(carrier, case, schemas)
-        for case in rule.cases
-    )
-
-
 def _combo_option_to_wire(option: str | ComboOption, wire_version: int) -> object:
     if isinstance(option, str):
         return option
-    if wire_version < 23:
-        return option.value
     wire: dict[str, object] = {"value": option.value}
     for field_name in ("label", "info", "folder"):
         field_value = getattr(option, field_name)
@@ -322,7 +122,7 @@ def _widget_descriptor_to_wire(
         asset_wire: dict[str, object] = {"type": "ASSET", "accept": list(widget.accept)}
         if widget.kind:
             asset_wire["kind"] = widget.kind
-        if widget.allow_upload and wire_version >= 22:
+        if widget.allow_upload:
             asset_wire["allowUpload"] = True
         return asset_wire
     if isinstance(widget, ComboWidget):
@@ -332,31 +132,24 @@ def _widget_descriptor_to_wire(
                 _combo_option_to_wire(option, wire_version) for option in widget.options
             ]
         if widget.option_source is not None:
-            if wire_version < 43:
-                raise SchemaWireVersionRequirement("COMBO input-family option source", 43)
-            combo_wire["optionSource"] = {
-                "inputFamily": widget.option_source.input_family,
-            }
+            combo_wire["optionSource"] = {"inputFamily": widget.option_source.input_family}
         if widget.remote_route:
             remote: dict[str, object] = {"route": widget.remote_route}
             if widget.refresh_button:
                 remote["refreshButton"] = True
-            if wire_version >= 20:
-                if widget.control_after_refresh is not None:
-                    remote["controlAfterRefresh"] = widget.control_after_refresh
-                if widget.remote_timeout_ms is not None:
-                    remote["timeoutMs"] = widget.remote_timeout_ms
-                if widget.remote_max_retries is not None:
-                    remote["maxRetries"] = widget.remote_max_retries
-                if widget.remote_refresh_ms is not None:
-                    remote["refreshMs"] = widget.remote_refresh_ms
+            if widget.control_after_refresh is not None:
+                remote["controlAfterRefresh"] = widget.control_after_refresh
+            if widget.remote_timeout_ms is not None:
+                remote["timeoutMs"] = widget.remote_timeout_ms
+            if widget.remote_max_retries is not None:
+                remote["maxRetries"] = widget.remote_max_retries
+            if widget.remote_refresh_ms is not None:
+                remote["refreshMs"] = widget.remote_refresh_ms
             combo_wire["remote"] = remote
-        if widget.control_after_generate is not None and wire_version >= 19:
+        if widget.control_after_generate is not None:
             combo_wire["controlAfterGenerate"] = widget.control_after_generate
         return combo_wire
     if isinstance(widget, MultiComboWidget):
-        if wire_version < 21:
-            raise SchemaWireVersionRequirement("MULTI_COMBO widget", 21)
         multi_wire: dict[str, object] = {"type": "MULTI_COMBO"}
         if widget.options:
             multi_wire["options"] = [
@@ -396,11 +189,11 @@ def _widget_descriptor_to_wire(
             encoded = _number_constraint_to_wire(constraint, wire_version)
             if encoded is not None:
                 number_wire[field] = encoded
-        if widget.round is not None and wire_version >= 19:
+        if widget.round is not None:
             number_wire["round"] = widget.round
         if widget.control_after_generate is not None:
             number_wire["controlAfterGenerate"] = widget.control_after_generate
-        if widget.display is not None and wire_version >= 18:
+        if widget.display is not None:
             number_wire["display"] = widget.display
         if len(number_wire) == 1:
             return None
@@ -409,12 +202,11 @@ def _widget_descriptor_to_wire(
         string_wire: dict[str, object] = {"type": "STRING"}
         if widget.multiline is not None:
             string_wire["multiline"] = widget.multiline
-        if wire_version >= 19:
-            if widget.placeholder is not None:
-                string_wire["placeholder"] = widget.placeholder
-            if widget.dynamic_prompts is not None:
-                string_wire["dynamicPrompts"] = widget.dynamic_prompts
-        if wire_version >= 36 and widget.completions is not None:
+        if widget.placeholder is not None:
+            string_wire["placeholder"] = widget.placeholder
+        if widget.dynamic_prompts is not None:
+            string_wire["dynamicPrompts"] = widget.dynamic_prompts
+        if widget.completions is not None:
             completions: dict[str, object] = {}
             if widget.completions.items:
                 completions["items"] = [
@@ -434,14 +226,10 @@ def _widget_descriptor_to_wire(
             return None
         return string_wire
     if isinstance(widget, ColorWidget):
-        return {"type": "COLOR"} if wire_version >= 19 else None
+        return {"type": "COLOR"}
     if isinstance(widget, CurveWidget):
-        if wire_version < 35:
-            raise SchemaWireVersionRequirement("CURVE widget", 35)
         return {"type": "CURVE"}
     if isinstance(widget, CompositorWidget):
-        if wire_version < 37:
-            raise SchemaWireVersionRequirement("COMPOSITOR widget", 37)
         return {"type": "COMPOSITOR"}
     remaining = cast("object", widget)
     if isinstance(remaining, SaveTargetWidget):
@@ -454,17 +242,12 @@ def _widget_descriptor_to_wire(
 
 def _widget_to_wire(widget: Widget, wire_version: int) -> dict[str, object] | None:
     if isinstance(widget, WidgetRepresentations):
-        if wire_version < 17:
-            return _widget_to_wire(widget.default_representation().widget, wire_version)
         representations: list[dict[str, object]] = []
         for representation in widget.representations:
             representation_wire = _widget_descriptor_to_wire(representation.widget, wire_version)
             if representation_wire is None:
                 continue
-            entry: dict[str, object] = {
-                "id": representation.id,
-                "widget": representation_wire,
-            }
+            entry: dict[str, object] = {"id": representation.id, "widget": representation_wire}
             if representation.display_name:
                 entry["displayName"] = representation.display_name
             representations.append(entry)
@@ -473,18 +256,12 @@ def _widget_to_wire(widget: Widget, wire_version: int) -> dict[str, object] | No
         surviving_ids = {cast("str", entry["id"]) for entry in representations}
         return {
             "type": "REPRESENTATIONS",
-            "default": (
-                widget.default
-                if widget.default in surviving_ids
-                else cast("str", representations[0]["id"])
-            ),
+            "default": widget.default
+            if widget.default in surviving_ids
+            else cast("str", representations[0]["id"]),
             "userSwitchable": widget.user_switchable,
             "representations": representations,
         }
-    if isinstance(widget, StringWidget) and not widget.multiline and wire_version < 17:
-        # Before wire 17, descriptor absence is the exact one-line string
-        # presentation. Downlevel to that established spelling.
-        return None
     return _widget_descriptor_to_wire(widget, wire_version)
 
 
@@ -497,17 +274,10 @@ def _reject_unknown_fields(data: dict[str, object], allowed: frozenset[str], sub
 def _combo_option_from_wire(value: object, wire_version: int, *, subject: str) -> str | ComboOption:
     if type(value) is str and value:
         return value
-    if wire_version < 23 or not isinstance(value, dict):
-        raise ValueError(
-            f"{subject} must be a non-empty string"
-            + (" or structured choice" if wire_version >= 23 else "")
-        )
+    if not isinstance(value, dict):
+        raise ValueError(f"{subject} must be a non-empty string" + " or structured choice")
     option = cast("dict[str, object]", value)
-    _reject_unknown_fields(
-        option,
-        frozenset({"value", "label", "info", "folder"}),
-        subject,
-    )
+    _reject_unknown_fields(option, frozenset({"value", "label", "info", "folder"}), subject)
     raw_value = option.get("value")
     if type(raw_value) is not str or not raw_value:
         raise ValueError(f"{subject}.value must be a non-empty string")
@@ -529,8 +299,7 @@ def _widget_descriptor_from_wire(
     if kind == "ASSET":
         if strict:
             allowed = {"type", "accept", "kind"}
-            if wire_version >= 22:
-                allowed.add("allowUpload")
+            allowed.add("allowUpload")
             _reject_unknown_fields(widget_data, frozenset(allowed), "ASSET widget")
         accept = widget_data.get("accept", ())
         if not isinstance(accept, list):
@@ -559,36 +328,30 @@ def _widget_descriptor_from_wire(
     if kind == "COMBO":
         if strict:
             allowed = {"type", "options", "remote"}
-            if wire_version >= 19:
-                allowed.add("controlAfterGenerate")
-            if wire_version >= 43:
-                allowed.add("optionSource")
+            allowed.add("controlAfterGenerate")
+            allowed.add("optionSource")
             _reject_unknown_fields(widget_data, frozenset(allowed), "COMBO widget")
         options = widget_data.get("options", [])
         if not isinstance(options, list):
             raise ValueError("COMBO widget options must be a list")
         option_values = cast("list[object]", options)
         decoded_options = tuple(
-            _combo_option_from_wire(
-                value,
-                wire_version,
-                subject=f"COMBO widget options[{index}]",
+            (
+                _combo_option_from_wire(
+                    value, wire_version, subject=f"COMBO widget options[{index}]"
+                )
+                for index, value in enumerate(option_values)
             )
-            for index, value in enumerate(option_values)
         )
         option_source = None
         raw_option_source = widget_data.get("optionSource")
         if raw_option_source is not None:
-            if wire_version < 43:
-                raise ValueError("COMBO input-family option source requires schema wire 43")
             if not isinstance(raw_option_source, dict):
                 raise ValueError("COMBO widget optionSource must be an object")
             source_data = cast("dict[str, object]", raw_option_source)
             if strict:
                 _reject_unknown_fields(
-                    source_data,
-                    frozenset({"inputFamily"}),
-                    "COMBO widget optionSource",
+                    source_data, frozenset({"inputFamily"}), "COMBO widget optionSource"
                 )
             input_family = source_data.get("inputFamily")
             if not isinstance(input_family, str):
@@ -607,14 +370,11 @@ def _widget_descriptor_from_wire(
             remote_data = cast("dict[str, object]", remote)
             if strict:
                 allowed_remote = {"route", "refreshButton"}
-                if wire_version >= 20:
-                    allowed_remote.update(
-                        ("controlAfterRefresh", "timeoutMs", "maxRetries", "refreshMs")
-                    )
+                allowed_remote.update(
+                    ("controlAfterRefresh", "timeoutMs", "maxRetries", "refreshMs")
+                )
                 _reject_unknown_fields(
-                    remote_data,
-                    frozenset(allowed_remote),
-                    "COMBO widget remote",
+                    remote_data, frozenset(allowed_remote), "COMBO widget remote"
                 )
             route = remote_data.get("route")
             if not isinstance(route, str) or not route:
@@ -631,9 +391,9 @@ def _widget_descriptor_from_wire(
             ):
                 raise ValueError("COMBO widget controlAfterRefresh must be 'first' or 'last'")
             for field, lower, upper in (
-                ("timeoutMs", 1, 60_000),
+                ("timeoutMs", 1, 60000),
                 ("maxRetries", 0, 5),
-                ("refreshMs", 0, 86_400_000),
+                ("refreshMs", 0, 86400000),
             ):
                 value = remote_data.get(field)
                 if field in remote_data and (type(value) is not int or not lower <= value <= upper):
@@ -660,8 +420,6 @@ def _widget_descriptor_from_wire(
             remote_refresh_ms=cast("int | None", remote_refresh_ms),
         )
     if kind == "MULTI_COMBO":
-        if wire_version < 21:
-            raise ValueError("MULTI_COMBO widget requires schema wire 21")
         if strict:
             _reject_unknown_fields(
                 widget_data,
@@ -672,12 +430,12 @@ def _widget_descriptor_from_wire(
         if not isinstance(options, list):
             raise ValueError("MULTI_COMBO widget options must be a list")
         decoded_options = tuple(
-            _combo_option_from_wire(
-                value,
-                wire_version,
-                subject=f"MULTI_COMBO widget options[{index}]",
+            (
+                _combo_option_from_wire(
+                    value, wire_version, subject=f"MULTI_COMBO widget options[{index}]"
+                )
+                for index, value in enumerate(cast("list[object]", options))
             )
-            for index, value in enumerate(cast("list[object]", options))
         )
         remote_route = ""
         refresh_button = False
@@ -720,9 +478,9 @@ def _widget_descriptor_from_wire(
             ):
                 raise ValueError("MULTI_COMBO widget controlAfterRefresh must be 'first' or 'last'")
             for field, lower, upper in (
-                ("timeoutMs", 1, 60_000),
+                ("timeoutMs", 1, 60000),
                 ("maxRetries", 0, 5),
-                ("refreshMs", 0, 86_400_000),
+                ("refreshMs", 0, 86400000),
             ):
                 value = remote_data.get(field)
                 if field in remote_data and (type(value) is not int or not lower <= value <= upper):
@@ -762,15 +520,9 @@ def _widget_descriptor_from_wire(
     if kind == "NUMBER":
         if strict:
             allowed = {"type", "min", "max", "step", "controlAfterGenerate"}
-            if wire_version >= 18:
-                allowed.add("display")
-            if wire_version >= 19:
-                allowed.add("round")
-            _reject_unknown_fields(
-                widget_data,
-                frozenset(allowed),
-                "NUMBER widget",
-            )
+            allowed.add("display")
+            allowed.add("round")
+            _reject_unknown_fields(widget_data, frozenset(allowed), "NUMBER widget")
         bounds: dict[str, int | float | None] = {}
         for field in ("min", "max", "step"):
             raw = widget_data.get(field)
@@ -790,8 +542,6 @@ def _widget_descriptor_from_wire(
             )
         display = widget_data.get("display")
         if "display" in widget_data:
-            if wire_version < 18:
-                raise ValueError("NUMBER widget display requires schema wire 18")
             if type(display) is not str:
                 raise ValueError("NUMBER widget display must be a string")
         return NumberWidget(
@@ -805,18 +555,12 @@ def _widget_descriptor_from_wire(
     if kind == "STRING":
         if strict:
             allowed = {"type", "multiline"}
-            if wire_version >= 19:
-                allowed.update(("placeholder", "dynamicPrompts"))
-            if wire_version >= 36:
-                allowed.add("completions")
+            allowed.update(("placeholder", "dynamicPrompts"))
+            allowed.add("completions")
             _reject_unknown_fields(widget_data, frozenset(allowed), "STRING widget")
         multiline = widget_data.get("multiline")
         if "multiline" in widget_data and type(multiline) is not bool:
             raise ValueError("STRING widget multiline must be a boolean")
-        if wire_version < 19 and type(multiline) is not bool:
-            raise ValueError("STRING widget multiline must be a boolean")
-        if wire_version < 17 and multiline is not True:
-            raise ValueError("STRING widget multiline must be true before schema wire 17")
         placeholder = widget_data.get("placeholder")
         if "placeholder" in widget_data and type(placeholder) is not str:
             raise ValueError("STRING widget placeholder must be a string")
@@ -825,16 +569,12 @@ def _widget_descriptor_from_wire(
             raise ValueError("STRING widget dynamicPrompts must be a boolean")
         completions = None
         if "completions" in widget_data:
-            if wire_version < 36:
-                raise ValueError("STRING widget completions require schema wire 36")
             completion_data = widget_data["completions"]
             if not isinstance(completion_data, dict):
                 raise ValueError("STRING widget completions must be an object")
             completion_data = cast("dict[str, object]", completion_data)
             _reject_unknown_fields(
-                completion_data,
-                frozenset({"items", "inputFamilies"}),
-                "STRING widget completions",
+                completion_data, frozenset({"items", "inputFamilies"}), "STRING widget completions"
             )
             raw_items = completion_data.get("items", [])
             raw_families = completion_data.get("inputFamilies", [])
@@ -876,8 +616,7 @@ def _widget_descriptor_from_wire(
                     )
                 )
             completions = TextCompletions(
-                items=tuple(items),
-                input_families=tuple(cast("list[str]", families)),
+                items=tuple(items), input_families=tuple(cast("list[str]", families))
             )
         return StringWidget(
             multiline=cast("bool | None", multiline),
@@ -886,20 +625,14 @@ def _widget_descriptor_from_wire(
             completions=completions,
         )
     if kind == "COLOR":
-        if wire_version < 19:
-            raise ValueError("COLOR widget requires schema wire 19")
         if strict:
             _reject_unknown_fields(widget_data, frozenset({"type"}), "COLOR widget")
         return ColorWidget()
     if kind == "CURVE":
-        if wire_version < 35:
-            raise ValueError("CURVE widget requires schema wire 35")
         if strict:
             _reject_unknown_fields(widget_data, frozenset({"type"}), "CURVE widget")
         return CurveWidget()
     if kind == "COMPOSITOR":
-        if wire_version < 37:
-            raise ValueError("COMPOSITOR widget requires schema wire 37")
         if strict:
             _reject_unknown_fields(widget_data, frozenset({"type"}), "COMPOSITOR widget")
         return CompositorWidget()
@@ -919,9 +652,7 @@ def _widget_from_wire(widget_wire: object, wire_version: int) -> Widget:
         raise ValueError(f"unsupported input widget: {widget_wire!r}")
     widget_data = cast("dict[str, object]", widget_wire)
     if widget_data.get("type") != "REPRESENTATIONS":
-        return _widget_descriptor_from_wire(widget_data, wire_version, strict=wire_version >= 17)
-    if wire_version < 17:
-        raise ValueError("REPRESENTATIONS widget requires schema wire 17")
+        return _widget_descriptor_from_wire(widget_data, wire_version, strict=True)
     _reject_unknown_fields(
         widget_data,
         frozenset({"type", "default", "userSwitchable", "representations"}),
@@ -965,20 +696,13 @@ def _widget_from_wire(widget_wire: object, wire_version: int) -> Widget:
             )
         )
     return WidgetRepresentations(
-        representations=tuple(representations),
-        default=default,
-        user_switchable=user_switchable,
+        representations=tuple(representations), default=default, user_switchable=user_switchable
     )
 
 
 def type_expr_to_wire(expr: TypeExpr, wire_version: int = SCHEMA_WIRE_VERSION) -> dict[str, object]:
-    if expr.kind == "stream" and wire_version < 41:
-        raise SchemaWireVersionRequirement("stream type", 41)
     wire: dict[str, object] = {"kind": expr.kind}
     if expr.kind == "variable":
-        # Wire-15 contract (docs/wire15-contract.md "Variables at every
-        # depth"): a variable is {kind, templateId, allowed?}; "types" is
-        # reserved for concrete/union kinds.
         wire["templateId"] = expr.template_id
         if expr.types:
             wire["allowed"] = list(expr.types)
@@ -1000,23 +724,18 @@ def _media_policy_to_wire(spec: InputSpec | OutputSpec, wire_version: int) -> di
         result["maskPolarity"] = spec.mask_polarity
     if spec.mask_semantic is not None:
         result["maskSemantic"] = spec.mask_semantic
-    if result and wire_version < 40:
-        raise SchemaWireVersionRequirement("media policies", 40)
     return result
 
 
 def _media_policy_from_wire(entry: dict[str, Any], wire_version: int) -> dict[str, Any]:
-    fields = ("alphaPolicy", "maskPolarity", "maskSemantic")
-    if wire_version < 40 and any(key in entry for key in fields):
-        raise ValueError("media policies require schema wire 40")
     return {
         "alpha_policy": _expect_str(entry.get("alphaPolicy", "preserve"), "alphaPolicy"),
-        "mask_polarity": (
-            _expect_str(entry["maskPolarity"], "maskPolarity") if "maskPolarity" in entry else None
-        ),
-        "mask_semantic": (
-            _expect_str(entry["maskSemantic"], "maskSemantic") if "maskSemantic" in entry else None
-        ),
+        "mask_polarity": _expect_str(entry["maskPolarity"], "maskPolarity")
+        if "maskPolarity" in entry
+        else None,
+        "mask_semantic": _expect_str(entry["maskSemantic"], "maskSemantic")
+        if "maskSemantic" in entry
+        else None,
     }
 
 
@@ -1031,12 +750,7 @@ def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object
         entry["default"] = spec.default
     if spec.on_absent is not None:
         entry["onAbsent"] = spec.on_absent
-    omit_list_source_widget = (
-        wire_version < 22
-        and spec.source_filename is not None
-        and spec.type == TypeExpr.list_of(TypeExpr.concrete("dinkster.asset"))
-    )
-    if spec.widget is not None and not omit_list_source_widget:
+    if spec.widget is not None:
         try:
             widget_wire = _widget_to_wire(spec.widget, wire_version)
         except TypeError as exc:
@@ -1051,29 +765,15 @@ def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object
         entry["forceInput"] = True
     if spec.advanced:
         entry["advanced"] = True
-    if spec.hidden and wire_version >= 38:
+    if spec.hidden:
         entry["hidden"] = True
     if spec.lazy:
-        if wire_version < 16:
-            raise ValueError("lazy inputs cannot be represented in schema wire 15")
         entry["lazy"] = True
     if spec.accepts_storage:
-        if wire_version < 39:
-            raise SchemaWireVersionRequirement("acceptsStorage input", 39)
         entry["acceptsStorage"] = True
     if spec.accepts_stream:
-        if wire_version < 41:
-            raise SchemaWireVersionRequirement("acceptsStream input", 41)
         entry["acceptsStream"] = True
-    if (
-        spec.source_filename is not None
-        and spec.source_filename.kind == "media/model3d"
-        and wire_version < 25
-    ):
-        # Older wires omit the binding entirely below 22, which would strip
-        # the upload contract from a 3D input instead of downgrading it.
-        raise SchemaWireVersionRequirement("media/model3d source filename", 25)
-    if spec.source_filename is not None and wire_version >= 22:
+    if spec.source_filename is not None:
         entry["sourceFilename"] = {
             "kind": spec.source_filename.kind,
             "category": spec.source_filename.category,
@@ -1143,8 +843,6 @@ def _dynamic_entry_to_wire(
         if spec.force_input:
             entry["forceInput"] = True
     if spec.type_template_id:
-        if wire_version < 32:
-            raise SchemaWireVersionRequirement("dynamic slot type binding", 32)
         entry["typeTemplateId"] = spec.type_template_id
     if spec.doc:
         entry["doc"] = spec.doc
@@ -1170,14 +868,12 @@ def schema_to_wire(
     wire_version: int = SCHEMA_WIRE_VERSION,
     replacement_schemas: Mapping[str, NodeSchema] | None = None,
 ) -> dict[str, object]:
-    if type(wire_version) is not int or wire_version not in _SCHEMA_WIRE_ENCODE_VERSIONS:
+    if type(wire_version) is not int or wire_version != SCHEMA_WIRE_VERSION:
         raise ValueError(f"unsupported schemaVersion: {wire_version!r}")
     interface: list[dict[str, object]] = []
     for spec in schema.inputs:
         try:
             interface.append(_dynamic_entry_to_wire(spec, wire_version))
-        except SchemaWireVersionRequirement:
-            raise
         except ValueError as exc:
             raise ValueError(f"node {schema.node_type!r}, {exc}") from exc
     for fam in schema.input_families:
@@ -1197,13 +893,11 @@ def schema_to_wire(
             out_entry["optional"] = True
         if out.doc:
             out_entry["doc"] = out.doc
-        if out.display_name and wire_version >= 39:
+        if out.display_name:
             out_entry["displayName"] = out.display_name
-        if out.preview and wire_version >= 16:
+        if out.preview:
             out_entry["preview"] = True
         if out.represents is not None:
-            if wire_version < 31:
-                raise SchemaWireVersionRequirement("output representation", 31)
             represents: dict[str, object] = {
                 "input": out.represents.input,
                 "rendition": out.represents.rendition,
@@ -1214,13 +908,9 @@ def schema_to_wire(
                 }
             out_entry["represents"] = represents
         if out.known_value is not None:
-            if wire_version < 34:
-                raise SchemaWireVersionRequirement("output known value", 34)
             out_entry["knownValue"] = {"input": out.known_value.input}
         interface.append(out_entry)
     for out_fam in schema.output_families:
-        if out_fam.count is not None and wire_version < 26:
-            raise SchemaWireVersionRequirement("output family count", 26)
         out_fam_entry: dict[str, object] = {
             "role": "outputFamily",
             "id": out_fam.id,
@@ -1231,18 +921,13 @@ def schema_to_wire(
             out_fam_entry["maxMembers"] = out_fam.max_members
         if out_fam.doc:
             out_fam_entry["doc"] = out_fam.doc
-        if out_fam.preview and wire_version >= 16:
+        if out_fam.preview:
             out_fam_entry["preview"] = True
         if out_fam.count is not None:
-            out_fam_entry["count"] = {
-                "input": out_fam.count.input,
-                "suffix": out_fam.count.suffix,
-            }
+            out_fam_entry["count"] = {"input": out_fam.count.input, "suffix": out_fam.count.suffix}
         interface.append(out_fam_entry)
     descriptors = schema.output_descriptors
     if descriptors is not None:
-        if wire_version < 39:
-            raise SchemaWireVersionRequirement("output descriptors", 39)
         descriptor_entry: dict[str, object] = {
             "role": "outputDescriptors",
             "input": descriptors.input,
@@ -1285,7 +970,7 @@ def schema_to_wire(
         wire["occupies"] = list(schema.occupies)
     if schema.io_bound:
         wire["ioBound"] = True
-    if schema.dispatch_affinity is not None and wire_version >= 45:
+    if schema.dispatch_affinity is not None:
         wire["dispatchAffinity"] = schema.dispatch_affinity
     if schema.deprecation is not None:
         dep: dict[str, object] = {"message": schema.deprecation.message}
@@ -1300,12 +985,6 @@ def schema_to_wire(
         wire["searchTerms"] = list(schema.search_terms)
     if schema.replacements:
         replacements = schema.replacements
-        if wire_version < 28:
-            replacements = tuple(
-                rule
-                for rule in replacements
-                if not replacement_requires_schema_wire_28(schema, rule, replacement_schemas)
-            )
         if replacements:
             wire["replacements"] = [rule_to_wire(rule) for rule in replacements]
     if schema.aliases:
@@ -1313,8 +992,6 @@ def schema_to_wire(
     if schema.output_node:
         wire["outputNode"] = True
     if schema.chunk_safe is not None:
-        if wire_version < 41:
-            raise SchemaWireVersionRequirement("chunkSafe", 41)
         wire["chunkSafe"] = {
             "inputs": list(schema.chunk_safe[0]),
             "outputs": list(schema.chunk_safe[1]),
@@ -1328,9 +1005,9 @@ def schema_to_wire(
                 else {}
             ),
         }
-    if schema.emits_previews and wire_version >= 24:
+    if schema.emits_previews:
         wire["emitsPreviews"] = True
-    if schema.widget_groups and wire_version >= 27:
+    if schema.widget_groups:
         groups: list[dict[str, object]] = []
         for group in schema.widget_groups:
             encoded: dict[str, object] = {
@@ -1345,11 +1022,7 @@ def schema_to_wire(
                 ]
             groups.append(encoded)
         wire["widgetGroups"] = groups
-    # A mirror scoped by applicability requires wire 30: emitting it below
-    # that without its applies scope would hand older clients a mirror they
-    # would run for combo values it does not cover (wrong estimates, not
-    # missing ones), so the whole declaration is withheld instead.
-    if schema.mirror is not None and wire_version >= (30 if schema.mirror.applies else 29):
+    if schema.mirror is not None:
         mirror: dict[str, object] = {
             "kind": schema.mirror.kind,
             "precision": schema.mirror.precision,
@@ -1404,15 +1077,6 @@ def schema_signature(schema: NodeSchema) -> str:
     dynamicPrompts state is the sole widget exception because it changes
     client serialization before submission."""
 
-    # Keep the established wire-16 computational basis. Encode through v41 so
-    # dynamicPrompts, sourceFilename (media/model3d included), output-family
-    # counts, dynamic-slot type bindings, acceptsStorage, output descriptors,
-    # media policies, and stream contracts join identity, then normalize and strip
-    # every presentation-only field. Everything v23-v25
-    # added beyond v22 lives in widget descriptors (stripped) or fields popped
-    # below, so schemas without later computational facts retain their exact
-    # prior signatures. The pin is deliberate: a future version-gated fact
-    # must fail here loudly and move the basis on purpose.
     def strip_editor_widget(entry: DynamicEntry) -> DynamicEntry:
         if isinstance(entry, InputSpec):
             if (
@@ -1451,18 +1115,12 @@ def schema_signature(schema: NodeSchema) -> str:
             )
         if isinstance(entry, DynamicComboSpec):
             options = tuple(
-                replace(
-                    option,
-                    inputs=tuple(strip_editor_widget(item) for item in option.inputs),
-                )
+                replace(option, inputs=tuple(strip_editor_widget(item) for item in option.inputs))
                 for option in entry.options
             )
             if options == entry.options:
                 return entry
-            return replace(
-                entry,
-                options=options,
-            )
+            return replace(entry, options=options)
         inputs = tuple(strip_editor_widget(item) for item in entry.inputs)
         variants = (
             tuple(
@@ -1477,11 +1135,7 @@ def schema_signature(schema: NodeSchema) -> str:
         )
         if inputs == entry.inputs and variants == entry.variants:
             return entry
-        return replace(
-            entry,
-            inputs=inputs,
-            variants=variants,
-        )
+        return replace(entry, inputs=inputs, variants=variants)
 
     signature_schema = replace(
         schema,
@@ -1498,24 +1152,21 @@ def schema_signature(schema: NodeSchema) -> str:
         replacements=(),
         outputs=tuple(replace(output, known_value=None) for output in schema.outputs),
     )
-    wire = schema_to_wire(signature_schema, wire_version=41)
-    wire["schemaVersion"] = 16
+    wire = schema_to_wire(signature_schema)
     wire.pop("occupies", None)
     wire.pop("ioBound", None)
     wire.pop("deprecation", None)
     wire.pop("searchVisibility", None)
     wire.pop("searchTerms", None)
+    wire.pop("dispatchAffinity", None)
     wire.pop("replacements", None)
     wire.pop("aliases", None)
     wire.pop("outputNode", None)
     wire.pop("emitsPreviews", None)
     wire.pop("widgetGroups", None)
-    # Mirror declarations remain presentation-only even though the encoding
-    # basis now includes their wire version.
     wire.pop("mirror", None)
     wire.pop("displayName", None)
     wire.pop("category", None)
-
     wire.pop("description", None)
 
     def strip_presentation(entry: dict[str, object]) -> None:
@@ -1560,10 +1211,7 @@ def schema_signature(schema: NodeSchema) -> str:
                 identities.append([raw.get("id"), identity])
         if not identities:
             return None
-        return {
-            "default": descriptor.get("default"),
-            "representations": identities,
-        }
+        return {"default": descriptor.get("default"), "representations": identities}
 
     for entry in cast("list[dict[str, object]]", wire["interface"]):
         strip_presentation(entry)
@@ -1616,11 +1264,9 @@ def _expect_strings(value: object, field: str) -> tuple[str, ...]:
 
 def type_expr_from_wire(wire: dict[str, Any], wire_version: int = SCHEMA_WIRE_VERSION) -> TypeExpr:
     kind = _expect_str(wire.get("kind"), "type.kind")
-    if kind == "stream" and wire_version < 41:
-        raise ValueError("stream type requires schema wire 41")
     if kind == "variable":
         if "types" in wire:
-            raise ValueError("type.types is not a wire-15 variable field; use allowed")
+            raise ValueError("type.types is not a variable field; use allowed")
         types = _expect_strings(wire.get("allowed", []), "type.allowed")
     else:
         if "allowed" in wire:
@@ -1637,56 +1283,35 @@ def type_expr_from_wire(wire: dict[str, Any], wire_version: int = SCHEMA_WIRE_VE
 
 
 def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> InputSpec:
-    if wire_version < 38 and "hidden" in entry:
-        raise ValueError("input.hidden requires schema wire 38")
-    if wire_version < 39 and "acceptsStorage" in entry:
-        raise ValueError("input.acceptsStorage requires schema wire 39")
-    if wire_version < 41 and "acceptsStream" in entry:
-        raise ValueError("input.acceptsStream requires schema wire 41")
     on_absent = entry.get("onAbsent")
     widget_wire = entry.get("widget")
     widget = None if widget_wire is None else _widget_from_wire(widget_wire, wire_version)
-    source_wire = entry.get("sourceFilename") if wire_version >= 22 else None
+    source_wire = entry.get("sourceFilename")
     source_filename = None
     if source_wire is not None:
         source_data = _expect_object(source_wire, "input.sourceFilename")
-        _reject_unknown_fields(
-            source_data,
-            frozenset({"kind", "category"}),
-            "input.sourceFilename",
-        )
+        _reject_unknown_fields(source_data, frozenset({"kind", "category"}), "input.sourceFilename")
         source_filename = SourceFilenameSpec(
             kind=cast("Any", _expect_str(source_data.get("kind"), "input.sourceFilename.kind")),
             category=cast(
-                "Any",
-                _expect_str(source_data.get("category"), "input.sourceFilename.category"),
+                "Any", _expect_str(source_data.get("category"), "input.sourceFilename.category")
             ),
         )
-        if source_filename.kind == "media/model3d" and wire_version < 25:
-            raise ValueError("media/model3d source filename requires schema wire 25")
     return InputSpec(
         id=_expect_str(entry.get("id"), "input.id"),
         type=type_expr_from_wire(_expect_object(entry.get("type"), "input.type"), wire_version),
         required=_expect_bool(entry.get("required", True), "input.required"),
         default=entry.get("default"),
         doc=_expect_str(entry.get("doc", ""), "input.doc"),
-        on_absent=(
-            None
-            if on_absent is None
-            else cast("AbsentPolicy", _expect_str(on_absent, "input.onAbsent"))
-        ),
+        on_absent=None
+        if on_absent is None
+        else cast("AbsentPolicy", _expect_str(on_absent, "input.onAbsent")),
         widget=widget,
         display_name=_expect_str(entry.get("displayName", ""), "input.displayName"),
         force_input=_expect_bool(entry.get("forceInput", False), "input.forceInput"),
         advanced=_expect_bool(entry.get("advanced", False), "input.advanced"),
-        hidden=(
-            _expect_bool(entry.get("hidden", False), "input.hidden")
-            if wire_version >= 38
-            else False
-        ),
-        lazy=(
-            _expect_bool(entry.get("lazy", False), "input.lazy") if wire_version >= 16 else False
-        ),
+        hidden=_expect_bool(entry.get("hidden", False), "input.hidden"),
+        lazy=_expect_bool(entry.get("lazy", False), "input.lazy"),
         source_filename=source_filename,
         accepts_storage=_expect_bool(entry.get("acceptsStorage", False), "input.acceptsStorage"),
         accepts_stream=_expect_bool(entry.get("acceptsStream", False), "input.acceptsStream"),
@@ -1714,7 +1339,7 @@ def _dynamic_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Dynami
         if "type" in entry and "template" in entry:
             raise ValueError("inputFamily must not carry both type and template")
         if "type" in entry:
-            raise ValueError("inputFamily.type is not supported in schema wire 15")
+            raise ValueError("inputFamily.type is not supported")
         max_members = entry.get("maxMembers")
         names = entry.get("memberNames")
         prefix = entry.get("memberPrefix")
@@ -1727,18 +1352,18 @@ def _dynamic_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Dynami
                 for item in _expect_list(entry.get("template"), "inputFamily.template")
             ),
             min_members=_expect_int(entry.get("minMembers", 0), "inputFamily.minMembers"),
-            max_members=(
-                None if max_members is None else _expect_int(max_members, "inputFamily.maxMembers")
-            ),
+            max_members=None
+            if max_members is None
+            else _expect_int(max_members, "inputFamily.maxMembers"),
             doc=_expect_str(entry.get("doc", ""), "inputFamily.doc"),
             display_name=_expect_str(entry.get("displayName", ""), "inputFamily.displayName"),
             required=_expect_bool(entry.get("required", True), "inputFamily.required"),
-            member_prefix=(
-                None if prefix is None else _expect_str(prefix, "inputFamily.memberPrefix")
-            ),
-            member_names=(
-                None if names is None else _expect_strings(names, "inputFamily.memberNames")
-            ),
+            member_prefix=None
+            if prefix is None
+            else _expect_str(prefix, "inputFamily.memberPrefix"),
+            member_names=None
+            if names is None
+            else _expect_strings(names, "inputFamily.memberNames"),
         )
     if role == "dynamicCombo":
         options: list[DynamicComboOption] = []
@@ -1759,7 +1384,7 @@ def _dynamic_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Dynami
         return DynamicComboSpec(
             id=_expect_str(entry.get("id"), "dynamicCombo.id"),
             options=tuple(options),
-            default=(None if default is None else _expect_str(default, "dynamicCombo.default")),
+            default=None if default is None else _expect_str(default, "dynamicCombo.default"),
             required=_expect_bool(entry.get("required", True), "dynamicCombo.required"),
             doc=_expect_str(entry.get("doc", ""), "dynamicCombo.doc"),
             display_name=_expect_str(entry.get("displayName", ""), "dynamicCombo.displayName"),
@@ -1769,32 +1394,26 @@ def _dynamic_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Dynami
         has_slot_type = "slotType" in entry
         if has_variants == has_slot_type:
             raise ValueError("dynamicSlot requires exactly one of variants or slotType")
-        if "typeTemplateId" in entry and wire_version < 32:
-            raise ValueError("dynamic slot type binding requires schema wire 32")
         type_template_id = _expect_str(
             entry.get("typeTemplateId", ""), "dynamicSlot.typeTemplateId"
         )
-        if "typeTemplateId" in entry and not type_template_id:
+        if "typeTemplateId" in entry and (not type_template_id):
             raise ValueError("dynamicSlot.typeTemplateId must be a non-empty string")
         return DynamicSlotSpec(
             id=_expect_str(entry.get("id"), "dynamicSlot.id"),
-            variants=(
-                tuple(
-                    _variant_from_wire(
-                        _expect_object(variant, "dynamicSlot.variants entry"), wire_version
-                    )
-                    for variant in _expect_list(entry.get("variants"), "dynamicSlot.variants")
+            variants=tuple(
+                _variant_from_wire(
+                    _expect_object(variant, "dynamicSlot.variants entry"), wire_version
                 )
-                if has_variants
-                else None
-            ),
-            slot_type=(
-                type_expr_from_wire(
-                    _expect_object(entry.get("slotType"), "dynamicSlot.slotType"), wire_version
-                )
-                if has_slot_type
-                else None
-            ),
+                for variant in _expect_list(entry.get("variants"), "dynamicSlot.variants")
+            )
+            if has_variants
+            else None,
+            slot_type=type_expr_from_wire(
+                _expect_object(entry.get("slotType"), "dynamicSlot.slotType"), wire_version
+            )
+            if has_slot_type
+            else None,
             inputs=tuple(
                 _dynamic_entry_from_wire(
                     _expect_object(item, "dynamicSlot.inputs entry"), wire_version
@@ -1874,19 +1493,9 @@ def _output_descriptors_from_wire(
 
 
 def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
-    # Wire input is untrusted JSON: every value is shape-checked as read.
     wire_version = wire.get("schemaVersion")
-    if type(wire_version) is not int or wire_version not in _SCHEMA_WIRE_DECODE_VERSIONS:
+    if type(wire_version) is not int or wire_version != SCHEMA_WIRE_VERSION:
         raise ValueError(f"unsupported schemaVersion: {wire.get('schemaVersion')!r}")
-    # Reserved-version fields are rejected, never dropped: silently losing a
-    # foreign grammar's data on a decode/encode round trip would corrupt
-    # registries and worker handshakes.
-    if "widgetGroups" in wire and cast("int", wire_version) < 27:
-        raise ValueError("widgetGroups requires schema wire 27")
-    if wire.get("mirror") is not None and wire_version < 29:
-        raise ValueError("mirror requires schema wire 29")
-    if "dispatchAffinity" in wire and wire_version < 45:
-        raise ValueError("dispatchAffinity requires schema wire 45")
     dispatch_affinity = None
     if "dispatchAffinity" in wire:
         raw_dispatch_affinity = _expect_str(wire.get("dispatchAffinity"), "dispatchAffinity")
@@ -1904,8 +1513,6 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         entry = _expect_object(raw_entry, "interface entry")
         role = _expect_str(entry.get("role"), "interface role")
         if role == "outputDescriptors":
-            if wire_version < 39:
-                raise ValueError("outputDescriptors requires schema wire 39")
             if output_descriptors is not None:
                 raise ValueError("only one outputDescriptors construct is allowed")
             output_descriptors = _output_descriptors_from_wire(entry, wire_version)
@@ -1937,8 +1544,6 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
             out_max = entry.get("maxMembers")
             has_count = "count" in entry
             raw_count = entry.get("count")
-            if has_count and cast("int", wire_version) < 26:
-                raise ValueError("outputFamily.count requires schema wire 26")
             count = None
             if has_count:
                 count_data = _expect_object(raw_count, "outputFamily.count")
@@ -1952,16 +1557,15 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
                     ),
                 )
             preview = False
-            if cast("int", wire_version) >= 16:
-                preview = _expect_bool(entry.get("preview", False), "outputFamily.preview")
+            preview = _expect_bool(entry.get("preview", False), "outputFamily.preview")
             output_families.append(
                 OutputFamilySpec(
                     id=_expect_str(entry.get("id"), "outputFamily.id"),
                     type=expr,
                     min_members=_expect_int(entry.get("minMembers", 0), "outputFamily.minMembers"),
-                    max_members=(
-                        None if out_max is None else _expect_int(out_max, "outputFamily.maxMembers")
-                    ),
+                    max_members=None
+                    if out_max is None
+                    else _expect_int(out_max, "outputFamily.maxMembers"),
                     doc=_expect_str(entry.get("doc", ""), "outputFamily.doc"),
                     preview=preview,
                     count=count,
@@ -1969,17 +1573,12 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
             )
         elif role == "output":
             preview = False
-            if cast("int", wire_version) >= 16:
-                preview = _expect_bool(entry.get("preview", False), "output.preview")
+            preview = _expect_bool(entry.get("preview", False), "output.preview")
             represents = None
             if "represents" in entry:
-                if cast("int", wire_version) < 31:
-                    raise ValueError("output.represents requires schema wire 31")
                 data = _expect_object(entry.get("represents"), "output.represents")
                 _reject_unknown_fields(
-                    data,
-                    frozenset({"input", "rendition", "applies"}),
-                    "output.represents",
+                    data, frozenset({"input", "rendition", "applies"}), "output.represents"
                 )
                 applies = None
                 if "applies" in data:
@@ -1991,8 +1590,6 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
                 )
             known_value = None
             if "knownValue" in entry:
-                if cast("int", wire_version) < 34:
-                    raise ValueError("output.knownValue requires schema wire 34")
                 data = _expect_object(entry.get("knownValue"), "output.knownValue")
                 _reject_unknown_fields(data, frozenset({"input"}), "output.knownValue")
                 known_value = OutputKnownValue(
@@ -2041,17 +1638,10 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         rule_from_wire(_expect_object(rule, "replacements entry"))
         for rule in _expect_list(wire.get("replacements", []), "replacements")
     )
-    if cast("int", wire_version) < 28:
-        if any(case.slot_variants for rule in replacements for case in rule.cases):
-            raise ValueError("replacement slotVariants require schema wire 28")
-        if any(rule.migration is not None for rule in replacements):
-            raise ValueError("replacement migration requires schema wire 28")
     widget_groups = _widget_groups_from_wire(wire.get("widgetGroups"))
     chunk_safe = None
     chunk_safe_applies = None
     if "chunkSafe" in wire:
-        if wire_version < 41:
-            raise ValueError("chunkSafe requires schema wire 41")
         declaration = _expect_object(wire["chunkSafe"], "chunkSafe")
         _reject_unknown_fields(
             declaration, frozenset({"inputs", "outputs", "applies"}), "chunkSafe"
@@ -2111,8 +1701,7 @@ def _widget_groups_from_wire(raw: Any) -> tuple[ConditionalWidgetGroup, ...]:
             raise ValueError(f"{where} must contain exactly input and values")
         values = _expect_list(data.get("values"), f"{where}.values")
         return ConditionalWidgetCondition(
-            input=_expect_str(data.get("input"), f"{where}.input"),
-            values=tuple(values),
+            input=_expect_str(data.get("input"), f"{where}.input"), values=tuple(values)
         )
 
     result: list[ConditionalWidgetGroup] = []
@@ -2125,15 +1714,16 @@ def _widget_groups_from_wire(raw: Any) -> tuple[ConditionalWidgetGroup, ...]:
         )
         members = _expect_strings(data.get("members"), f"{where}.members")
         requires = tuple(
-            condition_from_wire(item, f"{where}.requires[{required_index}]")
-            for required_index, item in enumerate(
-                _expect_list(data.get("requires", []), f"{where}.requires")
+            (
+                condition_from_wire(item, f"{where}.requires[{required_index}]")
+                for required_index, item in enumerate(
+                    _expect_list(data.get("requires", []), f"{where}.requires")
+                )
             )
         )
-        if "requires" in data and not requires:
+        if "requires" in data and (not requires):
             raise ValueError(f"{where}.requires must be a non-empty array")
         result.append(ConditionalWidgetGroup(condition.input, condition.values, members, requires))
-    # NodeSchema performs reference validation against the decoded static inputs.
     return tuple(result)
 
 
@@ -2141,12 +1731,6 @@ def _mirror_from_wire(wire: Any, wire_version: int) -> MirrorSpec | None:
     if wire is None:
         return None
     data = _expect_object(wire, "mirror")
-    # Same loss-refusal rule as the schema-level version gates: an applies
-    # scope carried by an older-versioned payload is a mislabeled wire, and
-    # dropping it would over-apply the mirror after a decode/encode round
-    # trip.
-    if data.get("applies") is not None and wire_version < 30:
-        raise ValueError("mirror.applies requires schema wire 30")
     _reject_unknown_fields(
         data,
         frozenset({"kind", "precision", "tolerance", "grammarVersion", "source", "applies"}),
@@ -2157,16 +1741,12 @@ def _mirror_from_wire(wire: Any, wire_version: int) -> MirrorSpec | None:
         bounds = _expect_object(data.get("tolerance"), "mirror.tolerance")
         _reject_unknown_fields(bounds, frozenset({"relative", "perChannel"}), "mirror.tolerance")
         tolerance = MirrorTolerance(
-            relative=(
-                _expect_float(bounds.get("relative"), "mirror.tolerance.relative")
-                if bounds.get("relative") is not None
-                else None
-            ),
-            per_channel=(
-                _expect_float(bounds.get("perChannel"), "mirror.tolerance.perChannel")
-                if bounds.get("perChannel") is not None
-                else None
-            ),
+            relative=_expect_float(bounds.get("relative"), "mirror.tolerance.relative")
+            if bounds.get("relative") is not None
+            else None,
+            per_channel=_expect_float(bounds.get("perChannel"), "mirror.tolerance.perChannel")
+            if bounds.get("perChannel") is not None
+            else None,
         )
     applies: dict[str, tuple[str, ...]] | None = None
     if data.get("applies") is not None:
@@ -2175,16 +1755,12 @@ def _mirror_from_wire(wire: Any, wire_version: int) -> MirrorSpec | None:
         kind=cast("Any", _expect_str(data.get("kind"), "mirror.kind")),
         precision=cast("Any", _expect_str(data.get("precision"), "mirror.precision")),
         tolerance=tolerance,
-        grammar_version=(
-            _expect_int(data.get("grammarVersion"), "mirror.grammarVersion")
-            if data.get("grammarVersion") is not None
-            else None
-        ),
-        source=(
-            _expect_str(data.get("source"), "mirror.source")
-            if data.get("source") is not None
-            else None
-        ),
+        grammar_version=_expect_int(data.get("grammarVersion"), "mirror.grammarVersion")
+        if data.get("grammarVersion") is not None
+        else None,
+        source=_expect_str(data.get("source"), "mirror.source")
+        if data.get("source") is not None
+        else None,
         applies=applies,
     )
 

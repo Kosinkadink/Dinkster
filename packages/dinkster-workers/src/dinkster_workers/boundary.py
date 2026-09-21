@@ -57,7 +57,7 @@ from dinkster_protocol import (
     validate_preview_mode,
 )
 from dinkster_protocol.result_algebra import JsonLiteral
-from dinkster_schema import SCHEMA_WIRE_SERVE_VERSIONS, schema_from_wire, schema_to_wire
+from dinkster_schema import schema_from_wire, schema_to_wire
 from dinkster_values import (
     BufferEncoding,
     EncodedPayload,
@@ -98,7 +98,7 @@ PROTOCOL_VERSION = 9
 each other explicitly instead of corrupting frames. Local parent/child pairs
 ship together and do not negotiate.
 
-v9: schema wire v41 in worker declarations and invocation effective schemas;
+v9: schema declarations and invocation effective schemas;
 v8: stable engine, daemon, job-attempt, and invocation identities with
 same-process rebind, owner fencing, and acknowledged result replay;
 v7: session leases (``engine`` label in clientHello, ``leaseTtl`` in the
@@ -796,9 +796,7 @@ def encode_invocation(
         "attemptId": invocation.attempt_id,
         "nodeId": invocation.node_id,
         "nodeType": invocation.node_type,
-        "effectiveSchema": schema_to_wire(
-            invocation.effective_schema, wire_version=max(SCHEMA_WIRE_SERVE_VERSIONS)
-        ),
+        "effectiveSchema": schema_to_wire(invocation.effective_schema),
         "outputMembers": [
             [family_id, list(suffixes)] for family_id, suffixes in invocation.output_members
         ],
