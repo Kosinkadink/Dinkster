@@ -8,7 +8,7 @@ node code.
 
 1. Register a `ModelFamily` with header-only detection evidence, explicit
    specificity, latent and sampling descriptors, component wiring, supported
-   dtypes, and engine properties.
+   dtypes, engine properties, and dotted-path worker callables.
 2. Register each loadable component with its geometry planner and dotted-path
    torch-worker loader.
 3. Register one assembly planner and dotted-path loader when the family is
@@ -23,11 +23,17 @@ node code.
 6. Test header detection, registration collisions, malformed dotted paths,
    loader resolution, and identical seeded output through custom sampling and
    KSampler composition on CPU.
-7. Run `tests/test_family_registration_gates.py`. A family id in a shared
-   engine policy branch is a failure. The extension-factory allowlist ceiling
-   must not increase.
+7. Return the family, components, and assemblies from one
+   `InferenceContribution`, and declare the `model-family-registration`
+   capability in the pack manifest.
+8. Run `tests/test_family_registration_gates.py`. A family id in a shared
+   engine or node policy branch is a failure. The extension-factory allowlist
+   ceiling must not increase.
 
-The smallest proof is
-`packages/dinkster-inference-torch/tests/test_new_family_checklist.py`. Its
-toy family has no production registration and runs only through the same
-public registration and sampling contracts available to a real family.
+The registration-path allowlist is declared by the gate itself. Review changes
+to that list as gate changes, not as proof that a newly listed path is valid.
+
+The proof in `packages/dinkster-inference-torch/tests/test_new_family_checklist.py`
+materializes the ordinary pack fixture under `tests/fixtures/extension-contract-pack`,
+detects its toy family through the merged worker registry, and runs its denoiser
+through both sampler surfaces.
