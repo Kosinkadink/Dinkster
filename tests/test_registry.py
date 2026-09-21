@@ -82,7 +82,7 @@ def accepted_review() -> ReviewLog:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("text", ["0.0.1", "1.0.0", "0.4.12", "10.20.30"])
+@pytest.mark.parametrize("text", ["0.0.1", "1.0", "0.4.12", "1.0rc1", "2.post1"])
 def test_valid_versions(text: str) -> None:
     assert validate_version(text) is None
     assert str(Version.parse(text)) == text
@@ -90,7 +90,7 @@ def test_valid_versions(text: str) -> None:
 
 @pytest.mark.parametrize(
     "text",
-    ["1.0", "1.0.0.0", "01.0.0", "1.00.0", "v1.0.0", "1.0.0-beta", "1.0.0 ", "", "a.b.c"],
+    ["01.0.0", "1.00.0", "v1.0.0", "1.0.0-beta", "1.0+local", "1.0 ", "", "a.b.c"],
 )
 def test_invalid_versions(text: str) -> None:
     assert validate_version(text) is not None
@@ -104,8 +104,8 @@ def test_version_ordering() -> None:
 
 def test_artifact_digest_grammar() -> None:
     assert validate_artifact_digest(DIGEST_A) is None
-    assert validate_artifact_digest("sha256:XYZ") is not None
-    assert validate_artifact_digest("blake3:" + "0" * 64) is not None  # asset space, not artifact
+    assert validate_artifact_digest("sha256:" + "0" * 64) is not None
+    assert validate_artifact_digest("blake3:XYZ") is not None
     assert validate_artifact_digest("0" * 64) is not None
 
 
@@ -453,7 +453,7 @@ def test_executed_node_types_are_exempt_from_coverage() -> None:
     [
         ({"publisher": "Alice"}, "registry.invalid-name"),
         ({"pack_name": "Img-Tools"}, "registry.invalid-name"),
-        ({"version": "1.0"}, "registry.invalid-version"),
+        ({"version": "1.0+local"}, "registry.invalid-version"),
         ({"artifact_digest": "md5:abc"}, "registry.invalid-digest"),
     ],
 )

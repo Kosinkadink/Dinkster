@@ -86,11 +86,11 @@ def test_artifact_install_does_not_activate_a_workspace_environment() -> None:
         assert step["run"].splitlines()[0].startswith("uv run --no-project --python 3.12 ")
     assert steps.index(extract) < steps.index(checkouts[0]) < steps.index(install_step)
     assert (
-        'registry_command="$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry-sqlite"'
+        'registry_command="$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"'
         in (install_step["run"])
     )
     assert (
-        'registry_command="$GITHUB_WORKSPACE/registry/.venv/Scripts/dinkster-registry-sqlite.exe"'
+        'registry_command="$GITHUB_WORKSPACE/registry/.venv/Scripts/dinkster-registry.exe"'
         in (install_step["run"])
     )
     assert '--registry-command "$registry_command"' in install_step["run"]
@@ -115,7 +115,7 @@ def test_release_registry_access_does_not_persist_credentials() -> None:
     assert checkout["with"] == {
         "clean": True,
         "repository": "Kosinkadink/dinkster-registry",
-        "ref": "772dd2a230e50dcc4f05c513c3f27279e0a6a652",
+        "ref": "1d10b407e7c54095e2d91ebac0a9c1897416a304",
         "path": "registry",
         "persist-credentials": False,
     }
@@ -125,7 +125,7 @@ def test_release_registry_access_does_not_persist_credentials() -> None:
     assert sync["run"].splitlines() == [
         "trap 'unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 "
         "GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1' EXIT",
-        "uv sync --project registry --all-packages --frozen",
+        "uv sync --project registry --frozen",
     ]
     assert sync["env"] == {
         "GIT_CONFIG_COUNT": "2",

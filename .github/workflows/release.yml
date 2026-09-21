@@ -106,7 +106,7 @@ jobs:
         with:
           clean: true
           repository: Kosinkadink/dinkster-registry
-          ref: 772dd2a230e50dcc4f05c513c3f27279e0a6a652
+          ref: 1d10b407e7c54095e2d91ebac0a9c1897416a304
           path: registry
           persist-credentials: false
       - name: Install the independent loopback registry
@@ -119,7 +119,7 @@ jobs:
           GIT_CONFIG_VALUE_1: ""
         run: |
           trap 'unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1' EXIT
-          uv sync --project registry --all-packages --frozen
+          uv sync --project registry --frozen
       - name: Install from the archive without a checkout
         shell: bash
         working-directory: ${{ runner.temp }}
@@ -129,9 +129,9 @@ jobs:
           uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-serve --help
           uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-pack --help
           uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync dinkster-installs --help
-          registry_command="$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry-sqlite"
+          registry_command="$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"
           if [ "$RUNNER_OS" = Windows ]; then
-            registry_command="$GITHUB_WORKSPACE/registry/.venv/Scripts/dinkster-registry-sqlite.exe"
+            registry_command="$GITHUB_WORKSPACE/registry/.venv/Scripts/dinkster-registry.exe"
           fi
           uv run --project clean-install/dinkster-backend-${GITHUB_SHA} --no-sync python clean-install/dinkster-backend-${GITHUB_SHA}/scripts/verify_release_install.py clean-install/dinkster-backend-${GITHUB_SHA} --registry-command "$registry_command"
   publish:

@@ -250,7 +250,7 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
 
     spec = default_pack_spec(pack_name)
     assert spec.packs is not None
-    digest = spec.packs[pack_name].artifact_digest.removeprefix("sha256:")
+    digest = spec.packs[pack_name].artifact_digest.removeprefix("blake3:")
     calls: list[dict[str, object]] = []
     selected_python = tmp_path / "prepared" / "bin" / "python"
 
@@ -354,7 +354,7 @@ def test_bundled_standard_pack_exposes_its_artifact_module(
             packs={
                 "bundled-pack": PackInfo(
                     display_name="Bundled pack",
-                    artifact_digest=f"sha256:{'1' * 64}",
+                    artifact_digest=f"blake3:{'1' * 64}",
                 )
             },
         ),

@@ -70,7 +70,8 @@ def verify(root: Path, state: Path, registry_command: Path) -> None:
     registry_command = registry_command.resolve()
     state.mkdir(parents=True)
     python = root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    registry = str(state / "registry")
+    registry_database = "sqlite:///" + (state / "registry.db").as_posix()
+    registry_objects = str(state / "registry-objects")
     packs = str(state / "packs")
     registry_url = f"http://127.0.0.1:{available_port()}"
     backend_url = f"http://127.0.0.1:{available_port()}"
@@ -88,7 +89,7 @@ def verify(root: Path, state: Path, registry_command: Path) -> None:
 
     def registry_admin(*args: str) -> str:
         return subprocess.run(
-            [str(registry_command), "--data", registry, "admin", *args],
+            [str(registry_command), "admin", "--database-url", registry_database, *args],
             cwd=root,
             text=True,
             capture_output=True,
@@ -127,17 +128,17 @@ def verify(root: Path, state: Path, registry_command: Path) -> None:
         registry_process = service(
             "registry",
             str(registry_command),
-            "--data",
-            registry,
             "serve",
             "--host",
             "127.0.0.1",
             "--port",
             registry_url.rsplit(":", 1)[1],
-            "--probe-sandbox",
-            "off",
+            "--database-url",
+            registry_database,
+            "--object-store-root",
+            registry_objects,
         )
-        wait_for(registry_url + "/index/packs", registry_process)
+        wait_for(registry_url + "/v1/health", registry_process)
         environment = {**os.environ, "DINKSTER_REGISTRY_TOKEN": token}
         publication = run(
             "dinkster.manager",
@@ -150,15 +151,29 @@ def verify(root: Path, state: Path, registry_command: Path) -> None:
             env=environment,
         )
         (state / "publish.log").write_text(publication)
+        candidate_id = publication.strip().rsplit(" ", 1)[-1]
+        subprocess.run(
+            [
+                str(registry_command),
+                "scanner",
+                "--once",
+                "--database-url",
+                registry_database,
+                "--object-store-root",
+                registry_objects,
+            ],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
         request = urllib.request.Request(
-            registry_url + "/reviews/my-pack/versions/0.1.0/resolve",
-            data=json.dumps(
-                {"decision": "accepted", "reason": "Reviewed bundled template"}
-            ).encode(),
+            registry_url + f"/v1/reviews/{candidate_id}",
+            data=json.dumps({"decision": "accept", "reason": "Reviewed bundled template"}).encode(),
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         )
         with urllib.request.urlopen(request) as response:
-            assert json.load(response)["state"] == "accepted"
+            assert json.load(response)["status"] == "accepted"
         workspace = []
         for package in (
             "workers",

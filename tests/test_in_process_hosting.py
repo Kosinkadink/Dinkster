@@ -108,8 +108,8 @@ def component_publisher_events(
 def _lockfile() -> Lockfile:
     return Lockfile(
         packs=(
-            LockedPack("alpha", "1.0.0", "sha256:" + "1" * 64, "pub", ("alpha",), "registry:x"),
-            LockedPack("beta", "1.0.0", "sha256:" + "2" * 64, "pub", ("beta",), "registry:x"),
+            LockedPack("alpha", "1.0.0", "blake3:" + "1" * 64, "pub", ("alpha",), "registry:x"),
+            LockedPack("beta", "1.0.0", "blake3:" + "2" * 64, "pub", ("beta",), "registry:x"),
         )
     )
 

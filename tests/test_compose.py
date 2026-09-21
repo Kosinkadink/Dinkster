@@ -614,7 +614,7 @@ def test_pack_contract_resolver_orders_dependencies_and_capability_providers(
         "[pack.requirements.capabilities]\n"
         '"provider.video-generation" = ">=2,<3"\n',
     )
-    digest = "sha256:" + "a" * 64
+    digest = "blake3:" + "a" * 64
     provider_spec = PackSpec(
         provider,
         packs={
@@ -674,7 +674,7 @@ def test_compose_serving_orders_provider_before_consumer(tmp_path: Path) -> None
         "[pack.requirements.capabilities]\n"
         '"provider.video-generation" = ">=2,<3"\n',
     )
-    digest = "sha256:" + "d" * 64
+    digest = "blake3:" + "d" * 64
     specs = (
         PackSpec(
             consumer,
@@ -713,7 +713,7 @@ def test_compose_serving_orders_provider_before_consumer(tmp_path: Path) -> None
 def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_registry_ids(
     tmp_path: Path,
 ) -> None:
-    digest = "sha256:" + "b" * 64
+    digest = "blake3:" + "b" * 64
 
     def spec(path: Path, name: str) -> PackSpec:
         return PackSpec(
@@ -782,7 +782,7 @@ def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_registry_i
 
 
 def test_pack_registry_providers_order_consumers_and_report_conflicts(tmp_path: Path) -> None:
-    digest = "sha256:" + "9" * 64
+    digest = "blake3:" + "9" * 64
 
     def spec(path: Path, name: str) -> PackSpec:
         return PackSpec(
@@ -856,7 +856,7 @@ def test_composed_generation_records_contract_and_registry_resolution(tmp_path: 
         "consumer",
         '[pack.requirements.registry]\n"dinkster.samplers" = ["dinkster.euler"]\n',
     )
-    digest = "sha256:" + "c" * 64
+    digest = "blake3:" + "c" * 64
 
     async def scenario() -> None:
         composition = await compose_serving(
@@ -1293,19 +1293,19 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "sha256:ba02a4bc43883a41dacd272fd6941ecf7e7851408ac4122a6850aaabed1aadd3",
+            "blake3:bd961acec9597f23a764a7c20a5054a81ca6284655d2a366ec296679f541eff7",
         ),
         (
             "dinkster-nodes-media-io",
-            "sha256:854d6e32001aae22f44268ede6ea72ae6629e35a6449290304b7bccb4014f3bc",
+            "blake3:b488d997b2b3ed69494f654648b8976fc8142f4c8fb12a35f74b011701d7f755",
         ),
         (
             "dinkster-nodes-image",
-            "sha256:04a8d8267dc68625e769d8fbc7712a1a4c18e8fdb69d859622832e437c0da796",
+            "blake3:c101d7403b38a6915a5f5a796b29d1d6a5771695ca1e33b31d154f62e351f7a2",
         ),
         (
             "dinkster-nodes-remote",
-            "sha256:0c90459042759de51d09a1977593195535facf3b4c4e1ad5632ae6e721469d4b",
+            "blake3:4685f09942fd5d6a3d85bb559f42fd99d69484dd8f6253f5dda0f2a1c3e7be39",
         ),
     ],
 )
@@ -1636,7 +1636,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("sha256:6badee4196df5ec5e7e73ea7729229921d08353b9c98c1ed3ca0c5c79d73d9af")
+    assert expected == ("blake3:0421374ac24c9b910a97fc5a5b2982c681b9785ddbeb415f27a08b934bfc1a48")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
@@ -1724,14 +1724,14 @@ def test_default_suite_refuses_malformed_managed_lock(
         ('{"format":"dinkster.lock/1","packs":[]}', "selects no packs"),
         (
             '{"format":"dinkster.lock/1","packs":[{'
-            '"artifactDigest":"sha256:1111111111111111111111111111111111111111111111111111111111111111",'
+            '"artifactDigest":"blake3:1111111111111111111111111111111111111111111111111111111111111111",'
             '"claims":["other"],"pack":"other","publisher":"dinkster",'
             '"source":"registry","version":"1.0.0"}]}',
             "selects unsupported packs",
         ),
         (
             '{"format":"dinkster.lock/1","packs":[{'
-            '"artifactDigest":"sha256:1111111111111111111111111111111111111111111111111111111111111111",'
+            '"artifactDigest":"blake3:1111111111111111111111111111111111111111111111111111111111111111",'
             '"claims":["dinkster"],"pack":"dinkster-nodes-generation","publisher":"other",'
             '"source":"registry","version":"1.0.0"}]}',
             "contains non-Dinkster publishers",
