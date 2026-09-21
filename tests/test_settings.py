@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import os
 from collections.abc import Mapping
@@ -10,11 +11,13 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_assets import P2PPluginRegistration
 from dinkster_memory import MemoryGovernor
-from dinkster_p2p import default_p2p_settings
+from dinkster_p2p import default_p2p_settings, normalize_p2p_settings
 from dinkster_schema import LOG_LEVEL_ENV, LOG_OVERRIDES_ENV
 from dinkster_server import (
     ComfyArgumentError,
+    P2PSettingsError,
     Principal,
     RuntimeSettings,
     SettingsError,
@@ -23,6 +26,12 @@ from dinkster_server import (
     create_app,
     load_settings,
     validate_comfy_args,
+)
+from dinkster_server import (
+    default_p2p_settings as server_default_p2p_settings,
+)
+from dinkster_server import (
+    normalize_p2p_settings as server_normalize_p2p_settings,
 )
 from test_server import SCHEMAS, StubAuthenticator, make_engine
 
@@ -64,6 +73,63 @@ def settings(
         path=path,
         persisted_values=persisted,
     )
+
+
+def test_server_p2p_settings_match_the_plugin_with_and_without_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registration_module = importlib.import_module("dinkster_assets.p2p_plugin")
+    plugin_defaults = default_p2p_settings()
+
+    monkeypatch.setattr(registration_module, "_registration", None)
+    assert server_default_p2p_settings() == plugin_defaults
+    assert server_normalize_p2p_settings(plugin_defaults) == normalize_p2p_settings(plugin_defaults)
+
+    registration = P2PPluginRegistration(
+        default_settings=default_p2p_settings,
+        normalize_settings=normalize_p2p_settings,
+        lan_interfaces=lambda: (),
+    )
+    monkeypatch.setattr(registration_module, "_registration", registration)
+    assert server_default_p2p_settings() == plugin_defaults
+    assert server_normalize_p2p_settings(plugin_defaults) == normalize_p2p_settings(plugin_defaults)
+    runtime = settings(granted=frozenset({"p2p"}))
+
+    def reject_settings(_value: object) -> dict[str, object]:
+        raise ValueError("plugin rejected settings")
+
+    monkeypatch.setattr(
+        registration_module,
+        "_registration",
+        P2PPluginRegistration(
+            default_settings=default_p2p_settings,
+            normalize_settings=reject_settings,
+            lan_interfaces=lambda: (),
+        ),
+    )
+    with pytest.raises(P2PSettingsError, match="plugin rejected settings"):
+        server_normalize_p2p_settings(plugin_defaults)
+
+    async def scenario() -> None:
+        app = create_app(
+            make_engine,
+            SCHEMAS,
+            settings=runtime,
+        )
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.put("/api/settings/p2p", json=plugin_defaults)
+            assert response.status == 400
+            assert await response.json() == {
+                "error": "invalid-settings",
+                "category": "p2p",
+                "message": "plugin rejected settings",
+            }
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
 
 
 def test_settings_get_is_ungated_and_reports_mutability() -> None:

@@ -38,7 +38,6 @@ members = [
     "dinkster-nodes-std",
     "dinkster-nodes-training",
     "dinkster-nodes-vision",
-    "dinkster-p2p",
     "dinkster-protocol",
     "dinkster-registry",
     "dinkster-schema",
@@ -902,7 +901,7 @@ requires-dist = [
     { name = "dinkster-nodes-std", editable = "packages/dinkster-nodes-std" },
     { name = "dinkster-nodes-training", editable = "packages/dinkster-nodes-training" },
     { name = "dinkster-nodes-training", marker = "extra == 'default'", editable = "packages/dinkster-nodes-training" },
-    { name = "dinkster-p2p", editable = "packages/dinkster-p2p" },
+    { name = "dinkster-p2p", git = "https://github.com/Kosinkadink/dinkster-p2p.git?rev=16bf38c30a47fdde4f6b63e00d63fb2d8cb5ff5e" },
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
     { name = "dinkster-registry", editable = "packages/dinkster-registry" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
@@ -1510,32 +1509,13 @@ requires-dist = [
 [[package]]
 name = "dinkster-p2p"
 version = "0.0.1"
-source = { editable = "packages/dinkster-p2p" }
+source = { git = "https://github.com/Kosinkadink/dinkster-p2p.git?rev=16bf38c30a47fdde4f6b63e00d63fb2d8cb5ff5e#16bf38c30a47fdde4f6b63e00d63fb2d8cb5ff5e" }
 dependencies = [
     { name = "dinkster-assets" },
     { name = "dinkster-workers" },
     { name = "libtorrent", marker = "(python_full_version < '3.14' and platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (python_full_version < '3.14' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (python_full_version < '3.14' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (python_full_version < '3.14' and platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32')" },
     { name = "psutil" },
 ]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-assets", editable = "packages/dinkster-assets" },
-    { name = "dinkster-workers", editable = "packages/dinkster-workers" },
-    { name = "libtorrent", marker = "python_full_version >= '3.12' and python_full_version < '3.14' and platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin'", specifier = "==2.1.1" },
-    { name = "libtorrent", marker = "python_full_version >= '3.12' and python_full_version < '3.14' and platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'", specifier = "==2.1.1" },
-    { name = "libtorrent", marker = "python_full_version >= '3.12' and python_full_version < '3.14' and platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux'", specifier = "==2.1.1" },
-    { name = "libtorrent", marker = "python_full_version >= '3.12' and python_full_version < '3.14' and platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32'", specifier = "==2.1.1" },
-    { name = "psutil", specifier = ">=5.9" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "dinkster-protocol"
