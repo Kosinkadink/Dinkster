@@ -4953,19 +4953,25 @@ def test_validate_pack_template(tmp_path: Path) -> None:
     import hashlib
 
     from dinkster_workers import validate_pack_template
+    from icon_bytes import png_bytes
 
     manifest_path = tmp_path / "dinkster-pack.toml"
     manifest_path.write_text('[pack]\nname = "p"\n')
 
     data = b'{"graphs": {"main": {}}, "meta": {"name": "Portrait"}}'
     (tmp_path / "portrait.json").write_bytes(data)
+    thumbnail = png_bytes()
+    (tmp_path / "portrait.png").write_bytes(thumbnail)
     entry = {
         "id": "portrait",
         "name": "Portrait",
         "description": "Starter portrait workflow",
         "tags": ["image", "portrait"],
+        "family": "dinkster.sd15",
+        "models": ["sd15.safetensors"],
         "assets": ["base-model", "detail-lora"],
         "file": "portrait.json",
+        "thumbnail": "portrait.png",
     }
     template, problem = validate_pack_template(manifest_path, entry)
     assert problem is None and template is not None
@@ -4973,10 +4979,15 @@ def test_validate_pack_template(tmp_path: Path) -> None:
     assert template.name == "Portrait"
     assert template.description == "Starter portrait workflow"
     assert template.tags == ("image", "portrait")
+    assert template.family == "dinkster.sd15"
+    assert template.models == ("sd15.safetensors",)
     # References pass shape validation verbatim; existence is checked by
     # the parser against the pack's surviving declarations.
     assert template.assets == ("base-model", "detail-lora")
     assert template.digest == "sha256:" + hashlib.sha256(data).hexdigest()
+    assert template.thumbnail is not None
+    assert template.thumbnail.digest == "sha256:" + hashlib.sha256(thumbnail).hexdigest()
+    assert template.thumbnail.media_type == "image/png"
     assert template.data == data
 
     # description, tags, and assets are optional; omission is empty.
@@ -4985,6 +4996,7 @@ def test_validate_pack_template(tmp_path: Path) -> None:
     )
     assert problem is None and minimal is not None
     assert minimal.description == "" and minimal.tags == () and minimal.assets == ()
+    assert minimal.family == "" and minimal.models == () and minimal.thumbnail is None
 
     def rejected(entry: object) -> str:
         template, problem = validate_pack_template(manifest_path, entry)
@@ -4997,6 +5009,11 @@ def test_validate_pack_template(tmp_path: Path) -> None:
     assert "'name'" in rejected({"id": "x", "file": "portrait.json"})
     assert "'assets'" in rejected({"id": "x", "name": "X", "file": "portrait.json", "assets": [1]})
     assert "'assets'" in rejected({"id": "x", "name": "X", "file": "portrait.json", "assets": [""]})
+    assert "'family'" in rejected({"id": "x", "name": "X", "file": "portrait.json", "family": 1})
+    assert "'models'" in rejected({"id": "x", "name": "X", "file": "portrait.json", "models": [""]})
+    assert "'thumbnail'" in rejected(
+        {"id": "x", "name": "X", "file": "portrait.json", "thumbnail": "missing.png"}
+    )
     assert "'file'" in rejected({"id": "x", "name": "X"})
     # The document checks ride the shared validator - one containment
     # spot-check here; the exhaustive matrix lives in the blueprint test.
@@ -5096,11 +5113,14 @@ def test_pack_info_from_manifest_templates(tmp_path: Path) -> None:
     asset carries the same digest, asset references, and exact digested
     bytes."""
     from dinkster_assets import digest_bytes
+    from icon_bytes import png_bytes
 
     from dinkster.packs import pack_info_from_manifest
 
     data = '{"graphs": {"main": {}}}'
     (tmp_path / "starter.json").write_text(data)
+    thumbnail = png_bytes()
+    (tmp_path / "starter.png").write_bytes(thumbnail)
     (tmp_path / "model.bin").write_bytes(b"weights")
     declared = tmp_path / "dinkster-pack.toml"
     declared.write_text(
@@ -5113,7 +5133,8 @@ def test_pack_info_from_manifest_templates(tmp_path: Path) -> None:
         'file = "model.bin"\n'
         "[[pack.templates]]\n"
         'id = "starter"\nname = "Starter"\ndescription = "A starter"\n'
-        'tags = ["demo"]\nassets = ["model"]\nfile = "starter.json"\n'
+        'tags = ["demo"]\nfamily = "dinkster.sd15"\nmodels = ["model.bin"]\n'
+        'assets = ["model"]\nfile = "starter.json"\nthumbnail = "starter.png"\n'
     )
     manifest = load_manifest(declared)
     info = pack_info_from_manifest(manifest)
@@ -5123,6 +5144,10 @@ def test_pack_info_from_manifest_templates(tmp_path: Path) -> None:
     assert asset.name == "Starter"
     assert asset.description == "A starter"
     assert asset.tags == ("demo",)
+    assert asset.family == "dinkster.sd15"
+    assert asset.models == ("model.bin",)
     assert asset.assets == ("model",)
+    assert asset.thumbnail is not None
+    assert asset.thumbnail.data == thumbnail
     assert asset.digest == manifest.templates[0].digest
     assert asset.data == data.encode()

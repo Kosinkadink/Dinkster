@@ -6,6 +6,8 @@ import argparse
 import os
 from pathlib import Path
 
+from dinkster_assets import MountDef, dump_mounts, load_mounts
+
 from .installer import Installer
 
 
@@ -22,6 +24,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.parse_args(argv)
     library_root, install_root = default_roots()
     library_root.mkdir(parents=True, exist_ok=True)
+    output_root = library_root / "output"
+    output_root.mkdir(exist_ok=True)
+    mounts_path = library_root / "mounts.toml"
+    mounts = load_mounts(mounts_path)
+    if not any(mount.id == "output" or mount.path == output_root for mount in mounts):
+        mounts_path.write_text(
+            dump_mounts((*mounts, MountDef(id="output", path=output_root, mode="readwrite"))),
+            encoding="utf-8",
+        )
     Installer(install_root)
     print(f"Library: {library_root}")
     print(f"Packs: {install_root}")
