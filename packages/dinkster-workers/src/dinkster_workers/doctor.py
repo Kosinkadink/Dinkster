@@ -956,6 +956,18 @@ def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Find
                 "or remove the provider declaration",
             )
         )
+    for scope, problem in sorted(report["extension_entry_errors"].items()):
+        findings.append(
+            Finding(
+                severity="error",
+                code="extension.entry-unresolvable",
+                message=f"[pack.extension] {scope} failed to import: {problem}",
+                fix=(
+                    f"check the {scope} module:attr target exists and its "
+                    "dependencies are installed"
+                ),
+            )
+        )
     if report["nodes_entry_problem"] is not None:
         findings.append(
             Finding(

@@ -3,6 +3,9 @@ from typing import Any
 
 from dinkster_native import native_arm as _implementation
 from dinkster_native.native_arm import *  # pyright: ignore[reportWildcardImportFromLibrary]  # noqa: F403
+from dinkster_native.native_arm import (
+    _NativeModelOverlay as _NativeModelOverlay,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 def __getattr__(name: str) -> Any:
