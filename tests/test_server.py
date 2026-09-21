@@ -3490,7 +3490,6 @@ def test_diagnostics_endpoint_reports_cross_pack_replacement_problems() -> None:
             assert await resp.json() == {
                 "replacementProblems": [],
                 "compatSkips": [],
-                "packInferenceUnavailable": [],
             }
         finally:
             await clean.close()
