@@ -4,21 +4,144 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from typing import Any, cast
 
 from dinkster_api.v1 import (
+    FLOAT32,
+    AssemblyRegistration,
+    ComponentDescriptor,
+    ComponentWiring,
+    DetectionEvidence,
+    InferenceContribution,
     InputSpec,
     JsonField,
     JsonObjectSchema,
+    LatentDescriptor,
+    ModelFamily,
     Node,
     NodeSchema,
     OutputSpec,
     PackEvent,
+    Parameterization,
+    SamplingDescriptor,
     TypeExpr,
     TypeRegistry,
     report_pack_event,
 )
 
 VALUE_TYPE = "fixture.extension.value"
+FAMILY_ID = "fixture.toy-image"
+
+
+class ToyFamilyDetector:
+    def detect(self, source: Any) -> DetectionEvidence | None:
+        key = "toy.denoiser.weight"
+        if key not in source.keys():
+            return None
+        return DetectionEvidence(FAMILY_ID, (key,), {"channels": 4})
+
+
+TOY_FAMILY = ModelFamily(
+    id=FAMILY_ID,
+    display_name="Fixture Toy Image",
+    detector=ToyFamilyDetector(),
+    specificity=100,
+    latent=LatentDescriptor(channels=4, scale_factor=1.0, shift_factor=0.0),
+    sampling=SamplingDescriptor(Parameterization.FLOW, sigma_min=0.01, sigma_max=1.0),
+    wiring=ComponentWiring(),
+    supported_dtypes=frozenset({FLOAT32}),
+    denoiser="extension_contract_pack:toy_denoiser",
+    text_encoder="extension_contract_pack:encode_text",
+    latent_codec="extension_contract_pack:decode_latent",
+    loader="extension_contract_pack:load_toy",
+)
+
+
+def detect_components(
+    source: Any, _path: object, **_options: object
+) -> tuple[tuple[str, object], ...]:
+    return (("diffusion", {"family": FAMILY_ID}),) if "toy.denoiser.weight" in source.keys() else ()
+
+
+TOY_COMPONENT = ComponentDescriptor(
+    family=TOY_FAMILY,
+    detector=detect_components,
+    roles=("diffusion",),
+    text_encoder_roles=(),
+    codec_roles=(),
+    loader="extension_contract_pack:load_toy",
+    runtime_class="builtins:object",
+)
+
+
+def plan_toy(**_sources: object) -> object:
+    return {"family": FAMILY_ID}
+
+
+TOY_ASSEMBLY = AssemblyRegistration(
+    id=FAMILY_ID,
+    plan=plan_toy,
+    load="extension_contract_pack:load_toy",
+)
+
+
+def toy_denoiser(_runtime: object, _dtype: object, _context: object) -> object:
+    from dinkster_inference_torch.sampling_execution import (
+        SamplingDenoiserAdapter,
+        SamplingDenoiserExecution,
+    )
+
+    class Adapter:
+        evaluator_identity = "fixture.toy-image.denoiser.v1"
+
+        @staticmethod
+        def prepare_conditioning(value: object, _role: object) -> object:
+            return value
+
+        @staticmethod
+        def evaluate_conditioning(value: Any, _sigma: float, context: Any) -> Any:
+            return value * 0.25 + context.embeddings.mean()
+
+        @staticmethod
+        def batchable(_conditions: tuple[object, ...]) -> bool:
+            return True
+
+        def evaluate_batch(
+            self,
+            value: Any,
+            sigma: float,
+            conditions: tuple[Any, ...],
+            _context: object | None = None,
+        ) -> tuple[Any, ...]:
+            return tuple(self.evaluate_conditioning(value, sigma, item) for item in conditions)
+
+        evaluate_conditioning_batch = evaluate_batch
+
+    return SamplingDenoiserExecution(cast("SamplingDenoiserAdapter", Adapter()))
+
+
+def encode_text(text: str) -> tuple[int, ...]:
+    return tuple(text.encode("utf-8"))
+
+
+def decode_latent(latent: object) -> object:
+    return latent
+
+
+def load_toy(plan: object) -> object:
+    return plan
+
+
+def register_inference() -> InferenceContribution:
+    return InferenceContribution(
+        families=(TOY_FAMILY,),
+        components=(TOY_COMPONENT,),
+        assemblies=(TOY_ASSEMBLY,),
+    )
+
+
+register = register_inference
+
 
 EVENT = PackEvent(
     "fixture.extension-contract.executed",

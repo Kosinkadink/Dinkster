@@ -821,7 +821,7 @@ class SaveImage(Node):
                     "target",
                     SAVE_TARGET,
                     required=False,
-                    default={"mount": "comfy-output", "prefix": "ComfyUI"},
+                    default=None,
                     widget=SaveTargetWidget(),
                 ),
                 InputSpec(
@@ -888,10 +888,8 @@ class SaveImage(Node):
             )
             for frame in batch
         ]
-        destination = (
-            target if target is not None else {"mount": "comfy-output", "prefix": "ComfyUI"}
-        )
         writer = _mount_writer()
+        destination = target if target is not None else writer.output_target("ComfyUI")
         assets = [
             writer.save_bytes(destination, data, suffix=suffix, media_type=media_type)
             for data, suffix, media_type in encoded

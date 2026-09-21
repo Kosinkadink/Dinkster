@@ -67,7 +67,7 @@ create a runtime door by itself.
 | `background-jobs` | Declared and unconsumed | No extension capability consumer |
 | `downloads` | Declared and unconsumed | No extension capability consumer |
 | `filesystem` | Declared and unconsumed | No extension capability consumer |
-| `model-family-registration` | Declared and unconsumed | No pack-facing model-family registration door; adding one requires a core edit |
+| `model-family-registration` | Works | `InferenceContribution` merges pack families, components, and assemblies in the torch worker; `tests/test_extension_contract_pack.py` |
 | `routes` | Works | `tests/test_pack_surfaces.py` |
 
 The generated contribution vocabulary and doctor diagnostics keep declared

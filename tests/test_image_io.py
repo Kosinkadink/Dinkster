@@ -59,11 +59,28 @@ def _mount(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root.mkdir()
     snapshot = tmp_path / "mounts.json"
     snapshot.write_text(
-        json.dumps({"mounts": [{"id": "out", "root": str(root), "mode": "readwrite"}]}),
+        json.dumps(
+            {
+                "mounts": [{"id": "out", "root": str(root), "mode": "readwrite"}],
+                "outputMount": "out",
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
     return root
+
+
+def test_save_image_uses_the_configured_default_output_mount(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _mount(tmp_path, monkeypatch)
+
+    result = SaveImage.execute(images=np.zeros((1, 2, 3, 3), dtype=np.float32))
+
+    (asset,) = cast("list[AssetRef]", result["assets"])
+    assert asset.virtual_path == "mounts/out/ComfyUI_00001.png"
+    assert (root / "ComfyUI_00001.png").is_file()
 
 
 def test_image_io_schemas_use_typed_assets_and_mounted_targets() -> None:

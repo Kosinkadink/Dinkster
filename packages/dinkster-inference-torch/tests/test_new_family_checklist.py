@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import cast
 
+import pytest
 import torch
 from dinkster_inference import (
     FLOAT32,
@@ -17,13 +20,21 @@ from dinkster_inference import (
     FamilyRegistry,
     FlowSigmas,
     GuidanceRole,
+    InferenceContribution,
     LatentDescriptor,
     ModelFamily,
     Parameterization,
+    RegistryError,
+    SamplerExtensionEntry,
     SamplingDescriptor,
     TensorGeometry,
     WeightEntry,
     WeightSource,
+    builtin_registries,
+    execution_symbol,
+    materialize_inference_generation,
+    merge,
+    write_sampler_catalog,
 )
 from dinkster_inference_torch.denoise import prepare_noise
 from dinkster_inference_torch.sampling_execution import (
@@ -158,7 +169,16 @@ def test_toy_family_detects_from_registration_data() -> None:
 
 
 def test_toy_family_runs_identically_through_both_sampler_surfaces_on_cpu() -> None:
-    runtime = ToyRuntime()
+    custom, ksampler = _run_both_sampler_surfaces(ToyRuntime())
+
+    assert torch.equal(custom, ksampler)
+    assert torch.count_nonzero(ksampler)
+    assert ksampler.device.type == "cpu"
+
+
+def _run_both_sampler_surfaces(
+    runtime: ToyRuntime,
+) -> tuple[torch.Tensor, torch.Tensor]:
     latent = torch.zeros((1, 4, 2, 3), dtype=torch.float32)
     conditioning = Conditioning(torch.arange(12, dtype=torch.float32).reshape(1, 3, 4))
     seed = 123
@@ -198,6 +218,55 @@ def test_toy_family_runs_identically_through_both_sampler_surfaces_on_cpu() -> N
         seed=seed,
     )
 
+    return custom, ksampler
+
+
+def test_pack_contributed_family_materializes_and_runs_both_sampler_surfaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = Path(__file__).parents[3] / "tests" / "fixtures" / "extension-contract-pack"
+    monkeypatch.syspath_prepend(str(fixture))
+    sys.modules.pop("extension_contract_pack", None)
+    catalog = tmp_path / "inference.json"
+    key = "candidate:pack-family"
+    write_sampler_catalog(
+        catalog,
+        key,
+        (SamplerExtensionEntry("fixture-pack", "extension_contract_pack:register_inference"),),
+    )
+
+    materialized = materialize_inference_generation(key, catalog_path=catalog)
+    family = materialized.registries.families.get("fixture.toy-image")
+    assert family is not None
+    detected = materialized.registries.families.detect(HeaderSource(("toy.denoiser.weight",)))
+    assert detected.best is not None and detected.best.family_id == family.id
+    assert materialized.registries.components.get(family.id) is not None
+    assert materialized.registries.assemblies.get(family.id) is not None
+    assert family.denoiser is not None
+    assert family.text_encoder is not None
+    assert family.latent_codec is not None
+    assert family.loader is not None
+    assert execution_symbol(family.text_encoder)("toy") == tuple(b"toy")
+    marker = object()
+    assert execution_symbol(family.latent_codec)(marker) is marker
+    assert execution_symbol(family.loader)(marker) is marker
+    contributed_family = family
+    contributed_denoiser = execution_symbol(family.denoiser)
+
+    class ContributedToyRuntime(ToyRuntime):
+        sampling_execution_registration = replace(
+            ToyRuntime.sampling_execution_registration,
+            denoiser=contributed_denoiser,
+        )
+
+        @property
+        def family(self) -> ModelFamily:
+            return contributed_family
+
+    custom, ksampler = _run_both_sampler_surfaces(ContributedToyRuntime())
     assert torch.equal(custom, ksampler)
     assert torch.count_nonzero(ksampler)
-    assert ksampler.device.type == "cpu"
+
+    contribution = InferenceContribution(families=(family,))
+    with pytest.raises(RegistryError, match="already registered"):
+        merge(builtin_registries(), (contribution, contribution))

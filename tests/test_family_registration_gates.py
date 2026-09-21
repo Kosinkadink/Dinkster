@@ -7,6 +7,7 @@ import pytest
 from dinkster_inference import EngineProperties, PreviewDecoderProperties, builtin_families
 from dinkster_inference.component_catalog import default_component_registry
 from family_gate_scanner import (
+    EXTERNAL_PROOF_FAMILY_IDS,
     NEW_FAMILY_PROOF_PATH,
     changed_paths_since_merge_base,
     family_literal_gates,
@@ -223,11 +224,12 @@ def test_scheduled_sampling_has_zero_shadow_orchestration() -> None:
     assert findings == [], "scheduled sampling orchestration remains:\n" + "\n".join(findings)
 
 
-def test_external_proof_family_is_in_fail_closed_scanner(tmp_path: Path) -> None:
+@pytest.mark.parametrize("family_id", sorted(EXTERNAL_PROOF_FAMILY_IDS))
+def test_external_proof_family_is_in_fail_closed_scanner(tmp_path: Path, family_id: str) -> None:
     source = tmp_path / "shared_engine.py"
-    source.write_text('enabled = family_id == "test.toy-image"\n', encoding="utf-8")
+    source.write_text(f'enabled = family_id == "{family_id}"\n', encoding="utf-8")
 
-    assert family_literal_gates(source, tmp_path) == ("shared_engine.py:1: test.toy-image",)
+    assert family_literal_gates(source, tmp_path) == (f"shared_engine.py:1: {family_id}",)
 
 
 def test_new_family_proof_only_changes_registration_points() -> None:

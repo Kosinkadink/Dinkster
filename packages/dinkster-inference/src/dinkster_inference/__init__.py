@@ -276,6 +276,7 @@ from .component_handle import (
     InferenceComponentHandle,
     require_inference_component_handle,
 )
+from .component_registry import ComponentDescriptor, execution_symbol
 from .composition import (
     COMPONENT_CONDITIONING_METADATA_KEY,
     ComponentBinding,
@@ -445,6 +446,9 @@ from .effect_mask import (
     compile_effect_mask_field,
 )
 from .extensions import (
+    INFERENCE_ASSEMBLIES_SURFACE,
+    INFERENCE_COMPONENTS_SURFACE,
+    INFERENCE_FAMILIES_SURFACE,
     INFERENCE_SAMPLERS_SURFACE,
     INFERENCE_SCHEDULERS_SURFACE,
     SAMPLER_CATALOG_ENV,
@@ -454,8 +458,11 @@ from .extensions import (
     MaterializedSamplerRegistry,
     SamplerContribution,
     SamplerExtensionEntry,
+    assembly_declaration,
     builtin_sampler_snapshot,
     compile_inference_graph,
+    component_declaration,
+    family_declaration,
     graph_compiler_declaration,
     guidance_declarations,
     materialize_inference_generation,
@@ -2055,6 +2062,8 @@ __all__ = [
     "CodecTiling",
     "ComponentApplication",
     "ComponentBinding",
+    "ComponentDescriptor",
+    "execution_symbol",
     "ComponentPlan",
     "CompiledEffectMaskField",
     "ControlApplication",
@@ -2684,6 +2693,12 @@ __all__ = [
     "NVFP4",
     "NodePath",
     "AssemblyRegistration",
+    "assembly_declaration",
+    "INFERENCE_ASSEMBLIES_SURFACE",
+    "INFERENCE_COMPONENTS_SURFACE",
+    "INFERENCE_FAMILIES_SURFACE",
+    "component_declaration",
+    "family_declaration",
     "NativeAssemblyPlan",
     "NativeAssemblyResolution",
     "builtin_assembly_registry",
