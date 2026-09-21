@@ -556,6 +556,10 @@ def test_pr_workflow_keeps_fast_validation_bounded_and_training_isolated() -> No
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     assert set(workflow["jobs"]) == {"fast", "default-training-pack"}
     assert set(workflow[True]) == {"pull_request", "workflow_dispatch"}
+    assert workflow["concurrency"] == {
+        "group": "${{ github.workflow }}-${{ github.ref }}",
+        "cancel-in-progress": True,
+    }
     assert WORKFLOW[True] == {
         "push": {"branches": ["main"]},
         "schedule": [
@@ -611,14 +615,109 @@ def test_pr_workflow_keeps_fast_validation_bounded_and_training_isolated() -> No
     assert "torch-cpu-suite" not in str(job)
 
 
-def test_full_validation_schedule_and_concurrency_keep_durable_runs_alive() -> None:
+def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path) -> None:
+    job = JOBS["test"]
+    windows_rows = [row for row in job["strategy"]["matrix"]["include"] if row["os"] == "windows"]
+    assert {row["pytest_args"] for row in windows_rows} == {
+        "-p tools.pytest_file_shard --file-shard 1/2",
+        "-p tools.pytest_file_shard --file-shard 2/2",
+    }
+
+    steps = job["steps"]
+    checkout_index = next(
+        index for index, step in enumerate(steps) if step.get("uses") == "actions/checkout@v4"
+    )
+    refresh = steps[checkout_index + 1]
+    assert refresh == {
+        "name": "Refresh tracked files with current attributes",
+        "if": "matrix.os == 'windows'",
+        "shell": "bash",
+        "run": "git rm -r --cached -q .\ngit reset --hard -q HEAD\n",
+    }
+
+    clone = tmp_path / "checkout"
+    subprocess.run(
+        ["git", "clone", "--quiet", "--shared", str(ROOT), str(clone)],
+        check=True,
+    )
+    subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=clone, check=True)
+    relative_license = Path(
+        "packages/dinkster-nodes-vision/dinkster_vision_hed_pack/LINEART_LICENSE"
+    )
+    license_file = clone / relative_license
+    attributes = clone / ".gitattributes"
+    current_attributes = attributes.read_text(encoding="utf-8")
+    assert "**/*_LICENSE text eol=lf\n" in current_attributes
+    attributes.write_text(
+        current_attributes.replace(
+            "**/*_LICENSE text eol=lf\n",
+            "**/CLIP_LICENSE text eol=lf\n**/SAM_LICENSE text eol=lf\n",
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", ".gitattributes"], cwd=clone, check=True)
+    license_file.unlink()
+    subprocess.run(
+        ["git", "checkout", "--", relative_license.as_posix()],
+        cwd=clone,
+        check=True,
+    )
+    assert b"\r\n" in license_file.read_bytes()
+
+    subprocess.run(
+        ["git", "restore", "--source=HEAD", "--staged", "--worktree", ".gitattributes"],
+        cwd=clone,
+        check=True,
+    )
+    lf_bytes = subprocess.run(
+        ["git", "show", f"HEAD:{relative_license.as_posix()}"],
+        cwd=clone,
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert b"\r" not in lf_bytes
+    assert b"\r\n" in license_file.read_bytes()
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--", relative_license.as_posix()],
+        cwd=clone,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert status.stdout == ""
+
+    subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", refresh["run"]],
+        cwd=clone,
+        check=True,
+    )
+    assert license_file.read_bytes() == lf_bytes
+    subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", refresh["run"]],
+        cwd=clone,
+        check=True,
+    )
+    assert license_file.read_bytes() == lf_bytes
+    assert (
+        subprocess.run(
+            ["git", "status", "--porcelain=v1"],
+            cwd=clone,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        == ""
+    )
+
+
+def test_full_validation_batches_pushes_without_cancelling_active_runs() -> None:
     assert WORKFLOW["permissions"] == {"actions": "read", "contents": "read"}
     assert WORKFLOW["concurrency"] == {
         "group": (
             "${{ github.workflow }}-${{ github.ref }}-"
             "${{ github.event_name == 'push' && 'push' || 'durable' }}"
         ),
-        "cancel-in-progress": "${{ github.event_name == 'push' }}",
+        "cancel-in-progress": False,
     }
     plan = JOBS["validation-plan"]
     assert plan["outputs"] == {"run-heavy": "${{ steps.plan.outputs.run-heavy }}"}
@@ -641,6 +740,8 @@ def test_full_validation_schedule_and_concurrency_keep_durable_runs_alive() -> N
 
     docs = (ROOT / "docs/testing.md").read_text(encoding="utf-8").replace("\n", " ")
     assert "`on.schedule` cron list in that file is the single schedule definition" in docs
+    assert "one active push run and only the newest pending push run" in docs
+    assert "git merge-base --is-ancestor" in docs
 
 
 @pytest.mark.parametrize("environment", ["github-hosted", "self-hosted"])

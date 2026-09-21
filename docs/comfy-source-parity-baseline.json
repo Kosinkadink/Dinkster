@@ -9,11 +9,6 @@
       "disposition": "development-only-no-comfy-execution-counterpart",
       "package": "dinkster-nodes-dev",
       "reason": "Dinkster-only development scaffolding and conformance nodes have no ComfyUI execution counterpart; parity is not claimed."
-    },
-    {
-      "disposition": "remote-service-no-local-comfy-execution-counterpart",
-      "package": "dinkster-nodes-partner",
-      "reason": "Remote partner API contracts are tested against provider schemas and requests, not local pinned ComfyUI execution; parity is not claimed."
     }
   ],
   "format": "dinkster-comfy-source-parity-baseline/1",

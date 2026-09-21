@@ -11,7 +11,6 @@ from dinkster_nodes_foundation import FOUNDATION_NODES
 from dinkster_nodes_generation import GENERATION_NODES
 from dinkster_nodes_image import IMAGE_NODES
 from dinkster_nodes_media_io import MEDIA_IO_NODES
-from dinkster_nodes_partner import PARTNER_NODES
 from dinkster_schema import DynamicComboSpec, InputSpec, NodeSchema, build_schemas
 
 BASELINE = Path(__file__).parent / "fixtures" / "input_prominence_baseline.json"
@@ -23,7 +22,6 @@ def _catalog() -> dict[str, NodeSchema]:
         *MEDIA_IO_NODES,
         *IMAGE_NODES,
         *GENERATION_NODES,
-        *PARTNER_NODES,
         *NATIVE_NODES,
         *WAN_MODEL_NODES,
     )
@@ -60,7 +58,7 @@ def test_approved_input_prominence_baseline() -> None:
     baseline_keys = [(item["node"], item["path"]) for item in baseline]
     assert len(baseline_keys) == len(set(baseline_keys))
     expected_counts = {
-        "P": 115,
+        "P": 82,
         "CP": 120,
         "A": 128,
         "I": 17,

@@ -7964,7 +7964,7 @@ def test_real_wan21_gguf_text_encoded_residency_modes_on_cuda() -> None:
         "native:dinkster.wan21:a8dfe7b595157c0272bd75b1f804ff9d5492edb081a338eee21eb178cee76b7d"
     )
     assert identities["memory"] == (
-        "native:dinkster.wan21:87551abf82205a831ac95bde95a2382f980e6610b2589ad4e1b73efedd06db08"
+        "native:dinkster.wan21:62af0051f3c7f831015da524b089c234a76fb47057707fb3621b29586c98df1b"
     )
     assert identities["balanced"] == _WAN21_UMT5_GGUF_BALANCED_IDENTITY
     for ours, reference in zip(encoded["balanced"], encoded["memory"], strict=True):

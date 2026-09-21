@@ -22,7 +22,8 @@ Malformed catalog entries are skipped without hiding valid entries.
 The equivalent environment variables are `DINKSTER_REMOTE_CATALOG_BASE`,
 `DINKSTER_REMOTE_GATEWAY_BASE`, `DINKSTER_REMOTE_AUTH_TOKEN_FILE`, and
 `DINKSTER_REMOTE_CATALOG_POLL_INTERVAL`. The gateway base defaults to the catalog
-base. Job polling defaults to one second for image nodes and five seconds for
+base. No network request is made when the catalog base is unset. Job polling
+defaults to one second for image nodes and five seconds for
 video nodes; `DINKSTER_REMOTE_IMAGE_POLL_INTERVAL` and
 `DINKSTER_REMOTE_VIDEO_POLL_INTERVAL` override those intervals. The bearer token
 file is read for each invocation so session rotation does not require

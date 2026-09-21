@@ -428,10 +428,9 @@ proxy, which refuses private, loopback, link-local, reserved, and otherwise
 non-global addresses before connecting to a validated address. TLS remains
 end-to-end between the worker client and the destination through HTTP CONNECT.
 Packs in one worker group share the union of origins granted to its members.
-
-For the installed partner pack, `--comfy-api-base` automatically grants that
-URL's exact origin. Any separate signed-transfer origins still require explicit
-`dinkster-nodes-partner=HTTPS_ORIGIN` grants.
+The remote-node catalog and job gateway origins are granted from
+`--remote-catalog-base` and `--remote-gateway-base`; signed-transfer origins
+returned by the gateway still require explicit grants.
 
 ## Memory and aimdo
 
@@ -717,6 +716,7 @@ Persistence root. When set, the following live under it:
 | `provenance.json` | Acquisition leads |
 | `resolver-indexes.json` | Resolver-index subscriptions and cached documents |
 | `mounts.toml` | Durable filesystem mount grants |
+| `asset-indexes/<mount-id>.json` | Per-mount digest indexes used to skip unchanged files |
 | `execution-cache/` | Layered execution-result manifests and content-addressed payloads |
 | `value-store/` | Persistent value store for remote workers (see [remote-workers.md](remote-workers.md)) |
 | `venvs/<accelerator>/<pack-digest>/<pack>/` | Standard vision-pack runtime environments provisioned before workers announce |
@@ -858,6 +858,13 @@ filesystem mounts while running (the desktop-shell folder-picker
 flow). Granted mounts persist to `<library-root>/mounts.toml`. Off by
 default: runtime mount mutation is a filesystem capability grant and
 stays operator-only. Requires `--library-root`.
+
+Mount scans store their indexes in `<library-root>/asset-indexes`, never in
+the mounted directory. If a mount still contains the former
+`.dinkster-asset-index.json`, its rows seed the library-owned index once; after
+the library index exists, the mount copy is ignored. `GET /api/mounts` reports
+scan progress as files, bytes, and elapsed seconds while unchanged size and
+mtime rows are reused.
 
 ## Logging
 

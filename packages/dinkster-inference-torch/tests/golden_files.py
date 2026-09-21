@@ -203,5 +203,16 @@ def _minted_cpu(document: dict[str, Any]) -> str | None:
 
 def platform_digest(name: str) -> str:
     path = Path(__file__).parent / "goldens" / "wiring_digests.json"
-    document = load_platform_golden(path)
-    return str(document["digests"][name])
+    document: dict[str, Any] = json.loads(path.read_text())
+    provenance = runtime_provenance()
+    for variant in document["variants"]:
+        if (
+            variant["cpu"] == cpu_identity()
+            and variant["python"] == provenance["python"]
+            and variant["torch"] == provenance["torch"]
+        ):
+            return str(variant["digests"][name])
+    pytest.skip(
+        "excluded: no wiring digest minted for "
+        f"{cpu_identity()}, {provenance['python']}, torch {provenance['torch']}"
+    )

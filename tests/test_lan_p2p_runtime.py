@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import struct
 import time
 from collections.abc import Awaitable, Callable
@@ -1163,6 +1164,93 @@ def test_controller_maps_trusted_resolver_snapshot_to_global_download_and_tombst
         assert controller._known_transports(derived.asset_digest) == ()
 
     asyncio.run(scenario())
+
+
+def test_monitor_logs_global_seed_admission_failure(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.safetensors"
+    source.write_bytes(_safetensors(256))
+    lease = replace(_leases(source, "monitor")[0], scope="lan-and-internet")
+    controller = LanP2PController(
+        vault=AssetVault(tmp_path / "vault"),
+        resolver_indexes=ResolverSubscriptionStore(
+            tmp_path / "subscriptions.json",
+            ProvenanceStore(tmp_path / "provenance.json"),
+        ),
+        receipts=PublicAcquisitionReceiptStore(tmp_path / "receipts.json"),
+        local_path_for=lambda _digest: None,
+    )
+
+    async def unchanged_policy() -> None:
+        return None
+
+    ticks = 0
+
+    async def fail_reconciliation() -> None:
+        nonlocal ticks
+        ticks += 1
+        if ticks != 3:
+            cast(Any, controller._manager)._verify_global_seed(lease)
+
+    def fail_mapping(*_args: object, **_kwargs: object) -> object:
+        raise OSError("USN change token unavailable")
+
+    async def cancel_after_tick(_delay: float) -> None:
+        if ticks == 4:
+            raise asyncio.CancelledError
+
+    async def skip_seed_refresh() -> None:
+        return None
+
+    monkeypatch.setattr(AssetVault, "verify_p2p_local_file", fail_mapping)
+    monkeypatch.setattr(controller, "_refresh_network_policy", unchanged_policy)
+    monkeypatch.setattr(controller, "_reconcile_locked", fail_reconciliation)
+    monkeypatch.setattr(controller, "_refresh_seed_mappings", skip_seed_refresh)
+    monkeypatch.setattr(lan_p2p_module.asyncio, "sleep", cancel_after_tick)
+
+    with caplog.at_level(logging.WARNING, logger="dinkster.lan_p2p"):
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(controller._monitor_state())
+    expected = (
+        "P2P monitor reconciliation failed: global seed mapping is not safe and current: "
+        "USN change token unavailable"
+    )
+    assert [record.getMessage() for record in caplog.records] == [expected, expected]
+
+
+def test_seed_prefilter_logs_unavailable_mapping(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.safetensors"
+    source.write_bytes(_safetensors(256))
+    seeder_vault, _, indexes, receipts, _, digest = _controller_inputs(tmp_path, source)
+    subscription = indexes.subscriptions()[0]
+    indexes.set_p2p_trust(
+        subscription.id,
+        trusted_for_p2p=True,
+        license_authoritative=True,
+    )
+    controller = LanP2PController(
+        vault=seeder_vault,
+        resolver_indexes=indexes,
+        receipts=receipts,
+        local_path_for=seeder_vault.resolve,
+    )
+    controller._settings = _settings(seeding=True)
+    controller._discovery = cast(Any, object())
+
+    def fail_mapping(*_args: object, **_kwargs: object) -> object:
+        raise OSError("USN change token unavailable")
+
+    monkeypatch.setattr(AssetVault, "verify_p2p_local_file", fail_mapping)
+    with caplog.at_level(logging.WARNING, logger="dinkster.lan_p2p"):
+        asyncio.run(controller.reconcile())
+    assert f"P2P seed mapping rejected for {digest}: USN change token unavailable" in caplog.text
 
 
 def test_controller_requires_receipt_then_maps_transfers_revokes_and_preserves_lan(

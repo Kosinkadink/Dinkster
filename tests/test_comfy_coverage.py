@@ -759,7 +759,7 @@ def test_checked_in_source_parity_baseline_has_explicit_non_parity_dispositions(
     assert {
         item["package"]
         for item in baseline["excludedNativePacks"]  # type: ignore[union-attr]
-    } == {"dinkster-nodes-dev", "dinkster-nodes-partner"}
+    } == {"dinkster-nodes-dev"}
 
 
 def test_video_operation_evidence_is_not_counted_as_mapping_parity(

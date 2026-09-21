@@ -110,7 +110,7 @@ dataclasses/protocols so the engine has no serialization framework in its hot pa
 |dinkster-workers| |dinkster-caches  |       |          node packs           |
 | in-process, | | memory-lru,  |       | foundation + media I/O,       |
 | venv/subproc| | ram-aware,   |       | dinkster-compat-comfy,           |
-| remote      | | disk/CAS,    |       | dinkster-partner-nodes,          |
+| remote      | | disk/CAS,    |       | dinkster-nodes-remote,           |
 |             | | remote       |       | third-party packs             |
 +------+------+ +------+-------+       +---------------+---------------+
        |               |                               |
@@ -159,14 +159,19 @@ contracts and never import the engine; node packs see only the extension API.
   libraries and resolvers (3.12).
 - **`dinkster-api`** - the versioned extension door: `dinkster_api.v1` re-exports the
   pack-author surface, frozen by a golden compat test suite.
-- **`dinkster-server`** - aiohttp HTTP/WS server, job queue, multi-client sessions,
-  the native protocol (3.5), artifact upload/serving.
+- **`dinkster-server`** - aiohttp HTTP/WS server, job queue, the native protocol
+  (3.5), and artifact upload/serving.
+- **`dinkster-collab`** - optional server extension for shared document sessions;
+  when installed, it registers its routes and persistent session service on the
+  host app without becoming an engine or server dependency.
+- **`dinkster-supervisor`** - optional layer-0 process supervision and install
+  registry tooling. It imports no engine code and owns its console scripts.
 - **Node packs** - `dinkster-nodes-foundation` (logic, math, text, lists,
   utilities), `dinkster-nodes-media-io` (asset-backed media I/O),
   `dinkster-nodes-generation` (provider-independent loading, conditioning,
   sampling, and codec schemas), model-family packs such as `dinkster-model-wan`,
   `dinkster-compat-comfy` (the quarantined ComfyUI surface and an execution
-  provider for generation schemas), and `dinkster-nodes-partner` (3.7).
+  provider for generation schemas), and catalog-driven `dinkster-nodes-remote`.
   `dinkster-nodes-std` is the metadata-only install suite for the foundation and
   media packs.
 
