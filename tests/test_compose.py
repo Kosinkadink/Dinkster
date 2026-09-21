@@ -1293,15 +1293,15 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "sha256:ba02a4bc43883a41dacd272fd6941ecf7e7851408ac4122a6850aaabed1aadd3",
+            "sha256:a77107ea1863d2f414819c88116fc6c82bcf147d038afb2a047cee7fd3632d65",
         ),
         (
             "dinkster-nodes-media-io",
-            "sha256:92b53c0f26668e6b5e5998e50848754f0bf9eb1434d2ee9aef08e049520db4d1",
+            "sha256:ede7937f78e83d0365316dcab7fc20a585abaf04fb1e351599adf560f59feefd",
         ),
         (
             "dinkster-nodes-image",
-            "sha256:04a8d8267dc68625e769d8fbc7712a1a4c18e8fdb69d859622832e437c0da796",
+            "sha256:cbf2b73dd6e454bbea3c3266a51486817a9cbbf55e9d3ed61fbedd29573ce688",
         ),
         (
             "dinkster-nodes-remote",
