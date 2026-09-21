@@ -43,6 +43,10 @@ if (-not $EvidenceRoot) {
     $EvidenceRoot = Join-Path $RepoRoot "../dinkster-evidence"
 }
 $AcceptancePackage = Join-Path $EvidenceRoot "packages/dinkster-acceptance"
+$InstallAcceptance = Test-Path $AcceptancePackage -PathType Container
+if (-not $InstallAcceptance) {
+    Write-Host "==> dinkster-evidence not found - skipping optional dinkster-acceptance"
+}
 
 $CpuEditablePackages = @(
     "packages/dinkster-api",
@@ -109,7 +113,9 @@ try {
     [Environment]::SetEnvironmentVariable(
         "UV_PROJECT_ENVIRONMENT", $RootEnvironment, "Process"
     )
-    Invoke-Native "uv" @("sync", "--project", $RepoRoot, "--all-packages")
+    Invoke-Native "uv" @(
+        "sync", "--project", $RepoRoot, "--python", "3.12", "--all-packages"
+    )
     [Environment]::SetEnvironmentVariable("UV_PROJECT_ENVIRONMENT", $null, "Process")
 
     Write-Host "==> .venv-torch (CPU torch test env)"
@@ -130,10 +136,12 @@ try {
         "dinkster-aimdo==0.5.5.post2"
     ) + (Get-EditableArguments $CpuEditablePackages)
     Invoke-Native "uv" (@("pip", "install", "--python", $TorchPython) + $CpuDependencies)
-    Invoke-Native "uv" @(
-        "pip", "install", "--python", $TorchPython,
-        "--no-deps", "--no-sources", "-e", $AcceptancePackage
-    )
+    if ($InstallAcceptance) {
+        Invoke-Native "uv" @(
+            "pip", "install", "--python", $TorchPython,
+            "--no-deps", "--no-sources", "-e", $AcceptancePackage
+        )
+    }
     Invoke-Native $TorchPython @(
         "-c",
         "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'"
@@ -172,10 +180,12 @@ try {
             "triton-windows==3.7.1.post27"
         ) + (Get-EditableArguments $GpuEditablePackages)
         Invoke-Native "uv" (@("pip", "install", "--python", $GpuPython) + $GpuDependencies)
-        Invoke-Native "uv" @(
-            "pip", "install", "--python", $GpuPython,
-            "--no-deps", "--no-sources", "-e", $AcceptancePackage
-        )
+        if ($InstallAcceptance) {
+            Invoke-Native "uv" @(
+                "pip", "install", "--python", $GpuPython,
+                "--no-deps", "--no-sources", "-e", $AcceptancePackage
+            )
+        }
         Invoke-Native $GpuPython @(
             "-c",
             "import torch, triton; assert torch.__version__ == '2.13.0+cu130'; assert triton.__version__ == '3.7.1'"
