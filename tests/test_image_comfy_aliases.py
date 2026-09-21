@@ -839,7 +839,7 @@ def test_new_image_aliases_execute() -> None:
     assert preview["image_b"] is ABSENT
 
 
-def test_media_alias_records_keep_the_wire_22_through_40_contract() -> None:
+def test_media_alias_records_keep_the_current_wire_contract() -> None:
     from dinkster_schema import comfy_alias_registry_from_wire, comfy_alias_registry_to_wire
 
     fields = {"id", "mappingKind", "carrier", "source", "replacement", "confidence", "family"}
@@ -847,10 +847,8 @@ def test_media_alias_records_keep_the_wire_22_through_40_contract() -> None:
         registry = json.loads((ROOT / "packages" / pack / "comfy-aliases.json").read_text())
         decoded = comfy_alias_registry_from_wire(registry)
         assert comfy_alias_registry_to_wire(decoded) == registry
-        for wire_version in range(22, 41):
-            wire = comfy_alias_registry_to_wire(decoded, wire_version=wire_version)
-            records = cast("list[dict[str, object]]", wire["records"])
-            assert all(set(record) <= fields for record in records)
+        records = cast("list[dict[str, object]]", registry["records"])
+        assert all(set(record) <= fields for record in records)
 
 
 def test_new_image_aliases_match_pinned_goldens() -> None:

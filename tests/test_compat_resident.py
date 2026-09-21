@@ -689,9 +689,9 @@ def test_native_clip_text_encode_schema_is_text_clip_in_conditioning_out() -> No
         default="multiline",
         user_switchable=True,
     )
-    wire19 = schema_to_wire(schema)
-    text19 = next(entry for entry in wire19["interface"] if entry["id"] == "text")  # type: ignore[union-attr]
-    assert text19["widget"] == {
+    wire = schema_to_wire(schema)
+    text = next(entry for entry in wire["interface"] if entry["id"] == "text")  # type: ignore[union-attr]
+    assert text["widget"] == {
         "type": "REPRESENTATIONS",
         "default": "multiline",
         "userSwitchable": True,
@@ -713,25 +713,6 @@ def test_native_clip_text_encode_schema_is_text_clip_in_conditioning_out() -> No
                     "multiline": True,
                     "dynamicPrompts": True,
                 },
-            },
-        ],
-    }
-    wire18 = schema_to_wire(schema, wire_version=18)
-    text18 = next(entry for entry in wire18["interface"] if entry["id"] == "text")  # type: ignore[union-attr]
-    assert text18["widget"] == {
-        "type": "REPRESENTATIONS",
-        "default": "multiline",
-        "userSwitchable": True,
-        "representations": [
-            {
-                "id": "single-line",
-                "displayName": "Single line",
-                "widget": {"type": "STRING", "multiline": False},
-            },
-            {
-                "id": "multiline",
-                "displayName": "Multiline",
-                "widget": {"type": "STRING", "multiline": True},
             },
         ],
     }
@@ -917,7 +898,7 @@ def test_native_model_loader_schemas_are_asset_in_resident_out() -> None:
             "CLIPLoader",
             "text_encoder",
             "model/text-encoder",
-            {"clip": ("comfy.CLIP",)},
+            {"clip": ("dinkster.clip",)},
         ),
         (
             LoadDiffusionModel,
@@ -1442,7 +1423,7 @@ def test_compat_ksampler_schema_is_generation_owner_schema() -> None:
     assert [out.type.types for out in schema.outputs] == [("dinkster.latent",)]
 
     wire = schema_to_wire(schema)
-    assert wire["schemaVersion"] == 40
+    assert wire["schemaVersion"] == 1
     interface = {item["id"]: item for item in wire["interface"]}  # type: ignore[index]
     assert interface["seed"]["widget"] == {
         "type": "NUMBER",

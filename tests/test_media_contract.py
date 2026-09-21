@@ -77,10 +77,8 @@ def test_media_policy_schema_roundtrip_and_identity() -> None:
     assert interface[1]["maskSemantic"] == "alpha"
     default = replace(schema, inputs=(InputSpec("image", IMAGE),))
     assert schema_signature(schema) != schema_signature(default)
-    with pytest.raises(ValueError, match="media policies.*40"):
-        schema_to_wire(schema, wire_version=39)
-    wire["schemaVersion"] = 39
-    with pytest.raises(ValueError, match="media policies require"):
+    wire["schemaVersion"] = 2
+    with pytest.raises(ValueError, match="unsupported schemaVersion"):
         schema_from_wire(wire)
 
 

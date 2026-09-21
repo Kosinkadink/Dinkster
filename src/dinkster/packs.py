@@ -24,7 +24,12 @@ from dinkster_server import (
     PackLocaleCatalogAsset,
     PackTemplateAsset,
 )
-from dinkster_workers import PackBlueprint, PackManifest, PackPresentation, PackTemplate
+from dinkster_workers import (
+    PackBlueprint,
+    PackManifest,
+    PackPresentation,
+    PackTemplate,
+)
 
 __all__ = [
     "blueprint_assets",
@@ -104,7 +109,18 @@ def template_assets(
             digest=template.digest,
             description=template.description,
             tags=template.tags,
+            family=template.family,
+            models=template.models,
             assets=template.assets,
+            thumbnail=(
+                PackIconAsset(
+                    digest=template.thumbnail.digest,
+                    media_type=template.thumbnail.media_type,
+                    data=template.thumbnail.data,
+                )
+                if template.thumbnail is not None
+                else None
+            ),
             data=template.data,
         )
         for template in templates

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_assets import MountDef, load_mounts
 
 from dinkster import launch, setup
 from dinkster.cli import main as cli_main
@@ -19,6 +20,10 @@ def test_setup_creates_the_default_launch_roots(tmp_path: Path, monkeypatch, cap
 
     library, packs = setup.default_roots()
     assert library.is_dir()
+    assert (library / "output").is_dir()
+    assert load_mounts(library / "mounts.toml") == (
+        MountDef(id="output", path=library / "output", mode="readwrite"),
+    )
     assert (packs / "generations").is_dir()
     assert "Run `dinkster`" in capsys.readouterr().out
 

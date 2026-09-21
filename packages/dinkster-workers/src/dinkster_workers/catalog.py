@@ -14,7 +14,6 @@ from typing import Any, cast
 
 from dinkster_protocol.pack_surfaces import pack_surfaces_to_wire
 from dinkster_schema import TypeExpr, schema_to_wire
-from dinkster_schema.wire import SCHEMA_WIRE_SERVE_VERSIONS
 
 from .manifest import PackManifest
 from .session import PackDeclarations
@@ -112,10 +111,7 @@ def source_digest(manifest: PackManifest) -> str:
 def worker_declarations(worker: Any) -> dict[str, Any]:
     arms = cast("Mapping[str, tuple[str, ...]]", worker.body_arms or {})
     return {
-        "schemas": {
-            name: schema_to_wire(schema, wire_version=max(SCHEMA_WIRE_SERVE_VERSIONS))
-            for name, schema in worker.schemas.items()
-        },
+        "schemas": {name: schema_to_wire(schema) for name, schema in worker.schemas.items()},
         "comboChoices": {name: list(values) for name, values in worker.combo_choices.items()},
         "lazyChoiceIds": sorted(worker.lazy_choice_ids),
         "compatSkips": {name: value.to_wire() for name, value in worker.compat_skips.items()},

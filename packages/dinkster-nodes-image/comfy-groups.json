@@ -2,7 +2,7 @@
   "format": "dinkster-comfy-group/1",
   "sourceSchemas": [
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.UNETLoader",
       "version": 1,
       "displayName": "",
@@ -66,7 +66,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.RTDETR_detect",
       "version": 1,
       "displayName": "",
@@ -242,7 +242,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.CheckpointLoaderSimple",
       "version": 1,
       "displayName": "",
@@ -304,7 +304,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.CLIPTextEncode",
       "version": 1,
       "displayName": "",
@@ -355,7 +355,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.SAM3_Detect",
       "version": 1,
       "displayName": "",
@@ -524,7 +524,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.SAM3_VideoTrack",
       "version": 1,
       "displayName": "",
@@ -643,7 +643,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.SAM3_TrackToMask",
       "version": 1,
       "displayName": "",
@@ -694,7 +694,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LoadBackgroundRemovalModel",
       "version": 1,
       "displayName": "",
@@ -736,7 +736,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.RemoveBackground",
       "version": 1,
       "displayName": "",
@@ -784,7 +784,7 @@
   ],
   "groupSchemas": [
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy-group.comfy-core.rtdetr-detect-fp16",
       "version": 1,
       "displayName": "",
@@ -946,7 +946,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy-group.comfy-core.sam3-text-detection",
       "version": 1,
       "displayName": "",
@@ -1012,7 +1012,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy-group.comfy-core.sam3-video-track-initial-mask",
       "version": 1,
       "displayName": "",
@@ -1055,7 +1055,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy-group.comfy-core.remove-background-birefnet",
       "version": 1,
       "displayName": "",

@@ -10,8 +10,8 @@ The fixture content is the coverage set agreed with Dinkster-Frontend: every
 predicate/mapping/transform union member, deep predicate nesting,
 multi-successor fan-out, deprecation + searchVisibility + replacements on
 one schema, a two-hop replacement chain with per-hop transforms, and the
-wire-v14 core.combo socket contract with the unchanged ComboWidget shape. A
-wire-v28 fixture selects nested dynamic target constructs and maps their
+core.combo socket contract with the unchanged ComboWidget shape. The dynamic
+fixture selects nested target constructs and maps their
 materialized input paths.
 """
 
@@ -391,16 +391,15 @@ def _dynamic_schemas() -> dict[str, NodeSchema]:
     return {schema.node_type: schema for schema in (predecessor, target)}
 
 
-def build_goldens(*, wire_version: int | None = None) -> dict[str, dict[str, object]]:
+def build_goldens() -> dict[str, dict[str, object]]:
     """Filename -> JSON content, everything through the real encoders."""
     goldens: dict[str, dict[str, object]] = {}
     fixtures = [
         ("vocabulary.json", _vocabulary_schemas()),
         ("chain.json", _chain_schemas()),
         ("combo.json", _combo_schemas()),
+        ("dynamic.json", _dynamic_schemas()),
     ]
-    if wire_version is None or wire_version >= 28:
-        fixtures.append(("dynamic.json", _dynamic_schemas()))
     for name, schemas in fixtures:
         problems = validate_replacement_references(schemas)
         if problems:
@@ -409,14 +408,7 @@ def build_goldens(*, wire_version: int | None = None) -> dict[str, dict[str, obj
             )
         goldens[name] = {
             "schemas": [
-                schema_to_wire(schema, replacement_schemas=schemas)
-                if wire_version is None
-                else schema_to_wire(
-                    schema,
-                    wire_version=wire_version,
-                    replacement_schemas=schemas,
-                )
-                for schema in schemas.values()
+                schema_to_wire(schema, replacement_schemas=schemas) for schema in schemas.values()
             ]
         }
     return goldens

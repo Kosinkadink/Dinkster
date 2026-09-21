@@ -7,14 +7,9 @@ Surface:
 
 - GET    /api/nodes                      schemaVersion + dinkster environment
                                          header (server version + schema wire
-                                         version). Optional ?wire=N[,N...]
-                                         advertises the client's supported
-                                         schema wire versions: served only
-                                         if the server encodes one of them
-                                         (406 with {requested, supported}
-                                         otherwise - never a silent
-                                         downgrade); absent = current
-                                         version. Plus packs table (pack id ->
+                                         version). The schema wire version is
+                                         fixed for a release. Plus packs table
+                                         (pack id ->
                                          displayName/abbr/mark/color badge
                                          presentation + omitted-when-unknown
                                          provenance: version/artifactDigest/
@@ -256,7 +251,6 @@ from dinkster_memory import (
     MemoryGovernor,
     ReservationTimeout,
 )
-from dinkster_p2p import default_p2p_settings
 from dinkster_protocol import (
     AttentionPolicy,
     AttentionPolicyConfig,
@@ -271,13 +265,11 @@ from dinkster_protocol import (
 )
 from dinkster_schema import (
     PROGRESS_EVENT,
-    SCHEMA_WIRE_SERVE_VERSIONS,
     SCHEMA_WIRE_VERSION,
     ComfyAliasRegistry,
     ComfyGroupRegistry,
     NodeSchema,
     ReplacementProblem,
-    SchemaWireVersionRequirement,
     combo_choices_json_bytes,
     comfy_alias_collision_problems,
     comfy_alias_registry_problems,
@@ -325,6 +317,7 @@ from .events import (
 from .execution_journal import ExecutionJournal, add_execution_journal_routes
 from .history import HistoryStore, add_history_routes
 from .library import LIBRARY_KEY, ServerLibrary, add_library_routes
+from .p2p_plugin import default_p2p_settings
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
 from .paging import decode_cursor, encode_cursor
 from .preflight import (
@@ -715,10 +708,13 @@ class PackTemplateAsset:
     digest: str
     description: str = ""
     tags: tuple[str, ...] = ()
+    family: str = ""
+    models: tuple[str, ...] = ()
     assets: tuple[str, ...] = ()
     """Pack-local [[pack.assets]] ids, passed through verbatim: the
     manifest already validated they exist among the pack's surviving
     declarations."""
+    thumbnail: PackIconAsset | None = None
     data: bytes = field(repr=False, default=b"")
 
     def descriptor(self, pack_id: str) -> dict[str, object]:
@@ -731,8 +727,17 @@ class PackTemplateAsset:
             wire["description"] = self.description
         if self.tags:
             wire["tags"] = list(self.tags)
+        if self.family:
+            wire["family"] = self.family
+        if self.models:
+            wire["models"] = list(self.models)
         if self.assets:
             wire["assets"] = list(self.assets)
+        if self.thumbnail is not None:
+            wire["thumbnail"] = {
+                "digest": self.thumbnail.digest,
+                "mediaType": self.thumbnail.media_type,
+            }
         wire["digest"] = self.digest
         return wire
 
@@ -839,7 +844,7 @@ class PackInfo:
     """Pack docs bytes and descriptors. Deliberately absent from
     ``to_wire``; descriptors ride the paged ``/api/docs`` index."""
     locale_catalogs: tuple[PackLocaleCatalogAsset, ...] = ()
-    """Pack translations. Wire 44 lists locale-to-digest descriptors;
+    """Pack translations listed as locale-to-digest descriptors;
     exact bytes ride the immutable per-pack endpoint."""
     comfy_aliases: ComfyAliasRegistry | None = None
     """Maintained ComfyUI import translations. Dedicated pack metadata:
@@ -850,7 +855,6 @@ class PackInfo:
     def to_wire(
         self,
         *,
-        schema_wire_version: int = SCHEMA_WIRE_VERSION,
         schemas: Mapping[str, NodeSchema] | None = None,
         published_types: frozenset[str] | None = None,
     ) -> dict[str, object]:
@@ -884,7 +888,7 @@ class PackInfo:
         if self.assets:
             # Descriptors only, same reasoning: identity + leads, no bytes.
             wire["assets"] = [asset.descriptor() for asset in self.assets]
-        if schema_wire_version >= 44 and self.locale_catalogs:
+        if self.locale_catalogs:
             catalogs = self.locale_catalogs
             if published_types is not None:
                 catalogs = tuple(
@@ -911,7 +915,6 @@ class PackInfo:
                 )
             wire["comfyAliases"] = comfy_alias_registry_to_wire(
                 aliases,
-                wire_version=schema_wire_version,
                 schemas=schemas,
             )
         if self.comfy_groups is not None:
@@ -934,7 +937,6 @@ class PackInfo:
                 )
             wire["comfyGroups"] = comfy_group_registry_to_wire(
                 groups,
-                wire_version=schema_wire_version,
                 schemas=schemas,
             )
         return wire
@@ -2453,62 +2455,16 @@ async def handle_workers(request: web.Request) -> web.Response:
 
 async def handle_nodes(request: web.Request) -> web.Response:
     state = request.app[STATE_KEY]
-    # Schema-wire negotiation (platform plan): ?wire= advertises the
-    # client's supported node-schema wire versions (comma-separated
-    # integers). The server selects the highest common version it actually
-    # encodes and otherwise answers a loud, machine-readable 406. Absent
-    # ?wire= serves the current version. Document/job protocol versioning is
-    # deliberately NOT coupled to this parameter.
-    requested = request.query.get("wire")
-    selected_wire_version = SCHEMA_WIRE_VERSION
-    if requested is not None:
-        parts = [part.strip() for part in requested.split(",") if part.strip()]
-        try:
-            advertised = {int(part) for part in parts}
-        except ValueError:
-            raise _bad_request(
-                "'wire' must be a comma-separated list of integer schema wire versions"
-            ) from None
-        if not advertised:
-            raise _bad_request("'wire' must name at least one integer schema wire version")
-        common = advertised.intersection(SCHEMA_WIRE_SERVE_VERSIONS)
-        if not common:
-            return web.json_response(
-                {
-                    "error": "wire-version-unsupported",
-                    "requested": sorted(advertised),
-                    "supported": list(SCHEMA_WIRE_SERVE_VERSIONS),
-                },
-                status=406,
-            )
-        selected_wire_version = max(common)
     nodes: dict[str, dict[str, object]] = {}
-    schema_skips: list[dict[str, object]] = []
     documented_nodes: set[tuple[str, str]] = set()
-    if selected_wire_version >= 42:
-        documented_nodes = {
-            (pack_id, page.id)
-            for pack_id in state.packs
-            for page in _valid_doc_pages(state, pack_id)
-            if page.kind == "node"
-        }
+    documented_nodes = {
+        (pack_id, page.id)
+        for pack_id in state.packs
+        for page in _valid_doc_pages(state, pack_id)
+        if page.kind == "node"
+    }
     for type_id, schema in state.schemas.items():
-        try:
-            entry = schema_to_wire(
-                schema,
-                wire_version=selected_wire_version,
-                replacement_schemas=state.schemas,
-            )
-        except SchemaWireVersionRequirement as exc:
-            schema_skips.append(
-                {
-                    "nodeType": type_id,
-                    "code": exc.code,
-                    "requiredWire": exc.required_version,
-                    "reason": str(exc),
-                }
-            )
-            continue
+        entry = schema_to_wire(schema, replacement_schemas=state.schemas)
         # Attribution rides the publication, never the schema: the host
         # attaches pack ids at collection, so a node cannot claim a pack.
         # The key is always present ("core" included) by frontend contract.
@@ -2556,7 +2512,7 @@ async def handle_nodes(request: web.Request) -> web.Response:
         # coercion planner enforces server-side either way).
         "dinkster": {
             "version": _dinkster_version(),
-            "schemaWire": selected_wire_version,
+            "schemaWire": SCHEMA_WIRE_VERSION,
             "graphFeatures": ["typedLiteral", "decimalInt", "regions", "placement"],
             "mergeableTypes": sorted(
                 type_id
@@ -2566,7 +2522,6 @@ async def handle_nodes(request: web.Request) -> web.Response:
         },
         "packs": {
             pack_id: info.to_wire(
-                schema_wire_version=selected_wire_version,
                 schemas=state.schemas,
                 # Keep the stored registries complete for provider reloads, but
                 # publish only carriers this response actually attributes here.
@@ -2578,8 +2533,6 @@ async def handle_nodes(request: web.Request) -> web.Response:
         },
         "nodes": nodes,
     }
-    if schema_skips:
-        wire["schemaSkips"] = schema_skips
     # Present exactly while the host is still announcing packs: this table
     # is real but not final - expect more epochs, then a
     # composition_complete event naming the last one. Omitted (never
@@ -2775,6 +2728,27 @@ async def handle_pack_template(request: web.Request) -> web.Response:
             "ETag": etag,
             "Cache-Control": "private, max-age=31536000, immutable",
         },
+    )
+
+
+async def handle_pack_template_thumbnail(request: web.Request) -> web.Response:
+    """Immutable thumbnail bytes for one template descriptor."""
+    state = request.app[STATE_KEY]
+    info = state.packs.get(request.match_info["pack_id"])
+    template = None
+    if info is not None:
+        template_id = request.match_info["template_id"]
+        template = next((tp for tp in info.templates if tp.id == template_id), None)
+    if template is None or template.thumbnail is None:
+        raise web.HTTPNotFound(
+            text=json.dumps({"error": "no such template thumbnail"}),
+            content_type="application/json",
+        )
+    return _immutable_pack_response(
+        request,
+        template.thumbnail.digest,
+        template.thumbnail.data,
+        template.thumbnail.media_type,
     )
 
 
@@ -4393,6 +4367,10 @@ def create_app(
     app.router.add_get("/api/packs/{pack_id}/blueprints/{blueprint_id}", handle_pack_blueprint)
     app.router.add_get("/api/templates", handle_templates_list)
     app.router.add_get("/api/packs/{pack_id}/templates/{template_id}", handle_pack_template)
+    app.router.add_get(
+        "/api/packs/{pack_id}/templates/{template_id}/thumbnail",
+        handle_pack_template_thumbnail,
+    )
     app.router.add_get("/api/docs", handle_docs_list)
     app.router.add_get("/api/packs/{pack_id}/docs/pages/{digest}", handle_pack_doc_page)
     app.router.add_get("/api/packs/{pack_id}/docs/assets/{digest}", handle_pack_doc_asset)
