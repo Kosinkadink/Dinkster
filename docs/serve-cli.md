@@ -74,11 +74,10 @@ not activate their type providers.
 Refresh an existing install with `dinkster-pack --root PATH prepare-catalogs`; refresh the
 default suite with `dinkster-pack prepare-catalogs --defaults --library-root PATH` using the
 same runtime configuration as the server. This includes the native generation
-schemas and the `dinkster-native` provider, plus the library's training schemas and
-executor. Set `DINKSTER_EXECUTION_PYTHON` to the native execution interpreter
-when it differs from the host. Use the same `--remote-catalog-base` and
-`--remote-gateway-base` options as the server, or their environment variables,
-when preparing remote nodes. Direct pack authors can use
+schemas and the `dinkster-native` provider. Set `DINKSTER_EXECUTION_PYTHON` to
+the native execution interpreter when it differs from the host. Use the same
+`--remote-catalog-base` and `--remote-gateway-base` options as the server, or
+their environment variables, when preparing remote nodes. Direct pack authors can use
 `dinkster-doctor path/to/dinkster-pack.toml`. Import/schema failures invalidate the
 catalog. `prepare-catalogs` executes trusted installed code and checks runtime
 declarations; it does not replace full `doctor` checks for pack authors or

@@ -36,15 +36,12 @@ members = [
     "dinkster-nodes-media-io",
     "dinkster-nodes-remote",
     "dinkster-nodes-std",
-    "dinkster-nodes-training",
     "dinkster-nodes-vision",
     "dinkster-protocol",
     "dinkster-registry",
     "dinkster-schema",
     "dinkster-server",
     "dinkster-supervisor",
-    "dinkster-training-torch",
-    "dinkster-training-worker",
     "dinkster-values",
     "dinkster-video",
     "dinkster-workers",
@@ -830,14 +827,12 @@ dependencies = [
     { name = "dinkster-nodes-image" },
     { name = "dinkster-nodes-remote" },
     { name = "dinkster-nodes-std" },
-    { name = "dinkster-nodes-training" },
     { name = "dinkster-p2p" },
     { name = "dinkster-protocol" },
     { name = "dinkster-registry" },
     { name = "dinkster-schema" },
     { name = "dinkster-server" },
     { name = "dinkster-supervisor" },
-    { name = "dinkster-training-worker" },
     { name = "dinkster-values" },
     { name = "dinkster-workers" },
     { name = "numpy" },
@@ -850,7 +845,6 @@ collab = [
 ]
 default = [
     { name = "dinkster-collab" },
-    { name = "dinkster-nodes-training" },
     { name = "dinkster-supervisor" },
 ]
 supervisor = [
@@ -899,8 +893,6 @@ requires-dist = [
     { name = "dinkster-nodes-image", editable = "packages/dinkster-nodes-image" },
     { name = "dinkster-nodes-remote", editable = "packages/dinkster-nodes-remote" },
     { name = "dinkster-nodes-std", editable = "packages/dinkster-nodes-std" },
-    { name = "dinkster-nodes-training", editable = "packages/dinkster-nodes-training" },
-    { name = "dinkster-nodes-training", marker = "extra == 'default'", editable = "packages/dinkster-nodes-training" },
     { name = "dinkster-p2p", git = "https://github.com/Kosinkadink/dinkster-p2p.git?rev=16bf38c30a47fdde4f6b63e00d63fb2d8cb5ff5e" },
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
     { name = "dinkster-registry", editable = "packages/dinkster-registry" },
@@ -909,7 +901,6 @@ requires-dist = [
     { name = "dinkster-supervisor", editable = "packages/dinkster-supervisor" },
     { name = "dinkster-supervisor", marker = "extra == 'default'", editable = "packages/dinkster-supervisor" },
     { name = "dinkster-supervisor", marker = "extra == 'supervisor'", editable = "packages/dinkster-supervisor" },
-    { name = "dinkster-training-worker", editable = "packages/dinkster-training-worker" },
     { name = "dinkster-values", editable = "packages/dinkster-values" },
     { name = "dinkster-workers", editable = "packages/dinkster-workers" },
     { name = "numpy", specifier = ">=1.26" },
@@ -1475,17 +1466,6 @@ requires-dist = [
 ]
 
 [[package]]
-name = "dinkster-nodes-training"
-version = "0.0.1"
-source = { editable = "packages/dinkster-nodes-training" }
-dependencies = [
-    { name = "dinkster-api" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "dinkster-api", editable = "packages/dinkster-api" }]
-
-[[package]]
 name = "dinkster-nodes-vision"
 version = "0.0.1"
 source = { editable = "packages/dinkster-nodes-vision" }
@@ -1605,92 +1585,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "aiohttp", specifier = ">=3.10" }]
-
-[[package]]
-name = "dinkster-training-torch"
-version = "0.0.1"
-source = { editable = "packages/dinkster-training-torch" }
-dependencies = [
-    { name = "av" },
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "dinkster-inference-torch" },
-    { name = "dinkster-nodes-training" },
-    { name = "dinkster-server" },
-    { name = "pillow" },
-]
-
-[package.optional-dependencies]
-torch = [
-    { name = "dinkster-inference-torch", extra = ["torch"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "av", specifier = "==16.0.1" },
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", editable = "packages/dinkster-inference" },
-    { name = "dinkster-inference-torch", editable = "packages/dinkster-inference-torch" },
-    { name = "dinkster-inference-torch", extras = ["torch"], marker = "extra == 'torch'", editable = "packages/dinkster-inference-torch" },
-    { name = "dinkster-nodes-training", editable = "packages/dinkster-nodes-training" },
-    { name = "dinkster-server", editable = "packages/dinkster-server" },
-    { name = "pillow", specifier = ">=10" },
-]
-provides-extras = ["torch"]
-
-[[package]]
-name = "dinkster-training-worker"
-version = "0.0.1"
-source = { editable = "packages/dinkster-training-worker" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-nodes-training" },
-    { name = "dinkster-server" },
-    { name = "dinkster-workers" },
-]
-
-[package.optional-dependencies]
-flux-lora = [
-    { name = "dinkster-training-torch", extra = ["torch"] },
-]
-ideogram4-lora = [
-    { name = "dinkster-training-torch", extra = ["torch"] },
-]
-minimax-h3-lora = [
-    { name = "dinkster-training-torch", extra = ["torch"] },
-]
-minimax-music3-lora = [
-    { name = "dinkster-training-torch", extra = ["torch"] },
-]
-qwen-image-lora = [
-    { name = "dinkster-training-torch", extra = ["torch"] },
-]
-sd15-lora = [
-    { name = "dinkster-training-torch", extra = ["torch"] },
-]
-sdxl-lora = [
-    { name = "dinkster-training-torch", extra = ["torch"] },
-]
-wan-lora = [
-    { name = "dinkster-training-torch", extra = ["torch"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-nodes-training", editable = "packages/dinkster-nodes-training" },
-    { name = "dinkster-server", editable = "packages/dinkster-server" },
-    { name = "dinkster-training-torch", extras = ["torch"], marker = "extra == 'flux-lora'", editable = "packages/dinkster-training-torch" },
-    { name = "dinkster-training-torch", extras = ["torch"], marker = "extra == 'ideogram4-lora'", editable = "packages/dinkster-training-torch" },
-    { name = "dinkster-training-torch", extras = ["torch"], marker = "extra == 'minimax-h3-lora'", editable = "packages/dinkster-training-torch" },
-    { name = "dinkster-training-torch", extras = ["torch"], marker = "extra == 'minimax-music3-lora'", editable = "packages/dinkster-training-torch" },
-    { name = "dinkster-training-torch", extras = ["torch"], marker = "extra == 'qwen-image-lora'", editable = "packages/dinkster-training-torch" },
-    { name = "dinkster-training-torch", extras = ["torch"], marker = "extra == 'sd15-lora'", editable = "packages/dinkster-training-torch" },
-    { name = "dinkster-training-torch", extras = ["torch"], marker = "extra == 'sdxl-lora'", editable = "packages/dinkster-training-torch" },
-    { name = "dinkster-training-torch", extras = ["torch"], marker = "extra == 'wan-lora'", editable = "packages/dinkster-training-torch" },
-    { name = "dinkster-workers", editable = "packages/dinkster-workers" },
-]
-provides-extras = ["sd15-lora", "sdxl-lora", "flux-lora", "ideogram4-lora", "minimax-h3-lora", "minimax-music3-lora", "qwen-image-lora", "wan-lora"]
 
 [[package]]
 name = "dinkster-values"
