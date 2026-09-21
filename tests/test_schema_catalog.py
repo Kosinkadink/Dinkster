@@ -279,6 +279,20 @@ def test_default_doctor_prepares_native_catalogs(monkeypatch: pytest.MonkeyPatch
         assert any(schema.input_families for schema in catalog.schemas.values())
 
 
+def test_default_pack_preparation_does_not_require_training_distribution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from argparse import Namespace
+
+    from dinkster import comfy_compose, compose, manager
+
+    monkeypatch.setattr(compose, "default_pack_specs", lambda: ())
+    monkeypatch.setattr(comfy_compose, "comfy_compat_specs", lambda: ())
+    args = Namespace(defaults=True, library_root=str(tmp_path), accelerator="cpu")
+
+    assert tuple(manager._prepared_pack_specs(args)) == ()
+
+
 def write_custom_type_pack(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     manifest = root / "dinkster-pack.toml"

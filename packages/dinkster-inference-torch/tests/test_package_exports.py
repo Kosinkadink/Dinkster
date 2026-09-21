@@ -13,6 +13,41 @@ from pathlib import Path
 import pytest
 
 PACKAGE = Path(__file__).parents[1] / "src" / "dinkster_inference_torch"
+TRAINING_EXPORTS = frozenset(
+    {
+        "AttentionGuidanceContext",
+        "MiniMaxH3AudioVAE",
+        "MiniMaxH3ConditionerModel",
+        "MiniMaxH3DiTConditioning",
+        "MiniMaxH3KeyframeLatent",
+        "MiniMaxH3ReferenceKind",
+        "MiniMaxH3ReferenceLatents",
+        "MiniMaxH3VideoVAE",
+        "MiniMaxH3VideoVAEConfig",
+        "MiniMaxMusic3TextModel",
+        "QwenImageLanguageModel",
+        "QwenImageTextModel",
+        "SD15AttentionExecutionContext",
+        "Wan21Model",
+        "Wan21MultiTalkExecution",
+        "Wan21TextRuntime",
+        "Wan22VAE",
+        "WanAttentionBlock",
+        "WanVAE",
+        "WanVAEConfig",
+        "assemble_minimax_h3_dit",
+        "bind_fp8_matmul_layer",
+        "load_tensors",
+        "minimax_h3_audio_vae_runtime_identity",
+        "minimax_h3_conditioner_runtime_identity",
+        "minimax_h3_video_vae_runtime_identity",
+        "plan_minimax_h3_model_assembly",
+        "select_attention",
+        "simple_schedule",
+        "tokenize_music_prompt",
+        "worker_planning_context",
+    }
+)
 
 
 def _run(source: str) -> None:
@@ -71,6 +106,13 @@ def test_binding_table_matches_static_imports_and_eager_baseline() -> None:
     package_entries = {entry.name for entry in PACKAGE.iterdir()}
     collisions = {name for name in bindings if f"{name}.py" in package_entries}
     assert collisions == {"component_publisher"}
+
+
+def test_training_contract_is_public_from_package_root() -> None:
+    import dinkster_inference_torch as package
+
+    assert TRAINING_EXPORTS <= set(package.__all__)
+    assert all(hasattr(package, name) for name in TRAINING_EXPORTS)
 
 
 def test_cold_package_and_dir_do_not_import_execution_dependencies() -> None:
