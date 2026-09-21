@@ -944,7 +944,7 @@ def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Find
                 descriptor_id = declaration.get("id")
                 if isinstance(surface_id, str) and isinstance(descriptor_id, str):
                     contributions.append((surface_id, descriptor_id))
-    if manifest.extension is not None and manifest.extension.entries.inference is not None:
+    if manifest.extension.entries.inference is not None:
         # Doctor sees one pack in isolation, so it cannot know whether the host it
         # runs on composes a sampling worker. It can name the requirement, which is
         # the explanation an author needs when the pack's samplers are absent from

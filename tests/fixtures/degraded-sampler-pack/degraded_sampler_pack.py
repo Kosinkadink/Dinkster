@@ -6,7 +6,7 @@ surfaces must still serve while its inference surface is reported unavailable.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from dinkster_api.v1 import (
     InferenceContribution,
@@ -16,10 +16,14 @@ from dinkster_api.v1 import (
     Node,
     NodeSchema,
     NoiseKind,
+    NoiseSampler,
+    OptionValue,
     OutputSpec,
     PackEvent,
     SamplerDescriptor,
+    SamplerInfo,
     SchedulerDescriptor,
+    StepCallback,
     TypeExpr,
     report_pack_event,
 )
@@ -29,10 +33,27 @@ EVENT = PackEvent(
     JsonObjectSchema((JsonField("steps", "integer"),)),
 )
 
+
+def _make_solver(_options: Mapping[str, OptionValue]):
+    def solve(
+        _denoiser,
+        x,
+        _sigmas: Sequence[float],
+        _info: SamplerInfo,
+        *,
+        noise: NoiseSampler | None = None,
+        on_step: StepCallback | None = None,
+    ):
+        del noise, on_step
+        return x
+
+    return solve
+
+
 SOLVER = SamplerDescriptor(
     id="degraded.fast_solver",
     display_name="Fast Solver",
-    make=lambda _options: lambda _denoiser, x, _sigmas, _info: x,
+    make=_make_solver,
     noise=NoiseKind.NONE,
 )
 

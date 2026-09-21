@@ -4848,7 +4848,7 @@ class ServingComposer:
     def _apply_inference_unavailable(
         self,
         unavailable: Mapping[str, PackInferenceUnavailable],
-        announced: Mapping[str, PackInfo],
+        announced: dict[str, PackInfo],
     ) -> None:
         """Publish the inference degradation state and mirror it into the delta.
 
@@ -7424,7 +7424,7 @@ class ServingComposer:
             if old_inference_worker is not None and old_inference_worker is not new_inference_worker
             else None
         )
-        self._apply_inference_unavailable(inference_unavailable, delta.packs)
+        self._apply_inference_unavailable(inference_unavailable, target_delta.packs)
         self._publish_runtime(
             topology,
             snapshot,

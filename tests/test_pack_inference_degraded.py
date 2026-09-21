@@ -125,9 +125,11 @@ def test_degraded_pack_reports_on_pack_table_and_diagnostics() -> None:
             nodes = await _wire(app, "/api/nodes")
             packs = nodes["packs"]
             assert isinstance(packs, dict)
+            node_rows = nodes["nodes"]
+            assert isinstance(node_rows, dict)
             row = packs[DEGRADED_PACK_ID]
             assert isinstance(row, dict)
-            assert PROBE_TYPE in nodes["nodes"]
+            assert PROBE_TYPE in node_rows
             wire = row["inferenceUnavailable"]
             assert isinstance(wire, dict)
             assert "native dinkster.ksampler worker" in str(wire["reason"])
