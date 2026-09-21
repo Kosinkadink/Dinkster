@@ -5,8 +5,11 @@
   output-category asset selection
 - Ordered animated and multipage image loading; pages with different dimensions
   from the first page are omitted from the batch
-- Ordered mounted image saving to PNG, JPEG, or WebP; 8-bit and 16-bit PNG mask
-  I/O with explicit channel and polarity; non-publishing typed image previews
+- Ordered mounted image saving to PNG, JPEG, or WebP; Save Image defaults to a
+  selectable readwrite output mount under the local library, publishes the
+  saved asset immediately, and returns its mounted virtual path; 8-bit and
+  16-bit PNG mask I/O with explicit channel and polarity; non-publishing typed
+  image previews
 - Source-bound still-image mask painting with bounded pressure-sensitive paint
   and erase strokes, clear/invert commands, and transparency-alpha output
 - Unified asset-backed ImageDocument v2 and `dinkster.layers`, with structural v1

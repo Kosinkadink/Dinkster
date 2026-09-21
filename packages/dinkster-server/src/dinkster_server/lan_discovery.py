@@ -7,11 +7,11 @@ import contextlib
 import re
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from ipaddress import IPv4Address, ip_address
+from ipaddress import IPv4Address, IPv4Network, ip_address, ip_network
 from types import TracebackType
 from typing import cast
 
-from dinkster_p2p import LanInterface, LanNetworkPolicy, lan_interfaces
+from dinkster_assets import p2p_plugin
 from zeroconf import IPVersion, NonUniqueNameException, ServiceInfo, ServiceStateChange, Zeroconf
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
 
@@ -30,6 +30,55 @@ DEFAULT_MDNS_RESOLVE_TIMEOUT_MS = 1000
 MAX_LAN_PEERS = 32
 
 _INSTANCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,62}$")
+_PRIVATE_NETWORKS = tuple(
+    ip_network(network) for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+
+
+@dataclass(frozen=True)
+class LanInterface:
+    name: str
+    address: IPv4Address
+    network: IPv4Network
+
+
+@dataclass(frozen=True)
+class LanNetworkPolicy:
+    interfaces: tuple[LanInterface, ...]
+
+    @property
+    def addresses(self) -> tuple[str, ...]:
+        return tuple(str(interface.address) for interface in self.interfaces)
+
+    def allows_peer(self, value: str | IPv4Address) -> bool:
+        try:
+            address = value if isinstance(value, IPv4Address) else ip_address(value)
+        except ValueError:
+            return False
+        return (
+            isinstance(address, IPv4Address)
+            and any(address in network for network in _PRIVATE_NETWORKS)
+            and any(
+                address in interface.network
+                and address
+                not in {
+                    interface.network.network_address,
+                    interface.network.broadcast_address,
+                }
+                for interface in self.interfaces
+            )
+        )
+
+
+def lan_interfaces() -> tuple[LanInterface, ...]:
+    """Discover interfaces through the optional P2P plugin."""
+    registration = p2p_plugin()
+    if registration is None:
+        return ()
+    return tuple(
+        LanInterface(interface.name, interface.address, interface.network)
+        for interface in registration.lan_interfaces()
+    )
 
 
 @dataclass(frozen=True)

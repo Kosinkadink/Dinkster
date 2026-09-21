@@ -35,6 +35,7 @@ from dinkster_assets import (
     digest_bytes,
     dump_mounts,
     load_mounts,
+    load_output_mount,
     parse_mounts,
 )
 from dinkster_assets.integrity import digest_file_with_record as real_digest_file_with_record
@@ -144,10 +145,23 @@ def test_parse_is_strict() -> None:
         parse_mounts('[mounts.a]\npath = "/same"\n[mounts.b]\npath = "/same"')
     with pytest.raises(MountsError, match="invalid TOML"):
         parse_mounts("[mounts.x\n")
+    with pytest.raises(MountsError, match="output mount 'missing' is not configured"):
+        parse_mounts('[settings]\noutput-mount = "missing"')
+    with pytest.raises(MountsError, match="must be readwrite"):
+        parse_mounts('[settings]\noutput-mount = "readonly"\n[mounts.readonly]\npath = "/data"')
 
 
 def test_load_missing_file_is_empty_table(tmp_path: Path) -> None:
     assert load_mounts(tmp_path / "mounts.toml") == ()
+
+
+def test_output_mount_config_round_trip(tmp_path: Path) -> None:
+    output = MountDef(id="output", path=tmp_path / "output", mode="readwrite")
+    path = tmp_path / "mounts.toml"
+    path.write_text(dump_mounts((output,), output_mount="output"), "utf-8")
+
+    assert load_mounts(path) == (output,)
+    assert load_output_mount(path) == "output"
 
 
 # --- the live table ----------------------------------------------------------
@@ -1193,6 +1207,45 @@ def test_mount_grant_and_revoke_at_runtime(tmp_path: Path) -> None:
         await client.close()
 
     asyncio.run(scenario())
+
+
+def test_output_mount_selection_is_persisted_and_published(tmp_path: Path) -> None:
+    config = tmp_path / "mounts.toml"
+    snapshot = tmp_path / "snapshot.json"
+    output = tmp_path / "output"
+    renders = tmp_path / "renders"
+    output.mkdir()
+    renders.mkdir()
+    table = MountTable(snapshot, output_mount="output")
+    table.add(MountDef("output", output, "readwrite"), source="config")
+    table.add(MountDef("renders", renders, "readwrite"), source="config")
+    table.scan("output")
+    table.scan("renders")
+    service = MountService(table, config, allow_changes=True)
+    service.persist()
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        response = await client.put("/api/mounts/output", json={"id": "renders"})
+        assert response.status == 200
+        assert await response.json() == {"outputMount": "renders"}
+        listing = await (await client.get("/api/mounts")).json()
+        assert listing["outputMount"] == "renders"
+        await client.close()
+
+    asyncio.run(scenario())
+    assert load_output_mount(config) == "renders"
+    assert json.loads(snapshot.read_text("utf-8"))["outputMount"] == "renders"
+
+
+def test_output_mount_selection_refuses_derived_mounts(tmp_path: Path) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+    table = MountTable(output_mount="output")
+    table.add(MountDef("output", output, "readwrite"), source="derived")
+
+    with pytest.raises(MountsError, match="not persisted in mounts.toml"):
+        table.select_output_mount("output")
 
 
 def test_mount_service_keeps_configured_resolution_scopes_in_sync(tmp_path: Path) -> None:

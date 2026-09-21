@@ -33,6 +33,7 @@ class LoadLayers(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.layers.load",
+            editor_role="layers-load",
             display_name="Load Layers",
             category="image/io",
             inputs=(InputSpec("document", ASSET, widget=AssetWidget()),),
