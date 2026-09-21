@@ -143,6 +143,7 @@ from .compose import (
     ServingComposer,
     default_pack_ids,
     default_pack_spec,
+    model_pack_specs,
     resolve_manifest_path,
     training_pack_specs,
 )
@@ -1690,6 +1691,8 @@ def main(argv: list[str] | None = None) -> None:
             # failure. Resolve defaults independently so one broken pack
             # cannot hide another pack's nodes.
             default_pack_failures[pack_id] = exc
+    if not args.no_default_packs:
+        specs.extend(model_pack_specs())
     try:
         compat_specs = (
             comfy_compat_specs(

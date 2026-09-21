@@ -43,6 +43,21 @@ def test_setup_preserves_a_selected_alternate_output_mount(tmp_path: Path, monke
     assert load_output_mount(library / "mounts.toml") == "renders"
 
 
+def test_setup_reuses_an_existing_mount_for_the_default_output_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
+    library, _ = setup.default_roots()
+    library.mkdir(parents=True)
+    existing = MountDef("existing-output", library / "output", "readwrite")
+    (library / "mounts.toml").write_text(dump_mounts((existing,)), "utf-8")
+
+    setup.main([])
+
+    assert load_mounts(library / "mounts.toml") == (existing,)
+    assert load_output_mount(library / "mounts.toml") == "existing-output"
+
+
 def test_bare_cli_launches_one_origin_and_opens_browser(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
