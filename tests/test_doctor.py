@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -91,6 +92,8 @@ def register_types(registry: TypeRegistry) -> None:
 NODES = [Doubler, Tagger]
 """
 
+EXTENSION_CONTRACT_PACK = Path(__file__).parent / "fixtures" / "extension-contract-pack"
+
 
 def write_pack(root: Path, manifest: str, module_name: str, source: str) -> Path:
     root.mkdir(parents=True, exist_ok=True)
@@ -120,6 +123,38 @@ def test_healthy_pack_is_healthy(tmp_path: Path) -> None:
     assert f"  interpreter: {report.interpreter}" in text
     # Elapsed import time depends on host load, not just pack behavior.
     assert codes(report) <= {"import.slow"}, render_text(report)
+
+
+def test_doctor_enforces_model_family_registration_capability(tmp_path: Path) -> None:
+    pack = tmp_path / "family-pack"
+    shutil.copytree(EXTENSION_CONTRACT_PACK, pack)
+    manifest = pack / "dinkster-pack.toml"
+
+    report = diagnose(manifest)
+    assert "extension.capability-required" not in codes(report), render_text(report)
+    assert "extension.capability-unused" not in codes(report), render_text(report)
+    assert "extension.capability-unconsumed" not in codes(report), render_text(report)
+
+    text = manifest.read_text(encoding="utf-8")
+    manifest.write_text(
+        text.replace(
+            'capabilities = ["model-family-registration", "routes"]',
+            'capabilities = ["routes"]',
+        ),
+        encoding="utf-8",
+    )
+    report = diagnose(manifest)
+    assert "extension.capability-required" in codes(report), render_text(report)
+
+    manifest.write_text(
+        text.replace(
+            'inference = "extension_contract_pack:register_inference"\n',
+            "",
+        ),
+        encoding="utf-8",
+    )
+    report = diagnose(manifest)
+    assert "extension.capability-unused" in codes(report), render_text(report)
 
 
 def test_registry_provider_declaration_matches_probed_inference_contribution(
@@ -348,6 +383,27 @@ def test_missing_manifest_is_one_clear_error(tmp_path: Path) -> None:
     assert not report.ok
     assert codes(report) == {"manifest.invalid"}
     assert report.findings[0].fix  # diagnostics carry the fix
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    (
+        '[pack.frontend]\nassets = "missing"\n',
+        '[pack.settings]\nschema = "missing.json"\n',
+    ),
+)
+def test_doctor_rejects_missing_pack_frontend_or_settings_files(
+    tmp_path: Path, declaration: str
+) -> None:
+    manifest = HEALTHY_MANIFEST + declaration
+    manifest_path = write_pack(
+        tmp_path / "missing-pack-data", manifest, "healthy_nodes", HEALTHY_NODES
+    )
+
+    report = diagnose(manifest_path)
+
+    assert not report.ok
+    assert codes(report) == {"manifest.invalid"}
 
 
 def test_invalid_icon_is_a_publish_gate_error(tmp_path: Path) -> None:

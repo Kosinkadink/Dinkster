@@ -35,6 +35,7 @@ from dinkster.reload_api import apply_reload, apply_remove
 
 FIXTURES = Path(__file__).parent
 ATTENTION_PROVIDER = FIXTURES / "fixtures/attention_provider"
+EXTENSION_CONTRACT_PACK = FIXTURES / "fixtures/extension-contract-pack"
 PROOF_MODULES = ("s1_sampler_pack_a", "s1_sampler_pack_b")
 
 
@@ -123,7 +124,34 @@ def _write_reloaded_module(root: Path) -> None:
 
 
 def _worker_env(tmp_path: Path) -> dict[str, str]:
-    return {"PYTHONPATH": os.pathsep.join((str(ATTENTION_PROVIDER), str(FIXTURES), str(tmp_path)))}
+    return {
+        "PYTHONPATH": os.pathsep.join(
+            (str(ATTENTION_PROVIDER), str(EXTENSION_CONTRACT_PACK), str(FIXTURES), str(tmp_path))
+        )
+    }
+
+
+def test_model_family_contribution_requires_manifest_capability(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=_worker_env(tmp_path))
+        try:
+            await composer.add_pack(
+                PackSpec(_host_manifest(tmp_path / "host"), trust_reserved=True)
+            )
+            manifest = _extension_manifest(
+                tmp_path / "family",
+                "fixture_family",
+                "extension_contract_pack",
+            )
+            with pytest.raises(
+                CompositionError,
+                match="without the model-family-registration capability",
+            ):
+                await composer.add_pack(PackSpec(manifest))
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
 
 
 def test_initial_sampler_host_publication_replaces_its_new_derived_choice(
