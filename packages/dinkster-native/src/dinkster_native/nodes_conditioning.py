@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, TypedDict
 
 from .families.minimax_h3 import (
     NativeEmptyLTXAVLatent,
@@ -49,6 +49,8 @@ from .nodes_provider import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence  # noqa: F401
+
+    from dinkster_inference import FluxFlowSigmas
 
 
 class GenerationConditioningMerge(Node):
@@ -476,6 +478,18 @@ class GenerationModelSamplingLTXV(Node):
         )
 
 
+class _FluxModelOverlay(Protocol):
+    @property
+    def runtime(self) -> Any: ...
+
+    @property
+    def sampling_space(self) -> FluxFlowSigmas: ...
+
+
+class _GenerationModelSamplingFluxOutput(TypedDict):
+    model: _FluxModelOverlay
+
+
 class GenerationModelSamplingFlux(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -490,7 +504,7 @@ class GenerationModelSamplingFlux(Node):
         base_shift: float = 0.5,
         width: int = 1024,
         height: int = 1024,
-    ) -> Mapping[str, object]:
+    ) -> _GenerationModelSamplingFluxOutput:
         for name, value in (("max_shift", max_shift), ("base_shift", base_shift)):
             if type(value) not in (int, float) or not math.isfinite(value):
                 raise ValueError(f"{name} must be finite")
@@ -511,20 +525,23 @@ class GenerationModelSamplingFlux(Node):
         shift = (width * height / (8 * 8 * 2 * 2)) * slope + intercept
         space = inference.FluxFlowSigmas(shift=shift)
         _sampling_space_runtime(handle.runtime, space)
-        return cls.outputs(
-            model=_NativeModelOverlay(
-                handle,
-                overlays,
-                resolvers,
-                control,
-                None,
-                transforms,
-                windows,
-                options,
-                sampling_cache=_native_model_sampling_cache(model_value),
-                sampling_timeline=_native_model_sampling_timeline(model_value),
-                sampling_space=space,
-            )
+        return cast(
+            "_GenerationModelSamplingFluxOutput",
+            cls.outputs(
+                model=_NativeModelOverlay(
+                    handle,
+                    overlays,
+                    resolvers,
+                    control,
+                    None,
+                    transforms,
+                    windows,
+                    options,
+                    sampling_cache=_native_model_sampling_cache(model_value),
+                    sampling_timeline=_native_model_sampling_timeline(model_value),
+                    sampling_space=space,
+                )
+            ),
         )
 
 

@@ -67,6 +67,7 @@ from dinkster_inference import (
     sampling_sigmas,
     select_builtin_sampler,
 )
+from dinkster_inference_torch import sampling_execution as sampling_engine
 from dinkster_inference_torch import wan21_multitalk as wan21_multitalk_module
 from dinkster_inference_torch import wan21_runtime as wan21_runtime_module
 from dinkster_inference_torch._conditioning_layout import (
@@ -1188,20 +1189,27 @@ def test_causal_runtime_processes_custom_denoised_output_with_wan_normalization(
         _denoiser: object, _solver: object, **kwargs: object
     ) -> torch.Tensor:
         report_state = cast("Any", kwargs["on_state"])
+        process_out = cast("Any", kwargs["process_out"])
+        unpack_state = cast("Any", kwargs["unpack_state"])
+        if unpack_state is not None:
+            current = unpack_state(latent)
+            denoised = unpack_state(torch.full_like(latent, 4.0))
+        else:
+            current = process_out(latent)
+            denoised = process_out(torch.full_like(latent, 4.0))
         report_state(
             SamplingStateEvent(
                 step=0,
                 total=1,
                 sigma=1.0,
                 phase="pre_update",
-                current=latent,
-                denoised=torch.full_like(latent, 4.0),
+                current=current,
+                denoised=denoised,
             )
         )
-        process_out = cast("Any", kwargs["process_out"])
         return process_out(torch.full_like(latent, 7.0))
 
-    monkeypatch.setattr(wan21_runtime_module, "run_sampler_engine", fake_run_sampler_engine)
+    monkeypatch.setattr(sampling_engine, "run_denoise", fake_run_sampler_engine)
 
     text = torch.ones((1, 2, WAN21_CAUSAL_AR_1_3B.text_dim))
     events: list[SamplingStateEvent[object]] = []
@@ -1307,7 +1315,7 @@ def test_causal_runtime_checks_cancellation_during_sampling(
         report_step(StepEvent(0, 1, 1.0))
         raise AssertionError("cancellation must stop the sampler step")
 
-    monkeypatch.setattr(wan21_runtime_module, "run_sampler_engine", fake_run_sampler_engine)
+    monkeypatch.setattr(sampling_engine, "run_denoise", fake_run_sampler_engine)
 
     with pytest.raises(SamplingCancelled):
         runtime.sample_custom(
@@ -2306,7 +2314,7 @@ def test_animate2_runtime_frees_pose_cache_when_sampling_fails(
         raise RuntimeError("sampler failed")
 
     monkeypatch.setattr(wan21_runtime, "PoseBranchCache", FakePoseCache)
-    monkeypatch.setattr(wan21_runtime, "run_sampler_engine", fail_sampling)
+    monkeypatch.setattr(sampling_engine, "run_denoise", fail_sampling)
 
     with pytest.raises(RuntimeError, match="sampler failed"):
         _sample(runtime, _video((1, 16, 3, 2, 2)), prepared)

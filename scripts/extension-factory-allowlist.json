@@ -89,7 +89,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-native/src/dinkster_native/nodes_conditioning.py",
-      "line": 387,
+      "line": 389,
       "column": 30,
       "issue": 120
     },
@@ -129,7 +129,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 1975,
+      "line": 1981,
       "column": 59,
       "issue": 120
     },
@@ -137,7 +137,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 2533,
+      "line": 2539,
       "column": 32,
       "issue": 120
     },
@@ -145,7 +145,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 4529,
+      "line": 4552,
       "column": 28,
       "issue": 120
     },

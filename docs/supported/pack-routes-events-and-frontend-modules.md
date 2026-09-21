@@ -12,6 +12,15 @@
   nodes that compatible editors keep out of backend execution requests.
 - Doctor warns when a pack declares a frontend contribution kind or extension
   capability for which no runtime consumer exists.
+- Packs can declare a pack-relative static asset directory with
+  `[pack.frontend] assets`. Validated file bytes are served under the pack's
+  authenticated `/packs/{packId}/static/` namespace without directory listings
+  or filesystem traversal.
+- Packs can declare a pack-relative closed-object JSON Schema with
+  `[pack.settings] schema`. The authenticated GET/PUT
+  `/api/packs/{packId}/settings` surface serves metadata and effective values,
+  validates complete updates, and persists accepted values under the host
+  library root.
 - Isolated packs can publish value renditions whose metadata, parameter
   normalization, MIME selection, and rendering remain pack-owned while being
   available through the host value API.
@@ -67,7 +76,7 @@ create a runtime door by itself.
 | `background-jobs` | Declared and unconsumed | No extension capability consumer |
 | `downloads` | Declared and unconsumed | No extension capability consumer |
 | `filesystem` | Declared and unconsumed | No extension capability consumer |
-| `model-family-registration` | Declared and unconsumed | No pack-facing model-family registration door; adding one requires a core edit |
+| `model-family-registration` | Works | `InferenceContribution` merges pack families, components, and assemblies in the torch worker; `tests/test_extension_contract_pack.py` |
 | `routes` | Works | `tests/test_pack_surfaces.py` |
 
 The generated contribution vocabulary and doctor diagnostics keep declared

@@ -8,7 +8,7 @@ import pytest
 from dinkster_inference import FLOAT32, ComponentPlan
 from dinkster_inference.component_catalog import default_component_registry
 from dinkster_inference.component_registry import DetectedComponents
-from dinkster_inference.hunyuan_image_text import bind_hunyuan_image_text
+from dinkster_inference.hunyuan_image_text import bind_hunyuan_image_text, plan_hunyuan_image_qwen
 from dinkster_inference.qwen_image_text import QWEN_IMAGE_TEXT_CONFIG, qwen_image_text_layout
 from dinkster_inference.recipe import WeightSourceRef
 from dinkster_inference.t5_text import (
@@ -64,6 +64,17 @@ def test_byt5_small_is_exact_and_does_not_broaden_t5_detection() -> None:
                 ),
             }
         )
+
+
+def test_hunyuan_qwen_probe_ignores_other_vl_architectures() -> None:
+    source = Header(
+        {
+            "model.embed_tokens.weight": (151936, 5120),
+            "visual.patch_embed.proj.weight": (1280, 3, 2, 14, 14),
+        }
+    )
+
+    assert plan_hunyuan_image_qwen(source, Path("qwen3vl.safetensors")) == ()
 
 
 def test_registry_binds_both_orders_and_retains_every_source() -> None:

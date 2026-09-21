@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import torch
 from dinkster_inference import (
@@ -15,34 +15,24 @@ from dinkster_inference import (
     ConditioningCarrier,
     ConditioningSet,
     ConditionScaleVector,
-    ContextWindowsSpec,
-    CustomSamplingRequest,
-    CustomSamplingResult,
     FlowSigmas,
     GuidanceRole,
-    InpaintConditioning,
     ModelFamily,
     Parameterization,
     PayloadDescriptor,
     PayloadReference,
     Registry,
     SamplerDescriptor,
-    SamplingStateCallback,
     SchedulerDescriptor,
     SigmaSpace,
-    StepCallback,
     encode_conditioning_carrier,
     make_conditioning_carrier,
-    sampling_execution_context,
 )
 from tokenizers import Tokenizer
 
-from .brownian import BrownianTreeNoise
 from .conditioning_adapters import basic_conditioning_to_carrier, materialize_basic_conditioning
-from .denoise import run_denoise
 from .guidance import (
     ConditioningBatch,
-    ConditioningEvaluation,
     GuidanceExecutor,
 )
 from .guidance import (
@@ -55,16 +45,12 @@ from .operations import module_compute_device
 from .parameterizations import calculate_denoised
 from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
 from .sampling_execution import (
-    CustomSamplingCfgValue,
-    CustomSamplingCondValue,
-    CustomSamplingLatentValue,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    custom_denoised_callback,
-    guided_denoiser,
-    narrow_single_stream_custom_sampling,
-    resolve_custom_sampling_request,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
+    SamplingExecutionRegistration,
+    SingleStreamLatentAdapter,
+    sampling_execution,
 )
 from .sampling_runtime import SingleStreamSamplingRuntime
 from .schedules import (
@@ -379,11 +365,97 @@ class _MiniMaxMusic3DiffusionAssembly:
         return self.compute if component == "diffusion" else None
 
 
+class _MiniMaxMusic3SamplingDenoiser:
+    evaluator_identity = "dinkster.minimax_music3.conditioning.v1"
+
+    def __init__(self, model: MiniMaxMusic3DiT, *, compute_dtype: torch.dtype) -> None:
+        self.evaluator = MiniMaxMusic3Denoiser(model, compute_dtype=compute_dtype)
+
+    def prepare_conditioning(
+        self,
+        value: object,
+        role: GuidanceRole,
+    ) -> tuple[torch.Tensor, str, torch.Tensor]:
+        return self.evaluator.prepare_conditioning(
+            value,
+            lane_id=("negative" if role is GuidanceRole.UNCONDITIONAL else "positive"),
+        )
+
+    def evaluate_conditioning(
+        self,
+        latent: torch.Tensor,
+        sigma: float,
+        condition: tuple[torch.Tensor, str, torch.Tensor],
+    ) -> torch.Tensor:
+        return self.evaluator.evaluate_conditioning(latent, sigma, condition)
+
+    def evaluate_conditioning_batch(
+        self,
+        latent: torch.Tensor,
+        sigma: float,
+        conditions: tuple[tuple[torch.Tensor, str, torch.Tensor], ...],
+    ) -> tuple[torch.Tensor, ...]:
+        return self.evaluator.evaluate_conditioning_batch(latent, sigma, conditions)
+
+    def batchable(
+        self,
+        conditions: tuple[tuple[torch.Tensor, str, torch.Tensor], ...],
+    ) -> bool:
+        return self.evaluator.batchable(conditions)
+
+
+def _validate_minimax_music3_latent(latent: torch.Tensor) -> None:
+    channels = MINIMAX_MUSIC3_CONFIG.latent_channels
+    if latent.ndim != 3 or latent.shape[1] != channels:
+        raise MiniMaxMusic3RuntimeError(
+            f"MiniMax Music 3 input must have shape [batch,{channels},frames]"
+        )
+
+
+def _minimax_music3_denoiser(
+    runtime: object,
+    compute_dtype: torch.dtype,
+    context: SamplingAdapterContext,
+) -> SamplingDenoiserExecution:
+    owner = cast("MiniMaxMusic3DiffusionRuntime", runtime)
+    if context.options:
+        names = ", ".join(sorted(context.options))
+        raise MiniMaxMusic3RuntimeError(
+            f"MiniMax Music 3 sampling does not accept adapter options: {names}"
+        )
+    return SamplingDenoiserExecution(
+        cast(
+            "SamplingDenoiserAdapter",
+            _MiniMaxMusic3SamplingDenoiser(
+                owner.assembled.diffusion,
+                compute_dtype=compute_dtype,
+            ),
+        )
+    )
+
+
+def _minimax_music3_device(runtime: object) -> torch.device:
+    owner = cast("MiniMaxMusic3DiffusionRuntime", runtime)
+    return module_compute_device(owner.assembled.diffusion)
+
+
+def _minimax_music3_compute_dtype(runtime: object) -> torch.dtype:
+    owner = cast("MiniMaxMusic3DiffusionRuntime", runtime)
+    return owner.assembled.compute_dtype("diffusion") or torch.bfloat16
+
+
 class MiniMaxMusic3DiffusionRuntime(SingleStreamSamplingRuntime):
     streamed_residency_components = frozenset()
     sampling_error = MiniMaxMusic3RuntimeError
     sampling_compute_dtype = torch.bfloat16
     supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=SingleStreamLatentAdapter(_validate_minimax_music3_latent),
+        denoiser=_minimax_music3_denoiser,
+        device=_minimax_music3_device,
+        compute_dtype=_minimax_music3_compute_dtype,
+        flow=True,
+    )
 
     def __init__(
         self,
@@ -412,106 +484,7 @@ class MiniMaxMusic3DiffusionRuntime(SingleStreamSamplingRuntime):
     def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
         return _sigma_space()
 
-    def sample_custom(
-        self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue = None,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: float | None = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        compute_dtype: torch.dtype | None = None,
-        device: torch.device | str | None = None,
-        capture_denoised: bool = True,
-    ) -> CustomSamplingResult[torch.Tensor]:
-        latent, noise, cond, cfg, denoise_mask = narrow_single_stream_custom_sampling(
-            self.family.id,
-            latent=latent,
-            noise=noise,
-            cond=cond,
-            cfg=cfg,
-            denoise_mask=denoise_mask,
-            error=MiniMaxMusic3RuntimeError,
-        )
-        channels = MINIMAX_MUSIC3_CONFIG.latent_channels
-        if latent.ndim != 3 or latent.shape[1] != channels:
-            raise MiniMaxMusic3RuntimeError(
-                f"MiniMax Music 3 input must have shape [batch,{channels},frames]"
-            )
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=MiniMaxMusic3RuntimeError
-        )
-        if compute_dtype is None:
-            compute_dtype = self.assembled.compute_dtype("diffusion") or torch.bfloat16
-        if device is None:
-            device = module_compute_device(self.assembled.diffusion)
-        space = _sigma_space()
-        schedule = build_custom_sampling_schedule(request.sigmas, space, sampler, flow=True)
-        noise_sampler: BrownianTreeNoise | None = brownian_step_noise(
-            sampler, schedule, latent, seed=seed, device=device
-        )
-        plan = compile_guidance_plan(cond, cfg, sampler, self._guidance)
-        evaluator = MiniMaxMusic3Denoiser(self.assembled.diffusion, compute_dtype=compute_dtype)
-        report_state: SamplingStateCallback | None
-        captured: list[torch.Tensor]
-        if capture_denoised:
-            report_state, captured = custom_denoised_callback(self.family, on_state)
-        else:
-            report_state, captured = on_state, []
-        denoiser = guided_denoiser(
-            ConditioningEvaluation(
-                lambda value, role: evaluator.prepare_conditioning(
-                    value,
-                    lane_id=("negative" if role is GuidanceRole.UNCONDITIONAL else "positive"),
-                ),
-                evaluator.evaluate_conditioning,
-                evaluator.batchable,
-                evaluator.evaluate_conditioning_batch,
-                evaluator_identity=lambda _role: "dinkster.minimax_music3.conditioning.v1",
-                standard_activation_memory_factor=self.family.memory_factor,
-            ),
-            input=latent,
-            executor=self._guidance,
-            plan=plan,
-            execution=sampling_execution_context(
-                sigmas=schedule.sigmas,
-                seed=seed,
-                on_step=on_step,
-                on_state=report_state,
-            ),
-        )
-        output = run_denoise(
-            denoiser,
-            request.build_solver(),
-            latent=latent,
-            noise=noise,
-            sigmas=schedule.sigmas,
-            initial_sigma=schedule.initial_sigma,
-            family=self.family,
-            seed=seed,
-            noise_kind=sampler.noise,
-            noise_sampler=noise_sampler,
-            percent_to_sigma=space.percent_to_sigma,
-            device=device,
-            on_step=on_step,
-            on_state=report_state,
-            denoise_mask=denoise_mask,
-        )
-        return CustomSamplingResult(output, captured[-1] if captured else None)
+    sample_custom = sampling_execution
 
     def encode_text(self, text: str) -> Conditioning[torch.Tensor]:
         del text
