@@ -409,6 +409,7 @@ class LoadImage(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.load_image",
+            editor_role="image-source",
             version=2,
             display_name="Load Image",
             category="image/io",
@@ -659,6 +660,7 @@ class PaintMask(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.mask.paint",
+            editor_role="mask-paint",
             version=1,
             display_name="Paint Mask",
             category="mask/edit",
@@ -810,6 +812,7 @@ class SaveImage(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.save_image",
+            editor_role="image-save",
             display_name="Save Image",
             category="image/io",
             inputs=(

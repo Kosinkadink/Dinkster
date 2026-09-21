@@ -314,6 +314,7 @@ class CurveEditor(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.curve.editor",
+            editor_role="curve",
             display_name="Curve Editor",
             category="utilities/curve",
             inputs=(
