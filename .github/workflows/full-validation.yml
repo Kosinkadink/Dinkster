@@ -215,6 +215,13 @@ jobs:
         with:
           clean: true
           persist-credentials: false
+      # The smoke gate validates the locked default install, and that install
+      # set needs the private dinkster-identity git dependency that
+      # dinkster-server pulls, so this job configures the same read-only
+      # deploy key as every other installing job (comfy-vibe-station#256).
+      - uses: ./.github/actions/configure-dinkster-identity
+        with:
+          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
