@@ -55,7 +55,6 @@ from .sampling_execution import (
     compile_guidance_plan,
     resolve_custom_sampling_request,
     run_ksampler_as_custom,
-    validate_sampling_options,
 )
 from .schedules import (
     custom_beta_sigmas,
@@ -320,7 +319,6 @@ class SingleStreamSamplingRuntime(SamplingRuntime):
         **kwargs: object,
     ) -> torch.Tensor:
         extra = dict(kwargs)
-        validate_sampling_options(self, extra)
         schedule_device = cast("torch.device | str | None", extra.pop("schedule_device", None))
         if self.supports_sampling_shift:
             extra["sampling_shift"] = sampling_shift
@@ -555,7 +553,6 @@ class MultiStreamSamplingRuntime(SamplingRuntime):
         **kwargs: object,
     ) -> MultiStreamLatent[torch.Tensor]:
         extra = dict(kwargs)
-        validate_sampling_options(self, extra)
         schedule_device = cast("torch.device | str | None", extra.pop("schedule_device", None))
         if type(latent) is not MultiStreamLatent:
             raise TypeError("latent must be an exact MultiStreamLatent")

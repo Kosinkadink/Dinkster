@@ -416,7 +416,12 @@ def test_flux2_runtime_sample_delegates_ksampler_composition(
 def test_flux2_ksampler_refuses_private_compute_placement(
     runtime_type: type[Flux2Runtime] | type[Flux2DiffusionRuntime], private_argument: str
 ) -> None:
-    runtime = object.__new__(runtime_type)
+    prepared = _bare_runtime(RecordingFlux())
+    runtime = cast("Any", object.__new__(runtime_type))
+    runtime.assembled = prepared.assembled
+    runtime._samplers = prepared._samplers  # pyright: ignore[reportPrivateUsage]
+    runtime._schedulers = prepared._schedulers  # pyright: ignore[reportPrivateUsage]
+    runtime._guidance = None
     with pytest.raises(TypeError, match="private compute placement"):
         runtime.sample(
             torch.zeros((1, 128, 2, 2)),
