@@ -75,6 +75,7 @@ from .minimax_h3_dit import (
 from .minimax_h3_video_vae import MiniMaxH3VideoVAE, MiniMaxH3VideoVAEConfig
 from .module_residency import declare_residency_materialization_ceilings
 from .operations import CastOperations, Operations, ResidencyRouted
+from .quant_linear import Fp8Linear, Int8Linear, Nvfp4Linear
 
 C = TypeVar("C")
 M = TypeVar("M", bound=torch.nn.Module)
@@ -654,6 +655,10 @@ def load_minimax_h3_component(
                 # default but hardcodes float32 embeddings and execution.
                 compute_dtype=torch.float32,
             )
+            for layer in module.modules():
+                if isinstance(layer, Fp8Linear | Int8Linear | Nvfp4Linear):
+                    layer.compute_dtype = torch.float32
+                    layer.full_precision_matmul = True
         elif expected_role == "video-vae":
             module = _load_verified_component(
                 plan,

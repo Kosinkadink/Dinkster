@@ -105,7 +105,7 @@ def _capture_prepare_callback(model, steps, x0_output):
         global _FIRST_STEP_CAPTURE
         callback(step, denoised, current, total)
         if (
-            step == 0
+            step == 1
             and _QUALITY_CAPTURE_ARMED
             and _FIRST_STEP_CAPTURE is None
             and _QUALITY_OUTPUT_DIR

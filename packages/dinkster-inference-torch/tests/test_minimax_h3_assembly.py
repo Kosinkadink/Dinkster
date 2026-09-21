@@ -57,6 +57,7 @@ from dinkster_inference_torch.minimax_h3_audio import MiniMaxH3AudioVAE
 from dinkster_inference_torch.minimax_h3_video_vae import MiniMaxH3VideoVAE
 from dinkster_inference_torch.module_residency import ModuleStateStore
 from dinkster_inference_torch.operations import INITLESS, CastOperations
+from dinkster_inference_torch.quant_linear import Int8Linear
 
 _TEST_IDENTITIES = {
     role: ((index, "blake3:" + f"{index:x}" * 64),)
@@ -846,7 +847,16 @@ def test_standalone_component_load_preserves_plan_identity(
     asset = _asset(path, digest_file(path), path.stat().st_size)
     plan = getattr(_plan(_paths(tmp_path)), plan_name)
     expected_identity = identity(plan)
-    module = torch.nn.Linear(1, 1)
+    module = torch.nn.Sequential(
+        Int8Linear(
+            16,
+            16,
+            bias=False,
+            compute_dtype=dtype,
+            convrot=False,
+            convrot_groupsize=256,
+        )
+    )
 
     def read_header(_handle: BinaryIO, *, path: Path) -> HeaderSource:
         return HeaderSource(path, {})
@@ -886,6 +896,12 @@ def test_standalone_component_load_preserves_plan_identity(
     assert loaded.plan is plan
     assert loaded.runtime_identity == expected_identity
     assert loaded_compute_dtype is (torch.float32 if role == "qwen3vl-32b-conditioner" else dtype)
+    quantized = loaded.module[0]
+    assert isinstance(quantized, Int8Linear)
+    assert quantized.compute_dtype is (
+        torch.float32 if role == "qwen3vl-32b-conditioner" else dtype
+    )
+    assert quantized.full_precision_matmul is (role == "qwen3vl-32b-conditioner")
 
 
 def test_standalone_component_load_refuses_wrong_structure(
