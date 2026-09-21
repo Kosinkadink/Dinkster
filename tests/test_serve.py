@@ -43,11 +43,13 @@ async def _default_pack_names() -> tuple[str, ...]:
     from dinkster_workers import load_manifest
 
     from dinkster.comfy_compose import comfy_compat_specs
-    from dinkster.compose import ServingComposer, default_pack_specs
+    from dinkster.compose import ServingComposer, default_pack_specs, model_pack_specs
 
     composer = ServingComposer()
     try:
-        specs = composer.order_pack_entries((*default_pack_specs(), *comfy_compat_specs()))
+        specs = composer.order_pack_entries(
+            (*default_pack_specs(), *model_pack_specs(), *comfy_compat_specs())
+        )
         return tuple(load_manifest(Path(spec.manifest)).name for spec in specs)
     finally:
         await composer.close()

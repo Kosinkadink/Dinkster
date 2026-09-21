@@ -133,7 +133,7 @@ def _fake_torch() -> object:
     )
 
 
-def test_h3_schemas_use_ordinary_model_latent_and_conditioning_types() -> None:
+def test_h3_schemas_use_declared_resident_graph_types() -> None:
     nodes = {node.schema().node_type: node for node in NATIVE_NODES}
     arms = {node.schema().node_type: node for node in native_arm.NATIVE_ARM_NODES}
     expected = {
@@ -158,7 +158,7 @@ def test_h3_schemas_use_ordinary_model_latent_and_conditioning_types() -> None:
     assert "dinkster.frame_range_mask" in nodes
     empty_schema = nodes["dinkster.empty_minimax_h3_av"].schema()
     assert tuple(item.id for item in empty_schema.inputs) == ("width", "height", "frame_count")
-    assert empty_schema.outputs[0].type == LATENT
+    assert empty_schema.outputs[0].type.types == ("dinkster.latent",)
     encode_schema = nodes["dinkster.minimax_h3_av_encode"].schema()
     assert tuple(item.id for item in encode_schema.inputs) == (
         "video_vae",
