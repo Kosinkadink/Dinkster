@@ -52,32 +52,19 @@ from dinkster_protocol import (
 )
 from dinkster_schema import (
     SCHEMA_WIRE_VERSION,
-    AssetWidget,
     ComfyAliasConfidence,
     ComfyAliasRecord,
     ComfyAliasRegistry,
     ComfyAliasSource,
     ComfyAliasSourceSchema,
-    CurveWidget,
-    DynamicComboOption,
-    DynamicComboSpec,
-    DynamicSlotSpec,
     InputSpec,
     MappingSource,
-    MirrorSpec,
-    MirrorTolerance,
-    MultiComboWidget,
     Node,
     NodeSchema,
-    OutputKnownValue,
-    OutputRepresents,
     OutputSpec,
     ReplacementCase,
-    ReplacementMigration,
-    ReplacementNode,
     ReplacementRule,
     SelectorSpec,
-    SourceFilenameSpec,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -1148,7 +1135,7 @@ def test_catalog_is_open_to_any_authenticated_principal_and_health_is_public() -
             health = await client.get("/api/health")
             assert health.status == 200
             for path in (
-                "/api/nodes?wire=16",
+                "/api/nodes",
                 "/api/composition",
                 "/api/diagnostics",
                 "/api/choices/missing",
@@ -1779,7 +1766,7 @@ def test_nodes_endpoint_serves_native_schema_wire() -> None:
             assert isinstance(data["dinkster"]["version"], str)
             assert data["dinkster"]["version"]
             assert data["dinkster"]["schemaWire"] == SCHEMA_WIRE_VERSION
-            assert SCHEMA_WIRE_VERSION == 40
+            assert SCHEMA_WIRE_VERSION == 1
             # Graph/job DOCUMENT wire capabilities, additive feature list
             # decoupled from the schema wire (joint contract 2026-07-25):
             # clients gate optional emission forms on membership.
@@ -1817,337 +1804,16 @@ def test_nodes_endpoint_serves_native_schema_wire() -> None:
     asyncio.run(scenario())
 
 
-def test_nodes_wire_negotiation() -> None:
-    """The server selects the highest mutually supported schema wire."""
-
+def test_nodes_endpoint_does_not_negotiate_schema_wire_versions() -> None:
     async def scenario() -> None:
         client = await make_client()
         try:
-            # Advertising a set containing the current version serves it.
-            for query in (
-                f"wire={SCHEMA_WIRE_VERSION}",
-                f"wire={SCHEMA_WIRE_VERSION - 1},{SCHEMA_WIRE_VERSION}",
-                f"wire= {SCHEMA_WIRE_VERSION} ",
-            ):
-                resp = await client.get(f"/api/nodes?{query}")
-                assert resp.status == 200
-                data = await resp.json()
-                assert data["dinkster"]["schemaWire"] == SCHEMA_WIRE_VERSION
-                # graphFeatures and mergeableTypes ride every successful
-                # negotiation.
-                assert data["dinkster"]["graphFeatures"] == [
-                    "typedLiteral",
-                    "decimalInt",
-                    "regions",
-                    "placement",
-                ]
-                assert data["dinkster"]["mergeableTypes"] == []
-                assert all(
-                    entry["schemaVersion"] == SCHEMA_WIRE_VERSION
-                    for entry in data["nodes"].values()
-                )
-            # Explicit versions select the highest mutually supported catalog.
-            for query, served in (
-                ("wire=29", 29),
-                ("wire=16,29", 29),
-                ("wire=28", 28),
-                ("wire=31", 31),
-                ("wire=40", 40),
-                ("wire=39,40", 40),
-                ("wire=39,40,41", 41),
-                ("wire=42,43", 43),
-                ("wire=43,44", 44),
-                ("wire=44,45", 45),
-            ):
-                response = await client.get(f"/api/nodes?{query}")
-                assert response.status == 200
-                predecessor = await response.json()
-                assert predecessor["dinkster"]["schemaWire"] == served
-                assert predecessor["dinkster"]["graphFeatures"] == [
-                    "typedLiteral",
-                    "decimalInt",
-                    "regions",
-                    "placement",
-                ]
-                assert all(
-                    entry["schemaVersion"] == served for entry in predecessor["nodes"].values()
-                )
-            # No overlap: loud 406 naming both sides of the mismatch.
-            resp = await client.get("/api/nodes?wire=21")
-            assert resp.status == 406
-            refusal = await resp.json()
-            assert refusal["error"] == "wire-version-unsupported"
-            assert refusal["requested"] == [21]
-            assert refusal["supported"] == [
-                22,
-                23,
-                24,
-                25,
-                26,
-                27,
-                28,
-                29,
-                30,
-                31,
-                32,
-                33,
-                34,
-                35,
-                36,
-                37,
-                38,
-                39,
-                40,
-                41,
-                42,
-                43,
-                44,
-                45,
-            ]
-            # Malformed advertisements are 400, not 406: the client asked
-            # a nonsense question, not an unsupported one.
-            for bad in ("wire=abc", "wire=", "wire=,", "wire=10.5"):
-                assert (await client.get(f"/api/nodes?{bad}")).status == 400
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
-
-
-def test_nodes_wire_negotiation_withholds_scoped_mirrors_below_v30() -> None:
-    """A mixed-version cluster degrades to NO estimate, never a wrong one:
-    when a wire-29 client negotiates, a mirror scoped by applies is withheld
-    entirely (serving it without its scope would make the client run it for
-    combo values it does not cover), while an unscoped mirror still rides."""
-    unscoped_mirror = MirrorSpec(
-        kind="glsl",
-        precision="bounded",
-        tolerance=MirrorTolerance(per_channel=1.0 / 255.0),
-        source="void main() {}",
-    )
-    scoped_mirror = replace(unscoped_mirror, applies={"operation": ("covered",)})
-    operation_combo = DynamicComboSpec(
-        "operation",
-        options=(DynamicComboOption("covered"), DynamicComboOption("uncovered")),
-        default="covered",
-    )
-    schemas = {
-        **SCHEMAS,
-        "test.unscoped": replace(
-            SCHEMAS["test.echo"], node_type="test.unscoped", mirror=unscoped_mirror
-        ),
-        "test.scoped": replace(
-            SCHEMAS["test.echo"],
-            node_type="test.scoped",
-            combos=(operation_combo,),
-            mirror=scoped_mirror,
-        ),
-    }
-
-    async def scenario() -> None:
-        app = create_app(make_engine, schemas)
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            current = await (await client.get("/api/nodes?wire=30")).json()
-            assert current["nodes"]["test.scoped"]["mirror"]["applies"] == {
-                "operation": ["covered"]
-            }
-            assert "applies" not in current["nodes"]["test.unscoped"]["mirror"]
-
-            predecessor = await (await client.get("/api/nodes?wire=29")).json()
-            assert "mirror" not in predecessor["nodes"]["test.scoped"]
-            assert "applies" not in predecessor["nodes"]["test.unscoped"]["mirror"]
-            assert "mirror" in predecessor["nodes"]["test.unscoped"]
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
-
-
-def test_nodes_wire_negotiation_skips_represented_outputs_below_v31() -> None:
-    image = TypeExpr.concrete("dinkster.image")
-    schema = NodeSchema(
-        node_type="test.represented-output",
-        inputs=(
-            InputSpec(
-                "image",
-                TypeExpr.asset_of(image),
-                widget=AssetWidget(kind="media/image"),
-            ),
-        ),
-        outputs=(
-            OutputSpec(
-                "image",
-                image,
-                represents=OutputRepresents("image", "decoded-image"),
-            ),
-        ),
-    )
-
-    async def scenario() -> None:
-        app = create_app(make_engine, {**SCHEMAS, schema.node_type: schema})
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            current = await (await client.get("/api/nodes?wire=31")).json()
-            current_output = current["nodes"][schema.node_type]["interface"][1]
-            assert current_output["represents"] == {
-                "input": "image",
-                "rendition": "decoded-image",
-            }
-
-            predecessor = await (await client.get("/api/nodes?wire=30")).json()
-            assert schema.node_type not in predecessor["nodes"]
-            assert predecessor["schemaSkips"] == [
-                {
-                    "nodeType": schema.node_type,
-                    "code": "schema-wire-required",
-                    "requiredWire": 31,
-                    "reason": "output representation requires schema wire 31",
-                }
-            ]
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
-
-
-@pytest.mark.parametrize("contract", ["type", "acceptance", "chunk"])
-def test_nodes_stream_contracts_require_explicit_wire41(contract: str) -> None:
-    image = TypeExpr.concrete("comfy.IMAGE")
-    schema = NodeSchema(
-        "test.stream-contract",
-        inputs=(InputSpec("image", image, accepts_stream=contract == "acceptance"),),
-        outputs=(OutputSpec("image", TypeExpr.stream_of(image) if contract == "type" else image),),
-        chunk_safe=(("image",), ("image",)) if contract == "chunk" else None,
-    )
-
-    async def scenario() -> None:
-        app = create_app(make_engine, {**SCHEMAS, schema.node_type: schema})
-        async with TestClient(TestServer(app)) as client:
-            for query, version in (("", 40), ("?wire=39", 39), ("?wire=40", 40)):
+            for query in ("", "?wire=1", "?wire=invalid"):
                 response = await client.get(f"/api/nodes{query}")
                 assert response.status == 200
                 data = await response.json()
-                assert data["dinkster"]["schemaWire"] == version
-                assert schema.node_type not in data["nodes"]
-                (skip,) = data["schemaSkips"]
-                assert skip["nodeType"] == schema.node_type
-                assert skip["requiredWire"] == 41
-            response = await client.get("/api/nodes?wire=39,40,41")
-            assert response.status == 200
-            data = await response.json()
-            assert data["dinkster"]["schemaWire"] == 41
-            entry = data["nodes"][schema.node_type]
-            assert entry["signature"] == schema_signature(schema)
-            assert entry.items() >= schema_to_wire(schema, wire_version=41).items()
-            assert "schemaSkips" not in data
-
-    asyncio.run(scenario())
-
-
-def test_nodes_wire_negotiation_skips_media_policies_below_v40() -> None:
-    image = TypeExpr.concrete("comfy.IMAGE")
-    schema = NodeSchema(
-        "test.media-policy",
-        outputs=(OutputSpec("image", image, alpha_policy="drop"),),
-    )
-    ordinary = NodeSchema("test.default-media-policy", outputs=(OutputSpec("image", image),))
-
-    async def scenario() -> None:
-        app = create_app(
-            make_engine, {**SCHEMAS, schema.node_type: schema, ordinary.node_type: ordinary}
-        )
-        async with TestClient(TestServer(app)) as client:
-            current = await (await client.get("/api/nodes?wire=39,40")).json()
-            entry = current["nodes"][schema.node_type]
-            assert entry["schemaVersion"] == 40
-            assert entry["interface"][0]["alphaPolicy"] == "drop"
-            assert entry["signature"] == schema_signature(schema)
-
-            predecessor = await (await client.get("/api/nodes?wire=39")).json()
-            assert schema.node_type not in predecessor["nodes"]
-            assert predecessor["schemaSkips"] == [
-                {
-                    "nodeType": schema.node_type,
-                    "code": "schema-wire-required",
-                    "requiredWire": 40,
-                    "reason": "media policies requires schema wire 40",
-                }
-            ]
-            default_entry = predecessor["nodes"][ordinary.node_type]
-            assert "alphaPolicy" not in default_entry["interface"][0]
-            assert default_entry["signature"] == schema_signature(ordinary)
-
-    asyncio.run(scenario())
-
-
-def test_nodes_wire_negotiation_skips_known_values_below_v34() -> None:
-    integer = TypeExpr.concrete("core.int")
-    schema = NodeSchema(
-        node_type="test.known-output",
-        inputs=(InputSpec("value", integer, required=False, default=0),),
-        outputs=(
-            OutputSpec(
-                "value",
-                integer,
-                known_value=OutputKnownValue("value"),
-            ),
-        ),
-    )
-
-    async def scenario() -> None:
-        app = create_app(make_engine, {**SCHEMAS, schema.node_type: schema})
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            current = await (await client.get("/api/nodes?wire=34")).json()
-            current_output = current["nodes"][schema.node_type]["interface"][1]
-            assert current_output["knownValue"] == {"input": "value"}
-
-            predecessor = await (await client.get("/api/nodes?wire=33")).json()
-            assert schema.node_type not in predecessor["nodes"]
-            assert predecessor["schemaSkips"] == [
-                {
-                    "nodeType": schema.node_type,
-                    "code": "schema-wire-required",
-                    "requiredWire": 34,
-                    "reason": "output known value requires schema wire 34",
-                }
-            ]
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
-
-
-def test_nodes_wire_negotiation_skips_curve_widgets_below_v35() -> None:
-    curve = TypeExpr.concrete("dinkster.curve")
-    schema = NodeSchema(
-        node_type="test.curve-widget",
-        inputs=(InputSpec("curve", curve, widget=CurveWidget()),),
-        outputs=(OutputSpec("curve", curve),),
-    )
-
-    async def scenario() -> None:
-        app = create_app(make_engine, {**SCHEMAS, schema.node_type: schema})
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            current = await (await client.get("/api/nodes?wire=35")).json()
-            assert current["nodes"][schema.node_type]["interface"][0]["widget"] == {"type": "CURVE"}
-
-            predecessor = await (await client.get("/api/nodes?wire=34")).json()
-            assert schema.node_type not in predecessor["nodes"]
-            assert predecessor["schemaSkips"] == [
-                {
-                    "nodeType": schema.node_type,
-                    "code": "schema-wire-required",
-                    "requiredWire": 35,
-                    "reason": "CURVE widget requires schema wire 35",
-                }
-            ]
+                assert data["dinkster"]["schemaWire"] == 1
+                assert all(entry["schemaVersion"] == 1 for entry in data["nodes"].values())
         finally:
             await client.close()
 
@@ -2607,348 +2273,6 @@ def test_placement_participates_in_job_idempotency_only() -> None:
     asyncio.run(scenario())
 
 
-def test_nodes_serves_multicombo_on_current_and_predecessor_wire_only() -> None:
-    combo_list = TypeExpr.list_of(TypeExpr.concrete("core.combo"))
-    schemas = {
-        **SCHEMAS,
-        "test.multicombo": NodeSchema(
-            node_type="test.multicombo",
-            inputs=(
-                InputSpec(
-                    "values",
-                    combo_list,
-                    default=[],
-                    required=False,
-                    widget=MultiComboWidget(options=("a", "b")),
-                ),
-            ),
-        ),
-    }
-
-    def engine_factory(on_event: EventListener | None = None) -> Engine:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        return Engine(
-            schemas=schemas,
-            registry=registry,
-            worker=InProcessWorker(build_node_types(NODES), registry),
-            cache=MemoryLRUCache(),
-            on_event=on_event,
-        )
-
-    async def scenario() -> None:
-        app = create_app(engine_factory, schemas)
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            current = await (await client.get("/api/nodes?wire=23")).json()
-            assert "test.multicombo" in current["nodes"]
-            assert "schemaSkips" not in current
-
-            predecessor = await (await client.get("/api/nodes?wire=22")).json()
-            assert "test.multicombo" in predecessor["nodes"]
-            assert "schemaSkips" not in predecessor
-
-            retired = await client.get("/api/nodes?wire=21")
-            assert retired.status == 406
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
-
-
-def test_nodes_downencodes_dynamic_replacements_without_hiding_the_schema() -> None:
-    integer = TypeExpr.concrete("core.int")
-    replacement = ReplacementRule(
-        from_type="test.legacy-dynamic-replacement",
-        cases=(
-            ReplacementCase.build(
-                "test.dynamic-replacement",
-                slot_variants={"policy": "active"},
-                inputs={"policy.value": MappingSource.copy("legacy_value")},
-            ),
-        ),
-    )
-    migration = ReplacementRule(
-        from_type="test.dynamic-replacement",
-        migration=ReplacementMigration(("legacy_policy",)),
-        cases=(ReplacementCase.build("test.dynamic-replacement"),),
-    )
-    schemas = {
-        **SCHEMAS,
-        "test.legacy-dynamic-replacement": NodeSchema(
-            node_type="test.legacy-dynamic-replacement",
-            inputs=(InputSpec("legacy_value", integer),),
-        ),
-        "test.dynamic-replacement": NodeSchema(
-            node_type="test.dynamic-replacement",
-            combos=(
-                DynamicComboSpec(
-                    "policy",
-                    options=(DynamicComboOption("active", inputs=(InputSpec("value", integer),)),),
-                ),
-            ),
-            replacements=(replacement, migration),
-        ),
-    }
-
-    def engine_factory(on_event: EventListener | None = None) -> Engine:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        return Engine(
-            schemas=schemas,
-            registry=registry,
-            worker=InProcessWorker(build_node_types(NODES), registry),
-            cache=MemoryLRUCache(),
-            on_event=on_event,
-        )
-
-    async def scenario() -> None:
-        app = create_app(engine_factory, schemas)
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            current = await (await client.get("/api/nodes?wire=28")).json()
-            assert current["nodes"]["test.dynamic-replacement"]["replacements"][0]["cases"][0][
-                "slotVariants"
-            ] == {"policy": "active"}
-            assert current["nodes"]["test.dynamic-replacement"]["replacements"][1]["migration"] == {
-                "historicalInputs": ["legacy_policy"]
-            }
-
-            predecessor = await (await client.get("/api/nodes?wire=27")).json()
-            assert "test.dynamic-replacement" in predecessor["nodes"]
-            assert "replacements" not in predecessor["nodes"]["test.dynamic-replacement"]
-            assert "schemaSkips" not in predecessor
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
-
-
-def test_nodes_downencodes_cross_schema_dynamic_replacements_and_pack_registries() -> None:
-    from test_comfy_group_registry import IMAGE, INT
-    from test_comfy_group_registry import registry as group_registry
-
-    alias_target = NodeSchema(
-        node_type="test.dynamic-alias-target",
-        slots=(
-            DynamicSlotSpec(
-                "text",
-                slot_type=STRING,
-                inputs=(InputSpec("suffix", STRING),),
-            ),
-        ),
-        outputs=(OutputSpec("out", STRING),),
-    )
-    group_target = NodeSchema(
-        node_type="test.dynamic-group-target",
-        inputs=(InputSpec("width", INT),),
-        slots=(
-            DynamicSlotSpec(
-                "image",
-                slot_type=IMAGE,
-                inputs=(InputSpec("low", INT),),
-            ),
-        ),
-        outputs=(OutputSpec("image", IMAGE),),
-    )
-    legacy_primary = NodeSchema(
-        node_type="test.legacy-primary",
-        inputs=(InputSpec("text", STRING),),
-    )
-    legacy_helper = replace(legacy_primary, node_type="test.legacy-helper")
-    advice = NodeSchema(
-        node_type="test.replacement-advice",
-        replacements=(
-            ReplacementRule(
-                from_type=legacy_primary.node_type,
-                cases=(
-                    ReplacementCase.build(
-                        alias_target.node_type,
-                        inputs={
-                            "text": MappingSource.copy("text"),
-                            "text.suffix": MappingSource.constant("!"),
-                        },
-                    ),
-                ),
-            ),
-            ReplacementRule(
-                from_type=legacy_helper.node_type,
-                cases=(
-                    ReplacementCase.build(
-                        "test.echo",
-                        nodes={
-                            "helper": ReplacementNode.build(
-                                alias_target.node_type,
-                                values={"text.suffix": "!"},
-                            )
-                        },
-                        inputs={
-                            "text": MappingSource.copy("text"),
-                            "helper:text": MappingSource.copy("text"),
-                        },
-                    ),
-                ),
-            ),
-        ),
-    )
-
-    aliases = alias_registry(carrier=alias_target.node_type, target_input="text")
-    alias_record = aliases.records[0]
-    aliases = replace(
-        aliases,
-        records=(
-            replace(
-                alias_record,
-                replacement=ReplacementRule(
-                    from_type=alias_record.replacement.from_type,
-                    cases=(
-                        ReplacementCase.build(
-                            alias_target.node_type,
-                            inputs={
-                                "text": MappingSource.copy("text"),
-                                "text.suffix": MappingSource.constant(""),
-                            },
-                            outputs={"out": "out"},
-                        ),
-                    ),
-                ),
-            ),
-        ),
-    )
-    groups = group_registry(carrier=group_target.node_type)
-    group_record = groups.records[0]
-    groups = replace(
-        groups,
-        records=(
-            replace(
-                group_record,
-                replacement=ReplacementRule(
-                    from_type=group_record.replacement.from_type,
-                    cases=(
-                        ReplacementCase.build(
-                            group_target.node_type,
-                            inputs={
-                                "image": MappingSource.copy("image"),
-                                "image.low": MappingSource.copy("low"),
-                                "width": MappingSource.copy("width"),
-                            },
-                            outputs={"image": "image"},
-                        ),
-                    ),
-                ),
-            ),
-        ),
-    )
-    schemas = {
-        **SCHEMAS,
-        alias_target.node_type: alias_target,
-        group_target.node_type: group_target,
-        legacy_primary.node_type: legacy_primary,
-        legacy_helper.node_type: legacy_helper,
-        advice.node_type: advice,
-    }
-
-    def engine_factory(on_event: EventListener | None = None) -> Engine:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        return Engine(
-            schemas=schemas,
-            registry=registry,
-            worker=InProcessWorker(build_node_types(NODES), registry),
-            cache=MemoryLRUCache(),
-            on_event=on_event,
-        )
-
-    async def scenario() -> None:
-        app = create_app(
-            engine_factory,
-            schemas,
-            packs={"native": PackInfo("Native", comfy_aliases=aliases, comfy_groups=groups)},
-            node_packs={
-                alias_target.node_type: "native",
-                group_target.node_type: "native",
-            },
-        )
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            current = await (await client.get("/api/nodes?wire=28")).json()
-            assert len(current["nodes"][advice.node_type]["replacements"]) == 2
-            assert len(current["packs"]["native"]["comfyAliases"]["records"]) == 1
-            assert len(current["packs"]["native"]["comfyGroups"]["records"]) == 1
-
-            for wire_version in range(22, 28):
-                predecessor = await (await client.get(f"/api/nodes?wire={wire_version}")).json()
-                assert "replacements" not in predecessor["nodes"][advice.node_type]
-                assert predecessor["packs"]["native"]["comfyAliases"]["records"] == []
-                assert predecessor["packs"]["native"]["comfyGroups"]["records"] == []
-                assert predecessor["packs"]["native"]["comfyAliases"]["sourceSchemas"] == []
-                assert predecessor["packs"]["native"]["comfyGroups"]["sourceSchemas"] == []
-                assert predecessor["packs"]["native"]["comfyGroups"]["groupSchemas"] == []
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
-
-
-def test_nodes_skips_model3d_source_node_below_wire25() -> None:
-    schemas = {
-        **SCHEMAS,
-        "test.load3d": NodeSchema(
-            node_type="test.load3d",
-            inputs=(
-                InputSpec(
-                    "model_file",
-                    TypeExpr.asset_of(TypeExpr.concrete("dinkster.model3d")),
-                    source_filename=SourceFilenameSpec("media/model3d", "input"),
-                    widget=AssetWidget(
-                        accept=("model/gltf-binary",),
-                        kind="media/model3d",
-                        allow_upload=True,
-                    ),
-                ),
-            ),
-        ),
-    }
-
-    def engine_factory(on_event: EventListener | None = None) -> Engine:
-        registry = TypeRegistry()
-        register_core_types(registry)
-        return Engine(
-            schemas=schemas,
-            registry=registry,
-            worker=InProcessWorker(build_node_types(NODES), registry),
-            cache=MemoryLRUCache(),
-            on_event=on_event,
-        )
-
-    async def scenario() -> None:
-        app = create_app(engine_factory, schemas)
-        client = TestClient(TestServer(app))
-        await client.start_server()
-        try:
-            current = await (await client.get("/api/nodes?wire=25")).json()
-            assert "test.load3d" in current["nodes"]
-            assert "schemaSkips" not in current
-
-            predecessor = await (await client.get("/api/nodes?wire=24")).json()
-            assert "test.load3d" not in predecessor["nodes"]
-            assert predecessor["schemaSkips"] == [
-                {
-                    "nodeType": "test.load3d",
-                    "code": "schema-wire-required",
-                    "requiredWire": 25,
-                    "reason": "media/model3d source filename requires schema wire 25",
-                }
-            ]
-        finally:
-            await client.close()
-
-    asyncio.run(scenario())
-
-
 def test_nodes_envelope_lists_mergeable_types_sorted() -> None:
     """mergeableTypes derives from the composed registry at ENVELOPE BUILD
     time, not server construction (joint contract 2026-07-26): every atom
@@ -3096,7 +2420,7 @@ def test_pack_comfy_alias_registry_is_dedicated_wire_metadata() -> None:
     pack_wire = info.to_wire()
     assert pack_wire["comfyAliases"]["format"] == "dinkster-comfy-alias/1"  # type: ignore[index]
     assert pack_wire["comfyAliases"]["records"][0]["carrier"] == "test.echo"  # type: ignore[index]
-    assert info.to_wire(schema_wire_version=27, schemas=SCHEMAS) == pack_wire
+    assert info.to_wire(schemas=SCHEMAS) == pack_wire
     assert SCHEMAS["test.echo"].replacements == ()
 
     async def scenario() -> None:
@@ -3128,7 +2452,7 @@ def test_pack_comfy_group_registry_is_dedicated_wire_metadata() -> None:
     pack_wire = info.to_wire()
     assert pack_wire["comfyGroups"]["format"] == "dinkster-comfy-group/1"  # type: ignore[index]
     assert pack_wire["comfyGroups"]["records"][0]["carrier"] == TARGET.node_type  # type: ignore[index]
-    assert info.to_wire(schema_wire_version=27, schemas=schemas) == pack_wire
+    assert info.to_wire(schemas=schemas) == pack_wire
     assert TARGET.replacements == ()
 
     app = create_app(
@@ -3951,16 +3275,10 @@ def test_pack_docs_index_marker_and_immutable_routes() -> None:
             node_packs={"test.echo": "docs-pack"},
         )
         async with TestClient(TestServer(app)) as client:
-            current = await (await client.get("/api/nodes?wire=42")).json()
-            assert current["dinkster"]["schemaWire"] == 42
+            current = await (await client.get("/api/nodes")).json()
+            assert current["dinkster"]["schemaWire"] == 1
             assert current["nodes"]["test.echo"]["hasDocs"] is True
             assert "docs" not in current["packs"]["docs-pack"]
-            predecessor = await (await client.get("/api/nodes?wire=41")).json()
-            assert "hasDocs" not in predecessor["nodes"]["test.echo"]
-            assert (
-                current["nodes"]["test.echo"]["signature"]
-                == predecessor["nodes"]["test.echo"]["signature"]
-            )
 
             listing = await (await client.get("/api/docs")).json()
             assert [item["id"] for item in listing["docs"]] == [
@@ -4100,22 +3418,14 @@ def test_pack_locale_catalog_wire_and_immutable_route() -> None:
             node_packs={"test.echo": "catalog-pack"},
         )
         async with TestClient(TestServer(app)) as client:
-            signatures: set[str] = set()
-            for wire_version in range(40, 44):
-                response = await client.get(f"/api/nodes?wire={wire_version}")
-                assert response.status == 200
-                wire = await response.json()
-                assert "locales" not in wire["packs"]["catalog-pack"]
-                signatures.add(wire["nodes"]["test.echo"]["signature"])
-            response = await client.get("/api/nodes?wire=44")
+            response = await client.get("/api/nodes")
             assert response.status == 200
             wire = await response.json()
+            assert wire["dinkster"]["schemaWire"] == 1
             assert wire["packs"]["catalog-pack"]["locales"] == {
                 "en": en_digest,
                 "pt-br": pt_digest,
             }
-            signatures.add(wire["nodes"]["test.echo"]["signature"])
-            assert len(signatures) == 1
 
             catalog = await client.get(f"/api/packs/catalog-pack/locales/{pt_digest}")
             assert catalog.status == 200

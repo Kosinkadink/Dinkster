@@ -95,7 +95,6 @@ from dinkster_protocol.pack_surfaces import (
     pack_surfaces_to_wire,
 )
 from dinkster_schema import (
-    SCHEMA_WIRE_SERVE_VERSIONS,
     ComfyAliasRegistry,
     ComfyGroupRegistry,
     Node,
@@ -1207,10 +1206,7 @@ async def serve_connection(
     hello: dict[str, object] = {
         "type": "hello",
         "pack": pack_name,
-        "schemas": {
-            t: schema_to_wire(s, wire_version=max(SCHEMA_WIRE_SERVE_VERSIONS))
-            for t, s in schemas.items()
-        },
+        "schemas": {t: schema_to_wire(s) for t, s in schemas.items()},
         "lazyStatus": True,
         # This process lifetime's identity: the same token resident codecs
         # stamp as RESOURCE_OWNER_META_KEY on the envelopes they produce, so
