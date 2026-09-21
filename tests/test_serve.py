@@ -2885,7 +2885,7 @@ def test_degraded_default_ordering_composes_media_io_before_image(
         '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
         encoding="utf-8",
     )
-    specs: list[PackSpec | Path] = [
+    specs: list[PackSpec] = [
         default_pack_spec("dinkster-nodes-foundation"),
         default_pack_spec("dinkster-nodes-image"),
         default_pack_spec("dinkster-nodes-media-io"),
@@ -2901,10 +2901,10 @@ def test_degraded_default_ordering_composes_media_io_before_image(
     async def scenario() -> None:
         # The probe's unresolvable capability makes full contract ordering
         # raise; the defaults must still compose providers before consumers.
-        serve._order_default_pack_specs(composer, specs, len(specs))
+        ordered = serve._order_default_pack_specs(composer, specs, len(specs))
         errors: dict[str, str] = {}
         deltas: dict[str, set[str]] = {}
-        for spec in specs:
+        for spec in ordered:
             pack = load_manifest(resolve_manifest_path(spec.manifest)).name
             try:
                 delta = await composer.add_pack(spec)

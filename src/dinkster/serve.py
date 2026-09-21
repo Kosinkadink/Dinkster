@@ -307,9 +307,9 @@ def _is_standard_vision_pack(spec: PackSpec) -> bool:
 
 
 def _order_default_pack_specs(
-    composer: ServingComposer, specs: list[PackSpec | Path], default_count: int
-) -> None:
-    """Put the default packs in provider-before-consumer order, in place.
+    composer: ServingComposer, specs: Sequence[PackSpec | Path | str], default_count: int
+) -> tuple[PackSpec, ...]:
+    """Return the default packs in provider-before-consumer order.
 
     Full contract resolution is authoritative when it succeeds. When it
     raises (one broken pack must not take the ordering down with it), the
@@ -319,16 +319,14 @@ def _order_default_pack_specs(
     against a dinkster-nodes-media-io that has not announced yet.
     """
     try:
-        ordered = composer.order_pack_entries(specs[:default_count])
+        return composer.order_pack_entries(specs[:default_count])
     except CompositionError as error:
         core_logger("serve").warning(
             "default pack contract ordering failed (%s); composing defaults in "
             "manifest requirement order",
             error,
         )
-        specs[:default_count] = order_pack_entries_by_requirements(specs[:default_count])
-    else:
-        specs[:default_count] = list(ordered)
+        return order_pack_entries_by_requirements(specs[:default_count])
 
 
 def detect_native_compute_dtypes(executing_cuda_indices: Sequence[int] = ()) -> frozenset[str]:
@@ -1927,7 +1925,9 @@ def main(argv: list[str] | None = None) -> None:
             cache_disk_budget=args.execution_cache_disk_budget,
             composition_mode="development" if args.watch_packs else "production",
         )
-        _order_default_pack_specs(composer, specs, resolved_default_pack_count)
+        specs[:resolved_default_pack_count] = list(
+            _order_default_pack_specs(composer, specs, resolved_default_pack_count)
+        )
         composer_ref.append(composer)
         composer.validate_specs(specs)
         if args.prepare_stale_catalogs:
