@@ -291,6 +291,230 @@ dinkster-nodes-media-io = ">=0.0.1,<1"
     "res4lyf.beta57",
 ]
 
+# BEGIN GENERATED STARTER TEMPLATES
+
+[[pack.templates]]
+id = "sd15"
+name = "Stable Diffusion 1.5"
+description = "Starter native workflow for Stable Diffusion 1.5."
+family = "dinkster.sd15"
+tags = ["starter", "family", "dinkster.sd15"]
+models = ["v1-5-pruned-emaonly-fp16.safetensors"]
+file = "src/dinkster_nodes_generation/templates/sd15.json"
+thumbnail = "src/dinkster_nodes_generation/templates/sd15.png"
+
+[[pack.templates]]
+id = "sdxl"
+name = "Stable Diffusion XL"
+description = "Starter native workflow for Stable Diffusion XL."
+family = "dinkster.sdxl"
+tags = ["starter", "family", "dinkster.sdxl"]
+models = ["sd_xl_base_1.0.safetensors"]
+file = "src/dinkster_nodes_generation/templates/sdxl.json"
+thumbnail = "src/dinkster_nodes_generation/templates/sdxl.png"
+
+[[pack.templates]]
+id = "sdxl-refiner"
+name = "Stable Diffusion XL Refiner"
+description = "Starter native workflow for Stable Diffusion XL Refiner."
+family = "dinkster.sdxl_refiner"
+tags = ["starter", "family", "dinkster.sdxl_refiner"]
+models = ["sd_xl_base_1.0.safetensors", "sd_xl_refiner_1.0.safetensors"]
+file = "src/dinkster_nodes_generation/templates/sdxl-refiner.json"
+thumbnail = "src/dinkster_nodes_generation/templates/sdxl-refiner.png"
+
+[[pack.templates]]
+id = "chroma"
+name = "Chroma"
+description = "Starter native workflow for Chroma."
+family = "dinkster.chroma"
+tags = ["starter", "family", "dinkster.chroma"]
+models = ["Chroma1-HD-fp8mixed.safetensors", "t5xxl_fp8_e4m3fn_scaled.safetensors", "ae.safetensors"]
+file = "src/dinkster_nodes_generation/templates/chroma.json"
+thumbnail = "src/dinkster_nodes_generation/templates/chroma.png"
+
+[[pack.templates]]
+id = "chroma-radiance"
+name = "Chroma Radiance"
+description = "Starter native workflow for Chroma Radiance."
+family = "dinkster.chroma_radiance"
+tags = ["starter", "family", "dinkster.chroma_radiance"]
+models = ["chroma-radiance-x0.safetensors", "t5xxl_fp8_e4m3fn_scaled.safetensors"]
+file = "src/dinkster_nodes_generation/templates/chroma-radiance.json"
+thumbnail = "src/dinkster_nodes_generation/templates/chroma-radiance.png"
+
+[[pack.templates]]
+id = "flux-dev"
+name = "Flux Dev"
+description = "Starter native workflow for Flux Dev."
+family = "dinkster.flux_dev"
+tags = ["starter", "family", "dinkster.flux_dev"]
+models = ["flux1-dev.safetensors", "t5xxl_fp16.safetensors", "ae.safetensors"]
+file = "src/dinkster_nodes_generation/templates/flux-dev.json"
+thumbnail = "src/dinkster_nodes_generation/templates/flux-dev.png"
+
+[[pack.templates]]
+id = "flux-schnell"
+name = "Flux Schnell"
+description = "Starter native workflow for Flux Schnell."
+family = "dinkster.flux_schnell"
+tags = ["starter", "family", "dinkster.flux_schnell"]
+models = ["flux1-schnell-fp8.safetensors"]
+file = "src/dinkster_nodes_generation/templates/flux-schnell.json"
+thumbnail = "src/dinkster_nodes_generation/templates/flux-schnell.png"
+
+[[pack.templates]]
+id = "flux2-dev"
+name = "Flux 2 Dev"
+description = "Starter native workflow for Flux 2 Dev."
+family = "dinkster.flux2_dev"
+tags = ["starter", "family", "dinkster.flux2_dev"]
+models = ["flux2_dev_fp8mixed.safetensors", "mistral_3_small_flux2_bf16.safetensors", "full_encoder_small_decoder.safetensors"]
+file = "src/dinkster_nodes_generation/templates/flux2-dev.json"
+thumbnail = "src/dinkster_nodes_generation/templates/flux2-dev.png"
+
+[[pack.templates]]
+id = "flux2-klein-9b"
+name = "Flux 2 Klein 9B"
+description = "Starter native workflow for Flux 2 Klein 9B."
+family = "dinkster.flux2_klein_9b"
+tags = ["starter", "family", "dinkster.flux2_klein_9b"]
+models = ["flux-2-klein-base-9b-fp8.safetensors", "qwen_3_8b_fp8mixed.safetensors", "full_encoder_small_decoder.safetensors"]
+file = "src/dinkster_nodes_generation/templates/flux2-klein-9b.json"
+thumbnail = "src/dinkster_nodes_generation/templates/flux2-klein-9b.png"
+
+[[pack.templates]]
+id = "flux2-klein-4b"
+name = "Flux 2 Klein 4B"
+description = "Starter native workflow for Flux 2 Klein 4B."
+family = "dinkster.flux2_klein_4b"
+tags = ["starter", "family", "dinkster.flux2_klein_4b"]
+models = ["flux-2-klein-base-4b.safetensors", "qwen_3_4b.safetensors", "flux2-vae.safetensors"]
+file = "src/dinkster_nodes_generation/templates/flux2-klein-4b.json"
+thumbnail = "src/dinkster_nodes_generation/templates/flux2-klein-4b.png"
+
+[[pack.templates]]
+id = "ltxv"
+name = "LTX-Video"
+description = "Starter native workflow for LTX-Video."
+family = "dinkster.ltxv"
+tags = ["starter", "family", "dinkster.ltxv"]
+models = ["ltx-video-2b-v0.9.safetensors", "t5xxl_fp16.safetensors"]
+file = "src/dinkster_nodes_generation/templates/ltxv.json"
+thumbnail = "src/dinkster_nodes_generation/templates/ltxv.png"
+
+[[pack.templates]]
+id = "ltxav"
+name = "LTX Audio/Video"
+description = "Starter native workflow for LTX Audio/Video."
+family = "dinkster.ltxav"
+tags = ["starter", "family", "dinkster.ltxav"]
+models = ["ltx-2-19b-dev-fp8.safetensors", "gemma_3_12B_it_fp4_mixed.safetensors"]
+file = "src/dinkster_nodes_generation/templates/ltxav.json"
+thumbnail = "src/dinkster_nodes_generation/templates/ltxav.png"
+
+[[pack.templates]]
+id = "z-image"
+name = "Z-Image"
+description = "Starter native workflow for Z-Image."
+family = "dinkster.z_image"
+tags = ["starter", "family", "dinkster.z_image"]
+models = ["z_image_bf16.safetensors", "qwen_3_4b.safetensors", "ae.safetensors"]
+file = "src/dinkster_nodes_generation/templates/z-image.json"
+thumbnail = "src/dinkster_nodes_generation/templates/z-image.png"
+
+[[pack.templates]]
+id = "z-image-pixel"
+name = "Z-Image Pixel Space"
+description = "Starter native workflow for Z-Image Pixel Space."
+family = "dinkster.z_image_pixel_space"
+tags = ["starter", "family", "dinkster.z_image_pixel_space"]
+models = ["zeta-chroma-base-x0-pixel-dino-distance.safetensors", "qwen_3_4b.safetensors"]
+file = "src/dinkster_nodes_generation/templates/z-image-pixel.json"
+thumbnail = "src/dinkster_nodes_generation/templates/z-image-pixel.png"
+
+[[pack.templates]]
+id = "minimax-h3"
+name = "MiniMax H3"
+description = "Starter native workflow for MiniMax H3."
+family = "dinkster.minimax_h3"
+tags = ["starter", "family", "dinkster.minimax_h3"]
+models = ["minimax_h3_fl2va_pruned_int8_convrot.safetensors", "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "minimax_h3_video_vae_fp16.safetensors", "minimax_h3_audio_vae_fp32.safetensors"]
+file = "src/dinkster_nodes_generation/templates/minimax-h3.json"
+thumbnail = "src/dinkster_nodes_generation/templates/minimax-h3.png"
+
+[[pack.templates]]
+id = "minimax-music3"
+name = "MiniMax Music 3"
+description = "Starter native workflow for MiniMax Music 3."
+family = "dinkster.minimax_music3"
+tags = ["starter", "family", "dinkster.minimax_music3"]
+models = ["minimax_music3_dit_fp16.safetensors", "minimax_music3_text_encoder_pruned_int8_convrot.safetensors", "minimax_music3_dav.safetensors"]
+file = "src/dinkster_nodes_generation/templates/minimax-music3.json"
+thumbnail = "src/dinkster_nodes_generation/templates/minimax-music3.png"
+
+[[pack.templates]]
+id = "krea2"
+name = "Krea 2"
+description = "Starter native workflow for Krea 2."
+family = "dinkster.krea2"
+tags = ["starter", "family", "dinkster.krea2"]
+models = ["krea2_turbo_fp8_scaled.safetensors", "qwen3vl_4b_fp8_scaled.safetensors", "qwen_image_vae.safetensors"]
+file = "src/dinkster_nodes_generation/templates/krea2.json"
+thumbnail = "src/dinkster_nodes_generation/templates/krea2.png"
+
+[[pack.templates]]
+id = "ideogram4"
+name = "Ideogram 4"
+description = "Starter native workflow for Ideogram 4."
+family = "dinkster.ideogram4"
+tags = ["starter", "family", "dinkster.ideogram4"]
+models = ["ideogram4_fp8_scaled.safetensors", "ideogram4_unconditional_fp8_scaled.safetensors", "qwen3vl_8b_fp8_scaled.safetensors", "flux2-vae.safetensors"]
+file = "src/dinkster_nodes_generation/templates/ideogram4.json"
+thumbnail = "src/dinkster_nodes_generation/templates/ideogram4.png"
+
+[[pack.templates]]
+id = "seedvr2"
+name = "SeedVR2"
+description = "Starter native workflow for SeedVR2."
+family = "dinkster.seedvr2"
+tags = ["starter", "family", "dinkster.seedvr2"]
+models = ["seedvr2_3b_int8_convrot.safetensors", "seedvr2_ema_vae_fp16.safetensors"]
+file = "src/dinkster_nodes_generation/templates/seedvr2.json"
+thumbnail = "src/dinkster_nodes_generation/templates/seedvr2.png"
+
+[[pack.templates]]
+id = "anima"
+name = "Anima"
+description = "Starter native workflow for Anima."
+family = "dinkster.anima"
+tags = ["starter", "family", "dinkster.anima"]
+models = ["anima-base-v1.0.safetensors", "qwen_3_06b_base.safetensors", "qwen_image_vae.safetensors"]
+file = "src/dinkster_nodes_generation/templates/anima.json"
+thumbnail = "src/dinkster_nodes_generation/templates/anima.png"
+
+[[pack.templates]]
+id = "lumina2"
+name = "Lumina Image 2.0"
+description = "Starter native workflow for Lumina Image 2.0."
+family = "dinkster.lumina2"
+tags = ["starter", "family", "dinkster.lumina2"]
+models = ["NetaYumev35_pretrained_all_in_one.safetensors"]
+file = "src/dinkster_nodes_generation/templates/lumina2.json"
+thumbnail = "src/dinkster_nodes_generation/templates/lumina2.png"
+
+[[pack.templates]]
+id = "trellis2"
+name = "TRELLIS.2 / Pixal3D"
+description = "Starter native workflow for TRELLIS.2 / Pixal3D."
+family = "dinkster.trellis2"
+tags = ["starter", "family", "dinkster.trellis2"]
+models = ["trellis_2_int8_convrot.safetensors", "dino_v3_L_naf_fp32.safetensors", "trellis_2_shape_vae_bf16.safetensors", "trellis_2_texture_vae_bf16.safetensors"]
+file = "src/dinkster_nodes_generation/templates/trellis2.json"
+thumbnail = "src/dinkster_nodes_generation/templates/trellis2.png"
+
+# END GENERATED STARTER TEMPLATES
+
 [pack.entry]
 nodes = "dinkster_nodes_generation:GENERATION_SCHEMA_NODES"
 choices = "dinkster_nodes_generation:generation_choices"

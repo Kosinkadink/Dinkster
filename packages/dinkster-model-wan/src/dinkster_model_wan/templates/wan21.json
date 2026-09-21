@@ -1,0 +1,283 @@
+{
+  "format": "dinkster-workflow",
+  "formatVersion": 1,
+  "lineage": "starter-wan21",
+  "root": "g0",
+  "graphs": {
+    "g0": {
+      "id": "g0",
+      "name": "Wan 2.1 Starter",
+      "nodes": {
+        "model": {
+          "id": "model",
+          "type": "dinkster.load_diffusion_model",
+          "values": {
+            "diffusion_model": "wan2.1_t2v_14B_fp8_scaled.safetensors"
+          }
+        },
+        "clip": {
+          "id": "clip",
+          "type": "dinkster.load_clip",
+          "values": {
+            "text_encoder": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+            "type": "wan"
+          }
+        },
+        "vae": {
+          "id": "vae",
+          "type": "dinkster.load_vae",
+          "values": {
+            "vae": "wan_2.1_vae.safetensors"
+          }
+        },
+        "positive": {
+          "id": "positive",
+          "type": "dinkster.clip_text_encode",
+          "values": {
+            "text": "a cinematic landscape, detailed lighting"
+          }
+        },
+        "negative": {
+          "id": "negative",
+          "type": "dinkster.clip_text_encode",
+          "values": {
+            "text": "blurry, low quality"
+          }
+        },
+        "latent": {
+          "id": "latent",
+          "type": "dinkster.empty_hunyuan_latent_video",
+          "values": {
+            "width": 848,
+            "height": 480,
+            "length": 25,
+            "batch_size": 1
+          }
+        },
+        "sampler": {
+          "id": "sampler",
+          "type": "dinkster.ksampler",
+          "values": {
+            "seed": 91,
+            "steps": 20,
+            "cfg": 5.0,
+            "sampler_name": "dinkster.euler",
+            "scheduler": "dinkster.simple",
+            "denoise": 1.0,
+            "conditioning_batching": "auto",
+            "max_fused_lanes": 2
+          }
+        },
+        "decode": {
+          "id": "decode",
+          "type": "dinkster.vae_decode",
+          "values": {}
+        },
+        "assemble": {
+          "id": "assemble",
+          "type": "dinkster.video.assemble",
+          "values": {
+            "fps": 24.0
+          }
+        },
+        "save": {
+          "id": "save",
+          "type": "dinkster.save_video",
+          "values": {
+            "target": {
+              "mount": "output",
+              "prefix": "wan21"
+            }
+          }
+        }
+      },
+      "links": {
+        "l1": {
+          "id": "l1",
+          "from": {
+            "node": "clip",
+            "port": "clip"
+          },
+          "to": {
+            "node": "positive",
+            "port": "clip"
+          }
+        },
+        "l2": {
+          "id": "l2",
+          "from": {
+            "node": "clip",
+            "port": "clip"
+          },
+          "to": {
+            "node": "negative",
+            "port": "clip"
+          }
+        },
+        "l3": {
+          "id": "l3",
+          "from": {
+            "node": "model",
+            "port": "model"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "model"
+          }
+        },
+        "l4": {
+          "id": "l4",
+          "from": {
+            "node": "positive",
+            "port": "conditioning"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "positive"
+          }
+        },
+        "l5": {
+          "id": "l5",
+          "from": {
+            "node": "negative",
+            "port": "conditioning"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "negative"
+          }
+        },
+        "l6": {
+          "id": "l6",
+          "from": {
+            "node": "latent",
+            "port": "latent"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "latent_image"
+          }
+        },
+        "l7": {
+          "id": "l7",
+          "from": {
+            "node": "sampler",
+            "port": "latent"
+          },
+          "to": {
+            "node": "decode",
+            "port": "samples"
+          }
+        },
+        "l8": {
+          "id": "l8",
+          "from": {
+            "node": "vae",
+            "port": "vae"
+          },
+          "to": {
+            "node": "decode",
+            "port": "vae"
+          }
+        },
+        "l9": {
+          "id": "l9",
+          "from": {
+            "node": "decode",
+            "port": "image"
+          },
+          "to": {
+            "node": "assemble",
+            "port": "images"
+          }
+        },
+        "l10": {
+          "id": "l10",
+          "from": {
+            "node": "assemble",
+            "port": "video"
+          },
+          "to": {
+            "node": "save",
+            "port": "video"
+          }
+        }
+      },
+      "nets": {},
+      "reroutes": {},
+      "nextOrdinal": 21
+    }
+  },
+  "view": {
+    "graphs": {
+      "g0": {
+        "nodes": {
+          "model": {
+            "position": {
+              "x": 40,
+              "y": 80
+            }
+          },
+          "clip": {
+            "position": {
+              "x": 40,
+              "y": 380
+            }
+          },
+          "vae": {
+            "position": {
+              "x": 40,
+              "y": 680
+            }
+          },
+          "positive": {
+            "position": {
+              "x": 380,
+              "y": 80
+            }
+          },
+          "negative": {
+            "position": {
+              "x": 380,
+              "y": 380
+            }
+          },
+          "latent": {
+            "position": {
+              "x": 380,
+              "y": 680
+            }
+          },
+          "sampler": {
+            "position": {
+              "x": 720,
+              "y": 380
+            }
+          },
+          "decode": {
+            "position": {
+              "x": 1060,
+              "y": 80
+            }
+          },
+          "assemble": {
+            "position": {
+              "x": 1400,
+              "y": 80
+            }
+          },
+          "save": {
+            "position": {
+              "x": 1740,
+              "y": 80
+            }
+          }
+        }
+      }
+    }
+  },
+  "meta": {
+    "title": "Wan 2.1 Starter",
+    "family": "dinkster.wan21"
+  }
+}

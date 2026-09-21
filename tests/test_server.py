@@ -3087,10 +3087,12 @@ def test_pack_template_endpoints() -> None:
     owns its query (q/tag/pack), pages with a cursor BOUND to that query
     (mismatch -> 400), and lists asset requirements as pack-local ids for
     clients to join against the packs table."""
-    from dinkster_server import PackTemplateAsset
+    from dinkster_server import PackIconAsset, PackTemplateAsset
 
     data = b'{"graphs": {"main": {}}}'
     digest = "sha256:" + hashlib.sha256(data).hexdigest()
+    thumbnail_data = b"thumbnail"
+    thumbnail_digest = "sha256:" + hashlib.sha256(thumbnail_data).hexdigest()
 
     async def scenario() -> None:
         app = create_app(
@@ -3106,7 +3108,14 @@ def test_pack_template_endpoints() -> None:
                             digest=digest,
                             description="Starter animation",
                             tags=("video",),
+                            family="dinkster.wan22",
+                            models=("wan.safetensors",),
                             assets=("motion-model",),
+                            thumbnail=PackIconAsset(
+                                digest=thumbnail_digest,
+                                media_type="image/png",
+                                data=thumbnail_data,
+                            ),
                             data=data,
                         ),
                         PackTemplateAsset(id="minimal", name="Minimal", digest=digest, data=data),
@@ -3145,7 +3154,10 @@ def test_pack_template_endpoints() -> None:
                     "name": "Animate",
                     "description": "Starter animation",
                     "tags": ["video"],
+                    "family": "dinkster.wan22",
+                    "models": ["wan.safetensors"],
                     "assets": ["motion-model"],
+                    "thumbnail": {"digest": thumbnail_digest, "mediaType": "image/png"},
                     "digest": digest,
                 },
                 {"pack": "ade", "id": "minimal", "name": "Minimal", "digest": digest},
@@ -3203,6 +3215,19 @@ def test_pack_template_endpoints() -> None:
             )
             assert resp.status == 304
             assert resp.headers["ETag"] == f'"{digest}"'
+
+            resp = await client.get("/api/packs/ade/templates/animate/thumbnail")
+            assert resp.status == 200
+            assert resp.headers["Content-Type"] == "image/png"
+            assert resp.headers["ETag"] == f'"{thumbnail_digest}"'
+            assert resp.headers["Cache-Control"] == ("private, max-age=31536000, immutable")
+            assert await resp.read() == thumbnail_data
+            resp = await client.get(
+                "/api/packs/ade/templates/animate/thumbnail",
+                headers={"If-None-Match": f'"{thumbnail_digest}"'},
+            )
+            assert resp.status == 304
+            assert (await client.get("/api/packs/ade/templates/minimal/thumbnail")).status == 404
 
             assert (await client.get("/api/packs/ade/templates/nope")).status == 404
             assert (await client.get("/api/packs/plain/templates/x")).status == 404
