@@ -1040,13 +1040,14 @@ def _swap_in_int8_layer(
         raise AssembleError(
             f"{component}: quantized layer {layer!r} does not exist in the constructed module"
         ) from error
+    layer_compute_dtype = bound_compute_dtype(existing) or compute_dtype
     if isinstance(existing, torch.nn.Linear):
         existing_bias = cast("torch.nn.Parameter | None", existing.bias)
         replacement: torch.nn.Module = Int8Linear(
             existing.in_features,
             existing.out_features,
             bias=existing_bias is not None,
-            compute_dtype=compute_dtype,
+            compute_dtype=layer_compute_dtype,
             convrot=resolved.convrot,
             convrot_groupsize=resolved.convrot_groupsize,
             full_precision_matmul=resolved.full_precision_matmul,
@@ -1060,7 +1061,7 @@ def _swap_in_int8_layer(
         replacement = Int8Embedding(
             existing.num_embeddings,
             existing.embedding_dim,
-            compute_dtype=compute_dtype,
+            compute_dtype=layer_compute_dtype,
             convrot=resolved.convrot,
             convrot_groupsize=resolved.convrot_groupsize,
         )
@@ -1486,11 +1487,18 @@ def _load_component(
             decoded_cache=decoded_cache,
         )
     if plan.quant:
-        # Quantized biases use the component dtype.
+        # INT8 biases use the layer's bound dtype when its constructor defines
+        # a precision island; other quantized biases use the component dtype.
         for layer in plan.quant:
             key = f"{layer}.bias"
             if key in state:
-                state[key] = state[key].to(compute_dtype)
+                owner = module.get_submodule(layer)
+                owner_dtype = (
+                    bound_compute_dtype(owner)
+                    if resolved[layer].format == "int8_tensorwise"
+                    else None
+                )
+                state[key] = state[key].to(owner_dtype or compute_dtype)
     for layer, owner in module.named_modules():
         if layer in plan.quant:
             continue
