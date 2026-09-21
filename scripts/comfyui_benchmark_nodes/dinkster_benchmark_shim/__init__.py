@@ -60,6 +60,7 @@ from pathlib import Path
 import comfy.model_management
 import comfy.utils
 import execution
+import latent_preview
 import numpy as np
 import torch
 from aiohttp import web
@@ -76,6 +77,7 @@ _PEAK_DEVICE_USED = 0
 _QUALITY_CAPTURED = False
 _QUALITY_CAPTURE_ARMED = False
 _QUALITY_CAPTURE_SEED: int | None = None
+_FIRST_STEP_CAPTURE = None
 _ALLOCATOR_WINDOW: dict[str, object] | None = None
 _ATTENTION_COUNTS = {
     "provider_attempts": 0,
@@ -92,6 +94,32 @@ _PROCESS_INSTANCE = f"{os.getpid()}:{time.time_ns()}:{_BOOT_NONCE}"
 _ATTENTION_POLICY = os.environ.get("DINKSTER_BENCHMARK_ATTENTION_POLICY", "auto")
 _QUALITY_OUTPUT_DIR = os.environ.get("DINKSTER_BENCHMARK_QUALITY_OUTPUT_DIR")
 _QUALITY_SPATIAL_STRIDE = int(os.environ.get("DINKSTER_BENCHMARK_QUALITY_SPATIAL_STRIDE", "4"))
+
+_original_prepare_callback = latent_preview.prepare_callback
+
+
+def _capture_prepare_callback(model, steps, x0_output):
+    callback = _original_prepare_callback(model, steps, x0_output)
+
+    def capture(step, denoised, current, total):
+        global _FIRST_STEP_CAPTURE
+        callback(step, denoised, current, total)
+        if (
+            step == 0
+            and _QUALITY_CAPTURE_ARMED
+            and _FIRST_STEP_CAPTURE is None
+            and _QUALITY_OUTPUT_DIR
+        ):
+            _FIRST_STEP_CAPTURE = _capture_nested_tensor(
+                current,
+                Path(_QUALITY_OUTPUT_DIR),
+                "first_step",
+            )
+
+    return capture
+
+
+latent_preview.prepare_callback = _capture_prepare_callback
 
 
 def _record_provider_call(function):
@@ -423,6 +451,8 @@ class DinksterBenchmarkSink:
                     output_dir / "sigmas.npy",
                     spatial_stride=None,
                 )
+            if _FIRST_STEP_CAPTURE is not None:
+                capture["first_step"] = _FIRST_STEP_CAPTURE
             observation["quality_capture"] = capture
             _QUALITY_CAPTURED = True
             _QUALITY_CAPTURE_ARMED = False
