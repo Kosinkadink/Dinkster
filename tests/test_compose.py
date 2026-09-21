@@ -57,6 +57,7 @@ from dinkster.compose import (
     compose_serving,
     default_pack_spec,
     default_pack_specs,
+    order_pack_entries_by_requirements,
     resolve_manifest_path,
 )
 
@@ -653,6 +654,50 @@ def test_pack_contract_resolver_orders_dependencies_and_capability_providers(
         assert [Path(spec.manifest) for spec in ordered] == [provider, consumer]
     finally:
         asyncio.run(composer.close())
+
+
+def test_requirement_ordering_survives_unresolvable_contracts(tmp_path: Path) -> None:
+    """A pack whose contracts cannot resolve must not undo the ordering of the
+    healthy packs: the consumer still composes after its declared provider."""
+    provider = write_contract_manifest(tmp_path / "provider", "provider")
+    consumer = write_contract_manifest(
+        tmp_path / "consumer", "consumer", '[pack.dependencies]\nprovider = ">=2,<3"\n'
+    )
+    broken = write_contract_manifest(
+        tmp_path / "broken",
+        "broken",
+        '[pack.requirements.capabilities]\n"missing.capability" = ">=1,<2"\n',
+    )
+    ordered = order_pack_entries_by_requirements((consumer, provider, broken))
+    assert [Path(spec.manifest).parent.name for spec in ordered] == [
+        "provider",
+        "consumer",
+        "broken",
+    ]
+
+
+def test_requirement_ordering_tolerates_cycles_unknowns_and_broken_manifests(
+    tmp_path: Path,
+) -> None:
+    first = write_contract_manifest(
+        tmp_path / "first", "first-cycle", '[pack.dependencies]\n"second-cycle" = ">=1,<2"\n'
+    )
+    second = write_contract_manifest(
+        tmp_path / "second", "second-cycle", '[pack.dependencies]\n"first-cycle" = ">=1,<2"\n'
+    )
+    ghost = write_contract_manifest(
+        tmp_path / "ghost", "ghost", '[pack.dependencies]\nunlisted-pack = ">=1,<2"\n'
+    )
+    entries = (first, second, ghost, tmp_path / "nowhere" / "dinkster-pack.toml")
+    ordered = order_pack_entries_by_requirements(entries)
+    # Unknown dependencies and unreadable manifests never refuse the set; the
+    # cycle members follow once nothing else can move, in given order.
+    assert [Path(spec.manifest).parent.name for spec in ordered] == [
+        "ghost",
+        "nowhere",
+        "first",
+        "second",
+    ]
 
 
 def test_serving_composer_registers_inference_boundary_types() -> None:
