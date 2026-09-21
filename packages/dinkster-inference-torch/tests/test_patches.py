@@ -18,7 +18,6 @@ packages/dinkster-inference-torch/tests
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 import types
 from collections.abc import Callable
@@ -445,16 +444,6 @@ def test_rounding_prefers_kitchen_kernel(
     # non-fp8 targets never touch the kernel
     stochastic_rounding(torch.randn(4, 3), torch.float16, seed=9)
     assert len(calls) == 1
-
-
-def test_training_import_defers_kitchen_backends_until_fp8_use() -> None:
-    result = subprocess.run(
-        [sys.executable, "-X", "importtime", "-c", "import dinkster_training_torch"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert "dinkster_kitchen" not in result.stderr
 
 
 def test_kitchen_probe_runs_only_on_first_fp8_use(monkeypatch: pytest.MonkeyPatch) -> None:

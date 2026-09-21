@@ -27,13 +27,13 @@ with matching PyTorch and image-library versions on the same Mac.
 | `dinkster-nodes-generation` | Announced; workflow passed | SD1.5, SDXL, and Klein native generation |
 | `dinkster-compat-comfy` | Announced; workflow passed | Translated image and model workflows |
 | `dinkster-nodes-remote` | Announced | No external provider request in this matrix |
-| `dinkster-nodes-training`, `dinkster-training-worker` | Announced | No training run in this matrix |
 | Standard vision packs | All announced | Model inference not covered by this matrix |
 
 The nine standard vision packs are BiRefNet, Depth Anything V2/V3, DETR,
 EfficientSAM, HED, RT-DETR, SAM 3.1, and upscale. Announcement validates
 composition and dependency availability, not every node's execution support.
-The server composed 17 packs and advertised 864 node types. Existing
+The recorded pre-split server composed 17 packs and advertised 864 node types;
+the two extracted training packs are omitted from the current matrix. Existing
 capability-gated CUDA tests are not evidence for MPS, and this matrix does not
 claim CUDA-only kernels, every model family, or arbitrary third-party packs.
 

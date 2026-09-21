@@ -94,6 +94,7 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "opencv-python-headless==5.0.0.93",
         "pillow==12.0.0",
         "safetensors==0.8.0",
+        "sentencepiece==0.2.1",
         "transformers==5.16.1",
         "dinkster-aimdo==0.5.5.post2",
         "$KitchenCpuWheel",
@@ -174,9 +175,7 @@ def test_powershell_setup_isolates_root_sync_and_prints_runnable_gates() -> None
         ".venv\\Scripts\\pyright.exe",
         ".venv\\Scripts\\python.exe -m pytest -q",
         ".venv-torch\\Scripts\\python.exe -m pytest -q packages\\dinkster-inference-torch\\tests",
-        ".venv-torch\\Scripts\\python.exe -m pytest -q packages\\dinkster-training-torch\\tests",
         ".venv-gpu\\Scripts\\python.exe -m pytest -q packages\\dinkster-inference-torch\\tests",
-        ".venv-gpu\\Scripts\\python.exe -m pytest -q packages\\dinkster-training-torch\\tests",
     ):
         assert command in setup
 
