@@ -54,12 +54,15 @@ The browser opens at `http://127.0.0.1:3639`. Do not expose the engine directly
 to the Internet; read [authentication](auth.md) before configuring shared
 access.
 
-For native generation, run `scripts/setup_envs.sh` on Linux or macOS, or
-`scripts/setup_envs.ps1` on Windows. The scripts create `.venv-torch` for CPU
-execution and for MPS execution on macOS Apple Silicon. On Linux and Windows
-with a detected NVIDIA GPU, they also create `.venv-gpu` for CUDA execution.
-Set `DINKSTER_EXECUTION_PYTHON` to the selected environment's Python when
-launching:
+For native generation, build the execution environments from the Dinkster
+repository root with `./scripts/setup_envs.sh`, or
+`.\scripts\setup_envs.ps1` on Windows. The scripts require `uv` and create
+`.venv-torch` for CPU execution and for MPS execution on macOS Apple Silicon.
+On Linux and Windows with a detected NVIDIA GPU, they also create `.venv-gpu`
+for CUDA execution. A `dinkster-evidence` sibling checkout is not required.
+When it is present, the scripts also install its optional `dinkster-acceptance`
+package; otherwise they print a skip notice and complete normally. Set
+`DINKSTER_EXECUTION_PYTHON` to the selected environment's Python when launching:
 
 | Platform | Execution interpreter |
 | --- | --- |
