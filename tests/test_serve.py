@@ -2356,6 +2356,58 @@ def test_unprepared_library_catalog_fails_before_api_binding(
     assert attempted
 
 
+def test_prepare_stale_catalogs_reports_each_pack_and_elapsed_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+    from dinkster.compose import PackSpec
+
+    manifests = (tmp_path / "alpha.toml", tmp_path / "beta.toml")
+    spec = PackSpec(manifests[0], require_catalog=True, group_manifests=(manifests[1],))
+    reports = iter(
+        (
+            type("Report", (), {"ok": True, "pack_name": "alpha"})(),
+            type("Report", (), {"ok": True, "pack_name": "beta"})(),
+        )
+    )
+    times = iter((10.0, 10.5, 11.7, 12.0, 14.4, 14.5))
+    monkeypatch.setattr(serve, "resolve_manifest_path", Path)
+    monkeypatch.setattr(serve, "load_manifest", lambda path: path)
+    monkeypatch.setattr(serve, "read_catalog", lambda _manifest: None)
+    monkeypatch.setattr(serve, "prepare_catalog", lambda *_args, **_kwargs: next(reports))
+    monkeypatch.setattr(serve.time, "perf_counter", lambda: next(times))
+
+    serve._prepare_stale_catalogs((spec,), venv_root=tmp_path / "venvs", accelerator="cpu")
+
+    assert capsys.readouterr().out.splitlines() == [
+        "Preparing pack catalogs (first launch): 0/2",
+        "Prepared pack catalog: alpha (1/2, 1.2s)",
+        "Prepared pack catalog: beta (2/2, 2.4s)",
+        "Prepared 2 pack catalogs in 4.5s",
+    ]
+
+
+def test_prepare_stale_catalogs_is_silent_when_catalogs_are_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+    from dinkster.compose import PackSpec
+
+    spec = PackSpec(tmp_path / "current.toml", require_catalog=True)
+    monkeypatch.setattr(serve, "resolve_manifest_path", Path)
+    monkeypatch.setattr(serve, "load_manifest", lambda path: path)
+    monkeypatch.setattr(serve, "read_catalog", lambda _manifest: object())
+    monkeypatch.setattr(
+        serve,
+        "prepare_catalog",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not prepare")),
+    )
+
+    serve._prepare_stale_catalogs((spec,), venv_root=tmp_path / "venvs", accelerator="cpu")
+
+    assert capsys.readouterr().out == ""
+
+
 def test_video_preview_pack_route_event_and_module_end_to_end(tmp_path: Path) -> None:
     import hashlib
 

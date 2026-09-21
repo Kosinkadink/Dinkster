@@ -40,7 +40,9 @@ also includes the independently installable `dinkster-collab` collaboration
 routes and `dinkster-supervisor` process supervisor. The command above starts
 the engine directly with collaboration enabled; peer-to-peer discovery is
 disabled for the local launch.
-Catalog preparation can make the first launch take longer than later launches.
+The first launch prepares pack catalogs and normally takes 25 to 35 seconds before the editor
+answers. The terminal reports each completed pack and the total preparation time. Later launches
+skip catalog preparation unless pack code has changed.
 
 Use Ctrl+C in the terminal to stop the engine. If the default port is busy,
 run `uv run dinkster --port 4640`. Use `--no-browser` on a headless machine and

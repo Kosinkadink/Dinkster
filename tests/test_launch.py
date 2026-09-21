@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import urllib.error
 from pathlib import Path
+from unittest.mock import Mock
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -85,12 +87,16 @@ def test_bare_cli_launches_one_origin_and_opens_browser(
             self.callback(*self.args)
 
     monkeypatch.setattr(launch.threading, "Thread", ImmediateThread)
+    output = Mock(wraps=builtins.print)
+    monkeypatch.setattr(builtins, "print", output)
 
     assert cli_main(["--port", "4640"]) == 0
 
     expected_url = "http://127.0.0.1:4640"
     assert browser_calls == [expected_url]
     assert f"Dinkster is available at {expected_url}" in capsys.readouterr().out
+    output.assert_any_call(f"Dinkster is available at {expected_url}", flush=True)
+    output.assert_any_call("Checking pack catalogs...", flush=True)
     args = serve_calls[0]
     assert args[args.index("--port") + 1] == "4640"
     assert args[args.index("--frontend-root") + 1] == str(bundle)
