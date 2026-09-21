@@ -6,6 +6,7 @@ import pytest
 from dinkster_inference import EngineProperties, PreviewDecoderProperties, builtin_families
 from dinkster_inference.component_catalog import default_component_registry
 from family_gate_scanner import (
+    NEW_FAMILY_PROOF_PATH,
     changed_paths_since_merge_base,
     family_literal_gates,
     unexpected_new_family_paths,
@@ -58,7 +59,9 @@ def test_new_family_proof_only_changes_registration_points() -> None:
     )
 
     shared_edit = "packages/dinkster-inference/src/dinkster_inference/runtime.py"
-    assert unexpected_new_family_paths(changed_paths | {shared_edit}) == (shared_edit,)
+    assert unexpected_new_family_paths(frozenset({NEW_FAMILY_PROOF_PATH, shared_edit})) == (
+        shared_edit,
+    )
 
 
 def test_registered_engine_properties_cover_shared_family_behavior() -> None:
