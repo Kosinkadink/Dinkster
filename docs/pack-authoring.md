@@ -427,6 +427,16 @@ Dependencies determine provider ordering but do not grant Python imports
 between pack implementations; share behavior through registered ids or a
 deliberately versioned library.
 
+The declaration and the inference entry must match in both directions.
+Composition refuses a pack when the entry registers a model family, sampler,
+or scheduler id absent from `[pack.provides.registry]`, or when a declared id
+is not registered. Print the exact table, or write it into the manifest, with:
+
+```console
+dinkster pack registry-declaration ./my-pack
+dinkster pack registry-declaration ./my-pack --write
+```
+
 Every resolved composition has one canonical digest over its mode, pack
 versions, artifact digests, and requirement-to-provider mapping. Production
 composition requires artifact-pinned packs. Raw local packs compose in

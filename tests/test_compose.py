@@ -534,11 +534,14 @@ def write_sampling_host_manifest(directory: Path) -> Path:
     return manifest
 
 
-def write_inference_extension_manifest(directory: Path, name: str) -> Path:
+def write_inference_extension_manifest(
+    directory: Path, name: str, registry_providers: str = ""
+) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     manifest = directory / "dinkster-pack.toml"
     manifest.write_text(
         f'[pack]\nname = "{name}"\nnamespaces = ["{name}"]\n\n'
+        f"{registry_providers}"
         '[pack.entry]\nnodes = "s1_sampler_empty:NODES"\n\n'
         '[pack.extension]\ninference = "unused_parent_fake:register"\n'
         'privileges = ["inference"]\n',
@@ -1228,6 +1231,49 @@ def test_graph_compiler_generation_orders_identity_and_binds_transport(
     asyncio.run(scenario())
 
 
+def test_registered_inference_provider_requires_manifest_declaration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_inference import INFERENCE_SAMPLERS_SURFACE
+
+    from dinkster.compose import PackSpec, ServingComposer
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        try:
+            await composer.add_pack(
+                PackSpec(
+                    write_sampling_host_manifest(tmp_path / "host"),
+                    trust_reserved=True,
+                )
+            )
+            worker = composer._sampling_worker(composer._topology)
+            assert worker is not None
+            sampler = KeyedContribution(
+                surface_id=INFERENCE_SAMPLERS_SURFACE,
+                id="sampler_only.proof",
+            )
+
+            async def materialize(_key: str):
+                return (("sampler_only", (sampler,)),)
+
+            monkeypatch.setattr(worker, "materialize_inference_generation", materialize)
+            manifest = write_inference_extension_manifest(tmp_path / "sampler_only", "sampler_only")
+            with pytest.raises(CompositionError) as raised:
+                await composer.add_pack(manifest)
+            assert str(raised.value) == (
+                "pack 'sampler_only' registers inference provider ids missing from "
+                "[pack.provides.registry]: dinkster.samplers:sampler_only.proof\n"
+                "Add this exact declaration:\n"
+                "[pack.provides.registry]\n"
+                '"dinkster.samplers" = ["sampler_only.proof"]'
+            )
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_noncompiler_inference_generation_has_no_compile_transport(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1261,9 +1307,12 @@ def test_noncompiler_inference_generation_has_no_compile_transport(
 
             monkeypatch.setattr(worker, "materialize_inference_generation", materialize)
             monkeypatch.setattr(worker, "compile_graph", compile_graph)
-            await composer.add_pack(
-                write_inference_extension_manifest(tmp_path / "sampler_only", "sampler_only")
+            manifest = write_inference_extension_manifest(
+                tmp_path / "sampler_only",
+                "sampler_only",
+                '[pack.provides.registry]\n"dinkster.samplers" = ["sampler_only.proof"]\n\n',
             )
+            await composer.add_pack(manifest)
             runtime = composer._runtime_seat.pin()
             assert runtime.graph_compiler_registry.contributions == ()
             assert runtime.graph_compile_transport is None
