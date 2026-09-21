@@ -114,8 +114,9 @@ def default_p2p_settings() -> dict[str, object]:
 
 def normalize_p2p_settings(value: object) -> dict[str, object]:
     registration = p2p_plugin()
-    return (
-        registration.normalize_settings(value)
-        if registration is not None
-        else _normalize_unavailable(value)
-    )
+    if registration is None:
+        return _normalize_unavailable(value)
+    try:
+        return registration.normalize_settings(value)
+    except ValueError as error:
+        raise P2PSettingsError(str(error)) from error
