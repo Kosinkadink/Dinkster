@@ -1,7 +1,7 @@
 ## Standalone native generation
 
 - The default SD 1.5 workflow runs natively without a ComfyUI checkout. For the
-  bare `dinkster` launcher, set `DINKSTER_COMFYUI_PYTHON` to the Python
+  bare `dinkster` launcher, set `DINKSTER_EXECUTION_PYTHON` to the Python
   environment containing PyTorch and the native inference packages. The graph
   uses native checkpoint, text-encode, empty-latent, sampler, decode, and
   image-save nodes.
