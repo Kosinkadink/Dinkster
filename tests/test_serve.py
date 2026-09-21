@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import builtins
 import json
 import os
 import signal
@@ -2432,6 +2433,8 @@ def test_prepare_stale_catalogs_reports_each_pack_and_elapsed_time(
     monkeypatch.setattr(serve, "read_catalog", lambda _manifest: None)
     monkeypatch.setattr(serve, "prepare_catalog", lambda *_args, **_kwargs: next(reports))
     monkeypatch.setattr(serve.time, "perf_counter", lambda: next(times))
+    output = Mock(wraps=builtins.print)
+    monkeypatch.setattr(builtins, "print", output)
 
     serve._prepare_stale_catalogs((spec,), venv_root=tmp_path / "venvs", accelerator="cpu")
 
@@ -2441,6 +2444,10 @@ def test_prepare_stale_catalogs_reports_each_pack_and_elapsed_time(
         "Prepared pack catalog: beta (2/2, 2.4s)",
         "Prepared 2 pack catalogs in 4.5s",
     ]
+    output.assert_any_call("Preparing pack catalogs (first launch): 0/2", flush=True)
+    output.assert_any_call("Prepared pack catalog: alpha (1/2, 1.2s)", flush=True)
+    output.assert_any_call("Prepared pack catalog: beta (2/2, 2.4s)", flush=True)
+    output.assert_any_call("Prepared 2 pack catalogs in 4.5s", flush=True)
 
 
 def test_prepare_stale_catalogs_is_silent_when_catalogs_are_current(
