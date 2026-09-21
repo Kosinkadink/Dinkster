@@ -1,9 +1,9 @@
 [project]
 name = "dinkster-registry"
 version = "0.0.1"
-description = "Dinkster registry model: identities, grants, releases, admission (pure, no server)"
+description = "Dinkster registry client, artifact, lockfile, and install models"
 requires-python = ">=3.12"
-dependencies = ["dinkster-schema"]
+dependencies = ["blake3>=0.4", "dinkster-schema", "packaging>=24"]
 
 [build-system]
 requires = ["hatchling"]

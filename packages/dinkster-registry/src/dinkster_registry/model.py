@@ -11,13 +11,10 @@ Identity decisions, each answering a recorded ComfyUI failure:
 
 - Pack names, publisher ids, and namespace claims share the one closed
   grammar (``dinkster_schema.names``); uniqueness is ``canonical_name``.
-- Release versions use a closed numeric ``major.minor.patch`` grammar (no
-  leading zeros). Prerelease tags and channels are a deliberate later
-  addition, never a reinterpretation.
-- Release artifacts are identified by ``sha256:<64 hex>`` - computable
-  with the stdlib everywhere, and deliberately a *different* digest space
-  from assets (``blake3:``, DESIGN 3.12) so an artifact digest can never
-  be mistaken for an asset digest or vice versa.
+- Release versions use normalized public PEP 440 forms. Local version
+  segments are excluded because they are not public release identities.
+- Release artifacts are identified by ``blake3:<64 hex>`` to match the
+  service's content-addressed artifact contract.
 - A (pack, version) release is immutable: once published, its digest can
   never change. Re-publishing identical bytes is idempotent; different
   bytes under an existing version are refused, never silently versioned
@@ -30,11 +27,13 @@ Identity decisions, each answering a recorded ComfyUI failure:
 
 from __future__ import annotations
 
-import hashlib
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Literal
+
+from blake3 import blake3
+from packaging.version import InvalidVersion
+from packaging.version import Version as PackagingVersion
 
 
 class RegistryError(Exception):
@@ -57,60 +56,65 @@ def canonical_json(payload: object) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Release versions (closed grammar, grows additively)
+# Release versions
 # ---------------------------------------------------------------------------
-
-_VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 
 def validate_version(text: str) -> str | None:
-    """The problem with ``text`` as a release version, or None."""
-    if not _VERSION_RE.fullmatch(text):
-        return (
-            "must be 'major.minor.patch' with decimal numbers and no "
-            "leading zeros (e.g. '1.0.0', '0.4.12')"
-        )
+    """The problem with ``text`` as a normalized public PEP 440 version, or None."""
+    try:
+        version = PackagingVersion(text)
+    except InvalidVersion:
+        return "must be a valid PEP 440 version"
+    if version.local is not None:
+        return "must not contain a local PEP 440 version segment"
+    if str(version) != text:
+        return f"must use normalized PEP 440 form {str(version)!r}"
     return None
 
 
-@dataclass(frozen=True, order=True)
+@dataclass(frozen=True)
 class Version:
-    """A parsed release version; ordering is (major, minor, patch)."""
+    """A normalized public PEP 440 version."""
 
-    major: int
-    minor: int
-    patch: int
+    value: PackagingVersion
 
     @classmethod
     def parse(cls, text: str) -> Version:
         problem = validate_version(text)
         if problem is not None:
             raise RegistryError(f"invalid version {text!r}: {problem}")
-        major, minor, patch = (int(part) for part in text.split("."))
-        return cls(major, minor, patch)
+        return cls(PackagingVersion(text))
 
     def __str__(self) -> str:
-        return f"{self.major}.{self.minor}.{self.patch}"
+        return str(self.value)
+
+    def __lt__(self, other: Version) -> bool:
+        return self.value < other.value
 
 
 # ---------------------------------------------------------------------------
 # Artifact digests
 # ---------------------------------------------------------------------------
 
-ARTIFACT_DIGEST_PREFIX = "sha256:"
-_ARTIFACT_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+ARTIFACT_DIGEST_PREFIX = "blake3:"
 
 
 def validate_artifact_digest(text: str) -> str | None:
     """The problem with ``text`` as a release artifact digest, or None."""
-    if not _ARTIFACT_DIGEST_RE.fullmatch(text):
-        return "must be 'sha256:<64 lowercase hex>' computed over the artifact bytes"
+    value = text.removeprefix(ARTIFACT_DIGEST_PREFIX)
+    if (
+        not text.startswith(ARTIFACT_DIGEST_PREFIX)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        return "must be 'blake3:<64 lowercase hex>' computed over the artifact bytes"
     return None
 
 
 def artifact_digest(data: bytes) -> str:
     """The canonical digest of release artifact bytes."""
-    return ARTIFACT_DIGEST_PREFIX + hashlib.sha256(data).hexdigest()
+    return ARTIFACT_DIGEST_PREFIX + blake3(data).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +241,7 @@ class Release:
     def record_digest(self) -> str:
         """Digest of the release *metadata* record (not the artifact) -
         the stable key for signed metadata and mirror verification."""
-        return ARTIFACT_DIGEST_PREFIX + hashlib.sha256(self.record_json().encode()).hexdigest()
+        return ARTIFACT_DIGEST_PREFIX + blake3(self.record_json().encode()).hexdigest()
 
 
 class ReleaseIndex:

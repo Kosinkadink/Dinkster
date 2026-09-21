@@ -38,6 +38,7 @@ import sys
 import tempfile
 import tomllib
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -158,37 +159,52 @@ def _is_registry_source(source: str) -> bool:
 def http_registry_fetcher(
     endpoint: str, *, token: str = "", timeout: float = DEFAULT_REGISTRY_TIMEOUT
 ) -> RegistryFetcher:
-    """Content-addressed artifact download from a registry endpoint:
-    ``GET <endpoint>/artifacts/<hex>.zip``. The digest is the whole
-    request - no name/version resolution happens here (that needs the
-    registry's index API), so this surface cannot be talked into a
-    nearest-version or yanked-release substitution: the caller already
-    holds the digest and ``acquire`` verifies the bytes against it.
-    http(s) only, same posture as asset fetch. ``token`` rides as a
-    bearer Authorization header when set (scoped registry tokens)."""
+    """Acquire exact bytes through the registry's download-ticket contract."""
     base = endpoint.rstrip("/")
     if not base.startswith(("http://", "https://")):
         raise InstallError(f"registry endpoint {endpoint!r} must be an http(s) URL")
 
     def fetch(entry: LockedPack) -> bytes:
-        url = f"{base}/artifacts/{_digest_hex(entry.artifact_digest)}.zip"
         headers = {"User-Agent": "dinkster-pack"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        request = urllib.request.Request(url, headers=headers)  # noqa: S310 - scheme checked above
+        ticket_url = f"{base}/v1/packs/{entry.pack}/versions/{entry.version}/download-tickets"
+        ticket_request = urllib.request.Request(ticket_url, headers=headers, method="POST")  # noqa: S310 - scheme checked above
         try:
+            with urllib.request.urlopen(ticket_request, timeout=timeout) as response:  # noqa: S310
+                ticket_raw: object = json.load(response)
+            if not isinstance(ticket_raw, dict):
+                raise ValueError("ticket is not an object")
+            ticket = cast("dict[str, object]", ticket_raw)
+            url = ticket.get("url")
+            digest = ticket.get("artifactDigest")
+            required_headers = ticket.get("requiredHeaders", {})
+            if (
+                not isinstance(url, str)
+                or digest != entry.artifact_digest
+                or not isinstance(required_headers, dict)
+                or not all(
+                    isinstance(name, str) and isinstance(value, str)
+                    for name, value in required_headers.items()
+                )
+            ):
+                raise ValueError("ticket fields do not match the locked release")
+            url = urllib.parse.urljoin(base + "/", url)
+            if not url.startswith(("http://", "https://")):
+                raise ValueError("ticket URL is not HTTP(S)")
+            request = urllib.request.Request(url, headers=cast("dict[str, str]", required_headers))  # noqa: S310 - service-issued ticket URL
             with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
                 return response.read()
-        except (OSError, urllib.error.URLError, TimeoutError) as exc:
+        except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
             raise InstallError(
-                f"registry download of {entry.pack} from {url} failed: {exc}"
+                f"registry download of {entry.pack}@{entry.version} from {base} failed: {exc}"
             ) from exc
 
     return fetch
 
 
 def _digest_hex(digest: str) -> str:
-    """Directory-safe key: the hex half of ``sha256:<hex>``."""
+    """Directory-safe key: the hex half of a prefixed digest."""
     return digest.partition(":")[2]
 
 

@@ -129,13 +129,24 @@ def test_comparison_accepts_absolute_artifact_paths_from_either_host_os(
     benchmark._compare_reports(reference, candidate)
 
 
+def test_comparison_accepts_scrubbed_local_home_artifact_path() -> None:
+    reference = _report("one-gpu", rate=90.0, memory=1_200)
+    candidate = _report("two-gpu", rate=70.0, memory=700)
+    for report in (reference, candidate):
+        cast("dict[str, object]", report["artifact"])["path"] = (
+            "<LOCAL_HOME>/models/qwen_3_06b_base.safetensors"
+        )
+
+    benchmark._compare_reports(reference, candidate)
+
+
 def test_comparison_refuses_relative_artifact_path() -> None:
     reference = _report("one-gpu", rate=90.0, memory=1_200)
     candidate = _report("two-gpu", rate=70.0, memory=700)
     for report in (reference, candidate):
         cast("dict[str, object]", report["artifact"])["path"] = "models/model.safetensors"
 
-    with pytest.raises(ValueError, match="artifact path must be absolute"):
+    with pytest.raises(ValueError, match="artifact path must be absolute or use <LOCAL_HOME>"):
         benchmark._compare_reports(reference, candidate)
 
 
