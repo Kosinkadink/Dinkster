@@ -22,6 +22,22 @@ export const frontendExtension = {
       latest = event;
       refresh();
     });
+    context.canvasLayer('dinkster-extension-contract-fixture.canvas', {
+      id: 'dinkster-extension-contract-fixture.canvas',
+      position: 'foreground',
+      draw({ context: canvas, nodes }) {
+        const proof = nodes.find((node) => node.id === 'proof');
+        globalThis.__dinksterExtensionContractCanvas = {
+          draws: (globalThis.__dinksterExtensionContractCanvas?.draws ?? 0) + 1,
+          nodes: nodes.map((node) => node.id),
+        };
+        if (!proof) return;
+        canvas.strokeStyle = '#ff4fd8';
+        canvas.lineWidth = 3;
+        canvas.setLineDash([8, 5]);
+        canvas.strokeRect(proof.x - 8, proof.y - 8, proof.width + 16, proof.height + 16);
+      },
+    });
     context.onDispose(() => { latest = undefined; });
     void context.queryRoute('extension-contract').then((value) => {
       routeMessage = value.message;

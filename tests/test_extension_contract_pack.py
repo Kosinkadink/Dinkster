@@ -95,6 +95,15 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
                 "width": "integer",
             }
             module = extension["frontend"][0]
+            assert module["contributions"] == [
+                {
+                    "event": EVENT,
+                    "id": f"{PACK_ID}.event",
+                    "kind": "eventConsumer",
+                },
+                {"id": f"{PACK_ID}.status", "kind": "hostUi"},
+                {"id": f"{PACK_ID}.canvas", "kind": "canvasLayer"},
+            ]
             async with session.get(base + module["moduleUrl"]) as response:
                 assert response.status == 200
                 assert (
