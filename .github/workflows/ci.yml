@@ -60,20 +60,28 @@ jobs:
         run: |
           set -euo pipefail
           training_socket="$SSH_AUTH_SOCK"
+          training_public="$RUNNER_TEMP/training-deploy-key.pub"
+          ssh-add -L > "$training_public"
           eval "$(ssh-agent -s)" >/dev/null
           printf '%s\n' "$IDENTITY_DEPLOY_KEY" | ssh-add - >/dev/null
+          identity_public="$RUNNER_TEMP/identity-deploy-key.pub"
+          ssh-add -L > "$identity_public"
           identity_config="$RUNNER_TEMP/private-dependencies-ssh-config"
           cat > "$identity_config" <<EOF
           Host github-training
             HostName github.com
             User git
             IdentityAgent $training_socket
+            IdentityFile $training_public
+            IdentitiesOnly yes
             HostKeyAlias github.com
             UserKnownHostsFile $RUNNER_TEMP/identity-known-hosts
           Host github-identity
             HostName github.com
             User git
             IdentityAgent $SSH_AUTH_SOCK
+            IdentityFile $identity_public
+            IdentitiesOnly yes
             HostKeyAlias github.com
             UserKnownHostsFile $RUNNER_TEMP/identity-known-hosts
           EOF
