@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 
 import pytest
 from dinkster_inference import EngineProperties, PreviewDecoderProperties, builtin_families
 from dinkster_inference.component_catalog import default_component_registry
+from family_gate_scanner import family_literal_gates
 
 ROOT = Path(__file__).resolve().parents[1]
-EXTERNAL_PROOF_FAMILY_IDS = frozenset({"test.toy-image"})
 SHARED_ENGINE_FILES = (
     "packages/dinkster-inference/src/dinkster_inference/assembly.py",
     "packages/dinkster-inference/src/dinkster_inference/component_catalog.py",
@@ -31,32 +30,20 @@ SHARED_ENGINE_FILES = (
 # native_arm.py is asserted separately by the #170 scanner test.
 
 
-def _family_literal_gates(path: Path, family_ids: frozenset[str]) -> tuple[str, ...]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    findings: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.Compare, ast.Dict, ast.IfExp, ast.Match, ast.Set)):
-            continue
-        literals = {
-            child.value
-            for child in ast.walk(node)
-            if isinstance(child, ast.Constant)
-            and isinstance(child.value, str)
-            and child.value in family_ids
-        }
-        for literal in literals:
-            findings.add(f"{path.relative_to(ROOT)}:{node.lineno}: {literal}")
-    return tuple(sorted(findings))
-
-
 def test_shared_engine_has_zero_literal_family_gates() -> None:
-    family_ids = frozenset(family.id for family in builtin_families()) | EXTERNAL_PROOF_FAMILY_IDS
     findings = tuple(
         finding
         for relative_path in SHARED_ENGINE_FILES
-        for finding in _family_literal_gates(ROOT / relative_path, family_ids)
+        for finding in family_literal_gates(ROOT / relative_path, ROOT)
     )
     assert findings == (), "literal family gates remain:\n" + "\n".join(findings)
+
+
+def test_external_proof_family_is_in_fail_closed_scanner(tmp_path: Path) -> None:
+    source = tmp_path / "shared_engine.py"
+    source.write_text('enabled = family_id == "test.toy-image"\n', encoding="utf-8")
+
+    assert family_literal_gates(source, tmp_path) == ("shared_engine.py:1: test.toy-image",)
 
 
 def test_registered_engine_properties_cover_shared_family_behavior() -> None:
