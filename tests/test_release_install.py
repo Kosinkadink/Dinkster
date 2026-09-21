@@ -109,7 +109,7 @@ def test_linux_release_install_exercises_the_pinned_registry_service() -> None:
     assert registry_checkout["with"] == {
         "clean": True,
         "repository": "Kosinkadink/dinkster-registry",
-        "ref": "689e52effdaee1933e29481a28fbb0b37bb3f97e",
+        "ref": "5d844ae53616f88756a98eb6dc3aa73fefb92622",
         "path": "registry",
         "persist-credentials": False,
     }
