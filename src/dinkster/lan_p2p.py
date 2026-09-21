@@ -38,19 +38,19 @@ from dinkster_p2p import (
     DOWNLOAD_LEASE_VERSION,
     AuthorizedGlobalLease,
     DownloadLease,
-    LanNetworkPolicy,
     P2PManagerError,
     P2PSidecarManager,
     SeedLease,
     authorized_global_leases_for_snapshots,
-    current_lan_policy,
 )
 from dinkster_server import (
     ActiveSeedMapping,
     LanMappingService,
     LanMdnsDiscovery,
+    LanNetworkPolicy,
     RunningLanMappingServer,
     discover_lan_mappings,
+    lan_interfaces,
     start_lan_mapping_server,
 )
 
@@ -373,7 +373,7 @@ class LanP2PController:
 
     async def _apply_network_state(self) -> None:
         enabled = self._enabled("downloadsEnabled") or self._enabled("seedingEnabled")
-        policy = current_lan_policy()
+        policy = LanNetworkPolicy(lan_interfaces())
         self._network_policy = policy
         if not enabled or not self._network_allowed():
             await self._stop_lan()
@@ -473,7 +473,7 @@ class LanP2PController:
             await asyncio.sleep(_MONITOR_INTERVAL_SECONDS)
 
     async def _refresh_network_policy(self) -> None:
-        policy = current_lan_policy()
+        policy = LanNetworkPolicy(lan_interfaces())
         if policy == self._network_policy:
             return
         self._network_policy = policy

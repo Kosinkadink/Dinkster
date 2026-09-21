@@ -78,7 +78,6 @@ from dinkster_memory import (
     load_budgets,
     parse_size,
 )
-from dinkster_p2p import default_p2p_settings
 from dinkster_protocol import AttentionPolicy, validate_attention_policy
 from dinkster_schema import (
     LOG_LEVEL_ENV,
@@ -106,6 +105,7 @@ from dinkster_server import (
     TrainingSessionStore,
     comfy_dtype_args,
     create_app,
+    default_p2p_settings,
     load_authenticator,
     load_settings,
     principal_for,
@@ -149,10 +149,9 @@ from .frontend import install_frontend
 from .generation_api import GenerationModel, GenerationService, add_generation_routes
 from .guess_api import add_guess_routes
 from .installer import Installer
-from .lan_p2p import LanP2PController
 from .mounts_api import MountService, add_mount_routes
 from .native_policy import NativeDispatchPolicy, NativePolicyDiagnostic
-from .p2p_api import add_p2p_routes
+from .p2p_plugin import load_p2p_plugin
 from .reload_api import add_reload_routes, apply_reload
 from .remote_reconnect import RemoteReconnectSupervisor
 from .remotes import RemotesError, RemoteSpec, load_remotes
@@ -1343,6 +1342,7 @@ def main(argv: list[str] | None = None) -> None:
             "--execution-cache-mode layered requires --execution-cache-dir "
             "when --library-root is disabled"
         )
+    p2p_plugin = load_p2p_plugin()
     try:
         persisted_settings = load_settings(settings_path) if settings_path is not None else {}
     except SettingsError as exc:
@@ -1505,6 +1505,8 @@ def main(argv: list[str] | None = None) -> None:
         configure_logging(log_level, overrides=effective_overrides)
     except ValueError as exc:
         parser.error(str(exc))
+    if p2p_plugin is None:
+        core_logger("serve").info("p2p unavailable")
     # Worker subprocesses inherit the environment; exporting the resolved
     # config here is how --log-level/--log reach pack processes.
     os.environ[LOG_LEVEL_ENV] = log_level
@@ -1929,7 +1931,7 @@ def main(argv: list[str] | None = None) -> None:
         training_sessions = None
         execution_journal = None
         resolver_indexes = None
-        p2p_manager: LanP2PController | None = None
+        p2p_manager: Any | None = None
         principal_permissions = PrincipalPermissionStore(
             Path(args.library_root) / "principals.sqlite" if args.library_root else None
         )
@@ -1970,18 +1972,20 @@ def main(argv: list[str] | None = None) -> None:
                     ).document
                 ),
             )
-            p2p_manager = LanP2PController(
-                vault=vault,
-                resolver_indexes=resolver_indexes,
-                receipts=receipts,
-                local_path_for=library.locate,
-                installation_root=Path(args.install_root) if args.install_root else None,
-            )
-            library = replace(
-                library,
-                lan_resolve=p2p_manager.resolve_sync,
-                p2p_acquired=p2p_manager.notify_acquired,
-            )
+            if p2p_plugin is not None:
+                manager = p2p_plugin.controller(
+                    vault=vault,
+                    resolver_indexes=resolver_indexes,
+                    receipts=receipts,
+                    local_path_for=library.locate,
+                    installation_root=Path(args.install_root) if args.install_root else None,
+                )
+                p2p_manager = manager
+                library = replace(
+                    library,
+                    lan_resolve=manager.resolve_sync,
+                    p2p_acquired=manager.notify_acquired,
+                )
             # Persistent execution history rides the same persistence root:
             # terminal runs land in history.sqlite with their sourceDocument
             # link back to uploaded workflow assets.
@@ -2098,14 +2102,16 @@ def main(argv: list[str] | None = None) -> None:
                     threshold=args.event_loop_stall_threshold,
                     logger=log,
                 )
-            if p2p_manager is None:
-                add_p2p_routes(app, None, runtime_settings)
-            else:
-                add_p2p_routes(
+            if p2p_plugin is not None:
+                p2p_plugin.add_routes(
                     app,
                     p2p_manager,
                     runtime_settings,
-                    grant_snapshot=lambda: p2p_manager.grant_snapshot,
+                    **(
+                        {"grant_snapshot": lambda: p2p_manager.grant_snapshot}
+                        if p2p_manager is not None
+                        else {}
+                    ),
                 )
         except BaseException:
             close_resolution_store()

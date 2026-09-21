@@ -11,13 +11,13 @@ from typing import Literal, cast
 
 from aiohttp import web
 from dinkster_memory import MemoryGovernor, parse_size
-from dinkster_p2p import P2PSettingsError, normalize_p2p_settings
 from dinkster_schema import (
     LOG_LEVEL_ENV,
     LOG_OVERRIDES_ENV,
     configure_logging,
 )
 
+from .p2p_plugin import P2PSettingsError, normalize_p2p_settings
 from .queue import JobQueue
 
 SettingsSource = Literal["cli", "persisted", "config", "default", "runtime"]
