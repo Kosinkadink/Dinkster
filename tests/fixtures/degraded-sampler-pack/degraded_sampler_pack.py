@@ -36,15 +36,15 @@ EVENT = PackEvent(
 
 def _make_solver(_options: Mapping[str, OptionValue]):
     def solve(
-        _denoiser,
+        denoiser,
         x,
-        _sigmas: Sequence[float],
-        _info: SamplerInfo,
+        sigmas: Sequence[float],
+        info: SamplerInfo,
         *,
         noise: NoiseSampler | None = None,
         on_step: StepCallback | None = None,
     ):
-        del noise, on_step
+        del denoiser, sigmas, info, noise, on_step
         return x
 
     return solve
