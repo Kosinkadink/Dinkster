@@ -30,8 +30,6 @@ dependencies = [
     "dinkster-model-ipadapter",
     "dinkster-model-triposplat",
     "dinkster-nodes-dev",
-    "dinkster-nodes-training",
-    "dinkster-training-worker",
     "dinkster-server",
     "dinkster-collab",
     "dinkster-registry",
@@ -57,7 +55,6 @@ dinkster-p2p-diagnostics = "dinkster.p2p_diagnostics:main"
 default = [
     "dinkster-supervisor",
     "dinkster-collab",
-    "dinkster-nodes-training",
 ]
 collab = ["dinkster-collab"]
 supervisor = ["dinkster-supervisor"]
@@ -107,8 +104,6 @@ dinkster-model-qwen-image = { workspace = true }
 dinkster-model-ipadapter = { workspace = true }
 dinkster-model-triposplat = { workspace = true }
 dinkster-nodes-dev = { workspace = true }
-dinkster-nodes-training = { workspace = true }
-dinkster-training-worker = { workspace = true }
 dinkster-server = { workspace = true }
 dinkster-collab = { workspace = true }
 dinkster-registry = { workspace = true }
@@ -153,7 +148,6 @@ extraPaths = ["src", "../dinkster-evidence", ".evidence-source"]
 # Torch execution packages import torch, absent from the torch-free root
 # venv; each has its own [tool.pyright] gate against .venv-torch:
 #   .venv/bin/pyright -p packages/dinkster-inference-torch
-#   .venv/bin/pyright -p packages/dinkster-training-torch
 # The vision provider package imports execution dependencies absent from the
 # root environment, so its gate also resolves against .venv-torch.
 # Hosted CI enforces every .venv-torch pyright project in the torch-cpu
@@ -161,7 +155,6 @@ extraPaths = ["src", "../dinkster-evidence", ".evidence-source"]
 exclude = [
     "packages/dinkster-inference-torch",
     "packages/dinkster-nodes-vision",
-    "packages/dinkster-training-torch",
     "packages/dinkster-model-wan/src/dinkster_model_wan/provider.py",
     "packages/dinkster-model-qwen-image/src/dinkster_model_qwen_image/provider.py",
     "packages/dinkster-model-qwen-image/tests",

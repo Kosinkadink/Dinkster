@@ -43,6 +43,16 @@ Dependencies: `dinkster-schema` only (for the closed name grammar).
 Deliberately NOT a dependency: torch, numpy, comfy. Mapping a `DType`
 to a framework dtype is the executing backend's job (stage 4+).
 
+## Training API
+
+The separately versioned training runtime consumes these package-root exports:
+`MiniMaxH3CommonComponentRole`, `MiniMaxH3ConditionerConfig`,
+`MiniMaxH3DiTRole`, `MiniMaxH3ModelAssemblyPlan`,
+`MiniMaxH3TimeEmbeddingKind`, `QWEN_IMAGE_TEXT_CONFIG`,
+`format_qwen_image_prompt`, `plan_minimax_h3_common_component`, and
+`select_qwen_image_output`. These names are supported cross-repository
+contracts; training code does not import their owning submodules.
+
 ## Modules
 
 | Module | Contracts | Replaces (ComfyUI @ b78cec87) |
