@@ -760,7 +760,6 @@ def test_serve_official_bootstrap_configuration_preserves_p2p_off_and_permission
 
     monkeypatch.setattr(serve.ResolverSubscriptionStore, "bootstrap_official", bootstrap)
     monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
-    monkeypatch.setattr(serve, "training_pack_specs", lambda _path: ())
     monkeypatch.setattr(serve.web, "run_app", fake_run_app)
     monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--library-root", str(tmp_path), *flags])
     serve.main()
@@ -1814,6 +1813,56 @@ def test_serve_resolves_legacy_pack_from_launch_directory(
     assert captured == [legacy_pack.resolve()]
 
 
+def test_comfy_root_defaults_include_compat_specs_in_ordering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import serve
+    from dinkster.compose import PackSpec
+
+    comfy_root = tmp_path / "ComfyUI"
+    comfy_root.mkdir()
+    compat = (
+        PackSpec(manifest=tmp_path / "generation"),
+        PackSpec(manifest=tmp_path / "compat"),
+    )
+    captured: list[tuple[int, int]] = []
+
+    def capture_ordering(
+        _composer: object,
+        specs: object,
+        default_count: int,
+    ) -> tuple[PackSpec, ...]:
+        entries = tuple(specs)  # type: ignore[arg-type]
+        captured.append((len(entries), default_count))
+        raise RuntimeError("captured ordering")
+
+    def run_app(awaitable: object, **_kwargs: object) -> None:
+        with pytest.raises(RuntimeError, match="captured ordering"):
+            asyncio.run(awaitable)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
+    monkeypatch.setattr(serve, "model_pack_specs", lambda: ())
+    monkeypatch.setattr(serve, "comfy_compat_specs", lambda *_args, **_kwargs: compat)
+    monkeypatch.setattr(serve, "_order_default_pack_specs", capture_ordering)
+    monkeypatch.setattr(serve.web, "run_app", run_app)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dinkster-serve",
+            "--library-root",
+            "",
+            "--comfy-root",
+            str(comfy_root),
+        ],
+    )
+
+    serve.main()
+
+    assert captured == [(2, 2)]
+
+
 @pytest.mark.parametrize("mode", [None, "auto", "on", "off"])
 def test_serve_aimdo_cli_defaults_and_reaches_compat_specs(
     mode: str | None,
@@ -2329,7 +2378,7 @@ def test_unprepared_library_catalog_fails_before_api_binding(
     from dinkster.compose import CompositionError, PackSpec
 
     manifest = write_iso_manifest(tmp_path / "unprepared")
-    training = PackSpec(manifest, require_catalog=True)
+    pack = PackSpec(manifest, require_catalog=True)
     attempted = False
 
     def run_app(awaitable: object, **_kwargs: object) -> None:
@@ -2343,12 +2392,19 @@ def test_unprepared_library_catalog_fails_before_api_binding(
 
     monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
     monkeypatch.setattr(serve, "comfy_compat_specs", lambda *_args, **_kwargs: ())
-    monkeypatch.setattr(serve, "training_pack_specs", lambda _journal: (training,))
+    monkeypatch.setattr(serve, "_resolve_pack_argument", lambda _path: pack)
     monkeypatch.setattr(serve.web, "run_app", run_app)
     monkeypatch.setattr(
         sys,
         "argv",
-        ["dinkster-serve", "--library-root", str(tmp_path), "--disable-p2p"],
+        [
+            "dinkster-serve",
+            "--library-root",
+            str(tmp_path),
+            "--disable-p2p",
+            "--pack",
+            "fixture",
+        ],
     )
 
     serve.main()
@@ -2818,15 +2874,7 @@ def test_library_startup_composes_without_pack_workers(
                     except aiohttp.ClientError:
                         pass
                     await asyncio.sleep(0.05)
-            expected = (
-                set()
-                if no_defaults
-                else {
-                    *await _default_pack_names(),
-                    "dinkster-nodes-training",
-                    "dinkster-training-worker",
-                }
-            )
+            expected = set() if no_defaults else set(await _default_pack_names())
             assert set(report["packs"]) == expected, report
             assert all(pack["state"] == "announced" for pack in report["packs"].values()), report
             output = log.read_text()
@@ -2923,6 +2971,42 @@ def test_degraded_default_ordering_composes_media_io_before_image(
         asyncio.run(scenario())
     finally:
         asyncio.run(composer.close())
+
+
+def test_degraded_default_ordering_places_generation_before_model_packs(
+    tmp_path: Path,
+) -> None:
+    from dinkster_workers import load_manifest
+
+    import dinkster.serve as serve
+    from dinkster.comfy_compose import comfy_compat_specs
+    from dinkster.compose import PackSpec, ServingComposer, default_pack_specs, model_pack_specs
+
+    broken = tmp_path / "ordering-probe"
+    broken.mkdir()
+    (broken / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-ordering-probe"\nnamespaces = ["probe"]\n'
+        "[pack.requirements.capabilities]\n"
+        '"dinkster.ordering.probe" = ">=1.0.0,<2.0.0"\n'
+        '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
+        encoding="utf-8",
+    )
+    defaults = (*default_pack_specs(), *model_pack_specs(), *comfy_compat_specs())
+    specs = (*defaults, PackSpec(manifest=broken / "dinkster-pack.toml"))
+    composer = ServingComposer()
+    try:
+        ordered = serve._order_default_pack_specs(composer, specs, len(specs))
+    finally:
+        asyncio.run(composer.close())
+
+    names = [load_manifest(Path(spec.manifest)).name for spec in ordered]
+    generation = names.index("dinkster-nodes-generation")
+    for model in (
+        "dinkster-model-qwen-image",
+        "dinkster-model-triposplat",
+        "dinkster-model-wan",
+    ):
+        assert generation < names.index(model)
 
 
 def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:

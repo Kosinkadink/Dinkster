@@ -679,6 +679,38 @@ def test_requirement_ordering_survives_unresolvable_contracts(tmp_path: Path) ->
     ]
 
 
+def test_requirement_ordering_honors_capability_providers(tmp_path: Path) -> None:
+    provider = write_contract_manifest(
+        tmp_path / "provider",
+        "provider",
+        '[pack.capabilities]\n"provider.schemas" = "2.1.0"\n',
+    )
+    incompatible = write_contract_manifest(
+        tmp_path / "incompatible",
+        "incompatible",
+        '[pack.capabilities]\n"provider.schemas" = "3.0.0"\n',
+    )
+    consumer = write_contract_manifest(
+        tmp_path / "consumer",
+        "consumer",
+        '[pack.requirements.capabilities]\n"provider.schemas" = ">=2,<3"\n',
+    )
+    broken = write_contract_manifest(
+        tmp_path / "broken",
+        "broken",
+        '[pack.requirements.capabilities]\n"missing.capability" = ">=1,<2"\n',
+    )
+
+    ordered = order_pack_entries_by_requirements((consumer, provider, incompatible, broken))
+
+    assert [Path(spec.manifest).parent.name for spec in ordered] == [
+        "provider",
+        "consumer",
+        "incompatible",
+        "broken",
+    ]
+
+
 def test_requirement_ordering_tolerates_cycles_unknowns_and_broken_manifests(
     tmp_path: Path,
 ) -> None:

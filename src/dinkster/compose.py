@@ -1974,31 +1974,51 @@ def _pack_provider_identity(manifest: PackManifest, spec: PackSpec) -> str:
 def order_pack_entries_by_requirements(
     entries: Sequence[PackSpec | Path | str],
 ) -> tuple[PackSpec, ...]:
-    """Order packs by manifest-declared pack dependencies only, never raising.
+    """Order packs by manifest-declared pack and capability dependencies.
 
     serve uses this as the degraded ordering path when full contract
-    resolution fails for the candidate set: a pack that declares a dependency
-    must still compose after the pack providing it (nodes-image after
-    nodes-media-io), so one broken pack cannot be allowed to validate a
-    consumer against a dependency that merely sorts later. Unlike
-    order_pack_entries, capability/provider/version resolution is skipped
-    entirely; unreadable manifests, unknown dependencies, and dependency
+    resolution fails for the candidate set: a consumer must still compose
+    after in-set packs that satisfy its declared pack or capability
+    requirements. Unreadable manifests, unknown requirements, and dependency
     cycles keep the entry in its given position instead of refusing the set.
     """
     specs = tuple(
         entry if isinstance(entry, PackSpec) else PackSpec(manifest=entry) for entry in entries
     )
+    manifests: list[PackManifest | None] = []
     names: list[str | None] = []
-    dependencies: list[set[str]] = []
     for spec in specs:
         try:
             manifest = load_manifest(resolve_manifest_path(spec.manifest))
         except Exception:
+            manifests.append(None)
             names.append(None)
+            continue
+        manifests.append(manifest)
+        names.append(canonical_name(manifest.name))
+    capability_providers: dict[str, list[tuple[str, str]]] = {}
+    for name, manifest in zip(names, manifests, strict=True):
+        if name is None or manifest is None:
+            continue
+        for capability in manifest.capabilities:
+            capability_providers.setdefault(canonical_name(capability.id), []).append(
+                (name, capability.version)
+            )
+    dependencies: list[set[str]] = []
+    for name, manifest in zip(names, manifests, strict=True):
+        if name is None or manifest is None:
             dependencies.append(set())
             continue
-        names.append(canonical_name(manifest.name))
-        dependencies.append({canonical_name(item.pack) for item in manifest.dependencies})
+        required = {canonical_name(item.pack) for item in manifest.dependencies}
+        for requirement in manifest.requirements.capabilities:
+            required.update(
+                provider
+                for provider, version in capability_providers.get(
+                    canonical_name(requirement.id), ()
+                )
+                if provider != name and requirement.accepts(version)
+            )
+        dependencies.append(required)
     wanted = {name for name in names if name is not None}
     ordered: list[PackSpec] = []
     emitted: set[str] = set()

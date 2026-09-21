@@ -12,17 +12,20 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tools.evidence_paths import EVIDENCE_ROOT
-
 ROOT = Path(__file__).resolve().parents[1]
 ACTION_PATH = "./.github/actions/torch-cpu-suite"
 ACTION = yaml.safe_load((ROOT / ACTION_PATH / "action.yml").read_text(encoding="utf-8"))
+PRIVATE_DEPENDENCY_ACTION_PATH = "./.github/actions/check-private-dependencies"
+PRIVATE_DEPENDENCY_ACTION = yaml.safe_load(
+    (ROOT / PRIVATE_DEPENDENCY_ACTION_PATH / "action.yml").read_text(encoding="utf-8")
+)
 WORKFLOW = yaml.safe_load(
     (ROOT / ".github/workflows/full-validation.yml").read_text(encoding="utf-8")
 )
 JOBS = WORKFLOW["jobs"]
 PR_WORKFLOW = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
 PR_JOBS = PR_WORKFLOW["jobs"]
+PRIVATE_DEPENDENCIES_AVAILABLE = "steps.private-dependencies.outputs.available == 'true'"
 MODEL_CONDITION = "inputs.run-model-tests == 'true'"
 MODEL_GROUP_ENV = "env.DINKSTER_MODEL_TEST_GROUP"
 RECEIPT_TEST = "tests/test_gen_comfy_source_parity_receipts.py"
@@ -32,7 +35,6 @@ ACCEPTANCE_CLOSURE_TEST = (
 ACCEPTANCE_SAMPLING_TEST = (
     ".evidence-source/packages/dinkster-acceptance/tests/test_acceptance_sampling.py"
 )
-TRAINING_SUITE = "packages/dinkster-training-torch/tests"
 VISION_SUITES = (
     "packages/dinkster-nodes-vision/tests/test_hed.py",
     "packages/dinkster-nodes-vision/tests/test_upscale.py",
@@ -156,6 +158,15 @@ def _condition_matches(expression: str, context: dict[str, str]) -> bool:
     return all(matches)
 
 
+def _assert_fork_runner(expression: str, trusted_labels: str) -> None:
+    assert expression.startswith("${{ fromJSON(")
+    assert "github.event_name == 'pull_request'" in expression
+    assert "github.event.pull_request.head.repo.full_name != github.repository" in expression
+    assert "inputs.simulate-fork" in expression
+    assert "'[\"ubuntu-latest\"]'" in expression
+    assert trusted_labels in expression
+
+
 def test_every_cpu_composite_caller_declares_its_model_test_allocation() -> None:
     callers = []
     for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
@@ -167,12 +178,18 @@ def test_every_cpu_composite_caller_declares_its_model_test_allocation() -> None
                 assert step["with"]["run-model-tests"] == (
                     "true" if name in {"engine-tests", "model-tests"} else "false"
                 )
-                assert job["runs-on"] == [
-                    "self-hosted",
-                    "Linux",
-                    "X64",
-                    "cpu-golden-avx2",
-                ]
+                if path.name == "ci.yml":
+                    _assert_fork_runner(
+                        job["runs-on"],
+                        '\'["self-hosted", "Linux", "X64", "cpu-golden-avx2"]\'',
+                    )
+                else:
+                    assert job["runs-on"] == [
+                        "self-hosted",
+                        "Linux",
+                        "X64",
+                        "cpu-golden-avx2",
+                    ]
     assert set(callers) == {
         ("ci.yml", "engine-tests"),
         ("full-validation.yml", "model-tests"),
@@ -181,6 +198,104 @@ def test_every_cpu_composite_caller_declares_its_model_test_allocation() -> None
     assert len(callers) == 3
     assert ACTION["inputs"]["run-model-tests"]["default"] == "false"
     assert ACTION["inputs"]["pytest-args"]["default"] == ""
+
+
+def test_fork_pull_requests_use_hosted_runners_and_record_private_jobs_not_run() -> None:
+    assert set(PR_JOBS) == {"fast", "engine-tests"}
+    _assert_fork_runner(
+        PR_JOBS["fast"]["runs-on"],
+        'vars.DINKSTER_PR_RUNNER || \'["self-hosted", "linux", "x64"]\'',
+    )
+    _assert_fork_runner(
+        PR_JOBS["engine-tests"]["runs-on"],
+        '\'["self-hosted", "Linux", "X64", "cpu-golden-avx2"]\'',
+    )
+    expected_secrets = {
+        "fast": (
+            ("DINKSTER_EVIDENCE_READ_KEY", "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}"),
+            ("DINKSTER_IDENTITY_DEPLOY_KEY", "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}"),
+        ),
+        "engine-tests": (
+            ("DINKSTER_IDENTITY_DEPLOY_KEY", "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}"),
+            ("DINKSTER_EVIDENCE_READ_KEY", "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}"),
+        ),
+    }
+    for job_name, secrets in expected_secrets.items():
+        steps = PR_JOBS[job_name]["steps"]
+        guard = steps[1]
+        assert guard == {
+            "name": "Check private dependency access",
+            "id": "private-dependencies",
+            "uses": PRIVATE_DEPENDENCY_ACTION_PATH,
+            "with": {
+                "secret-name-1": secrets[0][0],
+                "secret-value-1": secrets[0][1],
+                "secret-name-2": secrets[1][0],
+                "secret-value-2": secrets[1][1],
+                "force-not-run": "${{ inputs.simulate-fork }}",
+            },
+        }
+        assert all(step["if"] == PRIVATE_DEPENDENCIES_AVAILABLE for step in steps[2:])
+
+
+@pytest.mark.parametrize(
+    ("force_not_run", "secret_value_1", "secret_value_2", "expected_available", "summary"),
+    [
+        ("false", "first", "second", "true", ""),
+        (
+            "false",
+            "",
+            "second",
+            "false",
+            "not run: requires repository secret FIRST\n",
+        ),
+        (
+            "true",
+            "first",
+            "second",
+            "false",
+            "not run: requires repository secret FIRST\n"
+            "not run: requires repository secret SECOND\n",
+        ),
+    ],
+)
+def test_private_dependency_check_reports_each_missing_secret(
+    tmp_path: Path,
+    force_not_run: str,
+    secret_value_1: str,
+    secret_value_2: str,
+    expected_available: str,
+    summary: str,
+) -> None:
+    output = tmp_path / "output"
+    step_summary = tmp_path / "summary"
+    result = subprocess.run(
+        [
+            "bash",
+            "-e",
+            "-o",
+            "pipefail",
+            "-c",
+            PRIVATE_DEPENDENCY_ACTION["runs"]["steps"][0]["run"],
+        ],
+        env={
+            **os.environ,
+            "FORCE_NOT_RUN": force_not_run,
+            "SECRET_NAME_1": "FIRST",
+            "SECRET_VALUE_1": secret_value_1,
+            "SECRET_NAME_2": "SECOND",
+            "SECRET_VALUE_2": secret_value_2,
+            "GITHUB_OUTPUT": str(output),
+            "GITHUB_STEP_SUMMARY": str(step_summary),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert output.read_text(encoding="utf-8") == f"available={expected_available}\n"
+    actual_summary = step_summary.read_text(encoding="utf-8") if step_summary.exists() else ""
+    assert actual_summary == summary
 
 
 def test_torch_cpu_has_one_contract_guard_and_an_unconditional_suite() -> None:
@@ -291,7 +406,6 @@ def test_all_model_downloads_and_model_pytest_lanes_require_opt_in(enabled: str)
             "-m pytest" in command
             and RECEIPT_TEST not in command
             and ACCEPTANCE_CLOSURE_TEST not in command
-            and TRAINING_SUITE not in command
             and (not is_vision_execution or "env" in step)
         )
         if not (is_download or is_execution):
@@ -360,7 +474,7 @@ def test_model_lane_commands_artifact_pins_and_environments_match_reviewed_contr
     )
 
 
-def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
+def test_source_receipts_and_torch_typechecks_remain_hosted() -> None:
     retained = []
     for step in ACTION["runs"]["steps"]:
         if (
@@ -374,13 +488,11 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
     commands = [step.get("run", "").strip() for step in retained]
     projects = {
         path.parent.name
-        for path in (
-            *(ROOT / "packages").glob("*/pyproject.toml"),
-            EVIDENCE_ROOT / "packages/dinkster-acceptance/pyproject.toml",
-        )
+        for path in (ROOT / "packages").glob("*/pyproject.toml")
         if 'venv = ".venv-torch"' in path.read_text(encoding="utf-8")
     }
-    assert len(projects) == 4
+    projects.add("dinkster-acceptance")
+    assert len(projects) == 3
     assert {command for command in commands if "pyright -p" in command} == {
         (
             ".venv/bin/pyright -p .evidence-source/packages/dinkster-acceptance "
@@ -391,16 +503,6 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
         for project in projects
     }
     assert f".venv-torch/bin/python -m pytest -q {RECEIPT_TEST}" in commands
-    training_steps = [step for step in retained if TRAINING_SUITE in step.get("run", "")]
-    assert training_steps == [
-        {
-            "name": "Test training runtime",
-            "if": f"{MODEL_GROUP_ENV} == ''",
-            "shell": "bash",
-            "env": {"OMP_NUM_THREADS": "4", "MKL_NUM_THREADS": "4"},
-            "run": f".venv-torch/bin/python -m pytest -q {TRAINING_SUITE}",
-        }
-    ]
     assert {
         command
         for command in commands
@@ -417,7 +519,6 @@ def test_source_receipts_typechecks_and_training_suite_remain_hosted() -> None:
         "Verify source-generated parity receipts",
         "Test source-parity receipt generation",
         "Assert pinned CPU dispatch",
-        "Test training runtime",
     }
 
 
@@ -445,7 +546,7 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
     (checkout,) = [step for step in preparation_steps if step.get("uses") == "actions/checkout@v4"]
     assert checkout["with"] == {
         "repository": "Kosinkadink/dinkster-evidence",
-        "ref": "16d3d1dae062266232758b07cda181ca3ad881e3",
+        "ref": "29f6a9163eab4fc7b595832da2a671c9136bd81f",
         "path": ".evidence-source",
         "clean": True,
         "persist-credentials": False,
@@ -618,6 +719,16 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
 def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
     assert set(PR_JOBS) == {"fast", "engine-tests"}
     assert set(PR_WORKFLOW[True]) == {"pull_request", "workflow_dispatch"}
+    assert PR_WORKFLOW[True]["workflow_dispatch"] == {
+        "inputs": {
+            "simulate-fork": {
+                "description": "Run the fork pull-request policy without repository secrets",
+                "required": True,
+                "default": False,
+                "type": "boolean",
+            }
+        }
+    }
     assert PR_WORKFLOW["concurrency"] == {
         "group": "${{ github.workflow }}-${{ github.ref }}",
         "cancel-in-progress": True,
@@ -633,7 +744,10 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
     }
     job = PR_JOBS["fast"]
     assert job["timeout-minutes"] == 5
-    assert job["steps"][-1] == {"run": "bash scripts/ci-fast.sh"}
+    assert job["steps"][-1] == {
+        "if": PRIVATE_DEPENDENCIES_AVAILABLE,
+        "run": "bash scripts/ci-fast.sh",
+    }
     preparation = [
         step
         for step in job["steps"]
@@ -641,6 +755,7 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
     ]
     assert len(preparation) == 1
     assert preparation[0]["with"]["coverage"] == "false"
+    assert "dinkster-training" not in str(PR_WORKFLOW)
     script = (ROOT / "scripts/ci-fast.sh").read_text(encoding="utf-8")
     assert "ruff format --check ." in script
     assert "ruff check ." in script
@@ -662,7 +777,10 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
 
 def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> None:
     job = PR_JOBS["engine-tests"]
-    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "cpu-golden-avx2"]
+    _assert_fork_runner(
+        job["runs-on"],
+        '\'["self-hosted", "Linux", "X64", "cpu-golden-avx2"]\'',
+    )
     assert job["timeout-minutes"] == 30
     assert job["permissions"] == {"contents": "read"}
     assert job["strategy"] == {
@@ -695,7 +813,20 @@ def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> 
             "with": {"clean": True, "persist-credentials": False},
         },
         {
+            "name": "Check private dependency access",
+            "id": "private-dependencies",
+            "uses": PRIVATE_DEPENDENCY_ACTION_PATH,
+            "with": {
+                "secret-name-1": "DINKSTER_IDENTITY_DEPLOY_KEY",
+                "secret-value-1": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}",
+                "secret-name-2": "DINKSTER_EVIDENCE_READ_KEY",
+                "secret-value-2": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
+                "force-not-run": "${{ inputs.simulate-fork }}",
+            },
+        },
+        {
             "uses": ACTION_PATH,
+            "if": PRIVATE_DEPENDENCIES_AVAILABLE,
             "with": {
                 "identity-deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}",
                 "evidence-deploy-key": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",

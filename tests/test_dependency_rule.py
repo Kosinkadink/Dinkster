@@ -172,29 +172,6 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_nodes_vision": {"dinkster_api", "dinkster_inference_torch"},
     # Dev scaffolding is a pack like any other: the same door, nothing more.
     "dinkster_nodes_dev": {"dinkster_api"},
-    # Training nodes are thin adapters over a host-bound service protocol;
-    # the session handle and its digest grammar arrive through the door.
-    "dinkster_nodes_training": {"dinkster_api"},
-    # The optional torch trainer implements the training service against the
-    # native model runtime and the durable session store. The schema package
-    # remains torch-free; only a selected training worker imports this package.
-    "dinkster_training_torch": {
-        "dinkster_api",
-        "dinkster_inference",
-        "dinkster_inference_torch",
-        "dinkster_nodes_training",
-        "dinkster_server",
-    },
-    # The isolated executor binds a training service to those schema adapters.
-    # It owns the concrete durable store dependency and keeps it out of the
-    # schema package loaded by the server process.
-    "dinkster_training_worker": {
-        "dinkster_api",
-        "dinkster_nodes_training",
-        "dinkster_server",
-        "dinkster_training_torch",
-        "dinkster_workers",
-    },
     # The pure registry model (DESIGN M8): shares only the closed name
     # grammar with the rest of the stack. Doctor evidence arrives as the
     # report JSON, never a dinkster_workers import - the registry consumes
@@ -339,7 +316,6 @@ def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:
         "default": [
             "dinkster-supervisor",
             "dinkster-collab",
-            "dinkster-nodes-training",
         ],
         "collab": ["dinkster-collab"],
         "supervisor": ["dinkster-supervisor"],
@@ -362,7 +338,6 @@ def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:
     assert root_locked["optional-dependencies"] == {
         "default": [
             {"name": "dinkster-collab"},
-            {"name": "dinkster-nodes-training"},
             {"name": "dinkster-supervisor"},
         ],
         "collab": [{"name": "dinkster-collab"}],
