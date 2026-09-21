@@ -3,6 +3,8 @@
 These tested capabilities vary in exposure. Some have end-to-end loading and
 sampling workflows, while others are limited to training APIs, specific node
 compositions, optional workers, or compatibility boundaries described below.
+Training capabilities are delivered by the separately versioned
+[`dinkster-training`](https://github.com/Kosinkadink/dinkster-training) packages.
 
 - Experimental on-demand execution supports static, data-only nodes with scalars,
   images, masks, latents and recursive lists through a caller-supplied dispatch

@@ -1072,7 +1072,7 @@ def _cmd_archive(args: argparse.Namespace) -> None:
 
 def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
     from .comfy_compose import comfy_compat_specs
-    from .compose import default_pack_specs, training_pack_specs
+    from .compose import default_pack_specs
     from .serve import _default_pack_venv_root, _prepare_default_pack, _with_remote_config
 
     specs = (
@@ -1081,8 +1081,6 @@ def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
         else _installer(args).packs_for_serving()
     )
     default_count = len(specs)
-    if args.defaults and args.library_root:
-        specs = (*specs, *training_pack_specs(Path(args.library_root) / "training.sqlite"))
     for index, spec in enumerate(specs):
         if args.defaults and "dinkster-nodes-remote" in (spec.packs or {}):
             spec = _with_remote_config(

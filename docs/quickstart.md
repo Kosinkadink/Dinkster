@@ -35,11 +35,11 @@ uv run dinkster
 
 The editor opens at `http://127.0.0.1:3639`. Its application, API, and event
 connections all use that origin. The default pack suite includes the
-foundation, media, vision, and training nodes. The default Dinkster install
-also includes the independently installable `dinkster-collab` collaboration
-routes and `dinkster-supervisor` process supervisor. The command above starts
-the engine directly with collaboration enabled; peer-to-peer discovery is
-disabled for the local launch.
+foundation, media, and vision nodes. The default Dinkster install also includes
+the independently installable `dinkster-collab` collaboration routes and
+`dinkster-supervisor` process supervisor. The command above starts the engine
+directly with collaboration enabled; peer-to-peer discovery is disabled for
+the local launch.
 Catalog preparation can make the first launch take longer than later launches.
 
 Use Ctrl+C in the terminal to stop the engine. If the default port is busy,

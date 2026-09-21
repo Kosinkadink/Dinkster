@@ -3,6 +3,12 @@ name: ci
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      simulate-fork:
+        description: Run the fork pull-request policy without repository secrets
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -14,7 +20,7 @@ concurrency:
 jobs:
   fast:
     name: format, lint, types and unit subset
-    runs-on: ${{ fromJSON(vars.DINKSTER_PR_RUNNER || '["self-hosted", "linux", "x64"]') }}
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.simulate-fork) && '["ubuntu-latest"]' || (vars.DINKSTER_PR_RUNNER || '["self-hosted", "linux", "x64"]')) }}
     timeout-minutes: 5
     env:
       OMP_NUM_THREADS: "4"
@@ -26,22 +32,36 @@ jobs:
           clean: true
           fetch-depth: 0
           persist-credentials: false
+      - name: Check private dependency access
+        id: private-dependencies
+        uses: ./.github/actions/check-private-dependencies
+        with:
+          secret-name-1: DINKSTER_EVIDENCE_READ_KEY
+          secret-value-1: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
+          secret-name-2: DINKSTER_IDENTITY_DEPLOY_KEY
+          secret-value-2: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          force-not-run: ${{ inputs.simulate-fork }}
       - uses: ./.github/actions/prepare-validation-inputs
+        if: steps.private-dependencies.outputs.available == 'true'
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           coverage: "false"
       - uses: ./.github/actions/configure-dinkster-identity
+        if: steps.private-dependencies.outputs.available == 'true'
         with:
           deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
       - uses: astral-sh/setup-uv@v5
+        if: steps.private-dependencies.outputs.available == 'true'
         with:
           python-version: "3.12"
-      - run: uv sync --locked --all-packages
-      - run: bash scripts/ci-fast.sh
+      - if: steps.private-dependencies.outputs.available == 'true'
+        run: uv sync --locked --all-packages
+      - if: steps.private-dependencies.outputs.available == 'true'
+        run: bash scripts/ci-fast.sh
 
   engine-tests:
     name: engine tests (${{ matrix.name }})
-    runs-on: [self-hosted, Linux, X64, cpu-golden-avx2]
+    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.simulate-fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64", "cpu-golden-avx2"]') }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -78,7 +98,17 @@ jobs:
         with:
           clean: true
           persist-credentials: false
+      - name: Check private dependency access
+        id: private-dependencies
+        uses: ./.github/actions/check-private-dependencies
+        with:
+          secret-name-1: DINKSTER_IDENTITY_DEPLOY_KEY
+          secret-value-1: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
+          secret-name-2: DINKSTER_EVIDENCE_READ_KEY
+          secret-value-2: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
+          force-not-run: ${{ inputs.simulate-fork }}
       - uses: ./.github/actions/torch-cpu-suite
+        if: steps.private-dependencies.outputs.available == 'true'
         with:
           identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}

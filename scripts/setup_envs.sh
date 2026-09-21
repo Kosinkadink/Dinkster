@@ -73,7 +73,7 @@ fi
 uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "scipy>=1.11" \
     "simpleeval==1.0.3" \
     "onnxruntime==1.29.0" "opencv-python-headless==5.0.0.93" "pillow==12.0.0" \
-    "safetensors==0.8.0" "transformers==5.16.1" \
+    "safetensors==0.8.0" "sentencepiece==0.2.1" "transformers==5.16.1" \
     -e packages/dinkster-api \
     -e packages/dinkster-schema \
     -e packages/dinkster-values \
@@ -93,8 +93,7 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     -e packages/dinkster-model-qwen-image \
     -e packages/dinkster-model-triposplat \
     -e packages/dinkster-nodes-vision \
-    -e packages/dinkster-workers \
-    -e 'packages/dinkster-training-torch[torch]'
+    -e packages/dinkster-workers
 uv pip install --python .venv-torch/bin/python --no-deps --no-sources \
     -e "$evidence_root/packages/dinkster-acceptance"
 
@@ -189,8 +188,7 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         -e packages/dinkster-compat-comfy \
         -e packages/dinkster-model-ipadapter \
         -e packages/dinkster-model-triposplat \
-        -e packages/dinkster-model-wan \
-        -e 'packages/dinkster-training-torch[torch]'
+        -e packages/dinkster-model-wan
     uv pip install --python .venv-gpu/bin/python --no-deps --no-sources \
         -e "$evidence_root/packages/dinkster-acceptance"
 
@@ -214,8 +212,6 @@ echo "  .venv/bin/python -m pytest -q"
 echo "  .venv/bin/pyright -p packages/dinkster-inference-torch"
 echo '  CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \'
 echo "    .venv-torch/bin/python -m pytest -q packages/dinkster-inference-torch/tests"
-echo "  .venv/bin/pyright -p packages/dinkster-training-torch"
-echo "  .venv-torch/bin/python -m pytest -q packages/dinkster-training-torch/tests"
 echo "  .venv/bin/pyright -p packages/dinkster-nodes-vision"
 echo "  .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests"
 echo "GPU machines additionally:"
