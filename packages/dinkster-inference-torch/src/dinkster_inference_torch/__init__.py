@@ -503,6 +503,13 @@ if _TYPE_CHECKING:
         MiniMaxH3VisionValue,
         realize_minimax_h3_conditioner_inputs,
     )
+    from .minimax_h3_dit import (
+        MiniMaxH3DiTConditioning,
+        MiniMaxH3KeyframeLatent,
+        MiniMaxH3ReferenceKind,
+        MiniMaxH3ReferenceLatents,
+        assemble_minimax_h3_dit,
+    )
     from .minimax_h3_runtime import (
         MiniMaxH3AudioVaeRuntime,
         MiniMaxH3ConditionerRuntime,
@@ -569,6 +576,7 @@ if _TYPE_CHECKING:
         InitlessOperations,
         Operations,
         ResidencyRouted,
+        bind_fp8_matmul_layer,
         materialized_conv2d_parameters,
     )
     from .ops import DeferredPatch, PreparedPatchSource, WeightFunction, cast_weight
@@ -683,7 +691,11 @@ if _TYPE_CHECKING:
         materialize_qwen_image_conditioning,
         qwen_image_conditioning_to_carrier,
     )
-    from .qwen_image_text import resize_qwen_image_content
+    from .qwen_image_text import (
+        QwenImageLanguageModel,
+        QwenImageTextModel,
+        resize_qwen_image_content,
+    )
     from .qwen_layer_placement import (
         QwenLayerPlacement,
         QwenLayerRange,
@@ -758,6 +770,7 @@ if _TYPE_CHECKING:
         normal_schedule,
         sd_turbo_sigmas,
         sgm_uniform_schedule,
+        simple_schedule,
         torch_scheduler_registry,
     )
     from .sd_denoise import (
@@ -920,6 +933,7 @@ if _TYPE_CHECKING:
         Umt5TokenizerError,
     )
     from .unet import (
+        AttentionGuidanceContext,
         BasicTransformerBlock,
         CrossAttention,
         FeedForward,
@@ -936,6 +950,7 @@ if _TYPE_CHECKING:
         load_wan21_component,
     )
     from .wan21_humo import Wan21HumoModel
+    from .wan21_model import Wan21Model, WanAttentionBlock
     from .wan21_multitalk import (
         Wan21MultiTalk,
         Wan21MultiTalkBindingError,
@@ -968,8 +983,10 @@ if _TYPE_CHECKING:
         wan21_uni3c_resource_digest,
         wan21_uni3c_tensor_digest,
     )
+    from .wan21_vae import WanVAE, WanVAEConfig
     from .wan22_dancer import Wan22DancerModel
     from .wan22_s2v import Wan22S2VModel
+    from .wan22_vae import Wan22VAE
     from .wan_ati import WanAtiError, patch_wan_ati_motion, prepare_wan_ati_tracks
     from .wav2vec2 import Wav2Vec2Model
     from .wav2vec2_component import LoadedWav2Vec2, load_wav2vec2_component
@@ -1444,6 +1461,11 @@ _EXPORTS: dict[str, tuple[str, str | None]] = {
         "minimax_h3_conditioning",
         "realize_minimax_h3_conditioner_inputs",
     ),
+    "MiniMaxH3DiTConditioning": ("minimax_h3_dit", "MiniMaxH3DiTConditioning"),
+    "MiniMaxH3KeyframeLatent": ("minimax_h3_dit", "MiniMaxH3KeyframeLatent"),
+    "MiniMaxH3ReferenceKind": ("minimax_h3_dit", "MiniMaxH3ReferenceKind"),
+    "MiniMaxH3ReferenceLatents": ("minimax_h3_dit", "MiniMaxH3ReferenceLatents"),
+    "assemble_minimax_h3_dit": ("minimax_h3_dit", "assemble_minimax_h3_dit"),
     "MiniMaxH3AudioVaeRuntime": ("minimax_h3_runtime", "MiniMaxH3AudioVaeRuntime"),
     "MiniMaxH3ConditionerRuntime": ("minimax_h3_runtime", "MiniMaxH3ConditionerRuntime"),
     "MiniMaxH3DiTRuntime": ("minimax_h3_runtime", "MiniMaxH3DiTRuntime"),
@@ -1511,6 +1533,7 @@ _EXPORTS: dict[str, tuple[str, str | None]] = {
     "InitlessOperations": ("operations", "InitlessOperations"),
     "Operations": ("operations", "Operations"),
     "ResidencyRouted": ("operations", "ResidencyRouted"),
+    "bind_fp8_matmul_layer": ("operations", "bind_fp8_matmul_layer"),
     "materialized_conv2d_parameters": ("operations", "materialized_conv2d_parameters"),
     "DeferredPatch": ("ops", "DeferredPatch"),
     "PreparedPatchSource": ("ops", "PreparedPatchSource"),
@@ -1640,6 +1663,8 @@ _EXPORTS: dict[str, tuple[str, str | None]] = {
         "qwen_image_runtime",
         "qwen_image_conditioning_to_carrier",
     ),
+    "QwenImageLanguageModel": ("qwen_image_text", "QwenImageLanguageModel"),
+    "QwenImageTextModel": ("qwen_image_text", "QwenImageTextModel"),
     "resize_qwen_image_content": ("qwen_image_text", "resize_qwen_image_content"),
     "QwenLayerPlacement": ("qwen_layer_placement", "QwenLayerPlacement"),
     "QwenLayerRange": ("qwen_layer_placement", "QwenLayerRange"),
@@ -1705,6 +1730,7 @@ _EXPORTS: dict[str, tuple[str, str | None]] = {
     "normal_schedule": ("schedules", "normal_schedule"),
     "sd_turbo_sigmas": ("schedules", "sd_turbo_sigmas"),
     "sgm_uniform_schedule": ("schedules", "sgm_uniform_schedule"),
+    "simple_schedule": ("schedules", "simple_schedule"),
     "torch_scheduler_registry": ("schedules", "torch_scheduler_registry"),
     "CROSS_ATTN_REPEAT_LIMIT": ("sd_denoise", "CROSS_ATTN_REPEAT_LIMIT"),
     "SDXL_ADM_DEFAULT_SIZE": ("sd_denoise", "SDXL_ADM_DEFAULT_SIZE"),
@@ -1867,6 +1893,7 @@ _EXPORTS: dict[str, tuple[str, str | None]] = {
     "UMT5_SENTENCEPIECE_VOCAB_SIZE": ("umt5_tokenizer", "UMT5_SENTENCEPIECE_VOCAB_SIZE"),
     "Umt5SentencePieceTokenizer": ("umt5_tokenizer", "Umt5SentencePieceTokenizer"),
     "Umt5TokenizerError": ("umt5_tokenizer", "Umt5TokenizerError"),
+    "AttentionGuidanceContext": ("unet", "AttentionGuidanceContext"),
     "BasicTransformerBlock": ("unet", "BasicTransformerBlock"),
     "CrossAttention": ("unet", "CrossAttention"),
     "FeedForward": ("unet", "FeedForward"),
@@ -1880,6 +1907,8 @@ _EXPORTS: dict[str, tuple[str, str | None]] = {
     "Wan21TextRuntime": ("wan21_component", "Wan21TextRuntime"),
     "load_wan21_component": ("wan21_component", "load_wan21_component"),
     "Wan21HumoModel": ("wan21_humo", "Wan21HumoModel"),
+    "Wan21Model": ("wan21_model", "Wan21Model"),
+    "WanAttentionBlock": ("wan21_model", "WanAttentionBlock"),
     "Wan21MultiTalk": ("wan21_multitalk", "Wan21MultiTalk"),
     "Wan21MultiTalkBindingError": ("wan21_multitalk", "Wan21MultiTalkBindingError"),
     "Wan21MultiTalkExecution": ("wan21_multitalk", "Wan21MultiTalkExecution"),
@@ -1906,8 +1935,11 @@ _EXPORTS: dict[str, tuple[str, str | None]] = {
     "validate_wan21_uni3c_resource": ("wan21_uni3c", "validate_wan21_uni3c_resource"),
     "wan21_uni3c_resource_digest": ("wan21_uni3c", "wan21_uni3c_resource_digest"),
     "wan21_uni3c_tensor_digest": ("wan21_uni3c", "wan21_uni3c_tensor_digest"),
+    "WanVAE": ("wan21_vae", "WanVAE"),
+    "WanVAEConfig": ("wan21_vae", "WanVAEConfig"),
     "Wan22DancerModel": ("wan22_dancer", "Wan22DancerModel"),
     "Wan22S2VModel": ("wan22_s2v", "Wan22S2VModel"),
+    "Wan22VAE": ("wan22_vae", "Wan22VAE"),
     "WanAtiError": ("wan_ati", "WanAtiError"),
     "patch_wan_ati_motion": ("wan_ati", "patch_wan_ati_motion"),
     "prepare_wan_ati_tracks": ("wan_ati", "prepare_wan_ati_tracks"),
@@ -2192,6 +2224,7 @@ __all__ = [
     "AttentionStatus",
     "AttentionTensorLease",
     "AttentionValidationError",
+    "AttentionGuidanceContext",
     "BUILTIN_SDPA_PROVIDER",
     "COMFY_KITCHEN_INT8_PROVIDER",
     "SAGE2_PROVIDER",
@@ -2502,8 +2535,10 @@ __all__ = [
     "QwenImageFunControlNet",
     "QwenImageInstantXControlNet",
     "QwenImageLastLayer",
+    "QwenImageLanguageModel",
     "QwenImageLoadedComponent",
     "QwenImageRuntime",
+    "QwenImageTextModel",
     "QwenImageTextRuntime",
     "QwenImageTimestepEmbeddings",
     "QwenImageTransformerBlock",
@@ -2535,6 +2570,7 @@ __all__ = [
     "ResidencyMechanism",
     "ResidencyMechanismFactory",
     "ResidencyRouted",
+    "bind_fp8_matmul_layer",
     "ResidencyUnit",
     "ResidentWeights",
     "ResnetBlock",
@@ -2618,6 +2654,7 @@ __all__ = [
     "Wan21DiffusionRuntime",
     "Wan21CausalModel",
     "Wan21HumoModel",
+    "Wan21Model",
     "Wan21InfiniteTalkExecution",
     "Wan21LoadedComponent",
     "Wan21Runtime",
@@ -2629,8 +2666,12 @@ __all__ = [
     "Wan21Uni3C",
     "Wan21Uni3CBindingError",
     "Wan21Uni3CExecution",
+    "WanAttentionBlock",
+    "WanVAE",
+    "WanVAEConfig",
     "Wan22DancerModel",
     "Wan22S2VModel",
+    "Wan22VAE",
     "Wav2Vec2Model",
     "LoadedWav2Vec2",
     "WhisperLargeV3Model",
@@ -2651,6 +2692,7 @@ __all__ = [
     "assemble_sd15_controlnet",
     "assemble_sd15_ipadapter",
     "assemble_sd15_t2i_adapter",
+    "assemble_minimax_h3_dit",
     "assemble_sdxl_control_lora",
     "assemble_sdxl_controlnet",
     "assemble_sdxl_controlnet_union",
@@ -2875,6 +2917,7 @@ __all__ = [
     "discrete_percent_to_sigma",
     "set_simple_vram_headroom",
     "sgm_uniform_schedule",
+    "simple_schedule",
     "sd_grouped_region_evaluator",
     "sd_region_evaluator",
     "sd_turbo_sigmas",
@@ -2911,11 +2954,15 @@ __all__ = [
     "MiniMaxH3AudioVAE",
     "MiniMaxH3AttentionKernelFactory",
     "MiniMaxH3ConditionerRuntime",
+    "MiniMaxH3DiTConditioning",
     "MiniMaxH3DiTRuntime",
+    "MiniMaxH3KeyframeLatent",
     "MiniMaxH3PackedSequenceFacts",
     "MiniMaxH3SequenceGather",
     "MiniMaxH3SequenceSharding",
     "MiniMaxH3PreparedConditioning",
+    "MiniMaxH3ReferenceKind",
+    "MiniMaxH3ReferenceLatents",
     "MiniMaxH3RuntimeError",
     "MiniMaxH3VideoVaeRuntime",
     "add_minimax_h3_motion_context",

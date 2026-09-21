@@ -514,13 +514,10 @@ def test_temporary_image_features_release_after_language_failure() -> None:
     assert model.active_image_features is None
 
 
-def test_source_remains_direct_import_only() -> None:
+def test_training_models_are_public_but_vision_stays_direct_import_only() -> None:
     import dinkster_inference_torch
 
-    for name in (
-        "QwenImageLanguageModel",
-        "QwenImageTextModel",
-        "QwenImageVisionTransformer",
-    ):
-        assert not hasattr(dinkster_inference_torch, name)
+    assert dinkster_inference_torch.QwenImageLanguageModel is QwenImageLanguageModel
+    assert dinkster_inference_torch.QwenImageTextModel is QwenImageTextModel
+    assert not hasattr(dinkster_inference_torch, "QwenImageVisionTransformer")
     assert QWEN_IMAGE_TEXT_CONFIG.hidden_size == 3584

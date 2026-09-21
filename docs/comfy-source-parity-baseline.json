@@ -9,11 +9,6 @@
       "disposition": "development-only-no-comfy-execution-counterpart",
       "package": "dinkster-nodes-dev",
       "reason": "Dinkster-only development scaffolding and conformance nodes have no ComfyUI execution counterpart; parity is not claimed."
-    },
-    {
-      "disposition": "schema-only-no-comfy-execution-counterpart",
-      "package": "dinkster-nodes-training",
-      "reason": "The manifest-declared training session nodes are schema-only and have no ComfyUI execution counterpart; parity is not claimed."
     }
   ],
   "format": "dinkster-comfy-source-parity-baseline/1",
