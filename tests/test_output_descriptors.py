@@ -75,11 +75,9 @@ def test_wire_and_effective_interface_roundtrip() -> None:
     assert schema_from_wire(schema_to_wire(effective)) == effective
     assert effective.is_static
     assert schema_signature(schema)
-    with pytest.raises(ValueError, match="39"):
-        schema_to_wire(schema, wire_version=38)
     old = schema_to_wire(schema)
-    old["schemaVersion"] = 38
-    with pytest.raises(ValueError, match="39"):
+    old["schemaVersion"] = 2
+    with pytest.raises(ValueError, match="unsupported schemaVersion"):
         schema_from_wire(old)
 
 
@@ -348,7 +346,7 @@ def test_persisted_descriptors_start_only_on_execution(tmp_path: Path, in_proces
             composition = composer.composition
             app = create_app(composition.make_engine, composition.schemas)
             async with TestClient(TestServer(app)) as client:
-                response = await client.get("/api/nodes?wire=39")
+                response = await client.get("/api/nodes")
                 assert response.status == 200
                 assert '"outputDescriptors"' in await response.text()
                 assert worker.cold and not worker.alive

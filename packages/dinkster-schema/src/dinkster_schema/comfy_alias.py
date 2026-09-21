@@ -22,7 +22,6 @@ from .replace import (
 )
 from .wire import (
     SCHEMA_WIRE_VERSION,
-    replacement_requires_schema_wire_28,
     schema_from_wire,
     schema_to_wire,
 )
@@ -147,13 +146,15 @@ class ComfyAliasRecord:
 
 @dataclass(frozen=True)
 class ComfyAliasSourceSchema:
-    """One import-only source schema and the wire version it was declared with."""
+    """One import-only source schema."""
 
     schema: NodeSchema
     wire_version: int
 
     def __post_init__(self) -> None:
-        wire = schema_to_wire(self.schema, wire_version=self.wire_version)
+        if self.wire_version != SCHEMA_WIRE_VERSION:
+            raise ValueError(f"unsupported schemaVersion: {self.wire_version!r}")
+        wire = schema_to_wire(self.schema)
         try:
             decoded = schema_from_wire(cast("dict[str, Any]", wire))
         except ValueError as exc:
@@ -320,10 +321,7 @@ def comfy_alias_registry_from_wire(value: object) -> ComfyAliasRegistry:
         schema_wire = _expect_object(item, where)
         try:
             schema = schema_from_wire(schema_wire)
-            canonical = schema_to_wire(
-                schema,
-                wire_version=cast("int", schema_wire.get("schemaVersion")),
-            )
+            canonical = schema_to_wire(schema)
         except (AttributeError, KeyError, OverflowError, TypeError, ValueError) as exc:
             raise ValueError(f"{where} is invalid: {exc}") from None
         if canonical != schema_wire:
@@ -398,22 +396,14 @@ def _record_to_wire(record: ComfyAliasRecord) -> dict[str, object]:
 def comfy_alias_registry_to_wire(
     registry: ComfyAliasRegistry,
     *,
-    wire_version: int = SCHEMA_WIRE_VERSION,
     schemas: Mapping[str, NodeSchema] | None = None,
 ) -> dict[str, object]:
     records = registry.records
-    if wire_version < 28:
-        records = tuple(
-            record
-            for record in records
-            if (carrier := schemas.get(record.carrier) if schemas is not None else None) is not None
-            and not replacement_requires_schema_wire_28(carrier, record.replacement, schemas)
-        )
     used_source_types = frozenset(record.source.node_type for record in records)
     return {
         "format": registry.format,
         "sourceSchemas": [
-            schema_to_wire(snapshot.schema, wire_version=snapshot.wire_version)
+            schema_to_wire(snapshot.schema)
             for snapshot in registry.source_schemas
             if snapshot.schema.node_type in used_source_types
         ],

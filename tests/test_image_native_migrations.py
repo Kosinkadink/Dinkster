@@ -26,9 +26,9 @@ from dinkster_schema import (
     validate_replacement_references,
 )
 
-# Generated from commit 681f529b5eb80554d28ef836016bf78a7c4654f3 at schema wire 26.
-FIXTURE = Path(__file__).parent / "fixtures" / "image_native_v1_wire26.json.zlib.b85"
-FIXTURE_SHA256 = "5cec48d215446308d1ae6c857e1cd87edff9de7fbd218a2dad403fe5bfcda52f"
+# Generated from commit 681f529b5eb80554d28ef836016bf78a7c4654f3.
+FIXTURE = Path(__file__).parent / "fixtures" / "image_native_v1.json.zlib.b85"
+FIXTURE_SHA256 = "e3e479c3a71c03a827a78326bf8f2388f4513249d706fa2698fac5d1ed8db5f6"
 
 CASE_COUNTS = {
     "dinkster.image.resize": 101,
@@ -344,7 +344,7 @@ def _predicates(predicate: ReplacementPredicate, kind: str) -> tuple[Replacement
 
 def test_frozen_v1_fixture_is_exact_and_test_only() -> None:
     raw = _fixture_bytes()
-    assert len(raw) == 100_314
+    assert len(raw) == 100_295
     assert hashlib.sha256(raw).hexdigest() == FIXTURE_SHA256
 
     old = _v1_schemas()
