@@ -15,10 +15,15 @@ from scripts.build_release import build_source_archive, release_version, workspa
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_release_workflow_is_tag_only_and_publishes_after_platform_installs() -> None:
+def test_release_workflow_validates_tag_before_building_and_publishing() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     assert workflow[True] == {"push": {"tags": ["v*.*.*"]}}
-    assert set(workflow["jobs"]) == {"build", "install", "release"}
+    assert set(workflow["jobs"]) == {"validation", "build", "install", "release"}
+    assert workflow["jobs"]["validation"] == {
+        "uses": "./.github/workflows/full-validation.yml",
+        "secrets": "inherit",
+    }
+    assert workflow["jobs"]["build"]["needs"] == "validation"
     assert workflow["jobs"]["install"]["needs"] == "build"
     assert workflow["jobs"]["release"]["needs"] == "install"
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
