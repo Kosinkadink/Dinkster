@@ -117,7 +117,10 @@ def _widget_descriptor_to_wire(
     widget: WidgetDescriptor, wire_version: int
 ) -> dict[str, object] | None:
     if isinstance(widget, CustomWidgetDescriptor):
-        return {"type": widget.widget_type, **dict(widget.params)}
+        return {
+            "type": widget.widget_type,
+            **{key: _json_value_to_wire(value) for key, value in widget.params.items()},
+        }
     if isinstance(widget, AssetWidget):
         asset_wire: dict[str, object] = {"type": "ASSET", "accept": list(widget.accept)}
         if widget.kind:
@@ -238,6 +241,14 @@ def _widget_descriptor_to_wire(
             wire["suffix"] = remaining.suffix
         return wire
     raise TypeError(f"unsupported widget descriptor {widget!r}")
+
+
+def _json_value_to_wire(value: JsonValue) -> object:
+    if isinstance(value, Mapping):
+        return {key: _json_value_to_wire(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_value_to_wire(item) for item in value]
+    return value
 
 
 def _widget_to_wire(widget: Widget, wire_version: int) -> dict[str, object] | None:
@@ -964,6 +975,8 @@ def schema_to_wire(
         "idempotent": schema.idempotent,
         "interface": interface,
     }
+    if schema.editor_role is not None:
+        wire["editorRole"] = schema.editor_role
     if schema.slot_choices:
         wire["slotChoices"] = [[slot_id, key] for slot_id, key in schema.slot_choices]
     if schema.occupies:
@@ -1166,6 +1179,7 @@ def schema_signature(schema: NodeSchema) -> str:
     wire.pop("widgetGroups", None)
     wire.pop("mirror", None)
     wire.pop("displayName", None)
+    wire.pop("editorRole", None)
     wire.pop("category", None)
     wire.pop("description", None)
 
@@ -1658,6 +1672,9 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         display_name=_expect_str(wire.get("displayName", ""), "displayName"),
         category=_expect_str(wire.get("category", ""), "category"),
         description=_expect_str(wire.get("description", ""), "description"),
+        editor_role=(
+            _expect_str(wire["editorRole"], "editorRole") if "editorRole" in wire else None
+        ),
         inputs=tuple(inputs),
         outputs=tuple(outputs),
         input_families=tuple(input_families),
