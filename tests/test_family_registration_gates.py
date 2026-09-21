@@ -236,8 +236,9 @@ def test_new_family_proof_only_changes_registration_points() -> None:
         unexpected
     )
 
+    proof_edit = "packages/dinkster-inference-torch/tests/test_new_family_checklist.py"
     shared_edit = "packages/dinkster-inference/src/dinkster_inference/runtime.py"
-    assert unexpected_new_family_paths(changed_paths | {shared_edit}) == (shared_edit,)
+    assert unexpected_new_family_paths(frozenset({proof_edit, shared_edit})) == (shared_edit,)
 
 
 def test_registered_engine_properties_cover_shared_family_behavior() -> None:
