@@ -2840,7 +2840,16 @@ def test_library_startup_composes_without_pack_workers(
             assert p2p["state"] == ("disabled" if disable_p2p else "running"), p2p
             if disable_p2p:
                 assert p2p["sidecar"] is None, p2p
-            assert len(server.children(recursive=True)) == (0 if disable_p2p else 1)
+                assert not server.children(recursive=True)
+            else:
+                sidecar = psutil.Process(p2p["sidecar"]["pid"])
+                process_chain = []
+                process_in_chain: psutil.Process | None = sidecar
+                while process_in_chain != server:
+                    assert process_in_chain is not None
+                    process_chain.append(process_in_chain)
+                    process_in_chain = process_in_chain.parent()
+                assert set(server.children(recursive=True)) == set(process_chain)
 
     try:
         asyncio.run(scenario())
