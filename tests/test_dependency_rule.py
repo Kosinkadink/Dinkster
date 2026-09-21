@@ -228,11 +228,14 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_assets",
         "dinkster_image_document",
         "dinkster_token_verifier",
-        "dinkster_p2p",
     },
 }
 
-OPTIONAL_CORE_PACKAGES = frozenset({"dinkster_collab", "dinkster_supervisor"})
+EXTERNAL_PACKAGES = frozenset({"dinkster_p2p"})
+OPTIONAL_CORE_PACKAGES = frozenset({"dinkster_collab", "dinkster_p2p", "dinkster_supervisor"})
+OPTIONAL_PLUGIN_MODULES = frozenset(
+    {REPO_ROOT / "src/dinkster/lan_p2p.py", REPO_ROOT / "src/dinkster/p2p_api.py"}
+)
 
 
 def dinkster_imports(path: Path) -> set[str]:
@@ -246,27 +249,44 @@ def dinkster_imports(path: Path) -> set[str]:
     return found.intersection(ALLOWED)
 
 
+def workspace_package_names(packages: Path) -> set[str]:
+    return {
+        path.name.replace("-", "_")
+        for path in packages.iterdir()
+        if path.is_dir()
+        and path.name.startswith("dinkster-")
+        and (path / "pyproject.toml").is_file()
+    }
+
+
 def test_every_package_is_governed() -> None:
     """A package absent from ALLOWED escapes the layering rule entirely -
-    every packages/dinkster-* directory must have an explicit allowed set."""
-    on_disk = {
-        path.name.replace("-", "_")
-        for path in (
-            *(REPO_ROOT / "packages").iterdir(),
-            EVIDENCE_ROOT / "packages/dinkster-acceptance",
-        )
-        if path.is_dir() and path.name.startswith("dinkster-")
-    }
-    assert on_disk == set(ALLOWED), (
+    every workspace package must have an explicit allowed set."""
+    on_disk = workspace_package_names(REPO_ROOT / "packages")
+    assert (EVIDENCE_ROOT / "packages/dinkster-acceptance/pyproject.toml").is_file()
+    on_disk.add("dinkster_acceptance")
+    governed_workspace_packages = set(ALLOWED) - EXTERNAL_PACKAGES
+    assert on_disk == governed_workspace_packages, (
         f"packages missing from ALLOWED: {sorted(on_disk - set(ALLOWED))}; "
-        f"ALLOWED entries with no package: {sorted(set(ALLOWED) - on_disk)}"
+        "ALLOWED entries with no workspace package: "
+        f"{sorted(governed_workspace_packages - on_disk)}"
     )
+
+
+def test_workspace_package_discovery_ignores_stale_bytecode(tmp_path: Path) -> None:
+    (tmp_path / "dinkster-real").mkdir()
+    (tmp_path / "dinkster-real/pyproject.toml").touch()
+    (tmp_path / "dinkster-removed/src/dinkster_removed/__pycache__").mkdir(parents=True)
+
+    assert workspace_package_names(tmp_path) == {"dinkster_real"}
 
 
 def test_one_way_dependencies() -> None:
     violations: list[str] = []
     checked = 0
     for package, allowed in ALLOWED.items():
+        if package in EXTERNAL_PACKAGES:
+            continue
         root = EVIDENCE_ROOT if package == "dinkster_acceptance" else REPO_ROOT
         src = root / "packages" / package.replace("_", "-") / "src" / package
         if not src.exists():
@@ -294,6 +314,7 @@ def test_core_paths_do_not_import_optional_packages_at_module_scope() -> None:
         for source in sources
         if source.is_dir()
         for module in source.rglob("*.py")
+        if module not in OPTIONAL_PLUGIN_MODULES
         for imported in sorted(dinkster_imports(module) & OPTIONAL_CORE_PACKAGES)
     ]
     assert not violations, "core imports optional packages at module scope:\n" + "\n".join(
@@ -315,6 +336,11 @@ def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:
         (REPO_ROOT / "packages/dinkster-inference/pyproject.toml").read_text()
     )["project"]
     assert root_project["optional-dependencies"] == {
+        "default": [
+            "dinkster-supervisor",
+            "dinkster-collab",
+            "dinkster-nodes-training",
+        ],
         "collab": ["dinkster-collab"],
         "supervisor": ["dinkster-supervisor"],
     }
@@ -334,6 +360,11 @@ def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:
     gguf_locked = packages["gguf"]
     assert "gguf" not in {dependency["name"] for dependency in root_locked["dependencies"]}
     assert root_locked["optional-dependencies"] == {
+        "default": [
+            {"name": "dinkster-collab"},
+            {"name": "dinkster-nodes-training"},
+            {"name": "dinkster-supervisor"},
+        ],
         "collab": [{"name": "dinkster-collab"}],
         "supervisor": [{"name": "dinkster-supervisor"}],
     }

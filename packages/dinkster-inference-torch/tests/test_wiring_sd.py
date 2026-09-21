@@ -134,6 +134,8 @@ from dinkster_inference_torch import (
     torch_sampler_registry,
     torch_scheduler_registry,
 )
+from dinkster_inference_torch import sampling_execution as sampling_engine
+from dinkster_inference_torch import sampling_execution as sampling_execution_module
 from dinkster_inference_torch._conditioning_layout import declare_text_conditioning
 from dinkster_inference_torch.attention import builtin_sdpa_kernel
 from dinkster_inference_torch.controlnet import (
@@ -547,7 +549,6 @@ def test_sd_runtime_prepares_canonical_conditioning(
 def test_sd_runtime_uses_resident_execution_device(
     sd1: SDRuntime, monkeypatch: pytest.MonkeyPatch, device: str | None
 ) -> None:
-    import dinkster_inference_torch.wiring as wiring_module
     from dinkster_inference_torch import basic_conditioning_to_carrier
 
     encoded = sd1.encode_text("a glass bottle")
@@ -566,7 +567,7 @@ def test_sd_runtime_uses_resident_execution_device(
         observed.append(kwargs["device"])
         return cast("torch.Tensor", kwargs["latent"])
 
-    monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+    monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
     sd1.sample(
         tiny_latent(),
         cond=encoded,
@@ -576,7 +577,9 @@ def test_sd_runtime_uses_resident_execution_device(
         compute_dtype=torch.float32,
         device=device,
     )
-    assert observed == [torch.device(device or "meta")]
+    assert [torch.device(cast("Any", value)) for value in observed] == [
+        torch.device(device or "meta")
+    ]
 
 
 # --- encode_text: the per-family CLIP stack ---------------------------------
@@ -843,7 +846,6 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         assert isinstance(sd1, CustomSamplingRuntime)
         sampler = builtin_sampler_registry().get("dinkster.euler")
@@ -871,7 +873,7 @@ class TestSample:
             )
             return output
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         result = sd1.sample_custom(
             latent,
             noise=noise,
@@ -974,7 +976,6 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         selected: list[float] = []
 
@@ -991,7 +992,7 @@ class TestSample:
             return latent
 
         monkeypatch.setattr(SDDenoiser, "set_control_gain", capture_gain)
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         latent = tiny_latent()
         cond = sd1.encode_text("custom ControlNet parity")
         seed = 31
@@ -1329,17 +1330,16 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         captured: list[GuidedDenoiser] = []
-        original = wiring_module.guided_denoiser
+        original = sampling_execution_module.guided_denoiser
 
         def capture(*args: Any, **kwargs: Any) -> GuidedDenoiser:
             guided = original(*args, **kwargs)
             captured.append(guided)
             return guided
 
-        monkeypatch.setattr(wiring_module, "guided_denoiser", capture)
+        monkeypatch.setattr(sampling_execution_module, "guided_denoiser", capture)
         cond = sd1.encode_text("layout positive")
         uncond = sd1.encode_text("layout negative")
         sd1.sample(
@@ -1391,17 +1391,16 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         captured: list[GuidedDenoiser] = []
-        original = wiring_module.guided_denoiser
+        original = sampling_execution_module.guided_denoiser
 
         def capture(*args: Any, **kwargs: Any) -> GuidedDenoiser:
             guided = original(*args, **kwargs)
             captured.append(guided)
             return guided
 
-        monkeypatch.setattr(wiring_module, "guided_denoiser", capture)
+        monkeypatch.setattr(sampling_execution_module, "guided_denoiser", capture)
         cond = declare_text_conditioning(
             Conditioning(torch.zeros(1, 2, TINY_CLIP_L.hidden_size)),
             2,
@@ -1543,7 +1542,6 @@ class TestSample:
         sd1_inpaint: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         latent = tiny_latent()
         mask = torch.tensor([[[[0.0, 1.0], [1.0, 0.0]]]])
@@ -1560,7 +1558,7 @@ class TestSample:
             assert torch.equal(inpaint_noise, prepare_noise(latent, 4))
             raise Captured
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture)
         with pytest.raises(Captured):
             sd1_inpaint.sample(
                 latent,
@@ -1582,7 +1580,6 @@ class TestSample:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import dinkster_inference_torch.sd_denoise as sd_denoise_module
-        import dinkster_inference_torch.wiring as wiring_module
 
         latent = tiny_latent()
         cond = sdxl_inpaint.encode_text("a cat")
@@ -1594,7 +1591,7 @@ class TestSample:
         seen_sampler_masks: list[torch.Tensor | None] = []
         original_concat = sd_denoise_module.inpaint_model_input
         original_forward = sdxl_inpaint.assembled.diffusion.forward
-        original_drive = wiring_module.run_denoise
+        original_drive = sampling_execution_module.run_denoise
 
         def capture_concat(
             noise: torch.Tensor,
@@ -1630,7 +1627,7 @@ class TestSample:
 
         monkeypatch.setattr(sd_denoise_module, "inpaint_model_input", capture_concat)
         monkeypatch.setattr(sdxl_inpaint.assembled.diffusion, "forward", capture_forward)
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_drive)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_drive)
         output = sdxl_inpaint.sample(
             latent,
             cond=cond,
@@ -1688,7 +1685,6 @@ class TestSample:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import dinkster_inference_torch.distributed as distributed_module
-        import dinkster_inference_torch.wiring as wiring_module
 
         distributed = type("Distributed", (), {"world_size": 2, "mode": "guidance"})()
         monkeypatch.setattr(distributed_module, "distributed_sampling_config", lambda: distributed)
@@ -1699,7 +1695,7 @@ class TestSample:
             model_runs.append(1)
             raise RuntimeError("denoising reached")
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         latent = tiny_latent()
         cond = sd1.encode_text("a cat")
         runtime = SDRuntime(
@@ -1727,7 +1723,6 @@ class TestSample:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         import dinkster_inference_torch.distributed as distributed_module
-        import dinkster_inference_torch.wiring as wiring_module
 
         distributed = type("Distributed", (), {"world_size": 2, "mode": "guidance"})()
         monkeypatch.setattr(distributed_module, "distributed_sampling_config", lambda: distributed)
@@ -1741,7 +1736,7 @@ class TestSample:
             assert isinstance(latent, torch.Tensor)
             return latent
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         runtime = SDRuntime(
             sd1.assembled,
             runtime_identity="native:dinkster.sd15:deployment-specific",
@@ -1811,7 +1806,6 @@ class TestSample:
     ) -> None:
         """A receipt does not restrict registered samplers or guidance contributions."""
         import dinkster_inference_torch.distributed as distributed_module
-        import dinkster_inference_torch.wiring as wiring_module
 
         distributed = type("Distributed", (), {"world_size": 2, "mode": "guidance"})()
         monkeypatch.setattr(distributed_module, "distributed_sampling_config", lambda: distributed)
@@ -1827,7 +1821,7 @@ class TestSample:
             assert isinstance(value, torch.Tensor)
             return value
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         latent = tiny_latent()
         cond = sd1.encode_text("a cat")
         uncond = sd1.encode_text("")
@@ -1931,7 +1925,6 @@ class TestSample:
     ) -> None:
         """The same callback hooks reach the shared engine on either sampling path."""
         import dinkster_inference_torch.distributed as distributed_module
-        import dinkster_inference_torch.wiring as wiring_module
 
         distributed = type("Distributed", (), {"world_size": 2, "mode": "guidance"})()
         monkeypatch.setattr(distributed_module, "distributed_sampling_config", lambda: distributed)
@@ -1947,7 +1940,7 @@ class TestSample:
             assert isinstance(value, torch.Tensor)
             return value
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         latent = tiny_latent()
         cond = sd1.encode_text("a cat")
         uncond = sd1.encode_text("")
@@ -1984,7 +1977,6 @@ class TestSample:
     ) -> None:
         """Per-run guidance contributions are accepted independently of receipts."""
         import dinkster_inference_torch.distributed as distributed_module
-        import dinkster_inference_torch.wiring as wiring_module
 
         distributed = type("Distributed", (), {"world_size": 2, "mode": "guidance"})()
         monkeypatch.setattr(distributed_module, "distributed_sampling_config", lambda: distributed)
@@ -2000,7 +1992,7 @@ class TestSample:
             assert isinstance(value, torch.Tensor)
             return value
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         latent = tiny_latent()
         cond = sd1.encode_text("a cat")
         uncond = sd1.encode_text("")
@@ -2046,7 +2038,6 @@ class TestSample:
     ) -> None:
         """Cancellation is checked during execution, not by an admission type allowlist."""
         import dinkster_inference_torch.distributed as distributed_module
-        import dinkster_inference_torch.wiring as wiring_module
 
         distributed = type("Distributed", (), {"world_size": 2, "mode": "guidance"})()
         monkeypatch.setattr(distributed_module, "distributed_sampling_config", lambda: distributed)
@@ -2062,7 +2053,7 @@ class TestSample:
             assert isinstance(value, torch.Tensor)
             return value
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         latent = tiny_latent()
         cond = sd1.encode_text("a cat")
         uncond = sd1.encode_text("")
@@ -2113,7 +2104,6 @@ class TestSample:
     ) -> None:
         """Builtin snapshots remain canonical while explicit registry overrides execute."""
         import dinkster_inference_torch.distributed as distributed_module
-        import dinkster_inference_torch.wiring as wiring_module
         from dinkster_inference.solvers import DINKSTER_HEUN
 
         distributed = type("Distributed", (), {"world_size": 2, "mode": "guidance"})()
@@ -2130,7 +2120,7 @@ class TestSample:
             assert isinstance(value, torch.Tensor)
             return value
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         latent = tiny_latent()
         cond = sd1.encode_text("a cat")
         uncond = sd1.encode_text("")
@@ -2188,7 +2178,6 @@ class TestSample:
     ) -> None:
         """Execution uses the configured registry, not equality with a builtin catalog."""
         import dinkster_inference_torch.distributed as distributed_module
-        import dinkster_inference_torch.wiring as wiring_module
 
         distributed = type("Distributed", (), {"world_size": 2, "mode": "guidance"})()
         monkeypatch.setattr(distributed_module, "distributed_sampling_config", lambda: distributed)
@@ -2204,7 +2193,7 @@ class TestSample:
             assert isinstance(value, torch.Tensor)
             return value
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         latent = tiny_latent()
         cond = sd1.encode_text("a cat")
         uncond = sd1.encode_text("")
@@ -2316,7 +2305,6 @@ class TestSample:
         executor independently of receipt observation.
         """
         import dinkster_inference_torch.distributed as distributed_module
-        import dinkster_inference_torch.wiring as wiring_module
         from dinkster_inference_torch.guidance import GuidedDenoiser
 
         distributed = type("Distributed", (), {"world_size": 2, "mode": "guidance"})()
@@ -2335,7 +2323,7 @@ class TestSample:
             assert isinstance(value, torch.Tensor)
             return value
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
 
         smuggled_calls: list[object] = []
 
@@ -2385,7 +2373,6 @@ class TestSample:
     ) -> None:
         """An explicit registry override executes and propagates its own build failure."""
         import dinkster_inference_torch.distributed as distributed_module
-        import dinkster_inference_torch.wiring as wiring_module
 
         distributed = type("Distributed", (), {"world_size": 2, "mode": "guidance"})()
         monkeypatch.setattr(distributed_module, "distributed_sampling_config", lambda: distributed)
@@ -2401,7 +2388,7 @@ class TestSample:
             assert isinstance(value, torch.Tensor)
             return value
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         latent = tiny_latent()
         cond = sd1.encode_text("a cat")
         uncond = sd1.encode_text("")
@@ -2479,7 +2466,6 @@ class TestSample:
         a Registry subclass overriding ``get`` never executes during
         sampling, including distributed execution."""
         import dinkster_inference_torch.distributed as distributed_module
-        import dinkster_inference_torch.wiring as wiring_module
 
         class SneakyRegistry(Registry[Any]):
             def __init__(self) -> None:
@@ -2515,7 +2501,7 @@ class TestSample:
             assert isinstance(value, torch.Tensor)
             return value
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         latent = tiny_latent()
         result = runtime.sample(
             latent,
@@ -2559,7 +2545,6 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         latent = tiny_latent()
         cond = sd1.encode_text("a cat")
@@ -2571,7 +2556,7 @@ class TestSample:
             assert isinstance(value, torch.Tensor)
             return value
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture)
         global_state = torch.random.get_rng_state()
         for sampler_id in ("ddim", "euler"):
             result = sd1.sample(
@@ -3072,7 +3057,6 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         selected: list[float] = []
         original_set = SDDenoiser.set_control_gain
@@ -3092,7 +3076,7 @@ class TestSample:
             return latent
 
         monkeypatch.setattr(SDDenoiser, "set_control_gain", capture_gain)
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         cond = sd1.encode_text("constant parity")
         sd1.sample(
             tiny_latent(),
@@ -3121,7 +3105,6 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         reference = CUSTOM_SIGMA_GOLDENS["percent_to_sigma"]["dinkster.sd15"]["0.37,False"]
         first_sigma = math.nextafter(reference, math.inf)
@@ -3155,7 +3138,7 @@ class TestSample:
             return latent
 
         monkeypatch.setattr(SDDenoiser, "set_control_gain", capture_gain)
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         runtime.sample(
             tiny_latent(),
             cond=runtime.encode_text("reference percent boundary"),
@@ -3172,7 +3155,6 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         selected: list[float] = []
         evaluator_identities: list[str] = []
@@ -3196,7 +3178,7 @@ class TestSample:
             assert isinstance(latent, torch.Tensor)
             return latent
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         sd1.sample(
             tiny_latent(),
             cond=sd1.encode_text("scheduled control"),
@@ -3273,7 +3255,6 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         selected: list[tuple[float, ...]] = []
         identities: list[str] = []
@@ -3296,7 +3277,7 @@ class TestSample:
             return latent
 
         monkeypatch.setattr(SDDenoiser, "set_control_gains", capture_gains)
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         oldest = control_conditioning(
             child_id="depth",
             gain=ContributionGain(DirectGainTableCurve((1.0, 0.5, 0.0)), 1.0),
@@ -3349,7 +3330,6 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         selected: list[SDControlGain] = []
 
@@ -3366,7 +3346,7 @@ class TestSample:
             return latent
 
         monkeypatch.setattr(SDDenoiser, "set_control_gain_rows", capture_rows)
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         site_gains = tuple(
             (
                 site_id,
@@ -3411,7 +3391,6 @@ class TestSample:
         sdxl: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         selected: list[SDControlGain] = []
         identities: list[str] = []
@@ -3432,7 +3411,7 @@ class TestSample:
             return latent
 
         monkeypatch.setattr(SDDenoiser, "set_control_gain_rows", capture_rows)
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         site_gains = tuple(
             (site, 2.0 if index == 0 else 1.0)
             for index, site in enumerate(SDXL_CONTROL_RESIDUAL_SITES)
@@ -3470,7 +3449,6 @@ class TestSample:
         sdxl: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         identities: list[str] = []
 
@@ -3483,7 +3461,7 @@ class TestSample:
             assert isinstance(latent, torch.Tensor)
             return latent
 
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         for token in ("hed", "pidi"):
             sdxl.sample(
                 tiny_latent(),
@@ -3506,7 +3484,6 @@ class TestSample:
         sdxl: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         selected: list[SDControlGain] = []
 
@@ -3522,7 +3499,7 @@ class TestSample:
             return latent
 
         monkeypatch.setattr(SDDenoiser, "set_control_gain_rows", capture_rows)
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         effect_mask = effect_mask_source(
             torch.tensor([[[0.0, 1.0], [1.0, 0.0]]]),
             SDXL_CONTROL_RESIDUAL_SITES[-1],
@@ -3552,7 +3529,6 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         selected: list[SDControlGain] = []
         identities: list[str] = []
@@ -3574,7 +3550,7 @@ class TestSample:
             return latent
 
         monkeypatch.setattr(SDDenoiser, "set_control_gain_rows", capture_rows)
-        monkeypatch.setattr(wiring_module, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", capture_run)
         source = effect_mask_source(
             torch.tensor([[[0.0, 1.0], [0.0, 1.0]]]),
             SD15_CONTROL_RESIDUAL_SITES[0],
@@ -3632,13 +3608,11 @@ class TestSample:
         sd1: SDRuntime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
-
         def refuse_run(*_args: object, **_kwargs: object) -> torch.Tensor:
             pytest.fail("run_denoise must not execute")
 
         monkeypatch.setattr(
-            wiring_module,
+            sampling_engine,
             "run_denoise",
             refuse_run,
         )
@@ -3720,13 +3694,11 @@ class TestSample:
         gain: ContributionGain,
         message: str,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
-
         def fail_run(*_args: object, **_kwargs: object) -> torch.Tensor:
             pytest.fail("run_denoise must not execute")
 
         monkeypatch.setattr(
-            wiring_module,
+            sampling_engine,
             "run_denoise",
             fail_run,
         )
@@ -3747,7 +3719,6 @@ class TestSample:
         synthetic_sd15_receipt: str,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import dinkster_inference_torch.wiring as wiring_module
 
         def refuse_plan(
             context: GuidancePlanContext[torch.Tensor],
@@ -3769,7 +3740,7 @@ class TestSample:
         def fail_run(*_args: object, **_kwargs: object) -> torch.Tensor:
             pytest.fail("run_denoise must not execute")
 
-        monkeypatch.setattr(wiring_module, "run_denoise", fail_run)
+        monkeypatch.setattr(sampling_execution_module, "run_denoise", fail_run)
         with pytest.raises(WiringError, match="unsupported_control_partition"):
             runtime.sample(
                 tiny_latent(),

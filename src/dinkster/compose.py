@@ -193,7 +193,9 @@ from dinkster_server import (
     CORE_PACK_ID,
     ChoiceOwnerGone,
     LazyChoiceFetcher,
+    PackInferenceUnavailable,
     PackInfo,
+    UnavailableInferenceProvider,
     WorkerInfo,
     validate_comfy_args,
 )
@@ -341,6 +343,13 @@ _MODEL_PACK_IDS = (
     "dinkster-model-qwen-image",
     "dinkster-model-triposplat",
     "dinkster-model-wan",
+)
+SAMPLING_WORKER_NAME = "dinkster.ksampler"
+"""Native worker whose arm materializes every inference extension surface."""
+INFERENCE_UNAVAILABLE_REASON = (
+    "no live native dinkster.ksampler worker was composed (the native inference "
+    "pack did not load), so this pack's samplers, schedulers, graph compilers and "
+    "guidance strategies cannot run"
 )
 
 
@@ -1850,6 +1859,10 @@ class RemoveResult:
     """Retained authority for every derived choice replacement."""
     removed_compat_skips: tuple[tuple[str, str], ...] = ()
     """Every (pack id, source node name) skip owned by the removed worker."""
+    packs: dict[str, PackInfo] = field(default_factory=dict)
+    """Pack-table rows this removal changed on other packs. Removing the native
+    inference pack degrades every remaining pack that declares an inference
+    entry, so those rows must ride the removal announcement."""
 
 
 @dataclass(frozen=True, eq=False)
@@ -1955,6 +1968,59 @@ def _pack_provider_identity(manifest: PackManifest, spec: PackSpec) -> str:
     if digest:
         identity += f"#{digest}"
     return identity
+
+
+def order_pack_entries_by_requirements(
+    entries: Sequence[PackSpec | Path | str],
+) -> tuple[PackSpec, ...]:
+    """Order packs by manifest-declared pack dependencies only, never raising.
+
+    serve uses this as the degraded ordering path when full contract
+    resolution fails for the candidate set: a pack that declares a dependency
+    must still compose after the pack providing it (nodes-image after
+    nodes-media-io), so one broken pack cannot be allowed to validate a
+    consumer against a dependency that merely sorts later. Unlike
+    order_pack_entries, capability/provider/version resolution is skipped
+    entirely; unreadable manifests, unknown dependencies, and dependency
+    cycles keep the entry in its given position instead of refusing the set.
+    """
+    specs = tuple(
+        entry if isinstance(entry, PackSpec) else PackSpec(manifest=entry) for entry in entries
+    )
+    names: list[str | None] = []
+    dependencies: list[set[str]] = []
+    for spec in specs:
+        try:
+            manifest = load_manifest(resolve_manifest_path(spec.manifest))
+        except Exception:
+            names.append(None)
+            dependencies.append(set())
+            continue
+        names.append(canonical_name(manifest.name))
+        dependencies.append({canonical_name(item.pack) for item in manifest.dependencies})
+    wanted = {name for name in names if name is not None}
+    ordered: list[PackSpec] = []
+    emitted: set[str] = set()
+    remaining = list(range(len(specs)))
+    while remaining:
+        selection = next(
+            (
+                index
+                for index in remaining
+                if names[index] is None
+                or all(dep not in wanted or dep in emitted for dep in dependencies[index])
+            ),
+            None,
+        )
+        if selection is None:
+            # Dependency cycle: compose cycle members in given order so each
+            # one still reports its own contract failure independently.
+            selection = remaining[0]
+        ordered.append(specs[selection])
+        if names[selection] is not None:
+            emitted.add(str(names[selection]))
+        remaining.remove(selection)
+    return tuple(ordered)
 
 
 def _builtin_registry_providers() -> dict[str, dict[str, str]]:
@@ -2545,6 +2611,11 @@ class ServingComposer:
         # by _mutate: startup's drive task adds packs sequentially, but a
         # reload request can arrive while composition is still in flight.
         self._records: dict[str, _PackRecord] = {}
+        # Packs whose [pack.extension] inference surface has no native sampling
+        # worker to materialize it. Rebuilt at every commit point from the
+        # snapshot builder, so reload, remote attach and removal all recompute it
+        # against the topology that actually exists at that moment.
+        self._inference_unavailable: dict[str, PackInferenceUnavailable] = {}
         # Composed remote workers, keyed by their configured name. Parallel
         # to _records on purpose: remotes have no manifest and no reload.
         self._remotes: dict[str, _RemoteRecord] = {}
@@ -2743,6 +2814,11 @@ class ServingComposer:
         protected_ro_exceptions.append(str(python.parent.parent))
         for name in _SANDBOX_RO_PATH_ENV:
             if value := effective_env.get(name):
+                if name == "DINKSTER_MOUNTS_SNAPSHOT" and any(
+                    Path(value).resolve().is_relative_to(Path(bound).resolve())
+                    for bound in ro_binds
+                ):
+                    continue
                 ro_binds.append(value)
                 if name == "DINKSTER_REMOTE_AUTH_TOKEN_FILE":
                     protected_ro_exceptions.append(value)
@@ -3482,6 +3558,7 @@ class ServingComposer:
             return None
         if not all_arms:
             raise RuntimeError(f"node type {node_type!r} has no execution provider")
+        self._require_available_inference(inputs)
         known_remotes = frozenset(self._remotes) if remote_names is None else remote_names
         remote_preference = preferred_worker is not None and preferred_worker in known_remotes
         arms = _provider_arms(all_arms, preferred_worker, known_remotes)
@@ -4349,10 +4426,29 @@ class ServingComposer:
 
     @staticmethod
     def _sampling_worker(topology: Topology) -> Any | None:
-        for arm in topology.get("dinkster.ksampler", ()):
+        for arm in topology.get(SAMPLING_WORKER_NAME, ()):
             if "@native" in arm.name:
                 return arm.owner_worker
         return None
+
+    @staticmethod
+    def _inference_unavailable_detail(record: _PackRecord) -> PackInferenceUnavailable:
+        """Describe a pack whose inference entry has no worker to materialize it.
+
+        The declared provider ids come from the manifest because nothing was
+        materialized, so they are reported with ``available`` false to explain a
+        name a saved workflow already carries rather than to offer it."""
+        entry = record.extension
+        assert entry is not None and entry.entries.inference is not None
+        return PackInferenceUnavailable(
+            reason=INFERENCE_UNAVAILABLE_REASON,
+            entry=entry.entries.inference,
+            worker=SAMPLING_WORKER_NAME,
+            providers=tuple(
+                UnavailableInferenceProvider(registry=item.registry, id=item.id)
+                for item in unmatched_registry_providers(record.manifest.provides, ())
+            ),
+        )
 
     async def _materialize_inference_contributions(
         self,
@@ -4361,6 +4457,7 @@ class ServingComposer:
     ) -> tuple[
         tuple[SamplerExtensionEntry, ...],
         dict[str, tuple[KeyedContribution, ...]],
+        dict[str, PackInferenceUnavailable],
     ]:
         entries = tuple(
             SamplerExtensionEntry(name, inference_entry)
@@ -4369,7 +4466,7 @@ class ServingComposer:
             and (inference_entry := record.extension.entries.inference) is not None
         )
         if not entries:
-            return (), {}
+            return (), {}, {}
         by_extension: dict[str, tuple[KeyedContribution, ...]]
         if all(
             getattr(records[entry.extension_id].worker, "catalog", None) is not None
@@ -4392,8 +4489,19 @@ class ServingComposer:
         else:
             worker = self._sampling_worker(topology)
             if worker is None:
-                raise CompositionError(
-                    "inference extensions require a live native dinkster.ksampler worker"
+                # The native inference pack did not load, so nothing can execute these
+                # declarations. Composing them anyway would register samplers whose
+                # every run fails inside the worker, and refusing the whole pack would
+                # take its nodes, routes and events with it. Degrade the one surface.
+                return (
+                    (),
+                    {},
+                    {
+                        entry.extension_id: self._inference_unavailable_detail(
+                            records[entry.extension_id]
+                        )
+                        for entry in entries
+                    },
                 )
             candidate_key = f"candidate:{uuid.uuid4().hex}"
             write_sampler_catalog(self._sampler_catalog_path, candidate_key, entries)
@@ -4445,7 +4553,7 @@ class ServingComposer:
                     f"pack {entry.extension_id!r} contributes model family registrations "
                     "without the model-family-registration capability"
                 )
-        return entries, by_extension
+        return entries, by_extension, {}
 
     async def call_pack_route(
         self, pack: str, route: PackRoute, data: Mapping[str, object], snapshot_digest: str
@@ -4480,11 +4588,18 @@ class ServingComposer:
         tuple[KeyedContribution, ...],
         GraphCompilerRegistrySnapshot,
         GraphCompileTransport | None,
+        dict[str, PackInferenceUnavailable],
     ]:
-        """Derive and worker-validate one RPC-clean behavior generation."""
+        """Derive and worker-validate one RPC-clean behavior generation.
+
+        The last element names the packs whose inference surface could not
+        materialize because no native sampling worker is live. Their other
+        surfaces compose normally, so the generation is published with those
+        packs present and their inference contributions simply absent."""
         (
             inference_entries,
             inference_contributions,
+            inference_unavailable,
         ) = await self._materialize_inference_contributions(records, topology)
         sampler_registry: Registry[KeyedContribution] = Registry()
         for declaration in builtin_sampler_snapshot().samplers:
@@ -4518,10 +4633,16 @@ class ServingComposer:
         active: list[ActiveExtension] = []
         for name, record in sorted(records.items()):
             keyed_contributions = inference_contributions.get(name, ())
+            degraded = name in inference_unavailable
             unmatched_providers = unmatched_registry_providers(
                 record.manifest.provides,
                 ((item.surface_id, item.id) for item in keyed_contributions),
             )
+            if degraded:
+                # Every declared provider is unregistered here, which is exactly
+                # what the degraded record reports; the mismatch is not a
+                # misconfiguration until a worker exists to answer the declaration.
+                unmatched_providers = ()
             if unmatched_providers:
                 provider = unmatched_providers[0]
                 raise CompositionError(
@@ -4589,7 +4710,11 @@ class ServingComposer:
                         )
                     owners.append(name)
             inference_entry = declaration.entries.inference
-            if inference_entry is not None:
+            # A degraded pack registers no inference:* contribution id; its
+            # declaration is reported through the pack's inferenceUnavailable
+            # record instead, which is also why the empty-contribution check
+            # below must not fire for it.
+            if inference_entry is not None and not degraded:
                 if not keyed_contributions:
                     raise CompositionError(
                         f"extension {name!r} declared an inference entry but produced nothing"
@@ -4817,7 +4942,59 @@ class ServingComposer:
             scheduler_snapshot,
             graph_compiler_registry,
             graph_compile_transport,
+            inference_unavailable,
         )
+
+    def _apply_inference_unavailable(
+        self,
+        unavailable: Mapping[str, PackInferenceUnavailable],
+        announced: dict[str, PackInfo],
+    ) -> None:
+        """Publish the inference degradation state and mirror it into the delta.
+
+        The state lives on ``PackInfo``, so it reaches the client only through a
+        packs-table entry. ``announced`` is that entry map for the delta being
+        committed, which normally carries only the pack being added or reloaded:
+        a pack degraded by this commit, or healed by it, is added so the client
+        sees the row change. The same object is written back to the owning
+        record's delta so a later full resync announces the identical row.
+        """
+        self._inference_unavailable = dict(unavailable)
+        for pack_id, info in list(self.composition.packs.items()):
+            detail = unavailable.get(pack_id)
+            if info.inference_unavailable == detail:
+                continue
+            updated = replace(info, inference_unavailable=detail)
+            self.composition.packs[pack_id] = updated
+            announced[pack_id] = updated
+            record = self._records.get(pack_id)
+            if record is not None and pack_id in record.delta.packs:
+                record.delta.packs[pack_id] = updated
+            if detail is not None:
+                core_logger("compose").warning(
+                    "pack %s composed without a native sampling worker: %s",
+                    pack_id,
+                    detail.reason,
+                )
+
+    def _require_available_inference(self, inputs: Mapping[str, Value]) -> None:
+        """Fail a plan that selects a provider a degraded pack no longer offers.
+
+        Keyed on the registry vocabulary rather than any node id: a saved
+        workflow can carry the sampler name in whatever input a sampler node or a
+        decomposed sampler seam uses, and the reason the user is told is the one
+        recorded when the surface degraded."""
+        if not self._inference_unavailable:
+            return
+        for pack_id, detail in sorted(self._inference_unavailable.items()):
+            declared = {provider.id for provider in detail.providers}
+            for input_name, value in inputs.items():
+                selected = value.resolve() if isinstance(value, Value) else value
+                if isinstance(selected, str) and selected in declared:
+                    raise RuntimeError(
+                        f"input {input_name!r} selects {selected!r} from pack "
+                        f"{pack_id!r}, whose inference surface is unavailable: {detail.reason}"
+                    )
 
     def _build_topology(
         self,
@@ -5714,6 +5891,7 @@ class ServingComposer:
                 scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
+                inference_unavailable,
             ) = await self._build_extension_snapshot(staged_records, topology)
             derived_choices = self._validated_derived_choices(
                 sampler_registry, scheduler_registry, staged_records, topology
@@ -5817,6 +5995,7 @@ class ServingComposer:
             },
             derived_choices=changed_derived_choices,
         )
+        self._apply_inference_unavailable(inference_unavailable, delta.packs)
         self._publish_runtime(
             topology,
             snapshot,
@@ -5942,6 +6121,7 @@ class ServingComposer:
                 scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
+                inference_unavailable,
             ) = await self._build_extension_snapshot(self._records, topology)
             derived_choices = self._validated_derived_choices(
                 sampler_registry, scheduler_registry, self._records, topology
@@ -6010,6 +6190,7 @@ class ServingComposer:
             },
             derived_choices=changed_derived_choices,
         )
+        self._apply_inference_unavailable(inference_unavailable, delta.packs)
         self._publish_runtime(
             topology,
             snapshot,
@@ -6438,6 +6619,7 @@ class ServingComposer:
                 scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
+                inference_unavailable,
             ) = await self._build_extension_snapshot(self._records, topology)
             derived_choices = self._validated_derived_choices(
                 sampler_registry, scheduler_registry, self._records, topology
@@ -6509,6 +6691,7 @@ class ServingComposer:
                 node_type: composition.execution_arms[node_type] for node_type in added_routes
             },
         )
+        self._apply_inference_unavailable(inference_unavailable, delta.packs)
         self._publish_runtime(
             topology,
             snapshot,
@@ -6817,6 +7000,7 @@ class ServingComposer:
                     scheduler_registry,
                     graph_compiler_registry,
                     graph_compile_transport,
+                    inference_unavailable,
                 ) = await self._build_extension_snapshot(staged_records, topology)
                 derived_choices = self._validated_derived_choices(
                     sampler_registry, scheduler_registry, staged_records, topology
@@ -6879,6 +7063,7 @@ class ServingComposer:
                     node_type: composition.execution_arms[node_type] for node_type in added_routes
                 },
             )
+            self._apply_inference_unavailable(inference_unavailable, delta.packs)
             self._publish_runtime(
                 topology,
                 snapshot,
@@ -7233,6 +7418,7 @@ class ServingComposer:
                 scheduler_registry,
                 graph_compiler_registry,
                 graph_compile_transport,
+                inference_unavailable,
             ) = await self._build_extension_snapshot(staged_records, topology)
             derived_choices = self._validated_derived_choices(
                 sampler_registry, scheduler_registry, staged_records, topology
@@ -7338,6 +7524,7 @@ class ServingComposer:
             if old_inference_worker is not None and old_inference_worker is not new_inference_worker
             else None
         )
+        self._apply_inference_unavailable(inference_unavailable, target_delta.packs)
         self._publish_runtime(
             topology,
             snapshot,
@@ -7426,6 +7613,7 @@ class ServingComposer:
                     scheduler_registry,
                     graph_compiler_registry,
                     graph_compile_transport,
+                    inference_unavailable,
                 ) = await self._build_extension_snapshot(staged_records, topology)
                 derived_choices = self._validated_derived_choices(
                     sampler_registry, scheduler_registry, staged_records, topology
@@ -7468,6 +7656,8 @@ class ServingComposer:
             self._rebuild_registries()
             self._apply_derived_choices(derived_choices)
             changed_derived_choices = self._changed_derived_choices(old_derived_choices)
+            changed_packs: dict[str, PackInfo] = {}
+            self._apply_inference_unavailable(inference_unavailable, changed_packs)
             self._publish_runtime(
                 topology,
                 snapshot,
@@ -7521,6 +7711,7 @@ class ServingComposer:
                     for pack_id, skips in record.delta.compat_skips.items()
                     for node_id in skips
                 ),
+                packs=changed_packs,
             )
 
     def _current_sampler_choices(self) -> dict[str, tuple[str, ...]]:

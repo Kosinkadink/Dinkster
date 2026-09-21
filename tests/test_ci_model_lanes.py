@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,8 @@ WORKFLOW = yaml.safe_load(
     (ROOT / ".github/workflows/full-validation.yml").read_text(encoding="utf-8")
 )
 JOBS = WORKFLOW["jobs"]
+PR_WORKFLOW = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+PR_JOBS = PR_WORKFLOW["jobs"]
 MODEL_CONDITION = "inputs.run-model-tests == 'true'"
 MODEL_GROUP_ENV = "env.DINKSTER_MODEL_TEST_GROUP"
 RECEIPT_TEST = "tests/test_gen_comfy_source_parity_receipts.py"
@@ -68,6 +71,30 @@ MODEL_GROUPS = (
         "suites": "birefnet,depth-anything-v3",
     },
     {"name": "SAM 3.1", "group": "vision-sam", "suites": "sam31"},
+)
+PR_MODEL_GROUPS = (
+    {
+        "name": "inference and IPAdapter, shard 1",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 1/2",
+    },
+    {
+        "name": "inference and IPAdapter, shard 2",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 2/2",
+    },
+    {"name": "HED, upscale and EfficientSAM", "group": "vision-fast", "pytest-args": ""},
+    {
+        "name": "Depth Anything V2, DETR and RT-DETR",
+        "group": "vision-detection",
+        "pytest-args": "",
+    },
+    {
+        "name": "BiRefNet and Depth Anything V3",
+        "group": "vision-large",
+        "pytest-args": "",
+    },
+    {"name": "SAM 3.1", "group": "vision-sam", "pytest-args": ""},
 )
 EXPECTED_MODEL_SUITES = {
     "inference-torch",
@@ -129,7 +156,7 @@ def _condition_matches(expression: str, context: dict[str, str]) -> bool:
     return all(matches)
 
 
-def test_every_cpu_composite_caller_explicitly_excludes_model_tests() -> None:
+def test_every_cpu_composite_caller_declares_its_model_test_allocation() -> None:
     callers = []
     for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
         for name, job in yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"].items():
@@ -138,7 +165,7 @@ def test_every_cpu_composite_caller_explicitly_excludes_model_tests() -> None:
                     continue
                 callers.append((path.name, name))
                 assert step["with"]["run-model-tests"] == (
-                    "true" if name == "model-tests" else "false"
+                    "true" if name in {"engine-tests", "model-tests"} else "false"
                 )
                 assert job["runs-on"] == [
                     "self-hosted",
@@ -147,17 +174,21 @@ def test_every_cpu_composite_caller_explicitly_excludes_model_tests() -> None:
                     "cpu-golden-avx2",
                 ]
     assert set(callers) == {
+        ("ci.yml", "engine-tests"),
         ("full-validation.yml", "model-tests"),
         ("full-validation.yml", "torch-cpu"),
     }
-    assert len(callers) == 2
+    assert len(callers) == 3
     assert ACTION["inputs"]["run-model-tests"]["default"] == "false"
+    assert ACTION["inputs"]["pytest-args"]["default"] == ""
 
 
 def test_torch_cpu_has_one_contract_guard_and_an_unconditional_suite() -> None:
     assert [name for name in JOBS if name.startswith("torch-cpu")] == ["torch-cpu"]
     job = JOBS["torch-cpu"]
-    assert set(job) == {"needs", "if", "runs-on", "env", "steps"}
+    # timeout-minutes bounds the whole job (comfy-vibe-station#245); the exact
+    # value is pinned in test_full_validation_pytest_and_demo_jobs_are_timeout_bounded
+    assert set(job) == {"needs", "if", "runs-on", "env", "timeout-minutes", "steps"}
     assert job["needs"] == "validation-plan"
     assert job["if"] == "needs.validation-plan.outputs.run-heavy == 'true'"
     assert job["runs-on"] == ["self-hosted", "Linux", "X64", "cpu-golden-avx2"]
@@ -231,6 +262,23 @@ def test_artifact_smoke_uses_only_available_self_hosted_platforms() -> None:
     }
 
 
+def test_artifact_smoke_installs_the_locked_default_set_with_the_identity_key() -> None:
+    job = JOBS["p2p-artifact-smoke"]
+    # The smoke gate validates the locked default install set, and that set
+    # pulls the private dinkster-identity git dependency through
+    # dinkster-server, so the job must configure the same read-only deploy
+    # key as every other installing job before uv sync runs
+    # (comfy-vibe-station#256).
+    configure, setup_uv, sync, pytest_run = job["steps"][1:]
+    assert configure == {
+        "uses": "./.github/actions/configure-dinkster-identity",
+        "with": {"deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}"},
+    }
+    assert setup_uv["uses"] == "astral-sh/setup-uv@v5"
+    assert sync == {"run": "uv sync --locked"}
+    assert pytest_run == {"run": "uv run --locked pytest -q tests/test_p2p_artifact_smoke.py"}
+
+
 @pytest.mark.parametrize("enabled", ["", "false", "true"])
 def test_all_model_downloads_and_model_pytest_lanes_require_opt_in(enabled: str) -> None:
     downloads = []
@@ -257,10 +305,11 @@ def test_all_model_downloads_and_model_pytest_lanes_require_opt_in(enabled: str)
         if is_download:
             downloads.append(step)
         if is_execution:
+            assert '"$HOME/comfy-vibe-station/run_counted_suite.sh"' in command
             executions.append(step)
     assert len(downloads) == 9
     assert len(executions) == 12
-    assert sum(len(step["env"]) for step in executions if "env" in step) == 18
+    assert sum(len(step["env"]) for step in executions if "env" in step) == 19
 
 
 def test_acceptance_sampling_runs_only_in_the_model_lane() -> None:
@@ -277,6 +326,7 @@ def test_acceptance_sampling_runs_only_in_the_model_lane() -> None:
     )
     assert common["if"] == f"{MODEL_GROUP_ENV} == ''"
     assert sampling["run"].strip() == (
+        '"$HOME/comfy-vibe-station/run_counted_suite.sh" '
         f".venv-torch/bin/python -m pytest -q {ACCEPTANCE_SAMPLING_TEST}"
     )
     assert sampling["if"] == (f"{MODEL_CONDITION} && {MODEL_GROUP_ENV} == 'acceptance'")
@@ -306,7 +356,7 @@ def test_model_lane_commands_artifact_pins_and_environments_match_reviewed_contr
         if step.get("if", "").startswith(f"{MODEL_CONDITION} &&")
     ]
     assert hashlib.sha256(json.dumps(steps, sort_keys=True).encode()).hexdigest() == (
-        "5583341b0b7a3877b63970114606a11f5c6f3dd426cea7c592eee8f4a285dc1d"
+        "282f057a4d097d1df57613c22dd51c6fcd0136355acbff41cb281519f04a6812"
     )
 
 
@@ -504,7 +554,7 @@ def test_model_job_runs_only_in_trusted_full_validation(
             assert "model-tests" not in hosted.get("needs", [])
 
 
-def test_model_job_has_no_pull_request_label_path() -> None:
+def test_full_model_job_remains_on_main_validation() -> None:
     assert JOBS["model-tests"]["if"] == (
         "needs.validation-plan.outputs.run-heavy == 'true' && "
         "github.repository == 'Kosinkadink/Dinkster'"
@@ -565,11 +615,10 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         assert JOBS[name]["if"] == "needs.validation-plan.outputs.run-heavy == 'true'"
 
 
-def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
-    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-    assert set(workflow["jobs"]) == {"fast"}
-    assert set(workflow[True]) == {"pull_request", "workflow_dispatch"}
-    assert workflow["concurrency"] == {
+def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
+    assert set(PR_JOBS) == {"fast", "engine-tests"}
+    assert set(PR_WORKFLOW[True]) == {"pull_request", "workflow_dispatch"}
+    assert PR_WORKFLOW["concurrency"] == {
         "group": "${{ github.workflow }}-${{ github.ref }}",
         "cancel-in-progress": True,
     }
@@ -582,7 +631,7 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
         "workflow_dispatch": None,
         "workflow_call": None,
     }
-    job = workflow["jobs"]["fast"]
+    job = PR_JOBS["fast"]
     assert job["timeout-minutes"] == 5
     assert job["steps"][-1] == {"run": "bash scripts/ci-fast.sh"}
     preparation = [
@@ -600,6 +649,7 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
         "tests/test_extension_contract_pack.py",
         "tests/test_extension_factory_guard.py",
         "tests/test_family_registration_gates.py",
+        "tests/test_release_install.py",
         "tests/test_schema.py",
         "tests/test_schema_current_contracts.py",
         "tests/test_values.py",
@@ -608,6 +658,65 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
     ]
     assert "--cov" not in script
     assert "torch-cpu-suite" not in str(job)
+
+
+def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> None:
+    job = PR_JOBS["engine-tests"]
+    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "cpu-golden-avx2"]
+    assert job["timeout-minutes"] == 30
+    assert job["permissions"] == {"contents": "read"}
+    assert job["strategy"] == {
+        "fail-fast": False,
+        "matrix": {"include": list(PR_MODEL_GROUPS)},
+    }
+    assert [row["group"] for row in PR_MODEL_GROUPS] == [
+        "inference",
+        "inference",
+        "vision-fast",
+        "vision-detection",
+        "vision-large",
+        "vision-sam",
+    ]
+    assert {row["pytest-args"] for row in PR_MODEL_GROUPS if row["group"] == "inference"} == {
+        "-p tools.pytest_file_shard --file-shard 1/2",
+        "-p tools.pytest_file_shard --file-shard 2/2",
+    }
+    assert all(row["pytest-args"] == "" for row in PR_MODEL_GROUPS if row["group"] != "inference")
+    assert job["env"] == {
+        "ATEN_CPU_CAPABILITY": "avx2",
+        "ONEDNN_MAX_CPU_ISA": "AVX2",
+        "OMP_NUM_THREADS": "4",
+        "MKL_NUM_THREADS": "4",
+        "DINKSTER_MODEL_TEST_GROUP": "${{ matrix.group }}",
+    }
+    assert job["steps"] == [
+        {
+            "uses": "actions/checkout@v4",
+            "with": {"clean": True, "persist-credentials": False},
+        },
+        {
+            "uses": ACTION_PATH,
+            "with": {
+                "identity-deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}",
+                "evidence-deploy-key": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
+                "run-model-tests": "true",
+                "pytest-args": "${{ matrix.pytest-args }}",
+            },
+        },
+    ]
+
+
+def test_pr_inference_step_applies_only_the_declared_pytest_arguments() -> None:
+    (step,) = [
+        step
+        for step in ACTION["runs"]["steps"]
+        if step.get("name") == "Test inference and IPAdapter"
+    ]
+    assert step["if"] == (f"{MODEL_CONDITION} && {MODEL_GROUP_ENV} == 'inference'")
+    assert step["env"] == {"DINKSTER_MODEL_PYTEST_ARGS": "${{ inputs.pytest-args }}"}
+    assert "$DINKSTER_MODEL_PYTEST_ARGS" in step["run"]
+    assert "packages/dinkster-inference-torch/tests" in step["run"]
+    assert "packages/dinkster-model-ipadapter/tests" in step["run"]
 
 
 def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path) -> None:
@@ -755,3 +864,44 @@ def test_destructive_disk_reclaim_never_runs_on_self_hosted(environment: str) ->
     assert _condition_matches(steps[0]["if"], {"runner.environment": environment}) == (
         environment == "github-hosted"
     )
+
+
+def test_full_validation_pytest_and_demo_jobs_are_timeout_bounded() -> None:
+    pytest_or_demo = {
+        name
+        for name, job in JOBS.items()
+        if any(
+            "pytest" in str(step.get("run", ""))
+            or "dinkster demo" in str(step.get("run", ""))
+            or step.get("uses") == ACTION_PATH
+            for step in job["steps"]
+        )
+    }
+    assert pytest_or_demo == {
+        "test",
+        "p2p-descriptor-macos",
+        "p2p-artifact-smoke",
+        "torch-cpu",
+        "model-tests",
+        "coverage",
+        "translation-coverage",
+    }
+    test_job = JOBS["test"]
+    assert test_job["timeout-minutes"] == "${{ matrix.timeout-minutes }}"
+    assert [row["timeout-minutes"] for row in test_job["strategy"]["matrix"]["include"]] == [
+        60,
+        60,
+        30,
+    ]
+    assert JOBS["p2p-descriptor-macos"]["timeout-minutes"] == 15
+    assert JOBS["p2p-artifact-smoke"]["timeout-minutes"] == 15
+    assert JOBS["torch-cpu"]["timeout-minutes"] == 45
+    assert JOBS["model-tests"]["timeout-minutes"] == 60
+    assert JOBS["coverage"]["timeout-minutes"] == 60
+    assert JOBS["translation-coverage"]["timeout-minutes"] == 15
+    # A hung pytest run self-identifies the stuck test through pytest's
+    # bundled faulthandler_timeout before the job bound releases the runner;
+    # it is diagnostic only and never skips or fails a test
+    # (comfy-vibe-station#245).
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert config["tool"]["pytest"]["ini_options"]["faulthandler_timeout"] == 600

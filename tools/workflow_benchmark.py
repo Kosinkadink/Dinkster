@@ -289,7 +289,7 @@ def server_command(args: argparse.Namespace, artifacts: list[dict[str, Any]]) ->
         str(output / "library"),
         "--comfy-root",
         str(args.reference_root),
-        "--comfy-python",
+        "--execution-python",
         str(args.server_python),
         "--aimdo",
         "auto",

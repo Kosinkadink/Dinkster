@@ -50,8 +50,8 @@ def dinkster_pythonpath(extra: Sequence[Path] = ()) -> str:
     return os.pathsep.join(parts)
 
 
-def comfy_python(root: Path) -> str:
-    explicit = os.environ.get("DINKSTER_COMFYUI_PYTHON", "")
+def execution_python(root: Path) -> str:
+    explicit = os.environ.get("DINKSTER_EXECUTION_PYTHON", "")
     if explicit:
         return explicit
     venv = root / "venv" / "bin" / "python"
@@ -137,7 +137,7 @@ def main() -> int:
 
     out_dir: Path = args.out
     out_dir.mkdir(parents=True, exist_ok=True)
-    python = comfy_python(args.comfyui_root)
+    python = execution_python(args.comfyui_root)
 
     records: list[dict[str, object]] = []
     for pack in args.packs:

@@ -685,10 +685,20 @@ def test_pack_frontend_and_settings_reject_missing_or_escaping_paths(
         load_manifest(path)
 
 
-def test_pack_frontend_assets_reject_symlinks(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("target_inside_assets", "message"),
+    (
+        (True, "must not contain symlinks"),
+        (False, "must not escape the asset directory"),
+    ),
+    ids=("in-root", "escape"),
+)
+def test_pack_frontend_assets_reject_symlinks(
+    tmp_path: Path, target_inside_assets: bool, message: str
+) -> None:
     frontend = tmp_path / "frontend"
     frontend.mkdir()
-    target = tmp_path / "target.css"
+    target = (frontend if target_inside_assets else tmp_path) / "target.css"
     target.write_text("body {}", encoding="utf-8")
     try:
         (frontend / "theme.css").symlink_to(target)
@@ -701,7 +711,7 @@ def test_pack_frontend_assets_reject_symlinks(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(ManifestError, match="must not contain symlinks"):
+    with pytest.raises(ManifestError, match=message):
         load_manifest(path)
 
 

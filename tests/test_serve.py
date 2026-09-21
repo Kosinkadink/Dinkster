@@ -799,7 +799,7 @@ def test_comfy_compat_composition_failure_exits_with_one_message(
     comfy_root.mkdir()
     message = (
         "ComfyUI requirement module 'einops' is unavailable in interpreter "
-        "'/selected/python' selected by --comfy-python"
+        "'/selected/python' selected by --execution-python"
     )
 
     def fail_specs(*_args: object, **_kwargs: object) -> None:
@@ -816,7 +816,7 @@ def test_comfy_compat_composition_failure_exits_with_one_message(
             "--no-default-packs",
             "--comfy-root",
             str(comfy_root),
-            "--comfy-python",
+            "--execution-python",
             "/selected/python",
         ],
     )
@@ -825,6 +825,33 @@ def test_comfy_compat_composition_failure_exits_with_one_message(
         serve.main()
 
     assert str(caught.value) == message
+
+
+def test_retired_comfy_python_flag_exits_naming_the_replacement(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+
+    monkeypatch.delenv("DINKSTER_COMFYUI_PYTHON", raising=False)
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--comfy-python", "/x/python"])
+    with pytest.raises(SystemExit, match="2"):
+        serve.main()
+    assert "--comfy-python is retired; pass --execution-python instead" in capsys.readouterr().err
+
+
+def test_retired_comfy_python_env_exits_naming_the_replacement(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+
+    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/x/python")
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve"])
+    with pytest.raises(SystemExit, match="2"):
+        serve.main()
+    assert (
+        "DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead"
+        in capsys.readouterr().err
+    )
 
 
 def test_settings_gate_unknown_is_startup_parser_error(
@@ -2826,6 +2853,76 @@ def test_library_startup_composes_without_pack_workers(
                 process.terminate()
             process.wait(timeout=15)
         assert not alive, f"server descendants survived teardown: {alive}"
+
+
+def test_degraded_default_ordering_composes_media_io_before_image(
+    tmp_path: Path,
+) -> None:
+    """One pack with unresolvable contracts must not send the healthy defaults
+    back to load order: dinkster-nodes-image sorts before dinkster-nodes-media-io
+    alphabetically, so composing in load order validates the image pack's
+    media-io requirement before the media-io pack has announced.
+
+    Regression for Kosinkadink/comfy-vibe-station#242, where exactly this took
+    down every hosted pack depending on the media-io chain.
+    """
+    import dinkster.serve as serve
+    from dinkster.compose import (
+        CompositionError,
+        PackSpec,
+        ServingComposer,
+        default_pack_spec,
+        load_manifest,
+        resolve_manifest_path,
+    )
+
+    broken = tmp_path / "ordering-probe"
+    broken.mkdir()
+    (broken / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-ordering-probe"\nnamespaces = ["probe"]\n'
+        "[pack.requirements.capabilities]\n"
+        '"dinkster.ordering.probe" = ">=1.0.0,<2.0.0"\n'
+        '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
+        encoding="utf-8",
+    )
+    specs: list[PackSpec] = [
+        default_pack_spec("dinkster-nodes-foundation"),
+        default_pack_spec("dinkster-nodes-image"),
+        default_pack_spec("dinkster-nodes-media-io"),
+        PackSpec(manifest=broken / "dinkster-pack.toml"),
+    ]
+    # Load order is alphabetical, and it puts the consumer before its provider.
+    from dinkster.compose import default_pack_ids
+
+    load_order = list(default_pack_ids())
+    assert load_order.index("dinkster-nodes-image") < load_order.index("dinkster-nodes-media-io")
+    composer = ServingComposer()
+
+    async def scenario() -> None:
+        # The probe's unresolvable capability makes full contract ordering
+        # raise; the defaults must still compose providers before consumers.
+        ordered = serve._order_default_pack_specs(composer, specs, len(specs))
+        errors: dict[str, str] = {}
+        deltas: dict[str, set[str]] = {}
+        for spec in ordered:
+            pack = load_manifest(resolve_manifest_path(spec.manifest)).name
+            try:
+                delta = await composer.add_pack(spec)
+            except CompositionError as error:
+                errors[pack] = str(error)
+            else:
+                deltas[pack] = set(delta.schemas)
+        assert list(errors) == ["dinkster-ordering-probe"]
+        assert "dinkster.ordering.probe" in errors["dinkster-ordering-probe"]
+        assert "dinkster-nodes-media-io" in deltas
+        assert "dinkster.load_video" in deltas["dinkster-nodes-media-io"]
+        assert "dinkster-nodes-image" in deltas, errors
+        assert "dinkster.image.resize" in deltas["dinkster-nodes-image"]
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(composer.close())
 
 
 def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:

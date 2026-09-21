@@ -53,6 +53,7 @@ from dinkster_inference import (
     UNetConfig,
     builtin_samplers,
     offset_first_sigma_for_snr,
+    sampling_environment_extension_ids,
     sampling_sigmas,
     use_sampling_environment,
 )
@@ -1933,6 +1934,7 @@ def test_sampling_execution_owns_masks_denoise_range_cancellation_previews_and_d
 
     class DenoiserAdapter:
         evaluator_identity = "test.synthetic.conditioning.v1"
+        observed_extension_ids: list[tuple[str, ...]] = []
 
         @staticmethod
         def prepare_conditioning(value: object, _role: GuidanceRole) -> object:
@@ -1942,6 +1944,7 @@ def test_sampling_execution_owns_masks_denoise_range_cancellation_previews_and_d
         def evaluate_conditioning(
             value: torch.Tensor, _sigma: float, context: object
         ) -> torch.Tensor:
+            DenoiserAdapter.observed_extension_ids.append(sampling_environment_extension_ids())
             condition = cast("Conditioning[torch.Tensor]", context)
             return value * 0.5 + condition.embeddings.mean()
 
@@ -2014,6 +2017,14 @@ def test_sampling_execution_owns_masks_denoise_range_cancellation_previews_and_d
             on_step=steps.append,
             on_state=states.append,
         )
+
+    with use_sampling_environment(("test.extension",), lambda: False):
+        sample()
+    assert DenoiserAdapter.observed_extension_ids
+    assert set(DenoiserAdapter.observed_extension_ids) == {("test.extension",)}
+    DenoiserAdapter.observed_extension_ids.clear()
+    steps.clear()
+    states.clear()
 
     output = sample()
     assert torch.equal(output[..., 0], latent[..., 0])

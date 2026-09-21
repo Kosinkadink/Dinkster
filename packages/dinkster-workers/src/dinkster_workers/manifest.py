@@ -318,12 +318,12 @@ def _parse_frontend_assets(raw: object, manifest_path: Path) -> tuple[PackFronte
     try:
         paths = sorted(root.rglob("*"))
         for path in paths:
-            if path.is_symlink():
-                raise ManifestError(f"{manifest_path}: frontend.assets must not contain symlinks")
             if not path.resolve().is_relative_to(root):
                 raise ManifestError(
                     f"{manifest_path}: frontend.assets entries must not escape the asset directory"
                 )
+            if path.is_symlink():
+                raise ManifestError(f"{manifest_path}: frontend.assets must not contain symlinks")
             if not path.is_file():
                 continue
             if len(assets) >= FRONTEND_ASSET_MAX_FILES:

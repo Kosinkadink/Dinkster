@@ -115,9 +115,9 @@ The dispatch ref selects both the workflow and checked-out code, so owners
 can obtain Windows and full-suite evidence for an unmerged branch. The
 selected branch must contain the workflow. The daily audit uses main.
 
-`release.yml` calls this reusable workflow before building and publishing,
-so release validation runs against the exact selected main commit rather
-than relying on an earlier push run.
+`release.yml` runs only for version tags. It builds the complete wheel set,
+then installs and launch-checks those exact artifacts on Linux, Windows and
+macOS before publishing the GitHub Release.
 
 Both workflows use Python 3.12 only. Package requirements and the dependency
 lock continue to support Python 3.13. Heavy jobs run independently; the

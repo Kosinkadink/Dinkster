@@ -17,7 +17,7 @@ uv sync --all-packages
 The package is not published separately yet. Without a ComfyUI installation,
 `dinkster-serve` mounts the provider from the separate `dinkster-native` package. Run
 it in a Dinkster inference environment with the `dinkster-inference-torch[torch]`
-dependencies installed, or select that interpreter with `--comfy-python PATH`.
+dependencies installed, or select that interpreter with `--execution-python PATH`.
 The torch-free host environment alone does not supply a sampling runtime.
 Running untranslated legacy nodes requires a ComfyUI installation selected
 through `--comfy-root`; `--legacy-pack` refuses without it.

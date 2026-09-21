@@ -138,14 +138,14 @@ async def apply_remove(
                 result.removed_types,
                 result.removed_packs,
                 {},
-                {},
+                result.packs,
                 {},
             )
             epoch = state.replace(
                 result.removed_types,
                 result.removed_packs,
                 {},
-                {},
+                result.packs,
                 {},
                 execution_arms=result.execution_arms,
                 remove_choices=(*result.removed_choices, *result.derived_choices),

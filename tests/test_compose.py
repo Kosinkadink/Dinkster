@@ -57,6 +57,7 @@ from dinkster.compose import (
     compose_serving,
     default_pack_spec,
     default_pack_specs,
+    order_pack_entries_by_requirements,
     resolve_manifest_path,
 )
 
@@ -179,8 +180,8 @@ def test_comfy_model_roots_preserve_every_category_root_with_safe_ids(
     )
     monkeypatch.setattr(
         comfy_compose,
-        "_comfy_python_selection",
-        lambda _root, _explicit=None: comfy_compose._ComfyPythonSelection(
+        "_execution_python_selection",
+        lambda _root, _explicit=None: comfy_compose._ExecutionPythonSelection(
             "/comfy/python", "current Python"
         ),
     )
@@ -241,8 +242,8 @@ def test_comfy_model_roots_rejects_unusable_probe_data(
     )
     monkeypatch.setattr(
         comfy_compose,
-        "_comfy_python_selection",
-        lambda _root, _explicit=None: comfy_compose._ComfyPythonSelection(
+        "_execution_python_selection",
+        lambda _root, _explicit=None: comfy_compose._ExecutionPythonSelection(
             "/comfy/python", "current Python"
         ),
     )
@@ -287,31 +288,51 @@ def test_comfy_blake3_preflight_is_exact_isolated_and_bounded(
     }
 
 
-def test_comfy_python_selection_reports_resolution_step(
+def test_execution_python_selection_reports_resolution_step(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dinkster.comfy_compose import _comfy_python_selection
+    from dinkster.comfy_compose import _execution_python_selection
 
     root = tmp_path / "ComfyUI"
     root.mkdir()
+    monkeypatch.delenv("DINKSTER_EXECUTION_PYTHON", raising=False)
     monkeypatch.delenv("DINKSTER_COMFYUI_PYTHON", raising=False)
-    assert _comfy_python_selection(root, "/cli/python") == ("/cli/python", "--comfy-python")
+    assert _execution_python_selection(root, "/cli/python") == ("/cli/python", "--execution-python")
 
-    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/env/python")
-    assert _comfy_python_selection(root) == ("/env/python", "DINKSTER_COMFYUI_PYTHON")
+    monkeypatch.setenv("DINKSTER_EXECUTION_PYTHON", "/env/python")
+    assert _execution_python_selection(root) == ("/env/python", "DINKSTER_EXECUTION_PYTHON")
 
-    monkeypatch.delenv("DINKSTER_COMFYUI_PYTHON")
+    monkeypatch.delenv("DINKSTER_EXECUTION_PYTHON")
     venv_python = root / "venv" / "bin" / "python"
     venv_python.parent.mkdir(parents=True)
     venv_python.write_text("")
-    assert _comfy_python_selection(root) == (
+    assert _execution_python_selection(root) == (
         str(venv_python),
         "<comfy-root>/venv/bin/python",
     )
 
     venv_python.unlink()
-    assert _comfy_python_selection(root) == (sys.executable, "current Python")
+    assert _execution_python_selection(root) == (sys.executable, "current Python")
+
+
+def test_retired_comfyui_python_env_is_refused_with_the_new_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster import comfy_compose
+
+    root = tmp_path / "ComfyUI"
+    root.mkdir()
+    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/env/python")
+    with pytest.raises(comfy_compose.CompositionError) as caught:
+        comfy_compose._execution_python_selection(root)
+    assert str(caught.value) == comfy_compose.RETIRED_EXECUTION_PYTHON_ENV_MESSAGE
+    assert comfy_compose.RETIRED_EXECUTION_PYTHON_ENV_MESSAGE == (
+        "DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead"
+    )
+    with pytest.raises(comfy_compose.CompositionError, match="DINKSTER_EXECUTION_PYTHON"):
+        comfy_compose.comfy_compat_specs(None, python="/explicit/python")
 
 
 @pytest.mark.parametrize("missing", [None, "einops"])
@@ -338,7 +359,7 @@ def test_comfy_requirements_probe_with_fake_interpreter(
         )
 
     monkeypatch.setattr(comfy_compose.subprocess, "run", fake_run)
-    selection = comfy_compose._ComfyPythonSelection("/fake/python", "--comfy-python")
+    selection = comfy_compose._ExecutionPythonSelection("/fake/python", "--execution-python")
 
     if missing is None:
         comfy_compose._probe_comfy_requirements(root, selection)
@@ -347,7 +368,7 @@ def test_comfy_requirements_probe_with_fake_interpreter(
             comfy_compose._probe_comfy_requirements(root, selection)
         assert str(caught.value) == (
             "ComfyUI requirement module 'einops' is unavailable in interpreter "
-            "'/fake/python' selected by --comfy-python"
+            "'/fake/python' selected by --execution-python"
         )
 
     command = captured.pop("command")
@@ -370,7 +391,7 @@ def test_comfy_requirements_probe_executes_imports(tmp_path: Path) -> None:
     root = tmp_path / "ComfyUI"
     root.mkdir()
     requirements = root / "requirements.txt"
-    selection = comfy_compose._ComfyPythonSelection(sys.executable, "current Python")
+    selection = comfy_compose._ExecutionPythonSelection(sys.executable, "current Python")
 
     requirements.write_text("json\n")
     comfy_compose._probe_comfy_requirements(root, selection)
@@ -406,7 +427,7 @@ def test_comfy_requirements_probe_preserves_backslashes_in_interpreter_path(
     with pytest.raises(CompositionError) as caught:
         comfy_compose._probe_comfy_requirements(
             root,
-            comfy_compose._ComfyPythonSelection(interpreter, "current Python"),
+            comfy_compose._ExecutionPythonSelection(interpreter, "current Python"),
         )
 
     assert str(caught.value) == (
@@ -633,6 +654,50 @@ def test_pack_contract_resolver_orders_dependencies_and_capability_providers(
         assert [Path(spec.manifest) for spec in ordered] == [provider, consumer]
     finally:
         asyncio.run(composer.close())
+
+
+def test_requirement_ordering_survives_unresolvable_contracts(tmp_path: Path) -> None:
+    """A pack whose contracts cannot resolve must not undo the ordering of the
+    healthy packs: the consumer still composes after its declared provider."""
+    provider = write_contract_manifest(tmp_path / "provider", "provider")
+    consumer = write_contract_manifest(
+        tmp_path / "consumer", "consumer", '[pack.dependencies]\nprovider = ">=2,<3"\n'
+    )
+    broken = write_contract_manifest(
+        tmp_path / "broken",
+        "broken",
+        '[pack.requirements.capabilities]\n"missing.capability" = ">=1,<2"\n',
+    )
+    ordered = order_pack_entries_by_requirements((consumer, provider, broken))
+    assert [Path(spec.manifest).parent.name for spec in ordered] == [
+        "provider",
+        "consumer",
+        "broken",
+    ]
+
+
+def test_requirement_ordering_tolerates_cycles_unknowns_and_broken_manifests(
+    tmp_path: Path,
+) -> None:
+    first = write_contract_manifest(
+        tmp_path / "first", "first-cycle", '[pack.dependencies]\n"second-cycle" = ">=1,<2"\n'
+    )
+    second = write_contract_manifest(
+        tmp_path / "second", "second-cycle", '[pack.dependencies]\n"first-cycle" = ">=1,<2"\n'
+    )
+    ghost = write_contract_manifest(
+        tmp_path / "ghost", "ghost", '[pack.dependencies]\nunlisted-pack = ">=1,<2"\n'
+    )
+    entries = (first, second, ghost, tmp_path / "nowhere" / "dinkster-pack.toml")
+    ordered = order_pack_entries_by_requirements(entries)
+    # Unknown dependencies and unreadable manifests never refuse the set; the
+    # cycle members follow once nothing else can move, in given order.
+    assert [Path(spec.manifest).parent.name for spec in ordered] == [
+        "ghost",
+        "nowhere",
+        "first",
+        "second",
+    ]
 
 
 def test_serving_composer_registers_inference_boundary_types() -> None:

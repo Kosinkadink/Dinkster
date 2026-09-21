@@ -122,7 +122,7 @@ def test_causal_custom_node_matches_dense_sampling(
         assert type(tensor) is torch.Tensor
         assert type(reference) is torch.Tensor
         assert tensor.dtype == reference.dtype
-        assert torch.equal(tensor.view(torch.uint8), reference.view(torch.uint8))
+        assert torch.equal(tensor.view(torch.uint8), reference.view(torch.uint8)), key
         if not structural:
             assert actual["downscale_ratio_spacial"] == 8
             assert actual["downscale_ratio_temporal"] == 4

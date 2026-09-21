@@ -133,7 +133,14 @@ from .benchmark import (
     instrument_engine_factory,
     write_record,
 )
-from .comfy_compose import comfy_compat_specs, comfy_model_roots, comfy_python
+from .comfy_compose import (
+    RETIRED_EXECUTION_PYTHON_ENV,
+    RETIRED_EXECUTION_PYTHON_ENV_MESSAGE,
+    RETIRED_EXECUTION_PYTHON_FLAG_MESSAGE,
+    comfy_compat_specs,
+    comfy_model_roots,
+    execution_python,
+)
 from .compat_api import add_comfy_compat_routes
 from .compose import (
     CompositionError,
@@ -144,6 +151,7 @@ from .compose import (
     default_pack_ids,
     default_pack_spec,
     model_pack_specs,
+    order_pack_entries_by_requirements,
     resolve_manifest_path,
     training_pack_specs,
 )
@@ -296,6 +304,29 @@ def _is_standard_vision_pack(spec: PackSpec) -> bool:
         and len(spec.packs) == 1
         and next(iter(spec.packs)).startswith("dinkster-vision-")
     )
+
+
+def _order_default_pack_specs(
+    composer: ServingComposer, specs: Sequence[PackSpec | Path | str], default_count: int
+) -> tuple[PackSpec, ...]:
+    """Return the default packs in provider-before-consumer order.
+
+    Full contract resolution is authoritative when it succeeds. When it
+    raises (one broken pack must not take the ordering down with it), the
+    defaults still compose in manifest-requirement order: composing them in
+    load order validates a pack before a declared dependency that sorts
+    later, so dinkster-nodes-image would fail its media-io requirement
+    against a dinkster-nodes-media-io that has not announced yet.
+    """
+    try:
+        return composer.order_pack_entries(specs[:default_count])
+    except CompositionError as error:
+        core_logger("serve").warning(
+            "default pack contract ordering failed (%s); composing defaults in "
+            "manifest requirement order",
+            error,
+        )
+        return order_pack_entries_by_requirements(specs[:default_count])
 
 
 def detect_native_compute_dtypes(executing_cuda_indices: Sequence[int] = ()) -> frozenset[str]:
@@ -832,11 +863,11 @@ def main(argv: list[str] | None = None) -> None:
         "(default: $DINKSTER_COMFYUI_ROOT)",
     )
     parser.add_argument(
-        "--comfy-python",
+        "--execution-python",
         default="",
         metavar="PATH",
         help="interpreter for native or compat execution "
-        "(default: $DINKSTER_COMFYUI_PYTHON, the optional ComfyUI venv, or current Python)",
+        "(default: $DINKSTER_EXECUTION_PYTHON, the optional ComfyUI venv, or current Python)",
     )
     parser.add_argument(
         "--openai-base-url",
@@ -1259,6 +1290,11 @@ def main(argv: list[str] | None = None) -> None:
         help="diagnose event-loop stalls longer than SECONDS with safe request timing "
         "and Python thread stacks",
     )
+    argv_tokens = list(argv) if argv is not None else sys.argv[1:]
+    if any(arg == "--comfy-python" or arg.startswith("--comfy-python=") for arg in argv_tokens):
+        parser.error(RETIRED_EXECUTION_PYTHON_FLAG_MESSAGE)
+    if RETIRED_EXECUTION_PYTHON_ENV in os.environ:
+        parser.error(RETIRED_EXECUTION_PYTHON_ENV_MESSAGE)
     args = parser.parse_args(argv)
     if (args.official_resolver_url or args.official_resolver_provider_id) and not args.library_root:
         parser.error("official resolver bootstrap requires --library-root")
@@ -1597,7 +1633,7 @@ def main(argv: list[str] | None = None) -> None:
         try:
             model_roots = comfy_model_roots(
                 args.comfy_root,
-                python=args.comfy_python or None,
+                python=args.execution_python or None,
                 comfy_args=effective_comfy_args,
             )
             comfy_requirements_checked = True
@@ -1701,7 +1737,7 @@ def main(argv: list[str] | None = None) -> None:
         compat_specs = (
             comfy_compat_specs(
                 args.comfy_root or None,
-                python=args.comfy_python or None,
+                python=args.execution_python or None,
                 _requirements_checked=comfy_requirements_checked,
                 legacy_packs=args.legacy_pack,
                 asset_vault=(Path(args.library_root) / "vault" if args.library_root else None),
@@ -1797,10 +1833,10 @@ def main(argv: list[str] | None = None) -> None:
                 ),
                 minimax_h3_runtime_versions=(
                     lambda: detect_native_runtime_versions(
-                        comfy_python(Path(args.comfy_root), args.comfy_python or None)
+                        execution_python(Path(args.comfy_root), args.execution_python or None)
                         if args.comfy_root
-                        else args.comfy_python
-                        or os.environ.get("DINKSTER_COMFYUI_PYTHON")
+                        else args.execution_python
+                        or os.environ.get("DINKSTER_EXECUTION_PYTHON")
                         or sys.executable
                     )
                 ),
@@ -1889,13 +1925,9 @@ def main(argv: list[str] | None = None) -> None:
             cache_disk_budget=args.execution_cache_disk_budget,
             composition_mode="development" if args.watch_packs else "production",
         )
-        try:
-            ordered_defaults = composer.order_pack_entries(specs[:resolved_default_pack_count])
-        except CompositionError:
-            # Incremental add_pack calls report each broken default independently.
-            pass
-        else:
-            specs[:resolved_default_pack_count] = ordered_defaults
+        specs[:resolved_default_pack_count] = list(
+            _order_default_pack_specs(composer, specs, resolved_default_pack_count)
+        )
         composer_ref.append(composer)
         composer.validate_specs(specs)
         if args.prepare_stale_catalogs:

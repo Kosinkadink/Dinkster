@@ -3,7 +3,7 @@
 Usage from the Dinkster repository root:
 
     COMFYUI_ROOT=/path/to/ComfyUI PYTHONPATH=../comfy-aimdo \
-        /path/to/comfy-python tools/gen_ideogram4_goldens.py
+        /path/to/execution/python tools/gen_ideogram4_goldens.py
 
 The generator refuses a dirty or differently pinned reference checkout and a
 different torch build. It executes tiny conditional, padded, and image-only

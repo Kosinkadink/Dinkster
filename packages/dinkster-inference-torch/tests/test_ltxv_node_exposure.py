@@ -398,7 +398,7 @@ def test_split_components_reach_both_sampling_nodes_through_one_engine(
         frame_rate=50.0,
     )
     sample_custom_calls: list[str] = []
-    original_sample_custom = cast("Any", LTXVDiffusionRuntime.sample_custom)
+    original_sample_custom = LTXVDiffusionRuntime.sample_custom
 
     def sample_custom(self: LTXVDiffusionRuntime, *args: Any, **kwargs: Any) -> Any:
         sample_custom_calls.append(self.runtime_identity)
@@ -664,7 +664,7 @@ def test_registered_ltxav_clip_output_reaches_both_sampling_nodes_through_one_en
         frame_rate=50.0,
     )
     sample_custom_calls: list[str] = []
-    original_sample_custom = cast("Any", LTXAVDiffusionRuntime.sample_custom)
+    original_sample_custom = LTXAVDiffusionRuntime.sample_custom
 
     def sample_custom(self: LTXAVDiffusionRuntime, *args: Any, **kwargs: Any) -> Any:
         sample_custom_calls.append(self.runtime_identity)

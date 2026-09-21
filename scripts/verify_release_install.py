@@ -65,11 +65,13 @@ def stop(process: subprocess.Popen[str]) -> None:
         raise RuntimeError("owned release verification descendants survived teardown")
 
 
-def verify(root: Path, state: Path, registry_command: Path) -> None:
+def verify(root: Path, state: Path, registry_command: Path, python: Path | None = None) -> None:
     root = root.resolve()
     registry_command = registry_command.resolve()
     state.mkdir(parents=True)
-    python = root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    if python is None:
+        python = root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    python = python.resolve()
     registry_database = "sqlite:///" + (state / "registry.db").as_posix()
     registry_objects = str(state / "registry-objects")
     packs = str(state / "packs")
@@ -79,7 +81,7 @@ def verify(root: Path, state: Path, registry_command: Path) -> None:
     def run(module: str, *args: str, env: dict[str, str] | None = None) -> str:
         result = subprocess.run(
             [str(python), "-m", module, *args],
-            cwd=root,
+            cwd=state,
             env=env,
             text=True,
             capture_output=True,
@@ -90,7 +92,7 @@ def verify(root: Path, state: Path, registry_command: Path) -> None:
     def registry_admin(*args: str) -> str:
         return subprocess.run(
             [str(registry_command), "admin", "--database-url", registry_database, *args],
-            cwd=root,
+            cwd=state,
             text=True,
             capture_output=True,
             check=True,
@@ -117,7 +119,7 @@ def verify(root: Path, state: Path, registry_command: Path) -> None:
             log = stack.enter_context((state / f"{name}.log").open("w"))
             process = subprocess.Popen(
                 command,
-                cwd=root,
+                cwd=state,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -145,7 +147,7 @@ def verify(root: Path, state: Path, registry_command: Path) -> None:
             "--registry",
             registry_url,
             "publish",
-            "templates/pack",
+            str(root / "templates/pack"),
             "--version",
             "0.1.0",
             env=environment,
@@ -162,7 +164,7 @@ def verify(root: Path, state: Path, registry_command: Path) -> None:
                 "--object-store-root",
                 registry_objects,
             ],
-            cwd=root,
+            cwd=state,
             text=True,
             capture_output=True,
             check=True,
@@ -290,9 +292,10 @@ if __name__ == "__main__":
     parser.add_argument("root", type=Path)
     parser.add_argument("--state", type=Path)
     parser.add_argument("--registry-command", type=Path, required=True)
+    parser.add_argument("--python", type=Path)
     args = parser.parse_args()
     if args.state is not None:
-        verify(args.root, args.state.resolve(), args.registry_command)
+        verify(args.root, args.state.resolve(), args.registry_command, args.python)
     else:
         with tempfile.TemporaryDirectory(prefix="dinkster-release-") as directory:
-            verify(args.root, Path(directory) / "state", args.registry_command)
+            verify(args.root, Path(directory) / "state", args.registry_command, args.python)

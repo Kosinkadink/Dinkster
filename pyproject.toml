@@ -54,6 +54,11 @@ dinkster-port = "dinkster.port:main"
 dinkster-p2p-diagnostics = "dinkster.p2p_diagnostics:main"
 
 [project.optional-dependencies]
+default = [
+    "dinkster-supervisor",
+    "dinkster-collab",
+    "dinkster-nodes-training",
+]
 collab = ["dinkster-collab"]
 supervisor = ["dinkster-supervisor"]
 
@@ -89,7 +94,7 @@ dinkster-workers = { workspace = true }
 dinkster-caches = { workspace = true }
 dinkster-assets = { workspace = true }
 dinkster-image-document = { workspace = true }
-dinkster-p2p = { workspace = true }
+dinkster-p2p = { git = "https://github.com/Kosinkadink/dinkster-p2p.git", rev = "16bf38c30a47fdde4f6b63e00d63fb2d8cb5ff5e" }
 dinkster-memory = { workspace = true }
 dinkster-native = { workspace = true }
 dinkster-compat-comfy = { workspace = true }
@@ -133,6 +138,11 @@ testpaths = [
 # root on sys.path. `python -m pytest` adds it implicitly; the `pytest`
 # entrypoint (what CI's `uv run pytest` invokes) does not.
 pythonpath = ["."]
+# Self-identifying hangs: once any test runs this long, pytest's bundled
+# faulthandler plugin dumps every thread's stack naming the stuck test
+# (comfy-vibe-station#245). Diagnostic only; it never skips, fails, or
+# reshapes a test.
+faulthandler_timeout = 600
 
 [tool.pyright]
 pythonVersion = "3.12"

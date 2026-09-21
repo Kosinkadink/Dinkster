@@ -42,24 +42,20 @@ not resolve samplers, construct schedules or noise, implement CFG, call the
 solver, apply masks, own callbacks, or poll cancellation. Those are engine
 invariants so every sampler surface observes identical behavior.
 
-## Migration order
+## Runtime adapters
 
-Migration proceeds from the smallest adapter surface to the largest:
+Every diffusion runtime executes through `sampling_execution`. Krea 2, Flux2,
+Anima, Chroma, Ideogram4, Lumina2, Qwen Image, SeedVR2, Z-Image, Flux, SD, and
+MiniMax Music 3 use single-stream adapters. Wan21, LTXV, LTXAV, TRELLIS.2,
+TripoSplat, and MiniMax H3 adapt structural latent shapes at the same seam.
 
-1. Flux2, Anima, Chroma, Ideogram4, Lumina2, Qwen Image, SeedVR2, and Z-Image
-   use `SingleStreamLatentAdapter` and execute through `sampling_execution`.
-2. The wiring-owned Flux and SD runtimes complete the single-stream migration.
-3. The registration seam gains a structural-latent adapter shape.
-   This is an interface extension, not a Wan21 or MiniMax H3 branch in engine
-   policy.
-4. Wan21 maps structural video streams, typed conditioning, context
-   windows, inpaint data, and masks into that adapter. Its loop, cancellation,
-   observers, and schedule move to the engine.
-5. LTXV, LTXAV, TRELLIS.2, and TripoSplat use the structural-latent contract.
-6. MiniMax H3 packs video/audio streams through the structural adapter and
-   finalizes audio scaling and capture. Distributed model evaluation stays
-   inside its denoiser adapter; solver and callback execution stay in the
-   engine. MiniMax Music 3 reuses that multi-stream shape.
+Wan21 maps structural video streams, typed conditioning, context windows,
+inpaint data, and masks into its adapter. LTXV, LTXAV, TRELLIS.2, and
+TripoSplat use the same structural contract. MiniMax H3 packs video and audio
+streams and finalizes audio scaling and capture through its latent adapter.
+Distributed and windowed model evaluation stays inside denoiser adapters;
+solver, schedule, noise, masking, cancellation, observer, and callback
+execution stays in the engine.
 
 Autoregressive or windowed model evaluation is a denoiser implementation, not
 a second sampling run. A migration is complete only when KSampler and direct
