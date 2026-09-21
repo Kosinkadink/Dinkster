@@ -9,6 +9,8 @@ from dinkster_inference import builtin_families
 EXTERNAL_PROOF_FAMILY_IDS = frozenset({"test.toy-image"})
 NEW_FAMILY_REGISTRATION_PATHS = frozenset(
     {
+        ".github/workflows/ci.yml",
+        ".github/workflows/full-validation.yml",
         "docs/new-model-family.md",
         "packages/dinkster-inference-torch/tests/test_new_family_checklist.py",
         "tests/family_gate_scanner.py",
@@ -46,12 +48,15 @@ def changed_paths_since_merge_base(root: Path, base_ref: str = "origin/main") ->
     merge_base = subprocess.run(
         ("git", "merge-base", "HEAD", base_ref),
         cwd=root,
-        check=True,
         capture_output=True,
         text=True,
-    ).stdout.strip()
+    )
+    if merge_base.returncode != 0:
+        raise AssertionError(
+            f"cannot resolve {base_ref}; validation checkouts must retain full history"
+        )
     changed = subprocess.run(
-        ("git", "diff", "--name-only", f"{merge_base}...HEAD"),
+        ("git", "diff", "--name-only", f"{merge_base.stdout.strip()}...HEAD"),
         cwd=root,
         check=True,
         capture_output=True,
