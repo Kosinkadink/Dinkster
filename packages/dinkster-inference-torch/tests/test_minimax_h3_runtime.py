@@ -1366,12 +1366,12 @@ def test_sde_sampler_matches_the_explicit_pre_offset_brownian_reference() -> Non
     packed, layout = pack_latent_streams(sampler_latent)
     pre_offset = sampling_sigmas(
         scheduler,
-        MINIMAX_H3_SIGMAS,
+        MINIMAX_H3_SIGMAS.video,
         3,
         denoise=1.0,
         discard_penultimate=sampler.discard_penultimate,
     )
-    schedule = offset_first_sigma_for_snr(pre_offset, MINIMAX_H3_SIGMAS, flow=True)
+    schedule = offset_first_sigma_for_snr(pre_offset, MINIMAX_H3_SIGMAS.video, flow=True)
     assert schedule != pre_offset
     generator = torch.Generator("cpu")
     generator.manual_seed(123)
@@ -2356,7 +2356,7 @@ def test_ksampler_surface_is_bit_equal_sugar_over_sample_custom(
         target,
         samplers=cast("Any", runtime)._samplers,
         schedulers=cast("Any", runtime)._schedulers,
-        space=MINIMAX_H3_SIGMAS,
+        space=MINIMAX_H3_SIGMAS.video,
         flow=True,
         sampler_id=sampler_id,
         scheduler_id=scheduler_id,
@@ -2404,7 +2404,7 @@ def test_ksampler_sugar_parity_holds_for_low_precision_latents() -> None:
         target,
         samplers=cast("Any", runtime)._samplers,
         schedulers=cast("Any", runtime)._schedulers,
-        space=MINIMAX_H3_SIGMAS,
+        space=MINIMAX_H3_SIGMAS.video,
         flow=True,
         sampler_id="euler",
         scheduler_id="simple",
@@ -2448,7 +2448,7 @@ def test_ksampler_sugar_parity_holds_for_cfg_pp_without_negative() -> None:
         target,
         samplers=cast("Any", runtime)._samplers,
         schedulers=cast("Any", runtime)._schedulers,
-        space=MINIMAX_H3_SIGMAS,
+        space=MINIMAX_H3_SIGMAS.video,
         flow=True,
         sampler_id="euler_cfg_pp",
         scheduler_id="simple",
@@ -2484,20 +2484,20 @@ def test_custom_sampling_sigma_methods_match_the_schedule_helpers() -> None:
     scheduler = torch_scheduler_registry().get("simple")
     assert scheduler is not None
     assert runtime.custom_sampling_sigmas("simple", 4, 1.0) == sampling_sigmas(
-        scheduler, MINIMAX_H3_SIGMAS, 4, denoise=1.0
+        scheduler, MINIMAX_H3_SIGMAS.video, 4, denoise=1.0
     )
     with pytest.raises(MiniMaxH3RuntimeError, match="unknown scheduler"):
         runtime.custom_sampling_sigmas("test.missing", 4, 1.0)
     assert runtime.custom_sampling_beta_sigmas(4, 0.6, 0.6) == custom_beta_sigmas(
-        MINIMAX_H3_SIGMAS, 4, 0.6, 0.6
+        MINIMAX_H3_SIGMAS.video, 4, 0.6, 0.6
     )
     with pytest.raises(ValueError, match="discrete sigma space"):
         runtime.custom_sampling_sd_turbo_sigmas(2, 1.0)
     assert runtime.custom_sampling_percent_to_sigma(
         0.5, return_actual_sigma=False
     ) == custom_percent_to_sigma(
-        MINIMAX_H3_SIGMAS,
-        MINIMAX_H3_SIGMAS.percent_to_sigma,
+        MINIMAX_H3_SIGMAS.video,
+        MINIMAX_H3_SIGMAS.video.percent_to_sigma,
         0.5,
         return_actual_sigma=False,
     )
@@ -2666,7 +2666,7 @@ def test_ksampler_sugar_skips_the_state_capture_evaluations_of_uni_pc() -> None:
         target,
         samplers=cast("Any", runtime)._samplers,
         schedulers=cast("Any", runtime)._schedulers,
-        space=MINIMAX_H3_SIGMAS,
+        space=MINIMAX_H3_SIGMAS.video,
         flow=True,
         sampler_id="uni_pc",
         scheduler_id="simple",
