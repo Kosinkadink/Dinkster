@@ -83,6 +83,12 @@ mark = "M"                       # one compact glyph (emoji ok); header chip
 color = "#4a7d5e"                # chip fill, #rrggbb
 icon = "icon.png"                # raster badge, see below
 
+[pack.frontend]                  # optional static files for pack UI
+assets = "frontend"
+
+[pack.settings]                  # optional settings shown by the frontend
+schema = "settings.schema.json"
+
 [[pack.blueprints]]              # optional starter workflows, see below
 id = "upscale"                   # unique within the pack; closed name grammar
 name = "Upscale"
@@ -96,6 +102,161 @@ file = "blueprints/upscale.json" # a workflow document inside the pack dir
 Entries are `module:attr` strings resolved inside the worker process, with
 the pack directory on `sys.path`. Loading the manifest itself never imports
 pack code.
+
+## Static frontend assets and settings
+
+`[pack.frontend] assets` names a directory relative to `dinkster-pack.toml`.
+The host recursively loads its regular files when the pack loads and serves
+each file at:
+
+```text
+/packs/{packId}/static/{path-relative-to-assets}
+```
+
+For example, `frontend/styles/panel.css` in `my-pack` is available at
+`/packs/my-pack/static/styles/panel.css`. The response contains the exact file
+bytes and a MIME type inferred from the filename; an unknown extension uses
+`application/octet-stream`. Reads require an authenticated principal. There is
+no directory listing, and a missing pack, missing file, directory path, or
+traversal attempt returns 404.
+
+The assets path must be non-empty, relative to the pack, resolve inside the
+pack directory, name a directory, and contain no symlink at the root or below
+it. A tree may contain at most 256 files, each at most 4 MiB, with at most
+16 MiB total. These bounds keep pack discovery predictable. Bytes are captured
+at load time, so changing a file on disk does not change what a running server
+returns; reload the pack to publish changed bytes.
+
+`[pack.settings] schema` names a UTF-8 JSON Schema file relative to the
+manifest. This example defines every field shape the Settings page supports:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "title": "Enable enhancement",
+      "description": "Apply the pack enhancement to new runs.",
+      "default": true
+    },
+    "quality": {
+      "type": "integer",
+      "title": "Quality level",
+      "default": 2,
+      "minimum": 1,
+      "maximum": 5,
+      "multipleOf": 1
+    },
+    "strength": {
+      "type": "number",
+      "title": "Strength",
+      "default": 0.5,
+      "minimum": 0,
+      "maximum": 1,
+      "multipleOf": 0.05
+    },
+    "mode": {
+      "type": "string",
+      "title": "Processing mode",
+      "default": "balanced",
+      "enum": ["fast", "balanced", "quality"]
+    },
+    "prefix": {
+      "type": "string",
+      "title": "Output prefix",
+      "description": "Prepended to generated filenames.",
+      "default": "enhanced"
+    }
+  },
+  "required": ["enabled", "quality", "strength", "mode", "prefix"]
+}
+```
+
+This is a deliberately closed JSON Schema subset, not arbitrary JSON Schema:
+
+- The root must be a non-empty object schema with `type: "object"`,
+  `additionalProperties: false`, `properties`, and `required`. `$schema` is
+  optional. No other root keywords are accepted.
+- Every property is required, and `required` lists every property once in the
+  same order as `properties`. Setting names start with an ASCII letter and then
+  use only ASCII letters, digits, `_`, `.`, or `-`.
+- A field has `type`, non-empty `title`, and `default`. Optional `description`
+  supplies help text. No other field keywords are accepted.
+- Supported types are `boolean`, `integer`, `number`, and `string`. The
+  Settings page renders them as a checkbox, integer/number input, and text
+  input respectively. A string `enum` renders as a select control.
+- `minimum`, `maximum`, and positive `multipleOf` apply only to numbers and
+  integers. Numbers must be finite. Integers and integer constraints must be
+  within JavaScript's safe integer range. `minimum` cannot exceed `maximum`.
+- A string `enum` contains unique strings. Every default must satisfy its type,
+  enum, and numeric constraints.
+
+The schema file is limited to 64 KiB. Duplicate JSON object keys, invalid
+UTF-8 or JSON, non-finite numbers, unsupported keywords, and inconsistent
+defaults or constraints are rejected rather than ignored.
+
+The frontend discovers configured packs through `settings: true` in the
+`/api/nodes` packs table, then uses these authenticated endpoints:
+
+```http
+GET /api/packs/my-pack/settings
+```
+
+```json
+{
+  "packId": "my-pack",
+  "displayName": "My Pack",
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "title": "Enable enhancement",
+        "default": true
+      }
+    },
+    "required": ["enabled"]
+  },
+  "values": {"enabled": true}
+}
+```
+
+The first GET returns schema defaults. Updates send the complete values object,
+not a patch:
+
+```http
+PUT /api/packs/my-pack/settings
+Content-Type: application/json
+
+{"enabled": false}
+```
+
+A successful PUT returns the same response shape as GET with the accepted
+values. Omitted, additional, incorrectly typed, out-of-range, non-finite, or
+oversized values return 400 and leave the previous object unchanged. The
+complete values object is limited to 64 KiB. An unknown pack or a pack without
+declared settings returns 404. Unauthenticated requests return 401; PUT also
+requires `settings:write` and returns 403 without it. Unreadable stored data or
+a persistence failure returns 500.
+
+With `dinkster-serve --library-root <root>`, accepted values are atomically
+stored by the host in `<root>/pack-settings/<packId>.json`, one complete JSON
+object per pack. Packs do not read or write these files themselves. Without a
+library root, values live in memory and reset when the server restarts. A pack
+schema change does not silently coerce stored values: incompatible stored data
+causes GET to fail until a valid complete object is PUT or the operator removes
+the host-owned file.
+
+`dinkster doctor` treats invalid asset or settings declarations as
+`manifest.invalid` publish blockers. It rejects missing, absolute, escaping,
+symlinked, incorrectly typed, unreadable, or over-budget paths and files. It
+also rejects malformed or unsupported settings schemas. These failures stop
+the whole declaration instead of advertising assets or controls that the host
+cannot serve safely and consistently.
 
 `[pack.sandbox]` is explicit even when all needs are false; `dinkster doctor`
 warns when the table is absent. `gpu` and `network` require matching per-pack
@@ -332,6 +493,33 @@ inline in the `/api/nodes` packs table and fetch the document lazily from
 `GET /api/packs/{packId}/blueprints/{id}` with immutable digest caching -
 change the document, ship new bytes, get a new digest. Blueprints never
 join schema signatures or execution identity.
+
+## Templates
+
+`[[pack.templates]]` entries ship complete starter workflows shown in the
+new-workflow gallery. They use the same `id`, `name`, optional `description`,
+`tags`, and JSON `file` rules as blueprints. `family` groups the template in
+the gallery, `models` lists exact required model filenames, and `assets`
+lists required pack-local `[[pack.assets]]` ids. An optional `thumbnail`
+names a static 64x64 PNG or WebP under the pack directory.
+
+```toml
+[[pack.templates]]
+id = "starter"
+name = "Starter workflow"
+description = "A minimal generation workflow."
+family = "example.image"
+tags = ["starter", "image"]
+models = ["example-model.safetensors"]
+assets = ["example-model"]
+file = "templates/starter.json"
+thumbnail = "templates/starter.png"
+```
+
+Descriptors are paged by `GET /api/templates`. Workflow and thumbnail bytes
+use immutable digest caching at
+`/api/packs/{packId}/templates/{id}` and
+`/api/packs/{packId}/templates/{id}/thumbnail`.
 
 ## Documentation
 
@@ -773,7 +961,7 @@ uv run dinkster-port path/to/legacy_pack --name my-pack \
 
 The legacy pack is imported in a disposable probe subprocess, never in
 the CLI's process, under the ComfyUI install's own interpreter
-(`--comfy-python`, else `$DINKSTER_COMFYUI_PYTHON`, else
+(`--execution-python`, else `$DINKSTER_EXECUTION_PYTHON`, else
 `<comfy-root>/venv/bin/python` - packs import torch and friends). For
 v1 mappings the probe runs the same loader and translate.py rules the
 compat worker runs, so the generated schemas can never drift from what

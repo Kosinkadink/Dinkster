@@ -1005,9 +1005,9 @@ def _load_detected_component(
         source = inference.load_safetensors_header(
             path, asset_digest=asset.digest, asset_size=asset.size
         )
-        descriptor, role, _plan = registry.select(source, path, kind, family_id=family_id)
+        descriptor, role, plan = registry.select(source, path, kind, family_id=family_id)
     else:
-        descriptor, role, _plan = registry.select_detected(detected, kind, family_id=family_id)
+        descriptor, role, plan = registry.select_detected(detected, kind, family_id=family_id)
     dtype = {
         "model": context.diffusion_dtype,
         "text": context.text_dtype,
@@ -1018,6 +1018,8 @@ def _load_detected_component(
     storage_kwargs: dict[str, Any] = (
         {} if storage_dtype is None else {"storage_dtype": storage_dtype}
     )
+    artifact_role = getattr(plan, "artifact_role", None)
+    artifact_kwargs = {} if artifact_role is None else {"artifact_role": artifact_role}
     return _build_component_runtime_handle(
         descriptor,
         asset,
@@ -1030,6 +1032,7 @@ def _load_detected_component(
         attention_policy=context.attention_policy,
         attention_route_token=context.attention_route_token,
         **storage_kwargs,
+        **artifact_kwargs,
     )
 
 

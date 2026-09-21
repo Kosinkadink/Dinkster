@@ -6,6 +6,13 @@ from pathlib import Path
 import pytest
 from dinkster_inference import EngineProperties, PreviewDecoderProperties, builtin_families
 from dinkster_inference.component_catalog import default_component_registry
+from family_gate_scanner import (
+    EXTERNAL_PROOF_FAMILY_IDS,
+    NEW_FAMILY_PROOF_PATH,
+    changed_paths_since_merge_base,
+    family_literal_gates,
+    unexpected_new_family_paths,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_ENGINE_FILES = (
@@ -15,47 +22,227 @@ SHARED_ENGINE_FILES = (
     "packages/dinkster-inference/src/dinkster_inference/identity.py",
     "packages/dinkster-inference/src/dinkster_inference/ipadapter.py",
     "packages/dinkster-inference/src/dinkster_inference/runtime.py",
+    "packages/dinkster-inference/src/dinkster_inference/solvers.py",
     "packages/dinkster-inference/src/dinkster_inference/taesd.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/assemble.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/_portable_solvers.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/component_runtime.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/denoise.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/memory.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_execution.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_runtime.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/scheduled_sampling.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/schedules.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/solvers.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
     "packages/dinkster-native/src/dinkster_native/preview_emit.py",
     "src/dinkster/native_policy.py",
 )
 # native_arm.py is asserted separately by the #170 scanner test.
 
-
-def _family_literal_gates(path: Path, family_ids: frozenset[str]) -> tuple[str, ...]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    findings: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.Compare, ast.Dict, ast.IfExp, ast.Match, ast.Set)):
-            continue
-        literals = {
-            child.value
-            for child in ast.walk(node)
-            if isinstance(child, ast.Constant)
-            and isinstance(child.value, str)
-            and child.value in family_ids
-        }
-        for literal in literals:
-            findings.add(f"{path.relative_to(ROOT)}:{node.lineno}: {literal}")
-    return tuple(sorted(findings))
+SAMPLING_RUNTIME_CLASSES = (
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/anima_runtime.py",
+        "AnimaDiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/chroma_runtime.py",
+        "ChromaDiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/flux2_runtime.py",
+        "Flux2Runtime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/flux2_runtime.py",
+        "Flux2DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/ideogram4_runtime.py",
+        "Ideogram4DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/krea2_runtime.py",
+        "Krea2DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "LTXAVDiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxv_runtime.py",
+        "LTXVDiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/lumina2_runtime.py",
+        "Lumina2DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "MiniMaxH3DiTRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_music3_runtime.py",
+        "MiniMaxMusic3DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/qwen_image_runtime.py",
+        "QwenImageRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/qwen_image_runtime.py",
+        "QwenImageDiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/seedvr2_runtime.py",
+        "SeedVR2DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_runtime.py",
+        "Trellis2DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "TripoSplatDiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "Wan21Runtime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "Wan21DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "Wan21CausalDiffusionRuntime",
+    ),
+    ("packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py", "FluxRuntime"),
+    ("packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py", "SDRuntime"),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/z_image_runtime.py",
+        "ZImageRuntime",
+    ),
+)
+FAMILY_ORCHESTRATION_CALLS = frozenset(
+    {
+        "brownian_step_noise",
+        "build_custom_sampling_schedule",
+        "compile_guidance_plan",
+        "guided_denoiser",
+        "resolve_custom_sampling_request",
+        "run_denoise",
+        "run_sampler_engine",
+    }
+)
+FAMILY_ORCHESTRATION_FUNCTIONS = frozenset(
+    {
+        "_drive",
+        "_progress_callback",
+        "sample_flux_scheduled_custom",
+        "sample_sd_scheduled_custom",
+    }
+)
 
 
 def test_shared_engine_has_zero_literal_family_gates() -> None:
-    family_ids = frozenset(family.id for family in builtin_families())
     findings = tuple(
         finding
         for relative_path in SHARED_ENGINE_FILES
-        for finding in _family_literal_gates(ROOT / relative_path, family_ids)
+        for finding in family_literal_gates(ROOT / relative_path, ROOT)
     )
     assert findings == (), "literal family gates remain:\n" + "\n".join(findings)
+
+
+def test_family_runtimes_have_zero_sampling_orchestration() -> None:
+    findings: list[str] = []
+    for relative_path, class_name in SAMPLING_RUNTIME_CLASSES:
+        path = ROOT / relative_path
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        runtime = next(
+            node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name
+        )
+        aliases = [
+            statement
+            for statement in runtime.body
+            if isinstance(statement, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "sample_custom"
+                for target in statement.targets
+            )
+        ]
+        if len(aliases) != 1 or "sampling_execution" not in {
+            node.id for node in ast.walk(aliases[0]) if isinstance(node, ast.Name)
+        }:
+            findings.append(
+                f"{relative_path}:{runtime.lineno}: {class_name} lacks the engine alias"
+            )
+        for node in ast.walk(runtime):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+                node.name == "sample_custom" or node.name.startswith("_sample_custom")
+            ):
+                findings.append(
+                    f"{relative_path}:{node.lineno}: {class_name}.{node.name} owns orchestration"
+                )
+            if isinstance(node, ast.Call):
+                call_name = (
+                    node.func.id
+                    if isinstance(node.func, ast.Name)
+                    else node.func.attr
+                    if isinstance(node.func, ast.Attribute)
+                    else None
+                )
+                if call_name in FAMILY_ORCHESTRATION_CALLS:
+                    findings.append(
+                        f"{relative_path}:{node.lineno}: {class_name} calls {call_name}"
+                    )
+    assert findings == [], "family sampling orchestration remains:\n" + "\n".join(findings)
+
+
+def test_scheduled_sampling_has_zero_shadow_orchestration() -> None:
+    relative_path = (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/scheduled_sampling.py"
+    )
+    path = ROOT / relative_path
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    findings: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+            node.name in FAMILY_ORCHESTRATION_FUNCTIONS
+        ):
+            findings.append(f"{relative_path}:{node.lineno}: defines {node.name}")
+        if isinstance(node, ast.Call):
+            call_name = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else None
+            )
+            if call_name in FAMILY_ORCHESTRATION_CALLS:
+                findings.append(f"{relative_path}:{node.lineno}: calls {call_name}")
+    assert findings == [], "scheduled sampling orchestration remains:\n" + "\n".join(findings)
+
+
+@pytest.mark.parametrize("family_id", sorted(EXTERNAL_PROOF_FAMILY_IDS))
+def test_external_proof_family_is_in_fail_closed_scanner(tmp_path: Path, family_id: str) -> None:
+    source = tmp_path / "shared_engine.py"
+    source.write_text(f'enabled = family_id == "{family_id}"\n', encoding="utf-8")
+
+    assert family_literal_gates(source, tmp_path) == (f"shared_engine.py:1: {family_id}",)
+
+
+def test_new_family_proof_only_changes_registration_points() -> None:
+    changed_paths = changed_paths_since_merge_base(ROOT)
+    unexpected = unexpected_new_family_paths(changed_paths)
+    assert unexpected == (), "new-family proof changed non-registration paths:\n" + "\n".join(
+        unexpected
+    )
+
+    shared_edit = "packages/dinkster-inference/src/dinkster_inference/runtime.py"
+    assert unexpected_new_family_paths(frozenset({NEW_FAMILY_PROOF_PATH, shared_edit})) == (
+        shared_edit,
+    )
 
 
 def test_registered_engine_properties_cover_shared_family_behavior() -> None:

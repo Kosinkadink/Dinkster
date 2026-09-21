@@ -43,17 +43,21 @@ async def _default_pack_names() -> tuple[str, ...]:
     from dinkster_workers import load_manifest
 
     from dinkster.comfy_compose import comfy_compat_specs
-    from dinkster.compose import ServingComposer, default_pack_specs
+    from dinkster.compose import ServingComposer, default_pack_specs, model_pack_specs
 
     composer = ServingComposer()
     try:
-        specs = composer.order_pack_entries((*default_pack_specs(), *comfy_compat_specs()))
+        specs = composer.order_pack_entries(
+            (*default_pack_specs(), *model_pack_specs(), *comfy_compat_specs())
+        )
         return tuple(load_manifest(Path(spec.manifest)).name for spec in specs)
     finally:
         await composer.close()
 
 
 def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Path) -> None:
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
+
     environment = tmp_path / "core-environment"
     sync_environment = {
         **os.environ,
@@ -69,6 +73,8 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
             "dinkster-collab",
             "--no-install-package",
             "dinkster-supervisor",
+            "--no-install-package",
+            "dinkster-p2p",
         ],
         cwd=TESTS_DIR.parent,
         env=sync_environment,
@@ -81,9 +87,9 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
             "-c",
             "import importlib.metadata as m, importlib.util as u; "
             "assert all(u.find_spec(n) is None for n in "
-            "('dinkster_collab', 'dinkster_supervisor')); "
+            "('dinkster_collab', 'dinkster_supervisor', 'dinkster_p2p')); "
             "assert all(not any(d.metadata['Name'] == n for d in m.distributions()) for n in "
-            "('dinkster-collab', 'dinkster-supervisor'))",
+            "('dinkster-collab', 'dinkster-supervisor', 'dinkster-p2p'))",
         ],
         check=True,
     )
@@ -95,6 +101,8 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
         "DINKSTER_REMOTE_GATEWAY_BASE": "",
         "DINKSTER_SERVING_PYTHON": str(python),
     }
+    log = tmp_path / "server.log"
+    output = log.open("w")
     process = subprocess.Popen(
         [
             str(python),
@@ -110,8 +118,8 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
         ],
         cwd=tmp_path,
         env=process_environment,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=output,
+        stderr=output,
     )
 
     async def scenario() -> None:
@@ -138,8 +146,30 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
                 for node_id, schema in nodes.items()
             )
             assert any(node_id.startswith("std.") for node_id in nodes)
+            graph = Graph(nodes={"sum": GraphNode("std.math.add_ints", {"a": 2, "b": 3})})
+            async with session.post(
+                base + "/api/jobs",
+                json={
+                    "clientId": "optional-package-proof",
+                    "jobId": "sum",
+                    "graph": graph_to_wire(graph),
+                    "targets": ["sum"],
+                },
+            ) as response:
+                assert response.status == 202, await response.text()
+            async with asyncio.timeout(30):
+                while True:
+                    async with session.get(
+                        base + "/api/jobs/optional-package-proof/sum"
+                    ) as response:
+                        job = await response.json()
+                    if job["state"] in {"completed", "failed", "cancelled"}:
+                        break
+                    await asyncio.sleep(0.05)
+            assert job["state"] == "completed", job
             async with session.get(base + "/api/sessions") as response:
                 assert response.status == 404
+            assert "p2p unavailable" in log.read_text("utf-8")
 
     try:
         asyncio.run(scenario())
@@ -150,6 +180,7 @@ def test_core_server_serves_real_catalog_without_optional_packages(tmp_path: Pat
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=30)
+        output.close()
 
 
 def test_installed_collaboration_package_registers_session_routes() -> None:
@@ -609,7 +640,7 @@ def test_settings_gate_argparse_matrix(
 
 @pytest.mark.parametrize("persisted_enabled", [None, False, True])
 @pytest.mark.parametrize("disabled", [False, True])
-def test_serve_p2p_defaults_off_preserves_saved_choice_and_allows_cli_disable(
+def test_serve_p2p_defaults_on_preserves_saved_choice_and_allows_cli_disable(
     persisted_enabled: bool | None,
     disabled: bool,
     tmp_path: Path,
@@ -655,7 +686,7 @@ def test_serve_p2p_defaults_off_preserves_saved_choice_and_allows_cli_disable(
     serve.main()
     value = captured[0][0]["p2p"]
     assert isinstance(value, dict)
-    enabled = not disabled and persisted_enabled is True
+    enabled = not disabled and persisted_enabled is not False
     assert value["downloadsEnabled"] is enabled
     assert value["seedingEnabled"] is enabled
     assert value["stagingBudgetBytes"] == 64 * 1024**3
@@ -768,7 +799,7 @@ def test_comfy_compat_composition_failure_exits_with_one_message(
     comfy_root.mkdir()
     message = (
         "ComfyUI requirement module 'einops' is unavailable in interpreter "
-        "'/selected/python' selected by --comfy-python"
+        "'/selected/python' selected by --execution-python"
     )
 
     def fail_specs(*_args: object, **_kwargs: object) -> None:
@@ -785,7 +816,7 @@ def test_comfy_compat_composition_failure_exits_with_one_message(
             "--no-default-packs",
             "--comfy-root",
             str(comfy_root),
-            "--comfy-python",
+            "--execution-python",
             "/selected/python",
         ],
     )
@@ -794,6 +825,33 @@ def test_comfy_compat_composition_failure_exits_with_one_message(
         serve.main()
 
     assert str(caught.value) == message
+
+
+def test_retired_comfy_python_flag_exits_naming_the_replacement(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+
+    monkeypatch.delenv("DINKSTER_COMFYUI_PYTHON", raising=False)
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve", "--comfy-python", "/x/python"])
+    with pytest.raises(SystemExit, match="2"):
+        serve.main()
+    assert "--comfy-python is retired; pass --execution-python instead" in capsys.readouterr().err
+
+
+def test_retired_comfy_python_env_exits_naming_the_replacement(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+
+    monkeypatch.setenv("DINKSTER_COMFYUI_PYTHON", "/x/python")
+    monkeypatch.setattr(sys, "argv", ["dinkster-serve"])
+    with pytest.raises(SystemExit, match="2"):
+        serve.main()
+    assert (
+        "DINKSTER_COMFYUI_PYTHON is retired; set DINKSTER_EXECUTION_PYTHON instead"
+        in capsys.readouterr().err
+    )
 
 
 def test_settings_gate_unknown_is_startup_parser_error(
@@ -1261,6 +1319,39 @@ def test_sandbox_protects_configured_auth_outside_library(
     assert len(captured) == 1
     assert str(shared) in captured[0].ro_binds
     assert str(auth) in captured[0].protected_roots
+
+
+def test_read_only_output_mount_is_not_selected_as_the_save_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster import serve
+
+    library = tmp_path / "library"
+    output = tmp_path / "shared-output"
+    library.mkdir()
+    output.mkdir()
+    (library / "mounts.toml").write_text(
+        f"[mounts.output]\npath = {json.dumps(str(output))}\n",
+        encoding="utf-8",
+    )
+
+    def fake_run_app(awaitable: object, **_kwargs: object) -> None:
+        awaitable.close()  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(serve.web, "run_app", fake_run_app)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "dinkster-serve",
+            "--library-root",
+            str(library),
+            "--no-default-packs",
+            "--disable-p2p",
+        ],
+    )
+
+    serve.main()
 
 
 def test_auth_file_malformed_refuses_serve_startup(
@@ -2696,14 +2787,7 @@ def test_library_startup_composes_without_pack_workers(
 
     from tools.benchmark_schema_catalog import ENTRY, bound_server, terminate_children
 
-    # Network-cost probes spawn transient OS helpers unrelated to pack startup.
-    entry = ENTRY.replace(
-        "serve.main()",
-        "from functools import partial\n"
-        "serve.add_p2p_routes = partial(serve.add_p2p_routes, "
-        "network_cost=lambda: 'unmetered')\n"
-        "serve.main()",
-    )
+    entry = ENTRY
     port = free_port()
     extra = ("--no-default-packs",) if no_defaults else ()
     if disable_p2p:
@@ -2753,9 +2837,10 @@ def test_library_startup_composes_without_pack_workers(
             async with session.get(f"http://127.0.0.1:{port}/api/p2p/status") as resp:
                 assert resp.status == 200
                 p2p = await resp.json()
-            assert p2p["state"] == "disabled", p2p
-            assert p2p["sidecar"] is None, p2p
-            assert not server.children(recursive=True)
+            assert p2p["state"] == ("disabled" if disable_p2p else "running"), p2p
+            if disable_p2p:
+                assert p2p["sidecar"] is None, p2p
+            assert len(server.children(recursive=True)) == (0 if disable_p2p else 1)
 
     try:
         asyncio.run(scenario())
@@ -2768,6 +2853,76 @@ def test_library_startup_composes_without_pack_workers(
                 process.terminate()
             process.wait(timeout=15)
         assert not alive, f"server descendants survived teardown: {alive}"
+
+
+def test_degraded_default_ordering_composes_media_io_before_image(
+    tmp_path: Path,
+) -> None:
+    """One pack with unresolvable contracts must not send the healthy defaults
+    back to load order: dinkster-nodes-image sorts before dinkster-nodes-media-io
+    alphabetically, so composing in load order validates the image pack's
+    media-io requirement before the media-io pack has announced.
+
+    Regression for Kosinkadink/comfy-vibe-station#242, where exactly this took
+    down every hosted pack depending on the media-io chain.
+    """
+    import dinkster.serve as serve
+    from dinkster.compose import (
+        CompositionError,
+        PackSpec,
+        ServingComposer,
+        default_pack_spec,
+        load_manifest,
+        resolve_manifest_path,
+    )
+
+    broken = tmp_path / "ordering-probe"
+    broken.mkdir()
+    (broken / "dinkster-pack.toml").write_text(
+        '[pack]\nname = "dinkster-ordering-probe"\nnamespaces = ["probe"]\n'
+        "[pack.requirements.capabilities]\n"
+        '"dinkster.ordering.probe" = ">=1.0.0,<2.0.0"\n'
+        '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
+        encoding="utf-8",
+    )
+    specs: list[PackSpec] = [
+        default_pack_spec("dinkster-nodes-foundation"),
+        default_pack_spec("dinkster-nodes-image"),
+        default_pack_spec("dinkster-nodes-media-io"),
+        PackSpec(manifest=broken / "dinkster-pack.toml"),
+    ]
+    # Load order is alphabetical, and it puts the consumer before its provider.
+    from dinkster.compose import default_pack_ids
+
+    load_order = list(default_pack_ids())
+    assert load_order.index("dinkster-nodes-image") < load_order.index("dinkster-nodes-media-io")
+    composer = ServingComposer()
+
+    async def scenario() -> None:
+        # The probe's unresolvable capability makes full contract ordering
+        # raise; the defaults must still compose providers before consumers.
+        ordered = serve._order_default_pack_specs(composer, specs, len(specs))
+        errors: dict[str, str] = {}
+        deltas: dict[str, set[str]] = {}
+        for spec in ordered:
+            pack = load_manifest(resolve_manifest_path(spec.manifest)).name
+            try:
+                delta = await composer.add_pack(spec)
+            except CompositionError as error:
+                errors[pack] = str(error)
+            else:
+                deltas[pack] = set(delta.schemas)
+        assert list(errors) == ["dinkster-ordering-probe"]
+        assert "dinkster.ordering.probe" in errors["dinkster-ordering-probe"]
+        assert "dinkster-nodes-media-io" in deltas
+        assert "dinkster.load_video" in deltas["dinkster-nodes-media-io"]
+        assert "dinkster-nodes-image" in deltas, errors
+        assert "dinkster.image.resize" in deltas["dinkster-nodes-image"]
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        asyncio.run(composer.close())
 
 
 def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:

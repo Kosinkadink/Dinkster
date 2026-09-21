@@ -60,6 +60,7 @@ from dinkster_assets import (
     ResolverIndexError,
     ResolverSubscriptionStore,
     load_mounts,
+    load_output_mount,
     require_region,
 )
 from dinkster_assets.resolution import ResolutionStore
@@ -78,7 +79,6 @@ from dinkster_memory import (
     load_budgets,
     parse_size,
 )
-from dinkster_p2p import default_p2p_settings
 from dinkster_protocol import AttentionPolicy, validate_attention_policy
 from dinkster_schema import (
     LOG_LEVEL_ENV,
@@ -106,6 +106,7 @@ from dinkster_server import (
     TrainingSessionStore,
     comfy_dtype_args,
     create_app,
+    default_p2p_settings,
     load_authenticator,
     load_settings,
     principal_for,
@@ -132,7 +133,14 @@ from .benchmark import (
     instrument_engine_factory,
     write_record,
 )
-from .comfy_compose import comfy_compat_specs, comfy_model_roots, comfy_python
+from .comfy_compose import (
+    RETIRED_EXECUTION_PYTHON_ENV,
+    RETIRED_EXECUTION_PYTHON_ENV_MESSAGE,
+    RETIRED_EXECUTION_PYTHON_FLAG_MESSAGE,
+    comfy_compat_specs,
+    comfy_model_roots,
+    execution_python,
+)
 from .compat_api import add_comfy_compat_routes
 from .compose import (
     CompositionError,
@@ -142,6 +150,8 @@ from .compose import (
     ServingComposer,
     default_pack_ids,
     default_pack_spec,
+    model_pack_specs,
+    order_pack_entries_by_requirements,
     resolve_manifest_path,
     training_pack_specs,
 )
@@ -149,10 +159,9 @@ from .frontend import install_frontend
 from .generation_api import GenerationModel, GenerationService, add_generation_routes
 from .guess_api import add_guess_routes
 from .installer import Installer
-from .lan_p2p import LanP2PController
 from .mounts_api import MountService, add_mount_routes
 from .native_policy import NativeDispatchPolicy, NativePolicyDiagnostic
-from .p2p_api import add_p2p_routes
+from .p2p_plugin import load_p2p_plugin
 from .reload_api import add_reload_routes, apply_reload
 from .remote_reconnect import RemoteReconnectSupervisor
 from .remotes import RemotesError, RemoteSpec, load_remotes
@@ -295,6 +304,29 @@ def _is_standard_vision_pack(spec: PackSpec) -> bool:
         and len(spec.packs) == 1
         and next(iter(spec.packs)).startswith("dinkster-vision-")
     )
+
+
+def _order_default_pack_specs(
+    composer: ServingComposer, specs: Sequence[PackSpec | Path | str], default_count: int
+) -> tuple[PackSpec, ...]:
+    """Return the default packs in provider-before-consumer order.
+
+    Full contract resolution is authoritative when it succeeds. When it
+    raises (one broken pack must not take the ordering down with it), the
+    defaults still compose in manifest-requirement order: composing them in
+    load order validates a pack before a declared dependency that sorts
+    later, so dinkster-nodes-image would fail its media-io requirement
+    against a dinkster-nodes-media-io that has not announced yet.
+    """
+    try:
+        return composer.order_pack_entries(specs[:default_count])
+    except CompositionError as error:
+        core_logger("serve").warning(
+            "default pack contract ordering failed (%s); composing defaults in "
+            "manifest requirement order",
+            error,
+        )
+        return order_pack_entries_by_requirements(specs[:default_count])
 
 
 def detect_native_compute_dtypes(executing_cuda_indices: Sequence[int] = ()) -> frozenset[str]:
@@ -831,11 +863,11 @@ def main(argv: list[str] | None = None) -> None:
         "(default: $DINKSTER_COMFYUI_ROOT)",
     )
     parser.add_argument(
-        "--comfy-python",
+        "--execution-python",
         default="",
         metavar="PATH",
         help="interpreter for native or compat execution "
-        "(default: $DINKSTER_COMFYUI_PYTHON, the optional ComfyUI venv, or current Python)",
+        "(default: $DINKSTER_EXECUTION_PYTHON, the optional ComfyUI venv, or current Python)",
     )
     parser.add_argument(
         "--openai-base-url",
@@ -1258,6 +1290,11 @@ def main(argv: list[str] | None = None) -> None:
         help="diagnose event-loop stalls longer than SECONDS with safe request timing "
         "and Python thread stacks",
     )
+    argv_tokens = list(argv) if argv is not None else sys.argv[1:]
+    if any(arg == "--comfy-python" or arg.startswith("--comfy-python=") for arg in argv_tokens):
+        parser.error(RETIRED_EXECUTION_PYTHON_FLAG_MESSAGE)
+    if RETIRED_EXECUTION_PYTHON_ENV in os.environ:
+        parser.error(RETIRED_EXECUTION_PYTHON_ENV_MESSAGE)
     args = parser.parse_args(argv)
     if (args.official_resolver_url or args.official_resolver_provider_id) and not args.library_root:
         parser.error("official resolver bootstrap requires --library-root")
@@ -1343,6 +1380,7 @@ def main(argv: list[str] | None = None) -> None:
             "--execution-cache-mode layered requires --execution-cache-dir "
             "when --library-root is disabled"
         )
+    p2p_plugin = load_p2p_plugin()
     try:
         persisted_settings = load_settings(settings_path) if settings_path is not None else {}
     except SettingsError as exc:
@@ -1505,6 +1543,8 @@ def main(argv: list[str] | None = None) -> None:
         configure_logging(log_level, overrides=effective_overrides)
     except ValueError as exc:
         parser.error(str(exc))
+    if p2p_plugin is None:
+        core_logger("serve").info("p2p unavailable")
     # Worker subprocesses inherit the environment; exporting the resolved
     # config here is how --log-level/--log reach pack processes.
     os.environ[LOG_LEVEL_ENV] = log_level
@@ -1593,7 +1633,7 @@ def main(argv: list[str] | None = None) -> None:
         try:
             model_roots = comfy_model_roots(
                 args.comfy_root,
-                python=args.comfy_python or None,
+                python=args.execution_python or None,
                 comfy_args=effective_comfy_args,
             )
             comfy_requirements_checked = True
@@ -1614,6 +1654,7 @@ def main(argv: list[str] | None = None) -> None:
         mount_table = MountTable(
             mounts_snapshot,
             index_root=library_root / "asset-indexes",
+            output_mount=load_output_mount(mounts_config),
         )
         try:
             for mount in load_mounts(mounts_config):
@@ -1648,6 +1689,13 @@ def main(argv: list[str] | None = None) -> None:
                 )
                 sandbox_mounts.append(mount)
                 redaction_roots.append((f"<mount:{model_root.mount_id}>", model_root.path))
+        if mount_table.output_mount is None:
+            output_mount = mount_table.get("output")
+            comfy_output_mount = mount_table.get("comfy-output")
+            if output_mount is not None and output_mount.mode == "readwrite":
+                mount_table.select_output_mount("output")
+            elif comfy_output_mount is not None and comfy_output_mount.mode == "readwrite":
+                mount_table.select_output_mount("comfy-output", require_config=False)
         mount_service = MountService(
             mount_table, mounts_config, allow_changes=args.allow_mount_changes
         )
@@ -1683,11 +1731,13 @@ def main(argv: list[str] | None = None) -> None:
             # failure. Resolve defaults independently so one broken pack
             # cannot hide another pack's nodes.
             default_pack_failures[pack_id] = exc
+    if not args.no_default_packs:
+        specs.extend(model_pack_specs())
     try:
         compat_specs = (
             comfy_compat_specs(
                 args.comfy_root or None,
-                python=args.comfy_python or None,
+                python=args.execution_python or None,
                 _requirements_checked=comfy_requirements_checked,
                 legacy_packs=args.legacy_pack,
                 asset_vault=(Path(args.library_root) / "vault" if args.library_root else None),
@@ -1783,10 +1833,10 @@ def main(argv: list[str] | None = None) -> None:
                 ),
                 minimax_h3_runtime_versions=(
                     lambda: detect_native_runtime_versions(
-                        comfy_python(Path(args.comfy_root), args.comfy_python or None)
+                        execution_python(Path(args.comfy_root), args.execution_python or None)
                         if args.comfy_root
-                        else args.comfy_python
-                        or os.environ.get("DINKSTER_COMFYUI_PYTHON")
+                        else args.execution_python
+                        or os.environ.get("DINKSTER_EXECUTION_PYTHON")
                         or sys.executable
                     )
                 ),
@@ -1875,13 +1925,9 @@ def main(argv: list[str] | None = None) -> None:
             cache_disk_budget=args.execution_cache_disk_budget,
             composition_mode="development" if args.watch_packs else "production",
         )
-        try:
-            ordered_defaults = composer.order_pack_entries(specs[:resolved_default_pack_count])
-        except CompositionError:
-            # Incremental add_pack calls report each broken default independently.
-            pass
-        else:
-            specs[:resolved_default_pack_count] = ordered_defaults
+        specs[:resolved_default_pack_count] = list(
+            _order_default_pack_specs(composer, specs, resolved_default_pack_count)
+        )
         composer_ref.append(composer)
         composer.validate_specs(specs)
         if args.prepare_stale_catalogs:
@@ -1929,7 +1975,7 @@ def main(argv: list[str] | None = None) -> None:
         training_sessions = None
         execution_journal = None
         resolver_indexes = None
-        p2p_manager: LanP2PController | None = None
+        p2p_manager: Any | None = None
         principal_permissions = PrincipalPermissionStore(
             Path(args.library_root) / "principals.sqlite" if args.library_root else None
         )
@@ -1970,18 +2016,20 @@ def main(argv: list[str] | None = None) -> None:
                     ).document
                 ),
             )
-            p2p_manager = LanP2PController(
-                vault=vault,
-                resolver_indexes=resolver_indexes,
-                receipts=receipts,
-                local_path_for=library.locate,
-                installation_root=Path(args.install_root) if args.install_root else None,
-            )
-            library = replace(
-                library,
-                lan_resolve=p2p_manager.resolve_sync,
-                p2p_acquired=p2p_manager.notify_acquired,
-            )
+            if p2p_plugin is not None:
+                manager = p2p_plugin.controller(
+                    vault=vault,
+                    resolver_indexes=resolver_indexes,
+                    receipts=receipts,
+                    local_path_for=library.locate,
+                    installation_root=Path(args.install_root) if args.install_root else None,
+                )
+                p2p_manager = manager
+                library = replace(
+                    library,
+                    lan_resolve=manager.resolve_sync,
+                    p2p_acquired=manager.notify_acquired,
+                )
             # Persistent execution history rides the same persistence root:
             # terminal runs land in history.sqlite with their sourceDocument
             # link back to uploaded workflow assets.
@@ -2076,6 +2124,9 @@ def main(argv: list[str] | None = None) -> None:
                 choice_owners=composition.choice_owners,
                 compat_skips=composition.compat_skips,
                 settings=runtime_settings,
+                pack_settings_root=(
+                    Path(args.library_root) / "pack-settings" if args.library_root else None
+                ),
                 redactor=redactor,
                 attention_policy=attention_policy,
                 execution_journal=execution_journal,
@@ -2098,14 +2149,16 @@ def main(argv: list[str] | None = None) -> None:
                     threshold=args.event_loop_stall_threshold,
                     logger=log,
                 )
-            if p2p_manager is None:
-                add_p2p_routes(app, None, runtime_settings)
-            else:
-                add_p2p_routes(
+            if p2p_plugin is not None:
+                p2p_plugin.add_routes(
                     app,
                     p2p_manager,
                     runtime_settings,
-                    grant_snapshot=lambda: p2p_manager.grant_snapshot,
+                    **(
+                        {"grant_snapshot": lambda: p2p_manager.grant_snapshot}
+                        if p2p_manager is not None
+                        else {}
+                    ),
                 )
         except BaseException:
             close_resolution_store()

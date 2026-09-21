@@ -44,7 +44,14 @@ from typing import Any, cast
 from dinkster_schema import reserved_root, validate_name
 from dinkster_workers.interpreter import InterpreterPreflightError, preflight_interpreter
 
-from .comfy_compose import comfy_python, dinkster_pythonpath, find_compat_manifest
+from .comfy_compose import (
+    RETIRED_EXECUTION_PYTHON_ENV,
+    RETIRED_EXECUTION_PYTHON_ENV_MESSAGE,
+    RETIRED_EXECUTION_PYTHON_FLAG_MESSAGE,
+    dinkster_pythonpath,
+    execution_python,
+    find_compat_manifest,
+)
 
 _PROBE_TIMEOUT_S = 600.0
 _LINE_WIDTH = 100
@@ -951,7 +958,7 @@ def _run_probe(pack_path: Path, comfyui_root: Path, *, python: str | None = None
     """Probe under the same environment the compat workers use: the
     ComfyUI install's own interpreter (packs import torch and friends),
     with Dinkster's pure-stdlib packages reachable from source."""
-    interpreter = comfy_python(comfyui_root, python)
+    interpreter = execution_python(comfyui_root, python)
     try:
         preflight_interpreter(interpreter)
     except InterpreterPreflightError as exc:
@@ -1009,11 +1016,11 @@ def main(argv: list[str] | None = None) -> int:
         help="ComfyUI install the pack was written against (default: DINKSTER_COMFYUI_ROOT)",
     )
     parser.add_argument(
-        "--comfy-python",
+        "--execution-python",
         default="",
         metavar="PATH",
         help="interpreter for the probe subprocess "
-        "(default: $DINKSTER_COMFYUI_PYTHON, else <comfy-root>/venv/bin/python)",
+        "(default: $DINKSTER_EXECUTION_PYTHON, else <comfy-root>/venv/bin/python)",
     )
     parser.add_argument(
         "--nodes",
@@ -1024,6 +1031,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="write into an existing non-empty output directory",
     )
+    argv_tokens = list(argv) if argv is not None else sys.argv[1:]
+    if any(arg == "--comfy-python" or arg.startswith("--comfy-python=") for arg in argv_tokens):
+        parser.error(RETIRED_EXECUTION_PYTHON_FLAG_MESSAGE)
+    if RETIRED_EXECUTION_PYTHON_ENV in os.environ:
+        parser.error(RETIRED_EXECUTION_PYTHON_ENV_MESSAGE)
     args = parser.parse_args(argv)
 
     try:
@@ -1061,7 +1073,7 @@ def main(argv: list[str] | None = None) -> int:
         probe = _run_probe(
             pack_path,
             Path(root_text),
-            python=cast("str", args.comfy_python) or None,
+            python=cast("str", args.execution_python) or None,
         )
         result = generate_pack(probe, pack_name, out_dir, only=only, source_label=str(pack_path))
     except PortError as exc:

@@ -65,6 +65,19 @@ def make_spec(tmp_path: Path, **overrides: object) -> LaunchSpec:
     return LaunchSpec(**fields)  # type: ignore[arg-type]
 
 
+def worker_failure(error: str, stderr_path: Path) -> AssertionError:
+    return AssertionError(f"{error}\nworker stderr:\n{stderr_path.read_text(encoding='utf-8')}")
+
+
+def test_worker_failure_includes_stderr(tmp_path: Path) -> None:
+    stderr_path = tmp_path / "serve.stderr"
+    stderr_path.write_text("bwrap: test failure\n", encoding="utf-8")
+
+    failure = worker_failure("worker exited with code 1", stderr_path)
+
+    assert str(failure) == ("worker exited with code 1\nworker stderr:\nbwrap: test failure\n")
+
+
 def test_plain_launcher_only_accepts_pack_scratch_from_launch_spec(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -699,6 +712,33 @@ def test_host_readwrite_mount_stays_read_only_without_manifest_request(tmp_path:
     assert str(writable) not in launcher.policy.rw_binds
 
 
+def test_mount_snapshot_uses_its_existing_directory_grant(tmp_path: Path) -> None:
+    from dinkster.compose import PackSpec, ServingComposer
+
+    manifest_path = tmp_path / "pack" / "dinkster-pack.toml"
+    manifest_path.parent.mkdir()
+    manifest_path.write_text(
+        '[pack]\nname = "plain"\n[pack.sandbox]\n[pack.entry]\nnodes = "plain:NODES"\n',
+        encoding="utf-8",
+    )
+    snapshot_dir = tmp_path / "library" / "worker-state"
+    snapshot_dir.mkdir(parents=True)
+    snapshot = snapshot_dir / "mounts-snapshot.json"
+    snapshot.write_text('{"mounts": []}', encoding="utf-8")
+    manifest = load_manifest(manifest_path)
+    composer = ServingComposer(sandbox_policy=SandboxPolicy(ro_binds=(str(snapshot_dir),)))
+
+    launcher = composer._sandbox_launcher(
+        PackSpec(manifest_path, env={"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}),
+        (manifest,),
+        {"DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)},
+    )
+
+    assert launcher is not None
+    assert str(snapshot_dir) in launcher.policy.ro_binds
+    assert str(snapshot) not in launcher.policy.ro_binds
+
+
 def test_remote_pack_gets_scoped_vault_write_token_read_and_gateway_egress(
     tmp_path: Path,
 ) -> None:
@@ -1274,6 +1314,8 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
             encoding="utf-8",
         )
 
+        stderr_path = tmp_path / "serve.stderr"
+        stderr_log = stderr_path.open("w", encoding="utf-8")
         process = subprocess.Popen(
             [
                 sys.executable,
@@ -1297,7 +1339,7 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                 "PYTHONPATH": os.pathsep.join((str(REPO_ROOT), str(pack))),
             },
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+            stderr=stderr_log,
             text=True,
         )
 
@@ -1307,14 +1349,13 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                 async with asyncio.timeout(60):
                     while True:
                         if process.poll() is not None:
-                            error = process.stderr.read() if process.stderr else "serve died"
-                            raise AssertionError(error)
+                            raise worker_failure("serve died", stderr_path)
                         try:
                             async with session.get(base + "/api/composition") as response:
                                 report = await response.json()
                             pack_state = report["packs"]["sandbox-probe"]
                             if pack_state["state"] == "failed":
-                                raise AssertionError(pack_state["error"])
+                                raise worker_failure(pack_state["error"], stderr_path)
                             if pack_state["state"] == "announced":
                                 break
                         except (aiohttp.ClientError, KeyError):
@@ -1371,6 +1412,7 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=30)
+            stderr_log.close()
 
 
 # -- probe jail (the doctor's import probe under bwrap) ------------------------

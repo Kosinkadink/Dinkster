@@ -19,12 +19,18 @@ from dinkster_server import (
     PackDocAsset,
     PackDocPageAsset,
     PackDocsAsset,
+    PackFrontendAsset,
     PackIconAsset,
     PackInfo,
     PackLocaleCatalogAsset,
     PackTemplateAsset,
 )
-from dinkster_workers import PackBlueprint, PackManifest, PackPresentation, PackTemplate
+from dinkster_workers import (
+    PackBlueprint,
+    PackManifest,
+    PackPresentation,
+    PackTemplate,
+)
 
 __all__ = [
     "blueprint_assets",
@@ -104,7 +110,18 @@ def template_assets(
             digest=template.digest,
             description=template.description,
             tags=template.tags,
+            family=template.family,
+            models=template.models,
             assets=template.assets,
+            thumbnail=(
+                PackIconAsset(
+                    digest=template.thumbnail.digest,
+                    media_type=template.thumbnail.media_type,
+                    data=template.thumbnail.data,
+                )
+                if template.thumbnail is not None
+                else None
+            ),
             data=template.data,
         )
         for template in templates
@@ -169,4 +186,14 @@ def pack_info_from_manifest(manifest: PackManifest) -> PackInfo:
         info = replace(info, comfy_aliases=manifest.comfy_aliases)
     if manifest.comfy_groups is not None:
         info = replace(info, comfy_groups=manifest.comfy_groups)
+    if manifest.frontend_assets:
+        info = replace(
+            info,
+            frontend_assets=tuple(
+                PackFrontendAsset(asset.path, asset.media_type, asset.data)
+                for asset in manifest.frontend_assets
+            ),
+        )
+    if manifest.settings_schema is not None:
+        info = replace(info, settings_schema=manifest.settings_schema)
     return info

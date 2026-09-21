@@ -51,7 +51,7 @@ pack to its per-pack (or H1/H2 grouped) isolated placement.
 4. Torch-free root venv is not negotiable. In-process model-pack
    hosting activates ONLY when serve runs in a torch-capable
    environment, reusing the existing interpreter-split mechanism
-   (the --comfy-python precedent in src/dinkster/comfy_compose.py). No
+   (the --execution-python precedent in src/dinkster/comfy_compose.py). No
    new hosting tier.
 
 ## Policy surface

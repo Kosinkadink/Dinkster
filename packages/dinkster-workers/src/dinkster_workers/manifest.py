@@ -52,6 +52,7 @@ import hashlib
 import importlib
 import json
 import math
+import mimetypes
 import re
 import tomllib
 import unicodedata
@@ -76,9 +77,10 @@ from dinkster_protocol import (
     EXTENSION_SCOPES,
     ExtensionDeclaration,
     ExtensionEntryPoints,
+    PackSettingsSchema,
 )
 from dinkster_protocol.frontend_modules import FrontendModule
-from dinkster_protocol.pack_surfaces import pack_surfaces_from_wire
+from dinkster_protocol.pack_surfaces import PACK_SETTINGS_SCHEMA_MAX_BYTES, pack_surfaces_from_wire
 from dinkster_schema import (
     ComfyAliasRegistry,
     ComfyGroupRegistry,
@@ -145,6 +147,9 @@ DOC_PACK_MAX_BYTES = 32 * 1024 * 1024
 DOC_LOCALES = frozenset({"en", "zh"})
 LOCALE_CATALOG_MAX_BYTES = 1024 * 1024
 LOCALE_CATALOG_PACK_MAX_BYTES = 16 * 1024 * 1024
+FRONTEND_ASSET_MAX_BYTES = 4 * 1024 * 1024
+FRONTEND_ASSET_PACK_MAX_BYTES = 16 * 1024 * 1024
+FRONTEND_ASSET_MAX_FILES = 256
 DOC_MEDIA_TYPES = {
     ".gif": "image/gif",
     ".jpeg": "image/jpeg",
@@ -270,6 +275,110 @@ def load_comfy_groups(manifest_path: Path) -> ComfyGroupRegistry | None:
         "comfy group",
         comfy_group_registry_from_wire,
     )
+
+
+@dataclass(frozen=True)
+class PackFrontendAsset:
+    """One immutable file from a pack-declared frontend asset tree."""
+
+    path: str
+    media_type: str
+    data: bytes = dataclass_field(repr=False)
+
+
+def _pack_relative_path(raw: object, manifest_path: Path, field: str) -> Path:
+    if not isinstance(raw, str) or not raw:
+        raise ManifestError(f"{manifest_path}: {field} must be a non-empty path string")
+    declared = Path(raw)
+    if declared.is_absolute():
+        raise ManifestError(f"{manifest_path}: {field} must be pack-relative")
+    root = manifest_path.parent.resolve()
+    unresolved = manifest_path.parent / declared
+    resolved = unresolved.resolve()
+    if not resolved.is_relative_to(root):
+        raise ManifestError(f"{manifest_path}: {field} must not escape the pack directory")
+    if unresolved.is_symlink():
+        raise ManifestError(f"{manifest_path}: {field} must not be a symlink")
+    return resolved
+
+
+def _parse_frontend_assets(raw: object, manifest_path: Path) -> tuple[PackFrontendAsset, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, dict):
+        raise ManifestError(f"{manifest_path}: [pack.frontend] must contain only assets")
+    table = cast("dict[object, object]", raw)
+    if set(table) != {"assets"}:
+        raise ManifestError(f"{manifest_path}: [pack.frontend] must contain only assets")
+    root = _pack_relative_path(table["assets"], manifest_path, "frontend.assets")
+    if not root.is_dir():
+        raise ManifestError(f"{manifest_path}: frontend.assets is not a directory: {root}")
+    assets: list[PackFrontendAsset] = []
+    total = 0
+    try:
+        paths = sorted(root.rglob("*"))
+        for path in paths:
+            if not path.resolve().is_relative_to(root):
+                raise ManifestError(
+                    f"{manifest_path}: frontend.assets entries must not escape the asset directory"
+                )
+            if path.is_symlink():
+                raise ManifestError(f"{manifest_path}: frontend.assets must not contain symlinks")
+            if not path.is_file():
+                continue
+            if len(assets) >= FRONTEND_ASSET_MAX_FILES:
+                raise ManifestError(
+                    f"{manifest_path}: frontend.assets exceeds {FRONTEND_ASSET_MAX_FILES} files"
+                )
+            data = path.read_bytes()
+            if len(data) > FRONTEND_ASSET_MAX_BYTES:
+                raise ManifestError(
+                    f"{manifest_path}: frontend asset {path.name!r} exceeds "
+                    f"{FRONTEND_ASSET_MAX_BYTES} bytes"
+                )
+            total += len(data)
+            if total > FRONTEND_ASSET_PACK_MAX_BYTES:
+                raise ManifestError(
+                    f"{manifest_path}: frontend.assets exceeds "
+                    f"{FRONTEND_ASSET_PACK_MAX_BYTES} bytes"
+                )
+            media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            assets.append(PackFrontendAsset(path.relative_to(root).as_posix(), media_type, data))
+    except ManifestError:
+        raise
+    except OSError as exc:
+        raise ManifestError(f"{manifest_path}: cannot read frontend.assets: {exc}") from exc
+    return tuple(assets)
+
+
+def _parse_pack_settings(raw: object, manifest_path: Path) -> PackSettingsSchema | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError(f"{manifest_path}: [pack.settings] must contain only schema")
+    table = cast("dict[object, object]", raw)
+    if set(table) != {"schema"}:
+        raise ManifestError(f"{manifest_path}: [pack.settings] must contain only schema")
+    path = _pack_relative_path(table["schema"], manifest_path, "settings.schema")
+    if not path.is_file():
+        raise ManifestError(f"{manifest_path}: settings.schema is not a file: {path}")
+    try:
+        data = path.read_bytes()
+        if len(data) > PACK_SETTINGS_SCHEMA_MAX_BYTES:
+            raise ManifestError(
+                f"{manifest_path}: settings.schema exceeds {PACK_SETTINGS_SCHEMA_MAX_BYTES} bytes"
+            )
+        document = json.loads(
+            data.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+            parse_float=_finite_json_float,
+        )
+        return PackSettingsSchema.from_wire(document)
+    except ManifestError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise ManifestError(f"{manifest_path}: invalid settings.schema: {exc}") from None
 
 
 @dataclass(frozen=True)
@@ -652,12 +761,15 @@ class PackTemplate:
     path: Path
     description: str = ""
     tags: tuple[str, ...] = ()
+    family: str = ""
+    models: tuple[str, ...] = ()
     assets: tuple[str, ...] = ()
     """Pack-local ``[[pack.assets]]`` ids this template requires.
     Validated to exist among the pack's surviving declarations at parse
     time (a dangling reference drops the template - its acquisition plan
     could never be constructed); passed through as ids on the wire, where
     clients join them against the pack's asset descriptors."""
+    thumbnail: PackIcon | None = None
     data: bytes = dataclass_field(repr=False, default=b"")
 
 
@@ -1383,6 +1495,17 @@ def validate_pack_template(
         return None, "'tags' must be a list of non-empty strings"
     tags = tuple(cast("list[str]", tags_raw))
 
+    family = table.get("family", "")
+    if not isinstance(family, str):
+        return None, "'family' must be a string"
+
+    models_raw = table.get("models", [])
+    if not isinstance(models_raw, list) or not all(
+        isinstance(model, str) and model for model in cast("list[object]", models_raw)
+    ):
+        return None, "'models' must be a list of non-empty model names"
+    models = tuple(cast("list[str]", models_raw))
+
     assets_raw = table.get("assets", [])
     if not isinstance(assets_raw, list) or not all(
         isinstance(ref, str) and ref for ref in cast("list[object]", assets_raw)
@@ -1399,6 +1522,15 @@ def validate_pack_template(
     if data is None or path is None:
         return None, problem
 
+    thumbnail = None
+    thumbnail_file = table.get("thumbnail")
+    if thumbnail_file is not None:
+        if not isinstance(thumbnail_file, str) or not thumbnail_file:
+            return None, "'thumbnail' must be a non-empty string"
+        thumbnail, thumbnail_problem = validate_pack_icon(manifest_path, thumbnail_file)
+        if thumbnail is None:
+            return None, f"'thumbnail' {thumbnail_problem}"
+
     digest = "sha256:" + hashlib.sha256(data).hexdigest()
     return (
         PackTemplate(
@@ -1408,7 +1540,10 @@ def validate_pack_template(
             path=path,
             description=description,
             tags=tags,
+            family=family,
+            models=models,
             assets=assets,
+            thumbnail=thumbnail,
             data=data,
         ),
         None,
@@ -2131,6 +2266,10 @@ class PackManifest:
     """Strict import-only translation data from adjacent ``comfy-aliases.json``."""
     comfy_groups: ComfyGroupRegistry | None = None
     """Strict group-pattern data from adjacent ``comfy-groups.json``."""
+    frontend_assets: tuple[PackFrontendAsset, ...] = ()
+    """Immutable bytes from the optional ``[pack.frontend] assets`` tree."""
+    settings_schema: PackSettingsSchema | None = None
+    """Validated schema from the optional ``[pack.settings] schema`` file."""
 
     def requires_for(self, accelerator: str) -> tuple[str, ...]:
         """The full requirement list for a host: base ``requires`` plus
@@ -2903,6 +3042,8 @@ def load_manifest(path: Path | str) -> PackManifest:
         extension_declared="extension" in pack,
         comfy_aliases=load_comfy_aliases(manifest_path),
         comfy_groups=load_comfy_groups(manifest_path),
+        frontend_assets=_parse_frontend_assets(pack.get("frontend"), manifest_path),
+        settings_schema=_parse_pack_settings(pack.get("settings"), manifest_path),
     )
 
 

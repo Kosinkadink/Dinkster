@@ -48,6 +48,7 @@ from dinkster_protocol import (
     ExtensionSnapshot,
     GraphCompilerRegistrySnapshot,
     KeyedContribution,
+    PackSettingsSchema,
 )
 from dinkster_schema import (
     SCHEMA_WIRE_VERSION,
@@ -79,6 +80,7 @@ from dinkster_server import (
     EventHub,
     Job,
     JobQueue,
+    PackFrontendAsset,
     PackIconAsset,
     PackInfo,
     Principal,
@@ -1026,6 +1028,7 @@ def test_missing_capability_is_403_for_every_route_family() -> None:
         ("POST", "/api/assets", "assets:write"),
         ("GET", "/api/settings", "settings:read"),
         ("PUT", "/api/settings/jobs", "settings:write"),
+        ("PUT", "/api/packs/missing/settings", "settings:write"),
         ("GET", "/api/p2p/status", "settings:read"),
         ("POST", f"/api/p2p/transfers/blake3:{'a' * 64}/pause", "settings:write"),
         ("GET", "/api/sessions", "sessions:read"),
@@ -1138,6 +1141,8 @@ def test_catalog_is_open_to_any_authenticated_principal_and_health_is_public() -
                 "/api/choices/missing",
                 "/api/templates",
                 "/api/packs/missing/icon",
+                "/api/packs/missing/settings",
+                "/packs/missing/static/theme.css",
             ):
                 response = await client.get(path, headers={"Authorization": "Bearer accepted"})
                 assert response.status not in (401, 403), (path, await response.text())
@@ -2872,6 +2877,121 @@ def test_pack_icon_endpoint() -> None:
     asyncio.run(scenario())
 
 
+def test_pack_static_assets_and_settings_end_to_end(tmp_path: Path) -> None:
+    schema = PackSettingsSchema.from_wire(
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "enabled": {"type": "boolean", "title": "Enabled", "default": True},
+                "strength": {
+                    "type": "number",
+                    "title": "Strength",
+                    "description": "Rendering strength",
+                    "default": 0.5,
+                    "minimum": 0,
+                    "maximum": 1,
+                },
+            },
+            "required": ["enabled", "strength"],
+        }
+    )
+    other_schema = PackSettingsSchema.from_wire(
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"label": {"type": "string", "title": "Label", "default": "other"}},
+            "required": ["label"],
+        }
+    )
+    packs = {
+        "visual-pack": PackInfo(
+            "Visual Pack",
+            frontend_assets=(
+                PackFrontendAsset("badge.png", "image/png", b"\x89PNG\r\nfixture"),
+                PackFrontendAsset("styles/theme.css", "text/css", b".pack { color: #123; }\n"),
+            ),
+            settings_schema=schema,
+        ),
+        "other-pack": PackInfo("Other Pack", settings_schema=other_schema),
+    }
+    settings_root = tmp_path / "pack-settings"
+
+    async def scenario() -> None:
+        app = create_app(
+            make_engine,
+            SCHEMAS,
+            packs=packs,
+            pack_settings_root=settings_root,
+        )
+        async with TestClient(TestServer(app)) as client:
+            image = await client.get("/packs/visual-pack/static/badge.png")
+            assert image.status == 200
+            assert image.headers["Content-Type"] == "image/png"
+            assert await image.read() == b"\x89PNG\r\nfixture"
+            css = await client.get("/packs/visual-pack/static/styles/theme.css")
+            assert css.status == 200
+            assert css.headers["Content-Type"].startswith("text/css")
+            assert await css.read() == b".pack { color: #123; }\n"
+            for path in (
+                "/packs/visual-pack/static/missing.css",
+                "/packs/visual-pack/static/styles/",
+                "/packs/visual-pack/static/%2e%2e/secret",
+                "/packs/visual-pack/static/styles/%2e%2e/%2e%2e/secret",
+                "/packs/visual-pack/static/styles%5C..%5Csecret",
+                "/packs/other-pack/static/badge.png",
+            ):
+                assert (await client.get(path)).status == 404
+
+            initial = await client.get("/api/packs/visual-pack/settings")
+            assert initial.status == 200
+            initial_wire = await initial.json()
+            assert initial_wire["packId"] == "visual-pack"
+            assert initial_wire["displayName"] == "Visual Pack"
+            assert initial_wire["schema"] == schema.to_wire()
+            assert initial_wire["values"] == {"enabled": True, "strength": 0.5}
+            nodes = await (await client.get("/api/nodes")).json()
+            assert nodes["packs"]["visual-pack"]["settings"] is True
+            assert "settings" not in nodes["packs"]["core"]
+
+            updated = await client.put(
+                "/api/packs/visual-pack/settings",
+                json={"enabled": False, "strength": 0.75},
+            )
+            assert updated.status == 200
+            assert (await updated.json())["values"] == {"enabled": False, "strength": 0.75}
+            invalid = await client.put(
+                "/api/packs/visual-pack/settings",
+                json={"enabled": False, "strength": 2},
+            )
+            assert invalid.status == 400
+            assert (await (await client.get("/api/packs/visual-pack/settings")).json())[
+                "values"
+            ] == {"enabled": False, "strength": 0.75}
+            assert (await client.get("/api/packs/missing/settings")).status == 404
+            assert (await (await client.get("/api/packs/other-pack/settings")).json())[
+                "values"
+            ] == {"label": "other"}
+
+        restarted = create_app(
+            make_engine,
+            SCHEMAS,
+            packs=packs,
+            pack_settings_root=settings_root,
+        )
+        async with TestClient(TestServer(restarted)) as client:
+            persisted = await client.get("/api/packs/visual-pack/settings")
+            assert (await persisted.json())["values"] == {
+                "enabled": False,
+                "strength": 0.75,
+            }
+            assert (await (await client.get("/api/packs/other-pack/settings")).json())[
+                "values"
+            ] == {"label": "other"}
+
+    asyncio.run(scenario())
+
+
 def test_pack_blueprint_endpoint() -> None:
     """The packs table advertises full blueprint descriptors inline
     ({id, name, description?, tags?, digest} - never the body bytes) and
@@ -2967,10 +3087,12 @@ def test_pack_template_endpoints() -> None:
     owns its query (q/tag/pack), pages with a cursor BOUND to that query
     (mismatch -> 400), and lists asset requirements as pack-local ids for
     clients to join against the packs table."""
-    from dinkster_server import PackTemplateAsset
+    from dinkster_server import PackIconAsset, PackTemplateAsset
 
     data = b'{"graphs": {"main": {}}}'
     digest = "sha256:" + hashlib.sha256(data).hexdigest()
+    thumbnail_data = b"thumbnail"
+    thumbnail_digest = "sha256:" + hashlib.sha256(thumbnail_data).hexdigest()
 
     async def scenario() -> None:
         app = create_app(
@@ -2986,7 +3108,14 @@ def test_pack_template_endpoints() -> None:
                             digest=digest,
                             description="Starter animation",
                             tags=("video",),
+                            family="dinkster.wan22",
+                            models=("wan.safetensors",),
                             assets=("motion-model",),
+                            thumbnail=PackIconAsset(
+                                digest=thumbnail_digest,
+                                media_type="image/png",
+                                data=thumbnail_data,
+                            ),
                             data=data,
                         ),
                         PackTemplateAsset(id="minimal", name="Minimal", digest=digest, data=data),
@@ -3025,7 +3154,10 @@ def test_pack_template_endpoints() -> None:
                     "name": "Animate",
                     "description": "Starter animation",
                     "tags": ["video"],
+                    "family": "dinkster.wan22",
+                    "models": ["wan.safetensors"],
                     "assets": ["motion-model"],
+                    "thumbnail": {"digest": thumbnail_digest, "mediaType": "image/png"},
                     "digest": digest,
                 },
                 {"pack": "ade", "id": "minimal", "name": "Minimal", "digest": digest},
@@ -3083,6 +3215,19 @@ def test_pack_template_endpoints() -> None:
             )
             assert resp.status == 304
             assert resp.headers["ETag"] == f'"{digest}"'
+
+            resp = await client.get("/api/packs/ade/templates/animate/thumbnail")
+            assert resp.status == 200
+            assert resp.headers["Content-Type"] == "image/png"
+            assert resp.headers["ETag"] == f'"{thumbnail_digest}"'
+            assert resp.headers["Cache-Control"] == ("private, max-age=31536000, immutable")
+            assert await resp.read() == thumbnail_data
+            resp = await client.get(
+                "/api/packs/ade/templates/animate/thumbnail",
+                headers={"If-None-Match": f'"{thumbnail_digest}"'},
+            )
+            assert resp.status == 304
+            assert (await client.get("/api/packs/ade/templates/minimal/thumbnail")).status == 404
 
             assert (await client.get("/api/packs/ade/templates/nope")).status == 404
             assert (await client.get("/api/packs/plain/templates/x")).status == 404
@@ -3345,6 +3490,7 @@ def test_diagnostics_endpoint_reports_cross_pack_replacement_problems() -> None:
             assert await resp.json() == {
                 "replacementProblems": [],
                 "compatSkips": [],
+                "packInferenceUnavailable": [],
             }
         finally:
             await clean.close()

@@ -114,8 +114,11 @@ MODEL = TypeExpr.concrete(comfy_type_id("MODEL"))
 CLIP = TypeExpr.concrete(comfy_type_id("CLIP"))
 CLIP_VISION = TypeExpr.concrete(comfy_type_id("CLIP_VISION"))
 VAE = TypeExpr.concrete(comfy_type_id("VAE"))
+DINKSTER_CLIP = TypeExpr.concrete("dinkster.clip")
 DINKSTER_CLIP_VISION = TypeExpr.concrete("dinkster.clip-vision")
 DINKSTER_VAE = TypeExpr.concrete("dinkster.vae")
+DINKSTER_LATENT = TypeExpr.concrete("dinkster.latent")
+DINKSTER_CONDITIONING = TypeExpr.concrete("dinkster.conditioning")
 CONTROL_NET = TypeExpr.concrete(comfy_type_id("CONTROL_NET"))
 MODEL_PATCH = TypeExpr.concrete(comfy_type_id("MODEL_PATCH"))
 IMAGE = TypeExpr.concrete(comfy_type_id("IMAGE"))
@@ -1861,6 +1864,7 @@ class LoadClip(Node):
         "stable_diffusion",
         "stable_cascade",
         "sd3",
+        "flux",
         "stable_audio",
         "mochi",
         "ltxv",
@@ -1948,7 +1952,7 @@ class LoadClip(Node):
                     widget=ComboWidget(options=("default", "cpu")),
                 ),
             ),
-            outputs=(OutputSpec("clip", CLIP, doc="The loaded text encoder."),),
+            outputs=(OutputSpec("clip", DINKSTER_CLIP, doc="The loaded text encoder."),),
             # Legacy API prompts naming "CLIPLoader" reach this port, with
             # the prompt boundary converting legacy clip_name strings to
             # digest-backed refs (make_load_clip_adapter); type and
@@ -2211,7 +2215,7 @@ class EmptyHunyuanLatentVideo(Node):
                     widget=NumberWidget(min=1, max=4096),
                 ),
             ),
-            outputs=(OutputSpec("latent", LATENT),),
+            outputs=(OutputSpec("latent", DINKSTER_LATENT),),
             aliases=("EmptyHunyuanLatentVideo",),
             search_terms=("EmptyHunyuanLatentVideo",),
         )
@@ -2336,7 +2340,7 @@ class MiniMaxMusic3TextEncode(Node):
                 "Uses a MiniMax Music3 CLIP model to generate the acoustic conditioning sequence."
             ),
             inputs=(
-                InputSpec("clip", CLIP),
+                InputSpec("clip", DINKSTER_CLIP),
                 InputSpec(
                     "caption",
                     STRING,
@@ -2381,7 +2385,10 @@ class MiniMaxMusic3TextEncode(Node):
                     widget=NumberWidget(min=1, max=16384, step=1),
                 ),
             ),
-            outputs=(OutputSpec("conditioning", CONDITIONING), OutputSpec("seconds", FLOAT)),
+            outputs=(
+                OutputSpec("conditioning", DINKSTER_CONDITIONING),
+                OutputSpec("seconds", FLOAT),
+            ),
             aliases=("MiniMaxMusic3TextEncode",),
         )
 
@@ -2577,7 +2584,7 @@ class VAEDecodeAudio(Node):
             node_type="dinkster.vae_decode_audio",
             display_name="VAE Decode Audio",
             category="model/latent",
-            inputs=(InputSpec("samples", LATENT), InputSpec("vae", VAE)),
+            inputs=(InputSpec("samples", DINKSTER_LATENT), InputSpec("vae", DINKSTER_VAE)),
             outputs=(OutputSpec("audio", AUDIO),),
             aliases=("VAEDecodeAudio",),
             search_terms=("latent to audio",),
@@ -2596,8 +2603,8 @@ class VAEDecodeAudioTiled(Node):
             display_name="VAE Decode Audio (Tiled)",
             category="model/latent",
             inputs=(
-                InputSpec("samples", LATENT),
-                InputSpec("vae", VAE),
+                InputSpec("samples", DINKSTER_LATENT),
+                InputSpec("vae", DINKSTER_VAE),
                 InputSpec(
                     "tile_size",
                     INT,
@@ -2994,7 +3001,7 @@ class EmptyMiniMaxMusic3LatentAudio(Node):
                     widget=NumberWidget(min=1, max=4096, step=1),
                 ),
             ),
-            outputs=(OutputSpec("latent", LATENT),),
+            outputs=(OutputSpec("latent", DINKSTER_LATENT),),
             aliases=("EmptyMiniMaxMusic3LatentAudio",),
             dispatch_affinity="native",
         )
@@ -3031,7 +3038,7 @@ class EmptyMiniMaxH3AV(Node):
                     widget=NumberWidget(min=5, max=3600, step=17),
                 ),
             ),
-            outputs=(OutputSpec("latent", LATENT),),
+            outputs=(OutputSpec("latent", DINKSTER_LATENT),),
             aliases=("EmptyMiniMaxH3LatentAV",),
             dispatch_affinity="native",
         )
@@ -3635,8 +3642,11 @@ class ConcatAVLatent(Node):
             node_type="dinkster.concat_av_latent",
             display_name="Concat Audio/Video Latent",
             category="latent/multi-stream",
-            inputs=(InputSpec("video_latent", LATENT), InputSpec("audio_latent", LATENT)),
-            outputs=(OutputSpec("latent", LATENT),),
+            inputs=(
+                InputSpec("video_latent", DINKSTER_LATENT),
+                InputSpec("audio_latent", DINKSTER_LATENT),
+            ),
+            outputs=(OutputSpec("latent", DINKSTER_LATENT),),
         )
 
     @classmethod
@@ -3651,8 +3661,11 @@ class SeparateAVLatent(Node):
             node_type="dinkster.separate_av_latent",
             display_name="Separate Audio/Video Latent",
             category="latent/multi-stream",
-            inputs=(InputSpec("latent", LATENT),),
-            outputs=(OutputSpec("video_latent", LATENT), OutputSpec("audio_latent", LATENT)),
+            inputs=(InputSpec("latent", DINKSTER_LATENT),),
+            outputs=(
+                OutputSpec("video_latent", DINKSTER_LATENT),
+                OutputSpec("audio_latent", DINKSTER_LATENT),
+            ),
         )
 
     @classmethod
@@ -3719,6 +3732,7 @@ class LoadLatent(Node):
         latent = TypeExpr.concrete("dinkster.latent")
         return NodeSchema(
             node_type="dinkster.load_latent",
+            editor_role="latent-source",
             display_name="Load Latent",
             category="latent",
             aliases=("LoadLatent",),

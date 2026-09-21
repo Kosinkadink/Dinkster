@@ -16,14 +16,10 @@ from dinkster_inference import (
     MINIMAX_H3_VIDEO_MASK_MAPPING,
     MINIMAX_H3_VIDEO_TEMPORAL_MAPPING,
     AudioPreview,
-    ContextWindowsSpec,
-    CustomSamplingRequest,
     CustomSamplingResult,
-    Denoiser,
     DualSamplingGuidance,
     ExecutionObserverAttachment,
     GuidanceRole,
-    InpaintConditioning,
     LatentMaskMapping,
     LatentPackLayout,
     LatentStream,
@@ -39,7 +35,6 @@ from dinkster_inference import (
     MiniMaxH3PresentationKind,
     MiniMaxH3REF2VARequest,
     MiniMaxH3ReferenceTokenGeometry,
-    MiniMaxH3Sigmas,
     MiniMaxH3Task,
     MiniMaxH3TokenLayoutPlan,
     MiniMaxH3VideoLatentGeometry,
@@ -47,8 +42,6 @@ from dinkster_inference import (
     ModelFamily,
     ModelTokenLayout,
     MultiStreamLatent,
-    NoiseKind,
-    Parameterization,
     PayloadDescriptor,
     PerpNegSamplingGuidance,
     PlacementMap,
@@ -57,18 +50,13 @@ from dinkster_inference import (
     SamplerDescriptor,
     SamplingCancelled,
     SamplingGuidance,
-    SamplingStateCallback,
-    SamplingStateEvent,
     SchedulerDescriptor,
     SequencePartition,
     SequenceShard,
     SigmaSpace,
-    StepCallback,
-    StepEvent,
     TimelineGuide,
     TokenGridTransform,
     TokenLayoutError,
-    UncondDenoiser,
     UspMesh,
     build_canonical_manifest,
     execution_span,
@@ -76,15 +64,12 @@ from dinkster_inference import (
     plan_minimax_h3_token_layout,
     plan_sequence_partition,
     prove_manifest_consensus,
-    sampling_environment_cancellation,
-    sampling_execution_context,
 )
 from dinkster_inference.devices import BFLOAT16, FLOAT16, FLOAT32
 from dinkster_inference.partition_compatibility import PartitionCompatibility
 
-from .denoise import prepare_noise, run_sampler_engine
+from .denoise import PackedInpaintConfiguration, prepare_noise
 from .distributed import (
-    DistributedGuidanceEvaluator,
     SequenceDigestConsensusTransport,
     distributed_sampling_config,
     ensure_process_group,
@@ -121,11 +106,13 @@ from .sampling_execution import (
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    guided_denoiser,
-    resolve_custom_sampling_request,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
+    SamplingExecutionInputs,
+    SamplingExecutionRegistration,
+    SamplingLatentAdapter,
+    sampling_execution,
 )
 from .sampling_runtime import MultiStreamSamplingRuntime
 from .schedules import (
@@ -190,62 +177,6 @@ def _validate_h3_mask(mask: MultiStreamLatent[torch.Tensor]) -> None:
             raise MiniMaxH3RuntimeError("H3 denoise mask values must be finite")
         if float(stream.payload.amin()) < 0.0 or float(stream.payload.amax()) > 1.0:
             raise MiniMaxH3RuntimeError("H3 denoise mask values must be within [0, 1]")
-
-
-class _MiniMaxH3InpaintDenoiser:
-    def __init__(
-        self,
-        inner: Denoiser[torch.Tensor],
-        *,
-        raw_mask: torch.Tensor,
-        token_mask: torch.Tensor,
-        latent: torch.Tensor,
-        noise: torch.Tensor,
-        video_elements: int,
-        sigmas: MiniMaxH3Sigmas,
-    ) -> None:
-        device = latent.device
-        self.inner = inner
-        self.raw_mask = raw_mask.to(device=device, dtype=torch.float32)
-        self.token_mask = token_mask.to(device=device, dtype=torch.float32)
-        self.latent = latent.to(dtype=torch.float32)
-        self.noise = noise.to(device=device, dtype=torch.float32)
-        self.video_elements = video_elements
-        self.sigmas = sigmas
-
-    def _input(self, x: torch.Tensor, sigma: float) -> torch.Tensor:
-        source = torch.empty_like(x)
-        split = self.video_elements
-        source[..., :split] = 0.999 * self.latent[..., :split] + 0.001 * self.noise[..., :split]
-        sigma_video = torch.tensor(sigma, dtype=torch.float32, device=x.device).clamp(min=1e-6)
-        base = sigma_video / (
-            self.sigmas.video.shift + sigma_video * (1.0 - self.sigmas.video.shift)
-        )
-        sigma_audio = (
-            self.sigmas.audio_shift * base / (1.0 + (self.sigmas.audio_shift - 1.0) * base)
-        )
-        audio_factor = (sigma_video / sigma_audio) / self.sigmas.audio_scale
-        source[..., split:] = self.latent[..., split:] * audio_factor
-        weight = (self.token_mask - self.raw_mask) / (1.0 - self.raw_mask).clamp(min=1e-6)
-        weight = torch.where(
-            self.raw_mask < 1.0,
-            weight.clamp(0.0, 1.0),
-            torch.zeros_like(weight),
-        )
-        token_source = source + weight * (x - source)
-        return x * self.raw_mask + token_source * (1.0 - self.raw_mask)
-
-    def _output(self, denoised: torch.Tensor) -> torch.Tensor:
-        return denoised * self.raw_mask + self.latent * (1.0 - self.raw_mask)
-
-    def __call__(self, x: torch.Tensor, sigma: float) -> torch.Tensor:
-        return self._output(self.inner(self._input(x, sigma), sigma))
-
-    def call_with_uncond(self, x: torch.Tensor, sigma: float) -> tuple[torch.Tensor, torch.Tensor]:
-        if not isinstance(self.inner, UncondDenoiser):
-            raise MiniMaxH3RuntimeError("H3 inpaint sampler requires an unconditional denoiser")
-        combined, uncond = self.inner.call_with_uncond(self._input(x, sigma), sigma)
-        return self._output(combined), uncond
 
 
 def _dit_component_role(task: MiniMaxH3Task) -> str:
@@ -1196,11 +1127,179 @@ class MiniMaxH3ConditionerRuntime:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class _H3SamplingContext:
+    source: MultiStreamLatent[torch.Tensor]
+    layout: LatentPackLayout
+    raw_mask: torch.Tensor | None
+    token_mask: torch.Tensor | None
+    model_mask: MultiStreamLatent[torch.Tensor] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _H3LatentAdapter:
+    def prepare(
+        self,
+        runtime: object,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs:
+        del family, error
+        owner = cast("MiniMaxH3DiTRuntime", runtime)
+        unknown = set(context.options) - {
+            "attention_kernel_factory",
+            "noise_inds",
+            "scheduler_label",
+        }
+        if unknown:
+            raise MiniMaxH3RuntimeError(
+                "MiniMax H3 sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+            )
+        if type(latent) is not MultiStreamLatent:
+            raise MiniMaxH3RuntimeError(
+                "MiniMax H3 custom sampling requires a MultiStreamLatent latent"
+            )
+        if type(noise) is not MultiStreamLatent:
+            raise MiniMaxH3RuntimeError(
+                "MiniMax H3 custom sampling requires MultiStreamLatent noise"
+            )
+        if isinstance(cfg, DualSamplingGuidance):
+            raise MiniMaxH3RuntimeError("MiniMax H3 does not support dual CFG guidance")
+        if isinstance(cfg, PerpNegSamplingGuidance):
+            raise MiniMaxH3RuntimeError(
+                "MiniMax H3 custom sampling does not support PerpNegSamplingGuidance"
+                " (perp-neg guidance); pass SamplingGuidance"
+            )
+        if type(cond) is not PreparedMultiStreamConditioning:
+            raise MiniMaxH3RuntimeError(
+                "MiniMax H3 custom sampling requires prepared multi-stream conditioning"
+            )
+        if cond.runtime_identity != owner.conditioning_identity:
+            raise MiniMaxH3RuntimeError(
+                "H3 conditioning was prepared by a different conditioner component"
+            )
+        conditioning = cond.payload
+        if type(conditioning) is not MiniMaxH3PreparedConditioning:
+            raise TypeError("conditioning must be exact MiniMaxH3PreparedConditioning")
+        guidance_cfg: SamplingGuidance[object] | None = None
+        if cfg is not None:
+            uncond_value = cfg.uncond
+            if uncond_value is None:
+                guidance_cfg = cast("SamplingGuidance[object]", cfg)
+            else:
+                if type(uncond_value) is not PreparedMultiStreamConditioning:
+                    raise MiniMaxH3RuntimeError(
+                        "MiniMax H3 custom sampling guidance requires prepared "
+                        "multi-stream conditioning"
+                    )
+                if uncond_value.runtime_identity != cond.runtime_identity:
+                    raise MiniMaxH3RuntimeError(
+                        "H3 conditional and unconditional lanes were prepared by "
+                        "different conditioner components"
+                    )
+                uncond_payload = uncond_value.payload
+                if type(uncond_payload) is not MiniMaxH3PreparedConditioning:
+                    raise TypeError("H3 guidance lanes require MiniMaxH3PreparedConditioning")
+                guidance_cfg = replace(cast("SamplingGuidance[object]", cfg), uncond=uncond_payload)
+        required_role = _dit_component_role(conditioning.task)
+        if owner._model_role != required_role:  # pyright: ignore[reportPrivateUsage]
+            raise MiniMaxH3RuntimeError(
+                f"MiniMax H3 {owner._model_role} component cannot sample task "  # pyright: ignore[reportPrivateUsage]
+                f"{conditioning.task.name}"
+            )
+        _validate_av_target(latent)
+        sigmas = MINIMAX_H3_SIGMAS
+        sampler_latent = _h3_latent(
+            latent.by_role("video").to(dtype=torch.float32),
+            latent.by_role("audio").to(dtype=torch.float32) * sigmas.audio_scale,
+        )
+        packed, layout = pack_latent_streams(sampler_latent)
+        packed_noise, noise_layout = pack_latent_streams(noise)
+        if noise_layout != layout:
+            raise MiniMaxH3RuntimeError("H3 initial noise topology differs from the latent")
+        packed_raw_mask: torch.Tensor | None = None
+        packed_token_mask: torch.Tensor | None = None
+        model_denoise_mask: MultiStreamLatent[torch.Tensor] | None = None
+        if denoise_mask is not None:
+            raw_masks = normalize_latent_mask(
+                cast("torch.Tensor | MultiStreamLatent[torch.Tensor]", denoise_mask),
+                sampler_latent,
+            )
+            _validate_h3_mask(raw_masks)
+            token_masks = _h3_token_grid_masks(raw_masks, owner.config.patch)
+            packed_raw_mask, raw_layout = pack_latent_streams(raw_masks)
+            packed_token_mask, token_layout = pack_latent_streams(token_masks)
+            if raw_layout != layout or token_layout != layout:
+                raise MiniMaxH3RuntimeError("H3 denoise mask topology differs from the latent")
+            if any(float(stream.payload.amin()) < 1.0 - 1e-3 for stream in token_masks.streams):
+                model_denoise_mask = token_masks
+        if layout != conditioning.target_layout:
+            raise MiniMaxH3RuntimeError("conditioning belongs to a different H3 target")
+        latent_context = _H3SamplingContext(
+            latent,
+            layout,
+            packed_raw_mask,
+            packed_token_mask,
+            model_denoise_mask,
+        )
+        return SamplingExecutionInputs(
+            packed,
+            packed_noise,
+            conditioning,
+            guidance_cfg,
+            packed_raw_mask,
+            latent_context,
+        )
+
+    def finish(
+        self,
+        inputs: SamplingExecutionInputs,
+        output: torch.Tensor,
+        denoised: object | None,
+    ) -> CustomSamplingResult[MultiStreamLatent[torch.Tensor]]:
+        context = cast("_H3SamplingContext", inputs.latent_context)
+        if output is inputs.latent:
+            return CustomSamplingResult(context.source, None)
+        unpacked = unpack_latent_streams(output, context.layout)
+        output_latent = _h3_latent(
+            unpacked.by_role("video"),
+            unpacked.by_role("audio") / MINIMAX_H3_SIGMAS.audio_scale,
+        )
+        denoised_output: MultiStreamLatent[torch.Tensor] | None = None
+        if denoised is not None:
+            if type(denoised) is not MultiStreamLatent:
+                raise TypeError("H3 denoised state must contain a MultiStreamLatent")
+            denoised_output = _h3_latent(
+                denoised.by_role("video"),
+                denoised.by_role("audio") / MINIMAX_H3_SIGMAS.audio_scale,
+            )
+        return CustomSamplingResult(output_latent, denoised_output)
+
+
 class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
     """Sampling execution for one role-specific H3 DiT component."""
 
     sampling_error = MiniMaxH3RuntimeError
     supports_denoised_capture = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=cast("SamplingLatentAdapter", _H3LatentAdapter()),
+        denoiser=lambda runtime, compute_dtype, context: cast(
+            "MiniMaxH3DiTRuntime", runtime
+        )._sampling_denoiser(compute_dtype, context),
+        device=lambda runtime: (
+            bound_compute_device(cast("MiniMaxH3DiTRuntime", runtime)._model.video_patch_proj)
+            or cast("MiniMaxH3DiTRuntime", runtime)._model.video_patch_proj.weight.device
+        ),
+        compute_dtype=lambda runtime: cast("MiniMaxH3DiTRuntime", runtime)._compute_dtype,
+        flow=True,
+    )
 
     def __init__(
         self,
@@ -1282,98 +1381,38 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             "scheduler_label": scheduler_id,
         }
 
-    def sample_custom(
+    def _sampling_denoiser(
         self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: float | None = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        noise_inds: Sequence[int] | None = None,
-        cancelled: Callable[[], bool] | None = None,
-        observer: ExecutionObserverAttachment | None = None,
-        parent_span_id: int | None = None,
-        attention_kernel_factory: MiniMaxH3AttentionKernelFactory | None = None,
-        scheduler_label: str = "custom",
-        capture_denoised: bool = True,
-    ) -> CustomSamplingResult[MultiStreamLatent[torch.Tensor]]:
-        if type(latent) is not MultiStreamLatent:
-            raise MiniMaxH3RuntimeError(
-                "MiniMax H3 custom sampling requires a MultiStreamLatent latent"
-            )
-        if type(noise) is not MultiStreamLatent:
-            raise MiniMaxH3RuntimeError(
-                "MiniMax H3 custom sampling requires MultiStreamLatent noise"
-            )
-        if isinstance(cfg, DualSamplingGuidance):
-            raise MiniMaxH3RuntimeError("MiniMax H3 does not support dual CFG guidance")
-        if isinstance(cfg, PerpNegSamplingGuidance):
-            raise MiniMaxH3RuntimeError(
-                "MiniMax H3 custom sampling does not support PerpNegSamplingGuidance"
-                " (perp-neg guidance); pass SamplingGuidance"
-            )
-        if type(cond) is not PreparedMultiStreamConditioning:
-            raise MiniMaxH3RuntimeError(
-                "MiniMax H3 custom sampling requires prepared multi-stream conditioning"
-            )
-        if cond.runtime_identity != self._conditioning_identity:
-            raise MiniMaxH3RuntimeError(
-                "H3 conditioning was prepared by a different conditioner component"
-            )
-        conditioning = cond.payload
-        if type(conditioning) is not MiniMaxH3PreparedConditioning:
-            raise TypeError("conditioning must be exact MiniMaxH3PreparedConditioning")
-        guidance_cfg: SamplingGuidance[object] | None = None
-        if cfg is not None:
-            uncond_value = cfg.uncond
-            if uncond_value is None:
-                guidance_cfg = cast("SamplingGuidance[object]", cfg)
-            else:
-                if type(uncond_value) is not PreparedMultiStreamConditioning:
-                    raise MiniMaxH3RuntimeError(
-                        "MiniMax H3 custom sampling guidance requires prepared "
-                        "multi-stream conditioning"
-                    )
-                if uncond_value.runtime_identity != cond.runtime_identity:
-                    raise MiniMaxH3RuntimeError(
-                        "H3 conditional and unconditional lanes were prepared by "
-                        "different conditioner components"
-                    )
-                uncond_payload = uncond_value.payload
-                if type(uncond_payload) is not MiniMaxH3PreparedConditioning:
-                    raise TypeError("H3 guidance lanes require MiniMaxH3PreparedConditioning")
-                guidance_cfg = replace(cast("SamplingGuidance[object]", cfg), uncond=uncond_payload)
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
+        compute_dtype: torch.dtype,
+        context: SamplingAdapterContext,
+    ) -> SamplingDenoiserExecution:
+        if (
+            context.inputs is None
+            or context.device is None
+            or context.plan is None
+            or context.request is None
+            or context.sampler is None
+            or context.schedule is None
+        ):
+            raise RuntimeError("MiniMax H3 sampling context is unresolved")
+        inputs = context.inputs
+        latent_context = cast("_H3SamplingContext", inputs.latent_context)
+        conditioning = cast("MiniMaxH3PreparedConditioning", inputs.cond)
+        guidance_plan = context.plan
+        request = context.request
+        seed = context.seed
+        cancelled = context.cancelled
+        observer = cast("ExecutionObserverAttachment | None", context.observer)
+        parent_span_id = context.parent_span_id
+        device = torch.device(context.device)
+        attention_kernel_factory = cast(
+            "MiniMaxH3AttentionKernelFactory | None",
+            context.options.get("attention_kernel_factory"),
         )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=MiniMaxH3RuntimeError
-        )
-        if cancelled is None:
-            cancelled = sampling_environment_cancellation()
-        required_role = _dit_component_role(conditioning.task)
+        scheduler_label = cast("str", context.options.get("scheduler_label", "custom"))
         model_role = self._model_role
-        if model_role != required_role:
-            raise MiniMaxH3RuntimeError(
-                f"MiniMax H3 {model_role} component cannot sample task {conditioning.task.name}"
-            )
         model = self._model
         requested_distributed = distributed_sampling_config()
-        requested_guidance = (
-            requested_distributed is not None and requested_distributed.mode != "sequence"
-        )
         requested_sequence = (
             requested_distributed is not None and requested_distributed.mode == "sequence"
         )
@@ -1381,11 +1420,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             raise MiniMaxH3RuntimeError(
                 "single-job sequence mode owns the attention kernel factory"
             )
-        guidance_plan = compile_guidance_plan(conditioning, guidance_cfg, sampler, None)
         sigmas = MINIMAX_H3_SIGMAS
-        _validate_av_target(latent)
-        weight = model.video_patch_proj.weight
-        device = bound_compute_device(model.video_patch_proj) or weight.device
         if requested_sequence:
             assert requested_distributed is not None
             if requested_distributed.sequence_guidance not in (1, 2):
@@ -1397,29 +1432,9 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 raise MiniMaxH3RuntimeError(
                     "single-job sequence guidance requires conditional and unconditional lanes"
                 )
-        sampler_latent = _h3_latent(
-            latent.by_role("video").to(device=device, dtype=torch.float32),
-            latent.by_role("audio").to(device=device, dtype=torch.float32) * sigmas.audio_scale,
-        )
-        packed, layout = pack_latent_streams(sampler_latent)
-        packed_raw_mask: torch.Tensor | None = None
-        packed_token_mask: torch.Tensor | None = None
-        model_denoise_mask: MultiStreamLatent[torch.Tensor] | None = None
-        if denoise_mask is not None:
-            raw_masks = normalize_latent_mask(
-                cast("torch.Tensor | MultiStreamLatent[torch.Tensor]", denoise_mask),
-                sampler_latent,
-            )
-            _validate_h3_mask(raw_masks)
-            token_masks = _h3_token_grid_masks(raw_masks, self.config.patch)
-            packed_raw_mask, raw_layout = pack_latent_streams(raw_masks)
-            packed_token_mask, token_layout = pack_latent_streams(token_masks)
-            if raw_layout != layout or token_layout != layout:
-                raise MiniMaxH3RuntimeError("H3 denoise mask topology differs from the latent")
-            if any(float(stream.payload.amin()) < 1.0 - 1e-3 for stream in token_masks.streams):
-                model_denoise_mask = token_masks
-        if layout != conditioning.target_layout:
-            raise MiniMaxH3RuntimeError("conditioning belongs to a different H3 target")
+        packed = inputs.latent
+        layout = latent_context.layout
+        model_denoise_mask = latent_context.model_mask
         distributed = ensure_process_group()
         from .distributed import synchronized_sampling_call
 
@@ -1439,8 +1454,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             )
         else:
             rank_device_bindings = ()
-        schedule_plan = build_custom_sampling_schedule(request.sigmas, sigmas, sampler, flow=True)
-        schedule = schedule_plan.sigmas
+        schedule = context.schedule.sigmas
 
         def device_branch(
             prepared: MiniMaxH3PreparedConditioning,
@@ -1708,9 +1722,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 return ()
             return value.token_layout.transforms
 
-        # Packed H3 latents use one immutable row-offset layout shared by the
-        # DiT payload and sequence-parallel sideband. Lane-expanded evaluation
-        # would require a new authenticated packed layout, so it stays separate.
+        sampler_latent = unpack_latent_streams(packed, layout)
         evaluator = ConditioningEvaluation(
             prepare_conditioning,
             evaluate,
@@ -1726,162 +1738,50 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 declared,
             ),
         )
-        if use_guidance:
-            denoiser = guided_denoiser(
-                evaluator,
-                input=packed,
-                executor=None,
-                plan=guidance_plan,
-                execution=sampling_execution_context(schedule, seed, on_step),
-                replica_evaluator_factory=lambda evaluate: (
-                    DistributedGuidanceEvaluator(evaluate).evaluate_request
-                ),
-            )
-        elif use_sequence and distributed is not None and distributed.sequence_guidance == 2:
-            denoiser = guided_denoiser(
-                evaluator,
-                input=packed,
-                executor=None,
-                plan=guidance_plan,
-                execution=sampling_execution_context(schedule, seed, on_step, on_state),
-                replica_evaluator_factory=lambda evaluate: (
-                    DistributedGuidanceEvaluator(
-                        evaluate,
-                        guidance_group_size=(
-                            distributed.sequence_ulysses * distributed.sequence_ring
-                        ),
-                    ).evaluate_request
-                ),
-            )
-        else:
-            denoiser = guided_denoiser(
-                evaluator,
-                input=packed,
-                executor=None,
-                plan=guidance_plan,
-                execution=sampling_execution_context(schedule, seed, on_step, on_state),
-                distributed_evaluation=distributed is not None,
-            )
-
-        if not schedule_plan.pre_offset:
-            return CustomSamplingResult(latent, None)
-        with execution_span(
-            observer,
-            "sample",
-            "prepare",
-            parent_span_id=parent_span_id,
-            device=str(packed.device),
-        ):
-            packed_noise, noise_layout = pack_latent_streams(noise)
-            if noise_layout != layout:
-                raise MiniMaxH3RuntimeError("H3 initial noise topology differs from the latent")
-        if sampler.noise in (NoiseKind.BROWNIAN, NoiseKind.BROWNIAN_GPU) and not any(
-            value > 0.0 for value in schedule_plan.pre_offset
-        ):
-            raise MiniMaxH3RuntimeError("H3 brownian sampler needs positive sigmas")
-        step_noise: Callable[[float, float], torch.Tensor] | None = brownian_step_noise(
-            sampler, schedule_plan, packed, seed=seed
+        replica_group_size = (
+            distributed.sequence_ulysses * distributed.sequence_ring
+            if use_sequence and distributed is not None and distributed.sequence_guidance == 2
+            else None
         )
-
-        def progress(event: StepEvent) -> None:
-            _check_cancelled(cancelled)
-            if on_step is not None:
-                on_step(event)
-            _check_cancelled(cancelled)
-
-        # Preserve distributed runs without preview requests: solvers such
-        # as UniPC perform extra model evaluations when state capture is enabled.
-        capture = capture_denoised and not requested_guidance and not requested_sequence
-        captured_denoised: list[MultiStreamLatent[torch.Tensor]] = []
-
-        def state_progress(event: SamplingStateEvent[object]) -> None:
-            _check_cancelled(cancelled)
-            if capture:
-                denoised = event.denoised
-                if type(denoised) is MultiStreamLatent:
-                    captured_denoised[:] = [cast("MultiStreamLatent[torch.Tensor]", denoised)]
-            if on_state is not None:
-                on_state(event)
-            _check_cancelled(cancelled)
-
-        inpaint_noise: torch.Tensor | None = None
-        packed_noise = packed_noise.to(device=packed.device, dtype=torch.float32)
-        if packed_raw_mask is not None:
-            inpaint_noise = (
-                prepare_noise(packed, seed + 1, noise_inds).to(
-                    device=packed.device, dtype=torch.float32
-                )
-                if sampler.random_inpaint_noise
-                else packed_noise
-            )
-        executing_denoiser: Denoiser[torch.Tensor] = denoiser
-        if packed_raw_mask is not None:
-            assert packed_token_mask is not None and inpaint_noise is not None
-            executing_denoiser = _MiniMaxH3InpaintDenoiser(
-                denoiser,
-                raw_mask=packed_raw_mask,
-                token_mask=packed_token_mask,
-                latent=packed,
-                noise=inpaint_noise,
-                video_elements=layout.by_role("video").elements,
-                sigmas=sigmas,
-            )
-        if step_noise is not None and observer is not None:
-            raw_step_noise = step_noise
-
-            def observed_step_noise(sigma_from: float, sigma_to: float) -> torch.Tensor:
-                with execution_span(
-                    observer,
-                    "sample",
-                    "step_noise",
-                    parent_span_id=parent_span_id,
-                    device=str(packed.device),
-                ):
-                    return raw_step_noise(sigma_from, sigma_to)
-
-            step_noise = observed_step_noise
-        output = run_sampler_engine(
-            executing_denoiser,
-            request.build_solver(),
-            latent=packed,
-            noise=packed_noise,
-            inpaint_noise=inpaint_noise,
-            sigmas=schedule,
-            initial_sigma=schedule_plan.initial_sigma,
-            parameterization=Parameterization.FLOW,
-            sigma_min=sigmas.sigma_min,
-            sigma_max=sigmas.sigma_max,
+        return SamplingDenoiserExecution(
+            cast("SamplingDenoiserAdapter", model),
+            conditioning_evaluation=evaluator,
+            replica_group_size=replica_group_size,
+            replica_evaluation=use_guidance or replica_group_size is not None,
+            distributed_evaluation=(
+                distributed is not None and not use_guidance and replica_group_size is None
+            ),
+            sampling=MINIMAX_H3.sampling,
+            percent_to_sigma=sigmas.percent_to_sigma,
             process_in=lambda value: value,
             process_out=lambda value: value,
-            seed=seed,
-            noise_kind=sampler.noise,
-            noise_sampler=step_noise,
-            percent_to_sigma=sigmas.percent_to_sigma,
-            device=packed.device,
-            on_step=progress,
-            on_state=state_progress if capture or on_state is not None else None,
             unpack_state=lambda value: unpack_latent_streams(value, layout),
-        )
-        with execution_span(
-            observer,
-            "sample",
-            "finalize",
-            parent_span_id=parent_span_id,
-            device=str(output.device),
-        ):
-            _check_cancelled(cancelled)
-            unpacked = unpack_latent_streams(output, layout)
-            output_latent = _h3_latent(
-                unpacked.by_role("video"), unpacked.by_role("audio") / sigmas.audio_scale
-            )
-            denoised_output: MultiStreamLatent[torch.Tensor] | None = None
-            if captured_denoised:
-                last_denoised = captured_denoised[-1]
-                denoised_output = _h3_latent(
-                    last_denoised.by_role("video"),
-                    last_denoised.by_role("audio") / sigmas.audio_scale,
+            denoise_mask_prepared=True,
+            inpaint_noise=(
+                prepare_noise(
+                    inputs.latent,
+                    seed + 1,
+                    cast("Sequence[int] | None", context.options.get("noise_inds")),
                 )
-            return CustomSamplingResult(output_latent, denoised_output)
+                if latent_context.raw_mask is not None and context.sampler.random_inpaint_noise
+                else inputs.noise
+                if latent_context.raw_mask is not None
+                else None
+            ),
+            packed_inpaint=(
+                None
+                if latent_context.raw_mask is None or latent_context.token_mask is None
+                else PackedInpaintConfiguration(
+                    latent_context.token_mask,
+                    layout.by_role("video").elements,
+                    MINIMAX_H3_SIGMAS.video.shift,
+                    MINIMAX_H3_SIGMAS.audio_shift,
+                    MINIMAX_H3_SIGMAS.audio_scale,
+                )
+            ),
+        )
+
+    sample_custom = sampling_execution
 
 
 __all__ = [

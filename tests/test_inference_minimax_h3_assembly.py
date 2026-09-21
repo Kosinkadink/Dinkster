@@ -9,7 +9,8 @@ from types import MappingProxyType
 
 import pytest
 from dinkster_inference.assembly import NativePlanningContext
-from dinkster_inference.devices import BFLOAT16, FLOAT16, FLOAT32, DType
+from dinkster_inference.component_catalog import default_component_registry
+from dinkster_inference.devices import BFLOAT16, FLOAT16, FLOAT32, INT8, UINT8, DType
 from dinkster_inference.minimax_h3_assembly import (
     component_plan_claims,
     minimax_h3_component_runtime_identity,
@@ -76,10 +77,15 @@ class IdentifiedHeaderSource(HeaderSource):
         *,
         asset_digest: str | None,
         asset_size: int | None,
+        configurations: Mapping[str, bytes] | None = None,
     ) -> None:
         super().__init__(path, geometries)
         self.asset_digest = asset_digest
         self.asset_size = asset_size
+        self.configurations = {} if configurations is None else dict(configurations)
+
+    def read_uint8_configuration(self, key: str) -> bytes:
+        return self.configurations[key]
 
 
 def _authority(role: str) -> tuple[int, str]:
@@ -92,6 +98,22 @@ def _dit_geometries() -> dict[str, TensorGeometry]:
         key: TensorGeometry(shape, FLOAT32 if key in layout.fp32_storage_keys else BFLOAT16)
         for key, shape in layout.keys.items()
     }
+
+
+def _int8_dit_geometries() -> tuple[dict[str, TensorGeometry], dict[str, bytes]]:
+    geometries = _dit_geometries()
+    configurations: dict[str, bytes] = {}
+    for key, geometry in tuple(geometries.items()):
+        if len(geometry.shape) != 2 or not key.startswith(("blocks.", "token_refiner.blocks.")):
+            continue
+        layer = key.removesuffix(".weight")
+        configuration_key = layer + ".comfy_quant"
+        configuration = b'{"format":"int8_tensorwise","convrot":true,"convrot_groupsize":64}'
+        geometries[key] = TensorGeometry(geometry.shape, INT8)
+        geometries[layer + ".weight_scale"] = TensorGeometry((geometry.shape[0], 1), FLOAT32)
+        geometries[configuration_key] = TensorGeometry((len(configuration),), UINT8)
+        configurations[configuration_key] = configuration
+    return geometries, configurations
 
 
 def _component_geometries(
@@ -226,3 +248,49 @@ def test_model_assembly_plans_one_dit_without_shared_assets(tmp_path: Path) -> N
     assert plan.claims == component_plan_claims(
         plan.diffusion  # pyright: ignore[reportArgumentType]
     )
+
+
+@pytest.mark.parametrize(
+    ("filename", "quantized", "artifact_role"),
+    (
+        ("minimax_h3_fl2va_bf16.safetensors", False, "fl2va-dit"),
+        ("minimax_h3_fl2va_int8_convrot.safetensors", True, "fl2va-dit"),
+        ("minimax_h3_ref2va_bf16.safetensors", False, "ref2va-dit"),
+    ),
+)
+def test_component_registry_selects_h3_fp_and_int8_diffusion(
+    tmp_path: Path,
+    filename: str,
+    quantized: bool,
+    artifact_role: str,
+) -> None:
+    path = tmp_path / filename
+    geometries, configurations = _int8_dit_geometries() if quantized else (_dit_geometries(), {})
+    source = IdentifiedHeaderSource(
+        path,
+        geometries,
+        asset_digest="blake3:" + "1" * 64,
+        asset_size=123,
+        configurations=configurations,
+    )
+
+    descriptor, role, candidate = default_component_registry().select(
+        source,
+        path,
+        "model",
+        family_id="dinkster.minimax_h3",
+    )
+
+    assert descriptor.id == "dinkster.minimax_h3"
+    assert role == "diffusion"
+    assert candidate.artifact_role == artifact_role
+    assert "audio_patch_proj.weight" in candidate.source.keys()
+    if quantized:
+        assert "blocks.0.adaln_proj.linear.weight_scale" in candidate.source.keys()
+    identity = descriptor.component_identity(
+        role,
+        candidate,
+        "bfloat16",
+        runtime_versions={"torch": "2.13.0+cu130", "dinkster-kitchen": "0.2.35.post1"},
+    )
+    assert identity.startswith("native:dinkster.minimax_h3:")

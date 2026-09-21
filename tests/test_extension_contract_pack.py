@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -12,6 +13,8 @@ from pathlib import Path
 import aiohttp
 import pytest
 from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+
+from dinkster.compose import PackSpec, ServingComposer
 
 ROOT = Path(__file__).parent.parent
 PACK = ROOT / "tests" / "fixtures" / "extension-contract-pack" / "dinkster-pack.toml"
@@ -28,6 +31,22 @@ def free_port() -> int:
 
 def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
     port = free_port()
+    route_manifest = tmp_path / "route-pack.toml"
+    route_manifest.write_text(
+        PACK.read_text(encoding="utf-8")
+        .replace('inference = "dinkster-inference/1"\n', "")
+        .replace(
+            '[pack.provides.registry]\n"dinkster.model-families" = ["fixture.toy-image"]\n\n',
+            "",
+        )
+        .replace('inference = "extension_contract_pack:register_inference"\n', "")
+        .replace(
+            'capabilities = ["model-family-registration", "routes"]',
+            'capabilities = ["routes"]',
+        ),
+        encoding="utf-8",
+    )
+    shutil.copy(PACK.parent / "frontend.js", route_manifest.parent / "frontend.js")
     process = subprocess.Popen(
         [
             sys.executable,
@@ -42,14 +61,17 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
             "--no-default-packs",
             "--disable-p2p",
             "--pack",
-            str(PACK),
+            str(route_manifest),
         ],
         cwd=tmp_path,
         env={
             **os.environ,
             "DINKSTER_SERVING_PYTHON": sys.executable,
             "PYTHONPATH": os.pathsep.join(
-                filter(None, (str(PACK.parent), os.environ.get("PYTHONPATH")))
+                filter(
+                    None,
+                    (str(PACK.parent), os.environ.get("PYTHONPATH")),
+                )
             ),
         },
         stdout=subprocess.DEVNULL,
@@ -95,6 +117,15 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
                 "width": "integer",
             }
             module = extension["frontend"][0]
+            assert module["contributions"] == [
+                {
+                    "event": EVENT,
+                    "id": f"{PACK_ID}.event",
+                    "kind": "eventConsumer",
+                },
+                {"id": f"{PACK_ID}.status", "kind": "hostUi"},
+                {"id": f"{PACK_ID}.canvas", "kind": "canvasLayer"},
+            ]
             async with session.get(base + module["moduleUrl"]) as response:
                 assert response.status == 200
                 assert (
@@ -154,3 +185,46 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=30)
+
+
+def test_pack_composes_model_family_into_sampling_worker(tmp_path: Path) -> None:
+    host = tmp_path / "host" / "dinkster-pack.toml"
+    host.parent.mkdir()
+    host.write_text(
+        '[pack]\nname = "sampling-host"\nnamespaces = ["dinkster", "comfy"]\n\n'
+        '[pack.arms]\nnative = ["dinkster.ksampler"]\n\n'
+        '[pack.entry]\nnodes = "s1_sampler_host:NODES"\n'
+        'arm_nodes = "s1_sampler_host:ARM_NODES"\n'
+        'choices = "s1_sampler_host:choices"\n',
+        encoding="utf-8",
+    )
+
+    async def scenario() -> None:
+        composer = ServingComposer(
+            worker_env={
+                "PYTHONPATH": os.pathsep.join(
+                    (
+                        str(ROOT / "tests" / "fixtures" / "attention_provider"),
+                        str(PACK.parent),
+                        str(ROOT / "tests"),
+                    )
+                )
+            }
+        )
+        try:
+            await composer.add_pack(PackSpec(host, trust_reserved=True))
+            await composer.add_pack(PackSpec(PACK))
+            extension = next(
+                item
+                for item in composer._runtime_seat.pin().extension_snapshot.extensions
+                if item.id == PACK_ID
+            )
+            assert [(item.surface_id, item.id) for item in extension.keyed_contributions] == [
+                ("inference.families", "fixture.toy-image"),
+                ("inference.components", "fixture.toy-image"),
+                ("inference.assemblies", "fixture.toy-image"),
+            ]
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())

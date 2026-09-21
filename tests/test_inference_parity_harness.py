@@ -98,7 +98,7 @@ def station_paths(environ: Mapping[str, str] = os.environ) -> dict[str, Path]:
 
     The defaults preserve the original acceptance-station layout; any other
     machine opts in by exporting DINKSTER_PARITY_COMFYUI_ROOT,
-    DINKSTER_PARITY_COMFYUI_PYTHON, and DINKSTER_PARITY_ARTIFACT_ROOT.
+    DINKSTER_PARITY_COMFY_PYTHON, and DINKSTER_PARITY_ARTIFACT_ROOT.
     """
     comfyui = Path(environ.get("DINKSTER_PARITY_COMFYUI_ROOT", "/home/kosin/ComfyUI"))
     return {
@@ -107,7 +107,7 @@ def station_paths(environ: Mapping[str, str] = os.environ) -> dict[str, Path]:
         ),
         "comfyui": comfyui,
         "python": Path(
-            environ.get("DINKSTER_PARITY_COMFYUI_PYTHON", str(comfyui / "venv" / "bin" / "python"))
+            environ.get("DINKSTER_PARITY_COMFY_PYTHON", str(comfyui / "venv" / "bin" / "python"))
         ),
     }
 
@@ -127,7 +127,7 @@ requires_comfyui_station = pytest.mark.skipif(
     not station_available(_STATION),
     reason=(
         "external ComfyUI station prerequisites unavailable; set"
-        " DINKSTER_PARITY_COMFYUI_ROOT, DINKSTER_PARITY_COMFYUI_PYTHON, and"
+        " DINKSTER_PARITY_COMFYUI_ROOT, DINKSTER_PARITY_COMFY_PYTHON, and"
         " DINKSTER_PARITY_ARTIFACT_ROOT to enable the adapter construction proofs"
     ),
 )
@@ -2038,7 +2038,7 @@ def test_station_prerequisites_default_override_and_probe(tmp_path: Path) -> Non
     assert overridden["artifact"] == tmp_path / "models"
     assert overridden["comfyui"] == tmp_path / "comfy"
     assert overridden["python"] == tmp_path / "comfy" / "venv" / "bin" / "python"
-    explicit = station_paths({"DINKSTER_PARITY_COMFYUI_PYTHON": str(tmp_path / "python")})
+    explicit = station_paths({"DINKSTER_PARITY_COMFY_PYTHON": str(tmp_path / "python")})
     assert explicit["python"] == tmp_path / "python"
     assert explicit["comfyui"] == Path("/home/kosin/ComfyUI")
     assert not station_available(overridden)

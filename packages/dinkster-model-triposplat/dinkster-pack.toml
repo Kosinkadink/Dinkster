@@ -23,3 +23,17 @@ dinkster-nodes-media-io = ">=0.0.1,<1"
 
 [pack.entry]
 nodes = "dinkster_model_triposplat:TRIPOSPLAT_MODEL_NODES"
+
+# BEGIN GENERATED STARTER TEMPLATES
+
+[[pack.templates]]
+id = "triposplat"
+name = "TripoSplat"
+description = "Starter native workflow for TripoSplat."
+family = "dinkster.triposplat"
+tags = ["starter", "family", "dinkster.triposplat"]
+models = ["triposplat_fp16.safetensors", "dino_v3_vit_h.safetensors", "flux2-vae.safetensors", "triposplat_vae_decoder_fp16.safetensors"]
+file = "src/dinkster_model_triposplat/templates/triposplat.json"
+thumbnail = "src/dinkster_model_triposplat/templates/triposplat.png"
+
+# END GENERATED STARTER TEMPLATES

@@ -8,8 +8,8 @@ Dinkster environment; each `--pack` runs in its own worker process by default.
 The default SD 1.5 workflow runs natively without a ComfyUI checkout. Its
 execution interpreter must contain PyTorch and the native inference packages.
 The bare `dinkster` launcher inherits that interpreter from
-`DINKSTER_COMFYUI_PYTHON`; advanced `dinkster-serve` launches can select it
-separately from the host with `--comfy-python`.
+`DINKSTER_EXECUTION_PYTHON`; advanced `dinkster-serve` launches can select it
+separately from the host with `--execution-python`.
 This is a complete reference for every command-line argument, grounded in
 `src/dinkster/serve.py`.
 
@@ -75,7 +75,7 @@ Refresh an existing install with `dinkster-pack --root PATH prepare-catalogs`; r
 default suite with `dinkster-pack prepare-catalogs --defaults --library-root PATH` using the
 same runtime configuration as the server. This includes the native generation
 schemas and the `dinkster-native` provider, plus the library's training schemas and
-executor. Set `DINKSTER_COMFYUI_PYTHON` to the native execution interpreter
+executor. Set `DINKSTER_EXECUTION_PYTHON` to the native execution interpreter
 when it differs from the host. Use the same `--remote-catalog-base` and
 `--remote-gateway-base` options as the server, or their environment variables,
 when preparing remote nodes. Direct pack authors can use
@@ -222,16 +222,20 @@ are lowered to canonical `dinkster.*` nodes before planning. The single-job
 multi-GPU options also work without a ComfyUI install. Legacy quarantine
 still requires this option.
 
-### --comfy-python
+### --execution-python
 
-Syntax: `--comfy-python PATH`.
+Syntax: `--execution-python PATH`.
 
-Default: `$DINKSTER_COMFYUI_PYTHON`, then `<comfy-root>/venv/bin/python`,
+Default: `$DINKSTER_EXECUTION_PYTHON`, then `<comfy-root>/venv/bin/python`,
 then the serving process's interpreter.
 
 Interpreter for native or compat execution. The resolution chain is: CLI value,
-then the `DINKSTER_COMFYUI_PYTHON` environment variable, then the install's
+then the `DINKSTER_EXECUTION_PYTHON` environment variable, then the install's
 own venv when `--comfy-root` is set, then the current Python.
+
+The earlier names `--comfy-python` and `DINKSTER_COMFYUI_PYTHON` are retired
+with no aliases: `dinkster-serve`, `dinkster-port` and composition refuse them
+with a message pointing at this flag and variable.
 
 When `--comfy-root` is set, this is also the interpreter used to import the
 compatibility layer. Composition checks the imports named by the install's
@@ -249,7 +253,7 @@ To force CPU execution, including on a GPU-equipped machine:
 
 ```sh
 DINKSTER_ACCELERATOR=cpu dinkster-serve --comfy-root /path/to/ComfyUI \
-  --comfy-python /path/to/ComfyUI/.venv/bin/python
+  --execution-python /path/to/ComfyUI/.venv/bin/python
 ```
 
 On Apple Silicon, install native arm64 PyTorch in the worker environment.

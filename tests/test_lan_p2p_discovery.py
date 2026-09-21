@@ -10,6 +10,15 @@ from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import pytest
+from dinkster_p2p import (
+    LanInterface as PluginLanInterface,
+)
+from dinkster_p2p import (
+    LanNetworkPolicy as PluginLanNetworkPolicy,
+)
+from dinkster_p2p import (
+    lan_interfaces as plugin_lan_interfaces,
+)
 from dinkster_server import (
     LAN_P2P_SERVICE_TYPE,
     LanInterface,
@@ -39,6 +48,35 @@ def test_lan_network_policy_accepts_only_same_private_interface() -> None:
     assert not policy.allows_peer("192.168.50.0")
     assert not policy.allows_peer("192.168.50.255")
     assert not policy.allows_peer("not-an-address")
+
+
+def test_server_and_plugin_lan_policies_match_at_network_boundaries() -> None:
+    server_policy = LanNetworkPolicy((_interface(),))
+    plugin_policy = PluginLanNetworkPolicy(
+        (
+            PluginLanInterface(
+                "ethernet",
+                IPv4Address("192.168.50.10"),
+                IPv4Network("192.168.50.0/24"),
+            ),
+        )
+    )
+    addresses = (
+        "192.168.50.0",
+        "192.168.50.1",
+        "192.168.50.200",
+        "192.168.50.255",
+        "192.168.51.1",
+        "10.0.0.1",
+        "100.64.0.2",
+        "169.254.1.2",
+        "8.8.8.8",
+        "127.0.0.1",
+        "not-an-address",
+    )
+    assert tuple(server_policy.allows_peer(value) for value in addresses) == tuple(
+        plugin_policy.allows_peer(value) for value in addresses
+    )
 
 
 def test_lan_interfaces_excludes_public_loopback_down_and_point_to_point() -> None:
@@ -71,6 +109,10 @@ def test_lan_interfaces_excludes_public_loopback_down_and_point_to_point() -> No
                 "down": [address("10.1.0.2", "255.255.0.0")],
                 "tunnel": [address("100.64.1.2", "255.255.255.255")],
             },
+        ),
+        patch(
+            "dinkster_server.lan_discovery.p2p_plugin",
+            return_value=SimpleNamespace(lan_interfaces=plugin_lan_interfaces),
         ),
     ):
         assert lan_interfaces() == (

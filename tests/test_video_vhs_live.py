@@ -1,6 +1,6 @@
 """Real pinned VHS source info, with independent alpha and timestamp fixtures.
 
-Run with DINKSTER_COMFYUI_ROOT, DINKSTER_COMFYUI_PYTHON and DINKSTER_VHS_ROOT set.
+Run with DINKSTER_COMFYUI_ROOT, DINKSTER_EXECUTION_PYTHON and DINKSTER_VHS_ROOT set.
 The worker interpreter needs the pinned ComfyUI and VHS requirements, matching
 CPU torch/torchvision/torchaudio, and Dinkster's compat numba dependency. The host
 uses the normal locked Dinkster environment (including its own PyAV version).
@@ -164,8 +164,8 @@ def live_corpus(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict[str, Pat
     from tests.test_compat_video_live import (
         PINNED_COMFY_COMMIT,
         REPO_ROOT,
-        _comfy_python,
         _dinkster_pythonpath,
+        _execution_python,
     )
 
     for root, pin in ((COMFY_ROOT, PINNED_COMFY_COMMIT), (VHS_ROOT, PINNED_VHS_COMMIT)):
@@ -184,7 +184,7 @@ def live_corpus(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict[str, Pat
     receipt = directory / "receipt.json"
     completed = subprocess.run(
         [
-            _comfy_python(),
+            _execution_python(),
             "-c",
             "import json, sys; from tests.test_video_vhs_live import _live_receipt; "
             "_live_receipt(json.loads(sys.argv[1]), sys.argv[2])",

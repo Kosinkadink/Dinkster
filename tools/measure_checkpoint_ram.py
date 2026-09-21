@@ -124,7 +124,7 @@ def main() -> None:
     parser.add_argument(
         "--python",
         type=Path,
-        default=os.environ.get("DINKSTER_COMFYUI_PYTHON"),
+        default=os.environ.get("DINKSTER_EXECUTION_PYTHON"),
         help="ComfyUI interpreter (default: COMFYUI_ROOT/venv/bin/python)",
     )
     args = parser.parse_args()

@@ -1,0 +1,362 @@
+{
+  "format": "dinkster-workflow",
+  "formatVersion": 1,
+  "lineage": "starter-sdxl-refiner",
+  "root": "g0",
+  "graphs": {
+    "g0": {
+      "id": "g0",
+      "name": "Stable Diffusion XL Refiner Starter",
+      "nodes": {
+        "base": {
+          "id": "base",
+          "type": "dinkster.load_checkpoint",
+          "values": {
+            "checkpoint": "sd_xl_base_1.0.safetensors"
+          }
+        },
+        "refiner": {
+          "id": "refiner",
+          "type": "dinkster.load_checkpoint",
+          "values": {
+            "checkpoint": "sd_xl_refiner_1.0.safetensors"
+          }
+        },
+        "positive": {
+          "id": "positive",
+          "type": "dinkster.clip_text_encode",
+          "values": {
+            "text": "a cinematic landscape, detailed lighting"
+          }
+        },
+        "negative": {
+          "id": "negative",
+          "type": "dinkster.clip_text_encode",
+          "values": {
+            "text": "blurry, low quality"
+          }
+        },
+        "refiner_positive": {
+          "id": "refiner_positive",
+          "type": "dinkster.clip_text_encode",
+          "values": {
+            "text": "a cinematic landscape, detailed lighting"
+          }
+        },
+        "refiner_negative": {
+          "id": "refiner_negative",
+          "type": "dinkster.clip_text_encode",
+          "values": {
+            "text": "blurry, low quality"
+          }
+        },
+        "latent": {
+          "id": "latent",
+          "type": "dinkster.empty_latent_image",
+          "values": {
+            "width": 1024,
+            "height": 1024,
+            "batch_size": 1
+          }
+        },
+        "base_sampler": {
+          "id": "base_sampler",
+          "type": "dinkster.ksampler_advanced",
+          "values": {
+            "add_noise": "enable",
+            "noise_seed": 91,
+            "steps": 25,
+            "cfg": 8.0,
+            "sampler_name": "dinkster.euler",
+            "scheduler": "dinkster.simple",
+            "start_at_step": 0,
+            "end_at_step": 20,
+            "return_with_leftover_noise": "enable",
+            "conditioning_batching": "auto",
+            "max_fused_lanes": 2
+          }
+        },
+        "sampler": {
+          "id": "sampler",
+          "type": "dinkster.ksampler_advanced",
+          "values": {
+            "add_noise": "disable",
+            "noise_seed": 91,
+            "steps": 25,
+            "cfg": 8.0,
+            "sampler_name": "dinkster.euler",
+            "scheduler": "dinkster.simple",
+            "start_at_step": 20,
+            "end_at_step": 25,
+            "return_with_leftover_noise": "enable",
+            "conditioning_batching": "auto",
+            "max_fused_lanes": 2
+          }
+        },
+        "decode": {
+          "id": "decode",
+          "type": "dinkster.vae_decode",
+          "values": {}
+        },
+        "save": {
+          "id": "save",
+          "type": "dinkster.save_image",
+          "values": {
+            "target": {
+              "mount": "output",
+              "prefix": "sdxl-refiner"
+            }
+          }
+        }
+      },
+      "links": {
+        "l1": {
+          "id": "l1",
+          "from": {
+            "node": "base",
+            "port": "clip"
+          },
+          "to": {
+            "node": "positive",
+            "port": "clip"
+          }
+        },
+        "l2": {
+          "id": "l2",
+          "from": {
+            "node": "base",
+            "port": "clip"
+          },
+          "to": {
+            "node": "negative",
+            "port": "clip"
+          }
+        },
+        "l3": {
+          "id": "l3",
+          "from": {
+            "node": "base",
+            "port": "model"
+          },
+          "to": {
+            "node": "base_sampler",
+            "port": "model"
+          }
+        },
+        "l4": {
+          "id": "l4",
+          "from": {
+            "node": "refiner",
+            "port": "model"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "model"
+          }
+        },
+        "l5": {
+          "id": "l5",
+          "from": {
+            "node": "positive",
+            "port": "conditioning"
+          },
+          "to": {
+            "node": "base_sampler",
+            "port": "positive"
+          }
+        },
+        "l6": {
+          "id": "l6",
+          "from": {
+            "node": "negative",
+            "port": "conditioning"
+          },
+          "to": {
+            "node": "base_sampler",
+            "port": "negative"
+          }
+        },
+        "l7": {
+          "id": "l7",
+          "from": {
+            "node": "latent",
+            "port": "latent"
+          },
+          "to": {
+            "node": "base_sampler",
+            "port": "latent_image"
+          }
+        },
+        "l8": {
+          "id": "l8",
+          "from": {
+            "node": "refiner",
+            "port": "clip"
+          },
+          "to": {
+            "node": "refiner_positive",
+            "port": "clip"
+          }
+        },
+        "l9": {
+          "id": "l9",
+          "from": {
+            "node": "refiner",
+            "port": "clip"
+          },
+          "to": {
+            "node": "refiner_negative",
+            "port": "clip"
+          }
+        },
+        "l10": {
+          "id": "l10",
+          "from": {
+            "node": "refiner_positive",
+            "port": "conditioning"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "positive"
+          }
+        },
+        "l11": {
+          "id": "l11",
+          "from": {
+            "node": "refiner_negative",
+            "port": "conditioning"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "negative"
+          }
+        },
+        "l12": {
+          "id": "l12",
+          "from": {
+            "node": "base_sampler",
+            "port": "latent"
+          },
+          "to": {
+            "node": "sampler",
+            "port": "latent_image"
+          }
+        },
+        "l13": {
+          "id": "l13",
+          "from": {
+            "node": "sampler",
+            "port": "latent"
+          },
+          "to": {
+            "node": "decode",
+            "port": "samples"
+          }
+        },
+        "l14": {
+          "id": "l14",
+          "from": {
+            "node": "refiner",
+            "port": "vae"
+          },
+          "to": {
+            "node": "decode",
+            "port": "vae"
+          }
+        },
+        "l15": {
+          "id": "l15",
+          "from": {
+            "node": "decode",
+            "port": "image"
+          },
+          "to": {
+            "node": "save",
+            "port": "images"
+          }
+        }
+      },
+      "nets": {},
+      "reroutes": {},
+      "nextOrdinal": 27
+    }
+  },
+  "view": {
+    "graphs": {
+      "g0": {
+        "nodes": {
+          "base": {
+            "position": {
+              "x": 40,
+              "y": 80
+            }
+          },
+          "refiner": {
+            "position": {
+              "x": 40,
+              "y": 680
+            }
+          },
+          "positive": {
+            "position": {
+              "x": 380,
+              "y": 80
+            }
+          },
+          "negative": {
+            "position": {
+              "x": 380,
+              "y": 380
+            }
+          },
+          "refiner_positive": {
+            "position": {
+              "x": 380,
+              "y": 680
+            }
+          },
+          "refiner_negative": {
+            "position": {
+              "x": 380,
+              "y": 980
+            }
+          },
+          "latent": {
+            "position": {
+              "x": 380,
+              "y": 1280
+            }
+          },
+          "base_sampler": {
+            "position": {
+              "x": 720,
+              "y": 380
+            }
+          },
+          "sampler": {
+            "position": {
+              "x": 1060,
+              "y": 380
+            }
+          },
+          "decode": {
+            "position": {
+              "x": 1400,
+              "y": 80
+            }
+          },
+          "save": {
+            "position": {
+              "x": 1740,
+              "y": 80
+            }
+          }
+        }
+      }
+    }
+  },
+  "meta": {
+    "title": "Stable Diffusion XL Refiner Starter",
+    "family": "dinkster.sdxl_refiner"
+  }
+}

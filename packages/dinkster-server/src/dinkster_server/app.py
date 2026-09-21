@@ -32,6 +32,12 @@ Surface:
                                          cache headers (bytes for a digest
                                          never change); 404 for unknown packs
                                          and packs without icons
+- GET    /packs/{packId}/static/{path}   exact bytes from a pack-declared
+                                         frontend asset tree; no directory
+                                         listing or traversal
+- GET/PUT /api/packs/{packId}/settings   declared schema plus effective values;
+                                         complete PUT objects are validated and
+                                         atomically persisted
 - GET    /api/packs/{packId}/blueprints/{id}
                                          blueprint document bytes (JSON) for
                                          packs whose table entry advertises
@@ -251,11 +257,11 @@ from dinkster_memory import (
     MemoryGovernor,
     ReservationTimeout,
 )
-from dinkster_p2p import default_p2p_settings
 from dinkster_protocol import (
     AttentionPolicy,
     AttentionPolicyConfig,
     CompatGateDiagnostic,
+    PackSettingsSchema,
     PreviewPolicy,
     attention_policy_config_from_wire,
     attention_policy_config_to_wire,
@@ -318,6 +324,8 @@ from .events import (
 from .execution_journal import ExecutionJournal, add_execution_journal_routes
 from .history import HistoryStore, add_history_routes
 from .library import LIBRARY_KEY, ServerLibrary, add_library_routes
+from .p2p_plugin import default_p2p_settings
+from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
 from .paging import decode_cursor, encode_cursor
 from .preflight import (
@@ -344,6 +352,7 @@ PlaceExecution = Callable[
 FullFree = Callable[[str], Awaitable[Sequence[dict[str, object]]]]
 
 STATE_KEY: web.AppKey[ServerState] = web.AppKey("state")
+PACK_SETTINGS_KEY: web.AppKey[PackSettingsStore] = web.AppKey("pack_settings")
 
 # One lazy choice list: awaited per /api/choices fetch, returning the values
 # to serve. The composition binds these to worker sessions; the server owns
@@ -708,10 +717,13 @@ class PackTemplateAsset:
     digest: str
     description: str = ""
     tags: tuple[str, ...] = ()
+    family: str = ""
+    models: tuple[str, ...] = ()
     assets: tuple[str, ...] = ()
     """Pack-local [[pack.assets]] ids, passed through verbatim: the
     manifest already validated they exist among the pack's surviving
     declarations."""
+    thumbnail: PackIconAsset | None = None
     data: bytes = field(repr=False, default=b"")
 
     def descriptor(self, pack_id: str) -> dict[str, object]:
@@ -724,8 +736,17 @@ class PackTemplateAsset:
             wire["description"] = self.description
         if self.tags:
             wire["tags"] = list(self.tags)
+        if self.family:
+            wire["family"] = self.family
+        if self.models:
+            wire["models"] = list(self.models)
         if self.assets:
             wire["assets"] = list(self.assets)
+        if self.thumbnail is not None:
+            wire["thumbnail"] = {
+                "digest": self.thumbnail.digest,
+                "mediaType": self.thumbnail.media_type,
+            }
         wire["digest"] = self.digest
         return wire
 
@@ -777,6 +798,55 @@ class PackLocaleCatalogAsset:
     digest: str
     node_references: tuple[str, ...] = ()
     data: bytes = field(repr=False, default=b"")
+
+
+@dataclass(frozen=True)
+class PackFrontendAsset:
+    """One validated static file served from a pack's frontend namespace."""
+
+    path: str
+    media_type: str
+    data: bytes = field(repr=False, default=b"")
+
+
+@dataclass(frozen=True)
+class UnavailableInferenceProvider:
+    """One registry entry a pack's manifest declared it would provide on the
+    inference surface but could not materialize. ``available`` is always False:
+    the row exists to explain a name a saved workflow already carries, never to
+    offer it for execution."""
+
+    registry: str
+    id: str
+
+    def to_wire(self) -> dict[str, object]:
+        return {"registry": self.registry, "id": self.id, "available": False}
+
+
+@dataclass(frozen=True)
+class PackInferenceUnavailable:
+    """A composed pack whose ``[pack.extension]`` inference surface did not
+    materialize because no native sampling worker is live.
+
+    The pack's nodes, routes, events, choices and renditions are unaffected;
+    only its samplers, schedulers, graph compilers and guidance strategies are
+    absent. One record per degraded pack, never per node."""
+
+    reason: str
+    entry: str
+    """The pack's declared ``[pack.extension]`` inference entry point."""
+    worker: str = "dinkster.ksampler"
+    """The native worker whose absence degraded the surface."""
+    providers: tuple[UnavailableInferenceProvider, ...] = ()
+    """Registry ids the manifest declared it would provide, each unavailable."""
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "reason": self.reason,
+            "entry": self.entry,
+            "worker": self.worker,
+            "providers": [provider.to_wire() for provider in self.providers],
+        }
 
 
 @dataclass(frozen=True)
@@ -839,6 +909,15 @@ class PackInfo:
     rules are never copied into native node schemas or execution surfaces."""
     comfy_groups: ComfyGroupRegistry | None = None
     """Maintained ComfyUI group patterns, separate from executable schemas."""
+    frontend_assets: tuple[PackFrontendAsset, ...] = ()
+    """Validated static frontend files, served lazily outside the packs table."""
+    settings_schema: PackSettingsSchema | None = None
+    """Declared user settings schema; values live in the host library."""
+    inference_unavailable: PackInferenceUnavailable | None = None
+    """Set when this pack's ``[pack.extension]`` inference surface degraded
+    because no native sampling worker is live. Its other surfaces are served
+    normally. Never identity: absent from schema signatures and execution
+    identity, and omitted from the wire when the surface is healthy."""
 
     def to_wire(
         self,
@@ -927,6 +1006,13 @@ class PackInfo:
                 groups,
                 schemas=schemas,
             )
+        if self.settings_schema is not None:
+            wire["settings"] = True
+        if self.inference_unavailable is not None:
+            # One inline record per degraded pack: it is a handful of strings,
+            # so it needs no lazy endpoint, and it must ride the table the
+            # client already refetches on every schema change.
+            wire["inferenceUnavailable"] = self.inference_unavailable.to_wire()
         return wire
 
 
@@ -2543,8 +2629,18 @@ async def handle_diagnostics(request: web.Request) -> web.Response:
     """Instance-level schema diagnostics: problems only visible with the
     complete schema mapping plus classified compat translation skips.
     Advisory, mirroring the frontend's stance: diagnostics render and force
-    review, they never make anything unloadable."""
+    review, they never make anything unloadable.
+
+    ``packInferenceUnavailable`` carries one entry per pack whose inference
+    surface degraded because no native sampling worker is live. It is derived
+    from the packs table, so a pack that ships forty samplers still produces
+    one message, never forty."""
     state = request.app[STATE_KEY]
+    degraded_packs = {
+        pack_id: info.inference_unavailable
+        for pack_id, info in state.packs.items()
+        if info.inference_unavailable is not None
+    }
     return web.json_response(
         {
             "replacementProblems": [
@@ -2559,6 +2655,10 @@ async def handle_diagnostics(request: web.Request) -> web.Response:
                     "extensionSnapshotDigest": state.engine.extension_snapshot_digest,
                 }
                 for (pack_id, node_id), diagnostic in sorted(state.compat_skips.items())
+            ],
+            "packInferenceUnavailable": [
+                {"packId": pack_id, **detail.to_wire()}
+                for pack_id, detail in sorted(degraded_packs.items())
             ],
         }
     )
@@ -2656,6 +2756,79 @@ async def handle_pack_icon(request: web.Request) -> web.Response:
     )
 
 
+async def handle_pack_static(request: web.Request) -> web.Response:
+    """Serve one exact immutable file from a pack's validated asset tree."""
+    info = request.app[STATE_KEY].packs.get(request.match_info["pack_id"])
+    relative = request.match_info["path"]
+    parts = relative.replace("\\", "/").split("/")
+    asset = None
+    if info is not None and relative and all(part not in ("", ".", "..") for part in parts):
+        normalized = "/".join(parts)
+        asset = next((item for item in info.frontend_assets if item.path == normalized), None)
+    if asset is None:
+        raise web.HTTPNotFound(
+            text=json.dumps({"error": "no such pack static asset"}),
+            content_type="application/json",
+        )
+    return web.Response(
+        body=asset.data,
+        content_type=asset.media_type,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+def _pack_settings_info(request: web.Request) -> tuple[str, PackInfo, PackSettingsSchema]:
+    pack_id = request.match_info["pack_id"]
+    info = request.app[STATE_KEY].packs.get(pack_id)
+    if info is None or info.settings_schema is None:
+        raise web.HTTPNotFound(
+            text=json.dumps({"error": "no such pack settings"}),
+            content_type="application/json",
+        )
+    return pack_id, info, info.settings_schema
+
+
+def _pack_settings_wire(
+    pack_id: str, info: PackInfo, schema: PackSettingsSchema, values: Mapping[str, object]
+) -> dict[str, object]:
+    return {
+        "packId": pack_id,
+        "displayName": info.display_name,
+        "schema": schema.to_wire(),
+        "values": dict(values),
+    }
+
+
+async def handle_pack_settings_get(request: web.Request) -> web.Response:
+    pack_id, info, schema = _pack_settings_info(request)
+    try:
+        values = await asyncio.to_thread(request.app[PACK_SETTINGS_KEY].read, pack_id, schema)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=500)
+    return web.json_response(_pack_settings_wire(pack_id, info, schema, values))
+
+
+async def handle_pack_settings_put(request: web.Request) -> web.Response:
+    pack_id, info, schema = _pack_settings_info(request)
+    try:
+        body = await request.json()
+        if not isinstance(body, Mapping):
+            raise ValueError("pack settings must be a JSON object")
+        values = await asyncio.to_thread(
+            request.app[PACK_SETTINGS_KEY].write,
+            pack_id,
+            schema,
+            cast(Mapping[str, object], body),
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except OSError as exc:
+        return web.json_response(
+            {"error": f"pack settings could not be persisted: {exc}"}, status=500
+        )
+    return web.json_response(_pack_settings_wire(pack_id, info, schema, values))
+
+
 async def handle_pack_blueprint(request: web.Request) -> web.Response:
     """Blueprint document bytes for one packs-table descriptor. Copies the
     icon endpoint's contract verbatim: the descriptor's presence in
@@ -2716,6 +2889,27 @@ async def handle_pack_template(request: web.Request) -> web.Response:
             "ETag": etag,
             "Cache-Control": "private, max-age=31536000, immutable",
         },
+    )
+
+
+async def handle_pack_template_thumbnail(request: web.Request) -> web.Response:
+    """Immutable thumbnail bytes for one template descriptor."""
+    state = request.app[STATE_KEY]
+    info = state.packs.get(request.match_info["pack_id"])
+    template = None
+    if info is not None:
+        template_id = request.match_info["template_id"]
+        template = next((tp for tp in info.templates if tp.id == template_id), None)
+    if template is None or template.thumbnail is None:
+        raise web.HTTPNotFound(
+            text=json.dumps({"error": "no such template thumbnail"}),
+            content_type="application/json",
+        )
+    return _immutable_pack_response(
+        request,
+        template.thumbnail.digest,
+        template.thumbnail.data,
+        template.thumbnail.media_type,
     )
 
 
@@ -4229,6 +4423,7 @@ def create_app(
     choice_owners: Mapping[str, str] | None = None,
     compat_skips: Mapping[str, Mapping[str, CompatGateDiagnostic]] | None = None,
     settings: RuntimeSettings | None = None,
+    pack_settings_root: Path | None = None,
     memory_headroom_changed: Callable[[int], None] | None = None,
     residency_memory_budgets: Callable[[], Mapping[str, Mapping[str, int]]] | None = None,
     workers: Callable[[], Sequence[WorkerInfo]] | None = None,
@@ -4288,6 +4483,7 @@ def create_app(
     )
     app = web.Application()
     app[STATE_KEY] = state
+    app[PACK_SETTINGS_KEY] = PackSettingsStore(pack_settings_root)
     permission_store = principal_permissions or PrincipalPermissionStore()
     install_browser_request_security(
         app,
@@ -4331,9 +4527,16 @@ def create_app(
     app.router.add_get("/api/diagnostics", handle_diagnostics)
     app.router.add_get("/api/choices/{choice_id}", handle_choices)
     app.router.add_get("/api/packs/{pack_id}/icon", handle_pack_icon)
+    app.router.add_get("/packs/{pack_id}/static/{path:.*}", handle_pack_static)
+    app.router.add_get("/api/packs/{pack_id}/settings", handle_pack_settings_get)
+    app.router.add_put("/api/packs/{pack_id}/settings", handle_pack_settings_put)
     app.router.add_get("/api/packs/{pack_id}/blueprints/{blueprint_id}", handle_pack_blueprint)
     app.router.add_get("/api/templates", handle_templates_list)
     app.router.add_get("/api/packs/{pack_id}/templates/{template_id}", handle_pack_template)
+    app.router.add_get(
+        "/api/packs/{pack_id}/templates/{template_id}/thumbnail",
+        handle_pack_template_thumbnail,
+    )
     app.router.add_get("/api/docs", handle_docs_list)
     app.router.add_get("/api/packs/{pack_id}/docs/pages/{digest}", handle_pack_doc_page)
     app.router.add_get("/api/packs/{pack_id}/docs/assets/{digest}", handle_pack_doc_asset)
