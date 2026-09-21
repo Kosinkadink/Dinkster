@@ -15,7 +15,6 @@ independently of file equality.
 
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import json
 import sys
@@ -81,20 +80,6 @@ def test_committed_goldens_match_current_encoders() -> None:
             f"{name} drifted from the current encoders; regenerate with "
             "scripts/generate_replacement_goldens.py"
         )
-
-
-def test_wire21_golden_bytes_are_exactly_preserved() -> None:
-    generator = _load_generator()
-    expected = {
-        "chain.json": "efb460bff6efa2d5aac64c7212002377f147419fe73734167b714fcb06b07e14",
-        "combo.json": "aa8a1f15a9e9f90d779bdaecaf48882850e6f5514dcec1de312ad93088f2f24f",
-        "vocabulary.json": "c2b6a8916c19e8b5f23a8cda03841daedcc4ac8e54749af59cf23981af1c36f7",
-    }
-    built = generator.build_goldens(wire_version=21)
-    assert {
-        name: hashlib.sha256((json.dumps(content, indent=2) + "\n").encode()).hexdigest()
-        for name, content in built.items()
-    } == expected
 
 
 def test_goldens_round_trip_through_the_decoder() -> None:
@@ -206,7 +191,7 @@ def test_combo_fixture_pins_current_wire_widget_contract() -> None:
     content = json.loads((GOLDENS_DIR / "combo.json").read_text(encoding="utf-8"))
     (schema,) = content["schemas"]
     assert schema["nodeType"] == "fixture.combo-contract"
-    assert schema["schemaVersion"] == 40
+    assert schema["schemaVersion"] == 1
     by_key = {(entry["role"], entry["id"]): entry for entry in schema["interface"]}
     combo_input = by_key[("input", "choice")]
     combo_output = by_key[("output", "choice")]

@@ -40,7 +40,7 @@ from typing import Any, Protocol, cast
 from dinkster_assets import digest_bytes, require_digest
 from dinkster_caches import DiskCAS
 from dinkster_protocol import Invocation, InvocationEvent, InvocationResult, OnInvocationEvent
-from dinkster_schema import SCHEMA_WIRE_SERVE_VERSIONS, NodeSchema, schema_to_wire
+from dinkster_schema import SCHEMA_WIRE_VERSION, NodeSchema, schema_to_wire
 from dinkster_values import TypeRegistry, Value, default_decode, list_children, parse_list_type_id
 from dinkster_workers import InProcessWorker
 from dinkster_workers.boundary import (
@@ -57,7 +57,6 @@ from dinkster_workers.boundary import (
 Envelope = dict[str, Any]
 Dispatch = Callable[[Envelope], Awaitable[Envelope]]
 _VERSION = 1
-_SCHEMA_TRANSFER_VERSION = max(SCHEMA_WIRE_SERVE_VERSIONS)
 _DATA_TYPES = frozenset(
     {
         "core.int",
@@ -280,7 +279,7 @@ class Transport:
         self.identity = {
             "version": _VERSION,
             "protocolVersion": PROTOCOL_VERSION,
-            "schemaVersion": _SCHEMA_TRANSFER_VERSION,
+            "schemaVersion": SCHEMA_WIRE_VERSION,
             "sourceIdentity": source_identity,
         }
 
@@ -472,9 +471,7 @@ class InvocationHandler:
         header, blobs, correlation = await self.transport.unpack(envelope, "invoke")
         codec = self.transport.codec()
         invocation = decode_invocation(codec, header, blobs, [])
-        if header["effectiveSchema"] != schema_to_wire(
-            invocation.effective_schema, wire_version=_SCHEMA_TRANSFER_VERSION
-        ):
+        if header["effectiveSchema"] != schema_to_wire(invocation.effective_schema):
             raise UnsupportedCapability("noncanonical or unsupported schema fields/version")
         _invocation(invocation, self.worker.schemas)
         emitted = False

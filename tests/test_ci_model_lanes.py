@@ -601,6 +601,7 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
         "tests/test_extension_factory_guard.py",
         "tests/test_family_registration_gates.py",
         "tests/test_schema.py",
+        "tests/test_schema_current_contracts.py",
         "tests/test_values.py",
         "tests/test_graph.py",
         "tests/test_graph_wire.py",

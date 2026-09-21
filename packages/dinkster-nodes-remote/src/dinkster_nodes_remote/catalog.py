@@ -10,7 +10,6 @@ from typing import cast
 
 import httpx
 from dinkster_api.v1 import (
-    SCHEMA_WIRE_SERVE_VERSIONS,
     SCHEMA_WIRE_VERSION,
     NodeSchema,
     pack_logger,
@@ -19,7 +18,6 @@ from dinkster_api.v1 import (
 )
 
 _CACHE_FORMAT = "dinkster.remote.catalog-cache/1"
-_WIRE_QUERY = ",".join(str(version) for version in reversed(SCHEMA_WIRE_SERVE_VERSIONS))
 
 log = pack_logger("dinkster-nodes-remote")
 
@@ -66,7 +64,7 @@ def _remote_schema(node_type: str, value: object, schema_wire: int) -> RemoteSch
     selected = _mapping(versions.get(str(latest)), f"schemaVersions[{latest}]")
     wire = _mapping(selected.get("schema"), "schema")
     if wire.get("schemaVersion") != schema_wire:
-        raise CatalogError("schema entry does not use the catalog's negotiated wire version")
+        raise CatalogError("schema entry does not use the catalog's schema wire version")
     signature = selected.get("signature")
     if not isinstance(signature, str) or not signature:
         raise CatalogError("schema version requires a signature")
@@ -97,11 +95,8 @@ def parse_catalog(payload: object) -> CatalogSnapshot:
     if type(epoch) is not int or epoch < 0:
         raise CatalogError("catalogEpoch must be a non-negative integer")
     schema_wire = document.get("schemaWire")
-    if type(schema_wire) is not int or schema_wire not in SCHEMA_WIRE_SERVE_VERSIONS:
-        raise CatalogError(
-            f"catalog selected unsupported schema wire {schema_wire!r}; "
-            f"supported wires are {SCHEMA_WIRE_SERVE_VERSIONS}"
-        )
+    if type(schema_wire) is not int or schema_wire != SCHEMA_WIRE_VERSION:
+        raise CatalogError(f"catalog selected unsupported schema wire {schema_wire!r}")
     nodes = _mapping(document.get("nodes"), "catalog nodes")
     accepted: list[RemoteSchema] = []
     for node_type, entry in nodes.items():
@@ -233,7 +228,6 @@ class CatalogClient:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.get(
                     self.nodes_url,
-                    params={"wire": _WIRE_QUERY},
                     headers=self._headers(conditional=True),
                 )
             if response.status_code == 304:
@@ -254,7 +248,6 @@ class CatalogClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(
                     self.nodes_url,
-                    params={"wire": _WIRE_QUERY},
                     headers=self._headers(conditional=conditional),
                 )
             if response.status_code == 304:
