@@ -38,17 +38,20 @@ from dinkster_p2p import (
     DOWNLOAD_LEASE_VERSION,
     AuthorizedGlobalLease,
     DownloadLease,
-    LanNetworkPolicy,
     P2PManagerError,
     P2PSidecarManager,
     SeedLease,
     authorized_global_leases_for_snapshots,
-    current_lan_policy,
+)
+from dinkster_p2p import (
+    current_lan_policy as plugin_current_lan_policy,
 )
 from dinkster_server import (
     ActiveSeedMapping,
+    LanInterface,
     LanMappingService,
     LanMdnsDiscovery,
+    LanNetworkPolicy,
     RunningLanMappingServer,
     discover_lan_mappings,
     start_lan_mapping_server,
@@ -57,6 +60,15 @@ from dinkster_server import (
 _RESOLUTION_TIMEOUT_SECONDS = 120.0
 _MONITOR_INTERVAL_SECONDS = 0.5
 _LOG = logging.getLogger(__name__)
+
+
+def current_lan_policy() -> LanNetworkPolicy:
+    return LanNetworkPolicy(
+        tuple(
+            LanInterface(interface.name, interface.address, interface.network)
+            for interface in plugin_current_lan_policy().interfaces
+        )
+    )
 
 
 class LanP2PBackend:
