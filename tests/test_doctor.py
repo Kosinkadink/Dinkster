@@ -205,6 +205,52 @@ def register_inference():
     assert "registry.provider-unregistered" in codes(report), render_text(report)
 
 
+def test_doctor_names_the_worker_an_inference_surface_requires(tmp_path: Path) -> None:
+    manifest = (
+        HEALTHY_MANIFEST
+        + """
+
+[pack.extension]
+inference = "healthy_nodes:register_inference"
+privileges = ["inference"]
+"""
+    )
+    source = (
+        HEALTHY_NODES
+        + """
+
+from dinkster_api.v1 import InferenceContribution, SchedulerDescriptor
+
+
+def make_sigmas(steps, _space):
+    return (float(steps), 0.0)
+
+
+def register_inference():
+    return InferenceContribution(
+        schedulers=(
+            SchedulerDescriptor(
+                id="healthy.schedule",
+                display_name="Healthy schedule",
+                make_sigmas=make_sigmas,
+            ),
+        )
+    )
+"""
+    )
+    path = write_pack(tmp_path / "inference", manifest, "healthy_nodes", source)
+
+    report = diagnose(path)
+    finding = next(item for item in report.findings if item.code == "inference.worker-required")
+    assert finding.severity == "info", render_text(report)
+    assert "dinkster.ksampler" in finding.message
+    assert "unavailable" in finding.fix
+
+    # A pack with no inference surface is told nothing about sampling workers.
+    plain = write_pack(tmp_path / "plain", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
+    assert "inference.worker-required" not in codes(diagnose(plain))
+
+
 def test_doctor_warns_for_extension_declarations_without_runtime_consumers(
     tmp_path: Path,
 ) -> None:

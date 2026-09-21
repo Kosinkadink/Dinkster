@@ -598,7 +598,11 @@ def test_scheduler_collision_from_two_extensions_fails_host_composition(
                     "s1_scheduler_collision_b",
                 )
             )
-            entries, contributions = await composer._materialize_inference_contributions(
+            (
+                entries,
+                contributions,
+                unavailable,
+            ) = await composer._materialize_inference_contributions(
                 composer._records, composer._topology
             )
             scheduler_b = contributions["scheduler_b"][0]
@@ -610,7 +614,7 @@ def test_scheduler_collision_from_two_extensions_fails_host_composition(
             )
 
             async def colliding_contributions(_records, _topology):
-                return entries, contributions
+                return entries, contributions, unavailable
 
             monkeypatch.setattr(
                 composer,
