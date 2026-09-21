@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 from dinkster_inference import EngineProperties, PreviewDecoderProperties, builtin_families
 from dinkster_inference.component_catalog import default_component_registry
-from family_gate_scanner import family_literal_gates
+from family_gate_scanner import (
+    family_literal_gates,
+    new_family_proof_commit_paths,
+    unexpected_new_family_paths,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SHARED_ENGINE_FILES = (
@@ -44,6 +48,14 @@ def test_external_proof_family_is_in_fail_closed_scanner(tmp_path: Path) -> None
     source.write_text('enabled = family_id == "test.toy-image"\n', encoding="utf-8")
 
     assert family_literal_gates(source, tmp_path) == ("shared_engine.py:1: test.toy-image",)
+
+
+def test_new_family_proof_only_changes_registration_points() -> None:
+    changed_paths = new_family_proof_commit_paths(ROOT)
+    assert unexpected_new_family_paths(changed_paths) == ()
+
+    shared_edit = "packages/dinkster-inference/src/dinkster_inference/runtime.py"
+    assert unexpected_new_family_paths(changed_paths | {shared_edit}) == (shared_edit,)
 
 
 def test_registered_engine_properties_cover_shared_family_behavior() -> None:
