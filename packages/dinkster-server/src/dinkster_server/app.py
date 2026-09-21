@@ -257,7 +257,6 @@ from dinkster_memory import (
     MemoryGovernor,
     ReservationTimeout,
 )
-from dinkster_p2p import default_p2p_settings
 from dinkster_protocol import (
     AttentionPolicy,
     AttentionPolicyConfig,
@@ -325,6 +324,7 @@ from .events import (
 from .execution_journal import ExecutionJournal, add_execution_journal_routes
 from .history import HistoryStore, add_history_routes
 from .library import LIBRARY_KEY, ServerLibrary, add_library_routes
+from .p2p_plugin import default_p2p_settings
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
 from .paging import decode_cursor, encode_cursor
