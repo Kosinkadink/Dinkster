@@ -23,10 +23,9 @@ from dinkster_supervisor import (
     parse_station_config,
 )
 from dinkster_supervisor import ingress as ingress_module
+from dinkster_supervisor.install_manager import _write_config
 from dinkster_supervisor.installs import InstallsError
 from multidict import CIMultiDict
-
-from dinkster.install_manager import _write_config
 
 
 async def _fleet(
@@ -427,7 +426,7 @@ def test_exact_primary_and_local_route_matrix(tmp_path: Path) -> None:
         )
         try:
             for route in (
-                "/api/nodes?wire=7",
+                "/api/nodes",
                 "/api/choices/model",
                 "/api/composition",
                 "/api/templates",

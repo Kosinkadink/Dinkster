@@ -75,7 +75,7 @@ def test_gallery_asset_codec_uses_the_process_vault(
 
 def test_gallery_widget_wire_coverage() -> None:
     """dev.gallery.widgets carries every native input-widget descriptor at
-    wire v11: bounded NUMBERs, a seed controller, a multiline STRING, a
+    the current wire: bounded NUMBERs, a seed controller, a multiline STRING, a
     per-input displayName, static COMBO, remote COMBO (route +
     refreshButton), a remote-only combo with no static options, a labeled
     BOOLEAN, and bare number/string/boolean inputs that (by convention)
@@ -85,7 +85,7 @@ def test_gallery_widget_wire_coverage() -> None:
         composition = await compose_serving([DEV_PACK_MANIFEST])
         try:
             wire = schema_to_wire(composition.schemas["dev.gallery.widgets"])
-            assert wire["schemaVersion"] == SCHEMA_WIRE_VERSION == 40
+            assert wire["schemaVersion"] == SCHEMA_WIRE_VERSION == 1
             assert wire["searchTerms"] == ["gallery", "widget zoo", "kitchen sink"]
 
             static = _entry(wire, "combo_static")["widget"]

@@ -293,6 +293,11 @@ with aliases, validators (extension/magic-byte), role metadata, recursive
 enumeration, duplicate policy, safe path handles (no raw path-table mutation),
 and state-dict loading that accepts already-loaded data.
 
+This section specifies the target architecture, not a running pack door.
+`model-family-registration` is declared as capability metadata but has no
+pack-facing registration path. Current capability status is listed in
+[Pack routes, events, and frontend modules](supported/pack-routes-events-and-frontend-modules.md#extension-capability-status).
+
 ### 3.10 ControlNet pipeline contract (core)
 Not just a `control-apply` wrapper (report-01): immutable/cloneable ordered
 control chain; hint preparation; per-run lifecycle (configure hint, pre-run
@@ -320,22 +325,35 @@ errors); lifecycle-managed background producers (no import-time daemon
 threads, report-08); capability discovery. **Binary media channels
 (versioned framing, MIME, correlation, backpressure) and upload/transcoding
 are a later media-specific slice** (VHS's 24-byte header hack is the
-cautionary tale).
+cautionary tale). Current server capability status is listed in the
+[capability status table](supported/pack-routes-events-and-frontend-modules.md#extension-capability-status).
 
-Frontend: co-design NOW the stable node schema, IDs, manifest fields, and
-event correlation (these are cheap to fix now and impossible later). The
-full frontend extension API - widget registry, dynamic reconciliation, render
-layers, menu contributions, graph transactions, app-shell mounts, workflow
-document service, settings service - moves to a **separate frontend RFC**
-once Dinkster's UI architecture is fixed. If Dinkster claims ComfyUI ecosystem
-portability, that RFC cannot be deferred indefinitely; if it claims an
-inference-engine extension API only, deferral is acceptable.
+Frontend design covers stable node schema, IDs, manifest fields, event
+correlation, widget registration, render layers, menus, graph transactions,
+app-shell mounts, workflow documents, and settings. This is a target surface,
+not a claim that every contribution kind is wired. The generated vocabulary's
+current per-kind status is listed in
+[Pack routes, events, and frontend modules](supported/pack-routes-events-and-frontend-modules.md#extension-contribution-status).
 
 ## 5. Packaging, identity, compatibility
 
+Extension factory allowlists pin every site by path, line, column, and owning
+issue. Their ceilings are non-increasing; raising one is an explicit reviewed
+decision, never an effect of regeneration. When a scanned file is renamed or
+split, retarget or re-add its allowlist entries with their owning issues before
+running `--write`; ownership deliberately does not carry across path changes.
+After merging main, run
+`uv run --locked python scripts/check_extension_factories.py --write`, review
+that only expected line or column coordinates changed and no ceiling changed,
+then run `bash scripts/ci-fast.sh`. A ceiling lowered by `--write` is permanent;
+reverting a removal requires both the re-added allowlist entry and an explicit
+ceiling raise.
+
 - Packs declare: id, version, required host API version, capabilities (routes,
   filesystem, downloads, background jobs, model-family registration,
-  accelerator, artifacts), and provided services (per-scope, P7).
+  accelerator, artifacts), and provided services (per-scope, P7). A declared
+  capability is not evidence of a runtime consumer; see the authoritative
+  [capability status table](supported/pack-routes-events-and-frontend-modules.md#extension-capability-status).
 - No import-time side effects; no runtime pip (17% of packs do it today -
   supply-chain risk); dependencies resolve at install time.
 - One node/schema format from day one: stable internal IDs, typed custom
@@ -364,6 +382,9 @@ Every slice must prove: two extensions coexisting, deterministic ordering,
 exception/cancellation cleanup, unload returns to baseline, behavior-identity
 invalidation, golden output/event stability.
 
+Repository guards that keep pack doors and core behavior aligned are tracked
+in [comfy-vibe-station#120](https://github.com/Kosinkadink/comfy-vibe-station/issues/120).
+
 - **S0. Activation + snapshot + behavior identity** (3.0). Proof: a trivial
   pack loads/unloads; goldens stable across snapshots.
 - **S1. Minimal execution context + sampler registry** against the existing
@@ -386,16 +407,17 @@ invalidation, golden output/event stability.
 - **S8. Image ControlNet pipeline** (3.10). Proof: first-party ControlNet pack.
 - **S9. Storage providers + ArtifactStore + compile contracts** (3.3, 3.9
   artifacts). Proof: one quantized-storage pack.
-- **S10. Model-family registration** (3.9), proven with the **simplest
-  genuinely out-of-tree architecture** - a video model is an integration
-  program, not a demo.
+- **S10. Model-family registration** (3.9), proposed and not available through
+  a pack-facing door. Its proof target is the **simplest genuinely out-of-tree
+  architecture** - a video model is an integration program, not a demo.
 - **S11. Sampler checkpoints (envelope) + SamplingDriver + trajectory
   middleware** (rest of 3.6). Proof: stateful sampler resume; one full-loop
   driver under supervision.
 - **S12. Video: latent/codec/context windows** (3.11, codec parts of 3.9).
 - **S13. Media channels + uploads** (rest of 4 server).
-- **S14. Frontend RFC -> implementation** (separate document, after UI
-  architecture is fixed).
+- **S14. Frontend RFC -> implementation.** The implemented subset and the
+  declared but unconsumed kinds are listed in the authoritative
+  [contribution status table](supported/pack-routes-events-and-frontend-modules.md#extension-contribution-status).
 
 Ordering rationale: S0 protects reproducibility before anything registers at
 runtime; S1-S3 remove the largest monkeypatch classes and unblock the highest

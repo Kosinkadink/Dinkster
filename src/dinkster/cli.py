@@ -57,7 +57,7 @@ _COMMANDS: dict[str, _Command] = {
         summary="manage a Dinkster install root (alias: dinkster-pack)",
     ),
     "installs": _Command(
-        "dinkster.install_manager",
+        "dinkster_supervisor.install_manager",
         passes_argv=False,
         summary="manage the station's install registry (alias: dinkster-installs)",
     ),

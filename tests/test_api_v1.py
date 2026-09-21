@@ -168,7 +168,6 @@ GOLDEN_V1_SURFACE = (
     "ValueTransform",
     "WidgetRepresentation",
     "WidgetRepresentations",
-    "SCHEMA_WIRE_SERVE_VERSIONS",
     "SCHEMA_WIRE_VERSION",
     "output_descriptor_entries",
     "schema_from_wire",
@@ -312,7 +311,7 @@ GOLDEN_V1_SURFACE = (
     "is_digest",
     "register_asset_type",
     "resolver_from_env",
-    # -- mounted saves (dinkster-assets + dinkster-schema widgets, wire v5)
+    # -- mounted saves (dinkster-assets + current dinkster-schema widgets)
     "AssetWidget",
     "AssetWriter",
     "bind_video_value",

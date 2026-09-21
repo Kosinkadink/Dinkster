@@ -1,13 +1,9 @@
 ## Server API and execution
 
-- Schema wire versions 22 through 41 (default: 40); wire 39 combines stored
-  output descriptors with compact-storage input declarations, wire 40 adds
-  alpha/mask policy declarations on inputs, outputs, and descriptor choices,
-  and wire 41 adds stream type declarations, range-aware inputs, and chunk-safe
-  declarations scoped to supported dynamic-combo options. Stream execution is
-  not exposed by the catalog until a node pack supplies matching value codecs.
-  Older-wire serving refuses unsupported execution features rather than dropping
-  them
+- Schema wire version 1 with stored output descriptors, compact-storage and
+  stream input declarations, alpha and mask policies, range-aware inputs, and
+  chunk-safe declarations scoped to supported dynamic-combo options. Stream
+  execution is not exposed until a node pack supplies matching value codecs
 - Resident-resource consumers follow the validated producer execution arm
   without a node-name or native-arm-name allowlist; malformed, unknown, and
   conflicting producer stamps are refused
@@ -23,6 +19,9 @@
   replay), values, queue control, live WebSocket events, settings, memory
   governance, cache trim/export; asset library and history routes when a
   library root is configured, including classified bounded latent upload
+- Filesystem mount scans report file, byte, and elapsed progress; publish
+  indexed assets before the scan finishes; reuse unchanged-file indexes; and
+  keep per-mount indexes under the configured library root
 - Inbound authentication with operator-managed static Bearer credentials,
   identity-service Ed25519 JWTs verified against cached JWKS, or both with
   static credentials tried first

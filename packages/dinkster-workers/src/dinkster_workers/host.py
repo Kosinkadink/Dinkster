@@ -95,7 +95,6 @@ from dinkster_protocol.pack_surfaces import (
     pack_surfaces_to_wire,
 )
 from dinkster_schema import (
-    SCHEMA_WIRE_SERVE_VERSIONS,
     ComfyAliasRegistry,
     ComfyGroupRegistry,
     Node,
@@ -154,6 +153,7 @@ from .manifest import (
     ManifestError,
     PackManifest,
     VisionProvider,
+    add_pack_root_to_import_path,
     generation_provider_to_wire,
     load_manifest,
     resolve_entry,
@@ -836,6 +836,7 @@ def load_extension_contributions(
 
 async def serve(endpoint: str, manifest_path: str, *, shm_threshold: int, use_shm: bool) -> None:
     manifest = load_manifest(Path(manifest_path))
+    add_pack_root_to_import_path(manifest, sys.path)
     worker, registry, node_classes, arm_workers = load_pack(manifest)
     with use_declared_asset_pack(manifest.name):
         planner = load_planner(manifest)
@@ -890,6 +891,7 @@ async def serve_many(
     loaded: list[tuple[Any, ...]] = []
     for path in manifest_paths:
         manifest = load_manifest(Path(path))
+        add_pack_root_to_import_path(manifest, sys.path)
         pack_load = load_pack(manifest)
         with use_declared_asset_pack(manifest.name):
             loaded.append(
@@ -1204,10 +1206,7 @@ async def serve_connection(
     hello: dict[str, object] = {
         "type": "hello",
         "pack": pack_name,
-        "schemas": {
-            t: schema_to_wire(s, wire_version=max(SCHEMA_WIRE_SERVE_VERSIONS))
-            for t, s in schemas.items()
-        },
+        "schemas": {t: schema_to_wire(s) for t, s in schemas.items()},
         "lazyStatus": True,
         # This process lifetime's identity: the same token resident codecs
         # stamp as RESOURCE_OWNER_META_KEY on the envelopes they produce, so

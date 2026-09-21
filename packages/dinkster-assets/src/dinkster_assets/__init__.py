@@ -78,6 +78,7 @@ from .latent_format import (
 from .library import (
     DEFAULT_IGNORE,
     WRITES_SIDECAR_NAME,
+    AssetScanProgress,
     IndexedAssetResolver,
     LocalAssetLibrary,
     load_write_records,
@@ -200,6 +201,7 @@ from .writer import AssetWriter, MountSnapshotWriter, MountWriteAuthority
 
 __all__ = [
     "ASSET_TYPE",
+    "AssetScanProgress",
     "DEFAULT_SCOPE",
     "DEFAULT_DISCOVERY_TIMEOUT",
     "DEFAULT_TRANSFER_STALL_TIMEOUT",

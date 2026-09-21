@@ -2,7 +2,7 @@
   "format": "dinkster-comfy-alias/1",
   "sourceSchemas": [
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageBatch",
       "version": 1,
       "displayName": "ImageBatch",
@@ -48,7 +48,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.BatchImagesNode",
       "version": 1,
       "displayName": "Batch Images",
@@ -93,7 +93,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ResizeAndPadImage",
       "version": 1,
       "displayName": "Resize And Pad Image",
@@ -207,7 +207,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageCompare",
       "version": 1,
       "displayName": "Compare Images",
@@ -255,7 +255,7 @@
       "outputNode": true
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.RepeatImageBatch",
       "version": 1,
       "displayName": "Repeat Image Batch",
@@ -307,7 +307,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageFromBatch",
       "version": 1,
       "displayName": "Get Image from Batch",
@@ -376,7 +376,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.RebatchImages",
       "version": 1,
       "displayName": "Rebatch Images",
@@ -434,7 +434,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageStitch",
       "version": 1,
       "displayName": "Stitch Images",
@@ -555,7 +555,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ImageBatchMulti",
       "version": 1,
       "displayName": "ImageBatchMulti",
@@ -617,7 +617,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ImageBatchRepeatInterleaving",
       "version": 1,
       "displayName": "ImageBatchRepeatInterleaving",
@@ -690,7 +690,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.InsertImagesToBatchIndexed",
       "version": 1,
       "displayName": "InsertImagesToBatchIndexed",
@@ -767,7 +767,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ReverseImageBatch",
       "version": 1,
       "displayName": "ReverseImageBatch",
@@ -802,7 +802,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ReplaceImagesInBatch",
       "version": 1,
       "displayName": "ReplaceImagesInBatch",
@@ -897,7 +897,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ShuffleImageBatch",
       "version": 1,
       "displayName": "ShuffleImageBatch",
@@ -948,7 +948,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ImageGridComposite2x2",
       "version": 1,
       "displayName": "ImageGridComposite2x2",
@@ -1016,7 +1016,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ImageGridComposite3x3",
       "version": 1,
       "displayName": "ImageGridComposite3x3",
@@ -1139,7 +1139,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ImageGridtoBatch",
       "version": 1,
       "displayName": "ImageGridtoBatch",
@@ -1208,7 +1208,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.TransitionImagesMulti",
       "version": 1,
       "displayName": "TransitionImagesMulti",
@@ -1384,7 +1384,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.TransitionImagesInBatch",
       "version": 1,
       "displayName": "TransitionImagesInBatch",
@@ -1533,7 +1533,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ImageBatchJoinWithTransition",
       "version": 1,
       "displayName": "ImageBatchJoinWithTransition",
@@ -1710,7 +1710,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.ImageBatchMultiple+",
       "version": 1,
       "displayName": "ImageBatchMultiple+",
@@ -1811,7 +1811,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.ImageExpandBatch+",
       "version": 1,
       "displayName": "ImageExpandBatch+",
@@ -1883,7 +1883,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.ImageFromBatch+",
       "version": 1,
       "displayName": "ImageFromBatch+",
@@ -1950,7 +1950,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.ImageListToBatch+",
       "version": 1,
       "displayName": "ImageListToBatch+",
@@ -1988,7 +1988,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.ImageBatchToList+",
       "version": 1,
       "displayName": "ImageBatchToList+",
@@ -2026,7 +2026,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.ImageTile+",
       "version": 1,
       "displayName": "ImageTile+",
@@ -2184,7 +2184,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.ImageUntile+",
       "version": 1,
       "displayName": "ImageUntile+",
@@ -2285,7 +2285,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.MaskBatch+",
       "version": 1,
       "displayName": "MaskBatch+",
@@ -2331,7 +2331,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.MaskExpandBatch+",
       "version": 1,
       "displayName": "MaskExpandBatch+",
@@ -2403,7 +2403,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.MaskFromBatch+",
       "version": 1,
       "displayName": "MaskFromBatch+",
@@ -2470,7 +2470,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ResizeImageMaskNode",
       "version": 1,
       "displayName": "Resize Image/Mask",
@@ -2809,7 +2809,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ImageResizeKJ",
       "version": 1,
       "displayName": "ImageResizeKJ",
@@ -2979,7 +2979,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ImageResizeKJv2",
       "version": 1,
       "displayName": "ImageResizeKJv2",
@@ -3207,7 +3207,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.GetImageSizeAndCount",
       "version": 1,
       "displayName": "GetImageSizeAndCount",
@@ -3272,7 +3272,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ImageCropByMask",
       "version": 1,
       "displayName": "ImageCropByMask",
@@ -3318,7 +3318,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.ImageResize+",
       "version": 1,
       "displayName": "ImageResize+",
@@ -3490,7 +3490,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.ImageCrop+",
       "version": 1,
       "displayName": "ImageCrop+",
@@ -3637,7 +3637,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.GetImageSize+",
       "version": 1,
       "displayName": "GetImageSize+",
@@ -3692,7 +3692,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.ImageRemoveAlpha+",
       "version": 1,
       "displayName": "ImageRemoveAlpha+",
@@ -3727,7 +3727,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.MaskBoundingBox+",
       "version": 1,
       "displayName": "MaskBoundingBox+",
@@ -3857,7 +3857,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.PrimitiveBoundingBox",
       "version": 1,
       "displayName": "Bounding Box",
@@ -3949,7 +3949,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageScale",
       "version": 1,
       "displayName": "ImageScale",
@@ -4061,7 +4061,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageScaleBy",
       "version": 1,
       "displayName": "ImageScaleBy",
@@ -4136,7 +4136,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageScaleToTotalPixels",
       "version": 1,
       "displayName": "Scale Image to Total Pixels",
@@ -4229,7 +4229,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageScaleToMaxDimension",
       "version": 1,
       "displayName": "Scale Image to Max Dimension",
@@ -4305,7 +4305,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageFlip",
       "version": 1,
       "displayName": "Flip Image",
@@ -4359,7 +4359,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageRotate",
       "version": 1,
       "displayName": "Rotate Image",
@@ -4415,7 +4415,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImagePadForOutpaint",
       "version": 1,
       "displayName": "ImagePadForOutpaint",
@@ -4551,7 +4551,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageCrop",
       "version": 1,
       "displayName": "Crop Image (DEPRECATED)",
@@ -4661,7 +4661,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageCropV2",
       "version": 1,
       "displayName": "Crop Image",
@@ -4713,7 +4713,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfy-mtb.BBox (mtb)",
       "version": 1,
       "displayName": "BBox (mtb)",
@@ -4809,7 +4809,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfy-mtb.Uncrop (mtb)",
       "version": 1,
       "displayName": "Uncrop (mtb)",
@@ -4884,7 +4884,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.GetImageSize",
       "version": 1,
       "displayName": "Get Image Size",
@@ -4939,7 +4939,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageCompositeMasked",
       "version": 1,
       "displayName": "Image Composite Masked",
@@ -5044,7 +5044,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageBlend",
       "version": 1,
       "displayName": "Blend Images",
@@ -5131,7 +5131,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.PorterDuffImageComposite",
       "version": 1,
       "displayName": "Porter-Duff Image Composite",
@@ -5244,7 +5244,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageInvert",
       "version": 1,
       "displayName": "ImageInvert",
@@ -5279,7 +5279,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.NormalizeImages",
       "version": 1,
       "displayName": "Normalize Image Colors",
@@ -5354,7 +5354,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.AdjustBrightness",
       "version": 1,
       "displayName": "Adjust Brightness",
@@ -5409,7 +5409,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.AdjustContrast",
       "version": 1,
       "displayName": "Adjust Contrast",
@@ -5464,7 +5464,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageBlur",
       "version": 1,
       "displayName": "Blur Image",
@@ -5535,7 +5535,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageSharpen",
       "version": 1,
       "displayName": "Sharpen Image",
@@ -5627,7 +5627,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageQuantize",
       "version": 1,
       "displayName": "Quantize Image",
@@ -5703,7 +5703,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.Morphology",
       "version": 1,
       "displayName": "Apply Morphology",
@@ -5780,7 +5780,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.SplitImageWithAlpha",
       "version": 1,
       "displayName": "Split Image with Alpha",
@@ -5825,7 +5825,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.JoinImageWithAlpha",
       "version": 1,
       "displayName": "Join Image with Alpha",
@@ -5871,7 +5871,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageRGBToYUV",
       "version": 1,
       "displayName": "Image RGB to YUV",
@@ -5926,7 +5926,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageYUVToRGB",
       "version": 1,
       "displayName": "Image YUV to RGB",
@@ -5983,7 +5983,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.SolidMask",
       "version": 1,
       "displayName": "Create Solid Mask",
@@ -6061,7 +6061,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.InvertMask",
       "version": 1,
       "displayName": "Invert Mask",
@@ -6096,7 +6096,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.CropMask",
       "version": 1,
       "displayName": "Crop Mask",
@@ -6203,7 +6203,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.FeatherMask",
       "version": 1,
       "displayName": "Feather Mask",
@@ -6310,7 +6310,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.GrowMask",
       "version": 1,
       "displayName": "Grow Mask",
@@ -6376,7 +6376,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ThresholdMask",
       "version": 1,
       "displayName": "Threshold Mask",
@@ -6429,7 +6429,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.MaskComposite",
       "version": 1,
       "displayName": "Combine Masks",
@@ -6534,7 +6534,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageToMask",
       "version": 1,
       "displayName": "Convert Image to Mask",
@@ -6590,7 +6590,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageColorToMask",
       "version": 1,
       "displayName": "Convert Image Color to Mask",
@@ -6644,7 +6644,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.MaskToImage",
       "version": 1,
       "displayName": "Convert Mask to Image",
@@ -6679,7 +6679,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.EmptyImage",
       "version": 1,
       "displayName": "EmptyImage",
@@ -6774,7 +6774,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.CreateShapeMask",
       "version": 1,
       "displayName": "CreateShapeMask",
@@ -6964,7 +6964,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.CreateTextMask",
       "version": 1,
       "displayName": "CreateTextMask",
@@ -7192,7 +7192,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.GrowMaskWithBlur",
       "version": 1,
       "displayName": "GrowMaskWithBlur",
@@ -7362,7 +7362,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.ColorToMask",
       "version": 1,
       "displayName": "ColorToMask",
@@ -7494,7 +7494,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.GetMaskSizeAndCount",
       "version": 1,
       "displayName": "GetMaskSizeAndCount",
@@ -7559,7 +7559,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.DrawMaskOnImage",
       "version": 1,
       "displayName": "DrawMaskOnImage",
@@ -7636,7 +7636,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui-kjnodes.BboxVisualize",
       "version": 1,
       "displayName": "BboxVisualize",
@@ -7719,7 +7719,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.MaskFromColor+",
       "version": 1,
       "displayName": "MaskFromColor+",
@@ -7822,7 +7822,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.TransitionMask+",
       "version": 1,
       "displayName": "TransitionMask+",
@@ -7976,7 +7976,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_essentials.DrawText+",
       "version": 1,
       "displayName": "DrawText+",
@@ -8235,7 +8235,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.CannyEdgePreprocessor",
       "version": 1,
       "displayName": "CannyEdgePreprocessor",
@@ -8324,7 +8324,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.PyraCannyPreprocessor",
       "version": 1,
       "displayName": "PyraCannyPreprocessor",
@@ -8413,7 +8413,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.LineartStandardPreprocessor",
       "version": 1,
       "displayName": "LineartStandardPreprocessor",
@@ -8502,7 +8502,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.ScribblePreprocessor",
       "version": 1,
       "displayName": "ScribblePreprocessor",
@@ -8555,7 +8555,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.Scribble_XDoG_Preprocessor",
       "version": 1,
       "displayName": "Scribble_XDoG_Preprocessor",
@@ -8626,7 +8626,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.LineArtPreprocessor",
       "version": 1,
       "displayName": "LineArtPreprocessor",
@@ -8696,7 +8696,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.AnimeLineArtPreprocessor",
       "version": 1,
       "displayName": "AnimeLineArtPreprocessor",
@@ -8749,7 +8749,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.Manga2Anime_LineArt_Preprocessor",
       "version": 1,
       "displayName": "Manga2Anime_LineArt_Preprocessor",
@@ -8802,7 +8802,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.AnyLineArtPreprocessor_aux",
       "version": 1,
       "displayName": "AnyLineArtPreprocessor_aux",
@@ -8948,7 +8948,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.HEDPreprocessor",
       "version": 1,
       "displayName": "HEDPreprocessor",
@@ -9018,7 +9018,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.FakeScribblePreprocessor",
       "version": 1,
       "displayName": "FakeScribblePreprocessor",
@@ -9088,7 +9088,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.PiDiNetPreprocessor",
       "version": 1,
       "displayName": "PiDiNetPreprocessor",
@@ -9158,7 +9158,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.Scribble_PiDiNet_Preprocessor",
       "version": 1,
       "displayName": "Scribble_PiDiNet_Preprocessor",
@@ -9228,7 +9228,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.TEEDPreprocessor",
       "version": 1,
       "displayName": "TEEDPreprocessor",
@@ -9299,7 +9299,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.M-LSDPreprocessor",
       "version": 1,
       "displayName": "M-LSDPreprocessor",
@@ -9388,7 +9388,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.DiffusionEdge_Preprocessor",
       "version": 1,
       "displayName": "DiffusionEdge_Preprocessor",
@@ -9479,7 +9479,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.BinaryPreprocessor",
       "version": 1,
       "displayName": "BinaryPreprocessor",
@@ -9550,7 +9550,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.ColorPreprocessor",
       "version": 1,
       "displayName": "ColorPreprocessor",
@@ -9603,7 +9603,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.ImageLuminanceDetector",
       "version": 1,
       "displayName": "ImageLuminanceDetector",
@@ -9674,7 +9674,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.ImageIntensityDetector",
       "version": 1,
       "displayName": "ImageIntensityDetector",
@@ -9745,7 +9745,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.ShufflePreprocessor",
       "version": 1,
       "displayName": "ShufflePreprocessor",
@@ -9815,7 +9815,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.TilePreprocessor",
       "version": 1,
       "displayName": "TilePreprocessor",
@@ -9886,7 +9886,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.TTPlanet_TileGF_Preprocessor",
       "version": 1,
       "displayName": "TTPlanet_TileGF_Preprocessor",
@@ -10011,7 +10011,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.TTPlanet_TileSimple_Preprocessor",
       "version": 1,
       "displayName": "TTPlanet_TileSimple_Preprocessor",
@@ -10082,7 +10082,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.InpaintPreprocessor",
       "version": 1,
       "displayName": "InpaintPreprocessor",
@@ -10140,7 +10140,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.HintImageEnchance",
       "version": 1,
       "displayName": "HintImageEnchance",
@@ -10231,7 +10231,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.comfyui_controlnet_aux.PixelPerfectResolution",
       "version": 1,
       "displayName": "PixelPerfectResolution",
@@ -10322,7 +10322,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.AddLayer",
       "version": 1,
       "displayName": "AddLayer",
@@ -10511,7 +10511,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.LayersFromBoundingBoxes",
       "version": 1,
       "displayName": "LayersFromBoundingBoxes",
@@ -10617,7 +10617,7 @@
       ]
     },
     {
-      "schemaVersion": 40,
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageCompositor",
       "version": 1,
       "displayName": "ImageCompositor",

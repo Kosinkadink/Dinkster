@@ -3045,7 +3045,7 @@ def test_schema_dispatch_affinity_routes_without_a_policy_id_list() -> None:
     assert asyncio.run(policy.select("extension.unknown", {}, ARMS)) is None
 
 
-def test_native_dispatch_schema_inventory_and_wire45_compatibility() -> None:
+def test_native_dispatch_schema_inventory_and_current_wire_compatibility() -> None:
     assert len(NATIVE_DISPATCH_SCHEMAS) == 8
     assert all(schema.dispatch_affinity == "native" for schema in NATIVE_DISPATCH_SCHEMAS.values())
     catalog_schemas = {
@@ -3060,12 +3060,9 @@ def test_native_dispatch_schema_inventory_and_wire45_compatibility() -> None:
     synthetic = NodeSchema("extension.synthetic", dispatch_affinity="native")
 
     for schema in (*NATIVE_DISPATCH_SCHEMAS.values(), synthetic):
-        for version in range(40, 45):
-            wire = schema_to_wire(schema, wire_version=version)
-            assert "dispatchAffinity" not in wire
-        wire45 = schema_to_wire(schema, wire_version=45)
-        assert wire45["dispatchAffinity"] == "native"
-        assert schema_from_wire(wire45) == schema
+        wire = schema_to_wire(schema)
+        assert wire["dispatchAffinity"] == "native"
+        assert schema_from_wire(wire) == schema
         assert schema_signature(schema) == schema_signature(replace(schema, dispatch_affinity=None))
 
 

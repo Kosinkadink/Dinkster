@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import ipaddress
 import json
 import logging
@@ -63,7 +64,6 @@ from dinkster_assets import (
 )
 from dinkster_assets.resolution import ResolutionStore
 from dinkster_caches import DEFAULT_DISK_CACHE_BYTES, BudgetedDiskCAS
-from dinkster_collab import SessionService, SessionStore, add_session_routes
 from dinkster_inference import (
     OpenAICompatibility,
     OpenAIGenerationProvider,
@@ -192,6 +192,25 @@ def _validate_collaboration_snapshot(
     if not isinstance(snapshot, dict) or snapshot.get("lineage") != document_id:
         return "ImageDocument lineage must match documentId"
     return None
+
+
+def _add_collaboration_routes(app: web.Application, database: Path | None) -> bool:
+    """Ask the optional collaboration package to register its server extension."""
+    try:
+        collab = importlib.import_module("dinkster_collab")
+    except ModuleNotFoundError as error:
+        if error.name != "dinkster_collab":
+            raise
+        return False
+
+    collab.install_session_extension(
+        app,
+        database=database,
+        snapshot_validator=_validate_collaboration_snapshot,
+        principal_for=principal_for,
+        resolve_scope=resolve_scope,
+    )
+    return True
 
 
 def _default_pack_venv_root(library_root: str) -> Path:
@@ -760,6 +779,11 @@ def _install_event_loop_stall_diagnostics(
     app.on_cleanup.append(stop)
 
 
+def _resolve_pack_argument(value: str) -> Path:
+    """Freeze a --pack path before any worker or asynchronous startup work."""
+    return Path(value).resolve()
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Run a Dinkster server from its installed defaults plus configured packs"
@@ -785,9 +809,11 @@ def main(argv: list[str] | None = None) -> None:
         "--pack",
         action="append",
         default=[],
+        type=_resolve_pack_argument,
         metavar="PATH",
         help="pack to serve: a dinkster-pack.toml or its directory, repeatable; "
-        "each pack runs isolated in its own process",
+        "relative paths resolve from the launch directory; each pack runs "
+        "isolated in its own process",
     )
     parser.add_argument(
         "--install-root",
@@ -961,10 +987,12 @@ def main(argv: list[str] | None = None) -> None:
         "--legacy-pack",
         action="append",
         default=[],
+        type=_resolve_pack_argument,
         metavar="PATH",
         help="unmodified ComfyUI custom node pack (directory or single .py), "
-        "repeatable; loads in the legacy quarantine worker and attributes "
-        "as 'comfy.<pack>' (requires --comfy-root)",
+        "repeatable; relative paths resolve from the launch directory; loads "
+        "in the legacy quarantine worker and attributes as 'comfy.<pack>' "
+        "(requires --comfy-root)",
     )
     parser.add_argument(
         "--strict-packs",
@@ -1584,7 +1612,10 @@ def main(argv: list[str] | None = None) -> None:
         library_root = Path(args.library_root)
         mounts_config = library_root / "mounts.toml"
         mounts_snapshot = library_root / "worker-state" / "mounts-snapshot.json"
-        mount_table = MountTable(mounts_snapshot)
+        mount_table = MountTable(
+            mounts_snapshot,
+            index_root=library_root / "asset-indexes",
+        )
         try:
             for mount in load_mounts(mounts_config):
                 mount_table.add(mount, source="config")
@@ -1898,7 +1929,6 @@ def main(argv: list[str] | None = None) -> None:
             sampler.start()
         library = None
         history = None
-        session_store = None
         training_sessions = None
         execution_journal = None
         resolver_indexes = None
@@ -1959,7 +1989,6 @@ def main(argv: list[str] | None = None) -> None:
             # terminal runs land in history.sqlite with their sourceDocument
             # link back to uploaded workflow assets.
             history = HistoryStore(root / "history.sqlite")
-            session_store = SessionStore(root / "sessions.sqlite")
             # Training sessions ride it too: the session ledger and its
             # journal share training.sqlite (one fsync domain), owned by
             # the store and closed by create_app's cleanup.
@@ -1976,7 +2005,6 @@ def main(argv: list[str] | None = None) -> None:
         provider_policy: Mapping[str, frozenset[str]] | None = None
         cursor_key: bytes | None = None
         store_closed = False
-        session_store_closed = False
         if federated_asset_config is not None:
             store_path, provider_policy, cursor_key = federated_asset_config
             resolution_store = ResolutionStore(store_path)
@@ -1986,12 +2014,6 @@ def main(argv: list[str] | None = None) -> None:
             if resolution_store is not None and not store_closed:
                 store_closed = True
                 resolution_store.close()
-
-        def close_session_store() -> None:
-            nonlocal session_store_closed
-            if session_store is not None and not session_store_closed:
-                session_store_closed = True
-                session_store.close()
 
         build_task = asyncio.current_task()
         if resolution_store is not None and build_task is not None:
@@ -2004,10 +2026,6 @@ def main(argv: list[str] | None = None) -> None:
             build_task.add_done_callback(close_on_build_failure)
 
         try:
-            session_service = SessionService(
-                store=session_store,
-                snapshot_validator=_validate_collaboration_snapshot,
-            )
             generation_service = None
             if args.openai_base_url:
                 compatibility = OpenAICompatibility(args.openai_compatibility)
@@ -2094,31 +2112,20 @@ def main(argv: list[str] | None = None) -> None:
                 )
         except BaseException:
             close_resolution_store()
-            close_session_store()
             principal_permissions.close()
             raise
 
         async def close_federated_assets(_: web.Application) -> None:
             close_resolution_store()
 
-        async def close_collaborative_sessions(_: web.Application) -> None:
-            await asyncio.to_thread(close_session_store)
-
         if resolution_store is not None:
             app.on_cleanup.append(close_federated_assets)
-        if session_store is not None:
-            app.on_cleanup.append(close_collaborative_sessions)
         # ComfyUI API prompt submissions translate at this edge; the server
         # package itself stays comfy-free.
         add_comfy_compat_routes(app)
-        # Collaborative document sessions are a separate additive surface
-        # beside the job queue. Their working set persists under the library
-        # root when configured; the server package stays collab-free.
-        add_session_routes(
+        _add_collaboration_routes(
             app,
-            session_service,
-            principal_for=principal_for,
-            resolve_scope=resolve_scope,
+            Path(args.library_root) / "sessions.sqlite" if args.library_root else None,
         )
         if resolver_indexes is not None:
             add_resolver_index_routes(

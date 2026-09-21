@@ -67,7 +67,7 @@ execution.py became 1300 tangled lines.
 
 ## H7. Pre-1.0 wire formats are unstable, and only the current version decodes
 
-Version numbers may bump pre-1.0 (schema wire is at v3), but no backward
+Version numbers may bump pre-1.0 (the schema wire is currently 1), but no backward
 decoders or migration shims accrete: decoders accept exactly the current
 version and refuse everything else loudly (tested). Real migration guarantees
 begin at first public release; after that, changes are additive-first with

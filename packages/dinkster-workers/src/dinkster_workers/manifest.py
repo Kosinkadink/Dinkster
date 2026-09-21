@@ -3272,6 +3272,19 @@ def _parse_presentation(
     )
 
 
+def add_pack_root_to_import_path(manifest: PackManifest, import_path: list[str]) -> None:
+    """Expose local entries without shadowing entries installed in the pack interpreter."""
+    root = str(manifest.root.resolve())
+    if root in import_path:
+        return
+    module = manifest.nodes_entry.partition(":")[0]
+    source = manifest.root.joinpath(*module.split("."))
+    if source.with_suffix(".py").is_file() or source.is_dir():
+        import_path.insert(0, root)
+    else:
+        import_path.append(root)
+
+
 def resolve_entry(entry: str) -> object:
     """Import a 'module:attr' entry point. Runs pack code - worker hosts
     call this inside their own process, never the engine's (hazard H5)."""

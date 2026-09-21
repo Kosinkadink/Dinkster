@@ -11,23 +11,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_utility_execution_targets_are_native() -> None:
-    path = ROOT / "packages/dinkster-native/src/dinkster_native/native_arm.py"
+    source_dir = ROOT / "packages/dinkster-native/src/dinkster_native"
+    paths = tuple(source_dir.glob("native_arm*.py")) + tuple(source_dir.glob("nodes_*.py"))
     targets = {
         "GenerationImageCropToMask": "dinkster_inference_torch.image_crop",
         "GenerationGetMeshInfo": "dinkster_inference_torch.mesh",
         "GenerationMeshToModel3D": "dinkster_inference_torch.mesh",
     }
-    for node in ast.parse(path.read_text()).body:
-        if isinstance(node, ast.ClassDef) and node.name in targets:
-            imports = [
-                call.args[0].value
-                for call in ast.walk(node)
-                if isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Attribute)
-                and call.func.attr == "import_module"
-                and isinstance(call.args[0], ast.Constant)
-            ]
-            assert imports == [targets.pop(node.name)]
+    for path in paths:
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node, ast.ClassDef) and node.name in targets:
+                imports = [
+                    call.args[0].value
+                    for call in ast.walk(node)
+                    if isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "import_module"
+                    and isinstance(call.args[0], ast.Constant)
+                ]
+                assert imports == [targets.pop(node.name)]
     assert not targets
 
 

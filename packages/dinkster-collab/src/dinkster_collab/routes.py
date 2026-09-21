@@ -93,6 +93,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 from aiohttp import WSMsgType, web
@@ -114,6 +115,7 @@ from .sessions import (
     UnknownSessionError,
     validate_patch,
 )
+from .store import SessionStore
 
 SESSIONS_KEY = web.AppKey("dinkster_collab_sessions", SessionService)
 _SUBSCRIBER_QUEUE_SIZE = 256
@@ -486,8 +488,8 @@ async def handle_append_op(request: web.Request) -> web.Response:
     body = await _json_body(request)
     protocol = body.get("protocolVersion")
     if protocol != PROTOCOL_VERSION:
-        # Same posture as ?wire= on /api/nodes: an unsupported version is
-        # a loud, machine-readable refusal, never a silent reinterpretation.
+        # An unsupported version is a loud, machine-readable refusal, never a
+        # silent reinterpretation.
         return _error(
             406,
             {
@@ -845,3 +847,34 @@ def add_session_routes(
     app.router.add_get("/api/sessions/{session_id}/snapshot", handle_get_snapshot)
     app.router.add_put("/api/sessions/{session_id}/snapshot", handle_put_snapshot)
     app.router.add_get("/api/sessions/{session_id}/events", handle_session_events)
+
+
+def install_session_extension(
+    app: web.Application,
+    *,
+    database: Path | None,
+    snapshot_validator: Callable[[str, str, object], str | None],
+    principal_for: Callable[[web.Request], ScopePrincipal],
+    resolve_scope: Callable[[Any, str, object | None], str],
+) -> None:
+    """Install collaboration state, routes, and persistence cleanup on a host app."""
+    store = SessionStore(database) if database is not None else None
+    try:
+        service = SessionService(store=store, snapshot_validator=snapshot_validator)
+        add_session_routes(
+            app,
+            service,
+            principal_for=principal_for,
+            resolve_scope=resolve_scope,
+        )
+    except BaseException:
+        if store is not None:
+            store.close()
+        raise
+
+    if store is not None:
+
+        async def close_collaborative_sessions(_: web.Application) -> None:
+            await asyncio.to_thread(store.close)
+
+        app.on_cleanup.append(close_collaborative_sessions)

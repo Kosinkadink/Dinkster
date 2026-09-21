@@ -14,6 +14,11 @@ import pytest
 import torch
 from dinkster_inference import (
     EMPTY_RANGE,
+    FLUX_DEV,
+    FLUX_SCHNELL,
+    SD15,
+    SDXL,
+    SDXL_REFINER,
     AdapterPatch,
     Conditioning,
     ConditioningRange,
@@ -131,7 +136,7 @@ def test_grouped_condition_scale_reverse_one_forward_accumulation_and_dynamic_un
         torch.ones((1, 1, 2, 2)),
         0.5,
         FLOW,
-        "dinkster.sd15",
+        SD15,
         model,
         _evaluate(model, calls),
         {DIGEST: _patch()},
@@ -157,7 +162,7 @@ def test_mixed_roles_share_one_reversed_physical_forward() -> None:
         torch.ones((1, 1, 2, 2)),
         0.5,
         FLOW,
-        "dinkster.sd15",
+        SD15,
         model,
         _evaluate(model, calls),
         {DIGEST: _patch()},
@@ -244,7 +249,7 @@ def test_real_flux_and_sd_grouped_helpers_execute_one_reversed_forward(
             flux_x,
             0.5,
             FLOW,
-            "dinkster.flux_dev",
+            FLUX_DEV,
             flux_model,
             observe_flux_evaluator,
             {DIGEST: flux_patch},
@@ -336,7 +341,7 @@ def test_real_flux_and_sd_grouped_helpers_execute_one_reversed_forward(
             sd_x,
             0.5,
             SD15_SIGMAS,
-            "dinkster.sd15",
+            SD15,
             sd_model,
             observe_sd_evaluator,
             {DIGEST: sd_patch},
@@ -359,16 +364,14 @@ def test_memory_reciprocal_floor_patch_isolation_and_mapping_refuse_before_model
     model = _model()
     calls: list[tuple[tuple[GuidanceRole, ...], int]] = []
     regions = tuple(_region(scale=float(index), digest=DIGEST) for index in range(4))
-    two_required = regional_working_memory(
-        "dinkster.sd15", batch=2, height=2, width=2, dtype=torch.float32
-    )
+    two_required = regional_working_memory(SD15, batch=2, height=2, width=2, dtype=torch.float32)
     result = evaluate_grouped_regions(
         regions,
         (),
         torch.ones((1, 1, 2, 2)),
         0.5,
         FLOW,
-        "dinkster.sd15",
+        SD15,
         model,
         _evaluate(model, calls),
         {DIGEST: _patch()},
@@ -385,7 +388,7 @@ def test_memory_reciprocal_floor_patch_isolation_and_mapping_refuse_before_model
         torch.ones((1, 1, 2, 2)),
         0.5,
         FLOW,
-        "dinkster.sd15",
+        SD15,
         model,
         _evaluate(model, calls),
         {DIGEST: _patch()},
@@ -395,37 +398,35 @@ def test_memory_reciprocal_floor_patch_isolation_and_mapping_refuse_before_model
     )
     assert boundary.subgroup_sizes == (1, 1)
 
-    base = regional_working_memory(
-        "dinkster.sd15", batch=3, height=12, width=12, dtype=torch.float32
-    )
+    base = regional_working_memory(SD15, batch=3, height=12, width=12, dtype=torch.float32)
     assert base == 18119393.28
     assert (
-        regional_working_memory("dinkster.sdxl", batch=3, height=12, width=12, dtype=torch.float32)
+        regional_working_memory(SDXL, batch=3, height=12, width=12, dtype=torch.float32)
         == base * 0.8
     )
     assert (
-        regional_working_memory(
-            "dinkster.sdxl_refiner", batch=3, height=12, width=12, dtype=torch.float32
-        )
+        regional_working_memory(SDXL_REFINER, batch=3, height=12, width=12, dtype=torch.float32)
         == base
     )
     assert (
-        regional_working_memory(
-            "dinkster.flux_dev", batch=3, height=12, width=12, dtype=torch.float32
-        )
+        regional_working_memory(FLUX_DEV, batch=3, height=12, width=12, dtype=torch.float32)
         == base * 3.1
     )
     assert (
-        regional_working_memory(
-            "dinkster.flux_schnell", batch=3, height=12, width=12, dtype=torch.float32
-        )
+        regional_working_memory(FLUX_SCHNELL, batch=3, height=12, width=12, dtype=torch.float32)
         == base * 3.1
+    )
+    provided_family = replace(
+        SD15,
+        engine=replace(SD15.engine, regional_memory_factor=2.5),
+    )
+    assert (
+        regional_working_memory(provided_family, batch=3, height=12, width=12, dtype=torch.float32)
+        == base * 2.5
     )
 
     six_regions = tuple(_region(scale=float(index), digest=DIGEST) for index in range(6))
-    three_required = regional_working_memory(
-        "dinkster.sd15", batch=3, height=2, width=2, dtype=torch.float32
-    )
+    three_required = regional_working_memory(SD15, batch=3, height=2, width=2, dtype=torch.float32)
     memory_reads: list[torch.device] = []
 
     def boundary_memory(device: torch.device) -> DeviceMemory:
@@ -438,7 +439,7 @@ def test_memory_reciprocal_floor_patch_isolation_and_mapping_refuse_before_model
         torch.ones((1, 1, 2, 2)),
         0.5,
         FLOW,
-        "dinkster.sd15",
+        SD15,
         model,
         _evaluate(model, calls),
         {DIGEST: _patch()},
@@ -458,7 +459,7 @@ def test_memory_reciprocal_floor_patch_isolation_and_mapping_refuse_before_model
         torch.ones((1, 1, 2, 2)),
         0.5,
         FLOW,
-        "dinkster.sd15",
+        SD15,
         model,
         _evaluate(model, calls),
         {DIGEST: _patch(1.0), OTHER_DIGEST: _patch(2.0, digest=OTHER_DIGEST)},
@@ -479,7 +480,7 @@ def test_memory_reciprocal_floor_patch_isolation_and_mapping_refuse_before_model
             torch.ones((1, 1, 2, 2)),
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, calls),
             {},
@@ -495,7 +496,7 @@ def test_memory_reciprocal_floor_patch_isolation_and_mapping_refuse_before_model
             torch.ones((1, 1, 2, 2)),
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, calls),
             {DIGEST: _patch(digest=OTHER_DIGEST)},
@@ -515,7 +516,7 @@ def test_memory_reciprocal_floor_patch_isolation_and_mapping_refuse_before_model
             torch.ones((1, 1, 2, 2)),
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, calls),
             {DIGEST: absent_digest},
@@ -535,7 +536,7 @@ def test_memory_reciprocal_floor_patch_isolation_and_mapping_refuse_before_model
             torch.ones((1, 1, 2, 2)),
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, calls),
             {DIGEST: mismatched},
@@ -551,7 +552,7 @@ def test_memory_reciprocal_floor_patch_isolation_and_mapping_refuse_before_model
             torch.ones((1, 1, 2, 2)),
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, calls),
             {DIGEST: _patch(), OTHER_DIGEST: _patch(digest=OTHER_DIGEST)},
@@ -676,7 +677,7 @@ def test_grouped_public_preflight_refuses_before_side_effects(
         "x": torch.ones((1, 1, 2, 2)),
         "sigma": 0.5,
         "space": FLOW,
-        "family_id": "dinkster.sd15",
+        "family": SD15,
         "model": _model(),
         "evaluate": _evaluate(_model(), model_calls),
         "patch_sets": {DIGEST: _patch()},
@@ -714,7 +715,7 @@ def test_grouped_region_preflight_precedes_mapping_copy() -> None:
             torch.ones((1, 1, 2, 2)),
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             _model(),
             _evaluate(_model(), []),
             UnreadableMapping(),
@@ -750,7 +751,7 @@ def test_grouped_mapping_exception_is_normalized_before_side_effects(
             torch.ones((1, 1, 2, 2)),
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             _model(),
             _evaluate(_model(), []),
             RaisingMapping(),
@@ -795,7 +796,7 @@ def test_pairwise_cross_attention_cap_allows_aggregate_lcm_repeat() -> None:
         torch.ones((1, 1, 2, 2)),
         0.5,
         FLOW,
-        "dinkster.sd15",
+        SD15,
         model,
         evaluate,
         {DIGEST: _patch()},
@@ -821,7 +822,7 @@ def test_scale_batch_unit_rows_and_cancellation_cleanup() -> None:
         x,
         0.5,
         FLOW,
-        "dinkster.sd15",
+        SD15,
         model,
         _evaluate(model, calls),
         {DIGEST: _patch()},
@@ -836,7 +837,7 @@ def test_scale_batch_unit_rows_and_cancellation_cleanup() -> None:
         torch.ones((1, 1, 2, 2)),
         0.5,
         FLOW,
-        "dinkster.sd15",
+        SD15,
         model,
         _evaluate(model, calls),
         {DIGEST: _patch()},
@@ -853,7 +854,7 @@ def test_scale_batch_unit_rows_and_cancellation_cleanup() -> None:
             x,
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, calls),
             {DIGEST: _patch()},
@@ -876,7 +877,7 @@ def test_scale_batch_unit_rows_and_cancellation_cleanup() -> None:
             torch.ones((1, 1, 2, 2)),
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, calls),
             {DIGEST: _patch()},
@@ -929,7 +930,7 @@ def test_grouped_model_error_is_preserved_and_all_patch_owners_close(
             torch.ones((1, 1, 2, 2)),
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             fail,
             {DIGEST: _patch(), OTHER_DIGEST: _patch(2.0, digest=OTHER_DIGEST)},
@@ -1024,7 +1025,7 @@ def test_execution_owner_stages_once_across_two_sigma_evaluations(
             x,
             sigma,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, []),
             owner,
@@ -1092,7 +1093,7 @@ def test_execution_owner_refuses_mutated_scale_before_evaluation_side_effects() 
             x,
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, model_calls),
             owner,
@@ -1138,7 +1139,7 @@ def test_execution_owner_refuses_same_set_digest_reordering() -> None:
             x,
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, []),
             owner,
@@ -1215,7 +1216,7 @@ def test_execution_owner_refuses_execution_descriptor_drift(drift: str) -> None:
             evaluated_x,
             0.5,
             evaluated_space,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, calls),
             owner,
@@ -1261,7 +1262,7 @@ def test_execution_owner_preflights_target_and_cancel_drift_before_callbacks() -
             x,
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, []),
             owner,
@@ -1286,7 +1287,7 @@ def test_execution_owner_preflights_target_and_cancel_drift_before_callbacks() -
             x,
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, []),
             owner,
@@ -1334,7 +1335,7 @@ def test_execution_owner_normalizes_finite_payload_version_drift() -> None:
             x,
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, []),
             owner,
@@ -1385,7 +1386,7 @@ def test_grouped_inference_tensor_and_memory_result_refuse_deterministically(
             torch.ones((1, 1, 2, 2)),
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             _model(),
             _evaluate(_model(), []),
             {},
@@ -1481,7 +1482,7 @@ def test_grouped_finite_scale_overflow_refuses_transactionally() -> None:
             torch.ones((1, 1, 2, 2)),
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, calls),
             owner,
@@ -1721,7 +1722,7 @@ def test_execution_owner_failure_close_releases_all_state(failure: str) -> None:
             x,
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             fail if failure == "error" else _evaluate(model, []),
             owner,
@@ -1980,7 +1981,7 @@ def test_grouped_condition_scale_cuda_production_linear() -> None:
             torch.ones((1, 8, 2, 2), device=device),
             0.5,
             FLOW,
-            "dinkster.sd15",
+            SD15,
             model,
             _evaluate(model, []),
             {DIGEST: _patch(size=8)},
@@ -2011,7 +2012,7 @@ def test_grouped_condition_scale_same_process_two_gpu_isolation() -> None:
                 torch.ones((1, 1, 2, 2), device=device),
                 0.5,
                 FLOW,
-                "dinkster.sd15",
+                SD15,
                 model,
                 _evaluate(model, []),
                 {DIGEST: _patch()},

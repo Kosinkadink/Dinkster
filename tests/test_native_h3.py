@@ -1111,7 +1111,11 @@ def test_component_handle_validation_refuses_wrong_role_family_and_identity(
 
     monkeypatch.setattr(native_arm, "NativeComponentHandle", Handle)
     valid = Handle(family="dinkster.minimax_h3", role="video-vae")
-    assert native_arm._minimax_h3_component_handle(valid, "video_vae", "video-vae") is valid
+    family_id = "dinkster.minimax_h3"
+    assert (
+        native_arm.load_registered_component(valid, "video_vae", "video-vae", family_id=family_id)
+        is valid
+    )
     for value in (
         object(),
         Handle(family="dinkster.other", role="video-vae"),
@@ -1126,7 +1130,9 @@ def test_component_handle_validation_refuses_wrong_role_family_and_identity(
             TypeError,
             match="video_vae must be a native MiniMax H3 video VAE component",
         ):
-            native_arm._minimax_h3_component_handle(value, "video_vae", "video-vae")
+            native_arm.load_registered_component(
+                value, "video_vae", "video-vae", family_id=family_id
+            )
 
 
 def test_h3_model_admission_requires_the_exact_model_and_recipe(

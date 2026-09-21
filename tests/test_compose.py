@@ -44,7 +44,7 @@ from dinkster_nodes_media_io import MEDIA_IO_NODES
 from dinkster_protocol import GRAPH_COMPILERS_SURFACE, KeyedContribution, extension_behavior_hash
 from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
-from dinkster_values import TypeRegistry
+from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
 
@@ -1293,19 +1293,19 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "sha256:85dd36f2bb7ccbd94a7d8ce769a72dd8974b83183a9db31fa68cb91f98f3fc8f",
+            "sha256:ba02a4bc43883a41dacd272fd6941ecf7e7851408ac4122a6850aaabed1aadd3",
         ),
         (
             "dinkster-nodes-media-io",
-            "sha256:6fe365fabc7a5b853b66b4d67f77e575ae918b6cedd903a6c461f74c591a31d0",
+            "sha256:854d6e32001aae22f44268ede6ea72ae6629e35a6449290304b7bccb4014f3bc",
         ),
         (
             "dinkster-nodes-image",
-            "sha256:3d126cbf7fb4daa775c517885b96a93f0dff10aafed69facd48c834189405039",
+            "sha256:04a8d8267dc68625e769d8fbc7712a1a4c18e8fdb69d859622832e437c0da796",
         ),
         (
             "dinkster-nodes-remote",
-            "sha256:21e7bf193ff9c19c964b8f1897864da8fc309398ee4f7d1ab77ba9d644faf15e",
+            "sha256:0c90459042759de51d09a1977593195535facf3b4c4e1ad5632ae6e721469d4b",
         ),
     ],
 )
@@ -1417,6 +1417,25 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
         "pack artifact files must declare eol=lf for text or -text for binary: "
         + ", ".join(uncovered)
     )
+
+
+@pytest.mark.all_file_shards
+def test_vision_pack_license_worktree_bytes_are_lf() -> None:
+    repo_root = TESTS_DIR.parent
+    vision_root = repo_root / "packages/dinkster-nodes-vision"
+    licenses = sorted(vision_root.glob("*_pack/*_LICENSE"))
+
+    assert [path.relative_to(vision_root).as_posix() for path in licenses] == [
+        "dinkster_vision_hed_pack/LINEART_LICENSE",
+        "dinkster_vision_hed_pack/MANGA_LICENSE",
+        "dinkster_vision_hed_pack/MLSD_LICENSE",
+        "dinkster_vision_hed_pack/TEED_LICENSE",
+        "dinkster_vision_sam31_pack/CLIP_LICENSE",
+        "dinkster_vision_sam31_pack/SAM_LICENSE",
+    ]
+    assert [
+        path.relative_to(repo_root).as_posix() for path in licenses if b"\r" in path.read_bytes()
+    ] == []
 
 
 def test_default_pack_publishes_alias_registry_from_manifest(
@@ -2223,6 +2242,55 @@ def test_serving_composer_replaces_and_retracts_pack_renditions(tmp_path: Path) 
 
             await composer.remove_pack("isopack")
             assert registry.renditions_of("iso.blob") == ()
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.usefixtures("unrestricted_cuda_devices")
+@pytest.mark.parametrize("replica_cuda_indices", [(), (0, 1)], ids=["lazy", "replica-pool"])
+def test_cold_catalog_pack_renditions_relay_through_composed_registry(
+    tmp_path: Path, replica_cuda_indices: tuple[int, ...]
+) -> None:
+    async def scenario() -> None:
+        manifest = write_iso_manifest(tmp_path)
+        environment = {**os.environ, **WORKER_ENV}
+        assert prepare_catalog(manifest, environment=environment).ok
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        try:
+            await composer.add_pack(
+                PackSpec(
+                    manifest,
+                    require_catalog=True,
+                    replica_cuda_indices=replica_cuda_indices,
+                )
+            )
+            worker = composer._records["isopack"].worker
+            assert worker.cold
+
+            registry = composer.composition._registry
+            spec = registry.renditions_of("iso.blob")[0]
+            metadata = {"size": 3}
+            assert await registry.rendition_mime(spec, metadata) == "text/plain"
+            mime, parameters = await registry.resolve_rendition(spec, metadata, {"prefix": "pack"})
+            assert (mime, parameters) == ("text/plain", {"prefix": "pack"})
+            value = Value(
+                type_id="iso.blob",
+                fingerprint="iso-blob-test",
+                meta=ValueMeta(metadata),
+                payload=EncodedPayload(
+                    "iso.blob",
+                    default_encode({"n": 3, "data": "xxx"}),
+                    None,
+                ),
+            )
+            rendition = await registry.render_async(
+                value,
+                "summary",
+                parameters,
+            )
+            assert (rendition.mime, rendition.data) == ("text/plain", b"pack:3:xxx")
         finally:
             await composer.close()
 

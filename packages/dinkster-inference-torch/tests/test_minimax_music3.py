@@ -540,15 +540,11 @@ def test_native_text_node_binds_conditioning_to_the_text_component(
         def encode_text(self, *_args: object, **_kwargs: object) -> Conditioning[torch.Tensor]:
             return Conditioning(torch.ones((1, 2, 8 * 4096)), None)
 
-    def component_handle(*_args: object) -> Any:
+    def component_handle(*_args: object, **_kwargs: object) -> Any:
         return handle
 
     monkeypatch.setattr(native_arm, "_torch", lambda: torch)
-    monkeypatch.setattr(
-        native_arm,
-        "_minimax_music3_component_handle",
-        component_handle,
-    )
+    monkeypatch.setattr(native_arm, "load_registered_component", component_handle)
     monkeypatch.setattr(inference_torch, "MiniMaxMusic3TextRuntime", TextRuntime)
 
     output = native_arm.NativeMiniMaxMusic3TextEncode.execute(
@@ -614,10 +610,10 @@ def test_native_empty_latent_and_direct_tiled_audio_decode(
 
     codec = Codec()
 
-    def codec_factory(_vae: object) -> Codec:
+    def component_codec(_vae: object) -> Codec:
         return codec
 
-    monkeypatch.setattr(native_arm, "_MiniMaxMusic3ComponentCodec", codec_factory)
+    monkeypatch.setattr(native_arm, "_native_component_codec", component_codec)
     samples = {"samples": torch.zeros((1, 128, 3)), "sample_rate": 44100}
     direct = cast(
         "Any",

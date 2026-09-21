@@ -465,14 +465,14 @@ def test_unenrolled_none_preserves_ordinary_cache_identity() -> None:
     asyncio.run(scenario())
 
 
-def test_wire_16_rotates_the_empty_extension_cache_key_once() -> None:
+def test_current_wire_sets_the_empty_extension_cache_key() -> None:
     async def scenario() -> None:
         worker = RecordingWorker(lambda n: _string(f"v{n}"))
         events: list[EngineEvent] = []
         engine = _engine(worker, events=events)
         await engine.run(_graph(), ["p"])
         finished = next(event for event in events if event.kind == "node_finished")
-        assert finished.detail["cache_key"] == "4b58edf4b538499250164b035974164e0ea73fcc"
+        assert finished.detail["cache_key"] == "250e1d46c0d7a2c566da1e863ec20a18aa4f45da"
         assert worker.invocations[0].extension_snapshot_digest is None
 
     asyncio.run(scenario())

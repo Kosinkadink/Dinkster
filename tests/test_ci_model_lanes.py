@@ -597,13 +597,120 @@ def test_pr_workflow_has_only_the_bounded_weight_free_subset() -> None:
     assert "ruff check ." in script
     assert "uv run --locked pyright" in script
     assert re.findall(r"tests/\S+\.py", script) == [
+        "tests/test_extension_contract_pack.py",
+        "tests/test_extension_factory_guard.py",
+        "tests/test_family_registration_gates.py",
         "tests/test_schema.py",
+        "tests/test_schema_current_contracts.py",
         "tests/test_values.py",
         "tests/test_graph.py",
         "tests/test_graph_wire.py",
     ]
     assert "--cov" not in script
     assert "torch-cpu-suite" not in str(job)
+
+
+def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path) -> None:
+    job = JOBS["test"]
+    windows_rows = [row for row in job["strategy"]["matrix"]["include"] if row["os"] == "windows"]
+    assert {row["pytest_args"] for row in windows_rows} == {
+        "-p tools.pytest_file_shard --file-shard 1/2",
+        "-p tools.pytest_file_shard --file-shard 2/2",
+    }
+
+    steps = job["steps"]
+    checkout_index = next(
+        index for index, step in enumerate(steps) if step.get("uses") == "actions/checkout@v4"
+    )
+    refresh = steps[checkout_index + 1]
+    assert refresh == {
+        "name": "Refresh tracked files with current attributes",
+        "if": "matrix.os == 'windows'",
+        "shell": "pwsh",
+        "run": (
+            "git rm -r --cached -q .\n"
+            "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n"
+            "git reset --hard -q HEAD\n"
+        ),
+    }
+    repair_commands = "\n".join(
+        line for line in refresh["run"].splitlines() if line.startswith("git ")
+    )
+    assert repair_commands == "git rm -r --cached -q .\ngit reset --hard -q HEAD"
+
+    clone = tmp_path / "checkout"
+    subprocess.run(
+        ["git", "clone", "--quiet", "--shared", str(ROOT), str(clone)],
+        check=True,
+    )
+    subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=clone, check=True)
+    relative_license = Path(
+        "packages/dinkster-nodes-vision/dinkster_vision_hed_pack/LINEART_LICENSE"
+    )
+    license_file = clone / relative_license
+    attributes = clone / ".gitattributes"
+    current_attributes = attributes.read_text(encoding="utf-8")
+    assert "**/*_LICENSE text eol=lf\n" in current_attributes
+    attributes.write_text(
+        current_attributes.replace(
+            "**/*_LICENSE text eol=lf\n",
+            "**/CLIP_LICENSE text eol=lf\n**/SAM_LICENSE text eol=lf\n",
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", ".gitattributes"], cwd=clone, check=True)
+    license_file.unlink()
+    subprocess.run(
+        ["git", "checkout", "--", relative_license.as_posix()],
+        cwd=clone,
+        check=True,
+    )
+    assert b"\r\n" in license_file.read_bytes()
+
+    subprocess.run(
+        ["git", "restore", "--source=HEAD", "--staged", "--worktree", ".gitattributes"],
+        cwd=clone,
+        check=True,
+    )
+    lf_bytes = subprocess.run(
+        ["git", "show", f"HEAD:{relative_license.as_posix()}"],
+        cwd=clone,
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert b"\r" not in lf_bytes
+    assert b"\r\n" in license_file.read_bytes()
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--", relative_license.as_posix()],
+        cwd=clone,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert status.stdout == ""
+
+    subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", repair_commands],
+        cwd=clone,
+        check=True,
+    )
+    assert license_file.read_bytes() == lf_bytes
+    subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", repair_commands],
+        cwd=clone,
+        check=True,
+    )
+    assert license_file.read_bytes() == lf_bytes
+    assert (
+        subprocess.run(
+            ["git", "status", "--porcelain=v1"],
+            cwd=clone,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        == ""
+    )
 
 
 def test_full_validation_batches_pushes_without_cancelling_active_runs() -> None:
