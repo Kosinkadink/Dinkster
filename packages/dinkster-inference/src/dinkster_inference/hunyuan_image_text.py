@@ -11,7 +11,11 @@ from .assembly import ComponentPlan, _extract, _plan  # pyright: ignore[reportPr
 from .component_registry import component_plans
 from .prompt_tokens import TokenizerProfile
 from .qwen_bpe import QWEN_MERGES_SHA256, QWEN_VOCAB_SHA256
-from .qwen_image_text import QwenImageTextConfig, detect_qwen_image_text_config
+from .qwen_image_text import (
+    QwenImageTextConfig,
+    QwenImageTextDetectError,
+    detect_qwen_image_text_config,
+)
 from .t5_text import BYT5_SMALL_GLYPH_CONFIG
 from .text_recipes import (
     DetectedTextSources,
@@ -62,7 +66,10 @@ def plan_hunyuan_image_qwen(
     }.issubset(source.keys()):
         return ()
     extracted = _extract(source, path, "qwen25_vl", "")
-    config = detect_qwen_image_text_config(extracted.geometries)
+    try:
+        config = detect_qwen_image_text_config(extracted.geometries)
+    except QwenImageTextDetectError:
+        return ()
     planned = _plan("qwen25_vl", extracted, config)
     facts = planned.identity_facts
     if bind_asset_identity and isinstance(source, AssetIdentifiedSource):
