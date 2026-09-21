@@ -12,6 +12,7 @@ import numpy as np
 from dinkster_api.v1 import (
     ABSENT,
     ComboWidget,
+    CustomWidgetDescriptor,
     InputSpec,
     Node,
     NodeSchema,
@@ -300,11 +301,17 @@ class TrimVideo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.video.trim",
+            editor_role="video-trim",
             display_name="Trim Video",
             category="video",
             inputs=(
                 InputSpec("video", VIDEO),
-                InputSpec("video_edit", TypeExpr.concrete("comfy.VIDEO_EDIT"), required=False),
+                InputSpec(
+                    "video_edit",
+                    TypeExpr.concrete("comfy.VIDEO_EDIT"),
+                    required=False,
+                    widget=CustomWidgetDescriptor("VIDEO_EDIT", {"features": ["trim"]}),
+                ),
                 InputSpec(
                     "start_time",
                     FLOAT,
@@ -366,11 +373,17 @@ class CropVideo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.video.crop",
+            editor_role="video-crop",
             display_name="Crop Video",
             category="video",
             inputs=(
                 InputSpec("video", VIDEO),
-                InputSpec("video_edit", TypeExpr.concrete("comfy.VIDEO_EDIT"), required=False),
+                InputSpec(
+                    "video_edit",
+                    TypeExpr.concrete("comfy.VIDEO_EDIT"),
+                    required=False,
+                    widget=CustomWidgetDescriptor("VIDEO_EDIT", {"features": ["crop"]}),
+                ),
                 *(
                     InputSpec(key, INT, required=False, default=0, widget=NumberWidget(step=1))
                     for key in ("x", "y", "width", "height")
