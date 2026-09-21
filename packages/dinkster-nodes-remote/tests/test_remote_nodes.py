@@ -5,7 +5,7 @@ import base64
 import contextlib
 import json
 import uuid
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -26,6 +26,7 @@ from dinkster_api.v1 import (
     schema_to_wire,
 )
 from dinkster_graph import Graph, GraphNode
+from dinkster_nodes_remote import catalog as remote_catalog
 from dinkster_nodes_remote.catalog import CatalogError, parse_catalog
 from dinkster_nodes_remote.runtime import (
     GatewayError,
@@ -344,6 +345,19 @@ def test_catalog_enforces_remote_schema_invariants_and_isolates_bad_entries(
     assert parse_catalog(wrong_entry_wire).schemas == ()
     with pytest.raises(CatalogError, match="unsupported schema wire"):
         parse_catalog({**catalog_payload(valid), "schemaWire": 2})
+
+
+def test_catalog_rejects_entry_schema_wire_mismatch() -> None:
+    valid = remote_schema()
+    payload = catalog_payload(valid)
+    nodes = cast("dict[str, object]", payload["nodes"])
+    parse_entry = cast(
+        "Callable[[str, object, int], object]",
+        vars(remote_catalog)["_remote_schema"],
+    )
+
+    with pytest.raises(CatalogError, match="does not use the catalog's schema wire version"):
+        parse_entry(valid.node_type, nodes[valid.node_type], SCHEMA_WIRE_VERSION + 1)
 
 
 def test_dynamic_node_classes_keep_their_own_catalog_schema(tmp_path: Path) -> None:

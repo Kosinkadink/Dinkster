@@ -1,5 +1,8 @@
 # M1 lazy-input contract and conformance record
 
+Historical design record. Historical wire numbers below identify the feature
+sequence only; the current pre-public schema is wire 1 with no negotiation.
+
 Status: backend contract and bounded M1 runtime implemented 2026-08-03;
 scalar async lazy hooks followed on 2026-08-07. The coordinated schema decision
 is wire 16. The frontend decoder, backend output-family parity, and
@@ -78,13 +81,10 @@ Identity rules are frozen:
   the destination effective `InputSpec` plus a Link binding, so the same Link
   can never carry a second, drifting declaration.
 
-Frontend generation-2 review settled coordinated wire 16 in decision
-`0bc4d7f1-a645-45b7-b89d-4d4feaf6f012`. Rollout is decoder-first: a new
-frontend advertises 15 and 16 against the still-wire-15 server, then the
-backend publishes wire 16. New/new selects 16; an old 15-only frontend gets a
-machine-readable 406 from the 16-only server, never a lossy downgrade. The
-frontend renders lazy inputs as ordinary sockets and performs no selector
-synthesis, pre-pruning, prediction, or topology change.
+Frontend generation-2 review settled the original coordinated design in decision
+`0bc4d7f1-a645-45b7-b89d-4d4feaf6f012`. The current frontend renders lazy
+inputs as ordinary sockets and performs no selector synthesis, pre-pruning,
+prediction, or topology change.
 
 Rejected alternatives:
 

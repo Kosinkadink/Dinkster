@@ -64,7 +64,7 @@ def _remote_schema(node_type: str, value: object, schema_wire: int) -> RemoteSch
     selected = _mapping(versions.get(str(latest)), f"schemaVersions[{latest}]")
     wire = _mapping(selected.get("schema"), "schema")
     if wire.get("schemaVersion") != schema_wire:
-        raise CatalogError("schema entry does not use the catalog's negotiated wire version")
+        raise CatalogError("schema entry does not use the catalog's schema wire version")
     signature = selected.get("signature")
     if not isinstance(signature, str) or not signature:
         raise CatalogError("schema version requires a signature")

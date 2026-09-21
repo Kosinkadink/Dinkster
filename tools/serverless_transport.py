@@ -57,7 +57,6 @@ from dinkster_workers.boundary import (
 Envelope = dict[str, Any]
 Dispatch = Callable[[Envelope], Awaitable[Envelope]]
 _VERSION = 1
-_SCHEMA_TRANSFER_VERSION = SCHEMA_WIRE_VERSION
 _DATA_TYPES = frozenset(
     {
         "core.int",
@@ -280,7 +279,7 @@ class Transport:
         self.identity = {
             "version": _VERSION,
             "protocolVersion": PROTOCOL_VERSION,
-            "schemaVersion": _SCHEMA_TRANSFER_VERSION,
+            "schemaVersion": SCHEMA_WIRE_VERSION,
             "sourceIdentity": source_identity,
         }
 
@@ -472,9 +471,7 @@ class InvocationHandler:
         header, blobs, correlation = await self.transport.unpack(envelope, "invoke")
         codec = self.transport.codec()
         invocation = decode_invocation(codec, header, blobs, [])
-        if header["effectiveSchema"] != schema_to_wire(
-            invocation.effective_schema, wire_version=_SCHEMA_TRANSFER_VERSION
-        ):
+        if header["effectiveSchema"] != schema_to_wire(invocation.effective_schema):
             raise UnsupportedCapability("noncanonical or unsupported schema fields/version")
         _invocation(invocation, self.worker.schemas)
         emitted = False

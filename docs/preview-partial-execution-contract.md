@@ -19,10 +19,9 @@ and missing-asset preflight remain graph-wide.
 
 ## Preview-marked final outputs
 
-Schema wire 16 may carry `preview: true` on an ordinary output entry or an
+The current schema may carry `preview: true` on an ordinary output entry or an
 output-family declaration. Omission and `false` decode to false; every other
-JSON type is malformed. Encoders omit false. Wire 15 neither emits nor
-interprets the field. An output-family marker propagates to every elaborated
+JSON type is malformed. Encoders omit false. An output-family marker propagates to every elaborated
 ordinary member. The marker is final-output discovery metadata only and is
 recursively removed from computation signatures. It never selects targets,
 schedules output-level work, changes a cache key, chooses a renderer, or

@@ -465,7 +465,7 @@ def test_unenrolled_none_preserves_ordinary_cache_identity() -> None:
     asyncio.run(scenario())
 
 
-def test_empty_extension_snapshot_has_stable_cache_key() -> None:
+def test_current_wire_sets_the_empty_extension_cache_key() -> None:
     async def scenario() -> None:
         worker = RecordingWorker(lambda n: _string(f"v{n}"))
         events: list[EngineEvent] = []

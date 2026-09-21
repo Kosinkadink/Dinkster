@@ -50,6 +50,7 @@ from dinkster_inference import (
     Registry,
     SamplingCancelled,
     SamplingSegment,
+    builtin_families,
     extend_runtime_identity,
     require_inference_component_handle,
 )
@@ -65,6 +66,13 @@ from dinkster.native_policy import NativeDispatchPolicy, resolve_dtype_policy
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = REPO_ROOT / "packages" / "dinkster-compat-comfy" / "dinkster-pack.toml"
+NATIVE_ARM_SOURCE_DIR = REPO_ROOT / "packages" / "dinkster-native" / "src" / "dinkster_native"
+NATIVE_ARM_FAMILY_SOURCE_NAMES = ("ltx.py", "minimax_h3.py", "seedvr2.py", "wan21.py")
+NATIVE_ARM_SOURCES = (
+    tuple(sorted(NATIVE_ARM_SOURCE_DIR.glob("native_arm*.py")))
+    + tuple(sorted(NATIVE_ARM_SOURCE_DIR.glob("nodes_*.py")))
+    + tuple(NATIVE_ARM_SOURCE_DIR / "families" / name for name in NATIVE_ARM_FAMILY_SOURCE_NAMES)
+)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -1151,6 +1159,37 @@ def _ksampler_inputs(arm, runtime: object, torch: FakeTorch | None = None) -> di
 
 def _accept_custom_sampling(_request: object, **_kwargs: object) -> None:
     pass
+
+
+def test_native_arm_sources_have_zero_literal_family_gates() -> None:
+    family_ids = frozenset(family.id for family in builtin_families())
+    findings: list[str] = []
+    for path in NATIVE_ARM_SOURCES:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Compare, ast.Dict, ast.IfExp, ast.Match, ast.Set)):
+                continue
+            literals = {
+                child.value
+                for child in ast.walk(node)
+                if isinstance(child, ast.Constant)
+                and isinstance(child.value, str)
+                and child.value in family_ids
+            }
+            findings.extend(
+                f"{path.relative_to(REPO_ROOT)}:{node.lineno}: {literal}"
+                for literal in sorted(literals)
+            )
+    assert findings == [], "literal family gates remain:\n" + "\n".join(findings)
+
+
+def test_native_arm_source_modules_stay_below_size_limit() -> None:
+    line_counts = {
+        str(path.relative_to(REPO_ROOT)): len(path.read_text(encoding="utf-8").splitlines())
+        for path in NATIVE_ARM_SOURCES
+    }
+    oversized = {path: count for path, count in line_counts.items() if count >= 3_000}
+    assert oversized == {}
 
 
 def test_native_arm_import_and_schemas_are_torch_free() -> None:
@@ -7952,7 +7991,7 @@ def test_registry_runtime_threads_identity_and_enables_compute_following_storage
     }
 
 
-def test_sampler_registry_binds_aggregate_builtin_and_extension_generations(
+def test_sampler_registry_preserves_aggregate_generations_without_torch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     arm = _native_arm()
@@ -7963,30 +8002,25 @@ def test_sampler_registry_binds_aggregate_builtin_and_extension_generations(
         registries=SimpleNamespace(samplers=extension_samplers),
         extensions=(("proof_a", object()), ("proof_b", object())),
     )
-    bound: list[object] = []
-    inference_torch = SimpleNamespace(
-        torch_sampler_registry=lambda registry: bound.append(registry) or ("bound", registry)
-    )
     inference = SimpleNamespace(materialize_inference_generation=lambda _key: generation)
     real_import = importlib.import_module
 
     def fake_import(name: str) -> object:
-        if name == "dinkster_inference_torch":
-            return inference_torch
+        if name.startswith("dinkster_inference_torch") or name == "torch":
+            raise AssertionError("sampler registry metadata must not import torch")
         return real_import(name)
 
     monkeypatch.setattr(arm.importlib, "import_module", fake_import)
     monkeypatch.setattr(arm, "_builtin_inference_registries", lambda: builtin)
     monkeypatch.setattr(arm, "current_execution_context", lambda: None)
 
-    assert arm._sampler_registry(inference, None) == (("bound", builtin_samplers), (), None)
+    assert arm._sampler_registry(inference, None) == (builtin_samplers, (), None)
     digest = "sha256:" + "a" * 64
     assert arm._sampler_registry(inference, digest) == (
-        ("bound", extension_samplers),
+        extension_samplers,
         ("proof_a", "proof_b"),
         digest,
     )
-    assert bound == [builtin_samplers, extension_samplers]
 
 
 def test_load_runtime_passes_exact_sorted_split_source_kwargs(

@@ -168,10 +168,10 @@ def harness(tmp_path: Path) -> Harness:
     return Harness(tmp_path)
 
 
-def test_schema_transfer_uses_latest_served_wire(harness: Harness) -> None:
+def test_schema_transfer_uses_current_wire(harness: Harness) -> None:
     async def scenario() -> None:
         request = await harness.request()
-        assert request["schemaVersion"] == SCHEMA_WIRE_VERSION
+        assert request["schemaVersion"] == SCHEMA_WIRE_VERSION == 1
         assert request["frame"]["effectiveSchema"]["schemaVersion"] == SCHEMA_WIRE_VERSION
 
     asyncio.run(scenario())

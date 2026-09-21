@@ -1,4 +1,4 @@
-"""Typed assets end to end (joint contract 2026-07-26, wire v12).
+"""Typed assets end to end (joint contract 2026-07-26).
 
 The pinned rules this file proves: the runtime grammar grows exactly one
 constructor (``asset<id>``, recursive with ``list<...>``); an asset<T>
@@ -813,10 +813,10 @@ def test_declared_asset_inputs_still_receive_refs(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Wire v12 negotiation
+# Current schema wire
 
 
-def test_wire_v12_round_trips_asset_schemas() -> None:
+def test_current_wire_round_trips_asset_schemas() -> None:
     class Loader(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:

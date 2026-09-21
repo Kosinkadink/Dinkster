@@ -6,7 +6,7 @@ snapshot checkpoint - it never applies or interprets a patch. See
 sessions.py for the model and routes.py for the HTTP/WS contract.
 """
 
-from .routes import SESSIONS_KEY, add_session_routes
+from .routes import SESSIONS_KEY, add_session_routes, install_session_extension
 from .sessions import (
     DOCUMENT_KINDS,
     PROTOCOL_VERSION,
@@ -44,5 +44,6 @@ __all__ = [
     "StaleBaseError",
     "UnknownSessionError",
     "add_session_routes",
+    "install_session_extension",
     "validate_patch",
 ]

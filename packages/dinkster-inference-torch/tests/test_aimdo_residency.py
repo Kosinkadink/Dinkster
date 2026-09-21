@@ -361,7 +361,9 @@ class FakeVbarBackend:
         target: torch.Tensor,
         stream: object | None,
     ) -> None:
-        data = os.pread(file.fileno(), target.nbytes, offset)
+        data = os.pread(  # pyright: ignore[reportAttributeAccessIssue]
+            file.fileno(), target.nbytes, offset
+        )
         if len(data) != target.nbytes:
             raise RuntimeError("direct file read was truncated")
         target.reshape(-1).view(torch.uint8).copy_(

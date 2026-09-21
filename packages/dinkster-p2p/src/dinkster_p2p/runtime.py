@@ -809,13 +809,13 @@ class SidecarRuntime:
             except Exception as error:
                 global_transfers.close_transfers(reason="session-error")
                 self._set_global_network_plan(False, False)
-                if strict:
-                    raise
                 self._recovery = {
                     "state": "global-session-closed",
                     "files": [],
                     "error": str(error),
                 }
+                if strict:
+                    raise
 
     def apply_session_plan(self, plan: P2PSessionPlan) -> None:
         """Apply authorized global features without replacing the LAN session."""
@@ -1711,6 +1711,7 @@ class SidecarRuntime:
 
     def status(self) -> dict[str, object]:
         self.sample_activity()
+        recovery = self._recovery
         self._apply_global_settings()
         applied = self._session.get_settings()
         global_status = self._global.status() if self._global is not None else None
@@ -1769,7 +1770,7 @@ class SidecarRuntime:
                 "uploadedBytes": sum(cast(int, row["uploadedBytes"]) for row in transfers),
             },
             "transfers": transfers,
-            "recovery": self._recovery,
+            "recovery": self._recovery if self._recovery is not None else recovery,
             "diagnostics": self._diagnostics.snapshot(
                 lsd_peer_events_available=hasattr(self._lt, "lsd_peer_alert")
             ),
@@ -1892,6 +1893,7 @@ class SidecarRuntime:
                 self._apply_settings(strict_global=True)
                 self.save_state()
             except Exception as error:
+                recovery = self._recovery
                 if existing is None:
                     self._leases.pop(lease.lease_id, None)
                 else:
@@ -1905,6 +1907,7 @@ class SidecarRuntime:
                 else:
                     record.global_resume_required = previous_resume_required
                 self._apply_settings()
+                self._recovery = recovery
                 raise SidecarError(f"global lease activation failed: {error}") from error
             return self._lease_status(lease)
         shared_runtime = self._torrent_for_digest(lease.digest)

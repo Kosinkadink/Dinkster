@@ -18,6 +18,7 @@ from dinkster_schema import (
     NodeOutputError,
     NodeSchema,
     NumberWidget,
+    OutputRepresents,
     OutputSpec,
     SaveTargetWidget,
     StringWidget,
@@ -160,6 +161,52 @@ def test_malformed_widget_wire_is_rejected() -> None:
     entry["widget"] = {"type": ""}
     with pytest.raises(ValueError):
         schema_from_wire(wire)
+
+
+def test_output_represents_wire_decode_rejects_unknown_fields_and_bad_shapes() -> None:
+    schema = NodeSchema(
+        node_type="test.represented-output",
+        inputs=(
+            InputSpec(
+                "image",
+                TypeExpr.asset_of(TypeExpr.concrete("dinkster.image")),
+                widget=AssetWidget(kind="media/image"),
+            ),
+        ),
+        outputs=(
+            OutputSpec(
+                "image",
+                TypeExpr.concrete("dinkster.image"),
+                represents=OutputRepresents("image", "decoded-image"),
+            ),
+        ),
+    )
+
+    def malformed(represents: object) -> dict[str, object]:
+        wire = schema_to_wire(schema)
+        cast("list[dict[str, Any]]", wire["interface"])[1]["represents"] = represents
+        return wire
+
+    with pytest.raises(ValueError, match="output.represents must be an object"):
+        schema_from_wire(malformed(1))
+    with pytest.raises(ValueError, match="output.represents has unknown fields"):
+        schema_from_wire(
+            malformed({"input": "image", "rendition": "decoded-image", "surprise": True})
+        )
+    with pytest.raises(ValueError, match="output.represents.input must be a string"):
+        schema_from_wire(malformed({"input": 1, "rendition": "decoded-image"}))
+    with pytest.raises(ValueError, match="output.represents.applies must be an object"):
+        schema_from_wire(malformed({"input": "image", "rendition": "decoded-image", "applies": []}))
+    with pytest.raises(ValueError, match="must be an array of strings"):
+        schema_from_wire(
+            malformed(
+                {
+                    "input": "image",
+                    "rendition": "decoded-image",
+                    "applies": {"mode": [1]},
+                }
+            )
+        )
 
 
 class TwoOutputs(Node):

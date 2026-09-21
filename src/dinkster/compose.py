@@ -435,6 +435,25 @@ class _ReplicaWorkerPool:
     def renditions(self) -> object:
         return getattr(self._first, "renditions", ())
 
+    async def resolve_rendition(
+        self,
+        type_id: str,
+        kind: str,
+        metadata: Mapping[str, object],
+        parameters: Mapping[str, str],
+    ) -> tuple[str, Mapping[str, str]]:
+        return await self._first.resolve_rendition(type_id, kind, metadata, parameters)
+
+    async def resolve_rendition_mime(
+        self, type_id: str, kind: str, metadata: Mapping[str, object]
+    ) -> str:
+        return await self._first.resolve_rendition_mime(type_id, kind, metadata)
+
+    async def render_rendition(
+        self, value: Value, kind: str, parameters: Mapping[str, str]
+    ) -> Rendition:
+        return await self._first.render_rendition(value, kind, parameters)
+
     @property
     def can_convert_legacy_checkpoint(self) -> bool:
         return self._first.can_convert_legacy_checkpoint

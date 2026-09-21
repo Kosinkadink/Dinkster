@@ -6,11 +6,15 @@ from typing import Any, cast
 import pytest
 from dinkster_protocol import Invocation
 from dinkster_schema import (
+    DynamicSlotSpec,
     InputSpec,
     NodeSchema,
     OutputDescriptorsSpec,
     OutputSpec,
+    SlotVariant,
     TypeExpr,
+    combo_type_mismatch_is_error,
+    elaborate,
     schema_from_wire,
     schema_signature,
     schema_to_wire,
@@ -62,6 +66,28 @@ def test_worker_invocation_retains_stream_schema() -> None:
         for segment in segments:
             segment.close()
             segment.unlink()
+
+
+def test_stream_output_variable_is_bound_by_dynamic_slot() -> None:
+    variable = TypeExpr.variable("T", ("comfy.IMAGE",))
+    schema = NodeSchema(
+        "test.stream-variable",
+        slots=(
+            DynamicSlotSpec(
+                "source",
+                variants=(SlotVariant("image", IMAGE),),
+                type_template_id="T",
+            ),
+        ),
+        outputs=(OutputSpec("stream", TypeExpr.stream_of(variable)),),
+    )
+    effective = elaborate(schema, (), slot_variants={"source": "image"})
+    assert effective.outputs[0].type == STREAM
+
+
+def test_stream_combo_mismatch_keeps_hard_combo_boundary() -> None:
+    expected = TypeExpr.stream_of(TypeExpr.concrete("core.combo"))
+    assert combo_type_mismatch_is_error("stream<core.string>", expected)
 
 
 def test_storage_descriptors_policies_and_streams_coexist() -> None:

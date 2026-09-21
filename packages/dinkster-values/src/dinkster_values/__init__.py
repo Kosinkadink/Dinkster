@@ -239,8 +239,6 @@ __all__ = [
     "ResourceError",
     "ResourceHandle",
     "ResourcePins",
-    "CustomWidgetDescriptor",
-    "JsonValue",
     "TypeId",
     "TypeRegistry",
     "TypeSpec",

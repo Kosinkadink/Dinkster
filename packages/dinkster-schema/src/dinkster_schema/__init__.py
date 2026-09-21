@@ -1,4 +1,4 @@
-from dinkster_values import CustomWidgetDescriptor as CustomWidgetDescriptor
+from dinkster_values import CustomWidgetDescriptor
 
 from .capture import (
     install_stream_capture,
@@ -200,6 +200,7 @@ __all__ = [
     "AssetWidget",
     "BooleanWidget",
     "ColorWidget",
+    "CustomWidgetDescriptor",
     "CompositorWidget",
     "ConditionalWidgetCondition",
     "ConditionalWidgetGroup",
