@@ -138,6 +138,11 @@ testpaths = [
 # root on sys.path. `python -m pytest` adds it implicitly; the `pytest`
 # entrypoint (what CI's `uv run pytest` invokes) does not.
 pythonpath = ["."]
+# Self-identifying hangs: once any test runs this long, pytest's bundled
+# faulthandler plugin dumps every thread's stack naming the stuck test
+# (comfy-vibe-station#245). Diagnostic only; it never skips, fails, or
+# reshapes a test.
+faulthandler_timeout = 600
 
 [tool.pyright]
 pythonVersion = "3.12"
