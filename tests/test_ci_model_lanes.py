@@ -261,6 +261,23 @@ def test_artifact_smoke_uses_only_available_self_hosted_platforms() -> None:
     }
 
 
+def test_artifact_smoke_installs_the_locked_default_set_with_the_identity_key() -> None:
+    job = JOBS["p2p-artifact-smoke"]
+    # The smoke gate validates the locked default install set, and that set
+    # pulls the private dinkster-identity git dependency through
+    # dinkster-server, so the job must configure the same read-only deploy
+    # key as every other installing job before uv sync runs
+    # (comfy-vibe-station#256).
+    configure, setup_uv, sync, pytest_run = job["steps"][1:]
+    assert configure == {
+        "uses": "./.github/actions/configure-dinkster-identity",
+        "with": {"deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}"},
+    }
+    assert setup_uv["uses"] == "astral-sh/setup-uv@v5"
+    assert sync == {"run": "uv sync --locked"}
+    assert pytest_run == {"run": "uv run --locked pytest -q tests/test_p2p_artifact_smoke.py"}
+
+
 @pytest.mark.parametrize("enabled", ["", "false", "true"])
 def test_all_model_downloads_and_model_pytest_lanes_require_opt_in(enabled: str) -> None:
     downloads = []
