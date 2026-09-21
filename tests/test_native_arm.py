@@ -820,11 +820,21 @@ def _mock_component_builders(
 
     descriptor = component_catalog.default_component_registry().get(family_id)
     assert descriptor is not None
-    roles = (descriptor.model_role, *descriptor.text_encoder_roles[:1], *descriptor.codec_roles[:1])
-    descriptor = replace(
-        descriptor,
-        detector=lambda _source, _path: tuple((role, object()) for role in roles),
-    )
+    model_role = descriptor.model_role
+    roles = (model_role, *descriptor.text_encoder_roles[:1], *descriptor.codec_roles[:1])
+
+    def detector(_source: object, _path: Path) -> tuple[tuple[str, object], ...]:
+        return tuple(
+            (
+                role,
+                SimpleNamespace(artifact_role="fl2va-dit")
+                if family_id == "dinkster.minimax_h3" and role == model_role
+                else object(),
+            )
+            for role in roles
+        )
+
+    descriptor = replace(descriptor, detector=detector)
     registry = ComponentRegistry()
     registry.register(descriptor)
     monkeypatch.setattr(component_catalog, "default_component_registry", lambda: registry)
@@ -841,6 +851,7 @@ def _mock_component_builders(
         load_device: object,
         attention_policy: str,
         attention_route_token: object,
+        artifact_role: str | None = None,
         storage_dtype: object | None = None,
     ) -> object:
         assert selected is descriptor
@@ -851,6 +862,8 @@ def _mock_component_builders(
             assert model_builder is not None
             assert load_device is None
             options = {"compute_dtype": compute_dtype}
+            if artifact_role is not None:
+                options["artifact_role"] = artifact_role
             if storage_dtype is not None:
                 options["storage_dtype"] = storage_dtype
             return model_builder(asset, identity, torch, **options)
@@ -1405,7 +1418,16 @@ def test_native_generic_h3_component_loaders_publish_single_component_handles(
         calls.append((candidate, role, expected_identity, torch_module, kwargs))
         return handle
 
-    _mock_component_builders(monkeypatch, "dinkster.minimax_h3", build)
+    def build_model(
+        candidate: object,
+        expected_identity: str,
+        torch_module: object,
+        **kwargs: object,
+    ) -> object:
+        calls.append((candidate, "diffusion", expected_identity, torch_module, kwargs))
+        return handle
+
+    _mock_component_builders(monkeypatch, "dinkster.minimax_h3", build, build_model)
     monkeypatch.setattr(arm, "_torch", lambda: torch)
 
     with use_execution_context(
@@ -1432,8 +1454,21 @@ def test_native_generic_h3_component_loaders_publish_single_component_handles(
         )
     ):
         vae = arm.NativeLoadVae.execute(vae=asset)["vae"]
+    with use_execution_context(
+        ExecutionContext(
+            "native",
+            "model-identity",
+            diffusion_dtype="bfloat16",
+            text_dtype="unloaded",
+            vae_dtype="unloaded",
+        )
+    ):
+        model = arm.GenerationLoadDiffusionModel.execute(
+            diffusion_model=asset,
+            weight_dtype="default",
+        )["model"]
 
-    assert clip is vae is handle
+    assert clip is vae is model is handle
     assert calls == [
         (
             asset,
@@ -1443,6 +1478,13 @@ def test_native_generic_h3_component_loaders_publish_single_component_handles(
             {"compute_dtype": "bfloat16", "load_device": None},
         ),
         (asset, "video-vae", "vae-identity", torch, {"compute_dtype": "float16"}),
+        (
+            asset,
+            "diffusion",
+            "model-identity",
+            torch,
+            {"compute_dtype": "bfloat16", "artifact_role": "fl2va-dit"},
+        ),
     ]
     assert native.LoadClip.CLIP_TYPES[-1] == "minimax"
 
