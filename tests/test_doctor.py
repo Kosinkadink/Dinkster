@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from dinkster_protocol import EXTENSION_SCOPES
 from dinkster_workers import ManifestError, detect_bubblewrap, load_manifest
 from dinkster_workers.doctor import (
     DOCTOR_REPORT_VERSION,
@@ -108,7 +109,15 @@ def test_healthy_pack_is_healthy(tmp_path: Path) -> None:
     report = diagnose(manifest)
     assert report.ok, render_text(report)
     assert report.pack_name == "healthy-pack"
+    assert report.entry_path == str((manifest.parent / "healthy_nodes.py").resolve())
+    assert report.interpreter == str(Path(sys.executable).absolute())
     assert report.node_types == ("healthy.doubler", "healthy.tagger")
+    payload = json.loads(report.to_json())
+    assert payload["entryPath"] == report.entry_path
+    assert payload["interpreter"] == report.interpreter
+    text = render_text(report)
+    assert f"  entry: {report.entry_path}" in text
+    assert f"  interpreter: {report.interpreter}" in text
     # Elapsed import time depends on host load, not just pack behavior.
     assert codes(report) <= {"import.slow"}, render_text(report)
 
@@ -228,7 +237,7 @@ contributions = [{ id = "healthy-pack.future", kind = "futureKind" }]
         load_manifest(manifest)
 
 
-def test_pack_nested_in_distribution_uses_shared_source_root(tmp_path: Path) -> None:
+def test_pack_nested_in_distribution_does_not_add_undeclared_source_root(tmp_path: Path) -> None:
     distribution = tmp_path / "distribution"
     manifest = distribution / "healthy_pack" / "dinkster-pack.toml"
     manifest.parent.mkdir(parents=True)
@@ -240,8 +249,9 @@ def test_pack_nested_in_distribution_uses_shared_source_root(tmp_path: Path) -> 
 
     report = diagnose(manifest)
 
-    assert report.ok, render_text(report)
-    assert report.node_types == ("healthy.doubler", "healthy.tagger")
+    assert not report.ok
+    assert "entry.unresolvable" in codes(report)
+    assert report.entry_path == ""
 
 
 def test_blocking_import_emits_slow_warning(tmp_path: Path) -> None:
@@ -1044,6 +1054,67 @@ def test_broken_entry_is_a_finding_not_a_crash(tmp_path: Path) -> None:
     unresolvable = [f for f in report.findings if f.code == "entry.unresolvable"]
     assert len(unresolvable) == 1
     assert "kaboom" in unresolvable[0].message
+
+
+@pytest.mark.parametrize(
+    ("types_entry", "source"),
+    [
+        ("healthy_nodes:not_callable", HEALTHY_NODES + "\nnot_callable = 42\n"),
+        (
+            "healthy_nodes:register_broken_types",
+            HEALTHY_NODES
+            + "\ndef register_broken_types(registry):\n    raise RuntimeError('broken types')\n",
+        ),
+    ],
+)
+def test_types_entry_failures_are_actionable(tmp_path: Path, types_entry: str, source: str) -> None:
+    manifest_text = HEALTHY_MANIFEST.replace(
+        'types = "healthy_nodes:register_types"', f'types = "{types_entry}"'
+    )
+    manifest = write_pack(tmp_path / "broken-types", manifest_text, "healthy_nodes", source)
+
+    report = diagnose(manifest)
+
+    failed = [finding for finding in report.findings if finding.code == "entry.types-failed"]
+    assert len(failed) == 1
+    assert failed[0].severity == "error"
+    assert failed[0].fix
+
+
+@pytest.mark.parametrize("scope", EXTENSION_SCOPES)
+def test_every_extension_entry_scope_must_resolve(tmp_path: Path, scope: str) -> None:
+    valid_manifest_text = HEALTHY_MANIFEST + (
+        f'\n[pack.extension]\n{scope} = "healthy_nodes:Doubler"\nprivileges = ["{scope}"]\n'
+    )
+    valid_manifest = write_pack(
+        tmp_path / "valid" / scope,
+        valid_manifest_text,
+        "healthy_nodes",
+        HEALTHY_NODES,
+    )
+    valid_report = diagnose(valid_manifest)
+    assert all(item.code != "extension.entry-unresolvable" for item in valid_report.findings), (
+        render_text(valid_report)
+    )
+
+    invalid_manifest_text = HEALTHY_MANIFEST + (
+        f'\n[pack.extension]\n{scope} = "healthy_nodes:missing_{scope}"\nprivileges = ["{scope}"]\n'
+    )
+    invalid_manifest = write_pack(
+        tmp_path / "invalid" / scope,
+        invalid_manifest_text,
+        "healthy_nodes",
+        HEALTHY_NODES,
+    )
+
+    report = diagnose(invalid_manifest)
+
+    findings = [item for item in report.findings if item.code == "extension.entry-unresolvable"]
+    assert len(findings) == 1, render_text(report)
+    assert findings[0].severity == "error"
+    assert f"[pack.extension] {scope}" in findings[0].message
+    assert f"missing_{scope}" in findings[0].message
+    assert findings[0].fix
 
 
 def test_schema_problems_and_duplicates_are_errors(tmp_path: Path) -> None:

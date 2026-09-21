@@ -1,0 +1,217 @@
+{
+  "ceilings": {
+    "assemblyBuilder": 1,
+    "descriptorCatalog": 17,
+    "registryFactory": 8
+  },
+  "sites": [
+    {
+      "kind": "assemblyBuilder",
+      "call": "build_builtin_assembly_registry",
+      "path": "packages/dinkster-inference/src/dinkster_inference/registries.py",
+      "line": 42,
+      "column": 20,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_samplers",
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/_portable_solvers.py",
+      "line": 3561,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_schedulers",
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/schedules.py",
+      "line": 724,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_samplers",
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/solvers.py",
+      "line": 972,
+      "column": 58,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_samplers",
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/solvers.py",
+      "line": 974,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_families",
+      "path": "packages/dinkster-inference/src/dinkster_inference/catalog.py",
+      "line": 1298,
+      "column": 19,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_families",
+      "path": "packages/dinkster-inference/src/dinkster_inference/gguf.py",
+      "line": 844,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_families",
+      "path": "packages/dinkster-inference/src/dinkster_inference/gguf.py",
+      "line": 986,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_schedulers",
+      "path": "packages/dinkster-inference/src/dinkster_inference/schedules.py",
+      "line": 478,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_samplers",
+      "path": "packages/dinkster-inference/src/dinkster_inference/solvers.py",
+      "line": 543,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_families",
+      "path": "packages/dinkster-native/src/dinkster_native/nodes_conditioning.py",
+      "line": 387,
+      "column": 30,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_families",
+      "path": "packages/dinkster-native/src/dinkster_native/nodes_guidance.py",
+      "line": 146,
+      "column": 26,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_families",
+      "path": "packages/dinkster-native/src/dinkster_native/preview_emit.py",
+      "line": 320,
+      "column": 54,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_families",
+      "path": "packages/dinkster-native/src/dinkster_native/preview_emit.py",
+      "line": 895,
+      "column": 27,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_families",
+      "path": "packages/dinkster-native/src/dinkster_native/preview_emit.py",
+      "line": 903,
+      "column": 19,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_sampler_snapshot",
+      "path": "src/dinkster/compose.py",
+      "line": 1948,
+      "column": 59,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_sampler_snapshot",
+      "path": "src/dinkster/compose.py",
+      "line": 2506,
+      "column": 32,
+      "issue": 120
+    },
+    {
+      "kind": "descriptorCatalog",
+      "call": "builtin_sampler_snapshot",
+      "path": "src/dinkster/compose.py",
+      "line": 4452,
+      "column": 28,
+      "issue": 120
+    },
+    {
+      "kind": "registryFactory",
+      "call": "builtin_gguf_storage_registry",
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/gguf_linear.py",
+      "line": 58,
+      "column": 23,
+      "issue": 120
+    },
+    {
+      "kind": "registryFactory",
+      "call": "builtin_gguf_storage_registry",
+      "path": "packages/dinkster-inference/src/dinkster_inference/gguf.py",
+      "line": 1236,
+      "column": 53,
+      "issue": 120
+    },
+    {
+      "kind": "registryFactory",
+      "call": "default_component_registry",
+      "path": "packages/dinkster-inference/src/dinkster_inference/registries.py",
+      "line": 36,
+      "column": 18,
+      "issue": 120
+    },
+    {
+      "kind": "registryFactory",
+      "call": "builtin_sampler_registry",
+      "path": "packages/dinkster-inference/src/dinkster_inference/registries.py",
+      "line": 38,
+      "column": 18,
+      "issue": 120
+    },
+    {
+      "kind": "registryFactory",
+      "call": "builtin_scheduler_registry",
+      "path": "packages/dinkster-inference/src/dinkster_inference/registries.py",
+      "line": 39,
+      "column": 20,
+      "issue": 120
+    },
+    {
+      "kind": "registryFactory",
+      "call": "builtin_family_registry",
+      "path": "packages/dinkster-inference/src/dinkster_inference/registries.py",
+      "line": 40,
+      "column": 18,
+      "issue": 120
+    },
+    {
+      "kind": "registryFactory",
+      "call": "default_text_recipe_registry",
+      "path": "packages/dinkster-inference/src/dinkster_inference/text_recipes.py",
+      "line": 271,
+      "column": 20,
+      "issue": 120
+    },
+    {
+      "kind": "registryFactory",
+      "call": "builtin_preview_registry",
+      "path": "packages/dinkster-native/src/dinkster_native/preview_emit.py",
+      "line": 732,
+      "column": 16,
+      "issue": 120
+    }
+  ]
+}

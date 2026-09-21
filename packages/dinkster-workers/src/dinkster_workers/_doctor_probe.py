@@ -22,6 +22,7 @@ import os
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any, cast
 
 _MAX_CAPTURED_LOGS = 200
@@ -148,18 +149,21 @@ def _schema_atoms(schema: Any) -> set[str]:
 
 
 def probe(manifest_path: str) -> dict[str, Any]:
-    from dinkster_workers.manifest import load_manifest, resolve_entry
+    from dinkster_protocol import EXTENSION_SCOPES
+
+    from dinkster_workers.manifest import (
+        add_pack_root_to_import_path,
+        load_manifest,
+        resolve_entry,
+    )
 
     manifest = load_manifest(manifest_path)
-    sys.path.insert(0, str(manifest.root))
-    distribution_root = manifest.root.parent
-    if (distribution_root / "pyproject.toml").is_file():
-        source_root = distribution_root / "src"
-        if source_root.is_dir():
-            sys.path.insert(0, str(source_root))
+    add_pack_root_to_import_path(manifest, sys.path)
 
     report: dict[str, Any] = {
         "entry_error": None,
+        "entry_path": "",
+        "interpreter": str(Path(sys.executable).absolute()),
         "import_ms": 0.0,
         "import_stdout": "",
         "import_stderr": "",
@@ -176,6 +180,7 @@ def probe(manifest_path: str) -> dict[str, Any]:
         "unregistered_schema_atoms": [],
         "replacement_errors": [],
         "types_error": None,
+        "extension_entry_errors": {},
     }
 
     threads_before = threading.active_count()
@@ -189,11 +194,23 @@ def probe(manifest_path: str) -> dict[str, Any]:
         ):
             nodes_obj = resolve_entry(manifest.nodes_entry)
             types_fn = resolve_entry(manifest.types_entry) if manifest.types_entry else None
+            for scope in EXTENSION_SCOPES:
+                entry = getattr(manifest.extension.entries, scope)
+                if entry is None:
+                    continue
+                try:
+                    resolve_entry(entry)
+                except BaseException as exc:  # noqa: BLE001 - every accepted entry is probed
+                    report["extension_entry_errors"][scope] = _exception_detail(exc)
     except BaseException as exc:  # noqa: BLE001 - pack code may raise anything
         report["entry_error"] = _exception_detail(exc)
         report["import_stdout"] = out.getvalue()[:4000]
         report["import_stderr"] = err.getvalue()[:4000]
         return report
+    nodes_module = sys.modules.get(manifest.nodes_entry.partition(":")[0])
+    nodes_module_file = getattr(nodes_module, "__file__", None)
+    if nodes_module_file is not None:
+        report["entry_path"] = str(Path(nodes_module_file).resolve())
     report["import_ms"] = (time.monotonic() - started) * 1000.0
     report["import_stdout"] = out.getvalue()[:4000]
     report["import_stderr"] = err.getvalue()[:4000]
@@ -306,7 +323,6 @@ def probe(manifest_path: str) -> dict[str, Any]:
             if inference_entry is not None:
                 import tempfile
                 from dataclasses import asdict
-                from pathlib import Path
 
                 inference = importlib.import_module("dinkster_inference.extensions")
                 with tempfile.TemporaryDirectory() as directory:

@@ -44,7 +44,7 @@ from dinkster_nodes_media_io import MEDIA_IO_NODES
 from dinkster_protocol import GRAPH_COMPILERS_SURFACE, KeyedContribution, extension_behavior_hash
 from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
-from dinkster_values import TypeRegistry
+from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
 
@@ -57,7 +57,6 @@ from dinkster.compose import (
     compose_serving,
     default_pack_spec,
     default_pack_specs,
-    openai_generation_pack_spec,
     resolve_manifest_path,
 )
 
@@ -1306,7 +1305,7 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
         ),
         (
             "dinkster-nodes-remote",
-            "sha256:90d9f773f7711972cbb8d0465013d86470bf963ab2a94da2566a0863f31f09cd",
+            "sha256:21e7bf193ff9c19c964b8f1897864da8fc309398ee4f7d1ab77ba9d644faf15e",
         ),
     ],
 )
@@ -1418,6 +1417,25 @@ def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:
         "pack artifact files must declare eol=lf for text or -text for binary: "
         + ", ".join(uncovered)
     )
+
+
+@pytest.mark.all_file_shards
+def test_vision_pack_license_worktree_bytes_are_lf() -> None:
+    repo_root = TESTS_DIR.parent
+    vision_root = repo_root / "packages/dinkster-nodes-vision"
+    licenses = sorted(vision_root.glob("*_pack/*_LICENSE"))
+
+    assert [path.relative_to(vision_root).as_posix() for path in licenses] == [
+        "dinkster_vision_hed_pack/LINEART_LICENSE",
+        "dinkster_vision_hed_pack/MANGA_LICENSE",
+        "dinkster_vision_hed_pack/MLSD_LICENSE",
+        "dinkster_vision_hed_pack/TEED_LICENSE",
+        "dinkster_vision_sam31_pack/CLIP_LICENSE",
+        "dinkster_vision_sam31_pack/SAM_LICENSE",
+    ]
+    assert [
+        path.relative_to(repo_root).as_posix() for path in licenses if b"\r" in path.read_bytes()
+    ] == []
 
 
 def test_default_pack_publishes_alias_registry_from_manifest(
@@ -2230,6 +2248,55 @@ def test_serving_composer_replaces_and_retracts_pack_renditions(tmp_path: Path) 
     asyncio.run(scenario())
 
 
+@pytest.mark.usefixtures("unrestricted_cuda_devices")
+@pytest.mark.parametrize("replica_cuda_indices", [(), (0, 1)], ids=["lazy", "replica-pool"])
+def test_cold_catalog_pack_renditions_relay_through_composed_registry(
+    tmp_path: Path, replica_cuda_indices: tuple[int, ...]
+) -> None:
+    async def scenario() -> None:
+        manifest = write_iso_manifest(tmp_path)
+        environment = {**os.environ, **WORKER_ENV}
+        assert prepare_catalog(manifest, environment=environment).ok
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        try:
+            await composer.add_pack(
+                PackSpec(
+                    manifest,
+                    require_catalog=True,
+                    replica_cuda_indices=replica_cuda_indices,
+                )
+            )
+            worker = composer._records["isopack"].worker
+            assert worker.cold
+
+            registry = composer.composition._registry
+            spec = registry.renditions_of("iso.blob")[0]
+            metadata = {"size": 3}
+            assert await registry.rendition_mime(spec, metadata) == "text/plain"
+            mime, parameters = await registry.resolve_rendition(spec, metadata, {"prefix": "pack"})
+            assert (mime, parameters) == ("text/plain", {"prefix": "pack"})
+            value = Value(
+                type_id="iso.blob",
+                fingerprint="iso-blob-test",
+                meta=ValueMeta(metadata),
+                payload=EncodedPayload(
+                    "iso.blob",
+                    default_encode({"n": 3, "data": "xxx"}),
+                    None,
+                ),
+            )
+            rendition = await registry.render_async(
+                value,
+                "summary",
+                parameters,
+            )
+            assert (rendition.mime, rendition.data) == ("text/plain", b"pack:3:xxx")
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_add_pack_applies_host_types_at_commit(tmp_path: Path) -> None:
     """PackSpec.host_types registers host-side value types when the pack
     composes: applied exactly at the commit point (a failing pack never
@@ -2336,66 +2403,6 @@ def test_pack_spec_validates_aimdo_mode(tmp_path: Path) -> None:
         PackSpec(manifest, replica_cuda_indices=(0, -1))
     with pytest.raises(ValueError, match="execution_config"):
         PackSpec(manifest, execution_config={"": "value"})
-
-
-def test_openai_pack_scopes_secrets_and_hashes_only_execution_behavior() -> None:
-    secret = "not-for-diagnostics"
-    first = openai_generation_pack_spec(
-        base_url="https://api.example.test/v1",
-        model="model-a",
-        api_key=secret,
-        compatibility="openai",
-        stream=True,
-        timeout_s=30.0,
-    )
-    other_key = openai_generation_pack_spec(
-        base_url="https://api.example.test/v1",
-        model="model-a",
-        api_key="other-secret",
-        compatibility="openai",
-        stream=True,
-        timeout_s=30.0,
-    )
-    other_model = openai_generation_pack_spec(
-        base_url="https://api.example.test/v1",
-        model="model-b",
-        api_key=secret,
-        compatibility="openai",
-        stream=True,
-        timeout_s=30.0,
-    )
-    assert first.env["DINKSTER_OPENAI_API_KEY"] == secret
-    assert secret not in repr(first)
-    assert secret not in repr(first.execution_config)
-    manifest = load_manifest(first.manifest)
-    composer = ServingComposer()
-    assert first.packs is not None
-    assert other_key.packs is not None
-    assert other_model.packs is not None
-    first_identity = composer._execution_identity(manifest, first.packs, first)
-    assert first_identity == composer._execution_identity(manifest, other_key.packs, other_key)
-    assert first_identity != composer._execution_identity(manifest, other_model.packs, other_model)
-
-
-def test_openai_pack_refuses_invalid_configuration_before_launch() -> None:
-    with pytest.raises(ValueError, match="must not contain credentials"):
-        openai_generation_pack_spec(
-            base_url="https://user:secret@example.test/v1",
-            model="model",
-            api_key="",
-            compatibility="openai",
-            stream=True,
-            timeout_s=30.0,
-        )
-    with pytest.raises(ValueError, match="API key must be a string"):
-        openai_generation_pack_spec(
-            base_url="https://example.test/v1",
-            model="model",
-            api_key=None,  # type: ignore[arg-type]
-            compatibility="openai",
-            stream=True,
-            timeout_s=30.0,
-        )
 
 
 def test_pack_spec_validates_single_job_mode(tmp_path: Path) -> None:
@@ -2802,7 +2809,6 @@ def test_serving_composer_starts_ordered_cuda_replica_workers(
 @pytest.mark.usefixtures("unrestricted_cuda_devices")
 def test_serving_composer_sets_pure_ulysses_sequence_geometry(tmp_path: Path) -> None:
     from dinkster_values import TypeRegistry
-    from dinkster_workers import load_manifest
 
     from dinkster.compose import PackSpec, ServingComposer, _SingleJobWorkerPool
 

@@ -23,7 +23,7 @@ def test_workspace_and_generated_metadata_share_python_floor() -> None:
         *sorted((ROOT / "packages").glob("*/pyproject.toml")),
         EVIDENCE_ROOT / "packages/dinkster-acceptance/pyproject.toml",
     ]
-    assert len(manifests) == 40
+    assert len(manifests) == 38
     for manifest in manifests:
         project = _toml(manifest)["project"]
         assert isinstance(project, dict)

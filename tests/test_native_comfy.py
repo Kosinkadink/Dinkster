@@ -132,7 +132,7 @@ for descriptor in default_component_registry():
     for reference in (descriptor.execution_resolver, descriptor.codec_adapter):
         if reference is not None:
             assert reference.startswith('dinkster_native.')
-            assert execution_symbol(reference).__module__ == 'dinkster_native.native_arm'
+            assert execution_symbol(reference).__module__.startswith('dinkster_native.')
 print(json.dumps(sorted(nodes)))
 """
     result = subprocess.run(

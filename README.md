@@ -15,6 +15,10 @@ edge is a typed value envelope, so caching and transport are location-independen
 - Inbound authentication and capability policy: [docs/auth.md](docs/auth.md)
 - Pack sandbox platform support and security limits:
   [packages/dinkster-workers/README.md](packages/dinkster-workers/README.md#serving-sandbox)
+- Gateway remote nodes: the default-installed `dinkster-nodes-remote` pack
+  discovers `dinkster.remote.*` schemas from an explicitly configured
+  dinkster-gateway catalog and executes authenticated jobs with verified asset
+  downloads; see [remote nodes](docs/supported/remote-nodes.md).
 - Writing a pack: [docs/pack-authoring.md](docs/pack-authoring.md), starting
   from the template in [templates/pack/](templates/pack/) - a complete
   doctor-clean pack (manifest, nodes, custom type, icon, tests, CI) kept

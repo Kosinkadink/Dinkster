@@ -163,11 +163,6 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_nodes_image": {"dinkster_api", "dinkster_image_document"},
     "dinkster_nodes_remote": {"dinkster_api", "dinkster_workers"},
     "dinkster_nodes_generation": {"dinkster_api"},
-    "dinkster_nodes_generation_openai": {
-        "dinkster_inference",
-        "dinkster_nodes_generation",
-        "dinkster_workers",
-    },
     "dinkster_model_wan": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     "dinkster_model_qwen_image": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     "dinkster_model_triposplat": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
@@ -177,9 +172,6 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_nodes_vision": {"dinkster_api", "dinkster_inference_torch"},
     # Dev scaffolding is a pack like any other: the same door, nothing more.
     "dinkster_nodes_dev": {"dinkster_api"},
-    # Partner/API providers keep their descriptor interpreter and transport
-    # inside the independently movable pack, authored through the same door.
-    "dinkster_nodes_partner": {"dinkster_api"},
     # Training nodes are thin adapters over a host-bound service protocol;
     # the session handle and its digest grammar arrive through the door.
     "dinkster_nodes_training": {"dinkster_api"},
@@ -240,6 +232,8 @@ ALLOWED: dict[str, set[str]] = {
     },
 }
 
+OPTIONAL_CORE_PACKAGES = frozenset({"dinkster_collab", "dinkster_supervisor"})
+
 
 def dinkster_imports(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -288,6 +282,25 @@ def test_one_way_dependencies() -> None:
     assert not violations, "one-way dependency rule violated:\n" + "\n".join(violations)
 
 
+def test_core_paths_do_not_import_optional_packages_at_module_scope() -> None:
+    sources = [REPO_ROOT / "src/dinkster"]
+    sources.extend(
+        REPO_ROOT / "packages" / package.replace("_", "-") / "src" / package
+        for package in ALLOWED
+        if package not in OPTIONAL_CORE_PACKAGES and package != "dinkster_acceptance"
+    )
+    violations = [
+        f"{module.relative_to(REPO_ROOT)} imports {imported}"
+        for source in sources
+        if source.is_dir()
+        for module in source.rglob("*.py")
+        for imported in sorted(dinkster_imports(module) & OPTIONAL_CORE_PACKAGES)
+    ]
+    assert not violations, "core imports optional packages at module scope:\n" + "\n".join(
+        violations
+    )
+
+
 def test_bundled_video_preview_imports_only_the_pack_api() -> None:
     source = REPO_ROOT / "packages/dinkster-video/preview/src/dinkster_video_preview"
     modules = list(source.rglob("*.py"))
@@ -296,12 +309,18 @@ def test_bundled_video_preview_imports_only_the_pack_api() -> None:
         assert dinkster_imports(module) <= {"dinkster_api", "dinkster_video_preview"}
 
 
-def test_gguf_dependency_is_locked_only_behind_inference_extra() -> None:
+def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:
     root_project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())["project"]
     inference_project = tomllib.loads(
         (REPO_ROOT / "packages/dinkster-inference/pyproject.toml").read_text()
     )["project"]
-    assert root_project.get("optional-dependencies") is None
+    assert root_project["optional-dependencies"] == {
+        "collab": ["dinkster-collab"],
+        "supervisor": ["dinkster-supervisor"],
+    }
+    assert {"dinkster-collab", "dinkster-supervisor"} <= {
+        dependency for dependency in root_project["dependencies"]
+    }
     assert all(not dependency.startswith("gguf") for dependency in root_project["dependencies"])
     assert all(
         not dependency.startswith("gguf") for dependency in inference_project["dependencies"]
@@ -314,6 +333,10 @@ def test_gguf_dependency_is_locked_only_behind_inference_extra() -> None:
     inference_locked = packages["dinkster-inference"]
     gguf_locked = packages["gguf"]
     assert "gguf" not in {dependency["name"] for dependency in root_locked["dependencies"]}
+    assert root_locked["optional-dependencies"] == {
+        "collab": [{"name": "dinkster-collab"}],
+        "supervisor": [{"name": "dinkster-supervisor"}],
+    }
     assert "gguf" not in {dependency["name"] for dependency in inference_locked["dependencies"]}
     assert inference_locked["optional-dependencies"] == {"gguf": [{"name": "gguf"}]}
     assert gguf_locked["version"] == "0.19.0"
