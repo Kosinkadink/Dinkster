@@ -26,7 +26,8 @@ uv run dinkster-doctor --sandbox path/to/pack
 
 Exit code 0 means healthy, 1 means unhealthy, and 2 means a usage error.
 `--json` emits the versioned machine report with `reportVersion`,
-`apiVersion`, and `doctorVersion`.
+`apiVersion`, and `doctorVersion`. Both report formats identify the resolved
+nodes entry module and the interpreter that imported it.
 
 `--sandbox` runs the import probe - the one doctor stage that executes pack
 code - inside a network-less bubblewrap jail with CPU and file-size limits:

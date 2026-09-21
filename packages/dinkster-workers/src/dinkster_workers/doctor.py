@@ -140,6 +140,8 @@ class DoctorReport:
     findings: tuple[Finding, ...]
     node_types: tuple[str, ...] = ()
     docs_coverage: DocsCoverage | None = None
+    entry_path: str = ""
+    interpreter: str = ""
 
     @property
     def ok(self) -> bool:
@@ -152,6 +154,8 @@ class DoctorReport:
             "doctorVersion": _doctor_version(),
             "pack": self.pack_name,
             "manifest": self.manifest_path,
+            "entryPath": self.entry_path,
+            "interpreter": self.interpreter,
             "ok": self.ok,
             "nodeTypes": list(self.node_types),
             "findings": [asdict(f) for f in self.findings],
@@ -952,6 +956,18 @@ def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Find
                 "or remove the provider declaration",
             )
         )
+    for scope, problem in sorted(report["extension_entry_errors"].items()):
+        findings.append(
+            Finding(
+                severity="error",
+                code="extension.entry-unresolvable",
+                message=f"[pack.extension] {scope} failed to import: {problem}",
+                fix=(
+                    f"check the {scope} module:attr target exists and its "
+                    "dependencies are installed"
+                ),
+            )
+        )
     if report["nodes_entry_problem"] is not None:
         findings.append(
             Finding(
@@ -1259,11 +1275,15 @@ def _check_pack(
 
     node_types: tuple[str, ...] = ()
     docs_coverage: DocsCoverage | None = None
+    entry_path = ""
+    selected_interpreter = ""
     declaration_findings: list[Finding] = []
     probed = _run_probe(manifest, probe_jail, interpreter, environment)
     if isinstance(probed, Finding):
         findings.append(probed)
     else:
+        entry_path = cast("str", probed["entry_path"])
+        selected_interpreter = cast("str", probed["interpreter"])
         declaration_findings.extend(_probe_findings(probed, manifest))
         probed_nodes = tuple(cast("dict[str, Any]", node) for node in probed["nodes"])
         node_types = tuple(cast("str", node["node_type"]) for node in probed_nodes)
@@ -1309,6 +1329,8 @@ def _check_pack(
         findings=tuple(findings),
         node_types=node_types,
         docs_coverage=docs_coverage,
+        entry_path=entry_path,
+        interpreter=selected_interpreter,
     )
 
 
@@ -1317,6 +1339,10 @@ _SEVERITY_TAG = {"error": "ERROR", "warning": "WARN ", "info": "INFO "}
 
 def render_text(report: DoctorReport) -> str:
     lines = [f"dinkster doctor: {report.pack_name} ({report.manifest_path})"]
+    if report.entry_path:
+        lines.append(f"  entry: {report.entry_path}")
+    if report.interpreter:
+        lines.append(f"  interpreter: {report.interpreter}")
     if report.node_types:
         lines.append(f"  nodes: {', '.join(report.node_types)}")
     if report.docs_coverage is not None:

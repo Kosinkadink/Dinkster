@@ -1394,7 +1394,7 @@ def test_private_denoiser_prepares_once_and_refuses_stride_drift_with_cleanup() 
     denoiser = ScheduledConditioningDenoiser(
         regions,
         (),
-        family_id=FLUX_DEV.id,
+        family=FLUX_DEV,
         space=_flux_sigma_space(FLUX_DEV),
         model=runtime.assembled.diffusion,
         evaluate=cast(Any, zero_evaluate),

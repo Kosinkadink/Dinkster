@@ -110,7 +110,7 @@ class P2PLocalFileMapping:
     path: Path
     format_policy_version: int
     verification: AssetVerificationRecord | None
-    _fingerprint: tuple[int, int, int, int, int, int]
+    _fingerprint: tuple[int, ...]
 
     def is_current(self) -> bool:
         if os.name == "nt":
@@ -118,10 +118,7 @@ class P2PLocalFileMapping:
                 with _open_regular(self.path, writable=False) as handle:
                     current = os.fstat(handle.fileno())
                     _require_path_binding(self.path, current)
-                    return (
-                        _local_file_fingerprint(handle, current) == self._fingerprint
-                        and _hash_handle(handle) == self.digest
-                    )
+                    return _local_file_fingerprint(handle, current) == self._fingerprint
             except (OSError, P2PStorageError):
                 return False
         try:
@@ -1528,11 +1525,11 @@ def _stable_fingerprint(item: os.stat_result) -> tuple[int, int, int, int, int, 
 def _local_file_fingerprint(
     handle: BinaryIO,
     item: os.stat_result,
-) -> tuple[int, int, int, int, int, int]:
+) -> tuple[int, ...]:
     fingerprint = _stable_fingerprint(item)
     if _p2p_windows is None:
         return fingerprint
-    return (*fingerprint[:-1], _p2p_windows.change_time(handle.fileno()))
+    return (*fingerprint, _p2p_windows.change_token(handle.fileno()))
 
 
 def _is_link_or_junction(path: Path, item: os.stat_result) -> bool:

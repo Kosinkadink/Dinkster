@@ -706,7 +706,8 @@ pack implementation (`imports.pack-implementation`), unresolvable entries,
 invalid schemas or replacement rules, duplicate node types, invalid
 presentation icons (`presentation.icon-invalid`), invalid blueprints
 (`blueprints.invalid`, `blueprints.duplicate-id`,
-`blueprints.budget-exceeded`). Warnings (drift):
+`blueprints.budget-exceeded`), or any unresolved `[pack.extension]` scope
+(`extension.entry-unresolvable`). Warnings (drift):
 unpinned requirements, import-time side effects (stdout output, thread
 spawns), raw import-time logging, slow imports (> 2 s), codec-less types
 that your own schemas put on edges, foreign-origin logging, and extension

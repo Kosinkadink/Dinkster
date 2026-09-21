@@ -397,12 +397,19 @@ def test_default_diffusion_dtype(family_id: str, expected: object) -> None:
     assert default_diffusion_dtype(family_id) is expected
 
 
-def test_default_registry_set_is_built_once(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_default_registry_cache_rebuilds_for_provider_changes_and_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     identity_module._cached_default_inference_registries.cache_clear()
     original = registry_module.component_catalog.default_component_registry
     calls = 0
 
-    def counted_default_component_registry():
+    def provider_a():
+        nonlocal calls
+        calls += 1
+        return original()
+
+    def provider_b():
         nonlocal calls
         calls += 1
         return original()
@@ -410,15 +417,43 @@ def test_default_registry_set_is_built_once(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(
         registry_module.component_catalog,
         "default_component_registry",
-        counted_default_component_registry,
+        provider_a,
     )
     try:
-        registries = identity_module._default_inference_registries()
+        original_registries = identity_module._default_inference_registries()
         assert default_diffusion_dtype("dinkster.sd15") is FLOAT16
         assert default_text_dtype("dinkster.flux_dev") is BFLOAT16
         assert default_vae_dtype("dinkster.sdxl") is BFLOAT16
-        assert identity_module._default_inference_registries() is registries
+        assert identity_module._default_inference_registries() is original_registries
         assert calls == 1
+
+        monkeypatch.setattr(
+            registry_module.component_catalog,
+            "default_component_registry",
+            provider_b,
+        )
+        changed_registries = identity_module._default_inference_registries()
+        assert changed_registries is not original_registries
+        assert calls == 2
+
+        monkeypatch.setattr(
+            registry_module.component_catalog,
+            "default_component_registry",
+            provider_a,
+        )
+        assert identity_module._default_inference_registries() is original_registries
+        assert calls == 2
+
+        for _ in range(16):
+            monkeypatch.setattr(
+                registry_module.component_catalog,
+                "default_component_registry",
+                lambda: original(),
+            )
+            identity_module._default_inference_registries()
+        cache_info = identity_module._cached_default_inference_registries.cache_info()
+        assert cache_info.maxsize == 8
+        assert cache_info.currsize == 8
     finally:
         identity_module._cached_default_inference_registries.cache_clear()
 

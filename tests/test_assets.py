@@ -302,6 +302,23 @@ def test_library_index_skips_rehash(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     )
 
 
+def test_scan_keeps_existing_index_until_assets_are_published(tmp_path: Path) -> None:
+    root = make_models_dir(tmp_path)
+    library = LocalAssetLibrary(root)
+    library.scan()
+    existing_index = json.loads(library.index_path.read_text("utf-8"))
+    indexes_seen: list[dict[str, object]] = []
+
+    LocalAssetLibrary(root).scan(
+        on_progress=lambda _progress: indexes_seen.append(
+            json.loads(library.index_path.read_text("utf-8"))
+        )
+    )
+
+    assert indexes_seen[0] == existing_index
+    assert indexes_seen[-1] == existing_index
+
+
 def test_library_index_writes_are_atomic_and_quiescent(tmp_path: Path) -> None:
     """The index is shared state between Dinkster instances pointing at one
     model folder: writes go through temp + os.replace (a reader never sees

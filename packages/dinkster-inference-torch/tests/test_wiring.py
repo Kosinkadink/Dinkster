@@ -95,6 +95,7 @@ from dinkster_inference import (
     WindowWeightProfile,
     build_runtime_identity,
     build_windowed_evaluation_slot,
+    builtin_assembly_registry,
     builtin_family_registry,
     builtin_sampler_registry,
     compile_window_plan,
@@ -106,7 +107,6 @@ from dinkster_inference import (
 from dinkster_inference.runtime import (
     AssemblyRegistration,
     NativeAssemblyPlan,
-    builtin_assembly_registry,
 )
 from dinkster_inference_torch import (
     AssembledFlux,
@@ -467,6 +467,39 @@ def test_load_runtime_resolves_family_dtype_defaults_after_probe(
     assert captured_load["diffusion_dtype"] is torch.bfloat16
     assert captured_load["text_dtype"] is torch.bfloat16
     assert captured_load["vae_dtype"] is torch.bfloat16
+
+
+def test_load_runtime_uses_family_from_active_registry(
+    runtime: FluxRuntime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = tiny_plan()
+    registered_family = replace(
+        plan.family,
+        engine=replace(plan.family.engine, regional_memory_factor=7.0),
+    )
+    family_registry: Registry[ModelFamily] = Registry()
+    family_registry.register(registered_family)
+
+    def accept(*_args: object, **_kwargs: object) -> FluxAssemblyPlan:
+        return plan
+
+    def load(planned: NativeAssemblyPlan, **_kwargs: object) -> FluxRuntime:
+        assert planned.family is registered_family
+        return runtime
+
+    monkeypatch.setattr(sys.modules[__name__], "synthetic_loader", load)
+    assembly_registry = synthetic_registry(accept)
+
+    assert (
+        load_runtime(
+            FakeSource(Path("/fake/active-family.safetensors"), {}),
+            assembly_registry=assembly_registry,
+            family_registry=family_registry,
+            registry_token="active-family",
+        )
+        is runtime
+    )
 
 
 @pytest.mark.parametrize("explicit_dtypes", (False, True))

@@ -1,0 +1,37 @@
+[pack]
+name = "dinkster-extension-contract-fixture"
+namespaces = ["fixture"]
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+
+[pack.entry]
+nodes = "extension_contract_pack:NODES"
+types = "extension_contract_pack:register_types"
+
+[pack.sandbox]
+
+[pack.extension]
+privileges = ["schema", "server", "frontend"]
+capabilities = ["routes"]
+
+[[pack.extension.routes]]
+id = "extension-contract"
+method = "GET"
+handler = "extension_contract_pack:route"
+request = {}
+response = { message = "string" }
+
+[[pack.extension.events]]
+name = "fixture.extension-contract.executed"
+payload = { height = "integer", mean = "number", width = "integer" }
+
+[[pack.extension.frontend-modules]]
+id = "dinkster-extension-contract-fixture.frontend"
+module = "./frontend.js"
+privileges = ["app-workflow", "event-consumer"]
+contributions = [
+  { id = "dinkster-extension-contract-fixture.event", kind = "eventConsumer", event = "fixture.extension-contract.executed" },
+  { id = "dinkster-extension-contract-fixture.status", kind = "hostUi" },
+]

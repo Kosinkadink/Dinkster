@@ -519,7 +519,7 @@ def test_output_hash_failure_is_named(
 def test_native_arm_legacy_resolution_is_bounded_to_compatible_sources() -> None:
     import dinkster_compat_comfy.native_arm as native_arm
 
-    source = inspect.getsource(native_arm)
+    source = "\n".join(inspect.getsource(module) for module in native_arm._IMPLEMENTATION_MODULES)
 
     # Each prevalidated overlay and canonical role source is resolved before
     # any residency graph mutation.

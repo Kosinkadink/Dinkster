@@ -405,7 +405,7 @@ class P2PSidecarManager:
                     lease.local_path,
                     P2P_FORMAT_POLICY_VERSION,
                 ).require_current()
-            except AssetError as error:
+            except (AssetError, OSError) as error:
                 raise P2PManagerError(
                     f"global seed mapping is not safe and current: {error}"
                 ) from error
