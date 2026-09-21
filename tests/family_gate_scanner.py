@@ -9,10 +9,29 @@ from dinkster_inference import builtin_families
 EXTERNAL_PROOF_FAMILY_IDS = frozenset({"fixture.toy-image", "test.toy-image"})
 NEW_FAMILY_REGISTRATION_PATHS = frozenset(
     {
+        ".github/workflows/ci.yml",
+        ".github/workflows/full-validation.yml",
+        "docs/extension-design.md",
         "docs/new-model-family.md",
+        "docs/supported/pack-routes-events-and-frontend-modules.md",
+        "packages/dinkster-api/src/dinkster_api/v1.py",
+        "packages/dinkster-inference/src/dinkster_inference/__init__.py",
+        "packages/dinkster-inference/src/dinkster_inference/extensions.py",
+        "packages/dinkster-inference/src/dinkster_inference/families.py",
+        "packages/dinkster-inference/src/dinkster_inference/registries.py",
         "packages/dinkster-inference-torch/tests/test_new_family_checklist.py",
+        "packages/dinkster-workers/src/dinkster_workers/doctor.py",
+        "scripts/extension-factory-allowlist.json",
+        "src/dinkster/compose.py",
         "tests/family_gate_scanner.py",
+        "tests/fixtures/extension-contract-pack/dinkster-pack.toml",
+        "tests/fixtures/extension-contract-pack/extension_contract_pack.py",
+        "tests/test_api_v1.py",
+        "tests/test_doctor.py",
+        "tests/test_extension_contract_pack.py",
         "tests/test_family_registration_gates.py",
+        "tests/test_inference_contracts.py",
+        "tests/test_inference_extensions.py",
         "tests/test_native_arm.py",
     }
 )
@@ -42,25 +61,25 @@ def family_literal_gates(path: Path, root: Path) -> tuple[str, ...]:
     return tuple(sorted(findings))
 
 
-def new_family_proof_commit_paths(root: Path) -> frozenset[str]:
-    commits = subprocess.run(
-        ("git", "log", "--format=%H", "--diff-filter=A", "--", NEW_FAMILY_PROOF_PATH),
+def changed_paths_since_merge_base(root: Path, base_ref: str = "origin/main") -> frozenset[str]:
+    merge_base = subprocess.run(
+        ("git", "merge-base", "HEAD", base_ref),
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if merge_base.returncode != 0:
+        raise AssertionError(
+            f"cannot resolve {base_ref}; validation checkouts must retain full history"
+        )
+    changed = subprocess.run(
+        ("git", "diff", "--name-only", f"{merge_base.stdout.strip()}...HEAD"),
         cwd=root,
         check=True,
         capture_output=True,
         text=True,
     ).stdout.splitlines()
-    return frozenset(
-        path
-        for commit in commits
-        for path in subprocess.run(
-            ("git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit),
-            cwd=root,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.splitlines()
-    )
+    return frozenset(changed)
 
 
 def unexpected_new_family_paths(changed_paths: frozenset[str]) -> tuple[str, ...]:

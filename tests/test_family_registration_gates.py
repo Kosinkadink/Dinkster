@@ -7,8 +7,8 @@ from dinkster_inference import EngineProperties, PreviewDecoderProperties, built
 from dinkster_inference.component_catalog import default_component_registry
 from family_gate_scanner import (
     EXTERNAL_PROOF_FAMILY_IDS,
+    changed_paths_since_merge_base,
     family_literal_gates,
-    new_family_proof_commit_paths,
     unexpected_new_family_paths,
 )
 
@@ -53,8 +53,11 @@ def test_external_proof_family_is_in_fail_closed_scanner(tmp_path: Path, family_
 
 
 def test_new_family_proof_only_changes_registration_points() -> None:
-    changed_paths = new_family_proof_commit_paths(ROOT)
-    assert unexpected_new_family_paths(changed_paths) == ()
+    changed_paths = changed_paths_since_merge_base(ROOT)
+    unexpected = unexpected_new_family_paths(changed_paths)
+    assert unexpected == (), "new-family proof changed non-registration paths:\n" + "\n".join(
+        unexpected
+    )
 
     shared_edit = "packages/dinkster-inference/src/dinkster_inference/runtime.py"
     assert unexpected_new_family_paths(changed_paths | {shared_edit}) == (shared_edit,)

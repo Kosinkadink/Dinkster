@@ -30,6 +30,9 @@ node code.
    engine or node policy branch is a failure. The extension-factory allowlist
    ceiling must not increase.
 
+The registration-path allowlist is declared by the gate itself. Review changes
+to that list as gate changes, not as proof that a newly listed path is valid.
+
 The proof in `packages/dinkster-inference-torch/tests/test_new_family_checklist.py`
 materializes the ordinary pack fixture under `tests/fixtures/extension-contract-pack`,
 detects its toy family through the merged worker registry, and runs its denoiser
