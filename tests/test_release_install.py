@@ -115,7 +115,7 @@ def test_release_registry_access_does_not_persist_credentials() -> None:
     assert checkout["with"] == {
         "clean": True,
         "repository": "Kosinkadink/dinkster-registry",
-        "ref": "1d10b407e7c54095e2d91ebac0a9c1897416a304",
+        "ref": "bb890ef56285284350d892ec32d7ddaa0bd964d3",
         "path": "registry",
         "persist-credentials": False,
     }
