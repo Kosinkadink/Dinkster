@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, NoReturn, TypeVar, cast
 
 import dinkster_inference
+import dinkster_inference_torch.sampling_execution as sampling_engine
 import dinkster_inference_torch.wiring as wiring
 import pytest
 import torch
@@ -1388,7 +1389,9 @@ class TestSample:
                 ),
                 (expected["brownian_min"], expected["brownian_max"]),
             )
-            noise = wiring.brownian_step_noise(sampler, schedule, torch.zeros(1, 2, 2, 2), seed=23)
+            noise = sampling_engine.brownian_step_noise(
+                sampler, schedule, torch.zeros(1, 2, 2, 2), seed=23
+            )
             if schedule.sigmas == schedule.pre_offset:
                 assert noise is None
                 noise = BrownianTreeNoise(
@@ -1536,8 +1539,8 @@ class TestSample:
             )
             return output
 
-        monkeypatch.setattr(wiring, "brownian_step_noise", capture_step_noise)
-        monkeypatch.setattr(wiring, "run_denoise", capture_run)
+        monkeypatch.setattr(sampling_engine, "brownian_step_noise", capture_step_noise)
+        monkeypatch.setattr(sampling_engine, "run_denoise", capture_run)
         result = custom.sample_custom(
             latent,
             noise=noise,
@@ -1887,7 +1890,7 @@ class TestSample:
     ) -> None:
         captured: list[GuidedDenoiser] = []
         executed_layouts: list[tuple[str, ...]] = []
-        original_guided_denoiser = wiring.guided_denoiser
+        original_guided_denoiser = sampling_engine.guided_denoiser
         original_validate_layout = wiring.FluxWindowConditioningEvaluation.validate_layout
 
         def capture_guided_denoiser(*args: Any, **kwargs: Any) -> GuidedDenoiser:
@@ -1909,7 +1912,7 @@ class TestSample:
             )
             original_validate_layout(evaluation, conditioning, layout)
 
-        monkeypatch.setattr(wiring, "guided_denoiser", capture_guided_denoiser)
+        monkeypatch.setattr(sampling_engine, "guided_denoiser", capture_guided_denoiser)
         monkeypatch.setattr(
             wiring.FluxWindowConditioningEvaluation,
             "validate_layout",
@@ -2427,14 +2430,14 @@ class TestSample:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         captured: list[GuidedDenoiser] = []
-        original = wiring.guided_denoiser
+        original = sampling_engine.guided_denoiser
 
         def capture(*args: Any, **kwargs: Any) -> GuidedDenoiser:
             guided = original(*args, **kwargs)
             captured.append(guided)
             return guided
 
-        monkeypatch.setattr(wiring, "guided_denoiser", capture)
+        monkeypatch.setattr(sampling_engine, "guided_denoiser", capture)
         latent = tiny_latent()
         cond = runtime.encode_text("layout positive")
         uncond = runtime.encode_text("layout negative")
@@ -2508,14 +2511,14 @@ class TestSample:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         captured: list[GuidedDenoiser] = []
-        original = wiring.guided_denoiser
+        original = sampling_engine.guided_denoiser
 
         def capture(*args: Any, **kwargs: Any) -> GuidedDenoiser:
             guided = original(*args, **kwargs)
             captured.append(guided)
             return guided
 
-        monkeypatch.setattr(wiring, "guided_denoiser", capture)
+        monkeypatch.setattr(sampling_engine, "guided_denoiser", capture)
         cond = Conditioning(
             torch.zeros(1, 2, TINY_T5.d_model), torch.zeros(1, TINY_CLIP.hidden_size)
         )
@@ -2547,14 +2550,14 @@ class TestSample:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         captured: list[GuidedDenoiser] = []
-        original = wiring.guided_denoiser
+        original = sampling_engine.guided_denoiser
 
         def capture(*args: Any, **kwargs: Any) -> GuidedDenoiser:
             guided = original(*args, **kwargs)
             captured.append(guided)
             return guided
 
-        monkeypatch.setattr(wiring, "guided_denoiser", capture)
+        monkeypatch.setattr(sampling_engine, "guided_denoiser", capture)
         cond = declare_text_conditioning(
             Conditioning(torch.zeros(1, 2, TINY_T5.d_model), torch.zeros(1, TINY_CLIP.hidden_size)),
             2,

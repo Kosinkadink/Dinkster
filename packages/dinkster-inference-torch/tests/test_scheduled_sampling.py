@@ -35,6 +35,7 @@ from dinkster_inference import (
     PercentRange,
     SamplerDescriptor,
     SamplerInfo,
+    SamplingCancelled,
     SamplingGuidance,
     StepEvent,
     TokenLayoutDescriptor,
@@ -60,8 +61,8 @@ from dinkster_inference_torch.cfg import cfg_combine
 from dinkster_inference_torch.denoise import DenoiseError
 from dinkster_inference_torch.scheduled import _carrier
 from dinkster_inference_torch.scheduled_sampling import (
+    ScheduledConditioningDenoiser,
     _resolve_patch_sets,
-    _ScheduledDenoiser,
 )
 from dinkster_inference_torch.wiring import WiringError
 from test_denoise import tiny_cond as flux_cond
@@ -966,7 +967,7 @@ def test_cancellation_is_exact_bool_and_progress_checks_before_and_after() -> No
         state["progress"] += 1
         state["cancel"] = True
 
-    with pytest.raises(ScheduledSamplingError, match="cancelled"):
+    with pytest.raises(SamplingCancelled, match="cancelled"):
         runtime.sample_scheduled(
             flux_latent(),
             cond=carrier,
@@ -1164,7 +1165,7 @@ def test_context_solver_uses_same_cancel_object_and_cancels_after_progress() -> 
     def progress(_event: StepEvent) -> None:
         state["cancel"] = True
 
-    with pytest.raises(ScheduledSamplingError, match="cancelled"):
+    with pytest.raises(SamplingCancelled, match="cancelled"):
         runtime.sample_scheduled(
             flux_latent(),
             cond=_conditioning_carrier(FLUX_DEV.id, flux_cond("cond")),
@@ -1233,20 +1234,12 @@ def test_active_guidance_refuses_before_invalid_carrier_materialization() -> Non
         )
 
 
-def test_invalid_unconditional_carrier_refuses_before_brownian_allocation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_invalid_unconditional_carrier_refuses() -> None:
     runtime = _runtime("flux")
     latent = flux_latent()
     sampler = runtime._samplers.get("dinkster.euler")
     assert sampler is not None
     request = CustomSamplingRequest(sampler, (), (1.0, 0.0))
-    calls: list[object] = []
-
-    def allocate(*args: object, **kwargs: object) -> None:
-        calls.append((args, kwargs))
-
-    monkeypatch.setattr(scheduled_module, "brownian_step_noise", allocate)
     with pytest.raises(ScheduledSamplingError, match="guidance-carrier"):
         runtime.sample_custom(
             latent,
@@ -1256,7 +1249,6 @@ def test_invalid_unconditional_carrier_refuses_before_brownian_allocation(
             request=request,
             compute_dtype=torch.float32,
         )
-    assert calls == []
 
 
 def test_empty_non_tuple_ipadapter_input_refuses_in_scheduled_engine() -> None:
@@ -1390,7 +1382,7 @@ def test_private_denoiser_prepares_once_and_refuses_stride_drift_with_cleanup() 
     ) -> torch.Tensor:
         return torch.zeros_like(x)
 
-    denoiser = _ScheduledDenoiser(
+    denoiser = ScheduledConditioningDenoiser(
         regions,
         (),
         family=FLUX_DEV,

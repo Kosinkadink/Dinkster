@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 import torch
@@ -604,6 +605,7 @@ class _InpaintDenoiser:
         noise: torch.Tensor,
         parameterization: Parameterization,
         fixed_latent: bool = False,
+        packed: PackedInpaintConfiguration | None = None,
     ) -> None:
         self.inner = inner
         self.mask = mask
@@ -611,9 +613,39 @@ class _InpaintDenoiser:
         self.noise = noise
         self.parameterization = parameterization
         self.fixed_latent = fixed_latent
+        self.packed = (
+            None
+            if packed is None
+            else replace(
+                packed,
+                token_mask=packed.token_mask.to(device=latent.device, dtype=torch.float32),
+            )
+        )
 
     def _input(self, x: torch.Tensor, sigma: float) -> tuple[torch.Tensor, torch.Tensor]:
         keep = 1.0 - self.mask
+        if self.packed is not None:
+            source = torch.empty_like(x)
+            split = self.packed.primary_elements
+            source[..., :split] = 0.999 * self.latent[..., :split] + 0.001 * self.noise[..., :split]
+            sigma_primary = torch.tensor(sigma, dtype=torch.float32, device=x.device).clamp(
+                min=1e-6
+            )
+            base = sigma_primary / (
+                self.packed.primary_shift + sigma_primary * (1.0 - self.packed.primary_shift)
+            )
+            sigma_secondary = (
+                self.packed.secondary_shift
+                * base
+                / (1.0 + (self.packed.secondary_shift - 1.0) * base)
+            )
+            secondary_factor = (sigma_primary / sigma_secondary) / self.packed.secondary_scale
+            source[..., split:] = self.latent[..., split:] * secondary_factor
+            token_mask = self.packed.token_mask
+            weight = (token_mask - self.mask) / keep.clamp(min=1e-6)
+            weight = torch.where(self.mask < 1.0, weight.clamp(0.0, 1.0), torch.zeros_like(weight))
+            token_source = source + weight * (x - source)
+            return x * self.mask + token_source * keep, keep
         source = (
             self.latent
             if self.fixed_latent
@@ -631,7 +663,18 @@ class _InpaintDenoiser:
         masked, keep = self._input(x, sigma)
         combined, uncond = self.inner.call_with_uncond(masked, sigma)
         source = self.latent * keep
+        if self.packed is not None:
+            return combined * self.mask + source, uncond
         return combined * self.mask + source, uncond * self.mask + source
+
+
+@dataclass(frozen=True, slots=True)
+class PackedInpaintConfiguration:
+    token_mask: torch.Tensor
+    primary_elements: int
+    primary_shift: float
+    secondary_shift: float
+    secondary_scale: float
 
 
 def prepare_denoise_mask(
@@ -660,6 +703,8 @@ def run_denoise(
     initial_sigma: float | None = None,
     family: ModelFamily,
     sampling: SamplingDescriptor | None = None,
+    process_in: Callable[[torch.Tensor], torch.Tensor] | None = None,
+    process_out: Callable[[torch.Tensor], torch.Tensor] | None = None,
     seed: int = 0,
     noise_kind: NoiseKind = NoiseKind.NONE,
     noise_sampler: NoiseSampler[torch.Tensor] | None = None,
@@ -668,7 +713,11 @@ def run_denoise(
     on_step: StepCallback | None = None,
     on_step_begin: Callable[[int], None] | None = None,
     on_state: SamplingStateCallback | None = None,
+    unpack_state: Callable[[torch.Tensor], object] | None = None,
     denoise_mask: torch.Tensor | None = None,
+    denoise_mask_prepared: bool = False,
+    fixed_inpaint_latent: bool = False,
+    packed_inpaint: PackedInpaintConfiguration | None = None,
 ) -> torch.Tensor:
     """Drive one full denoise: the native KSAMPLER.sample +
     CFGGuider.inner_sample pipeline (@ b78cec87).
@@ -705,8 +754,32 @@ def run_denoise(
     if len(sigmas) == 0:
         return latent
     effective_sampling = sampling or family.sampling
-    latent_descriptor = family.single_stream_latent()
-    prepared_mask = prepare_denoise_mask(denoise_mask, latent, device=device)
+    prepared_mask = (
+        None
+        if denoise_mask is None
+        else denoise_mask.to(device=device)
+        if denoise_mask_prepared
+        else prepare_denoise_mask(denoise_mask, latent, device=device)
+    )
+    latent_descriptor = None
+    if process_in is None or process_out is None:
+        latent_descriptor = family.single_stream_latent()
+    if process_in is None:
+        assert latent_descriptor is not None
+
+        def default_process_in(value: torch.Tensor) -> torch.Tensor:
+            return latent_process_in(value, latent_descriptor)
+
+        process_in = default_process_in
+    if process_out is None:
+        assert latent_descriptor is not None
+
+        def default_process_out(value: torch.Tensor) -> torch.Tensor:
+            return latent_process_out(value, latent_descriptor)
+
+        process_out = default_process_out
+    if unpack_state is None:
+        unpack_state = process_out
     return run_sampler_engine(
         denoiser,
         solver,
@@ -718,8 +791,8 @@ def run_denoise(
         parameterization=effective_sampling.parameterization,
         sigma_min=effective_sampling.sigma_min,
         sigma_max=effective_sampling.sigma_max,
-        process_in=lambda value: latent_process_in(value, latent_descriptor),
-        process_out=lambda value: latent_process_out(value, latent_descriptor),
+        process_in=process_in,
+        process_out=process_out,
         seed=seed,
         noise_kind=noise_kind,
         noise_sampler=noise_sampler,
@@ -728,7 +801,10 @@ def run_denoise(
         on_step=on_step,
         on_step_begin=on_step_begin,
         on_state=on_state,
+        unpack_state=unpack_state,
         denoise_mask=prepared_mask,
+        fixed_inpaint_latent=fixed_inpaint_latent,
+        packed_inpaint=packed_inpaint,
     )
 
 
@@ -757,6 +833,7 @@ def run_sampler_engine(
     unpack_state: Callable[[torch.Tensor], object] | None = None,
     denoise_mask: torch.Tensor | None = None,
     fixed_inpaint_latent: bool = False,
+    packed_inpaint: PackedInpaintConfiguration | None = None,
 ) -> torch.Tensor:
     """Run the shared packed-state sampling engine for any latent topology.
 
@@ -816,6 +893,7 @@ def run_sampler_engine(
                 unpack_state=unpack_state,
                 denoise_mask=denoise_mask,
                 fixed_inpaint_latent=fixed_inpaint_latent,
+                packed_inpaint=packed_inpaint,
             ),
             template,
             config,
@@ -893,6 +971,7 @@ def run_sampler_engine(
             noise=selected_inpaint_noise,
             parameterization=parameterization,
             fixed_latent=fixed_inpaint_latent,
+            packed=packed_inpaint,
         )
     del latent32, latent_in, noise32
 

@@ -6,7 +6,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import cast
+from typing import Any, cast
 
 import torch
 from dinkster_inference import (
@@ -28,11 +28,8 @@ from dinkster_inference import (
     ConditioningChannel,
     ConditioningRecord,
     ConditioningSet,
-    ContextWindowsSpec,
-    CustomSamplingRequest,
     CustomSamplingResult,
     DualSamplingGuidance,
-    ExecutionObserverAttachment,
     FluxFlowSigmas,
     GuidanceCondition,
     GuidanceContribution,
@@ -44,14 +41,13 @@ from dinkster_inference import (
     GuidanceReduceContext,
     GuidanceRole,
     GuidanceStrategyDescriptor,
-    InpaintConditioning,
+    LatentPackLayout,
     LTXAVConfig,
     LTXGeneratedKeyframes,
     LTXVocoderBWEConfig,
     ModelFamily,
     MultiStreamFamilyRuntime,
     MultiStreamLatent,
-    NoiseKind,
     Parameterization,
     PayloadDescriptor,
     PayloadReference,
@@ -62,27 +58,20 @@ from dinkster_inference import (
     SamplerDescriptor,
     SamplingCancelled,
     SamplingGuidance,
-    SamplingStateCallback,
-    SamplingStateEvent,
     SchedulerDescriptor,
-    StepCallback,
-    StepEvent,
     TokenLayoutDescriptor,
     TokenSegmentDescriptor,
     encode_conditioning_carrier,
     ltx_audio_output_sample_rate,
     make_conditioning_carrier,
-    sampling_environment_cancellation,
-    sampling_execution_context,
 )
 from dinkster_inference.guidance import GuidancePhaseParticipation
 
 from ._conditioning_layout import DeclaredConditioning, declared_token_count
 from .codecs import CodecPlugin
-from .denoise import prepare_noise, run_sampler_engine, to_batch
+from .denoise import prepare_noise, to_batch
 from .gemma_text import GemmaTextModel, LtxDualTextProjection, LtxGemmaTextEncoder
 from .gemma_tokenizer import GemmaJsonTokenizer, GemmaSentencePieceTokenizer
-from .guidance import ConditioningEvaluation
 from .latent_streams import normalize_latent_mask, pack_latent_streams, unpack_latent_streams
 from .ltx_audio_vae import ltx_vocoder_features
 from .ltx_connector import LtxTextConnectors
@@ -99,11 +88,13 @@ from .sampling_execution import (
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    guided_denoiser,
-    resolve_custom_sampling_request,
+    SamplingAdapterContext,
+    SamplingDenoiserAdapter,
+    SamplingDenoiserExecution,
+    SamplingExecutionInputs,
+    SamplingExecutionRegistration,
+    SamplingLatentAdapter,
+    sampling_execution,
 )
 from .sampling_runtime import MultiStreamSamplingRuntime
 from .schedules import (
@@ -744,6 +735,354 @@ class _LTXAVDiffusionAssembly:
         return self.diffusion_dtype if component == "diffusion" else None
 
 
+@dataclass(frozen=True)
+class _LTXAVLatentContext:
+    original: MultiStreamLatent[torch.Tensor]
+    layout: LatentPackLayout
+    stream_shapes: tuple[tuple[int, ...], tuple[int, ...]]
+    video_mask: torch.Tensor | None
+    audio_mask: torch.Tensor | None
+
+
+@dataclass(frozen=True)
+class _LTXAVLatentAdapter:
+    def prepare(
+        self,
+        runtime: object,
+        family: ModelFamily,
+        *,
+        latent: CustomSamplingLatentValue,
+        noise: CustomSamplingLatentValue,
+        cond: CustomSamplingCondValue,
+        cfg: CustomSamplingCfgValue,
+        denoise_mask: CustomSamplingLatentValue | None,
+        context: SamplingAdapterContext,
+        error: type[Exception],
+    ) -> SamplingExecutionInputs:
+        del family, error
+        owner = cast("LTXAVDiffusionRuntime", runtime)
+        if context.options:
+            names = ", ".join(sorted(context.options))
+            raise LTXAVRuntimeError(f"LTX-2 sampling does not accept adapter options: {names}")
+        model = owner.assembled.diffusion
+        streams, video, audio = _av_streams(latent, video_channels=model.config.in_channels)
+        if type(noise) is not MultiStreamLatent:
+            raise LTXAVRuntimeError(
+                "LTX-2 audio-video custom sampling requires MultiStreamLatent noise"
+            )
+        if noise.roles != streams.roles:
+            raise LTXAVRuntimeError(
+                "LTX-2 audio-video noise streams must match the latent stream roles"
+            )
+        noise_video = noise.by_role("video")
+        noise_audio = noise.by_role("audio")
+        for noise_stream, reference in ((noise_video, video), (noise_audio, audio)):
+            if (
+                type(noise_stream) is not torch.Tensor
+                or not noise_stream.is_floating_point()
+                or noise_stream.layout != torch.strided
+            ):
+                raise TypeError(
+                    "LTX-2 audio-video noise streams must be exact strided floating"
+                    " torch.Tensor values"
+                )
+            if tuple(noise_stream.shape) != tuple(reference.shape):
+                raise LTXAVRuntimeError(
+                    "LTX-2 audio-video noise streams must match the latent stream shapes"
+                )
+        if isinstance(cfg, PerpNegSamplingGuidance):
+            raise LTXAVRuntimeError(
+                "LTX-2 audio-video custom sampling does not support PerpNegSamplingGuidance"
+                " (perp-neg guidance); pass SamplingGuidance"
+            )
+        if type(cond) is not PreparedMultiStreamConditioning:
+            raise LTXAVRuntimeError(
+                "LTX-2 audio-video custom sampling requires prepared multi-stream conditioning"
+            )
+        if cond.runtime_identity != owner.conditioning_identity:
+            raise LTXAVRuntimeError(
+                "LTX-2 audio-video conditioning was prepared by a different conditioner component"
+            )
+        conditioning = cond.payload
+        if type(conditioning) is not LTXAVPreparedConditioning:
+            raise TypeError("conditioning must be exact LTXAVPreparedConditioning")
+        _validate_text(conditioning.text, text_dim=owner.text_dim)
+
+        def unwrap(value: object) -> LTXAVPreparedConditioning | None:
+            if value is None:
+                return None
+            if type(value) is not PreparedMultiStreamConditioning:
+                raise LTXAVRuntimeError(
+                    "LTX-2 audio-video custom sampling guidance requires prepared"
+                    " multi-stream conditioning"
+                )
+            if value.runtime_identity != cond.runtime_identity:
+                raise LTXAVRuntimeError(
+                    "LTX-2 audio-video guidance lanes were prepared by different"
+                    " conditioner components"
+                )
+            payload = value.payload
+            if type(payload) is not LTXAVPreparedConditioning:
+                raise TypeError(
+                    "LTX-2 audio-video guidance lanes require exact LTXAVPreparedConditioning"
+                )
+            _validate_text(payload.text, text_dim=owner.text_dim)
+            return payload
+
+        uncond = unwrap(None if cfg is None else cfg.uncond)
+        middle = unwrap(cfg.middle) if isinstance(cfg, DualSamplingGuidance) else None
+        if cfg is None:
+            guidance_cfg = None
+        elif isinstance(cfg, DualSamplingGuidance):
+            guidance_cfg = replace(
+                cast("DualSamplingGuidance[object]", cfg), uncond=uncond, middle=middle
+            )
+        else:
+            guidance_cfg = replace(cast("SamplingGuidance[object]", cfg), uncond=uncond)
+        for lane in (uncond, middle):
+            if lane is not None and lane.frame_rate != conditioning.frame_rate:
+                raise LTXAVRuntimeError(
+                    "LTX-2 audio-video guidance lanes must share one frame rate"
+                )
+            if lane is not None and not _reference_audio_equal(
+                lane.reference_audio, conditioning.reference_audio
+            ):
+                raise LTXAVRuntimeError(
+                    "LTX-2 audio-video guidance lanes must share the same reference audio"
+                )
+            if lane is not None and lane.generated_keyframes != conditioning.generated_keyframes:
+                raise LTXAVRuntimeError(
+                    "LTX-2 audio-video guidance lanes must share generated keyframes"
+                )
+        packed, layout = pack_latent_streams(streams)
+        packed_noise, noise_layout = pack_latent_streams(
+            MultiStreamLatent.from_pairs((("video", noise_video), ("audio", noise_audio)))
+        )
+        if noise_layout != layout:
+            raise LTXAVRuntimeError("LTX-2 audio-video noise topology differs from the latent")
+        video_mask = None
+        audio_mask = None
+        sampler_mask = None
+        if denoise_mask is not None:
+            try:
+                normalized = normalize_latent_mask(
+                    cast("torch.Tensor | MultiStreamLatent[torch.Tensor]", denoise_mask), streams
+                )
+            except (TypeError, ValueError) as exception:
+                raise LTXAVRuntimeError(
+                    f"LTX-2 audio-video denoise mask is invalid: {exception}"
+                ) from None
+            if any(
+                not bool(torch.isfinite(mask.payload).all())
+                or float(mask.payload.amin()) < 0.0
+                or float(mask.payload.amax()) > 1.0
+                for mask in normalized.streams
+            ):
+                raise LTXAVRuntimeError(
+                    "LTX-2 audio-video denoise mask values must be finite within [0, 1]"
+                )
+            sampler_mask = pack_latent_streams(normalized)[0]
+            video_mask = normalized.by_role("video")[:, :1]
+            audio_mask = normalized.by_role("audio")[:, :1, :, :1]
+        return SamplingExecutionInputs(
+            packed,
+            packed_noise,
+            conditioning,
+            guidance_cfg,
+            sampler_mask,
+            _LTXAVLatentContext(
+                streams,
+                layout,
+                (tuple(video.shape), tuple(audio.shape)),
+                video_mask,
+                audio_mask,
+            ),
+        )
+
+    def finish(
+        self,
+        inputs: SamplingExecutionInputs,
+        output: torch.Tensor,
+        denoised: object | None,
+    ) -> CustomSamplingResult[MultiStreamLatent[torch.Tensor]]:
+        context = cast("_LTXAVLatentContext", inputs.latent_context)
+        unpacked = unpack_latent_streams(output, context.layout)
+        result = context.original.replace("video", unpacked.by_role("video")).replace(
+            "audio", unpacked.by_role("audio")
+        )
+        if denoised is None:
+            return CustomSamplingResult(result, None)
+        if type(denoised) is not MultiStreamLatent:
+            raise TypeError("LTX-2 denoised state must contain a MultiStreamLatent")
+        return CustomSamplingResult(
+            result,
+            context.original.replace("video", denoised.by_role("video")).replace(
+                "audio", denoised.by_role("audio")
+            ),
+        )
+
+
+class _LTXAVSamplingDenoiser:
+    evaluator_identity = "dinkster.ltxav.conditioning.v1"
+
+    def __init__(
+        self,
+        owner: LTXAVDiffusionRuntime,
+        latent_context: _LTXAVLatentContext,
+        *,
+        device: torch.device | str,
+        compute_dtype: torch.dtype,
+        space: FluxFlowSigmas,
+        cancelled: Callable[[], bool],
+    ) -> None:
+        self.owner = owner
+        self.latent_context = latent_context
+        self.device = device
+        self.compute_dtype = compute_dtype
+        self.space = space
+        self.cancelled = cancelled
+
+    def prepare_conditioning(self, value: object, _role: GuidanceRole) -> _LTXAVModelConditioning:
+        _check_cancelled(self.cancelled)
+        if type(value) is not LTXAVPreparedConditioning:
+            raise TypeError("LTX-2 audio-video guidance lanes require exact prepared conditioning")
+        model = self.owner.assembled.diffusion
+        text = _validate_text(value.text, text_dim=self.owner.text_dim).to(
+            device=self.device, dtype=self.compute_dtype
+        )
+        text = model.preprocess_text_embeds(text)
+        reference_audio = value.reference_audio
+        if reference_audio is not None:
+            if reference_audio.shape[2] != model.config.audio_in_channels:
+                raise LTXAVRuntimeError(
+                    "LTX-2 reference-audio token width must match the audio model"
+                )
+            reference_audio = reference_audio.to(device=self.device, dtype=self.compute_dtype)
+        return _LTXAVModelConditioning(
+            text,
+            value.frame_rate,
+            reference_audio,
+            value.execution,
+            value.generated_keyframes,
+        )
+
+    def evaluate_conditioning(
+        self, x: torch.Tensor, sigma: float, condition: _LTXAVModelConditioning
+    ) -> torch.Tensor:
+        return self.evaluate_conditioning_batch(x, sigma, (condition,))[0]
+
+    def batchable(self, values: tuple[_LTXAVModelConditioning, ...]) -> bool:
+        if not values:
+            return False
+        first = next(iter(values))
+        return all(
+            value.text.shape[1:] == first.text.shape[1:]
+            and value.frame_rate == first.frame_rate
+            and _reference_audio_equal(value.reference_audio, first.reference_audio)
+            and value.execution == first.execution
+            and value.generated_keyframes == first.generated_keyframes
+            for value in values[1:]
+        )
+
+    def evaluate_conditioning_batch(
+        self, x: torch.Tensor, sigma: float, values: tuple[_LTXAVModelConditioning, ...]
+    ) -> tuple[torch.Tensor, ...]:
+        _check_cancelled(self.cancelled)
+        if not values or not self.batchable(values):
+            raise LTXAVRuntimeError("LTX-2 model evaluation requires conditioning")
+        first = next(iter(values))
+        batch = x.shape[0]
+        base = calculate_input(Parameterization.FLOW, sigma, x).to(self.compute_dtype)
+        model_input = base if len(values) == 1 else torch.cat((base,) * len(values))
+        video_input, audio_input = unpack_av_latents(model_input, self.latent_context.stream_shapes)
+        text = torch.cat(tuple(to_batch(value.text, batch) for value in values))
+        timestep = self.space.timestep(sigma)
+        arguments: dict[str, object] = {}
+        if self.latent_context.video_mask is None or self.latent_context.audio_mask is None:
+            video_timesteps = torch.full(
+                (model_input.shape[0],), timestep, device=self.device, dtype=torch.float32
+            )
+            audio_timesteps = video_timesteps
+        else:
+            video_mask = to_batch(
+                self.latent_context.video_mask.to(self.device, self.compute_dtype), batch
+            )
+            audio_mask = to_batch(
+                self.latent_context.audio_mask.to(self.device, self.compute_dtype), batch
+            )
+            video_timesteps = (video_mask.float() * timestep).flatten(1)
+            audio_timesteps = (audio_mask.float() * timestep).flatten(1)
+            if len(values) > 1:
+                video_timesteps = torch.cat((video_timesteps,) * len(values))
+                audio_timesteps = torch.cat((audio_timesteps,) * len(values))
+                video_mask = torch.cat((video_mask,) * len(values))
+            arguments["denoise_mask"] = video_mask
+        if first.reference_audio is not None:
+            reference = to_batch(first.reference_audio, batch)
+            if len(values) > 1:
+                reference = torch.cat((reference,) * len(values))
+            arguments["ref_audio_tokens"] = reference
+        arguments.update(
+            stg_self_attn_blocks=first.execution.stg_self_attn_blocks,
+            a2v_cross_attention=first.execution.a2v_cross_attention,
+            v2a_cross_attention=first.execution.v2a_cross_attention,
+            generated_keyframes=first.generated_keyframes,
+            context_preprocessed=True,
+        )
+        video_velocity, audio_velocity = self.owner.assembled.diffusion(
+            video_input,
+            audio_input,
+            video_timesteps,
+            audio_timesteps,
+            text,
+            attention_mask=None,
+            frame_rate=first.frame_rate,
+            **arguments,
+        )
+        velocity = pack_av_latents((video_velocity, audio_velocity))[0].float()
+        return tuple(
+            calculate_denoised(Parameterization.FLOW, sigma, output, x)
+            for output in velocity.chunk(len(values))
+        )
+
+
+def _ltxav_denoiser(
+    runtime: object, compute_dtype: torch.dtype, context: SamplingAdapterContext
+) -> SamplingDenoiserExecution:
+    owner = cast("LTXAVDiffusionRuntime", runtime)
+    if context.inputs is None or context.device is None:
+        raise RuntimeError("LTX-2 sampling context is unresolved")
+    latent_context = cast("_LTXAVLatentContext", context.inputs.latent_context)
+    evaluator = _LTXAVSamplingDenoiser(
+        owner,
+        latent_context,
+        device=context.device,
+        compute_dtype=compute_dtype,
+        space=cast("FluxFlowSigmas", owner.sampling_sigma_space()),
+        cancelled=context.cancelled,
+    )
+    return SamplingDenoiserExecution(
+        cast("SamplingDenoiserAdapter", evaluator),
+        process_in=lambda value: value,
+        process_out=lambda value: value,
+        unpack_state=lambda value: unpack_latent_streams(value, latent_context.layout),
+        denoise_mask_prepared=True,
+        fixed_inpaint_latent=True,
+    )
+
+
+def _ltxav_device(runtime: object) -> torch.device:
+    model = cast("LTXAVDiffusionRuntime", runtime).assembled.diffusion
+    return bound_compute_device(model.patchify_proj) or model.patchify_proj.weight.device
+
+
+def _ltxav_compute_dtype(runtime: object) -> torch.dtype:
+    return (
+        cast("LTXAVDiffusionRuntime", runtime).assembled.compute_dtype("diffusion")
+        or torch.bfloat16
+    )
+
+
 class LTXAVDiffusionRuntime(MultiStreamSamplingRuntime):
     """Diffusion-only LTX-2 custom-sampling runtime."""
 
@@ -752,6 +1091,13 @@ class LTXAVDiffusionRuntime(MultiStreamSamplingRuntime):
     supports_denoised_capture = True
     supports_batch_noise_indices = False
     supports_sampling_shift = True
+    sampling_execution_registration = SamplingExecutionRegistration(
+        latent=cast("SamplingLatentAdapter", _LTXAVLatentAdapter()),
+        denoiser=_ltxav_denoiser,
+        device=_ltxav_device,
+        compute_dtype=_ltxav_compute_dtype,
+        flow=True,
+    )
     supports_audio_cfg = True
 
     def __init__(
@@ -795,6 +1141,7 @@ class LTXAVDiffusionRuntime(MultiStreamSamplingRuntime):
         self._schedulers = (
             torch_scheduler_registry() if scheduler_registry is None else scheduler_registry
         )
+        self._guidance = None
 
     @property
     def assembled(self) -> _LTXAVDiffusionAssembly:
@@ -871,6 +1218,10 @@ class LTXAVDiffusionRuntime(MultiStreamSamplingRuntime):
             return identity + ":" + suffix
         return identity
 
+    @property
+    def text_dim(self) -> int:
+        return self._text_dim
+
     def prepare_conditioning(
         self,
         carrier: ConditioningCarrier,
@@ -923,377 +1274,7 @@ class LTXAVDiffusionRuntime(MultiStreamSamplingRuntime):
         )
         return unpack_latent_streams(prepare_noise(packed_f32, seed), noise_layout)
 
-    def sample_custom(
-        self,
-        latent: CustomSamplingLatentValue,
-        *,
-        noise: CustomSamplingLatentValue,
-        cond: CustomSamplingCondValue,
-        cfg: CustomSamplingCfgValue = None,
-        request: CustomSamplingRequest[torch.Tensor],
-        seed: int = 0,
-        guidance: float | None = None,
-        denoise_mask: CustomSamplingLatentValue | None = None,
-        inpaint: InpaintConditioning[torch.Tensor] | None = None,
-        context_windows: ContextWindowsSpec | None = None,
-        on_step: StepCallback | None = None,
-        on_state: SamplingStateCallback | None = None,
-        cancelled: Callable[[], bool] | None = None,
-        observer: ExecutionObserverAttachment | None = None,
-        parent_span_id: int | None = None,
-        compute_dtype: torch.dtype | None = None,
-        device: torch.device | str | None = None,
-        sampling_shift: float | None = None,
-        capture_denoised: bool = True,
-    ) -> CustomSamplingResult[MultiStreamLatent[torch.Tensor]]:
-        del observer, parent_span_id
-        model = self.assembled.diffusion
-        text_dim = self._text_dim
-        streams, video, audio = _av_streams(latent, video_channels=model.config.in_channels)
-        if type(noise) is not MultiStreamLatent:
-            raise LTXAVRuntimeError(
-                "LTX-2 audio-video custom sampling requires MultiStreamLatent noise"
-            )
-        noise_streams = noise
-        if noise_streams.roles != streams.roles:
-            raise LTXAVRuntimeError(
-                "LTX-2 audio-video noise streams must match the latent stream roles"
-            )
-        noise_video = noise_streams.by_role("video")
-        noise_audio = noise_streams.by_role("audio")
-        for noise_stream, reference in ((noise_video, video), (noise_audio, audio)):
-            if (
-                type(noise_stream) is not torch.Tensor
-                or not noise_stream.is_floating_point()
-                or noise_stream.layout != torch.strided
-            ):
-                raise TypeError(
-                    "LTX-2 audio-video noise streams must be exact strided floating"
-                    " torch.Tensor values"
-                )
-            if tuple(noise_stream.shape) != tuple(reference.shape):
-                raise LTXAVRuntimeError(
-                    "LTX-2 audio-video noise streams must match the latent stream shapes"
-                )
-        if isinstance(cfg, PerpNegSamplingGuidance):
-            raise LTXAVRuntimeError(
-                "LTX-2 audio-video custom sampling does not support PerpNegSamplingGuidance"
-                " (perp-neg guidance); pass SamplingGuidance"
-            )
-        if type(cond) is not PreparedMultiStreamConditioning:
-            raise LTXAVRuntimeError(
-                "LTX-2 audio-video custom sampling requires prepared multi-stream conditioning"
-            )
-        if cond.runtime_identity != self.conditioning_identity:
-            raise LTXAVRuntimeError(
-                "LTX-2 audio-video conditioning was prepared by a different conditioner component"
-            )
-        conditioning = cond.payload
-        if type(conditioning) is not LTXAVPreparedConditioning:
-            raise TypeError("conditioning must be exact LTXAVPreparedConditioning")
-        _validate_text(conditioning.text, text_dim=text_dim)
-
-        def unwrap_lane(value: object) -> LTXAVPreparedConditioning | None:
-            if value is None:
-                return None
-            if type(value) is not PreparedMultiStreamConditioning:
-                raise LTXAVRuntimeError(
-                    "LTX-2 audio-video custom sampling guidance requires prepared"
-                    " multi-stream conditioning"
-                )
-            if value.runtime_identity != cond.runtime_identity:
-                raise LTXAVRuntimeError(
-                    "LTX-2 audio-video guidance lanes were prepared by different"
-                    " conditioner components"
-                )
-            payload = value.payload
-            if type(payload) is not LTXAVPreparedConditioning:
-                raise TypeError(
-                    "LTX-2 audio-video guidance lanes require exact LTXAVPreparedConditioning"
-                )
-            _validate_text(payload.text, text_dim=text_dim)
-            return payload
-
-        guidance_cfg: SamplingGuidance[object] | DualSamplingGuidance[object] | None
-        uncond_lane: LTXAVPreparedConditioning | None = None
-        middle_lane: LTXAVPreparedConditioning | None = None
-        if cfg is None:
-            guidance_cfg = None
-        elif isinstance(cfg, DualSamplingGuidance):
-            dual = cast("DualSamplingGuidance[object]", cfg)
-            uncond_lane = unwrap_lane(dual.uncond)
-            middle_lane = unwrap_lane(dual.middle)
-            guidance_cfg = replace(dual, uncond=uncond_lane, middle=middle_lane)
-        else:
-            base = cast("SamplingGuidance[object]", cfg)
-            uncond_lane = unwrap_lane(base.uncond)
-            guidance_cfg = base if base.uncond is None else replace(base, uncond=uncond_lane)
-        # The model takes one scalar frame rate; guidance lanes cannot
-        # disagree on it.
-        frame_rate = conditioning.frame_rate
-        for lane in (uncond_lane, middle_lane):
-            if lane is not None and lane.frame_rate != frame_rate:
-                raise LTXAVRuntimeError(
-                    "LTX-2 audio-video guidance lanes must share one frame rate"
-                )
-            if lane is not None and not _reference_audio_equal(
-                lane.reference_audio, conditioning.reference_audio
-            ):
-                raise LTXAVRuntimeError(
-                    "LTX-2 audio-video guidance lanes must share the same reference audio"
-                )
-            if lane is not None and lane.generated_keyframes != conditioning.generated_keyframes:
-                raise LTXAVRuntimeError(
-                    "LTX-2 audio-video guidance lanes must share generated keyframes"
-                )
-        self.check_custom_sampling(
-            request,
-            has_denoise_mask=denoise_mask is not None,
-            has_inpaint=inpaint is not None,
-            has_context_windows=context_windows is not None,
-            guidance=guidance,
-        )
-        sampler, request = resolve_custom_sampling_request(
-            self._samplers, request, error=LTXAVRuntimeError
-        )
-        if cancelled is None:
-            cancelled = sampling_environment_cancellation()
-        _check_cancelled(cancelled)
-        sigmas = _sigma_space(sampling_shift)
-        schedule_plan = build_custom_sampling_schedule(request.sigmas, sigmas, sampler, flow=True)
-        schedule = schedule_plan.sigmas
-        guidance_plan = compile_guidance_plan(conditioning, guidance_cfg, sampler, None)
-        weight = model.patchify_proj.weight
-        model_device = bound_compute_device(model.patchify_proj) or weight.device
-        load_device = model_device if device is None else torch.device(device)
-        selected_dtype = (
-            self.assembled.compute_dtype("diffusion") or torch.bfloat16
-            if compute_dtype is None
-            else compute_dtype
-        )
-        video = video.to(load_device)
-        audio = audio.to(load_device)
-        device_streams = MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))
-        packed, layout = pack_latent_streams(device_streams)
-        stream_shapes = (tuple(video.shape), tuple(audio.shape))
-        model_video_mask: torch.Tensor | None = None
-        model_audio_mask: torch.Tensor | None = None
-        sampler_mask: torch.Tensor | None = None
-        if denoise_mask is not None:
-            try:
-                normalized = normalize_latent_mask(
-                    cast("torch.Tensor | MultiStreamLatent[torch.Tensor]", denoise_mask),
-                    device_streams,
-                )
-            except (TypeError, ValueError) as error:
-                raise LTXAVRuntimeError(
-                    f"LTX-2 audio-video denoise mask is invalid: {error}"
-                ) from None
-            if any(
-                not bool(torch.isfinite(mask.payload).all())
-                or float(mask.payload.amin()) < 0.0
-                or float(mask.payload.amax()) > 1.0
-                for mask in normalized.streams
-            ):
-                raise LTXAVRuntimeError(
-                    "LTX-2 audio-video denoise mask values must be finite within [0, 1]"
-                )
-            sampler_mask = pack_latent_streams(normalized)[0]
-            model_video_mask = normalized.by_role("video")[:, :1].to(dtype=selected_dtype)
-            model_audio_mask = normalized.by_role("audio")[:, :1, :, :1].to(dtype=selected_dtype)
-
-        def prepare_conditioning(value: object, _role: GuidanceRole) -> _LTXAVModelConditioning:
-            _check_cancelled(cancelled)
-            if type(value) is not LTXAVPreparedConditioning:
-                raise TypeError(
-                    "LTX-2 audio-video guidance lanes require exact prepared conditioning"
-                )
-            text = _validate_text(value.text, text_dim=text_dim).to(
-                device=load_device, dtype=selected_dtype
-            )
-            text = model.preprocess_text_embeds(text)
-            reference_audio = value.reference_audio
-            if reference_audio is not None:
-                if reference_audio.shape[2] != model.config.audio_in_channels:
-                    raise LTXAVRuntimeError(
-                        "LTX-2 reference-audio token width must match the audio model"
-                    )
-                reference_audio = reference_audio.to(device=load_device, dtype=selected_dtype)
-            return _LTXAVModelConditioning(
-                text,
-                value.frame_rate,
-                reference_audio,
-                value.execution,
-                value.generated_keyframes,
-            )
-
-        def evaluate_batch(
-            x: torch.Tensor,
-            sigma: float,
-            contexts: tuple[_LTXAVModelConditioning, ...],
-        ) -> tuple[torch.Tensor, ...]:
-            _check_cancelled(cancelled)
-            if not contexts:
-                raise LTXAVRuntimeError("LTX-2 model evaluation requires conditioning")
-            first_context = next(iter(contexts))
-            batch = x.shape[0]
-            lane_frame_rate = first_context.frame_rate
-            base_input = calculate_input(Parameterization.FLOW, sigma, x).to(selected_dtype)
-            model_input = base_input
-            if len(contexts) > 1:
-                model_input = torch.cat((base_input,) * len(contexts))
-            video_input, audio_input = unpack_av_latents(model_input, stream_shapes)
-            context = torch.cat(tuple(to_batch(value.text, batch) for value in contexts))
-            timestep = sigmas.timestep(sigma)
-            model_arguments: dict[str, object] = {}
-            if model_video_mask is None or model_audio_mask is None:
-                video_timesteps = torch.full(
-                    (model_input.shape[0],),
-                    timestep,
-                    device=load_device,
-                    dtype=torch.float32,
-                )
-                audio_timesteps = video_timesteps
-            else:
-                video_mask = to_batch(model_video_mask, batch)
-                audio_mask = to_batch(model_audio_mask, batch)
-                video_timesteps = (video_mask.float() * timestep).flatten(1)
-                audio_timesteps = (audio_mask.float() * timestep).flatten(1)
-                if len(contexts) > 1:
-                    video_timesteps = torch.cat((video_timesteps,) * len(contexts))
-                    audio_timesteps = torch.cat((audio_timesteps,) * len(contexts))
-                    video_mask = torch.cat((video_mask,) * len(contexts))
-                model_arguments["denoise_mask"] = video_mask
-            if first_context.reference_audio is not None:
-                reference = to_batch(first_context.reference_audio, batch)
-                if len(contexts) > 1:
-                    reference = torch.cat((reference,) * len(contexts))
-                model_arguments["ref_audio_tokens"] = reference
-            model_arguments.update(
-                stg_self_attn_blocks=first_context.execution.stg_self_attn_blocks,
-                a2v_cross_attention=first_context.execution.a2v_cross_attention,
-                v2a_cross_attention=first_context.execution.v2a_cross_attention,
-                generated_keyframes=first_context.generated_keyframes,
-                context_preprocessed=True,
-            )
-            video_velocity, audio_velocity = model(
-                video_input,
-                audio_input,
-                video_timesteps,
-                audio_timesteps,
-                context,
-                attention_mask=None,
-                frame_rate=lane_frame_rate,
-                **model_arguments,
-            )
-            velocity = pack_av_latents((video_velocity, audio_velocity))[0].float()
-            outputs = velocity.chunk(len(contexts))
-            return tuple(
-                calculate_denoised(Parameterization.FLOW, sigma, output, x) for output in outputs
-            )
-
-        def batchable(contexts: tuple[_LTXAVModelConditioning, ...]) -> bool:
-            if not contexts:
-                return False
-            first = contexts[0]
-            return all(
-                value.text.shape[1:] == first.text.shape[1:]
-                and value.frame_rate == first.frame_rate
-                and _reference_audio_equal(value.reference_audio, first.reference_audio)
-                and value.execution == first.execution
-                and value.generated_keyframes == first.generated_keyframes
-                for value in contexts[1:]
-            )
-
-        evaluation = ConditioningEvaluation(
-            prepare_conditioning,
-            lambda x, sigma, context: evaluate_batch(x, sigma, (context,))[0],
-            batchable,
-            evaluate_batch,
-            evaluator_identity=lambda _role: "dinkster.ltxav.conditioning.v1",
-            standard_activation_memory_factor=self.family.memory_factor,
-        )
-
-        def report_step(event: StepEvent) -> None:
-            _check_cancelled(cancelled)
-            if on_step is not None:
-                on_step(event)
-
-        denoiser = guided_denoiser(
-            evaluation,
-            input=packed,
-            executor=None,
-            plan=guidance_plan,
-            execution=sampling_execution_context(schedule, seed, report_step, on_state),
-        )
-        if not schedule_plan.pre_offset:
-            return CustomSamplingResult(streams, None)
-
-        # Rounding a float32 draw to the sampling dtype here is
-        # bit-identical to drawing at the packed dtype (torch.randn
-        # always draws float32 first), so float32 noise from the
-        # composed KSampler path reproduces the reference draw exactly.
-        packed_noise, _ = pack_latent_streams(
-            MultiStreamLatent.from_pairs((("video", noise_video), ("audio", noise_audio)))
-        )
-        packed_noise = packed_noise.to(device=load_device, dtype=packed.dtype)
-        if sampler.noise in (NoiseKind.BROWNIAN, NoiseKind.BROWNIAN_GPU) and not any(
-            value > 0.0 for value in schedule_plan.pre_offset
-        ):
-            raise LTXAVRuntimeError("LTX-2 audio-video brownian sampler needs positive sigmas")
-        step_noise = brownian_step_noise(
-            sampler, schedule_plan, packed, seed=seed, device=load_device
-        )
-        captured_denoised: list[MultiStreamLatent[torch.Tensor]] = []
-
-        def state_progress(event: SamplingStateEvent[object]) -> None:
-            _check_cancelled(cancelled)
-            if capture_denoised:
-                denoised = event.denoised
-                if type(denoised) is MultiStreamLatent:
-                    captured_denoised[:] = [cast("MultiStreamLatent[torch.Tensor]", denoised)]
-            if on_state is not None:
-                on_state(event)
-            _check_cancelled(cancelled)
-
-        output = run_sampler_engine(
-            denoiser,
-            request.build_solver(),
-            latent=packed,
-            noise=packed_noise,
-            sigmas=schedule,
-            initial_sigma=schedule_plan.initial_sigma,
-            parameterization=Parameterization.FLOW,
-            sigma_min=sigmas.sigma_min,
-            sigma_max=sigmas.sigma_max,
-            # Both LTX-2 VAEs normalize latents themselves (encode returns
-            # normalized means; decode denormalizes), so the sampler-side
-            # latent transform is the identity.
-            process_in=lambda value: value,
-            process_out=lambda value: value,
-            seed=seed,
-            noise_kind=sampler.noise,
-            noise_sampler=step_noise,
-            percent_to_sigma=sigmas.percent_to_sigma,
-            device=load_device,
-            on_step=report_step,
-            on_state=state_progress if capture_denoised or on_state is not None else None,
-            unpack_state=lambda value: unpack_latent_streams(value, layout),
-            denoise_mask=sampler_mask,
-            fixed_inpaint_latent=True,
-        )
-        _check_cancelled(cancelled)
-        unpacked = unpack_latent_streams(output, layout)
-        output_latent = streams.replace("video", unpacked.by_role("video")).replace(
-            "audio", unpacked.by_role("audio")
-        )
-        denoised_output: MultiStreamLatent[torch.Tensor] | None = None
-        if captured_denoised:
-            last = captured_denoised[-1]
-            denoised_output = streams.replace("video", last.by_role("video")).replace(
-                "audio", last.by_role("audio")
-            )
-        return CustomSamplingResult(output_latent, denoised_output)
+    sample_custom = cast("Any", sampling_execution)  # noqa: F811
 
 
 class LTXAVTextRuntime:

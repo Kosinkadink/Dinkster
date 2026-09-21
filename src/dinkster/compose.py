@@ -2743,6 +2743,11 @@ class ServingComposer:
         protected_ro_exceptions.append(str(python.parent.parent))
         for name in _SANDBOX_RO_PATH_ENV:
             if value := effective_env.get(name):
+                if name == "DINKSTER_MOUNTS_SNAPSHOT" and any(
+                    Path(value).resolve().is_relative_to(Path(bound).resolve())
+                    for bound in ro_binds
+                ):
+                    continue
                 ro_binds.append(value)
                 if name == "DINKSTER_REMOTE_AUTH_TOKEN_FILE":
                     protected_ro_exceptions.append(value)
