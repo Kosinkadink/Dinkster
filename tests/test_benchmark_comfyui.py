@@ -563,6 +563,10 @@ class TestBuildGraph:
             (AUDIO_DECODE, "vae", AUDIO_VAE_LOADER, 0),
             (SINK, "images", DECODE, 0),
             (SINK, "audio", AUDIO_DECODE, 0),
+            (SINK, "conditioning", CONDITIONING, 0),
+            (SINK, "latent", CONDITIONING, 1),
+            (SINK, "final_latent", SAMPLER, 0),
+            (SINK, "sigmas", SCHEDULER, 0),
         }
 
     def test_flux_graph_routes_the_positive_through_flux_guidance(self) -> None:

@@ -331,7 +331,14 @@ class DinksterBenchmarkSink:
     def INPUT_TYPES(cls):
         return {
             "required": {"images": ("IMAGE", {})},
-            "optional": {"audio": ("AUDIO", {})},
+            "optional": {
+                "audio": ("AUDIO", {}),
+                "conditioning": ("CONDITIONING", {}),
+                "latent": ("LATENT", {}),
+                "final_latent": ("LATENT", {}),
+                "sigmas": ("SIGMAS", {}),
+                "seed": ("INT", {"default": 0}),
+            },
         }
 
     RETURN_TYPES = ()
@@ -339,7 +346,16 @@ class DinksterBenchmarkSink:
     OUTPUT_NODE = True
     CATEGORY = "dinkster_benchmark"
 
-    def observe(self, images, audio=None):
+    def observe(
+        self,
+        images,
+        audio=None,
+        conditioning=None,
+        latent=None,
+        final_latent=None,
+        sigmas=None,
+        seed=0,
+    ):
         global _QUALITY_CAPTURED, _QUALITY_CAPTURE_ARMED, _QUALITY_CAPTURE_SEED
         observation = {
             "finite": bool(torch.isfinite(images).all().item()),
@@ -372,6 +388,33 @@ class DinksterBenchmarkSink:
                     spatial_stride=None,
                 )
                 capture["audio_sample_rate"] = audio["sample_rate"]
+            if conditioning is not None:
+                capture["text_context"] = _capture_quality_tensor(
+                    conditioning[0][0],
+                    output_dir / "text_context.npy",
+                    spatial_stride=None,
+                )
+            if latent is not None:
+                noise = importlib.import_module("comfy.sample").prepare_noise(
+                    latent["samples"], seed
+                )
+                capture["initial_noise"] = _capture_nested_tensor(
+                    noise,
+                    output_dir,
+                    "initial_noise",
+                )
+            if final_latent is not None:
+                capture["final_latent"] = _capture_nested_tensor(
+                    final_latent["samples"],
+                    output_dir,
+                    "final_latent",
+                )
+            if sigmas is not None:
+                capture["sigmas"] = _capture_quality_tensor(
+                    sigmas,
+                    output_dir / "sigmas.npy",
+                    spatial_stride=None,
+                )
             observation["quality_capture"] = capture
             _QUALITY_CAPTURED = True
             _QUALITY_CAPTURE_ARMED = False
@@ -610,6 +653,19 @@ def _capture_quality_tensor(tensor, path: Path, *, spatial_stride: int | None):
         "source_shape": list(source_shape),
         "captured_shape": list(captured_shape),
         "spatial_stride": spatial_stride,
+    }
+
+
+def _capture_nested_tensor(value, output_dir: Path, stem: str):
+    tensors = value.unbind() if value.is_nested else (value,)
+    roles = ("video", "audio") if len(tensors) == 2 else tuple(str(i) for i in range(len(tensors)))
+    return {
+        role: _capture_quality_tensor(
+            tensor,
+            output_dir / f"{stem}_{role}.npy",
+            spatial_stride=None,
+        )
+        for role, tensor in zip(roles, tensors, strict=True)
     }
 
 
