@@ -22,6 +22,9 @@ uv sync --python 3.12 --all-packages --frozen
 uv run dinkster setup
 ```
 
+Until both repositories become public, these clone commands require a GitHub
+account with access; authenticated users may instead use `gh repo clone`.
+
 PowerShell, Command Prompt, and POSIX shells use the same commands. The setup
 command creates the local library and managed-pack roots under `~/.dinkster`
 (`%USERPROFILE%\.dinkster` on Windows). Set `DINKSTER_HOME` before setup and
@@ -70,26 +73,57 @@ and `dinkster[supervisor]` extras. The default `dinkster` install selects both.
 
 ## Generate a first image
 
-The launcher does not download model weights. Install the supported execution
-runtime and SD 1.5 checkpoint described in [installation](install.md#browser-frontend-and-native-generation),
-then point the native worker at that PyTorch environment when launching. POSIX
-shells can set the interpreter for the command:
+The launcher does not download model weights. Download the SD 1.5 checkpoint
+`v1-5-pruned-emaonly-fp16.safetensors` into a dedicated models folder, then add
+that folder to `~/.dinkster/library/mounts.toml`:
 
-```sh
-DINKSTER_EXECUTION_PYTHON=/absolute/path/to/pytorch-venv/bin/python uv run dinkster
+```toml
+[mounts.models]
+path = "/absolute/path/to/models"
+mode = "read"
+priority = 0
 ```
 
-In PowerShell, set the environment variable before launching:
+On Windows, use a TOML path such as `C:/Users/name/Models`. Keep the existing
+`[settings]` and `[mounts.output]` sections that `dinkster setup` created. See
+[installation](install.md#model-folders) for the full format.
+
+From the Dinkster checkout, build the execution environments and launch with
+the environment for your accelerator. On Linux with an NVIDIA GPU:
+
+```sh
+./scripts/setup_envs.sh
+DINKSTER_EXECUTION_PYTHON="$PWD/.venv-gpu/bin/python" uv run dinkster
+```
+
+On Windows with an NVIDIA GPU:
 
 ```powershell
-$env:DINKSTER_EXECUTION_PYTHON = 'C:\absolute\path\to\pytorch-venv\Scripts\python.exe'
+./scripts/setup_envs.ps1
+$env:DINKSTER_EXECUTION_PYTHON = "$PWD\.venv-gpu\Scripts\python.exe"
 uv run dinkster
 ```
 
-Keep this interpreter setting when the launcher refreshes pack catalogs. The
-selected Python must contain PyTorch and the native inference packages. No
-ComfyUI checkout or server is required. Then use the standard SD 1.5
-text-to-image workflow:
+The setup scripts create `.venv-gpu` only when they detect an NVIDIA GPU. For a
+CPU run on Linux or Windows, use `.venv-torch/bin/python` or
+`.venv-torch\Scripts\python.exe` instead. On macOS Apple Silicon,
+`./scripts/setup_envs.sh` installs MPS support in `.venv-torch`, so launch with:
+
+```sh
+DINKSTER_EXECUTION_PYTHON="$PWD/.venv-torch/bin/python" uv run dinkster
+```
+
+Keep this interpreter setting when the launcher refreshes pack catalogs. No
+ComfyUI checkout or server is required.
+
+The starter gallery opens on an empty workflow. Select **Stable Diffusion
+1.5**, or open **Library > Templates** and select it there. In the template's
+`Load Checkpoint` node, open **Browse**, choose the mounted checkpoint, and
+select **Run**. The image appears in the preview and the output mount. If
+Browse says that no mounted models are available, check the `models` path in
+`mounts.toml` and restart Dinkster so it can scan the folder.
+
+To build the same workflow manually instead:
 
 1. Load the checkpoint with `Load Checkpoint`.
 2. Enter positive and negative text in the two `CLIP Text Encode` nodes.
