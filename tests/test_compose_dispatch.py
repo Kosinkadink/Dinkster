@@ -2745,7 +2745,7 @@ def test_execution_identity_and_dead_owner_fail_loudly(tmp_path: Path) -> None:
             "owned.echo",
             executes=("owned.echo",),
         )
-        digest = "sha256:" + "ab" * 32
+        digest = "blake3:" + "ab" * 32
         spec = PackSpec(
             manifest=manifest,
             packs={"owner": PackInfo(display_name="Owner", artifact_digest=digest)},

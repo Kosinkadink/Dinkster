@@ -747,7 +747,7 @@ def test_hint_does_not_share_cache_across_different_execution_identities(tmp_pat
                         packs={
                             "local-iso": PackInfo(
                                 display_name="Local ISO",
-                                artifact_digest="sha256:" + "a" * 64,
+                                artifact_digest="blake3:" + "a" * 64,
                             )
                         },
                     )

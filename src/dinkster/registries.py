@@ -92,6 +92,7 @@ class PublishFinding:
 class PublishVerdict:
     state: str
     findings: tuple[PublishFinding, ...]
+    candidate_id: str = ""
 
 
 def _publish_request(
@@ -107,7 +108,12 @@ def _publish_request(
     except urllib.error.HTTPError as exc:
         try:
             body: object = json.loads(exc.read())
-            message = cast("dict[str, object]", body).get("error")
+            error = cast("dict[str, object]", body).get("error")
+            message = (
+                cast("dict[str, object]", error).get("message")
+                if isinstance(error, dict)
+                else error
+            )
         except (ValueError, AttributeError):
             message = None
         detail = f": {message}" if isinstance(message, str) else ""
@@ -121,55 +127,35 @@ def _publish_request(
 def publish_release(
     registry: NamedRegistry,
     archive: Path,
-    digest: str,
+    pack_name: str,
     version: str,
     *,
     timeout: float = DEFAULT_RESOLVE_TIMEOUT,
 ) -> PublishVerdict:
-    """Upload one canonical artifact and submit it for server-side admission."""
+    """Submit one canonical artifact to the service's admission queue."""
     headers = {"User-Agent": "dinkster-pack"}
     token = registry.token()
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    digest_hex = digest.partition(":")[2]
-    upload = urllib.request.Request(
-        f"{registry.endpoint}/artifacts/{digest_hex}.zip",
+    submit = urllib.request.Request(
+        f"{registry.endpoint}/v1/publish/{pack_name}/versions/{version}",
         data=archive.read_bytes(),
         headers={**headers, "Content-Type": "application/zip"},
-        method="PUT",
-    )
-    _publish_request(registry, upload, action="artifact upload", timeout=timeout)
-    body = json.dumps({"version": version, "artifactDigest": digest}).encode()
-    submit = urllib.request.Request(
-        f"{registry.endpoint}/publish",
-        data=body,
-        headers={**headers, "Content-Type": "application/json"},
         method="POST",
     )
-    payload = _publish_request(registry, submit, action="publish admission", timeout=timeout)
+    payload = _publish_request(registry, submit, action="publish submission", timeout=timeout)
     try:
         decoded: object = json.loads(payload)
         document = cast("dict[str, object]", decoded)
-        state = document["state"]
-        raw_findings = document["findings"]
-        if state not in ("accepted", "needs_review", "rejected") or not isinstance(
-            raw_findings, list
-        ):
+        state = document["status"]
+        candidate_id = document["candidateId"]
+        if not isinstance(state, str) or state != "queued" or not isinstance(candidate_id, str):
             raise TypeError
-        findings: list[PublishFinding] = []
-        for raw in cast("list[object]", raw_findings):
-            if not isinstance(raw, dict):
-                raise TypeError
-            finding = cast("dict[str, object]", raw)
-            code, message = finding.get("code"), finding.get("message")
-            if not isinstance(code, str) or not isinstance(message, str):
-                raise TypeError
-            findings.append(PublishFinding(code=code, message=message))
     except (ValueError, KeyError, TypeError) as exc:
         raise RegistryPublishError(
-            f"registry {registry.label} answered publish admission with a malformed verdict"
+            f"registry {registry.label} answered publish submission with a malformed receipt"
         ) from exc
-    return PublishVerdict(state=state, findings=tuple(findings))
+    return PublishVerdict(state=state, findings=(), candidate_id=candidate_id)
 
 
 @dataclass(frozen=True)
@@ -444,29 +430,34 @@ def resolve_release(
     wanted_pack = canonical_name(pack)
     fields = _index_get(
         registry,
-        f"/index/packs/{wanted_pack}/versions/{version}",
+        f"/v1/packs/{wanted_pack}/versions/{version}",
         action=f"resolving {wanted_pack}@{version}",
         subject=f"{wanted_pack}@{version}",
         missing=f"registry {registry.label} publishes no release {wanted_pack}@{version}",
         timeout=timeout,
     )
-    answered_pack = fields.get("pack")
+    answered_pack = fields.get("packName")
     answered_version = fields.get("version")
-    digest = fields.get("artifactDigest")
-    publisher = fields.get("publisher")
-    claims = fields.get("claims")
+    artifact = fields.get("artifact")
+    published_by = fields.get("publishedBy")
+    digest = (
+        cast("dict[str, object]", artifact).get("digest") if isinstance(artifact, dict) else None
+    )
+    publisher = (
+        cast("dict[str, object]", published_by).get("principalId")
+        if isinstance(published_by, dict)
+        else None
+    )
     if (
         not isinstance(answered_pack, str)
         or not isinstance(answered_version, str)
         or not isinstance(digest, str)
         or not isinstance(publisher, str)
-        or not isinstance(claims, list)
-        or not all(isinstance(claim, str) for claim in cast("list[object]", claims))
     ):
         raise InstallError(
             f"registry {registry.label} answered {wanted_pack}@{version} with a "
-            f"malformed release record (need pack/version/artifactDigest/"
-            f"publisher strings and a claims list)"
+            f"malformed release record (need packName/version, artifact digest, "
+            f"and publishing principal strings)"
         )
     if answered_pack != wanted_pack or answered_version != version:
         raise InstallError(
@@ -485,7 +476,7 @@ def resolve_release(
         version=version,
         artifact_digest=digest,
         publisher=canonical_name(publisher),
-        claims=tuple(canonical_name(claim) for claim in cast("list[str]", claims)),
+        claims=(),
         source=registry.source,
     )
 
@@ -497,7 +488,6 @@ class PackSummary:
     pack: str
     publisher: str
     latest_version: str
-    versions: int
 
 
 @dataclass(frozen=True)
@@ -527,8 +517,10 @@ class TemplatePage:
     cursor: str
 
 
-def _page_cursor(fields: dict[str, object], registry: NamedRegistry, subject: str) -> str:
-    cursor = fields.get("cursor", "")
+def _page_cursor(
+    fields: dict[str, object], registry: NamedRegistry, subject: str, *, key: str = "cursor"
+) -> str:
+    cursor = fields.get(key) or ""
     if not isinstance(cursor, str):
         raise InstallError(f"registry {registry.label} answered {subject} with a malformed cursor")
     return cursor
@@ -552,15 +544,15 @@ def browse_packs(
         params.append(("cursor", cursor))
     fields = _index_get(
         registry,
-        "/index/packs?" + urllib.parse.urlencode(params),
+        "/v1/packs?" + urllib.parse.urlencode(params),
         action="browsing the pack index",
         subject="the pack index",
         timeout=timeout,
     )
-    rows = fields.get("packs")
+    rows = fields.get("items")
     if not isinstance(rows, list):
         raise InstallError(
-            f"registry {registry.label} answered the pack index without a packs list"
+            f"registry {registry.label} answered the pack index without an items list"
         )
     packs: list[PackSummary] = []
     for row in cast("list[object]", rows):
@@ -569,26 +561,25 @@ def browse_packs(
                 f"registry {registry.label} answered the pack index with a non-object row"
             )
         entry = cast("dict[str, object]", row)
-        pack = entry.get("pack")
-        publisher = entry.get("publisher")
+        pack = entry.get("name")
+        owner = entry.get("owner")
+        publisher = (
+            cast("dict[str, object]", owner).get("slug") if isinstance(owner, dict) else None
+        )
         latest = entry.get("latestVersion")
-        versions = entry.get("versions")
         if (
             not isinstance(pack, str)
             or not isinstance(publisher, str)
             or not isinstance(latest, str)
-            or not isinstance(versions, int)
         ):
             raise InstallError(
                 f"registry {registry.label} answered the pack index with a malformed "
-                f"row (need pack/publisher/latestVersion strings and a versions count)"
+                f"row (need name/latestVersion strings and an owner slug)"
             )
-        packs.append(
-            PackSummary(pack=pack, publisher=publisher, latest_version=latest, versions=versions)
-        )
+        packs.append(PackSummary(pack=pack, publisher=publisher, latest_version=latest))
     return PackPage(
         packs=tuple(packs),
-        cursor=_page_cursor(fields, registry, "the pack index"),
+        cursor=_page_cursor(fields, registry, "the pack index", key="nextCursor"),
     )
 
 
