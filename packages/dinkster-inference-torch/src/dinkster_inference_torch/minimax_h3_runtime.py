@@ -1533,7 +1533,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                     inner_kernel = None
                     sequence_group_ranks: tuple[int, ...] = ()
                     try:
-                        av = unpack_latent_streams(x, layout)
+                        av = unpack_latent_streams(x.to(dtype=compute_dtype), layout)
                         facts = _packed_sequence_facts(
                             av,
                             context,
@@ -1687,7 +1687,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                         sequence_sharding=sharding,
                     )
                 else:
-                    av = unpack_latent_streams(x, layout)
+                    av = unpack_latent_streams(x.to(dtype=compute_dtype), layout)
                     if attention_kernel_factory is None:
                         velocity = model(
                             av,

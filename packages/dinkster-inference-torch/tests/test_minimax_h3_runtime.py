@@ -174,8 +174,8 @@ class FakeDiT:
         if attention_kernel_factory is not None:
             attention_kernel_factory(MiniMaxH3PackedSequenceFacts(1, ((0, 1, "video"),)))
         return _h3(
-            torch.full_like(value.by_role("video"), self.value),
-            torch.full_like(value.by_role("audio"), self.value),
+            torch.full_like(value.by_role("video"), self.value, dtype=torch.float32),
+            torch.full_like(value.by_role("audio"), self.value, dtype=torch.float32),
         )
 
 
@@ -1048,6 +1048,7 @@ class ContextMeanDiT:
     def __init__(self) -> None:
         self.calls: list[float] = []
         self.preprocessed_contexts: list[torch.Tensor] = []
+        self.input_dtypes: list[torch.dtype] = []
         self.video_patch_proj = torch.nn.Linear(1, 1, bias=False)
 
     def preprocess_text_embeddings(self, context: torch.Tensor) -> torch.Tensor:
@@ -1067,9 +1068,10 @@ class ContextMeanDiT:
         del sigma, conditioning, sigmas, denoise_mask
         velocity = float(context.mean())
         self.calls.append(velocity)
+        self.input_dtypes.append(value.by_role("video").dtype)
         return _h3(
-            torch.full_like(value.by_role("video"), velocity),
-            torch.full_like(value.by_role("audio"), velocity),
+            torch.full_like(value.by_role("video"), velocity, dtype=torch.float32),
+            torch.full_like(value.by_role("audio"), velocity, dtype=torch.float32),
         )
 
 
@@ -1087,6 +1089,25 @@ def _context_mean_runtime() -> tuple[
         runtime_identity="test:h3:conditioner",
     )
     return runtime, conditioner, dit
+
+
+def test_sampling_casts_latents_to_the_diffusion_compute_dtype() -> None:
+    runtime, conditioner, dit = _context_mean_runtime()
+    target = _target()
+
+    runtime.sample_multistream(
+        target,
+        conditioning=_condition_t2va(conditioner, target),
+        cfg=SamplingGuidance(None, 1.0),
+        sampler_id="euler",
+        scheduler_id="simple",
+        steps=1,
+        denoise=1.0,
+        seed=123,
+        cancelled=lambda: False,
+    )
+
+    assert dit.input_dtypes == [torch.bfloat16]
 
 
 def _condition_t2va(
