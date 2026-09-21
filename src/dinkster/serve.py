@@ -60,6 +60,7 @@ from dinkster_assets import (
     ResolverIndexError,
     ResolverSubscriptionStore,
     load_mounts,
+    load_output_mount,
     require_region,
 )
 from dinkster_assets.resolution import ResolutionStore
@@ -1617,6 +1618,7 @@ def main(argv: list[str] | None = None) -> None:
         mount_table = MountTable(
             mounts_snapshot,
             index_root=library_root / "asset-indexes",
+            output_mount=load_output_mount(mounts_config),
         )
         try:
             for mount in load_mounts(mounts_config):
@@ -1651,6 +1653,13 @@ def main(argv: list[str] | None = None) -> None:
                 )
                 sandbox_mounts.append(mount)
                 redaction_roots.append((f"<mount:{model_root.mount_id}>", model_root.path))
+        if mount_table.output_mount is None:
+            output_mount = mount_table.get("output")
+            comfy_output_mount = mount_table.get("comfy-output")
+            if output_mount is not None and output_mount.mode == "readwrite":
+                mount_table.select_output_mount("output")
+            elif comfy_output_mount is not None and comfy_output_mount.mode == "readwrite":
+                mount_table.select_output_mount("comfy-output", require_config=False)
         mount_service = MountService(
             mount_table, mounts_config, allow_changes=args.allow_mount_changes
         )

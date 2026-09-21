@@ -102,6 +102,7 @@ from .mounts import (
     MountTable,
     dump_mounts,
     load_mounts,
+    load_output_mount,
     parse_mounts,
 )
 from .need import (
@@ -356,6 +357,7 @@ __all__ = [
     "is_asset_kind",
     "is_digest",
     "load_mounts",
+    "load_output_mount",
     "load_write_records",
     "match_confidence",
     "normalize_guess_query",
