@@ -2266,26 +2266,26 @@ def test_preprocessed_text_embeddings_preserve_forward_output() -> None:
     assert torch.equal(hoisted.by_role("audio"), direct.by_role("audio"))
 
 
-def test_fp16_text_preprocessing_feeds_bf16_diffusion() -> None:
+def test_fp32_text_preprocessing_feeds_bf16_diffusion() -> None:
     model = MiniMaxH3DiT(
         cast(MiniMaxH3Config, _ReducedConfig()),
         builtin_sdpa_kernel(),
         _evidence(),
         operations=CastOperations(torch.bfloat16),
         fp32_operations=CastOperations(torch.float32),
-        text_operations=CastOperations(torch.float16),
+        text_operations=CastOperations(torch.float32),
     )
     _fill_reduced_model(model)
     value, context = _inputs()
 
-    prepared = model.preprocess_text_embeddings(context.to(torch.float16))
+    prepared = model.preprocess_text_embeddings(context.to(torch.float32))
     output = model(
         value.map(lambda stream: stream.to(torch.bfloat16)),
         0.5,
         prepared,
     )
 
-    assert prepared.dtype is torch.float16
+    assert prepared.dtype is torch.float32
     assert output.by_role("video").dtype is torch.bfloat16
     assert output.by_role("audio").dtype is torch.bfloat16
 

@@ -547,15 +547,14 @@ def _build_diffusion(
 ) -> MiniMaxH3DiT:
     if layout.config != MINIMAX_H3_CONFIG:
         raise MiniMaxH3SplitAssemblyError("diffusion builder requires exact H3 layout")
-    # The reference computes patch projections and the final layer at
-    # float32, but projects and refines its float16 text encoder output
-    # before joining the bfloat16 diffusion stream.
+    # The reference computes patch projections, text projection and
+    # refinement, and the final layer at float32 before joining the
+    # bfloat16 diffusion stream.
     fp32_operations = CastOperations(torch.float32)
-    text_operations = CastOperations(torch.float16)
     return assemble_minimax_h3_dit(
         operations=operations,
         fp32_operations=fp32_operations,
-        text_operations=text_operations,
+        text_operations=fp32_operations,
         time_embedding_kind=layout.time_embedding_kind,
         attention_selection=attention_selection,
     )
@@ -651,7 +650,9 @@ def load_minimax_h3_component(
                 plan,
                 _build_conditioner,
                 verified,
-                compute_dtype=compute_dtype,
+                # ComfyUI loads the text encoder with float16 storage by
+                # default but hardcodes float32 embeddings and execution.
+                compute_dtype=torch.float32,
             )
         elif expected_role == "video-vae":
             module = _load_verified_component(

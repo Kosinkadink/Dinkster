@@ -635,8 +635,8 @@ def test_artifact_verification_does_not_read_payload(
 def test_diffusion_builder_binds_reference_split_precision_operations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Reference-owned float32 and float16 islands do not inherit the
-    loader's bfloat16 diffusion operations."""
+    """Reference-owned float32 islands do not inherit the loader's
+    bfloat16 diffusion operations."""
     selected: tuple[object, object, object] | None = None
 
     def capture(
@@ -668,7 +668,7 @@ def test_diffusion_builder_binds_reference_split_precision_operations(
         assert isinstance(selected[1], CastOperations)
         assert selected[1].dtype is torch.float32
         assert isinstance(selected[2], CastOperations)
-        assert selected[2].dtype is torch.float16
+        assert selected[2].dtype is torch.float32
 
 
 def test_verified_diffusion_declares_route_materialization_ceilings(
@@ -854,7 +854,11 @@ def test_standalone_component_load_preserves_plan_identity(
     def retain_plan(*_args: object, **_kwargs: object) -> object:
         return plan
 
-    def load_component(*_args: object, **_kwargs: object) -> torch.nn.Module:
+    loaded_compute_dtype: torch.dtype | None = None
+
+    def load_component(*_args: object, **kwargs: object) -> torch.nn.Module:
+        nonlocal loaded_compute_dtype
+        loaded_compute_dtype = cast(torch.dtype, kwargs["compute_dtype"])
         return module
 
     monkeypatch.setattr(
@@ -881,6 +885,7 @@ def test_standalone_component_load_preserves_plan_identity(
     assert loaded.module is module
     assert loaded.plan is plan
     assert loaded.runtime_identity == expected_identity
+    assert loaded_compute_dtype is (torch.float32 if role == "qwen3vl-32b-conditioner" else dtype)
 
 
 def test_standalone_component_load_refuses_wrong_structure(
