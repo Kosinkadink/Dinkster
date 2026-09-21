@@ -50,7 +50,7 @@ jobs:
         include:
           - name: inference and IPAdapter, shard 1
             group: inference
-            pytest-args: -x -p tools.pytest_file_shard --file-shard 1/2
+            pytest-args: -p tools.pytest_file_shard --file-shard 1/2
           - name: inference and IPAdapter, shard 2
             group: inference
             pytest-args: -p tools.pytest_file_shard --file-shard 2/2

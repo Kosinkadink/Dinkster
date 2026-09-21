@@ -23,7 +23,6 @@ def _guarded_worker(queue: Any) -> None:
 
 
 def test_accelerator_gate_is_default_deny(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert False, "deliberate pull-request lane failure for issue 97"
     monkeypatch.delenv(GPU_TEST_OPT_IN, raising=False)
 
     assert not gpu_tests_enabled()
