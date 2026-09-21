@@ -554,7 +554,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
 
 def test_pr_workflow_keeps_fast_validation_bounded_and_training_isolated() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
-    assert set(workflow["jobs"]) == {"fast", "default-training-pack"}
+    assert set(workflow["jobs"]) == {"fast"}
     assert set(workflow[True]) == {"pull_request", "workflow_dispatch"}
     assert workflow["concurrency"] == {
         "group": "${{ github.workflow }}-${{ github.ref }}",
@@ -579,42 +579,7 @@ def test_pr_workflow_keeps_fast_validation_bounded_and_training_isolated() -> No
     ]
     assert len(preparation) == 1
     assert preparation[0]["with"]["coverage"] == "false"
-    training = workflow["jobs"]["default-training-pack"]
-    assert training["name"] == "default install exposes training nodes"
-    assert training["if"] == (
-        "github.event_name == 'workflow_dispatch' || "
-        "github.event.pull_request.head.repo.full_name == github.repository"
-    )
-    access = [
-        step
-        for step in training["steps"]
-        if step.get("uses") == "./.github/actions/configure-dinkster-identity"
-    ]
-    assert access == [
-        {
-            "uses": "./.github/actions/configure-dinkster-identity",
-            "with": {
-                "repository": "Kosinkadink/dinkster-training",
-                "deploy-key": "${{ secrets.DINKSTER_TRAINING_READ_KEY }}",
-            },
-        }
-    ]
-    configure_private_access = next(
-        step
-        for step in training["steps"]
-        if step.get("name") == "Configure private identity access"
-    )
-    assert configure_private_access["env"] == {
-        "IDENTITY_DEPLOY_KEY": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}"
-    }
-    private_access_script = configure_private_access["run"]
-    assert 'ssh-add -L > "$training_public"' in private_access_script
-    assert 'ssh-add -L > "$identity_public"' in private_access_script
-    assert private_access_script.count("IdentitiesOnly yes") == 2
-    assert "IdentityFile $training_public" in private_access_script
-    assert "IdentityFile $identity_public" in private_access_script
     assert "dinkster-training" not in str(job)
-    assert "dinkster-training" in str(training)
     script = (ROOT / "scripts/ci-fast.sh").read_text(encoding="utf-8")
     assert "ruff format --check ." in script
     assert "ruff check ." in script

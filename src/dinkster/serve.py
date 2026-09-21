@@ -143,7 +143,6 @@ from .compose import (
     default_pack_ids,
     default_pack_spec,
     resolve_manifest_path,
-    training_pack_specs,
 )
 from .frontend import install_frontend
 from .generation_api import GenerationModel, GenerationService, add_generation_routes
@@ -1707,14 +1706,6 @@ def main(argv: list[str] | None = None) -> None:
     if not args.comfy_root:
         specs.extend(replace(spec, require_catalog=True) for spec in compat_specs)
     resolved_default_pack_count = len(specs)
-    if args.library_root and not args.no_default_packs:
-        try:
-            specs.extend(
-                replace(spec, require_catalog=True)
-                for spec in training_pack_specs(Path(args.library_root) / "training.sqlite")
-            )
-        except Exception as exc:
-            default_pack_failures["dinkster-training"] = exc
     installer: Installer | None = None
     if args.install_root:
         # Installed defaults compose first, then managed packs, then explicit
