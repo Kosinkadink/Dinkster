@@ -1234,20 +1234,12 @@ def test_active_guidance_refuses_before_invalid_carrier_materialization() -> Non
         )
 
 
-def test_invalid_unconditional_carrier_refuses_before_brownian_allocation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_invalid_unconditional_carrier_refuses() -> None:
     runtime = _runtime("flux")
     latent = flux_latent()
     sampler = runtime._samplers.get("dinkster.euler")
     assert sampler is not None
     request = CustomSamplingRequest(sampler, (), (1.0, 0.0))
-    calls: list[object] = []
-
-    def allocate(*args: object, **kwargs: object) -> None:
-        calls.append((args, kwargs))
-
-    monkeypatch.setattr(scheduled_module, "brownian_step_noise", allocate)
     with pytest.raises(ScheduledSamplingError, match="guidance-carrier"):
         runtime.sample_custom(
             latent,
@@ -1257,7 +1249,6 @@ def test_invalid_unconditional_carrier_refuses_before_brownian_allocation(
             request=request,
             compute_dtype=torch.float32,
         )
-    assert calls == []
 
 
 def test_empty_non_tuple_ipadapter_input_refuses_in_scheduled_engine() -> None:

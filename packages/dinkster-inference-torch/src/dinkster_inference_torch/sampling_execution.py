@@ -59,6 +59,7 @@ from dinkster_inference import (
     execution_span,
     offset_first_sigma_for_snr,
     sampling_environment_cancellation,
+    sampling_environment_extension_ids,
     sampling_execution_context,
     sampling_sigmas,
     use_sampling_environment,
@@ -131,26 +132,6 @@ def resolve_custom_sampling_request(
         cache=request.cache,
         timeline=request.timeline,
     )
-
-
-def custom_denoised_callback(
-    family: ModelFamily,
-    callback: SamplingStateCallback | None,
-) -> tuple[SamplingStateCallback, list[torch.Tensor]]:
-    """A state callback that captures the last denoised latent in the
-    family's processed-out space while forwarding events to ``callback``."""
-    captured: list[torch.Tensor] = []
-    latent_descriptor = family.single_stream_latent()
-
-    def report(event: SamplingStateEvent[object]) -> None:
-        if event.denoised is not None:
-            if type(event.denoised) is not torch.Tensor:
-                raise TypeError("custom sampling denoised state must contain a torch.Tensor")
-            captured[:] = [latent_process_out(event.denoised, latent_descriptor)]
-        if callback is not None:
-            callback(event)
-
-    return report, captured
 
 
 @dataclass(frozen=True)
@@ -1082,7 +1063,7 @@ def sampling_execution(
     )
     primary: BaseException | None = None
     try:
-        with use_sampling_environment((), cancelled):
+        with use_sampling_environment(sampling_environment_extension_ids(), cancelled):
             output = run_denoise(
                 denoiser,
                 request.build_solver(**cast("Any", denoiser_execution.solver_options)),
@@ -1295,7 +1276,6 @@ __all__ = [
     "build_custom_sampling_schedule",
     "build_sampling_schedule",
     "compile_guidance_plan",
-    "custom_denoised_callback",
     "guided_denoiser",
     "narrow_single_stream_custom_sampling",
     "resolve_custom_sampling_request",

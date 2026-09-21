@@ -950,7 +950,7 @@ class QwenImageDiffusionRuntime(FlowSamplingRuntime):
     _diffusion_device = QwenImageRuntime._diffusion_device  # pyright: ignore[reportPrivateUsage]
     _sigma_space = QwenImageRuntime._sigma_space  # pyright: ignore[reportPrivateUsage]
     check_custom_sampling = QwenImageRuntime.check_custom_sampling
-    sample_custom = QwenImageRuntime.sample_custom
+    sample_custom = sampling_execution
 
     def _sampling_sigma_space(self, sampling_shift: float | None) -> FlowSigmas | FluxFlowSigmas:
         return self._sigma_space()

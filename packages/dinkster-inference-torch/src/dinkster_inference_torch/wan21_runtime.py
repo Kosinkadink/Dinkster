@@ -5307,7 +5307,7 @@ class Wan21DiffusionRuntime(MultiStreamSamplingRuntime):
     prepare_fun_conditioning = Wan21Runtime.prepare_fun_conditioning
     prepare_vace_conditioning = Wan21Runtime.prepare_vace_conditioning
     check_custom_sampling = Wan21Runtime.check_custom_sampling
-    sample_custom = Wan21Runtime.sample_custom
+    sample_custom = sampling_execution
     sampling_execution_registration = Wan21Runtime.sampling_execution_registration
     _sampling_denoiser = Wan21Runtime._sampling_denoiser  # pyright: ignore[reportPrivateUsage]
     _standard_sampling_denoiser = Wan21Runtime._standard_sampling_denoiser  # pyright: ignore[reportPrivateUsage]
@@ -5376,7 +5376,7 @@ class Wan21CausalDiffusionRuntime(MultiStreamSamplingRuntime):
     prepare_text_conditioning = Wan21Runtime.prepare_text_conditioning
     prepare_conditioning = Wan21Runtime.prepare_conditioning
     check_custom_sampling = Wan21Runtime.check_custom_sampling
-    sample_custom = Wan21Runtime.sample_custom
+    sample_custom = sampling_execution
     sampling_execution_registration = Wan21Runtime.sampling_execution_registration
     _sampling_denoiser = Wan21Runtime._sampling_denoiser  # pyright: ignore[reportPrivateUsage]
 

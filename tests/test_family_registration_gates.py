@@ -24,6 +24,7 @@ SHARED_ENGINE_FILES = (
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/memory.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_execution.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_runtime.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/scheduled_sampling.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/schedules.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/solvers.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
@@ -54,6 +55,10 @@ SAMPLING_RUNTIME_CLASSES = (
         "Ideogram4DiffusionRuntime",
     ),
     (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/krea2_runtime.py",
+        "Krea2DiffusionRuntime",
+    ),
+    (
         "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
         "LTXAVDiffusionRuntime",
     ),
@@ -78,6 +83,10 @@ SAMPLING_RUNTIME_CLASSES = (
         "QwenImageRuntime",
     ),
     (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/qwen_image_runtime.py",
+        "QwenImageDiffusionRuntime",
+    ),
+    (
         "packages/dinkster-inference-torch/src/dinkster_inference_torch/seedvr2_runtime.py",
         "SeedVR2DiffusionRuntime",
     ),
@@ -92,6 +101,14 @@ SAMPLING_RUNTIME_CLASSES = (
     (
         "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
         "Wan21Runtime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "Wan21DiffusionRuntime",
+    ),
+    (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "Wan21CausalDiffusionRuntime",
     ),
     ("packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py", "FluxRuntime"),
     ("packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py", "SDRuntime"),
@@ -109,6 +126,14 @@ FAMILY_ORCHESTRATION_CALLS = frozenset(
         "resolve_custom_sampling_request",
         "run_denoise",
         "run_sampler_engine",
+    }
+)
+FAMILY_ORCHESTRATION_FUNCTIONS = frozenset(
+    {
+        "_drive",
+        "_progress_callback",
+        "sample_flux_scheduled_custom",
+        "sample_sd_scheduled_custom",
     }
 )
 
@@ -171,12 +196,44 @@ def test_family_runtimes_have_zero_sampling_orchestration() -> None:
                 findings.append(
                     f"{relative_path}:{node.lineno}: {class_name}.{node.name} owns orchestration"
                 )
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id in FAMILY_ORCHESTRATION_CALLS:
+            if isinstance(node, ast.Call):
+                call_name = (
+                    node.func.id
+                    if isinstance(node.func, ast.Name)
+                    else node.func.attr
+                    if isinstance(node.func, ast.Attribute)
+                    else None
+                )
+                if call_name in FAMILY_ORCHESTRATION_CALLS:
                     findings.append(
-                        f"{relative_path}:{node.lineno}: {class_name} calls {node.func.id}"
+                        f"{relative_path}:{node.lineno}: {class_name} calls {call_name}"
                     )
     assert findings == [], "family sampling orchestration remains:\n" + "\n".join(findings)
+
+
+def test_scheduled_sampling_has_zero_shadow_orchestration() -> None:
+    relative_path = (
+        "packages/dinkster-inference-torch/src/dinkster_inference_torch/scheduled_sampling.py"
+    )
+    path = ROOT / relative_path
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    findings: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+            node.name in FAMILY_ORCHESTRATION_FUNCTIONS
+        ):
+            findings.append(f"{relative_path}:{node.lineno}: defines {node.name}")
+        if isinstance(node, ast.Call):
+            call_name = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else None
+            )
+            if call_name in FAMILY_ORCHESTRATION_CALLS:
+                findings.append(f"{relative_path}:{node.lineno}: calls {call_name}")
+    assert findings == [], "scheduled sampling orchestration remains:\n" + "\n".join(findings)
 
 
 def test_registered_engine_properties_cover_shared_family_behavior() -> None:

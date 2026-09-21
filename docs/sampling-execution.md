@@ -44,10 +44,10 @@ invariants so every sampler surface observes identical behavior.
 
 ## Runtime adapters
 
-Every diffusion runtime executes through `sampling_execution`. Flux2, Anima,
-Chroma, Ideogram4, Lumina2, Qwen Image, SeedVR2, Z-Image, Flux, SD, and MiniMax
-Music 3 use single-stream adapters. Wan21, LTXV, LTXAV, TRELLIS.2, TripoSplat,
-and MiniMax H3 adapt structural latent shapes at the same seam.
+Every diffusion runtime executes through `sampling_execution`. Krea 2, Flux2,
+Anima, Chroma, Ideogram4, Lumina2, Qwen Image, SeedVR2, Z-Image, Flux, SD, and
+MiniMax Music 3 use single-stream adapters. Wan21, LTXV, LTXAV, TRELLIS.2,
+TripoSplat, and MiniMax H3 adapt structural latent shapes at the same seam.
 
 Wan21 maps structural video streams, typed conditioning, context windows,
 inpaint data, and masks into its adapter. LTXV, LTXAV, TRELLIS.2, and

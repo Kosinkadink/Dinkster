@@ -16,36 +16,22 @@ import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import Any, Protocol, cast
 
 import torch
 from dinkster_inference import (
     ConditioningCarrier,
-    CustomSamplingRequest,
-    CustomSamplingResult,
     GuidanceRole,
-    InpaintConditioning,
     KeyedContribution,
     ModelFamily,
-    NoiseKind,
     PatchSet,
     PatchTargetComponent,
     RealizedSamplingTimeline,
     SamplingGuidance,
-    SamplingStateCallback,
-    StepCallback,
     encode_conditioning_carrier,
-    is_flow_parameterization,
-    realize_sampling_timeline,
-    sampling_execution_context,
-    use_sampling_environment,
 )
 
-from .denoise import DenoiseError, FluxGuidance, run_denoise
-from .guidance import (
-    ConditioningBatch,
-    ConditioningEvaluation,
-)
+from .guidance import ConditioningBatch
 from .guidance import (
     evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
 )
@@ -55,24 +41,14 @@ from .regional import (
     PreparedGroupedPatches,
     RegionalConditioningError,
     evaluate_grouped_regions,
-    flux_grouped_region_evaluator,
     materialize_regions,
     prepare_grouped_patches,
     realize_region_schedules,
-    sd_grouped_region_evaluator,
 )
-from .sampling_execution import (
-    SamplingGuidancePlan,
-    brownian_step_noise,
-    build_custom_sampling_schedule,
-    compile_guidance_plan,
-    custom_denoised_callback,
-    guided_denoiser,
-    resolve_custom_sampling_request,
+from .regional import (
+    sd_grouped_region_evaluator as sd_grouped_region_evaluator,
 )
-
-if TYPE_CHECKING:
-    from .wiring import FluxRuntime, SDRuntime
+from .sampling_execution import SamplingGuidancePlan
 
 
 class ScheduledSamplingError(ValueError):
@@ -191,10 +167,6 @@ def _check_cancel(cancel: Callable[[], bool]) -> None:
         raise _refuse("cancel-callback")
     if result:
         raise _refuse("cancelled")
-
-
-def _not_cancelled() -> bool:
-    return False
 
 
 def _metadata_request(
@@ -507,74 +479,6 @@ class ScheduledConditioningDenoiser:
             self._prepared = None
 
 
-def _progress_callback(
-    callback: StepCallback | None, cancel: Callable[[], bool]
-) -> StepCallback | None:
-    if callback is None:
-        return None
-
-    def checked(event: Any) -> None:
-        _check_cancel(cancel)
-        callback(event)
-        _check_cancel(cancel)
-
-    return checked
-
-
-def _drive(
-    denoiser: Any,
-    owner: ScheduledConditioningDenoiser,
-    solver: Any,
-    *,
-    latent: torch.Tensor,
-    noise: torch.Tensor,
-    sigmas: tuple[float, ...],
-    initial_sigma: float | None,
-    family: Any,
-    sampling: Any = None,
-    seed: int,
-    noise_kind: NoiseKind,
-    noise_sampler: Any,
-    percent_to_sigma: Callable[[float], float],
-    device: torch.device,
-    on_step: StepCallback | None,
-    on_state: SamplingStateCallback | None,
-    cancel: Callable[[], bool],
-) -> torch.Tensor:
-    primary: BaseException | None = None
-    try:
-        _check_cancel(cancel)
-        with use_sampling_environment((), cancel):
-            result = run_denoise(
-                denoiser,
-                solver,
-                latent=latent,
-                noise=noise,
-                sigmas=sigmas,
-                initial_sigma=initial_sigma,
-                family=family,
-                sampling=sampling,
-                seed=seed,
-                noise_kind=noise_kind,
-                noise_sampler=noise_sampler,
-                percent_to_sigma=percent_to_sigma,
-                device=device,
-                on_step=_progress_callback(on_step, cancel),
-                on_state=on_state,
-            )
-        _check_cancel(cancel)
-    except BaseException as error:
-        primary = error
-        raise
-    finally:
-        try:
-            owner.close()
-        except BaseException:
-            if primary is None:
-                raise
-    return result
-
-
 def prepare_scheduled_carriers(
     runtime: Any,
     latent: torch.Tensor,
@@ -660,327 +564,6 @@ def validate_unconditional_carrier(plan: SamplingGuidancePlan) -> None:
     )
     if type(cast("object", unconditional)) is not ConditioningCarrier:
         raise _refuse("guidance-carrier", "unconditional lane must be a ConditioningCarrier")
-
-
-def _resolve_sampler(
-    runtime: Any,
-    request: CustomSamplingRequest[torch.Tensor],
-) -> tuple[Any, CustomSamplingRequest[torch.Tensor]]:
-    if type(request) is not CustomSamplingRequest:
-        raise TypeError("custom sampling requires an exact CustomSamplingRequest")
-    if runtime._samplers.get(request.sampler.id) is None:
-        raise _refuse("unknown-sampler", request.sampler.id)
-    return resolve_custom_sampling_request(
-        runtime._samplers,
-        request,
-        error=ScheduledSamplingError,
-    )
-
-
-def sample_flux_scheduled_custom(
-    runtime: FluxRuntime,
-    latent: object,
-    *,
-    noise: object,
-    cond: object,
-    cfg: object,
-    request: CustomSamplingRequest[torch.Tensor],
-    seed: int = 0,
-    guidance: FluxGuidance = None,
-    denoise_mask: object = None,
-    inpaint: InpaintConditioning[torch.Tensor] | None = None,
-    context_windows: object = None,
-    window_plan: object = None,
-    on_step: StepCallback | None = None,
-    on_state: SamplingStateCallback | None = None,
-    resolver: ScheduledPatchResolver | None = None,
-    cancelled: Callable[[], bool] | None = None,
-    compute_dtype: torch.dtype | None = None,
-    device: torch.device | str | None = None,
-    capture_denoised: bool = True,
-) -> CustomSamplingResult[torch.Tensor]:
-    cancel = _not_cancelled if cancelled is None else cancelled
-    if not callable(cancel):
-        raise _refuse("cancel-callback")
-    if runtime._guidance is not None and runtime._guidance.registry.active:
-        raise _refuse("guidance-extensions")
-    if type(cfg) is SamplingGuidance and cfg.transforms:
-        raise _refuse("guidance-extensions")
-    if denoise_mask is not None:
-        raise _refuse("denoise-mask", runtime.family.id)
-    if inpaint is not None:
-        raise _refuse("inpaint", runtime.family.id)
-    if context_windows is not None:
-        raise _refuse("context-windows", runtime.family.id)
-    if window_plan is not None:
-        raise _refuse("window-plan", runtime.family.id)
-    if guidance == "disabled":
-        raise _refuse("distilled-guidance", runtime.family.id)
-    if guidance is not None and runtime.assembled.diffusion.guidance_in is None:
-        raise DenoiseError(
-            "guidance was given but this Flux model has no guidance"
-            " embedder (schnell); pass guidance=None"
-        )
-    latent, noise, cond, cfg, denoise_mask = narrow_scheduled_values(
-        runtime.family.id,
-        latent=latent,
-        noise=noise,
-        cond=cond,
-        cfg=cfg,
-        denoise_mask=denoise_mask,
-    )
-    sampler, request = _resolve_sampler(runtime, request)
-    runtime.check_custom_sampling(
-        request,
-        has_denoise_mask=False,
-        has_inpaint=False,
-        has_context_windows=False,
-        guidance=guidance,
-    )
-    plan = compile_guidance_plan(cond, cfg, sampler, runtime._guidance)
-    validate_unconditional_carrier(plan)
-    target = latent.device if device is None else torch.device(device)
-    if compute_dtype is None:
-        compute_dtype = runtime.assembled.compute_dtype("diffusion") or torch.bfloat16
-    space = runtime._space
-    schedule = build_custom_sampling_schedule(
-        request.sigmas,
-        space,
-        sampler,
-        flow=is_flow_parameterization(runtime.family.sampling.parameterization),
-    )
-    noise_sampler = brownian_step_noise(sampler, schedule, latent, seed=seed, device=target)
-    sigmas = schedule.sigmas
-    realized_timeline = (
-        None
-        if request.timeline is None
-        else realize_sampling_timeline(request.timeline, tuple(float(sigma) for sigma in sigmas))
-    )
-    conditional, unconditional, patch_sets, materialized_plan = prepare_scheduled_carriers(
-        runtime,
-        latent,
-        plan,
-        resolver=resolver,
-        device=target,
-        cancel=cancel,
-        timeline=realized_timeline,
-        space=space,
-    )
-    denoiser = ScheduledConditioningDenoiser(
-        conditional,
-        unconditional,
-        family=runtime.family,
-        space=space,
-        model=runtime.assembled.diffusion,
-        evaluate=flux_grouped_region_evaluator(
-            runtime.assembled.diffusion,
-            guidance=guidance,
-            compute_dtype=compute_dtype,
-        ),
-        patch_sets=patch_sets,
-        compute_dtype=compute_dtype,
-        device=target,
-        cancel=cancel,
-    )
-    guided = guided_denoiser(
-        ConditioningEvaluation(
-            denoiser.prepare_conditioning,
-            denoiser.evaluate_conditioning,
-            denoiser.batchable,
-            denoiser.evaluate_conditioning_batch,
-            evaluator_identity=lambda _role: f"{runtime.family.id}.scheduled-conditioning.v1",
-            standard_activation_memory_factor=runtime.family.memory_factor,
-        ),
-        input=latent,
-        executor=None,
-        plan=materialized_plan,
-        execution=sampling_execution_context(sigmas, seed, on_step),
-    )
-    report_state: SamplingStateCallback | None
-    captured: list[torch.Tensor]
-    if capture_denoised:
-        report_state, captured = custom_denoised_callback(runtime.family, on_state)
-    else:
-        report_state, captured = on_state, []
-    output = _drive(
-        guided,
-        denoiser,
-        request.build_solver(realized_timeline=realized_timeline),
-        latent=latent,
-        noise=noise,
-        sigmas=sigmas,
-        initial_sigma=schedule.initial_sigma,
-        family=runtime.family,
-        seed=seed,
-        noise_kind=sampler.noise,
-        noise_sampler=noise_sampler,
-        percent_to_sigma=space.percent_to_sigma,
-        device=target,
-        on_step=on_step,
-        on_state=report_state,
-        cancel=cancel,
-    )
-    return CustomSamplingResult(output, captured[-1] if captured else None)
-
-
-def sample_sd_scheduled_custom(
-    runtime: SDRuntime,
-    latent: object,
-    *,
-    noise: object,
-    cond: object,
-    cfg: object,
-    request: CustomSamplingRequest[torch.Tensor],
-    seed: int = 0,
-    guidance: float | None = None,
-    denoise_mask: object = None,
-    inpaint: InpaintConditioning[torch.Tensor] | None = None,
-    context_windows: object = None,
-    control: object = None,
-    attention_contributions: object = (),
-    on_step: StepCallback | None = None,
-    on_state: SamplingStateCallback | None = None,
-    resolver: ScheduledPatchResolver | None = None,
-    cancelled: Callable[[], bool] | None = None,
-    compute_dtype: torch.dtype | None = None,
-    device: torch.device | str | None = None,
-    capture_denoised: bool = True,
-) -> CustomSamplingResult[torch.Tensor]:
-    cancel = _not_cancelled if cancelled is None else cancelled
-    if not callable(cancel):
-        raise _refuse("cancel-callback")
-    if control is not None:
-        raise _refuse("control", runtime.family.id)
-    if type(attention_contributions) is not tuple:
-        raise _refuse("attention-contributions", runtime.family.id)
-    if attention_contributions:
-        raise _refuse("attention-contributions", runtime.family.id)
-    if runtime._guidance is not None and runtime._guidance.registry.active:
-        raise _refuse("guidance-extensions")
-    if type(cfg) is SamplingGuidance and cfg.transforms:
-        raise _refuse("guidance-extensions")
-    if guidance is not None:
-        raise _refuse("distilled-guidance", runtime.family.id)
-    if (
-        denoise_mask is not None
-        or inpaint is not None
-        or runtime.assembled.diffusion.config.in_channels == 9
-    ):
-        raise _refuse("scheduled-sd-inpaint")
-    if context_windows is not None:
-        raise _refuse("context-windows", runtime.family.id)
-    latent, noise, cond, cfg, denoise_mask = narrow_scheduled_values(
-        runtime.family.id,
-        latent=latent,
-        noise=noise,
-        cond=cond,
-        cfg=cfg,
-        denoise_mask=denoise_mask,
-    )
-    sampler, request = _resolve_sampler(runtime, request)
-    runtime.check_custom_sampling(
-        request,
-        has_denoise_mask=False,
-        has_inpaint=False,
-        has_context_windows=False,
-        guidance=None,
-    )
-    plan = compile_guidance_plan(cond, cfg, sampler, runtime._guidance)
-    validate_unconditional_carrier(plan)
-    target = latent.device if device is None else torch.device(device)
-    if compute_dtype is None:
-        compute_dtype = runtime.assembled.compute_dtype("diffusion") or torch.float16
-    schedule = build_custom_sampling_schedule(
-        request.sigmas,
-        runtime._space,
-        sampler,
-        flow=False,
-    )
-    sigmas = schedule.sigmas
-    realized_timeline = (
-        None
-        if request.timeline is None
-        else realize_sampling_timeline(request.timeline, tuple(float(sigma) for sigma in sigmas))
-    )
-    conditional, unconditional, patch_sets, materialized_plan = prepare_scheduled_carriers(
-        runtime,
-        latent,
-        plan,
-        resolver=resolver,
-        device=target,
-        cancel=cancel,
-        timeline=realized_timeline,
-        space=runtime._space,
-    )
-    adm = None
-    if runtime.assembled.diffusion.config.adm_in_channels is not None:
-
-        def resolve_adm(region: MaterializedRegion, role: GuidanceRole) -> torch.Tensor | None:
-            return runtime._adm(
-                region.conditioning,
-                latent,
-                negative=role is GuidanceRole.UNCONDITIONAL,
-            )
-
-        adm = resolve_adm
-    denoiser = ScheduledConditioningDenoiser(
-        conditional,
-        unconditional,
-        family=runtime.family,
-        space=runtime._space,
-        model=runtime.assembled.diffusion,
-        evaluate=sd_grouped_region_evaluator(
-            runtime.assembled.diffusion,
-            runtime._space,
-            parameterization=runtime.sampling.parameterization,
-            adm=adm,
-            compute_dtype=compute_dtype,
-        ),
-        patch_sets=patch_sets,
-        compute_dtype=compute_dtype,
-        device=target,
-        cancel=cancel,
-    )
-    guided = guided_denoiser(
-        ConditioningEvaluation(
-            denoiser.prepare_conditioning,
-            denoiser.evaluate_conditioning,
-            denoiser.batchable,
-            denoiser.evaluate_conditioning_batch,
-            evaluator_identity=lambda _role: f"{runtime.family.id}.scheduled-conditioning.v1",
-            standard_activation_memory_factor=runtime.family.memory_factor,
-        ),
-        input=latent,
-        executor=None,
-        plan=materialized_plan,
-        execution=sampling_execution_context(sigmas, seed, on_step),
-    )
-    report_state: SamplingStateCallback | None
-    captured: list[torch.Tensor]
-    if capture_denoised:
-        report_state, captured = custom_denoised_callback(runtime.family, on_state)
-    else:
-        report_state, captured = on_state, []
-    output = _drive(
-        guided,
-        denoiser,
-        request.build_solver(realized_timeline=realized_timeline),
-        latent=latent,
-        noise=noise,
-        sigmas=sigmas,
-        initial_sigma=None,
-        family=runtime.family,
-        sampling=runtime.sampling,
-        seed=seed,
-        noise_kind=sampler.noise,
-        noise_sampler=None,
-        percent_to_sigma=runtime._percent_to_sigma,
-        device=target,
-        on_step=on_step,
-        on_state=report_state,
-        cancel=cancel,
-    )
-    return CustomSamplingResult(output, captured[-1] if captured else None)
 
 
 __all__ = [
