@@ -282,7 +282,7 @@ def _prepare_default_pack(
         raise CompositionError("an installed default pack must carry exactly one provenance entry")
     info = next(iter(spec.packs.values()))
     algorithm, separator, digest = info.artifact_digest.partition(":")
-    if separator != ":" or algorithm != "sha256" or len(digest) != 64:
+    if separator != ":" or algorithm != "blake3" or len(digest) != 64:
         raise CompositionError(
             f"installed default pack {manifest.name!r} has invalid artifact digest"
         )

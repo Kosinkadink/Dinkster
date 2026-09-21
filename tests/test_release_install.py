@@ -86,8 +86,41 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     assert "--requirement" in command
     assert "from dinkster_frontend import bundle_path" in command
     assert all(
-        step.get("uses") != "./.github/actions/configure-private-repository"
+        step.get("uses") != "./.github/actions/configure-dinkster-identity"
         for step in workflow["jobs"]["install"]["steps"]
+    )
+
+
+def test_linux_release_install_exercises_the_pinned_registry_service() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["install"]["steps"]
+    registry_checkout = next(
+        step
+        for step in steps
+        if step.get("uses") == "actions/checkout@v4"
+        and step.get("with", {}).get("repository") == "Kosinkadink/dinkster-registry"
+    )
+    assert registry_checkout["if"] == "matrix.os == 'linux'"
+    assert registry_checkout["with"] == {
+        "clean": True,
+        "repository": "Kosinkadink/dinkster-registry",
+        "ref": "5d844ae53616f88756a98eb6dc3aa73fefb92622",
+        "path": "registry",
+        "persist-credentials": False,
+    }
+    registry_install = next(
+        step for step in steps if step.get("name") == "Install the independent loopback registry"
+    )
+    assert registry_install["if"] == "matrix.os == 'linux'"
+    assert registry_install["run"].splitlines()[-1] == "uv sync --project registry --frozen"
+    wheel_install = next(
+        step for step in steps if step.get("name") == "Install and launch from wheels"
+    )
+    assert 'if [ "$RUNNER_OS" = Linux ]; then' in wheel_install["run"]
+    assert "scripts/verify_release_install.py" in wheel_install["run"]
+    assert (
+        '--registry-command "$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"'
+        in wheel_install["run"]
     )
 
 

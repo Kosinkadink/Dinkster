@@ -93,6 +93,19 @@ jobs:
         with:
           clean: true
           persist-credentials: false
+      - uses: ./.github/actions/configure-private-repository
+        if: matrix.os == 'linux'
+        with:
+          repository: Kosinkadink/dinkster-registry
+          deploy-key: ${{ secrets.DINKSTER_REGISTRY_READ_KEY }}
+      - uses: actions/checkout@v4
+        if: matrix.os == 'linux'
+        with:
+          clean: true
+          repository: Kosinkadink/dinkster-registry
+          ref: 5d844ae53616f88756a98eb6dc3aa73fefb92622
+          path: registry
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           name: wheel-release
@@ -100,6 +113,18 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+      - name: Install the independent loopback registry
+        if: matrix.os == 'linux'
+        shell: bash
+        env:
+          GIT_CONFIG_COUNT: "2"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/Kosinkadink/Dinkster.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/Kosinkadink/Dinkster
+          GIT_CONFIG_KEY_1: credential.helper
+          GIT_CONFIG_VALUE_1: ""
+        run: |
+          trap 'unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1' EXIT
+          uv sync --project registry --frozen
       - name: Install and launch from wheels
         shell: bash
         run: |
@@ -115,6 +140,11 @@ jobs:
             --requirement "$RUNNER_TEMP/dinkster-release/constraints.txt"
           "$python" -m dinkster.cli --help
           "$python" -c "from dinkster_frontend import bundle_path; assert bundle_path().joinpath('index.html').is_file()"
+          if [ "$RUNNER_OS" = Linux ]; then
+            "$python" scripts/verify_release_install.py "$GITHUB_WORKSPACE" \
+              --python "$python" \
+              --registry-command "$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"
+          fi
 
   release:
     needs: install
