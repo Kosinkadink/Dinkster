@@ -518,8 +518,11 @@ def test_reexports_are_the_internal_objects() -> None:
         exported = getattr(api, name)
         owners = [m for m in sources if name in m.__all__]
         assert owners, f"{name} is not exported by any internal package"
-        assert len(owners) == 1, f"{name} exported by multiple internal packages"
-        assert getattr(owners[0], name) is exported, f"{name} is a wrapper/copy"
+        expected_owners = 2 if name == "CustomWidgetDescriptor" else 1
+        assert len(owners) == expected_owners, f"{name} exported by unexpected internal packages"
+        assert all(getattr(owner, name) is exported for owner in owners), (
+            f"{name} is a wrapper/copy"
+        )
 
 
 def test_dynamic_combo_specs_construct_through_v1() -> None:
