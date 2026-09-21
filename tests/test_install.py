@@ -147,7 +147,7 @@ def test_lockfile_stores_canonical_forms_only() -> None:
     # locks no claims; pack-name uniqueness holds without them.
     assert Lockfile.of([locked(claims=())]).packs[0].claims == ()
     with pytest.raises(InstallError, match="version"):
-        Lockfile.of([locked(version="1.0")])
+        Lockfile.of([locked(version="1.0+local")])
     with pytest.raises(InstallError, match="digest"):
         Lockfile.of([locked(digest="md5:nope")])
 

@@ -36,6 +36,13 @@ uv pip install --python .venv/bin/python --no-deps --require-hashes --find-links
 On Windows, use `.venv\Scripts\python.exe`. Do not combine wheels or constraints
 from different releases. Models and accelerator runtimes are not bundled.
 
+The registry server is a separate deployment, not part of the Dinkster wheel
+set. Hosted PostgreSQL and self-hosted SQLite deployments use the same
+`dinkster-registry-service` package and `dinkster-registry` command from the
+[registry repository](https://github.com/Kosinkadink/dinkster-registry).
+Dinkster remains a client of that service for browsing, publishing, resolving,
+and downloading exact pack releases.
+
 ## Develop from source
 
 Clone the backend and frontend as sibling directories, then run:

@@ -443,12 +443,10 @@ def _cmd_publish(args: argparse.Namespace) -> None:
             digest = build_artifact(manifest_path.parent, archive)
         except ArtifactError as exc:
             raise RegistryPublishError(str(exc)) from exc
-        verdict = publish_release(registry, archive, digest, args.version)
+        verdict = publish_release(registry, archive, manifest.name, args.version)
     for finding in verdict.findings:
         print(f"{finding.code}: {finding.message}")
-    if verdict.state == "rejected":
-        raise SystemExit(1)
-    print(f"published {manifest.name} {args.version} {digest}")
+    print(f"submitted {manifest.name} {args.version} {digest} as candidate {verdict.candidate_id}")
 
 
 def _claims_from_manifests(installer: Installer, target: Lockfile) -> Lockfile:
@@ -992,11 +990,7 @@ def _cmd_search(args: argparse.Namespace) -> None:
         print(f"no packs {what} on {registry.label}")
         return
     for entry in page.packs:
-        plural = "" if entry.versions == 1 else "s"
-        print(
-            f"{entry.pack}@{entry.latest_version}  "
-            f"publisher {entry.publisher}  ({entry.versions} version{plural})"
-        )
+        print(f"{entry.pack}@{entry.latest_version}  publisher {entry.publisher}")
     if page.cursor:
         print(f"more results: rerun with --cursor {page.cursor}")
 
