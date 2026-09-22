@@ -89,14 +89,50 @@ class _RegisteredComponentCodec:
         self._decode = registry.registered_callable(value, "native_decode")
         self._encode = registry.registered_callable(value, "native_encode")
 
+    @property
+    def descriptor(self) -> Any:
+        return self._codec.descriptor
+
+    @property
+    def resource_identity(self) -> str:
+        return cast("str", self._codec.resource_identity)
+
+    @property
+    def load_device(self) -> object:
+        return self._codec.load_device
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._codec, name)
+
+    def require_active(self) -> None:
+        self._codec.require_active()
+
+    def stage(self, *args: Any, **kwargs: Any) -> Any:
+        return self._codec.stage(*args, **kwargs)
 
     def decode_latent(self, latent: Any) -> Any:
         return self._decode(self._codec, latent)
 
+    def decode_latent_tiled(
+        self,
+        latent: Any,
+        *,
+        tile: tuple[int, ...],
+        overlap: tuple[int, ...],
+    ) -> Any:
+        return self._codec.decode_latent_tiled(latent, tile=tile, overlap=overlap)
+
     def encode_content(self, content: Any) -> Any:
         return self._encode(self._codec, content)
+
+    def encode_content_tiled(
+        self,
+        content: Any,
+        *,
+        tile: tuple[int, ...],
+        overlap: tuple[int, ...],
+    ) -> Any:
+        return self._codec.encode_content_tiled(content, tile=tile, overlap=overlap)
 
 
 def _native_component_codec(value: object) -> Any:

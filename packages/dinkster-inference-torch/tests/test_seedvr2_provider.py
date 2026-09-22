@@ -10,7 +10,12 @@ from typing import Any, cast
 
 import pytest
 import torch
-from dinkster_inference_torch import SeedVR2DiffusionRuntime, seedvr2_conditioning
+from dinkster_inference import ConditioningCarrier
+from dinkster_inference_torch import (
+    SeedVR2DiffusionRuntime,
+    materialize_seedvr2_conditioning,
+    seedvr2_conditioning,
+)
 from dinkster_inference_torch.checkpoint_runtime import (
     ComponentAssembly,
     ComponentCheckpointRuntime,
@@ -341,11 +346,13 @@ def test_conditioning_provider_binds_the_loaded_diffusion_identity(
         vae_conditioning={"samples": latent},
     )
 
-    positive = cast("list[list[object]]", output["positive"])[0]
-    negative = cast("list[list[object]]", output["negative"])[0]
-    assert torch.equal(cast("torch.Tensor", positive[0])[:, :16], latent)
-    for row, branch in ((positive, "positive"), (negative, "negative")):
-        prepared = cast("Any", next(iter(cast("dict[str, object]", row[1]).values())))
+    positive = cast("ConditioningCarrier", output["positive"])
+    negative = cast("ConditioningCarrier", output["negative"])
+    assert type(positive) is ConditioningCarrier
+    assert type(negative) is ConditioningCarrier
+    for carrier, branch in ((positive, "positive"), (negative, "negative")):
+        prepared = materialize_seedvr2_conditioning(carrier, device="cpu")
+        assert torch.equal(prepared.embeddings[:, :16], latent)
         assert prepared.component_identity == identity
         assert prepared.branch == branch
 
@@ -380,7 +387,7 @@ def test_custom_sampling_route_uses_matching_wrapped_seedvr2_runtime() -> None:
         return [
             [
                 typed.embeddings,
-                {arm._NATIVE_PREPARED_CONDITIONING_KEY: conditioning},
+                {"dinkster.native/prepared-conditioning": conditioning},
             ]
         ]
 
