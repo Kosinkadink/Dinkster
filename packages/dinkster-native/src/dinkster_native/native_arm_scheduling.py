@@ -956,6 +956,7 @@ def _build_trellis2_split_model_handle(
             texture_512=loaded["texture-512"].module,
         ),
         plan,
+        _torch_dtype(torch, compute_dtype),
     )
     runtime = inference_torch.Trellis2DiffusionRuntime(
         assembled,
