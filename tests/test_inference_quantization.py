@@ -625,6 +625,30 @@ def test_int8_tensorwise_convrot_variant_is_explicit_and_strict() -> None:
     }
 
 
+def test_int8_tensorwise_non_convrot_accepts_only_scalar_or_rowwise_scale() -> None:
+    rowwise = unsupported_header("int8_tensorwise")
+    rowwise["block.weight_scale"] = geometry((128, 1), FLOAT32)
+    split = split_quantization(
+        rowwise,
+        metadata({"block": {"format": "int8_tensorwise"}}),
+    )
+    assert split.layers["block"].parameters == {
+        "convrot": False,
+        "convrot_groupsize": 256,
+    }
+
+    malformed = unsupported_header("int8_tensorwise")
+    malformed["block.weight_scale"] = geometry((128,), FLOAT32)
+    with pytest.raises(
+        QuantizationError,
+        match=r"must be float32 with shape \(\) or \(128, 1\)",
+    ):
+        split_quantization(
+            malformed,
+            metadata({"block": {"format": "int8_tensorwise"}}),
+        )
+
+
 def test_convrot_w4a4_accepts_proven_top_level_and_nested_spellings() -> None:
     top = split_quantization(
         unsupported_header("convrot_w4a4"),
