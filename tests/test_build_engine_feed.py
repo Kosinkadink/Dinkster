@@ -305,6 +305,25 @@ def test_ambiguous_wheel_selection_is_refused() -> None:
         select_cell_wheel("pkg", wheels, "linux", "x86_64")
 
 
+def test_multiple_valid_wheels_select_broadest_tag() -> None:
+    # The real lock carries several valid wheels per distribution (abi3
+    # baselines layered with manylinux policies); the broadest tag wins.
+    wheels = [
+        {"url": "https://example.org/x/cryptography-45.0.7-cp39-abi3-musllinux_1_2_x86_64.whl"},
+        {"url": "https://example.org/x/cryptography-45.0.7-cp39-abi3-manylinux_2_28_x86_64.whl"},
+        {"url": "https://example.org/x/cryptography-45.0.7-cp39-abi3-manylinux_2_17_x86_64.whl"},
+        {"url": "https://example.org/x/cryptography-45.0.7-cp312-cp312-manylinux_2_28_x86_64.whl"},
+        {"url": "https://example.org/x/cryptography-45.0.7-cp312-cp312-win_amd64.whl"},
+    ]
+    selected = select_cell_wheel("cryptography", wheels, "linux", "x86_64")
+    filename = selected["url"].rsplit("/", 1)[-1]
+    assert filename == "cryptography-45.0.7-cp312-cp312-manylinux_2_28_x86_64.whl"
+
+    abi3_only = [wheel for wheel in wheels if "abi3" in wheel["url"]]
+    selected = select_cell_wheel("cryptography", abi3_only, "linux", "x86_64")
+    assert "manylinux_2_17" in selected["url"]
+
+
 # ---------------------------------------------------------------------------
 # Duplicate, missing and tampered artifacts
 
