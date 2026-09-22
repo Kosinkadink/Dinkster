@@ -10,8 +10,8 @@ from typing import Any
 
 import numpy as np
 import pytest
-import tools.inference_parity.chroma_e2e as chroma_e2e
-from tools.inference_parity.chroma_e2e import (
+import tools.inference_parity.chroma_e2e as chroma_e2e  # pyright: ignore[reportMissingImports]
+from tools.inference_parity.chroma_e2e import (  # pyright: ignore[reportMissingImports]
     COMFYUI_COMMIT,
     MEASURED_RUNS,
     PROCESS_ORDER,
@@ -324,6 +324,7 @@ def _record(
 ) -> dict[str, Any]:
     from dinkster_protocol import ATTENTION_ROLES
 
+    assert chroma_e2e.__file__ is not None
     stem = f"{index}-{engine}"
     cold_image = _receipt(tmp_path, f"{stem}-cold-image", value)
     cold_latent = _receipt(tmp_path, f"{stem}-cold-latent", value)

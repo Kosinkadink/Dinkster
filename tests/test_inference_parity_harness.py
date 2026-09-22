@@ -23,14 +23,16 @@ from typing import Any, NoReturn, cast
 
 import numpy as np
 import pytest
-from tools.inference_parity import harness
-from tools.inference_parity import nvfp4_flux_dinkster_adapter as nvfp4_adapter
-from tools.inference_parity.comfyui_adapter import (
+from tools.inference_parity import harness  # pyright: ignore[reportMissingImports]
+from tools.inference_parity import (  # pyright: ignore[reportMissingImports]
+    nvfp4_flux_dinkster_adapter as nvfp4_adapter,
+)
+from tools.inference_parity.comfyui_adapter import (  # pyright: ignore[reportMissingImports]
     _normal_sigmas_on_cpu,
     _set_text_precision,
     _set_vae_precision,
 )
-from tools.inference_parity.harness import (
+from tools.inference_parity.harness import (  # pyright: ignore[reportMissingImports]
     TIMING_ENGINE_ORDER,
     TIMING_PHASES,
     HarnessError,
@@ -59,12 +61,16 @@ from tools.inference_parity.harness import (
     validate_timing_history,
     write_json,
 )
-from tools.inference_parity.ovis_comfyui_adapter import _configure_precision
-from tools.inference_parity.ovis_decode_calibration import _regular_decode_without_fallback
-from tools.inference_parity.sdxl_edm_vpred_comfyui_adapter import (
+from tools.inference_parity.ovis_comfyui_adapter import (  # pyright: ignore[reportMissingImports]
+    _configure_precision,
+)
+from tools.inference_parity.ovis_decode_calibration import (  # pyright: ignore[reportMissingImports]
+    _regular_decode_without_fallback,
+)
+from tools.inference_parity.sdxl_edm_vpred_comfyui_adapter import (  # pyright: ignore[reportMissingImports]
     _configure_precision as _configure_sdxl_edm_vpred_precision,
 )
-from tools.inference_parity.sdxl_vpred_comfyui_adapter import (
+from tools.inference_parity.sdxl_vpred_comfyui_adapter import (  # pyright: ignore[reportMissingImports]
     _configure_precision as _configure_sdxl_vpred_precision,
 )
 
@@ -2054,7 +2060,7 @@ def test_station_prerequisites_default_override_and_probe(tmp_path: Path) -> Non
 
 
 def test_protocol_has_exactly_two_ordered_independently_gated_phases() -> None:
-    from tools.inference_parity.harness import PHASES
+    from tools.inference_parity.harness import PHASES  # pyright: ignore[reportMissingImports]
 
     assert PHASES == ("warmup", "real")
     assert phase_requests(123) == (

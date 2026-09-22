@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from tools.inference_parity import lora_storage_receipts as receipts
+from tools.inference_parity import (  # pyright: ignore[reportMissingImports]
+    lora_storage_receipts as receipts,
+)
 
 from tools.evidence_paths import EVIDENCE_ROOT
 

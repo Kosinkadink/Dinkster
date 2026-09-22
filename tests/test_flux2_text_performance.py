@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 import pytest
-from tools.inference_parity.flux2_text_performance import (
+from tools.inference_parity.flux2_text_performance import (  # pyright: ignore[reportMissingImports]
     COMFYUI_COMMIT,
     COMFYUI_KITCHEN_VERSION,
     DEVICE_UUID,

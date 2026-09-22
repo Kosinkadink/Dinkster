@@ -7,13 +7,17 @@ from typing import Any
 
 import pytest
 from dinkster_inference import MINIMAX_H3_CONFIG, builtin_families
-from tools.inference_parity import minimax_h3_codec_receipts
-from tools.inference_parity.minimax_h3_codec_receipts import (
+from tools.inference_parity import (  # pyright: ignore[reportMissingImports]
+    minimax_h3_codec_receipts,
+)
+from tools.inference_parity.minimax_h3_codec_receipts import (  # pyright: ignore[reportMissingImports]
     ArtifactReceiptError,
     load_manifest,
     validate_manifest,
 )
-from tools.inference_parity.qwen_image_receipts import validate_manifest as validate_qwen
+from tools.inference_parity.qwen_image_receipts import (  # pyright: ignore[reportMissingImports]
+    validate_manifest as validate_qwen,
+)
 
 from tools.evidence_paths import EVIDENCE_ROOT
 

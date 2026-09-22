@@ -8,9 +8,13 @@ from typing import Any
 
 import numpy as np
 import pytest
-from tools.inference_parity import harness
-from tools.inference_parity.gguf_comfyui_adapter import _regular_decode
-from tools.inference_parity.gguf_reference import compare_reference
+from tools.inference_parity import harness  # pyright: ignore[reportMissingImports]
+from tools.inference_parity.gguf_comfyui_adapter import (  # pyright: ignore[reportMissingImports]
+    _regular_decode,
+)
+from tools.inference_parity.gguf_reference import (  # pyright: ignore[reportMissingImports]
+    compare_reference,
+)
 
 from tools.evidence_paths import EVIDENCE_ROOT
 

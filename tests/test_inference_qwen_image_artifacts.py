@@ -11,8 +11,8 @@ from typing import cast
 import pytest
 from dinkster_inference.qwen_image_layout import qwen_image_dit_layout
 from dinkster_inference.qwen_image_text import qwen_image_text_layout
-from tools.inference_parity import qwen_image_receipts
-from tools.inference_parity.qwen_image_receipts import (
+from tools.inference_parity import qwen_image_receipts  # pyright: ignore[reportMissingImports]
+from tools.inference_parity.qwen_image_receipts import (  # pyright: ignore[reportMissingImports]
     ArtifactReceiptError,
     _open_artifact,
     canonical_header_digest,
