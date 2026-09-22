@@ -236,9 +236,12 @@ class AttentionWrapperDescriptor(Generic[T]):
     """Wrap one selected attention site around the kernel call.
 
     ``wrapper`` receives the site's q/k/v, the call context, and ``next``,
-    which invokes the rest of the chain. A ``terminal`` wrapper must not
-    call ``next``; a non-terminal wrapper must call ``next`` exactly once -
-    the runtime enforces both and refuses the composition otherwise.
+    which invokes the rest of the chain. ``terminal`` grants permission to
+    stop the chain: a terminal wrapper may call ``next`` zero or one time
+    (so it can delegate baseline calls and only rewrite its auxiliary
+    ones), while a non-terminal wrapper must call ``next`` exactly once.
+    Both reject more than one call - the runtime enforces the counts and
+    refuses the composition otherwise.
     """
 
     id: str
