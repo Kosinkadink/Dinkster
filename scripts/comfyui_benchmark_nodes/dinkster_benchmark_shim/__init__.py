@@ -742,7 +742,7 @@ def _install_h3_forward_trace(model, output_dir: Path):
 
     def post(name):
         def hook(_module, _inputs, output):
-            capture(name, output)
+            capture(name, torch.cat(output, dim=-1) if type(output) is tuple else output)
 
         return hook
 
