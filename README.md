@@ -1,10 +1,35 @@
 # Dinkster
 
-A clean-slate ComfyUI backend. Modular by construction: schema, values, graph,
-engine, workers, caches, server, and extension API are separate packages with
-one-way dependencies. Node execution is boundary-first - same venv, another venv,
-or another machine are just different `Worker` transports. Everything on a graph
-edge is a typed value envelope, so caching and transport are location-independent.
+Dinkster is a pre-release local engine and browser editor for image, video,
+audio, and model-training workflows. Workflows are node graphs executed by
+isolated packs, with typed values, content-addressed caching, managed memory,
+and optional remote workers. Dinkster runs native model families and can import
+existing ComfyUI workflows; an optional ComfyUI checkout adds compatibility
+for node packs that have not been ported.
+
+To run Dinkster from source, clone Dinkster and Dinkster-Frontend beside each
+other, build the frontend, install the locked Python workspace, and launch:
+
+```sh
+cd Dinkster-Frontend
+pnpm install --frozen-lockfile
+pnpm --filter @dinkster/app build
+cd ../Dinkster
+uv sync --python 3.12 --all-packages --frozen
+uv run dinkster setup
+uv run dinkster
+```
+
+The editor opens at `http://127.0.0.1:3639`. See the
+[browser editor quickstart](docs/quickstart.md) for model folders, execution
+environments, and the first-image walkthrough.
+
+Packs are independently installable Python distributions with a
+`dinkster-pack.toml` manifest. A pack declares its schemas, runtime entry
+point, dependencies, and optional frontend module; the server composes those
+contracts and starts a pack worker only when execution needs it. Start with
+the [pack authoring guide](docs/pack-authoring.md) and
+[pack template](templates/pack/).
 
 - Launch the browser editor: [docs/quickstart.md](docs/quickstart.md)
 - End-user backend and Desktop installation: [docs/install.md](docs/install.md)
@@ -25,16 +50,12 @@ edge is a typed value envelope, so caching and transport are location-independen
   healthy by this repo's own suite. `uv run dinkster-doctor <pack-dir>` is the
   pack linter and publish gate.
 - Companion frontend: [Dinkster-Frontend](https://github.com/Kosinkadink/Dinkster-Frontend)
-  (repository access is required until its planned public release)
-- Receipts, parity tooling, benchmarks, acceptance package, and hardware records:
-  [dinkster-evidence](https://github.com/Kosinkadink/dinkster-evidence)
-  (private maintainer repository; access is required)
 
-Status: pre-release. One private backend source archive is available; no
-Desktop release exists. See [installation](docs/install.md) for prerequisites,
-platform limits, and release assets. Native and ComfyUI-compatibility workflows run through the
-same typed graph, server, worker, and sampling boundaries. The exact model,
-node, dtype, training, and compatibility coverage is linked from the
+Status: in progress. No stable package or Desktop release exists yet. See
+[installation](docs/install.md) for prerequisites and platform limits. Native
+and ComfyUI-compatibility workflows run through the same typed graph, server,
+worker, and sampling boundaries. The exact model, node, dtype, training, and
+compatibility coverage is linked from the
 [SUPPORTED.md index](SUPPORTED.md). `uv sync --all-packages` (or
 `scripts/setup_envs.sh` on Linux/macOS or `scripts/setup_envs.ps1` on Windows,
 which also build the torch/GPU test venvs - see
@@ -51,8 +72,9 @@ Both setup scripts pin root synchronization to this checkout's torch-free
 Torch environments with project `uv sync`: exact sync can remove their
 platform-specific torch and kitchen wheels.
 
-Validation requires a sibling `dinkster-evidence` checkout, or an absolute
-`DINKSTER_EVIDENCE_ROOT` override. The `tools.inference_parity` imports, parity
+Maintainer parity validation requires the maintained evidence checkout as a
+sibling, or an absolute `DINKSTER_EVIDENCE_ROOT` override. The
+`tools.inference_parity` imports, parity
 manifest paths in harness tests, `scripts/benchmark_*` loaders, `benchmarks/`
 fixtures, and `packages/dinkster-acceptance` install/test paths refer to that
 checkout, not to files in core. Harness tests run with the evidence checkout as
