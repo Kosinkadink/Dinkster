@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from ..native_arm_core import (
-    _NATIVE_PREPARED_CONDITIONING_KEY,
     Any,
     Mapping,
     NativeComponentHandle,
@@ -374,8 +373,9 @@ class GenerationVAEEncode(NativeVAEEncode):
                 )
             content = pixel_tensor.permute(0, 3, 1, 2)
         if (
-            not batched_video
-            and codec.descriptor.kind == "video"
+            codec.descriptor.kind == "video"
+            and len(pixel_tensor.shape) == 4
+            and (not batched_video or component_codec)
             and (not component_codec or getattr(codec, "sequence_content", False))
         ):
             content = content.permute(1, 0, 2, 3).unsqueeze(0)
@@ -431,8 +431,9 @@ class GenerationVAEEncodeTiled(Node):
                 )
             content = pixel_tensor.permute(0, 3, 1, 2)
         if (
-            not batched_video
-            and codec.descriptor.kind == "video"
+            codec.descriptor.kind == "video"
+            and len(pixel_tensor.shape) == 4
+            and (not batched_video or component_codec)
             and (not component_codec or getattr(codec, "sequence_content", False))
         ):
             content = content.permute(1, 0, 2, 3).unsqueeze(0)
@@ -709,16 +710,10 @@ class GenerationSeedVR2Conditioning(Node):
             samples,
             component_identity=handle.recipe.runtime_identity,
         )
-
-        def row(conditioning: Any) -> list[list[object]]:
-            return [
-                [
-                    conditioning.embeddings,
-                    {_NATIVE_PREPARED_CONDITIONING_KEY: conditioning},
-                ]
-            ]
-
-        return cls.outputs(positive=row(positive), negative=row(negative))
+        return cls.outputs(
+            positive=inference_torch.seedvr2_conditioning_to_carrier(positive),
+            negative=inference_torch.seedvr2_conditioning_to_carrier(negative),
+        )
 
 
 class GenerationSeedVR2TemporalChunk(Node):

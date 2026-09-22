@@ -194,6 +194,31 @@ def test_packs_for_serving_reads_the_immutable_store(tmp_path: Path) -> None:
     assert served.artifact_digest == entry.artifact_digest
 
 
+def test_archived_manifest_inspection_keeps_declared_template(tmp_path: Path) -> None:
+    installer = make_installer(tmp_path)
+    pack_dir = write_pack(tmp_path / "demo", "demo")
+    template_data = b'{"graphs":{"starter":{"nodes":{}}}}'
+    (pack_dir / "templates").mkdir()
+    (pack_dir / "templates" / "starter.json").write_bytes(template_data)
+    (pack_dir / "dinkster-pack.toml").write_text(
+        (pack_dir / "dinkster-pack.toml").read_text()
+        + "\n[[pack.templates]]\n"
+        + 'id = "starter"\n'
+        + 'name = "Starter"\n'
+        + 'file = "templates/starter.json"\n'
+    )
+
+    entry = local_lockfile(installer, pack_dir).packs[0]
+    manifest = installer.manifest_of(entry)
+
+    assert manifest is not None
+    assert len(manifest.templates) == 1
+    assert manifest.templates[0].data == template_data
+    assert manifest.templates[0].path.relative_to(manifest.root).as_posix() == (
+        "templates/starter.json"
+    )
+
+
 def test_packs_for_serving_carries_generation_worker_groups(tmp_path: Path) -> None:
     installer = make_installer(tmp_path)
     alpha = write_pack(tmp_path / "alpha", "alpha")
@@ -832,6 +857,69 @@ def run_cli(*argv: str) -> None:
         manager.main()
     finally:
         sys.argv = old
+
+
+def test_local_workspace_dependency_closure_excludes_unrelated_members(tmp_path: Path) -> None:
+    from dinkster_workers.provision import workspace_packages_for
+
+    workspace = tmp_path / "workspace"
+    packages = workspace / "packages"
+    packages.mkdir(parents=True)
+    (workspace / "pyproject.toml").write_text(
+        '[project]\nname = "workspace-root"\nversion = "1"\n'
+        '[tool.uv.workspace]\nmembers = ["packages/*"]\n'
+    )
+
+    def project(name: str, dependencies: tuple[str, ...] = ()) -> Path:
+        root = packages / name
+        root.mkdir()
+        rendered = ", ".join(f'"{dependency}"' for dependency in dependencies)
+        (root / "pyproject.toml").write_text(
+            f'[project]\nname = "{name}"\nversion = "1"\ndependencies = [{rendered}]\n'
+        )
+        return root
+
+    pack = project("sample-pack", ("dinkster-api",))
+    api = project("dinkster-api")
+    workers = project("dinkster-workers", ("dinkster-protocol",))
+    protocol = project("dinkster-protocol")
+    project("unrelated-package")
+
+    discovered = workspace_packages_for(pack, host_requirements=("dinkster-workers",))
+
+    assert set(discovered) == {api, workers, protocol}
+
+
+def test_default_provision_discovers_dependencies_from_local_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pack = write_pack(tmp_path / "workspace" / "pack", "demo")
+    dependency = tmp_path / "workspace" / "dependency"
+    dependency.mkdir()
+    (dependency / "pyproject.toml").write_text(
+        '[project]\nname = "dinkster-api"\nversion = "1"\ndependencies = []\n'
+    )
+    seen: list[tuple[Path, ...]] = []
+
+    def provision(
+        manifest: PackManifest,
+        *,
+        venv_root: Path,
+        workspace_packages: Sequence[Path] = (),
+        pinned: Sequence[str] | None = None,
+        constraints: Sequence[str] = (),
+        accelerator: str | None = None,
+    ) -> Path:
+        seen.append(tuple(workspace_packages))
+        return fake_provision(manifest, venv_root)
+
+    monkeypatch.setattr(installer_module, "workspace_packages_for", lambda source: (dependency,))
+    monkeypatch.setattr(installer_module, "ensure_pack_venv", provision)
+    installer = Installer(tmp_path / "root", freeze=fake_freeze, accelerator="cpu")
+
+    installer.apply(local_lockfile(installer, pack))
+
+    assert seen == [(dependency,)]
 
 
 def test_cli_install_status_remove_rollback_gc(
