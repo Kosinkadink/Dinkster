@@ -19,7 +19,15 @@ the body and propagates absence to every output.
 Ports are generic. The same region carries images, latents, conditioning,
 masks, audio, video, assets, strings, integers, floats, and pack-defined value
 types without a loop-specific codec. Native `list<T>` values preserve element
-type, order, metadata, and exact payload content.
+type, order, metadata, and exact payload content. State ports preserve one
+typed value unchanged across iterations even when that value's payload is
+heterogeneous or list-shaped; only an explicitly declared `flatten` output
+concatenates `list<T>` values.
+
+A region is itself the declared loop boundary in the graph contract. Its body,
+typed ports, element and state roles, output modes, and while continuation are
+serialized inside the region entry and validated structurally. Boundaries are
+not inferred from node names, implementation classes, or matching ports.
 
 Runtime body IDs use `region[index]/node`. Nested regions extend the path at
 each level. The server emits expansion, per-iteration start and completion,
