@@ -15,11 +15,13 @@ executable the installer uses with UV_OFFLINE=1. The base id hashes only the
 canonical cell/platform/interpreter identity plus the resolved base closure,
 so kitchen, aimdo and every other code-layer pin can change without a new
 base. The code layer is the hash-locked wheelhouse uv.lock names for the cell
-minus every base distribution, plus the workspace release wheels, the git
+through marker-true runtime edges, minus the distributions the built base
+actually installed, plus the workspace release wheels, the git
 dependency built to a local wheel, and the pinned frontend bundle wheel from
-scripts/build_release.py and scripts/release_sources.json. Installing a
-release never touches GitHub or PyPI: all wheels are resolved before install
-and the generated requirements carry only hashes, no URLs.
+scripts/build_release.py and scripts/release_sources.json. Each wheel record
+carries its exact distribution name, version and sha256, from which the
+installer generates hash-locked requirements. Installing a release never
+touches GitHub or PyPI: all wheels are resolved before install.
 """
 
 from __future__ import annotations
@@ -40,9 +42,15 @@ import tempfile
 import tomllib
 import urllib.parse
 import urllib.request
+import zipfile
 from dataclasses import dataclass
+from email.message import Message
+from email.parser import Parser
 from pathlib import Path
 from typing import Any
+
+from packaging.markers import Marker
+from packaging.requirements import Requirement
 
 from scripts.build_release import TAG_PATTERN, release_version, wheel_metadata
 
@@ -166,31 +174,46 @@ def base_identity_hash(
     arch: str,
     python_implementation: str,
     python_version: str,
+    python_build: str,
     packages: dict[str, str],
+    uv_sha256: str,
 ) -> str:
     """The base id: cell, platform, interpreter and the resolved closure only.
 
-    Kitchen, aimdo and every other code-layer pin are absent by construction,
-    so changing them cannot change the base id.
+    The interpreter identity includes the python-build-standalone build
+    revision and the bundled uv digest: standalone distributions can be
+    revised byte-wise for one CPython version, and the accepted base is
+    immutable content, so no byte under one id may ever vary. Kitchen, aimdo
+    and every other code-layer pin are absent by construction, so changing
+    them cannot change the base id.
     """
     identity = {
         "schema": BASE_IDENTITY_SCHEMA,
         "cell": cell_name,
         "platform": {"os": os_name, "arch": arch},
-        "python": {"implementation": python_implementation, "version": python_version},
+        "python": {
+            "implementation": python_implementation,
+            "version": python_version,
+            "build": python_build,
+        },
         "packages": dict(sorted(packages.items())),
+        "uv_sha256": uv_sha256,
     }
     return hashlib.sha256(_canonical_json(identity).encode("utf-8")).hexdigest()
 
 
 def _pin_identity(
     config: CellConfig,
+    python_build: str,
+    uv_sha256: str,
 ) -> dict[str, object]:
     """What a base build starts from, used to skip unchanged rebuilds.
 
     Distinct from the base id: the id hashes the closure that resolution
     actually installed, while this records the requested pins so a rerun can
-    recognize that the same pins already produced a verified archive.
+    recognize that the same pins already produced a verified archive. The
+    standalone build revision and the bundled uv digest are pins too: either
+    changing must produce a new archive, never a reuse.
     """
     return {
         "cell": config.name,
@@ -198,25 +221,89 @@ def _pin_identity(
         "python": {
             "implementation": config.python_implementation,
             "version": config.python_version,
+            "build": python_build,
         },
         "torch_requirement": config.recipe.torch_requirement,
         "torchvision_requirement": config.recipe.torchvision_requirement,
         "index_url": config.recipe.index_url,
+        "uv_sha256": uv_sha256,
     }
 
 
-def _pin_identity_hash(config: CellConfig) -> str:
-    return hashlib.sha256(_canonical_json(_pin_identity(config)).encode("utf-8")).hexdigest()
+def _pin_identity_hash(config: CellConfig, python_build: str, uv_sha256: str) -> str:
+    return hashlib.sha256(
+        _canonical_json(_pin_identity(config, python_build, uv_sha256)).encode("utf-8")
+    ).hexdigest()
 
 
 # ---------------------------------------------------------------------------
 # Base archive construction
 
 
+def _managed_install_dir(python: Path) -> Path:
+    """The uv-managed interpreter install behind a found python, validated.
+
+    A plain ``uv python find`` returns the active project venv when its
+    version matches, and the standalone layout differs per platform: POSIX
+    installs keep the interpreter under ``bin/``, Windows installs put
+    ``python.exe`` at the install root. Both the managed shape and the
+    executable the base staging expects are checked.
+    """
+    if python.name == "python.exe":
+        install_dir = python.parent
+        executable = install_dir / "python.exe"
+    else:
+        install_dir = python.parents[1]
+        executable = install_dir / "bin" / "python3"
+    if not install_dir.name.startswith("cpython-"):
+        raise FeedError(f"uv python selection is not a managed interpreter install: {install_dir}")
+    if install_dir == Path(sys.prefix) or install_dir.is_relative_to(Path(sys.prefix)):
+        raise FeedError(f"uv python selection resolved to the active environment: {install_dir}")
+    if not executable.is_file():
+        raise FeedError(f"managed interpreter install has no executable at {executable}")
+    return install_dir
+
+
+def _uv_source(uv: str) -> Path:
+    source = shutil.which(uv)
+    if source is None:
+        raise FeedError(f"uv executable {uv!r} not found on PATH")
+    return Path(source)
+
+
+def _standalone_build_id(install_dir: Path) -> str:
+    """The python-build-standalone build revision of a managed install.
+
+    Standalone distributions can be revised byte-wise for the same CPython
+    version, so the BUILD marker at the install root is part of the
+    interpreter's identity.
+    """
+    marker = install_dir / "BUILD"
+    if not marker.is_file():
+        raise FeedError(f"managed interpreter install has no BUILD marker: {install_dir}")
+    build_id = marker.read_text(encoding="utf-8").strip()
+    if not build_id:
+        raise FeedError(f"managed interpreter install has an empty BUILD marker: {install_dir}")
+    return build_id
+
+
 def _uv_python_install_dir(uv: str, python_version: str) -> Path:
     _run([uv, "python", "install", python_version])
-    python = Path(_run([uv, "python", "find", python_version]).strip())
-    return python.parents[1]
+    python = Path(
+        _run(
+            [
+                uv,
+                "python",
+                "find",
+                "--managed-python",
+                "--no-project",
+                "--no-config",
+                "--resolve-links",
+                python_version,
+            ]
+        ).strip()
+    )
+    return _managed_install_dir(python)
 
 
 def _staging_python(staging_root: Path, os_name: str) -> Path:
@@ -230,7 +317,9 @@ def _installed_packages(staging_python: Path) -> dict[str, str]:
         "import json, importlib.metadata as m\n"
         "print(json.dumps({d.metadata['Name']: d.version for d in m.distributions()}))\n"
     )
-    output = _run([str(staging_python), "-S", "-c", script])
+    # -I isolates from user site and environment overrides while still
+    # reading the interpreter's own site-packages; -S would see none of them.
+    output = _run([str(staging_python), "-I", "-c", script])
     return {normalize_name(name): version for name, version in json.loads(output).items()}
 
 
@@ -241,17 +330,17 @@ def _clean_site_caches(staging_root: Path) -> None:
                 shutil.rmtree(cache, ignore_errors=True)
 
 
-def _copy_uv_binary(uv: str, staging_root: Path, os_name: str) -> str:
-    uv_rel = "tools/uv/uv.exe" if os_name == "windows" else "tools/uv/uv"
-    source = shutil.which(uv)
-    if source is None:
-        raise FeedError(f"uv executable {uv!r} not found on PATH")
+def _copy_uv_binary(uv: str, staging_root: Path, os_name: str) -> tuple[str, str]:
+    """Bundle uv at the installer's fixed location; returns path and digest."""
+    uv_rel = "tools/uv.exe" if os_name == "windows" else "tools/uv"
+    source = _uv_source(uv)
+    digest = sha256_file(source)
     destination = staging_root / uv_rel
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
     if os_name != "windows":
         destination.chmod(0o755)
-    return uv_rel
+    return uv_rel, digest
 
 
 def _validated_link_target(member_rel: str, target: str) -> None:
@@ -341,7 +430,6 @@ class BaseBuild:
     size: int
     packages: dict[str, str]
     python_path: str
-    uv_path: str
     reused: bool
 
 
@@ -382,13 +470,19 @@ def _reuse_base_record(
         isinstance(key, str) and isinstance(value, str) for key, value in packages.items()
     ):
         return None
+    python_build = record.get("python_build")
+    uv_sha256 = record.get("uv_sha256")
+    if not isinstance(python_build, str) or not isinstance(uv_sha256, str):
+        return None
     expected_id = base_identity_hash(
         config.name,
         config.os_name,
         config.arch,
         config.python_implementation,
         config.python_version,
+        python_build,
         packages,
+        uv_sha256,
     )
     if record.get("id") != expected_id:
         return None
@@ -399,7 +493,6 @@ def _reuse_base_record(
         size=record["size"],
         packages=packages,
         python_path=record["python_path"],
-        uv_path=record["uv_path"],
         reused=True,
     )
 
@@ -407,7 +500,13 @@ def _reuse_base_record(
 def build_base(uv: str, config: CellConfig, feed_dir: Path) -> BaseBuild:
     """Materialize, hash and archive the cell's base, reusing a verified one."""
     require_native_cell(config)
-    pin_hash = _pin_identity_hash(config)
+    # Interpreter selection and the bundled uv digest are part of the pin
+    # identity, so a revised standalone build or updated host uv forces a
+    # fresh archive instead of a reuse.
+    uv_sha256 = sha256_file(_uv_source(uv))
+    interpreter_dir = _uv_python_install_dir(uv, config.python_version)
+    python_build = _standalone_build_id(interpreter_dir)
+    pin_hash = _pin_identity_hash(config, python_build, uv_sha256)
     records = _load_base_records(feed_dir)
     record = records.get(pin_hash)
     if record is not None:
@@ -422,7 +521,6 @@ def build_base(uv: str, config: CellConfig, feed_dir: Path) -> BaseBuild:
 
     with tempfile.TemporaryDirectory(prefix="dinkster-base-") as work:
         staging_root = Path(work) / "base-root"
-        interpreter_dir = _uv_python_install_dir(uv, config.python_version)
         shutil.copytree(interpreter_dir, staging_root, symlinks=True)
         staging_python = _staging_python(staging_root, config.os_name)
         if not staging_python.is_file():
@@ -449,7 +547,7 @@ def build_base(uv: str, config: CellConfig, feed_dir: Path) -> BaseBuild:
                     f"base for cell {config.name} resolved without {required}: {sorted(packages)}"
                 )
         _clean_site_caches(staging_root)
-        uv_rel = _copy_uv_binary(uv, staging_root, config.os_name)
+        _, bundled_uv_sha256 = _copy_uv_binary(uv, staging_root, config.os_name)
         python_rel = staging_python.relative_to(staging_root).as_posix()
         base_id = base_identity_hash(
             config.name,
@@ -457,7 +555,9 @@ def build_base(uv: str, config: CellConfig, feed_dir: Path) -> BaseBuild:
             config.arch,
             config.python_implementation,
             config.python_version,
+            python_build,
             packages,
+            bundled_uv_sha256,
         )
         archive_rel = f"{BASE_DIR}/{config.name}/{base_id}.tar.gz"
         archive = feed_dir / archive_rel
@@ -473,7 +573,6 @@ def build_base(uv: str, config: CellConfig, feed_dir: Path) -> BaseBuild:
         size=archive.stat().st_size,
         packages=packages,
         python_path=python_rel,
-        uv_path=uv_rel,
         reused=False,
     )
     records[pin_hash] = {
@@ -483,8 +582,9 @@ def build_base(uv: str, config: CellConfig, feed_dir: Path) -> BaseBuild:
         "size": build.size,
         "packages": build.packages,
         "python_path": build.python_path,
-        "uv_path": build.uv_path,
-        "pin": _pin_identity(config),
+        "python_build": python_build,
+        "uv_sha256": uv_sha256,
+        "pin": _pin_identity(config, python_build, uv_sha256),
     }
     _save_base_records(feed_dir, records)
     print(
@@ -514,11 +614,61 @@ def workspace_members(lock: dict[str, dict[str, Any]]) -> set[str]:
     return {name for name, entry in lock.items() if _is_local_source(entry["source"])}
 
 
-def locked_closure(lock: dict[str, dict[str, Any]], roots: set[str]) -> dict[str, dict[str, Any]]:
+def cell_marker_environment(config: CellConfig) -> dict[str, str]:
+    """The PEP 508 marker environment of the cell's native platform.
+
+    Every variable is fixed by the cell definition, never by the host
+    interpreter, so lock traversal is deterministic for each cell.
+    """
+    platforms = {
+        "linux": ("linux", "Linux", "posix"),
+        "windows": ("win32", "Windows", "nt"),
+        "macos": ("darwin", "Darwin", "posix"),
+    }
+    machines = {"x86_64": "x86_64", "amd64": "AMD64", "arm64": "arm64"}
+    platform = platforms.get(config.os_name)
+    machine = machines.get(config.arch)
+    if platform is None or machine is None or config.python_implementation != "cpython":
+        raise FeedError(
+            f"cell {config.name} has no marker environment for "
+            f"{config.os_name}/{config.arch}/{config.python_implementation}"
+        )
+    return {
+        "implementation_name": "cpython",
+        "implementation_version": config.python_version,
+        "os_name": platform[2],
+        "platform_machine": machine,
+        "platform_python_implementation": "CPython",
+        "platform_release": "",
+        "platform_system": platform[1],
+        "platform_version": "",
+        "python_full_version": config.python_version,
+        "python_version": ".".join(config.python_version.split(".")[:2]),
+        "sys_platform": platform[0],
+    }
+
+
+def _dependency_allowed(dependency: dict[str, Any], environment: dict[str, str]) -> bool:
+    marker = dependency.get("marker")
+    if marker is None:
+        return True
+    return bool(Marker(str(marker)).evaluate(environment))
+
+
+def locked_closure(
+    lock: dict[str, dict[str, Any]],
+    roots: set[str],
+    environment: dict[str, str],
+    skip_expansion: frozenset[str] = frozenset(),
+) -> dict[str, dict[str, Any]]:
     """Every distribution reachable from the roots through runtime dependencies.
 
     Only the ``dependencies`` edge list is followed, so dev dependencies and
-    the lock's dev-dependency sections never enter the code layer.
+    the lock's dev-dependency sections never enter the closure. Edges whose
+    marker is false in the cell's environment are not followed. Distributions
+    in ``skip_expansion`` (the base's packages) are recorded when reached but
+    not expanded: the lock's subtree for such a distribution describes the
+    lock's variant of it, not the variant the base actually installed.
     """
     closure: dict[str, dict[str, Any]] = {}
     stack = sorted(roots)
@@ -530,23 +680,36 @@ def locked_closure(lock: dict[str, dict[str, Any]], roots: set[str]) -> dict[str
         if entry is None:
             raise FeedError(f"uv.lock has no entry for {name}")
         closure[name] = entry
-        stack.extend(dependency["name"] for dependency in entry.get("dependencies", []))
+        if name in skip_expansion:
+            continue
+        stack.extend(
+            dependency["name"]
+            for dependency in entry.get("dependencies", [])
+            if _dependency_allowed(dependency, environment)
+        )
     return closure
 
 
-def lock_descendants(lock: dict[str, dict[str, Any]], seeds: set[str]) -> set[str]:
-    """The seed distributions and everything reachable from them."""
-    seen: set[str] = set()
-    stack = sorted(seeds)
-    while stack:
-        name = stack.pop()
-        if name in seen:
-            continue
-        seen.add(name)
-        entry = lock.get(name)
-        if entry is not None:
-            stack.extend(dependency["name"] for dependency in entry.get("dependencies", []))
-    return seen
+def code_lock_closure(
+    lock: dict[str, dict[str, Any]], base_packages: dict[str, str], config: CellConfig
+) -> dict[str, dict[str, Any]]:
+    """The distributions the code layer must supply, with their lock entries.
+
+    The built base's package mapping is the authoritative exclusion set. A
+    distribution the base actually installed never ships again, and its lock
+    subtree is not expanded, so the code layer does not inherit the lock's
+    variant of a base distribution's dependencies. Every other distribution
+    reachable from the workspace members through marker-true edges stays in,
+    including one shared with a base distribution while absent from the
+    built base itself.
+    """
+    closure = locked_closure(
+        lock,
+        workspace_members(lock),
+        cell_marker_environment(config),
+        skip_expansion=frozenset(base_packages),
+    )
+    return {name: entry for name, entry in closure.items() if name not in base_packages}
 
 
 def wheel_filename_tags(filename: str) -> tuple[str, str, frozenset[str]]:
@@ -626,7 +789,9 @@ def _build_git_dependency_wheel(uv: str, source_url: str, output: Path) -> Path:
     """Build a wheel from the git dependency pinned in uv.lock.
 
     The wheel is what gets installed; a release needs no source checkout, so
-    the dependency must become a local wheel before the feed is complete.
+    the dependency must become a local wheel before the feed is complete. The
+    built wheel lands in the caller-owned ``output`` directory so the returned
+    path outlives the temporary clone.
     """
     clone_url = source_url.split("?", 1)[0].split("#", 1)[0]
     commit = source_url.rsplit("#", 1)[-1]
@@ -636,9 +801,8 @@ def _build_git_dependency_wheel(uv: str, source_url: str, output: Path) -> Path:
         clone = Path(work) / "src"
         _run(["git", "clone", "--quiet", clone_url, str(clone)])
         _run(["git", "-C", str(clone), "checkout", "--quiet", commit])
-        build_dir = Path(work) / "build"
-        _run([uv, "build", "--wheel", "--out-dir", str(build_dir), str(clone)])
-        wheels = sorted(build_dir.glob("*.whl"))
+        _run([uv, "build", "--wheel", "--out-dir", str(output), str(clone)])
+    wheels = sorted(output.glob("*.whl"))
     if len(wheels) != 1:
         raise FeedError(f"git dependency {clone_url} build produced {len(wheels)} wheels")
     return wheels[0]
@@ -716,6 +880,48 @@ def _refuse_base_code_overlap(base_packages: dict[str, str], entries: list[Wheel
         raise FeedError(f"distributions present in both base and code layers: {duplicated}")
 
 
+def _wheel_requires_dist(wheel_file: Path) -> list[Message]:
+    with zipfile.ZipFile(wheel_file) as archive:
+        metadata_paths = [
+            name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+        ]
+        if len(metadata_paths) != 1:
+            raise FeedError(f"wheel has no unique METADATA file: {wheel_file.name}")
+        message = Parser().parsestr(archive.read(metadata_paths[0]).decode("utf-8"))
+    return list(message.get_all("Requires-Dist") or [])
+
+
+def _verify_code_layer_completeness(
+    entries: list[WheelEntry],
+    feed_dir: Path,
+    base_packages: dict[str, str],
+    environment: dict[str, str],
+) -> None:
+    """Every runtime requirement of every code wheel must be satisfied offline.
+
+    Checked against the actual wheel METADATA, not the lock graph: a
+    requirement whose marker is false for the cell does not apply, and the
+    base satisfies whatever it actually installed. Everything else must ship
+    in the code layer, which is what stops a lock-subtree exclusion from
+    hiding a dependency real code wheels need.
+    """
+    supplied = frozenset(base_packages) | {entry.name for entry in entries}
+    missing: dict[str, list[str]] = {}
+    for entry in entries:
+        for requirement_text in _wheel_requires_dist(feed_dir / entry.path):
+            requirement = Requirement(requirement_text)
+            if requirement.marker is not None and not requirement.marker.evaluate(
+                {**environment, "extra": ""}
+            ):
+                continue
+            required_name = normalize_name(requirement.name)
+            if required_name not in supplied:
+                missing.setdefault(entry.name, []).append(requirement_text)
+    if missing:
+        details = "; ".join(f"{name}: {reqs}" for name, reqs in sorted(missing.items()))
+        raise FeedError(f"code layer is missing required distributions: {details}")
+
+
 def build_code_layer(
     uv: str,
     root: Path,
@@ -736,18 +942,14 @@ def build_code_layer(
             f"the code layer requires the pinned frontend bundle wheel, missing: {frontend_wheel}"
         )
     lock = load_lock(root)
-    closure = locked_closure(lock, workspace_members(lock))
-    # Every base distribution is a descendant of torch or torchvision in the
-    # lock graph, so excluding their subtree keeps the base and code layers
-    # disjoint even when a base package is also a code dependency.
-    base_names = lock_descendants(lock, {"torch", "torchvision"})
-    code_names = sorted(set(closure) - base_names)
+    code_closure = code_lock_closure(lock, base_packages, config)
+    code_names = sorted(code_closure)
 
     with tempfile.TemporaryDirectory(prefix="dinkster-wheels-") as work:
         built = _build_workspace_wheels(uv, root, Path(work))
         entries: dict[str, WheelEntry] = {}
         for lock_name in code_names:
-            entry = closure[lock_name]
+            entry = code_closure[lock_name]
             source = entry["source"]
             if _is_local_source(source):
                 wheel = built.get(normalize_name(lock_name))
@@ -772,45 +974,26 @@ def build_code_layer(
     _register_entry(entries, frontend_entry)
     result = [entries[name] for name in sorted(entries)]
     _refuse_base_code_overlap(base_packages, result)
+    _verify_code_layer_completeness(
+        result, feed_dir, base_packages, cell_marker_environment(config)
+    )
     return result
 
 
 # ---------------------------------------------------------------------------
-# Manifests and requirements
-
-
-@dataclass(frozen=True)
-class RequirementsFile:
-    path: str
-    sha256: str
-    size: int
-
-    def as_json(self) -> dict[str, object]:
-        return {"path": self.path, "sha256": self.sha256, "size": self.size}
-
-
-def write_requirements(
-    feed_dir: Path, commit: str, cell_name: str, entries: list[WheelEntry]
-) -> RequirementsFile:
-    """Hash-locked requirements generated from the wheels' own metadata."""
-    lines = "".join(
-        f"{entry.name}=={entry.version} --hash=sha256:{entry.sha256}\n"
-        for entry in sorted(entries, key=lambda entry: entry.name)
-    )
-    relative = f"{ENGINE_DIR}/{commit}/{cell_name}.requirements.txt"
-    path = feed_dir / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(lines, encoding="utf-8")
-    return RequirementsFile(relative, sha256_file(path), path.stat().st_size)
+# Manifests
 
 
 def build_manifest(
-    commit: str,
-    cell_name: str,
-    base: BaseBuild,
-    entries: list[WheelEntry],
-    requirements: RequirementsFile,
+    commit: str, cell_name: str, base: BaseBuild, entries: list[WheelEntry]
 ) -> dict[str, Any]:
+    """The manifest document exactly as the strict consumer parser defines it.
+
+    The installer generates its hash-locked requirements from the wheel
+    records themselves, so the manifest carries no separate requirements
+    section, and the bundled uv is fixed at tools/uv inside the base root
+    rather than named by a field.
+    """
     return {
         "format": MANIFEST_FORMAT,
         "commit": commit,
@@ -823,7 +1006,6 @@ def build_manifest(
                 "size": base.size,
             },
             "python": base.python_path,
-            "uv": base.uv_path,
             "packages": dict(sorted(base.packages.items())),
         },
         "wheels": [
@@ -838,7 +1020,6 @@ def build_manifest(
             }
             for entry in sorted(entries, key=lambda entry: entry.path)
         ],
-        "requirements": requirements.as_json(),
     }
 
 
@@ -924,28 +1105,29 @@ def _main(args: argparse.Namespace) -> int:
     commit = git_commit(root)
 
     if args.channel is not None:
-        return _write_channel(root, feed_dir, commit, args)
-
-    if not args.cells:
-        raise FeedError("nothing to do: pass --cells or --channel")
-    frontend_wheel = _resolve_frontend_wheel(root, args)
-    for cell_name in [cell.strip() for cell in args.cells.split(",") if cell.strip()]:
-        config = load_cell_config(root / "scripts/engine_cells.json", cell_name)
-        base = build_base(args.uv, config, feed_dir)
-        entries = build_code_layer(args.uv, root, feed_dir, config, base.packages, frontend_wheel)
-        requirements = write_requirements(feed_dir, commit, cell_name, entries)
-        manifest = build_manifest(commit, cell_name, base, entries, requirements)
-        manifest_rel = f"{ENGINE_DIR}/{commit}/{cell_name}.json"
-        manifest_path = feed_dir / manifest_rel
-        manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        manifest_path.write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        code_bytes = sum(entry.size for entry in entries)
-        print(
-            f"manifest written: {manifest_rel} ({len(entries)} wheels, "
-            f"{code_bytes} bytes of wheels)"
-        )
+        _write_channel(root, feed_dir, commit, args)
+    else:
+        if not args.cells:
+            raise FeedError("nothing to do: pass --cells or --channel")
+        frontend_wheel = _resolve_frontend_wheel(root, args)
+        for cell_name in [cell.strip() for cell in args.cells.split(",") if cell.strip()]:
+            config = load_cell_config(root / "scripts/engine_cells.json", cell_name)
+            base = build_base(args.uv, config, feed_dir)
+            entries = build_code_layer(
+                args.uv, root, feed_dir, config, base.packages, frontend_wheel
+            )
+            manifest = build_manifest(commit, cell_name, base, entries)
+            manifest_rel = f"{ENGINE_DIR}/{commit}/{cell_name}.json"
+            manifest_path = feed_dir / manifest_rel
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            code_bytes = sum(entry.size for entry in entries)
+            print(
+                f"manifest written: {manifest_rel} ({len(entries)} wheels, "
+                f"{code_bytes} bytes of wheels)"
+            )
 
     if args.upload_endpoint:
         if not args.upload_bucket:
@@ -1013,4 +1195,4 @@ def _write_channel(root: Path, feed_dir: Path, commit: str, args: argparse.Names
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
