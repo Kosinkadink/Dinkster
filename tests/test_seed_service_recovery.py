@@ -180,6 +180,41 @@ def test_changed_authority_retires_same_digest_leases_before_regrant(
     asyncio.run(scenario())
 
 
+def test_refreshed_expiry_renews_seed_leases_without_revocation(
+    native_service: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = native_service
+    current = build_provider_fixture(tmp_path / "models" / "current", payload_size=32)
+    refreshed = replace(
+        current,
+        observed_at=current.observed_at + 60,
+        snapshot=replace(
+            current.snapshot,
+            refreshed_at=current.snapshot.refreshed_at + 60,
+        ),
+    )
+
+    async def scenario() -> None:
+        h.publish(current)
+        await h.service.activity.update(h.service.settings)
+        assert len(h.runtime._leases) == 2
+        h.requests.clear()
+
+        h.publish(refreshed)
+        h.service.controller._clock = lambda: refreshed.observed_at
+        h.service.controller._grants._clock = lambda: refreshed.observed_at
+        monkeypatch.setattr("dinkster_p2p.global_leases.time.time", lambda: refreshed.observed_at)
+        await h.service.controller.reconcile(local_files_changed=True)
+
+        assert not any(operation == "revoke" for operation, _body in h.requests), h.requests
+        assert [operation for operation, _body in h.requests].count("grant-seed") == 1
+        assert [operation for operation, _body in h.requests].count("grant-global") == 1
+        assert len(h.runtime._leases) == 2
+        assert h.service.store.local_path_for(current.descriptor.asset_digest) is not None
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("still_metered", [False, True])
 def test_explicit_enable_recovers_only_current_authorized_seeds_after_restart(
     native_service: Any, tmp_path: Path, still_metered: bool

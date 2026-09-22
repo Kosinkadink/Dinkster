@@ -9,6 +9,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from dinkster_assets import (
@@ -729,7 +730,16 @@ class LanP2PController:
                 desired[digest] = (lease, mapping)
         # Retire both scopes before any admission can fail at the shared capacity limit.
         for digest, (lease, _mapping) in tuple(self._seed_leases.items()):
-            if digest in desired and desired[digest][0] == lease:
+            replacement = desired.get(digest)
+            if replacement is not None and replacement[0] == lease:
+                continue
+            if (
+                replacement is not None
+                and lease.grant_ids == replacement[0].grant_ids
+                and replace(lease, expires_at=replacement[0].expires_at) == replacement[0]
+            ):
+                await self._manager.grant_seed(replacement[0])
+                self._seed_leases[digest] = replacement
                 continue
             with contextlib.suppress(P2PManagerError):
                 await self._manager.revoke(lease.lease_id)
