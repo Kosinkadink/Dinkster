@@ -36,7 +36,6 @@ from dinkster_inference import (
     SamplerInfo,
     SamplingCancelled,
     SolverStateEvent,
-    StepCallback,
     StepEvent,
     builtin_scheduler_registry,
     builtin_schedulers,
@@ -804,25 +803,48 @@ class TestCatalogs:
         with pytest.raises(ValueError, match="num_frame_per_block.*must be <= 64"):
             select_builtin_sampler("ar_video", num_frame_per_block=65)
 
-        calls: list[tuple[Vec, tuple[float, ...], int, int]] = []
+        calls: list[tuple[Any, ...]] = []
+
+        class ARSession:
+            block_count = 2
+            sigma_step_count = 2
+
+            def __init__(self, x: Vec) -> None:
+                self.current = x
+
+            def begin_block(self, block_index: int) -> None:
+                calls.append(("begin", block_index))
+
+            def evaluate(self, sigma: float) -> tuple[Vec, Vec, Vec]:
+                denoised = self.current + 1.0
+                calls.append(("evaluate", sigma))
+                return self.current, denoised, denoised
+
+            def advance(self, denoised: Vec, sigma_next: float, seed: int) -> None:
+                calls.append(("advance", sigma_next, seed))
+                self.current = denoised
+
+            def commit_block(self) -> None:
+                calls.append(("commit",))
+
+            def finish(self) -> Vec:
+                calls.append(("finish",))
+                return self.current
 
         class ARDenoiser:
             def __call__(self, x: Vec, sigma: float) -> Vec:
                 del sigma
                 return x
 
-            def sample_autoregressive(
+            def prepare_autoregressive(
                 self,
                 x: Vec,
                 sigmas: Sequence[float],
-                info: SamplerInfo,
                 *,
                 num_frame_per_block: int,
-                on_step: StepCallback | None = None,
-            ) -> Vec:
-                del on_step
-                calls.append((x, tuple(sigmas), info.seed, num_frame_per_block))
-                return x + 1.0
+            ) -> ARSession:
+                calls.append(("prepare", x, tuple(sigmas), num_frame_per_block))
+                return ARSession(x)
 
         descriptor = builtin_sampler_registry().get(selection.sampler_id)
         assert descriptor is not None
@@ -835,8 +857,23 @@ class TestCatalogs:
             sigmas,
             SamplerInfo(Parameterization.FLOW, seed=17),
         )
-        assert result == x + 1.0
-        assert calls == [(x, sigmas, 17, 3)]
+        assert result == x + 4.0
+        assert calls == [
+            ("prepare", x, sigmas, 3),
+            ("begin", 0),
+            ("evaluate", 1.0),
+            ("advance", 0.5, 17),
+            ("evaluate", 0.5),
+            ("advance", 0.0, 18),
+            ("commit",),
+            ("begin", 1),
+            ("evaluate", 1.0),
+            ("advance", 0.5, 1017),
+            ("evaluate", 0.5),
+            ("advance", 0.0, 1018),
+            ("commit",),
+            ("finish",),
+        ]
         assert solver(mock_denoised, x, (0.0,), SPACE_INFO["flow"]) is x
         with pytest.raises(TypeError, match="autoregressive denoiser"):
             solver(mock_denoised, x, sigmas, SPACE_INFO["flow"])
@@ -844,20 +881,19 @@ class TestCatalogs:
         cancellation = CancellationFlag()
 
         class CancellingARDenoiser(ARDenoiser):
-            def sample_autoregressive(
+            def prepare_autoregressive(
                 self,
                 x: Vec,
                 sigmas: Sequence[float],
-                info: SamplerInfo,
                 *,
                 num_frame_per_block: int,
-                on_step: StepCallback | None = None,
-            ) -> Vec:
-                del sigmas, info, num_frame_per_block
+            ) -> ARSession:
                 cancellation.cancel()
-                assert on_step is not None
-                on_step(StepEvent(0, 1, 1.0))
-                return x
+                return super().prepare_autoregressive(
+                    x,
+                    sigmas,
+                    num_frame_per_block=num_frame_per_block,
+                )
 
         with use_sampling_environment((), cancellation):
             with pytest.raises(SamplingCancelled, match="sampling cancelled"):

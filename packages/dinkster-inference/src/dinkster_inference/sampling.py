@@ -216,18 +216,34 @@ class SamplingCache(Protocol[TensorT]):
 
 
 @runtime_checkable
-class AutoregressiveDenoiser(Protocol[TensorT]):
-    """Denoiser capability for model-owned temporal block sampling."""
+class AutoregressiveSamplingSession(Protocol[TensorT]):
+    """Model operations consumed by an autoregressive sampler invocation."""
 
-    def sample_autoregressive(
+    block_count: int
+    sigma_step_count: int
+
+    def begin_block(self, block_index: int) -> None: ...
+
+    def evaluate(self, sigma: float) -> tuple[TensorT, TensorT, TensorT]: ...
+
+    def advance(self, denoised: TensorT, sigma_next: float, seed: int) -> None: ...
+
+    def commit_block(self) -> None: ...
+
+    def finish(self) -> TensorT: ...
+
+
+@runtime_checkable
+class AutoregressiveDenoiser(Protocol[TensorT]):
+    """Denoiser capability that supplies model operations to an AR sampler."""
+
+    def prepare_autoregressive(
         self,
         x: TensorT,
         sigmas: Sequence[float],
-        info: SamplerInfo,
         *,
         num_frame_per_block: int,
-        on_step: StepCallback | None = None,
-    ) -> TensorT: ...
+    ) -> AutoregressiveSamplingSession[TensorT]: ...
 
 
 @runtime_checkable
@@ -1545,6 +1561,7 @@ def catalog_value_is_canonical(resolved: object, builtin: object) -> bool:
 
 __all__ = [
     "AutoregressiveDenoiser",
+    "AutoregressiveSamplingSession",
     "BuiltinSamplerSelection",
     "ArithTensor",
     "CallableEvidence",

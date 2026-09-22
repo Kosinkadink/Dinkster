@@ -49,15 +49,19 @@ Anima, Chroma, Ideogram4, Lumina2, Qwen Image, SeedVR2, Z-Image, Flux, SD, and
 MiniMax Music 3 use single-stream adapters. Wan21, LTXV, LTXAV, TRELLIS.2,
 TripoSplat, and MiniMax H3 adapt structural latent shapes at the same seam.
 
-Wan21 maps structural video streams, typed conditioning, context windows,
-inpaint data, and masks into its adapter. LTXV, LTXAV, TRELLIS.2, and
+Wan21 registers denoiser adapters for its base, Wan 2.2, VACE, Fun, and
+CausalAR profiles and maps structural video streams, typed conditioning,
+context windows, inpaint data, and masks through the shared latent seam. LTXV, LTXAV, TRELLIS.2, and
 TripoSplat use the same structural contract. MiniMax H3 packs video and audio
 streams and finalizes audio scaling and capture through its latent adapter.
 Distributed and windowed model evaluation stays inside denoiser adapters;
 solver, schedule, noise, masking, cancellation, observer, and callback
 execution stays in the engine.
 
-Autoregressive or windowed model evaluation is a denoiser implementation, not
-a second sampling run. A migration is complete only when KSampler and direct
+The autoregressive sampler owns temporal blocks, sigma replay, deterministic
+block noise, callbacks, and cancellation. Its denoiser adapter supplies an
+invocation-scoped session for model evaluation and cache commits; it does not
+run the schedule. Windowed model evaluation remains a denoiser concern. A
+migration is complete only when KSampler and direct
 SamplerCustom execution are bit-identical for the same request, noise, and
 inputs, without changing numerical comparisons.

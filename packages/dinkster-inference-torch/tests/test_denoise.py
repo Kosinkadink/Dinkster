@@ -1455,15 +1455,13 @@ def test_autoregressive_sampling_routes_distributed_execution_through_rank_zero(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     class Autoregressive(_IdentityDenoiser):
-        def sample_autoregressive(
+        def prepare_autoregressive(
             self,
             x: torch.Tensor,
             sigmas: Sequence[float],
-            info: SamplerInfo,
             *,
             num_frame_per_block: int,
-            on_step: StepCallback | None = None,
-        ) -> torch.Tensor:
+        ) -> object:
             raise AssertionError("distributed admission must precede model execution")
 
     config = distributed_module.DistributedSamplingConfig(
