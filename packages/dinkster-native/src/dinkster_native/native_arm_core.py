@@ -183,6 +183,12 @@ _RUNTIME_SOURCE_ROLE_SETS = (
     ("clip_l", "diffusion", "t5xxl", "vae"),
     *_EMBEDDING_FREE_RUNTIME_SOURCE_ROLE_SETS,
 )
+_TEXT_RUNTIME_SOURCE_ROLES = frozenset(("checkpoint", "clip_l", "gemma3_12b", "qwen3_4b", "t5xxl"))
+
+
+def _diffusion_unload_roles(handle: NativeRuntimeHandle) -> tuple[str, ...]:
+    source_roles = frozenset(source.role for source in handle.recipe.sources)
+    return ("text",) if source_roles & _TEXT_RUNTIME_SOURCE_ROLES else ()
 
 
 def _not_cancelled() -> bool:
