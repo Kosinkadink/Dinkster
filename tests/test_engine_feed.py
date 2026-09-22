@@ -130,6 +130,10 @@ class TestArtifact:
             "a%2fb.tar.gz",
             "a%5cb.tar.gz",
             "a%2Fb.tar.gz",
+            "%2e%2e/escape.tar.gz",
+            "..%2fescape.tar.gz",
+            "a%252fb.tar.gz",
+            "a%00b",
             "a\x00b",
             "a\nb",
         ],
@@ -474,6 +478,18 @@ class TestMirrorUrlValidation:
     @pytest.mark.parametrize(
         "url",
         [
+            "http://127.attacker.example/dl",
+            "http://localhost.evil.example/dl",
+            "http://172.0.0.1/dl",
+        ],
+    )
+    def test_lookalike_loopback_hostnames_rejected(self, url: str) -> None:
+        with pytest.raises(EngineFeedError, match="HTTPS"):
+            Mirror(url, allow_local_http=True)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
             "http://10.0.0.5:9000/dl",
             "http://192.168.1.10/dl",
             "http://mirror.example.com/dl",
@@ -493,6 +509,10 @@ class TestMirrorUrlValidation:
             "https://mirror.example.com/dl#fragment",
             "mirror.example.com/dl",
             "https://mirror.example.com/a/../dl",
+            "https://mirror.example.com/%2e%2e/dl",
+            "https://mirror.example.com/dl%2f..",
+            "https://mirror.example.com/dl%5c..",
+            "https://mirror.example.com/%252e%252e/dl",
             "https://mirror.example.com/dl ",
             "",
         ],
@@ -512,6 +532,9 @@ class _ServerConfig:
     redirects: dict[str, str] = field(default_factory=dict)
     ignore_range: bool = False
     bad_range_start: int | None = None
+    bad_range_end: int | None = None
+    wrong_range_length: bool = False
+    chunked_truncate: int | None = None
     serve_only: int | None = None
     error_status: int | None = None
     requests: list[tuple[str, str | None]] = field(default_factory=list)
@@ -551,11 +574,35 @@ class _FeedHandler(BaseHTTPRequestHandler):
             start = int(range_header.removeprefix("bytes=").split("-")[0])
             status = 206
         payload = body[start:]
+        if config.chunked_truncate is not None:
+            # Announce a chunk covering the whole payload but close the
+            # socket mid-chunk, so the client's read raises IncompleteRead.
+            self.send_response(status)
+            if status == 206:
+                advertised_start = (
+                    start if config.bad_range_start is None else config.bad_range_start
+                )
+                self.send_header(
+                    "Content-Range", f"bytes {advertised_start}-{len(body) - 1}/{len(body)}"
+                )
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            self.wfile.write(f"{len(payload):x}\r\n".encode())
+            self.wfile.write(payload[: config.chunked_truncate])
+            self.wfile.write(b"\r\n")
+            self.close_connection = True
+            return
         self.send_response(status)
         if status == 206:
-            advertised = start if config.bad_range_start is None else config.bad_range_start
-            self.send_header("Content-Range", f"bytes {advertised}-{len(body) - 1}/{len(body)}")
-        self.send_header("Content-Length", str(len(payload)))
+            advertised_start = start if config.bad_range_start is None else config.bad_range_start
+            advertised_end = len(body) - 1 if config.bad_range_end is None else config.bad_range_end
+            self.send_header(
+                "Content-Range", f"bytes {advertised_start}-{advertised_end}/{len(body)}"
+            )
+            declared = len(payload) + 1 if config.wrong_range_length else len(payload)
+            self.send_header("Content-Length", str(declared))
+        else:
+            self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         if config.serve_only is not None:
             payload = payload[: config.serve_only]
@@ -669,6 +716,50 @@ class TestDownload:
         make_mirror(feed_server).download(feed_artifact(), destination)
         assert destination.read_bytes() == CONTENT
 
+    @pytest.mark.parametrize("bad_end", [99, 50_000, 60_000])
+    def test_bad_content_range_end_resets(
+        self, feed_server: _FeedServer, tmp_path: Path, bad_end: int
+    ) -> None:
+        feed_server.config.content["/dl/store/0001/base.tar.gz"] = CONTENT
+        feed_server.config.bad_range_end = bad_end
+        destination = tmp_path / "base.tar.gz"
+        part = destination.with_name(destination.name + ".part")
+        part.write_bytes(CONTENT[:100])
+        make_mirror(feed_server).download(feed_artifact(), destination)
+        assert destination.read_bytes() == CONTENT
+
+    def test_range_length_disagreeing_with_content_range_resets(
+        self, feed_server: _FeedServer, tmp_path: Path
+    ) -> None:
+        feed_server.config.content["/dl/store/0001/base.tar.gz"] = CONTENT
+        feed_server.config.wrong_range_length = True
+        destination = tmp_path / "base.tar.gz"
+        part = destination.with_name(destination.name + ".part")
+        part.write_bytes(CONTENT[:100])
+        # The disagreement must reset the part and recover with a fresh
+        # download, never promote the mismatching range response.
+        result = make_mirror(feed_server).download(feed_artifact(), destination)
+        assert result == destination
+        assert destination.read_bytes() == CONTENT
+        assert feed_server.config.ranged_requests(), (
+            "the mismatch must be detected on a resumed range request"
+        )
+
+    def test_interrupted_read_is_recovered(self, feed_server: _FeedServer, tmp_path: Path) -> None:
+        feed_server.config.content["/dl/store/0001/base.tar.gz"] = CONTENT
+        feed_server.config.chunked_truncate = 150
+        destination = tmp_path / "base.tar.gz"
+        part = destination.with_name(destination.name + ".part")
+        part.write_bytes(CONTENT[:100])
+        with pytest.raises(EngineFeedError, match="did not complete"):
+            make_mirror(feed_server).download(feed_artifact(), destination)
+        # The read failure must not corrupt or consume the partial bytes.
+        assert part.read_bytes() == CONTENT[:100]
+        assert not destination.exists()
+        feed_server.config.chunked_truncate = None
+        make_mirror(feed_server).download(feed_artifact(), destination)
+        assert destination.read_bytes() == CONTENT
+
     def test_corrupt_prefix_fails_and_deletes_part(
         self, feed_server: _FeedServer, tmp_path: Path
     ) -> None:
@@ -754,6 +845,33 @@ class TestDownload:
         with pytest.raises(EngineFeedError, match="directory"):
             make_mirror(feed_server).download(feed_artifact(), destination)
 
+    def test_destination_symlink_rejected_without_touching_target(
+        self, feed_server: _FeedServer, tmp_path: Path
+    ) -> None:
+        feed_server.config.content["/dl/store/0001/base.tar.gz"] = CONTENT
+        target = tmp_path / "target.bin"
+        target.write_bytes(b"precious")
+        destination = tmp_path / "base.tar.gz"
+        destination.symlink_to(target)
+        with pytest.raises(EngineFeedError, match="symlink"):
+            make_mirror(feed_server).download(feed_artifact(), destination)
+        assert target.read_bytes() == b"precious"
+        assert not destination.with_name(destination.name + ".part").exists()
+
+    def test_part_symlink_rejected_without_touching_target(
+        self, feed_server: _FeedServer, tmp_path: Path
+    ) -> None:
+        feed_server.config.content["/dl/store/0001/base.tar.gz"] = CONTENT
+        target = tmp_path / "target.bin"
+        target.write_bytes(b"precious")
+        destination = tmp_path / "base.tar.gz"
+        part = destination.with_name(destination.name + ".part")
+        part.symlink_to(target)
+        with pytest.raises(EngineFeedError, match="symlink"):
+            make_mirror(feed_server).download(feed_artifact(), destination)
+        assert target.read_bytes() == b"precious"
+        assert not destination.exists()
+
 
 class TestDownloadRedirects:
     PATH = "/dl/store/0001/base.tar.gz"
@@ -798,6 +916,17 @@ class TestDownloadRedirects:
         finally:
             other.shutdown()
             other.server_close()
+
+    def test_redirect_with_encoded_traversal_rejected(
+        self, feed_server: _FeedServer, tmp_path: Path
+    ) -> None:
+        feed_server.config.redirects[self.PATH] = (
+            f"http://127.0.0.1:{feed_server.server_address[1]}/dl/x/%2e%2e/base.tar.gz"
+        )
+        destination = tmp_path / "base.tar.gz"
+        with pytest.raises(EngineFeedError, match="base prefix"):
+            make_mirror(feed_server).download(feed_artifact(), destination)
+        assert not destination.exists()
 
     def test_redirect_with_credentials_rejected(
         self, feed_server: _FeedServer, tmp_path: Path
