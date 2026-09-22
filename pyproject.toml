@@ -50,6 +50,7 @@ dinkster-pack = "dinkster.manager:main"
 dinkster-isolated = "dinkster.isolated_demo:main"
 dinkster-port = "dinkster.port:main"
 dinkster-p2p-diagnostics = "dinkster.p2p_diagnostics:main"
+dinkster-seed = "dinkster.seed:main"
 
 [project.optional-dependencies]
 default = [
@@ -91,7 +92,7 @@ dinkster-workers = { workspace = true }
 dinkster-caches = { workspace = true }
 dinkster-assets = { workspace = true }
 dinkster-image-document = { workspace = true }
-dinkster-p2p = { git = "https://github.com/Kosinkadink/dinkster-p2p.git", rev = "16bf38c30a47fdde4f6b63e00d63fb2d8cb5ff5e" }
+dinkster-p2p = { git = "https://github.com/Kosinkadink/dinkster-p2p.git", rev = "87fb4f0de8d70ae3f37816aa4a45e0ab766c7bf7" }
 dinkster-memory = { workspace = true }
 dinkster-native = { workspace = true }
 dinkster-compat-comfy = { workspace = true }
