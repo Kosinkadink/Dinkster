@@ -33,6 +33,7 @@ from dinkster_inference_torch.checkpoint_runtime import (
     ComponentCheckpointRuntime,
     assemble_component_checkpoint,
 )
+from dinkster_inference_torch.sampling_execution import CustomSamplingCapabilities
 from dinkster_inference_torch.sampling_runtime import SingleStreamSamplingRuntime
 from dinkster_inference_torch.schedules import torch_scheduler_registry
 from dinkster_inference_torch.solvers import torch_sampler_registry
@@ -42,6 +43,14 @@ from safetensors.torch import save_file
 class Diffusion(SingleStreamSamplingRuntime):
     runtime_identity = "synthetic-checkpoint"
     supports_denoise_mask = True
+    sampling_execution_registration = cast(
+        "Any",
+        SimpleNamespace(
+            capabilities=CustomSamplingCapabilities(),
+            forbidden_options=frozenset(),
+            forbidden_options_message="",
+        ),
+    )
 
     def __init__(self) -> None:
         self._samplers = torch_sampler_registry()

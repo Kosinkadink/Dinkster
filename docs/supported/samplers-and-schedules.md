@@ -61,7 +61,10 @@ and noise controls. AddNoise applies a supplied noise source to a dense latent
 over the selected sigma span while retaining latent metadata.
 Each accepts the matching ComfyUI node ID as an alias and keeps the same
 workflow-facing socket IDs and order. The custom path accepts plain and inpaint
-conditioning where the model supports it. It also accepts standard SD1.5
+conditioning where the model supports it. SamplerCustom and SamplerCustomAdvanced
+also expose optional denoise mask, positive and negative inpaint conditioning,
+noise indices, and context-window inputs. They reject conflicts with equivalent
+latent, conditioning, or model metadata. The custom path also accepts standard SD1.5
 IP-Adapter and maintained Qwen Image control applications. Component applications
 are accepted when the model consumes their declared inputs. Other overlays and
 controls are not supported there. SD1.5 IP-Adapter

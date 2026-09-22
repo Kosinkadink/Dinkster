@@ -9367,7 +9367,7 @@ def test_z_image_custom_sampler_encodes_control_after_admission(
         scheduler="simple",
         steps=2,
         denoise=1.0,
-    )["sigmas"] == arm._CustomSigmasValue((1.0, 0.5, 0.0))
+    )["sigmas"] == arm._CustomSigmasValue((1.0, 0.5, 0.0), source_scheduler_id="dinkster.simple")
     assert events == []
 
     positive = [[FakeTensor((1, 2, 8), "positive"), {}]]
@@ -14284,7 +14284,7 @@ def test_generation_basic_scheduler_resolves_res4lyf_workflow_names(
     )["sigmas"]
 
     assert calls == [(expected, 2, 0.75, schedule_device)]
-    assert sigmas == arm._CustomSigmasValue((1.0, 0.0))
+    assert sigmas == arm._CustomSigmasValue((1.0, 0.0), source_scheduler_id=expected)
 
 
 @pytest.mark.parametrize(
@@ -15289,6 +15289,11 @@ def test_dual_cfg_guider_forwards_all_three_lanes_and_style(
             "nested_guidance": True,
             "latent_image": {},
             "conditioning_batching": guider.batching,
+            "denoise_mask": None,
+            "inpaint": None,
+            "negative_inpaint": None,
+            "noise_inds": None,
+            "context_windows": None,
         }
     ]
 
@@ -16206,6 +16211,605 @@ def test_generation_custom_samplers_execute_the_public_runtime_contract(
         latent_image=latent_value,
     )
     assert patched_calls == [patched.sampling_space, patched.sampling_space]
+
+
+def _custom_sampling_forwarding_setup(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    inpaint_by_input: dict[str, object | None],
+) -> SimpleNamespace:
+    """Custom-sampling harness that records preflight and sample_custom forwarding."""
+    from dinkster_inference import (
+        Conditioning,
+        CustomSamplingRequest,
+        CustomSamplingResult,
+        LatentDescriptor,
+    )
+
+    arm = _native_arm()
+    torch = FakeTorch()
+    calls: list[dict[str, object]] = []
+    checks: list[dict[str, object]] = []
+    requests: list[str | None] = []
+    noise_requests: list[tuple[object, int, object]] = []
+    generated_noise = FakeTensor((1, 16, 8, 8), "generated-noise")
+    sampled = FakeTensor((1, 16, 8, 8), "sampled", device="cuda:0")
+    runtime_recipe = replace(
+        _recipe(),
+        family_id="dinkster.flux_dev",
+        component_identity=("family=dinkster.flux_dev",),
+    )
+
+    class Runtime:
+        family = SimpleNamespace(
+            id="dinkster.flux_dev",
+            latent=LatentDescriptor(channels=16),
+            single_stream_latent=lambda: SimpleNamespace(channels=16, dimensions=2),
+        )
+        runtime_identity = runtime_recipe.runtime_identity
+
+        @staticmethod
+        def encode_text(_text: str) -> Conditioning[FakeTensor]:
+            return Conditioning(FakeTensor((1, 2, 8), "encoded"))
+
+        @staticmethod
+        def sample(latent: FakeTensor, **_kwargs: object) -> FakeTensor:
+            return latent
+
+        @staticmethod
+        def decode_latent(latent: FakeTensor) -> FakeTensor:
+            return latent
+
+        @staticmethod
+        def encode_content(content: FakeTensor) -> FakeTensor:
+            return content
+
+        @staticmethod
+        def custom_sampling_sigmas(
+            scheduler_id: str,
+            steps: int,
+            denoise: float,
+            *,
+            device: object | None = None,
+        ) -> tuple[float, ...]:
+            assert (scheduler_id, steps, denoise) == ("dinkster.normal", 2, 0.75)
+            return (1.0, 0.5, 0.0)
+
+        @staticmethod
+        def custom_sampling_beta_sigmas(
+            steps: int,
+            alpha: float,
+            beta: float,
+            *,
+            device: object | None = None,
+        ) -> tuple[float, ...]:
+            raise AssertionError("unused in forwarding tests")
+
+        @staticmethod
+        def custom_sampling_sd_turbo_sigmas(
+            steps: int,
+            denoise: float,
+            *,
+            device: object | None = None,
+        ) -> tuple[float, ...]:
+            raise AssertionError("unused in forwarding tests")
+
+        @staticmethod
+        def custom_sampling_percent_to_sigma(
+            percent: float,
+            *,
+            return_actual_sigma: bool,
+        ) -> float:
+            raise AssertionError("unused in forwarding tests")
+
+        @staticmethod
+        def check_custom_sampling(
+            request: object,
+            *,
+            has_denoise_mask: bool,
+            has_inpaint: bool,
+            has_context_windows: bool,
+            guidance: float | None = None,
+        ) -> None:
+            assert isinstance(request, CustomSamplingRequest)
+            assert guidance is None
+            requests.append(request.source_scheduler_id)
+            checks.append(
+                {
+                    "has_denoise_mask": has_denoise_mask,
+                    "has_inpaint": has_inpaint,
+                    "has_context_windows": has_context_windows,
+                }
+            )
+
+        @staticmethod
+        def sample_custom(latent: object, **kwargs: object) -> Any:
+            calls.append({"latent": latent, **kwargs})
+            return CustomSamplingResult(cast("Any", sampled), None)
+
+    runtime = Runtime()
+    handle = _handle(arm, runtime, torch, recipe=runtime_recipe)
+    real_import = arm.importlib.import_module
+
+    def record_noise(samples: object, seed: int, noise_inds: object) -> object:
+        noise_requests.append((cast("FakeTensor", samples).shape, seed, noise_inds))
+        return generated_noise
+
+    fake_inference_torch = SimpleNamespace(
+        prepare_noise=record_noise,
+        torch_sampler_registry=_fake_torch_sampler_registry,
+    )
+
+    def import_module(name: str) -> object:
+        if name == "dinkster_inference_torch":
+            return fake_inference_torch
+        return real_import(name)
+
+    monkeypatch.setattr(arm.importlib, "import_module", import_module)
+    monkeypatch.setattr(arm, "_torch", lambda: torch)
+    monkeypatch.setattr(arm, "sampling_preview_emitter", lambda _handle: None)
+    prepared = {"positive": object(), "negative": object()}
+    monkeypatch.setattr(
+        arm,
+        "_custom_sampling_conditioning",
+        lambda _value, input_id, *_args: (prepared[input_id], inpaint_by_input.get(input_id)),
+    )
+    sampler = arm.GenerationKSamplerSelect.execute(sampler_name="euler")["sampler"]
+    sigmas = arm.GenerationBasicScheduler.execute(
+        model=handle,
+        scheduler="normal",
+        steps=2,
+        denoise=0.75,
+    )["sigmas"]
+    noise = arm.GenerationRandomNoise.execute(noise_seed=17)["noise"]
+    return SimpleNamespace(
+        arm=arm,
+        handle=handle,
+        calls=calls,
+        checks=checks,
+        requests=requests,
+        noise_requests=noise_requests,
+        sampler=sampler,
+        sigmas=sigmas,
+        noise=noise,
+        sampled=sampled,
+    )
+
+
+def _custom_sampling_runners(
+    bundle: SimpleNamespace,
+    model: object,
+    positive: object,
+    negative: object,
+    latent_image: dict[str, object],
+    **explicit: object,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run the same sampling through both maintained custom-sampler nodes."""
+    from dinkster_inference import SamplingGuidance
+
+    arm = cast("Any", bundle.arm)
+    custom = arm.GenerationSamplerCustom.execute(
+        model=model,
+        add_noise=True,
+        noise_seed=17,
+        cfg=6.5,
+        positive=positive,
+        negative=negative,
+        sampler=bundle.sampler,
+        sigmas=bundle.sigmas,
+        latent_image=latent_image,
+        **explicit,
+    )
+    guider = arm.GenerationCFGGuider.execute(
+        model=model,
+        positive=positive,
+        negative=negative,
+        cfg=6.5,
+    )["guider"]
+    advanced = arm.GenerationSamplerCustomAdvanced.execute(
+        noise=bundle.noise,
+        guider=guider,
+        sampler=bundle.sampler,
+        sigmas=bundle.sigmas,
+        latent_image=latent_image,
+        **explicit,
+    )
+    assert all(
+        isinstance(call["cfg"], SamplingGuidance) and call["cfg"].scale == 6.5
+        for call in bundle.calls
+    )
+    return cast("dict[str, Any]", custom), cast("dict[str, Any]", advanced)
+
+
+def test_generation_custom_samplers_forward_denoise_mask_without_inpaint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _custom_sampling_forwarding_setup(monkeypatch, inpaint_by_input={})
+    positive = [[FakeTensor((1, 2, 8), "positive"), {}]]
+    negative = [[FakeTensor((1, 2, 8), "negative"), {}]]
+    mask = FakeTensor((1, 8, 8), "mask")
+    latent_image: dict[str, object] = {
+        "samples": FakeTensor((1, 16, 8, 8), "latent"),
+        "noise_mask": mask,
+    }
+
+    custom, advanced = _custom_sampling_runners(
+        bundle, bundle.handle, positive, negative, latent_image
+    )
+
+    assert len(bundle.calls) == 2
+    for call in bundle.calls:
+        assert call["denoise_mask"] is mask
+        assert call["inpaint"] is None
+        assert call["context_windows"] is None
+    assert len(bundle.checks) == 4
+    assert all(
+        check
+        == {
+            "has_denoise_mask": True,
+            "has_inpaint": False,
+            "has_context_windows": False,
+        }
+        for check in bundle.checks
+    )
+    assert custom["output"]["noise_mask"] is mask
+    assert advanced["output"]["noise_mask"] is mask
+
+
+def test_generation_custom_samplers_forward_inpaint_without_denoise_mask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_inference import InpaintConditioning
+
+    mask_tensor = FakeTensor((1, 8, 8), "inpaint-mask")
+    masked_image = FakeTensor((1, 16, 8, 8), "masked-image")
+    inpaint = InpaintConditioning(cast("Any", mask_tensor), cast("Any", masked_image))
+    bundle = _custom_sampling_forwarding_setup(
+        monkeypatch,
+        inpaint_by_input={"positive": inpaint, "negative": inpaint},
+    )
+    # The raw concat metadata is what the inpaint preflight inspects before
+    # conditioning is prepared, so the fake must agree with the entries.
+    positive = [[FakeTensor((1, 2, 8), "positive"), {"concat_mask": mask_tensor}]]
+    negative = [[FakeTensor((1, 2, 8), "negative"), {"concat_mask": mask_tensor}]]
+    latent_image: dict[str, object] = {"samples": FakeTensor((1, 16, 8, 8), "latent")}
+
+    custom, advanced = _custom_sampling_runners(
+        bundle, bundle.handle, positive, negative, latent_image
+    )
+
+    assert len(bundle.calls) == 2
+    for call in bundle.calls:
+        assert call["denoise_mask"] is None
+        assert call["inpaint"] is inpaint
+        assert call["context_windows"] is None
+    assert len(bundle.checks) == 4
+    assert all(
+        check
+        == {
+            "has_denoise_mask": False,
+            "has_inpaint": True,
+            "has_context_windows": False,
+        }
+        for check in bundle.checks
+    )
+    assert "noise_mask" not in cast("dict[str, object]", custom["output"])
+    assert "noise_mask" not in cast("dict[str, object]", advanced["output"])
+
+
+def test_generation_custom_samplers_thread_batch_index_and_omit_it_when_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _custom_sampling_forwarding_setup(monkeypatch, inpaint_by_input={})
+    positive = [[FakeTensor((1, 2, 8), "positive"), {}]]
+    negative = [[FakeTensor((1, 2, 8), "negative"), {}]]
+    base_latent: dict[str, object] = {"samples": FakeTensor((1, 16, 8, 8), "latent")}
+
+    _custom_sampling_runners(bundle, bundle.handle, positive, negative, base_latent)
+    _custom_sampling_runners(
+        bundle,
+        bundle.handle,
+        positive,
+        negative,
+        {**base_latent, "batch_index": [1, 0]},
+    )
+
+    assert [request[2] for request in bundle.noise_requests] == [
+        None,
+        None,
+        (1, 0),
+        (1, 0),
+    ]
+    assert all(request[0] == (1, 16, 8, 8) for request in bundle.noise_requests)
+    assert all(request[1] == 17 for request in bundle.noise_requests)
+    # The same batch index reaches sample_custom explicitly, and stays None
+    # when the latent carries no batch_index.
+    assert [call["noise_inds"] for call in bundle.calls] == [None, None, (1, 0), (1, 0)]
+
+
+def test_generation_custom_samplers_forward_context_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_inference import ContextFuseMethod, ContextWindowSchedule, ContextWindowsSpec
+
+    bundle = _custom_sampling_forwarding_setup(monkeypatch, inpaint_by_input={})
+    arm = cast("Any", bundle.arm)
+    positive = [[FakeTensor((1, 2, 8), "positive"), {}]]
+    negative = [[FakeTensor((1, 2, 8), "negative"), {}]]
+    latent_image: dict[str, object] = {"samples": FakeTensor((1, 16, 8, 8), "latent")}
+    spec = ContextWindowsSpec(
+        ContextWindowSchedule.STATIC_STANDARD,
+        ContextFuseMethod.PYRAMID,
+        16,
+        4,
+    )
+    windowed = arm._NativeModelOverlay(bundle.handle, (), {}, context_windows=spec)
+
+    _custom_sampling_runners(bundle, bundle.handle, positive, negative, latent_image)
+    assert bundle.calls[-1]["context_windows"] is None
+    _custom_sampling_runners(bundle, windowed, positive, negative, latent_image)
+    assert bundle.calls[-1]["context_windows"] is spec
+    assert [check["has_context_windows"] for check in bundle.checks] == [
+        False,
+        False,
+        False,
+        False,
+        True,
+        True,
+        True,
+        True,
+    ]
+
+
+def test_generation_basic_scheduler_source_id_reaches_sample_custom_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _custom_sampling_forwarding_setup(monkeypatch, inpaint_by_input={})
+    positive = [[FakeTensor((1, 2, 8), "positive"), {}]]
+    negative = [[FakeTensor((1, 2, 8), "negative"), {}]]
+    latent_image: dict[str, object] = {"samples": FakeTensor((1, 16, 8, 8), "latent")}
+    _custom_sampling_runners(bundle, bundle.handle, positive, negative, latent_image)
+
+    # GenerationBasicScheduler tags the schedule with the catalog scheduler id
+    # and the shared custom-sampling helper copies it onto the request that
+    # both preflight checks and sample_custom carry.
+    assert bundle.sigmas.source_scheduler_id == "dinkster.normal"
+    assert bundle.requests == ["dinkster.normal"] * len(bundle.checks)
+    assert bundle.requests == ["dinkster.normal", "dinkster.normal"] * len(bundle.calls)
+    assert all(
+        cast("Any", call["request"]).source_scheduler_id == "dinkster.normal"
+        for call in bundle.calls
+    )
+
+
+def test_generation_custom_samplers_reject_one_sided_inpaint_conditioning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_inference import InpaintConditioning
+
+    mask_tensor = FakeTensor((1, 8, 8), "inpaint-mask")
+    inpaint = InpaintConditioning(
+        cast("Any", mask_tensor),
+        cast("Any", FakeTensor((1, 16, 8, 8), "masked-image")),
+    )
+    bundle = _custom_sampling_forwarding_setup(monkeypatch, inpaint_by_input={"positive": inpaint})
+    positive = [[FakeTensor((1, 2, 8), "positive"), {"concat_mask": mask_tensor}]]
+    negative = [[FakeTensor((1, 2, 8), "negative"), {}]]
+    latent_image: dict[str, object] = {"samples": FakeTensor((1, 16, 8, 8), "latent")}
+
+    with pytest.raises(ValueError, match="inpaint conditioning must both be present"):
+        bundle.arm.GenerationSamplerCustom.execute(
+            model=bundle.handle,
+            add_noise=True,
+            noise_seed=17,
+            cfg=6.5,
+            positive=positive,
+            negative=negative,
+            sampler=bundle.sampler,
+            sigmas=bundle.sigmas,
+            latent_image=latent_image,
+        )
+
+    assert bundle.calls == []
+    # The raw-entry preflight alone sees the inpaint; refusal happens before the
+    # second check_custom_sampling call.
+    assert bundle.checks == [
+        {
+            "has_denoise_mask": False,
+            "has_inpaint": True,
+            "has_context_windows": False,
+        }
+    ]
+
+
+def test_generation_custom_samplers_accept_explicit_denoise_mask_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _custom_sampling_forwarding_setup(monkeypatch, inpaint_by_input={})
+    positive = [[FakeTensor((1, 2, 8), "positive"), {}]]
+    negative = [[FakeTensor((1, 2, 8), "negative"), {}]]
+    mask = FakeTensor((1, 8, 8), "explicit-mask")
+    latent_image: dict[str, object] = {"samples": FakeTensor((1, 16, 8, 8), "latent")}
+
+    custom, advanced = _custom_sampling_runners(
+        bundle, bundle.handle, positive, negative, latent_image, denoise_mask=mask
+    )
+
+    assert len(bundle.calls) == 2
+    for call in bundle.calls:
+        assert call["denoise_mask"] is mask
+    assert len(bundle.checks) == 4
+    assert all(check["has_denoise_mask"] for check in bundle.checks)
+    assert custom["output"]["noise_mask"] is mask
+    assert advanced["output"]["noise_mask"] is mask
+
+
+def test_generation_custom_samplers_accept_explicit_inpaint_conditioning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_inference import InpaintConditioning
+
+    bundle = _custom_sampling_forwarding_setup(monkeypatch, inpaint_by_input={})
+    inpaint = InpaintConditioning(
+        cast("Any", FakeTensor((1, 8, 8), "explicit-inpaint-mask")),
+        cast("Any", FakeTensor((1, 16, 8, 8), "explicit-masked-image")),
+    )
+    positive = [[FakeTensor((1, 2, 8), "positive"), {}]]
+    negative = [[FakeTensor((1, 2, 8), "negative"), {}]]
+    latent_image: dict[str, object] = {"samples": FakeTensor((1, 16, 8, 8), "latent")}
+
+    _custom_sampling_runners(
+        bundle,
+        bundle.handle,
+        positive,
+        negative,
+        latent_image,
+        inpaint=inpaint,
+        negative_inpaint=inpaint,
+    )
+
+    assert len(bundle.calls) == 2
+    for call in bundle.calls:
+        assert call["inpaint"] is inpaint
+        assert call["denoise_mask"] is None
+    assert len(bundle.checks) == 4
+    assert all(check["has_inpaint"] for check in bundle.checks)
+
+
+def test_generation_custom_samplers_accept_explicit_noise_inds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _custom_sampling_forwarding_setup(monkeypatch, inpaint_by_input={})
+    positive = [[FakeTensor((1, 2, 8), "positive"), {}]]
+    negative = [[FakeTensor((1, 2, 8), "negative"), {}]]
+    latent_image: dict[str, object] = {"samples": FakeTensor((1, 16, 8, 8), "latent")}
+
+    _custom_sampling_runners(
+        bundle, bundle.handle, positive, negative, latent_image, noise_inds=[1, 0]
+    )
+
+    assert [call["noise_inds"] for call in bundle.calls] == [(1, 0), (1, 0)]
+    assert [request[2] for request in bundle.noise_requests] == [(1, 0), (1, 0)]
+    with pytest.raises(ValueError, match="nonnegative integers"):
+        _custom_sampling_runners(
+            bundle, bundle.handle, positive, negative, latent_image, noise_inds=[-1]
+        )
+
+
+def test_generation_custom_samplers_accept_explicit_context_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_inference import ContextFuseMethod, ContextWindowSchedule, ContextWindowsSpec
+
+    bundle = _custom_sampling_forwarding_setup(monkeypatch, inpaint_by_input={})
+    positive = [[FakeTensor((1, 2, 8), "positive"), {}]]
+    negative = [[FakeTensor((1, 2, 8), "negative"), {}]]
+    latent_image: dict[str, object] = {"samples": FakeTensor((1, 16, 8, 8), "latent")}
+    spec = ContextWindowsSpec(
+        ContextWindowSchedule.STATIC_STANDARD,
+        ContextFuseMethod.PYRAMID,
+        16,
+        4,
+    )
+
+    _custom_sampling_runners(
+        bundle, bundle.handle, positive, negative, latent_image, context_windows=spec
+    )
+
+    assert len(bundle.calls) == 2
+    assert all(call["context_windows"] is spec for call in bundle.calls)
+    assert len(bundle.checks) == 4
+    assert all(check["has_context_windows"] for check in bundle.checks)
+
+
+def test_generation_custom_samplers_reject_explicit_inputs_conflicting_with_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_inference import (
+        ContextFuseMethod,
+        ContextWindowSchedule,
+        ContextWindowsSpec,
+        InpaintConditioning,
+    )
+
+    positive = [[FakeTensor((1, 2, 8), "positive"), {}]]
+    negative = [[FakeTensor((1, 2, 8), "negative"), {}]]
+
+    mask_bundle = _custom_sampling_forwarding_setup(monkeypatch, inpaint_by_input={})
+    with pytest.raises(ValueError, match="denoise_mask cannot both be provided"):
+        _custom_sampling_runners(
+            mask_bundle,
+            mask_bundle.handle,
+            positive,
+            negative,
+            {
+                "samples": FakeTensor((1, 16, 8, 8), "latent"),
+                "noise_mask": FakeTensor((1, 8, 8), "metadata-mask"),
+            },
+            denoise_mask=FakeTensor((1, 8, 8), "explicit-mask"),
+        )
+    assert mask_bundle.calls == []
+
+    inds_bundle = _custom_sampling_forwarding_setup(monkeypatch, inpaint_by_input={})
+    with pytest.raises(ValueError, match="noise_inds cannot both be provided"):
+        _custom_sampling_runners(
+            inds_bundle,
+            inds_bundle.handle,
+            positive,
+            negative,
+            {
+                "samples": FakeTensor((1, 16, 8, 8), "latent"),
+                "batch_index": [1, 0],
+            },
+            noise_inds=[0, 1],
+        )
+    assert inds_bundle.calls == []
+
+    inpaint_tensor = InpaintConditioning(
+        cast("Any", FakeTensor((1, 8, 8), "inpaint-mask")),
+        cast("Any", FakeTensor((1, 16, 8, 8), "masked-image")),
+    )
+    explicit_inpaint = InpaintConditioning(
+        cast("Any", FakeTensor((1, 8, 8), "explicit-inpaint-mask")),
+        cast("Any", FakeTensor((1, 16, 8, 8), "explicit-masked-image")),
+    )
+    inpaint_bundle = _custom_sampling_forwarding_setup(
+        monkeypatch,
+        inpaint_by_input={"positive": inpaint_tensor, "negative": inpaint_tensor},
+    )
+    concat_positive = [[FakeTensor((1, 2, 8), "positive"), {"concat_mask": "m"}]]
+    concat_negative = [[FakeTensor((1, 2, 8), "negative"), {"concat_mask": "m"}]]
+    with pytest.raises(ValueError, match="explicit inpaint cannot both be provided"):
+        _custom_sampling_runners(
+            inpaint_bundle,
+            inpaint_bundle.handle,
+            concat_positive,
+            concat_negative,
+            {"samples": FakeTensor((1, 16, 8, 8), "latent")},
+            inpaint=explicit_inpaint,
+        )
+    assert inpaint_bundle.calls == []
+
+    spec = ContextWindowsSpec(
+        ContextWindowSchedule.STATIC_STANDARD,
+        ContextFuseMethod.PYRAMID,
+        16,
+        4,
+    )
+    windows_bundle = _custom_sampling_forwarding_setup(monkeypatch, inpaint_by_input={})
+    windowed = cast("Any", windows_bundle.arm)._NativeModelOverlay(
+        windows_bundle.handle, (), {}, context_windows=spec
+    )
+    with pytest.raises(ValueError, match="context_windows cannot both be provided"):
+        _custom_sampling_runners(
+            windows_bundle,
+            windowed,
+            positive,
+            negative,
+            {"samples": FakeTensor((1, 16, 8, 8), "latent")},
+            context_windows=spec,
+        )
+    assert windows_bundle.calls == []
 
 
 def test_impact_regional_pass_uses_the_custom_sampling_engine(
@@ -19409,6 +20013,11 @@ def test_generation_ltxav_dual_cfg_guider_hands_both_scales_to_sampling(
             "audio_cfg": 7.0,
             "latent_image": "latent",
             "conditioning_batching": ConditioningBatching(),
+            "denoise_mask": None,
+            "inpaint": None,
+            "negative_inpaint": None,
+            "noise_inds": None,
+            "context_windows": None,
         }
     ]
 
@@ -20817,7 +21426,7 @@ def test_generation_custom_sampling_routes_flux2_components_and_guidance(
     )
     guided = arm.GenerationFluxGuidance.execute(conditioning=bound, guidance=3.5)["conditioning"]
     sampler = arm.GenerationKSamplerSelect.execute(sampler_name="euler")["sampler"]
-    sigmas = arm._CustomSigmasValue((1.0, 0.5, 0.0))
+    sigmas = arm._CustomSigmasValue((1.0, 0.5, 0.0), source_scheduler_id="dinkster.simple")
     latent = FakeTensor((1, 128, 8, 8), "latent")
     shifted = arm._NativeModelOverlay(
         handle=handle,
@@ -21476,14 +22085,14 @@ def test_generation_custom_sampling_routes_multistream_payload_for_single_stream
     positive_prepared = PreparedMultiStreamConditioning(runtime.conditioning_identity, object())
     negative_prepared = PreparedMultiStreamConditioning(runtime.conditioning_identity, object())
     sampler = arm.GenerationKSamplerSelect.execute(sampler_name="euler")["sampler"]
-    sigmas = arm._CustomSigmasValue((1.0, 0.5, 0.0))
+    sigmas = arm._CustomSigmasValue((1.0, 0.5, 0.0), source_scheduler_id="dinkster.simple")
     shifted = arm._NativeModelOverlay(handle, (), {}, sampling_shift=3.25)
     assert arm.GenerationBasicScheduler.execute(
         model=shifted,
         scheduler="simple",
         steps=2,
         denoise=1.0,
-    )["sigmas"] == arm._CustomSigmasValue((1.0, 0.0))
+    )["sigmas"] == arm._CustomSigmasValue((1.0, 0.0), source_scheduler_id="dinkster.simple")
     assert arm.GenerationBetaSamplingScheduler.execute(
         model=shifted,
         steps=2,
@@ -22065,7 +22674,7 @@ def test_lumina2_model_sampling_overlay_reaches_custom_scheduler() -> None:
         denoise=0.75,
     )["sigmas"]
 
-    assert sigmas == arm._CustomSigmasValue((1.0, 0.0))
+    assert sigmas == arm._CustomSigmasValue((1.0, 0.0), source_scheduler_id="dinkster.normal")
     assert calls == [("dinkster.normal", 12, 0.75, None, handle.load_device)]
     assert spaces == [FlowSigmas(shift=4.0, multiplier=1.0)] * 2
     with pytest.raises(TypeError, match="sampling-space override"):
@@ -31047,6 +31656,28 @@ def test_trellis2_conditioning_connects_to_both_sampling_surfaces() -> None:
         schema = arm._generation_provider_schema(node_type)
         inputs = {item.id: item for item in schema.inputs}
         assert all(inputs[input_id].type.types == expected for input_id in input_ids)
+
+
+def test_custom_sampler_schemas_expose_all_sampling_inputs() -> None:
+    arm = _native_arm()
+    expected_optional = {
+        "denoise_mask": ("dinkster.mask",),
+        "inpaint": ("dinkster.inpaint-conditioning",),
+        "negative_inpaint": ("dinkster.inpaint-conditioning",),
+        "noise_inds": ("core.int",),
+        "context_windows": ("dinkster.context-windows",),
+    }
+
+    for node_type in ("dinkster.sampler_custom", "dinkster.sampler_custom_advanced"):
+        inputs = {item.id: item for item in arm._generation_provider_schema(node_type).inputs}
+        for input_id, expected_types in expected_optional.items():
+            assert inputs[input_id].required is False
+            input_type = inputs[input_id].type
+            if input_id == "noise_inds":
+                assert input_type.element is not None
+                assert input_type.element.types == expected_types
+            else:
+                assert input_type.types == expected_types
 
 
 def test_trellis2_execution_model_wraps_resident_lanes_for_custom_sampling(

@@ -210,17 +210,7 @@ def test_fork_pull_requests_use_hosted_runners_and_record_private_jobs_not_run()
         PR_JOBS["engine-tests"]["runs-on"],
         '\'["self-hosted", "Linux", "X64", "cpu-golden-avx2"]\'',
     )
-    expected_secrets = {
-        "fast": (
-            ("DINKSTER_EVIDENCE_READ_KEY", "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}"),
-            ("DINKSTER_IDENTITY_DEPLOY_KEY", "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}"),
-        ),
-        "engine-tests": (
-            ("DINKSTER_IDENTITY_DEPLOY_KEY", "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}"),
-            ("DINKSTER_EVIDENCE_READ_KEY", "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}"),
-        ),
-    }
-    for job_name, secrets in expected_secrets.items():
+    for job_name in PR_JOBS:
         steps = PR_JOBS[job_name]["steps"]
         guard = steps[1]
         assert guard == {
@@ -228,10 +218,8 @@ def test_fork_pull_requests_use_hosted_runners_and_record_private_jobs_not_run()
             "id": "private-dependencies",
             "uses": PRIVATE_DEPENDENCY_ACTION_PATH,
             "with": {
-                "secret-name-1": secrets[0][0],
-                "secret-value-1": secrets[0][1],
-                "secret-name-2": secrets[1][0],
-                "secret-value-2": secrets[1][1],
+                "secret-name-1": "DINKSTER_EVIDENCE_READ_KEY",
+                "secret-value-1": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
                 "force-not-run": "${{ inputs.simulate-fork }}",
             },
         }
@@ -317,7 +305,6 @@ def test_torch_cpu_has_one_contract_guard_and_an_unconditional_suite() -> None:
     assert suite == {
         "uses": ACTION_PATH,
         "with": {
-            "identity-deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}",
             "evidence-deploy-key": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
             "run-model-tests": "false",
         },
@@ -377,18 +364,9 @@ def test_artifact_smoke_uses_only_available_self_hosted_platforms() -> None:
     }
 
 
-def test_artifact_smoke_installs_the_locked_default_set_with_the_identity_key() -> None:
+def test_artifact_smoke_installs_the_locked_default_set_without_private_access() -> None:
     job = JOBS["p2p-artifact-smoke"]
-    # The smoke gate validates the locked default install set, and that set
-    # pulls the private dinkster-identity git dependency through
-    # dinkster-server, so the job must configure the same read-only deploy
-    # key as every other installing job before uv sync runs
-    # (comfy-vibe-station#256).
-    configure, setup_uv, sync, pytest_run = job["steps"][1:]
-    assert configure == {
-        "uses": "./.github/actions/configure-dinkster-identity",
-        "with": {"deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}"},
-    }
+    setup_uv, sync, pytest_run = job["steps"][1:]
     assert setup_uv["uses"] == "astral-sh/setup-uv@v5"
     assert sync == {"run": "uv sync --locked"}
     assert pytest_run == {"run": "uv run --locked pytest -q tests/test_p2p_artifact_smoke.py"}
@@ -540,26 +518,20 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
         step
         for step in preparation_steps
         if step.get("with", {}).get("repository") == "Kosinkadink/dinkster-evidence"
-        and step.get("uses") == "./.github/actions/configure-dinkster-identity"
+        and step.get("uses") == "./.github/actions/configure-private-repository"
     ]
     assert access["with"]["deploy-key"] == "${{ inputs.evidence-deploy-key }}"
     (checkout,) = [step for step in preparation_steps if step.get("uses") == "actions/checkout@v4"]
     assert checkout["with"] == {
         "repository": "Kosinkadink/dinkster-evidence",
-        "ref": "29f6a9163eab4fc7b595832da2a671c9136bd81f",
+        "ref": "4b1e344e8b22e0384abe5b38ce13f43dc31715a8",
         "path": ".evidence-source",
         "clean": True,
         "persist-credentials": False,
     }
     assert preparation_steps.index(access) < preparation_steps.index(checkout)
-    (identity,) = [
-        step
-        for step in steps
-        if step.get("uses") == "./.github/actions/configure-dinkster-identity"
-    ]
-    assert identity["with"]["deploy-key"] == "${{ inputs.identity-deploy-key }}"
     setup = next(step for step in steps if "./scripts/setup_envs.sh" in step.get("run", ""))
-    assert steps.index(prepare) < steps.index(identity) < steps.index(setup)
+    assert steps.index(prepare) < steps.index(setup)
     for name in (
         "Verify source-generated parity receipts",
         "Test source-parity receipt generation",
@@ -687,7 +659,6 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         "uses": ACTION_PATH,
         "with": {
             "run-model-tests": "true",
-            "identity-deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}",
             "evidence-deploy-key": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
         },
     }
@@ -817,10 +788,8 @@ def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> 
             "id": "private-dependencies",
             "uses": PRIVATE_DEPENDENCY_ACTION_PATH,
             "with": {
-                "secret-name-1": "DINKSTER_IDENTITY_DEPLOY_KEY",
-                "secret-value-1": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}",
-                "secret-name-2": "DINKSTER_EVIDENCE_READ_KEY",
-                "secret-value-2": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
+                "secret-name-1": "DINKSTER_EVIDENCE_READ_KEY",
+                "secret-value-1": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
                 "force-not-run": "${{ inputs.simulate-fork }}",
             },
         },
@@ -828,7 +797,6 @@ def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> 
             "uses": ACTION_PATH,
             "if": PRIVATE_DEPENDENCIES_AVAILABLE,
             "with": {
-                "identity-deploy-key": "${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}",
                 "evidence-deploy-key": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
                 "run-model-tests": "true",
                 "pytest-args": "${{ matrix.pytest-args }}",

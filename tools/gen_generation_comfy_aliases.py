@@ -97,6 +97,11 @@ SEEDVR2_WORKFLOW_EVIDENCE = [
     "tests/test_generation_nodes.py::test_seedvr2_comfy_aliases_translate_outputs_and_manual_chunking",
 ]
 
+CUSTOM_SAMPLING_EVIDENCE = [
+    "tests/test_native_arm.py::test_generation_custom_samplers_forward_denoise_mask_without_inpaint",
+    "tests/test_generation_comfy_aliases.py::test_custom_sampling_aliases_copy_every_shared_input",
+]
+
 
 def _git(comfy_root: Path, *arguments: str) -> str:
     return subprocess.run(
@@ -534,6 +539,75 @@ def _seedvr2_workflow_records() -> list[dict[str, object]]:
     ]
 
 
+def _custom_sampling_records() -> list[dict[str, object]]:
+    revision = "b78cec87"
+    return [
+        _record(
+            node_class="SamplerCustom",
+            carrier="dinkster.sampler_custom",
+            revision=revision,
+            rule=ReplacementRule(
+                from_type="comfy.SamplerCustom",
+                cases=(
+                    ReplacementCase.build(
+                        "dinkster.sampler_custom",
+                        inputs={
+                            name: MappingSource.copy(name)
+                            for name in (
+                                "model",
+                                "add_noise",
+                                "noise_seed",
+                                "cfg",
+                                "positive",
+                                "negative",
+                                "sampler",
+                                "sigmas",
+                                "latent_image",
+                            )
+                        },
+                        outputs={"output": "output", "denoised_output": "denoised_output"},
+                    ),
+                ),
+                note=(
+                    "The denoise mask, batch-index noise selection, and inpaint "
+                    "concat metadata ride on the copied latent and conditioning "
+                    "values, so they forward with KSampler semantics."
+                ),
+            ),
+            evidence=CUSTOM_SAMPLING_EVIDENCE,
+        ),
+        _record(
+            node_class="SamplerCustomAdvanced",
+            carrier="dinkster.sampler_custom_advanced",
+            revision=revision,
+            rule=ReplacementRule(
+                from_type="comfy.SamplerCustomAdvanced",
+                cases=(
+                    ReplacementCase.build(
+                        "dinkster.sampler_custom_advanced",
+                        inputs={
+                            name: MappingSource.copy(name)
+                            for name in (
+                                "noise",
+                                "guider",
+                                "sampler",
+                                "sigmas",
+                                "latent_image",
+                            )
+                        },
+                        outputs={"output": "output", "denoised_output": "denoised_output"},
+                    ),
+                ),
+                note=(
+                    "The denoise mask and batch-index noise selection ride on the "
+                    "copied latent value, so they forward with KSampler semantics."
+                ),
+            ),
+            evidence=CUSTOM_SAMPLING_EVIDENCE,
+        ),
+    ]
+
+
 def _build_current_seedvr2_registry(comfy_root: Path) -> dict[str, object]:
     if _git(comfy_root, "rev-parse", "HEAD") != CURRENT_COMFY_BASELINE:
         raise RuntimeError(f"Current ComfyUI must be pinned to {CURRENT_COMFY_BASELINE}")
@@ -544,7 +618,10 @@ def _build_current_seedvr2_registry(comfy_root: Path) -> dict[str, object]:
     from comfy.cli_args import args as _comfy_args  # pyright: ignore[reportMissingImports]
 
     _comfy_args.cpu = True
-    from comfy_extras import nodes_seedvr  # pyright: ignore[reportMissingImports]
+    from comfy_extras import (  # pyright: ignore[reportMissingImports]
+        nodes_custom_sampler,
+        nodes_seedvr,
+    )
     from nodes import (  # pyright: ignore[reportMissingImports]
         KSampler,
         UNETLoader,
@@ -572,11 +649,13 @@ def _build_current_seedvr2_registry(comfy_root: Path) -> dict[str, object]:
             "auto",
         ),
         _core_v3_schema(nodes_seedvr.SeedVR2TemporalMerge),
+        core_schema(nodes_custom_sampler.SamplerCustom, "SamplerCustom"),
+        core_schema(nodes_custom_sampler.SamplerCustomAdvanced, "SamplerCustomAdvanced"),
     ]
     return {
         "format": "dinkster-comfy-alias/1",
         "sourceSchemas": [schema_to_wire(schema) for schema in source_schemas],
-        "records": _seedvr2_workflow_records(),
+        "records": [*_seedvr2_workflow_records(), *_custom_sampling_records()],
     }
 
 

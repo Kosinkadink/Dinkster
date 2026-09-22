@@ -293,6 +293,7 @@ class CustomSamplingRuntime(Protocol[RuntimeTensorT]):
         ) = None,
         inpaint: InpaintConditioning[RuntimeTensorT] | None = None,
         context_windows: ContextWindowsSpec | None = None,
+        noise_inds: Sequence[int] | None = None,
         on_step: StepCallback | None = None,
         on_state: SamplingStateCallback | None = None,
     ) -> (

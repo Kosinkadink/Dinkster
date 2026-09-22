@@ -6,6 +6,8 @@ import importlib
 import inspect
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 import torch
@@ -25,9 +27,12 @@ from dinkster_inference import (
     SamplingSegment,
     SigmaSpace,
     SparseLatent,
+    builtin_families,
+    is_flow_parameterization,
     sampling_sigmas,
 )
 from dinkster_inference_torch.denoise import prepare_multistream_noise, prepare_noise
+from dinkster_inference_torch.sampling_execution import build_sampling_schedule
 from dinkster_inference_torch.sampling_runtime import (
     DenseOrSparseSamplingRuntime,
     MultiStreamSamplingRuntime,
@@ -43,6 +48,11 @@ from dinkster_inference_torch.schedules import (
 from dinkster_inference_torch.solvers import torch_sampler_registry
 from dinkster_inference_torch.sparse import make_sparse_support, pack_sparse_latent
 from golden_files import assert_reference_schedule, load_platform_golden
+
+_TEST_SAMPLING_REGISTRATION = cast(
+    "Any",
+    SimpleNamespace(forbidden_options=frozenset(), forbidden_options_message=""),
+)
 
 # ComfyUI b78cec87, SDXL normal scheduler, 30 steps.
 SDXL_NORMAL_30_CPU_B78CEC87 = (
@@ -168,6 +178,104 @@ def test_family_runtimes_inherit_all_four_sigma_helpers() -> None:
     assert len(seen) >= 22
 
 
+def test_every_builtin_family_composes_identical_ksampler_and_custom_requests() -> None:
+    sampler = torch_sampler_registry().get("dinkster.euler")
+    scheduler = torch_scheduler_registry().get("dinkster.simple")
+    assert sampler is not None
+    assert scheduler is not None
+
+    class CaptureRuntime(SingleStreamSamplingRuntime):
+        sampling_execution_registration = _TEST_SAMPLING_REGISTRATION
+
+        def __init__(self, family: ModelFamily, space: SigmaSpace) -> None:
+            self._family = family
+            self._space = space
+            self._samplers = torch_sampler_registry()
+            self._schedulers = torch_scheduler_registry()
+            self.calls: list[dict[str, object]] = []
+
+        @property
+        def family(self) -> ModelFamily:
+            return self._family
+
+        def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
+            return self._space
+
+        def check_custom_sampling(self, request: object, **kwargs: object) -> None:
+            pass
+
+        def sample_custom(
+            self, latent: torch.Tensor, **kwargs: object
+        ) -> CustomSamplingResult[torch.Tensor]:
+            self.calls.append(kwargs)
+            return CustomSamplingResult(latent, None)
+
+    latent = torch.zeros((1, 4, 2, 2))
+    mask = torch.ones_like(latent)
+    cond = Conditioning(torch.zeros((1, 2, 8)))
+    for family in builtin_families():
+        flow = is_flow_parameterization(family.sampling.parameterization)
+        space: SigmaSpace = FlowSigmas() if flow else DiscreteSigmas.linear_beta()
+        runtime = CaptureRuntime(family, space)
+        runtime.sample(
+            latent,
+            cond=cond,
+            sampler_id="dinkster.euler",
+            scheduler_id="dinkster.simple",
+            steps=2,
+            seed=17,
+            denoise_mask=mask,
+            noise_inds=(3,),
+        )
+        schedule = build_sampling_schedule(scheduler, space, sampler, 2, denoise=None, flow=flow)
+        runtime.sample_custom(
+            latent,
+            noise=prepare_noise(latent, 17, (3,)),
+            cond=cond,
+            cfg=None,
+            request=CustomSamplingRequest(
+                sampler, (), schedule.pre_offset, source_scheduler_id="dinkster.simple"
+            ),
+            seed=17,
+            guidance=None,
+            denoise_mask=mask,
+            inpaint=None,
+            context_windows=None,
+            noise_inds=(3,),
+            on_step=None,
+            on_state=None,
+        )
+        composed, custom = runtime.calls
+        assert composed.keys() == custom.keys(), family.id
+        for name in composed.keys() - {"noise", "denoise_mask"}:
+            assert composed[name] == custom[name], (family.id, name)
+        assert torch.equal(
+            cast("torch.Tensor", composed["noise"]), cast("torch.Tensor", custom["noise"])
+        )
+        assert composed["denoise_mask"] is custom["denoise_mask"]
+
+
+def test_sampling_registration_owns_all_family_admission() -> None:
+    import dinkster_inference_torch
+
+    source = Path(dinkster_inference_torch.__file__).parent
+    seen: set[type] = set()
+    for path in (*source.glob("*_runtime.py"), source / "wiring.py"):
+        module = importlib.import_module(f"dinkster_inference_torch.{path.stem}")
+        assert "_ksampler_kwargs" not in path.read_text(encoding="utf-8")
+        for _, runtime in inspect.getmembers(module, inspect.isclass):
+            if (
+                runtime.__module__ == module.__name__
+                and issubclass(runtime, SamplingRuntime)
+                and runtime is not SamplingRuntime
+                and hasattr(runtime, "sampling_execution_registration")
+            ):
+                seen.add(runtime)
+                assert "check_custom_sampling" not in runtime.__dict__, runtime.__name__
+                assert runtime.sampling_execution_registration.capabilities is not None
+    assert len(seen) >= 22
+
+
 @pytest.mark.parametrize(
     "name",
     (
@@ -233,6 +341,8 @@ def test_dense_or_sparse_runtime_inherits_one_ksampler_composition() -> None:
 @pytest.mark.parametrize("representation", ("dense", "sparse"))
 def test_dense_or_sparse_seam_inherits_ksampler_composition(representation: str) -> None:
     class SeamRuntime(DenseOrSparseSamplingRuntime):
+        sampling_execution_registration = _TEST_SAMPLING_REGISTRATION
+
         def __init__(self) -> None:
             self._samplers = torch_sampler_registry()
             self._schedulers = torch_scheduler_registry()
@@ -303,6 +413,8 @@ def test_multistream_seam_inherits_noise_masks_and_callbacks(
     add_noise: bool, dtype: torch.dtype
 ) -> None:
     class SeamRuntime(MultiStreamSamplingRuntime):
+        sampling_execution_registration = _TEST_SAMPLING_REGISTRATION
+
         def __init__(self) -> None:
             self._samplers = torch_sampler_registry()
             self._schedulers = torch_scheduler_registry()
@@ -336,6 +448,7 @@ def test_multistream_seam_inherits_noise_masks_and_callbacks(
             denoise_mask: object = None,
             inpaint: object = None,
             context_windows: object = None,
+            noise_inds: object = None,
             on_step: object = None,
             on_state: object = None,
         ) -> CustomSamplingResult[MultiStreamLatent[torch.Tensor]]:
@@ -343,6 +456,7 @@ def test_multistream_seam_inherits_noise_masks_and_callbacks(
                 "noise": noise,
                 "cond": cond,
                 "mask": denoise_mask,
+                "noise_inds": noise_inds,
                 "on_step": on_step,
                 "on_state": on_state,
             }
@@ -389,6 +503,7 @@ def test_multistream_seam_inherits_noise_masks_and_callbacks(
     assert prepared.payload is conditioning
     assert prepared.runtime_identity == runtime.conditioning_identity
     assert runtime.arguments["mask"] is mask
+    assert runtime.arguments["noise_inds"] == (2, 2)
     assert runtime.arguments["on_step"] == steps.append
     assert runtime.arguments["on_state"] == states.append
     assert runtime.admission["has_denoise_mask"] is True
@@ -400,6 +515,8 @@ def test_seam_only_runtime_inherits_schedule_noise_and_callback_forwarding(
     add_noise: bool, dtype: torch.dtype
 ) -> None:
     class SeamRuntime(SingleStreamSamplingRuntime):
+        sampling_execution_registration = _TEST_SAMPLING_REGISTRATION
+
         def __init__(self) -> None:
             self._samplers = torch_sampler_registry()
             self._schedulers = torch_scheduler_registry()
@@ -428,6 +545,7 @@ def test_seam_only_runtime_inherits_schedule_noise_and_callback_forwarding(
             denoise_mask: object = None,
             inpaint: object = None,
             context_windows: object = None,
+            noise_inds: object = None,
             on_step: object = None,
             on_state: object = None,
         ) -> CustomSamplingResult[torch.Tensor]:
@@ -436,6 +554,7 @@ def test_seam_only_runtime_inherits_schedule_noise_and_callback_forwarding(
                 "cond": cond,
                 "request": request,
                 "denoise_mask": denoise_mask,
+                "noise_inds": noise_inds,
                 "on_step": on_step,
                 "on_state": on_state,
             }
@@ -470,8 +589,10 @@ def test_seam_only_runtime_inherits_schedule_noise_and_callback_forwarding(
     request = args["request"]
     assert isinstance(request, CustomSamplingRequest)
     assert request.sigmas == runtime.custom_sampling_sigmas("dinkster.simple", 3, 1.0)
+    assert request.source_scheduler_id == "dinkster.simple"
     assert args["cond"] is cond
     assert args["denoise_mask"] is mask
+    assert args["noise_inds"] == (2, 2)
     assert args["on_step"] == steps.append
     assert args["on_state"] == states.append
 

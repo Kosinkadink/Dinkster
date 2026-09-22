@@ -13,7 +13,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validation:
+    uses: ./.github/workflows/full-validation.yml
+    secrets: inherit
+
   build:
+    needs: validation
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 30
     steps:
@@ -21,7 +26,7 @@ jobs:
         with:
           clean: true
           persist-credentials: false
-      - uses: ./.github/actions/configure-dinkster-identity
+      - uses: ./.github/actions/configure-private-repository
         with:
           repository: Kosinkadink/Dinkster-Frontend
           deploy-key: ${{ secrets.DINKSTER_FRONTEND_READ_KEY }}
@@ -35,20 +40,6 @@ jobs:
           repository: Kosinkadink/Dinkster-Frontend
           ref: ${{ steps.frontend.outputs.ref }}
           path: .release/frontend
-          persist-credentials: false
-      - uses: ./.github/actions/configure-dinkster-identity
-        with:
-          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-      - name: Select the pinned identity source
-        id: identity
-        run: |
-          echo "ref=$(python3 -c 'import json; print(json.load(open("scripts/release_sources.json"))["identityCommit"])')" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          repository: Kosinkadink/dinkster-identity
-          ref: ${{ steps.identity.outputs.ref }}
-          path: .release/identity
           persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
@@ -71,8 +62,7 @@ jobs:
           uv run --no-project --python 3.12 scripts/build_release.py \
             --tag "$GITHUB_REF_NAME" \
             --frontend-root .release/frontend \
-            --frontend-dist .release/frontend/packages/app/dist \
-            --identity-root .release/identity
+            --frontend-dist .release/frontend/packages/app/dist
           uvx twine check dist/*.whl
       - uses: actions/upload-artifact@v4
         with:
@@ -108,7 +98,7 @@ jobs:
         with:
           clean: true
           persist-credentials: false
-      - uses: ./.github/actions/configure-dinkster-identity
+      - uses: ./.github/actions/configure-private-repository
         if: matrix.os == 'linux'
         with:
           repository: Kosinkadink/dinkster-registry

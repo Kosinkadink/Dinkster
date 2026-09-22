@@ -104,6 +104,12 @@ from .registries import (
     routing_registry_fetcher,
     select_registry,
 )
+from .registry_declaration import (
+    RegistryDeclarationError,
+    load_registry_contributions,
+    registry_declaration_toml,
+    write_registry_declaration,
+)
 
 GIT_PREFIX = "git+"
 
@@ -1070,6 +1076,14 @@ def _cmd_archive(args: argparse.Namespace) -> None:
     print(build_pack_archive(args.pack_root, args.output))
 
 
+def _cmd_registry_declaration(args: argparse.Namespace) -> None:
+    manifest_path, contributions = load_registry_contributions(args.pack_root)
+    declaration = registry_declaration_toml(contributions)
+    if args.write:
+        write_registry_declaration(manifest_path, declaration)
+    print(declaration)
+
+
 def _prepared_pack_specs(args: argparse.Namespace) -> Iterator[PackSpec]:
     from .comfy_compose import comfy_compat_specs
     from .compose import default_pack_specs
@@ -1183,6 +1197,20 @@ def main() -> None:
     archive.add_argument("pack_root", metavar="PACK_ROOT", help="pack directory to archive")
     archive.add_argument("--output", required=True, metavar="FILE.zip", help="archive to write")
     archive.set_defaults(handler=_cmd_archive)
+
+    registry_declaration = commands.add_parser(
+        "registry-declaration",
+        help="print the registry providers materialized by a pack's inference entry",
+    )
+    registry_declaration.add_argument(
+        "pack_root", metavar="PACK_ROOT", help="pack directory or dinkster-pack.toml"
+    )
+    registry_declaration.add_argument(
+        "--write",
+        action="store_true",
+        help="update [pack.provides.registry] in dinkster-pack.toml",
+    )
+    registry_declaration.set_defaults(handler=_cmd_registry_declaration)
 
     for name, help_text, handler in (
         ("doctor", "lint installed packs and refresh schema catalogs", _cmd_doctor),
@@ -1392,6 +1420,7 @@ def main() -> None:
         InstallError,
         ArtifactError,
         PackArchiveError,
+        RegistryDeclarationError,
         CompositionError,
         ManifestError,
         AcceleratorError,

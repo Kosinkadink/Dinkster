@@ -58,6 +58,8 @@ CONDITIONING = TypeExpr.concrete(CONDITIONING_TYPE)
 LATENT = TypeExpr.concrete(LATENT_TYPE)
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)
+INPAINT_CONDITIONING = TypeExpr.concrete("dinkster.inpaint-conditioning")
+CONTEXT_WINDOWS = TypeExpr.concrete("dinkster.context-windows")
 SAMPLER = TypeExpr.concrete(SAMPLER_TYPE)
 SIGMAS = TypeExpr.concrete(SIGMAS_TYPE)
 GUIDER = TypeExpr.concrete(GUIDER_TYPE)
@@ -75,6 +77,7 @@ INT = TypeExpr.concrete(CORE_INT)
 STRING = TypeExpr.concrete(CORE_STRING)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 LATENT_LIST = TypeExpr.list_of(LATENT)
+INT_LIST = TypeExpr.list_of(INT)
 
 SAMPLER_IDS = (
     "dinkster.ar_video",
@@ -4397,6 +4400,11 @@ class SamplerCustom(_SchemaOnlyNode):
                 InputSpec("sampler", SAMPLER),
                 InputSpec("sigmas", SIGMAS),
                 InputSpec("latent_image", LATENT),
+                InputSpec("denoise_mask", MASK, required=False),
+                InputSpec("inpaint", INPAINT_CONDITIONING, required=False),
+                InputSpec("negative_inpaint", INPAINT_CONDITIONING, required=False),
+                InputSpec("noise_inds", INT_LIST, required=False),
+                InputSpec("context_windows", CONTEXT_WINDOWS, required=False),
                 *_conditioning_batching_inputs(),
             ),
             outputs=(
@@ -4421,6 +4429,11 @@ class SamplerCustomAdvanced(_SchemaOnlyNode):
                 InputSpec("sampler", SAMPLER),
                 InputSpec("sigmas", SIGMAS),
                 InputSpec("latent_image", LATENT),
+                InputSpec("denoise_mask", MASK, required=False),
+                InputSpec("inpaint", INPAINT_CONDITIONING, required=False),
+                InputSpec("negative_inpaint", INPAINT_CONDITIONING, required=False),
+                InputSpec("noise_inds", INT_LIST, required=False),
+                InputSpec("context_windows", CONTEXT_WINDOWS, required=False),
             ),
             outputs=(
                 OutputSpec("output", LATENT),

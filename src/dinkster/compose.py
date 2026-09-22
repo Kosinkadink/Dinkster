@@ -260,6 +260,7 @@ from .extension_assets import read_module, resolve_frontend_modules
 from .lazy_worker import CatalogTypeRegistry, LazyWorker
 from .native_policy import NativeDispatchPolicy, select_resident_producer
 from .packs import pack_info_from_manifest
+from .registry_declaration import registry_declaration_toml, undeclared_registry_providers
 from .remotes import RemoteSpec
 
 T = TypeVar("T")
@@ -4654,9 +4655,10 @@ class ServingComposer:
         for name, record in sorted(records.items()):
             keyed_contributions = inference_contributions.get(name, ())
             degraded = name in inference_unavailable
+            registered = tuple((item.surface_id, item.id) for item in keyed_contributions)
             unmatched_providers = unmatched_registry_providers(
                 record.manifest.provides,
-                ((item.surface_id, item.id) for item in keyed_contributions),
+                registered,
             )
             if degraded:
                 # Every declared provider is unregistered here, which is exactly
@@ -4669,6 +4671,21 @@ class ServingComposer:
                     f"pack {record.manifest.name!r} declares registry provider "
                     f"{provider.registry}:{provider.id}, but its inference contribution "
                     "does not register it"
+                )
+            undeclared_providers = undeclared_registry_providers(
+                record.manifest.provides,
+                registered,
+            )
+            if undeclared_providers:
+                missing = ", ".join(
+                    f"{registry}:{descriptor_id}"
+                    for registry, descriptor_id in undeclared_providers
+                )
+                raise CompositionError(
+                    f"pack {record.manifest.name!r} registers inference provider ids "
+                    "missing from [pack.provides.registry]: "
+                    f"{missing}\nAdd this exact declaration:\n"
+                    f"{registry_declaration_toml(registered)}"
                 )
             declaration = record.extension
             if declaration is None:

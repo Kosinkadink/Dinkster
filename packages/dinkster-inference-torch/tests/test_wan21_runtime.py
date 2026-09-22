@@ -598,7 +598,7 @@ def test_multistream_facade_delegates_once_to_custom_sampling(
     assert type(calls[0]["request"]) is CustomSamplingRequest
     assert type(calls[0]["noise"]) is MultiStreamLatent
     assert type(calls[0]["cond"]) is PreparedMultiStreamConditioning
-    assert calls[0]["capture_denoised"] is False
+    assert calls[0]["noise_inds"] is None
 
 
 def test_standard_wan_custom_sampling_matches_multistream_facade() -> None:
@@ -1025,7 +1025,7 @@ def test_causal_runtime_requires_matching_sampler_and_refuses_ordinary_sampling(
             request=ar_request,
             initial_latent=torch.zeros((1, 16, 1, 3, 2)),
         )
-    with pytest.raises(Wan21RuntimeError, match="requires the ar_video custom sampler"):
+    with pytest.raises(Wan21RuntimeError, match="requires the ar_video sampler"):
         causal.sample_multistream(
             MultiStreamLatent.from_pairs((("video", torch.zeros((1, 16, 2, 2, 2))),)),
             conditioning=object(),

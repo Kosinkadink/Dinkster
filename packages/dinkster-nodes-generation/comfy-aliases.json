@@ -11489,6 +11489,247 @@
       "aliases": [
         "SeedVR2TemporalMerge"
       ]
+    },
+    {
+      "schemaVersion": 1,
+      "nodeType": "comfy.SamplerCustom",
+      "version": 1,
+      "displayName": "SamplerCustom",
+      "category": "comfy/model/sampling/custom",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "model",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MODEL"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "add_noise",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.boolean"
+            ]
+          },
+          "required": false,
+          "default": true,
+          "advanced": true
+        },
+        {
+          "role": "input",
+          "id": "noise_seed",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": false,
+          "default": 0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0,
+            "controlAfterGenerate": "randomize"
+          }
+        },
+        {
+          "role": "input",
+          "id": "cfg",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": false,
+          "default": 8.0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.0,
+            "max": 100.0,
+            "step": 0.1,
+            "round": 0.01
+          }
+        },
+        {
+          "role": "input",
+          "id": "positive",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "negative",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "sampler",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.SAMPLER"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "sigmas",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.SIGMAS"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "latent_image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "output",
+          "id": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "denoised_output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        }
+      ],
+      "occupies": [
+        "gpu"
+      ],
+      "aliases": [
+        "SamplerCustom"
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "nodeType": "comfy.SamplerCustomAdvanced",
+      "version": 1,
+      "displayName": "SamplerCustomAdvanced",
+      "category": "comfy/model/sampling/custom",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "noise",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.NOISE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "guider",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.GUIDER"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "sampler",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.SAMPLER"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "sigmas",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.SIGMAS"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "latent_image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "output",
+          "id": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "denoised_output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "SamplerCustomAdvanced"
+      ]
     }
   ],
   "records": [
@@ -27268,6 +27509,128 @@
         "evidence": [
           "tests/test_generation_comfy_aliases.py::test_seedvr2_workflow_aliases_cover_current_core_surface",
           "tests/test_generation_nodes.py::test_seedvr2_comfy_aliases_translate_outputs_and_manual_chunking"
+        ]
+      }
+    },
+    {
+      "id": "comfy_alias:comfy-core/SamplerCustom",
+      "mappingKind": "op",
+      "carrier": "dinkster.sampler_custom",
+      "source": {
+        "pack": "comfy-core",
+        "nodeClass": "SamplerCustom",
+        "nodeType": "comfy.SamplerCustom",
+        "revision": "b78cec87"
+      },
+      "replacement": {
+        "from": "comfy.SamplerCustom",
+        "note": "The denoise mask, batch-index noise selection, and inpaint concat metadata ride on the copied latent and conditioning values, so they forward with KSampler semantics.",
+        "cases": [
+          {
+            "to": "dinkster.sampler_custom",
+            "inputs": {
+              "model": {
+                "kind": "copy",
+                "input": "model"
+              },
+              "add_noise": {
+                "kind": "copy",
+                "input": "add_noise"
+              },
+              "noise_seed": {
+                "kind": "copy",
+                "input": "noise_seed"
+              },
+              "cfg": {
+                "kind": "copy",
+                "input": "cfg"
+              },
+              "positive": {
+                "kind": "copy",
+                "input": "positive"
+              },
+              "negative": {
+                "kind": "copy",
+                "input": "negative"
+              },
+              "sampler": {
+                "kind": "copy",
+                "input": "sampler"
+              },
+              "sigmas": {
+                "kind": "copy",
+                "input": "sigmas"
+              },
+              "latent_image": {
+                "kind": "copy",
+                "input": "latent_image"
+              }
+            },
+            "outputs": {
+              "output": "output",
+              "denoised_output": "denoised_output"
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "exact",
+        "evidence": [
+          "tests/test_native_arm.py::test_generation_custom_samplers_forward_denoise_mask_without_inpaint",
+          "tests/test_generation_comfy_aliases.py::test_custom_sampling_aliases_copy_every_shared_input"
+        ]
+      }
+    },
+    {
+      "id": "comfy_alias:comfy-core/SamplerCustomAdvanced",
+      "mappingKind": "op",
+      "carrier": "dinkster.sampler_custom_advanced",
+      "source": {
+        "pack": "comfy-core",
+        "nodeClass": "SamplerCustomAdvanced",
+        "nodeType": "comfy.SamplerCustomAdvanced",
+        "revision": "b78cec87"
+      },
+      "replacement": {
+        "from": "comfy.SamplerCustomAdvanced",
+        "note": "The denoise mask and batch-index noise selection ride on the copied latent value, so they forward with KSampler semantics.",
+        "cases": [
+          {
+            "to": "dinkster.sampler_custom_advanced",
+            "inputs": {
+              "noise": {
+                "kind": "copy",
+                "input": "noise"
+              },
+              "guider": {
+                "kind": "copy",
+                "input": "guider"
+              },
+              "sampler": {
+                "kind": "copy",
+                "input": "sampler"
+              },
+              "sigmas": {
+                "kind": "copy",
+                "input": "sigmas"
+              },
+              "latent_image": {
+                "kind": "copy",
+                "input": "latent_image"
+              }
+            },
+            "outputs": {
+              "output": "output",
+              "denoised_output": "denoised_output"
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "exact",
+        "evidence": [
+          "tests/test_native_arm.py::test_generation_custom_samplers_forward_denoise_mask_without_inpaint",
+          "tests/test_generation_comfy_aliases.py::test_custom_sampling_aliases_copy_every_shared_input"
         ]
       }
     }

@@ -10,19 +10,19 @@ const bin = process.platform === 'win32'
 const agent = `${bin}ssh-agent${process.platform === 'win32' ? '.exe' : ''}`;
 
 try {
-  if (process.env.STATE_IDENTITY_POST) {
-    if (!process.env.STATE_IDENTITY_AGENT_PID) return;
+  if (process.env.STATE_REPOSITORY_POST) {
+    if (!process.env.STATE_REPOSITORY_AGENT_PID) return;
     execFileSync(agent, ['-k'], {
       env: {
         ...process.env,
-        SSH_AGENT_PID: process.env.STATE_IDENTITY_AGENT_PID,
-        SSH_AUTH_SOCK: process.env.STATE_IDENTITY_AUTH_SOCK,
+        SSH_AGENT_PID: process.env.STATE_REPOSITORY_AGENT_PID,
+        SSH_AUTH_SOCK: process.env.STATE_REPOSITORY_AUTH_SOCK,
       },
       stdio: 'pipe',
     });
   } else {
-    appendFileSync(process.env.GITHUB_STATE, 'IDENTITY_POST=true\n');
-    if (!privateKey?.trim()) throw new Error('Missing identity deploy key');
+    appendFileSync(process.env.GITHUB_STATE, 'REPOSITORY_POST=true\n');
+    if (!privateKey?.trim()) throw new Error('Missing repository deploy key');
     const repository = process.env.INPUT_REPOSITORY;
     if (!/^[\w.-]+\/[\w.-]+$/.test(repository ?? '')) {
       throw new Error('Invalid repository');
@@ -32,13 +32,13 @@ try {
     const socket = output.match(/^SSH_AUTH_SOCK=([^;]+);/m)?.[1];
     if (!pid || !socket) throw new Error('Invalid SSH agent response');
     appendFileSync(process.env.GITHUB_STATE,
-      `IDENTITY_AGENT_PID=${pid}\nIDENTITY_AUTH_SOCK=${socket}\n`);
+      `REPOSITORY_AGENT_PID=${pid}\nREPOSITORY_AUTH_SOCK=${socket}\n`);
     execFileSync(`${bin}ssh-add${process.platform === 'win32' ? '.exe' : ''}`, ['-'], {
       input: `${privateKey.trim()}\n`,
       env: { ...process.env, SSH_AGENT_PID: pid, SSH_AUTH_SOCK: socket },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    const knownHosts = join(process.env.RUNNER_TEMP, 'identity-known-hosts');
+    const knownHosts = join(process.env.RUNNER_TEMP, 'repository-known-hosts');
     writeFileSync(knownHosts,
       'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n',
       { mode: 0o600 });
@@ -56,6 +56,6 @@ try {
     ].join('\n'));
   }
 } catch {
-  console.error('::error::Identity SSH agent setup or cleanup failed. Check the deploy key and Git SSH installation.');
+  console.error('::error::Repository SSH agent setup or cleanup failed. Check the deploy key and Git SSH installation.');
   process.exitCode = 1;
 }

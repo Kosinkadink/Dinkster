@@ -1043,6 +1043,8 @@ def test_inference_declarations_compose_without_materializing_sampling_worker(
         '[pack.entry]\nnodes = "s1_sampler_empty:NODES"\n'
         '[pack.extension]\ninference = "s1_sampler_pack_a:register"\n'
         'privileges = ["inference"]\n'
+        '[pack.provides.registry]\n"dinkster.samplers" = ["proof_a.scaled_euler"]\n'
+        '"dinkster.schedulers" = ["proof_a.scheduler"]\n'
     )
     for path in (extension, host):
         report = diagnose(path, environment=environment)

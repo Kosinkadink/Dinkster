@@ -1,4 +1,4 @@
-name: Configure private dependency access
+name: Configure private repository access
 description: Configure read-only SSH access without writing a private key to disk
 inputs:
   deploy-key:
@@ -6,7 +6,7 @@ inputs:
     required: true
   repository:
     description: Repository the deploy key can read
-    default: Kosinkadink/dinkster-identity
+    required: true
 runs:
   using: node20
   main: agent.cjs
