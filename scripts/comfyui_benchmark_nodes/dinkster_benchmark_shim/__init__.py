@@ -60,7 +60,6 @@ from pathlib import Path
 import comfy.model_management
 import comfy.utils
 import execution
-import latent_preview
 import numpy as np
 import torch
 from aiohttp import web
@@ -77,10 +76,6 @@ _PEAK_DEVICE_USED = 0
 _QUALITY_CAPTURED = False
 _QUALITY_CAPTURE_ARMED = False
 _QUALITY_CAPTURE_SEED: int | None = None
-_FIRST_STEP_CAPTURE = None
-_SECOND_STEP_CAPTURE = None
-_H3_FORWARD_TRACE = None
-_H3_FORWARD_ORIGINAL = None
 _ALLOCATOR_WINDOW: dict[str, object] | None = None
 _ATTENTION_COUNTS = {
     "provider_attempts": 0,
@@ -97,34 +92,6 @@ _PROCESS_INSTANCE = f"{os.getpid()}:{time.time_ns()}:{_BOOT_NONCE}"
 _ATTENTION_POLICY = os.environ.get("DINKSTER_BENCHMARK_ATTENTION_POLICY", "auto")
 _QUALITY_OUTPUT_DIR = os.environ.get("DINKSTER_BENCHMARK_QUALITY_OUTPUT_DIR")
 _QUALITY_SPATIAL_STRIDE = int(os.environ.get("DINKSTER_BENCHMARK_QUALITY_SPATIAL_STRIDE", "4"))
-
-_original_prepare_callback = latent_preview.prepare_callback
-
-
-def _capture_prepare_callback(model, steps, x0_output):
-    callback = _original_prepare_callback(model, steps, x0_output)
-
-    def capture(step, denoised, current, total):
-        global _FIRST_STEP_CAPTURE, _SECOND_STEP_CAPTURE
-        callback(step, denoised, current, total)
-        if _QUALITY_CAPTURE_ARMED and _QUALITY_OUTPUT_DIR:
-            if step == 1 and _FIRST_STEP_CAPTURE is None:
-                _FIRST_STEP_CAPTURE = _capture_nested_tensor(
-                    current,
-                    Path(_QUALITY_OUTPUT_DIR),
-                    "first_step",
-                )
-            elif step == 2 and _SECOND_STEP_CAPTURE is None:
-                _SECOND_STEP_CAPTURE = _capture_nested_tensor(
-                    current,
-                    Path(_QUALITY_OUTPUT_DIR),
-                    "second_step",
-                )
-
-    return capture
-
-
-latent_preview.prepare_callback = _capture_prepare_callback
 
 
 def _record_provider_call(function):
@@ -456,12 +423,6 @@ class DinksterBenchmarkSink:
                     output_dir / "sigmas.npy",
                     spatial_stride=None,
                 )
-            if _FIRST_STEP_CAPTURE is not None:
-                capture["first_step"] = _FIRST_STEP_CAPTURE
-            if _SECOND_STEP_CAPTURE is not None:
-                capture["second_step"] = _SECOND_STEP_CAPTURE
-            if _H3_FORWARD_TRACE is not None:
-                capture["forward_trace"] = _H3_FORWARD_TRACE
             observation["quality_capture"] = capture
             _QUALITY_CAPTURED = True
             _QUALITY_CAPTURE_ARMED = False
@@ -703,113 +664,6 @@ def _capture_quality_tensor(tensor, path: Path, *, spatial_stride: int | None):
     }
 
 
-def _capture_trace_tensor(tensor, path: Path):
-    source_shape = tuple(int(value) for value in tensor.shape)
-    rows = tensor.detach().reshape(-1, source_shape[-1])
-    row_indices = (
-        torch.linspace(
-            0,
-            rows.shape[0] - 1,
-            min(64, rows.shape[0]),
-            device=rows.device,
-        )
-        .round()
-        .to(dtype=torch.long)
-        .unique()
-    )
-    channel_indices = (
-        torch.linspace(
-            0,
-            rows.shape[1] - 1,
-            min(128, rows.shape[1]),
-            device=rows.device,
-        )
-        .round()
-        .to(dtype=torch.long)
-        .unique()
-    )
-    sampled = rows.index_select(0, row_indices).index_select(1, channel_indices)
-    return {
-        **_capture_quality_tensor(sampled, path, spatial_stride=None),
-        "activation_shape": list(source_shape),
-        "row_indices": row_indices.cpu().tolist(),
-        "channel_indices": channel_indices.cpu().tolist(),
-    }
-
-
-def _install_h3_forward_trace(model, output_dir: Path):
-    trace = {}
-    handles = []
-
-    def capture(name, tensor):
-        if name not in trace:
-            trace[name] = _capture_trace_tensor(tensor, output_dir / f"trace_{name}.npy")
-
-    def post(name):
-        def hook(_module, _inputs, output):
-            capture(name, torch.cat(output, dim=-1) if type(output) is tuple else output)
-
-        return hook
-
-    def pre(name):
-        def hook(_module, inputs):
-            capture(name, inputs[0])
-
-        return hook
-
-    handles.extend(
-        (
-            model.condition_proj.register_forward_hook(post("condition_projection")),
-            model.token_refiner.register_forward_hook(post("token_refiner")),
-            model.video_patch_proj.register_forward_pre_hook(pre("video_patch_input")),
-            model.video_patch_proj.register_forward_hook(post("video_patch_projection")),
-            model.audio_patch_proj.register_forward_pre_hook(pre("audio_patch_input")),
-            model.audio_patch_proj.register_forward_hook(post("audio_patch_projection")),
-            model.blocks[0].register_forward_pre_hook(pre("block0_input")),
-            model.blocks[0].adaln_proj.register_forward_pre_hook(pre("block0_adaln_input")),
-            model.blocks[0].adaln_proj.register_forward_hook(post("block0_adaln")),
-            model.blocks[0].norm1.register_forward_hook(post("block0_norm1")),
-            model.blocks[0].attn.qkv_proj.register_forward_hook(post("block0_qkv")),
-            model.blocks[0].attn.out_proj.register_forward_hook(post("block0_attention")),
-            model.blocks[0].norm2.register_forward_hook(post("block0_norm2")),
-            model.blocks[0].mlp.fc1.register_forward_hook(post("block0_mlp_input")),
-            model.blocks[0].mlp.fc2.register_forward_hook(post("block0_mlp_output")),
-            model.blocks[0].register_forward_hook(post("block0_output")),
-            model.final_layer.register_forward_pre_hook(pre("final_input")),
-        )
-    )
-
-    def final_output(_module, _inputs, output):
-        capture("video_head", output[0])
-        capture("audio_head", output[1])
-
-    handles.append(model.final_layer.register_forward_hook(final_output))
-    return trace, handles
-
-
-def _trace_h3_forward(self, *args, **kwargs):
-    global _H3_FORWARD_TRACE
-    assert _H3_FORWARD_ORIGINAL is not None
-    if not _QUALITY_CAPTURE_ARMED or _H3_FORWARD_TRACE is not None or not _QUALITY_OUTPUT_DIR:
-        return _H3_FORWARD_ORIGINAL(self, *args, **kwargs)
-    trace, handles = _install_h3_forward_trace(self, Path(_QUALITY_OUTPUT_DIR))
-    try:
-        return _H3_FORWARD_ORIGINAL(self, *args, **kwargs)
-    finally:
-        for handle in handles:
-            handle.remove()
-        _H3_FORWARD_TRACE = trace
-
-
-def _ensure_h3_forward_trace_patch():
-    global _H3_FORWARD_ORIGINAL
-    if _H3_FORWARD_ORIGINAL is not None:
-        return
-    model_class = importlib.import_module("comfy.ldm.minimax.model").MiniMaxH3Model
-    _H3_FORWARD_ORIGINAL = model_class._forward
-    model_class._forward = _trace_h3_forward
-
-
 def _capture_nested_tensor(value, output_dir: Path, stem: str):
     tensors = value.unbind() if value.is_nested else (value,)
     roles = ("video", "audio") if len(tensors) == 2 else tuple(str(i) for i in range(len(tensors)))
@@ -996,7 +850,6 @@ async def _state(request):
 @_routes.post("/dinkster_benchmark/reset")
 async def _reset(request):
     global _ALLOCATOR_WINDOW
-    global _H3_FORWARD_TRACE
     global _PEAK_DEVICE_USED, _QUALITY_CAPTURED, _QUALITY_CAPTURE_ARMED, _QUALITY_CAPTURE_SEED
     payload = await request.json()
     nonce = payload.get("nonce")
@@ -1014,7 +867,6 @@ async def _reset(request):
         _QUALITY_CAPTURED = False
         _QUALITY_CAPTURE_ARMED = False
         _QUALITY_CAPTURE_SEED = None
-        _H3_FORWARD_TRACE = None
         for name in _ATTENTION_COUNTS:
             _ATTENTION_COUNTS[name] = 0
         _ALLOCATOR_WINDOW = (
@@ -1060,7 +912,6 @@ async def _arm_quality(request):
         return web.json_response({"error": "quality capture is not configured"}, status=400)
     if type(seed) is not int:
         return web.json_response({"error": "seed (int) is required"}, status=400)
-    _ensure_h3_forward_trace_patch()
     with _LOCK:
         if _QUALITY_CAPTURED or _QUALITY_CAPTURE_ARMED:
             return web.json_response(

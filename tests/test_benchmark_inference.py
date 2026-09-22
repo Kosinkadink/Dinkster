@@ -2101,7 +2101,7 @@ def test_minimax_h3_drives_the_native_production_nodes(
             "text_encoder",
             "text-identity",
             "unloaded",
-            "bfloat16",
+            "float16",
             "unloaded",
             "auto",
             None,
@@ -2490,6 +2490,7 @@ def test_quality_capture_uses_a_fresh_post_measurement_seed(
     image = object()
     waveform = object()
     captured: list[tuple[object, Path, int | None]] = []
+    raw_outputs: list[tuple[object, object, int, Path]] = []
 
     def run_once(seed: int) -> tuple[object, float, float, list[float]]:
         assert seed == 20260817
@@ -2500,6 +2501,15 @@ def test_quality_capture_uses_a_fresh_post_measurement_seed(
         captured.append((tensor, path, spatial_stride))
         return {"path": str(path)}
 
+    def capture_raw(
+        frames: object,
+        audio: object,
+        sample_rate: int,
+        output_dir: Path,
+    ) -> dict[str, object]:
+        raw_outputs.append((frames, audio, sample_rate, output_dir))
+        return {"frames": {}, "audio": {}}
+
     monkeypatch.setattr(run, "_run_once", run_once)
     monkeypatch.setattr(
         run,
@@ -2507,6 +2517,7 @@ def test_quality_capture_uses_a_fresh_post_measurement_seed(
         lambda frames, audio, label: f"{label} valid",
     )
     monkeypatch.setattr(benchmark_inference, "_capture_quality_tensor", capture)
+    monkeypatch.setattr(benchmark_inference, "_capture_raw_outputs", capture_raw)
 
     assert run.capture_quality() == "quality capture valid"
     assert run.quality_capture == {
@@ -2515,11 +2526,13 @@ def test_quality_capture_uses_a_fresh_post_measurement_seed(
         "image": {"path": str(tmp_path / "capture_image.npy")},
         "audio": {"path": str(tmp_path / "capture_audio.npy")},
         "audio_sample_rate": 32_000,
+        "raw_outputs": {"frames": {}, "audio": {}},
     }
     assert captured == [
         (image, tmp_path / "capture_image.npy", 4),
         (waveform, tmp_path / "capture_audio.npy", None),
     ]
+    assert raw_outputs == [(image, waveform, 32_000, tmp_path)]
     assert run.decoded_audio is None
 
 

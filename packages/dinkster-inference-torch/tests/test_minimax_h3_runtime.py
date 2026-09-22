@@ -1045,10 +1045,11 @@ class ContextMeanDiT:
     """Velocity equals the conditioning context's mean, so the cond and
     uncond branches produce distinguishable predictions."""
 
-    def __init__(self) -> None:
+    def __init__(self, output_dtype: torch.dtype = torch.float32) -> None:
         self.calls: list[float] = []
         self.preprocessed_contexts: list[torch.Tensor] = []
         self.input_dtypes: list[torch.dtype] = []
+        self.output_dtype = output_dtype
         self.video_patch_proj = torch.nn.Linear(1, 1, bias=False)
 
     def preprocess_text_embeddings(self, context: torch.Tensor) -> torch.Tensor:
@@ -1070,8 +1071,8 @@ class ContextMeanDiT:
         self.calls.append(velocity)
         self.input_dtypes.append(value.by_role("video").dtype)
         return _h3(
-            torch.full_like(value.by_role("video"), velocity, dtype=torch.float32),
-            torch.full_like(value.by_role("audio"), velocity, dtype=torch.float32),
+            torch.full_like(value.by_role("video"), velocity, dtype=self.output_dtype),
+            torch.full_like(value.by_role("audio"), velocity, dtype=self.output_dtype),
         )
 
 
@@ -1108,6 +1109,38 @@ def test_sampling_casts_latents_to_the_diffusion_compute_dtype() -> None:
     )
 
     assert dit.input_dtypes == [torch.bfloat16]
+
+
+def test_sampling_upcasts_velocity_before_sigma_multiplication() -> None:
+    dit = ContextMeanDiT(torch.bfloat16)
+    runtime = MiniMaxH3DiTRuntime(
+        dit,  # type: ignore[arg-type]
+        model_role="fl2va_dit",
+        runtime_identity="test:h3:fl2va",
+    )
+    conditioner = MiniMaxH3ConditionerRuntime(
+        FakeConditioner(),  # type: ignore[arg-type]
+        runtime_identity="test:h3:conditioner",
+    )
+    target = _target()
+    prepared = _condition_t2va(conditioner, target)
+    cond = PreparedMultiStreamConditioning(
+        "test:h3:fl2va", replace(prepared, context=torch.full_like(prepared.context, 2.0))
+    )
+    events: list[SamplingStateEvent[object]] = []
+
+    runtime.sample_custom(
+        target,
+        noise=target.map(torch.zeros_like),
+        cond=cond,
+        cfg=None,
+        request=_h3_custom_request("euler", (0.7, 0.0)),
+        on_state=events.append,
+    )
+
+    denoised = cast("MultiStreamLatent[torch.Tensor]", events[0].denoised)
+    expected = torch.full_like(denoised.by_role("video"), -1.4)
+    torch.testing.assert_close(denoised.by_role("video"), expected, rtol=0, atol=0)
 
 
 def _condition_t2va(

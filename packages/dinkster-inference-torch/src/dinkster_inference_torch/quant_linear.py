@@ -348,6 +348,7 @@ class Int8Linear(torch.nn.Module):
         *,
         bias: bool,
         compute_dtype: torch.dtype,
+        per_channel: bool | None = None,
         convrot: bool,
         convrot_groupsize: int,
         full_precision_matmul: bool = False,
@@ -358,13 +359,16 @@ class Int8Linear(torch.nn.Module):
         self.compute_dtype = compute_dtype
         self.convrot = convrot
         self.convrot_groupsize = convrot_groupsize
+        self.per_channel = convrot if per_channel is None else per_channel
+        if convrot and not self.per_channel:
+            raise ValueError("ConvRot INT8 storage requires per-channel scales")
         self.full_precision_matmul = full_precision_matmul
         self.fused_training = False
         self.weight = torch.nn.Parameter(
             torch.empty((out_features, in_features), dtype=torch.int8),
             requires_grad=False,
         )
-        scale_shape = (out_features, 1) if convrot else ()
+        scale_shape = (out_features, 1) if self.per_channel else ()
         self.register_buffer("weight_scale", torch.empty(scale_shape, dtype=torch.float32))
         if bias:
             self.bias: torch.nn.Parameter | None = torch.nn.Parameter(
@@ -548,6 +552,7 @@ class Int8Embedding(torch.nn.Module):
         embedding_dim: int,
         *,
         compute_dtype: torch.dtype,
+        per_channel: bool | None = None,
         convrot: bool,
         convrot_groupsize: int,
     ) -> None:
@@ -557,11 +562,14 @@ class Int8Embedding(torch.nn.Module):
         self.compute_dtype = compute_dtype
         self.convrot = convrot
         self.convrot_groupsize = convrot_groupsize
+        self.per_channel = convrot if per_channel is None else per_channel
+        if convrot and not self.per_channel:
+            raise ValueError("ConvRot INT8 storage requires per-channel scales")
         self.weight = torch.nn.Parameter(
             torch.empty((num_embeddings, embedding_dim), dtype=torch.int8),
             requires_grad=False,
         )
-        scale_shape = (num_embeddings, 1) if convrot else ()
+        scale_shape = (num_embeddings, 1) if self.per_channel else ()
         self.register_buffer("weight_scale", torch.empty(scale_shape, dtype=torch.float32))
 
     def bind_residency(self, binding: ResidencyBinding) -> None:

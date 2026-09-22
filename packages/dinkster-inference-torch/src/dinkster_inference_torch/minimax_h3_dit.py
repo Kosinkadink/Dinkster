@@ -74,7 +74,9 @@ def _h3_stream_sigmas(
     sigmas: MiniMaxH3Sigmas,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    sigma = torch.tensor(video_sigma, dtype=torch.float32, device=device).clamp(min=1e-6)
+    sigma = (
+        (torch.tensor(video_sigma, dtype=torch.float32, device=device) * 1000.0) / 1000.0
+    ).clamp(min=1e-6)
     base = sigma / (sigmas.video.shift + sigma * (1.0 - sigmas.video.shift))
     audio = sigmas.audio_shift * base / (1.0 + (sigmas.audio_shift - 1.0) * base)
     return sigma, audio

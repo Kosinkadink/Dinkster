@@ -2428,8 +2428,10 @@ def test_fractional_masks_drive_block_and_final_row_timesteps(
     )
     torch.testing.assert_close(audio_values, torch.tensor((0.2, 1.0, 1.0, 1.0, 0.6, 1.0)))
     video_time = 0.5
-    audio_sigma = MINIMAX_H3_SIGMAS.audio_sigma(0.5)
-    audio_time = 1.0 - audio_sigma
+    video_sigma = torch.tensor(0.5, dtype=torch.float32) * 1000.0 / 1000.0
+    base_sigma = video_sigma / (12.0 + video_sigma * (1.0 - 12.0))
+    audio_sigma = 3.0 * base_sigma / (1.0 + (3.0 - 1.0) * base_sigma)
+    audio_time = float(1.0 - audio_sigma)
     video_rows = (1.0 - video_values * 0.5).clamp(max=0.999)
     audio_rows = (1.0 - audio_values * audio_sigma).clamp(max=1.0)
     unique_times = tuple(
@@ -2526,9 +2528,11 @@ def test_uniform_fractional_masks_use_scalar_block_and_final_rows(
     )
     assert video_values is not None and audio_values is not None
     video_row_time = float((1.0 - video_values * 0.5).clamp(max=0.999)[0])
-    audio_sigma = MINIMAX_H3_SIGMAS.audio_sigma(0.5)
+    video_sigma = torch.tensor(0.5, dtype=torch.float32) * 1000.0 / 1000.0
+    base_sigma = video_sigma / (12.0 + video_sigma * (1.0 - 12.0))
+    audio_sigma = 3.0 * base_sigma / (1.0 + (3.0 - 1.0) * base_sigma)
     audio_row_time = float((1.0 - audio_values * audio_sigma).clamp(max=1.0)[0])
-    expected_times = tuple(sorted((0.5, 1.0 - audio_sigma, video_row_time, audio_row_time)))
+    expected_times = tuple(sorted((0.5, float(1.0 - audio_sigma), video_row_time, audio_row_time)))
     time_row = {time: index for index, time in enumerate(expected_times)}
 
     assert embedded_times == [expected_times]
@@ -2609,16 +2613,18 @@ def test_audio_carry_and_velocity_conversion_consume_exact_s2_coefficients(
 
 
 def test_h3_stream_sigmas_use_reference_float32_kernels() -> None:
-    video_value = 0.9956331849098206
+    video_value = 0.9908256530761719
     video, audio = dit_module._h3_stream_sigmas(  # pyright: ignore[reportPrivateUsage]
         video_value, MINIMAX_H3_SIGMAS, torch.device("cpu")
     )
-    expected_video = torch.tensor(video_value, dtype=torch.float32)
+    original_video = torch.tensor(video_value, dtype=torch.float32)
+    expected_video = original_video * 1000.0 / 1000.0
     base = expected_video / (12.0 + expected_video * (1.0 - 12.0))
     expected_audio = 3.0 * base / (1.0 + (3.0 - 1.0) * base)
 
     assert torch.equal(video, expected_video)
     assert torch.equal(audio, expected_audio)
+    assert not torch.equal(video, original_video)
     assert float(audio) != MINIMAX_H3_SIGMAS.audio_sigma(video_value)
 
 

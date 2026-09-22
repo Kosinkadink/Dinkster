@@ -1710,7 +1710,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             attention_kernel_factory=attention_kernel_factory,
                         )
                 packed_velocity, _ = pack_latent_streams(velocity)
-                result = x - packed_velocity * sigma
+                result = x - packed_velocity.float() * sigma
             _check_cancelled(cancelled)
             return result
 
