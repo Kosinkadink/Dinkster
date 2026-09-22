@@ -131,6 +131,7 @@ def resolve_custom_sampling_request(
         request.sigmas,
         cache=request.cache,
         timeline=request.timeline,
+        source_scheduler_id=request.source_scheduler_id,
     )
 
 
@@ -519,6 +520,7 @@ class SamplingAdapterContext:
     guidance: float | Literal["disabled"] | None
     inpaint: object | None
     context_windows: ContextWindowsSpec | None
+    noise_inds: Sequence[int] | None
     options: Mapping[str, object]
     inputs: SamplingExecutionInputs | None = None
     sampler: SamplerDescriptor[Any] | None = None
@@ -671,6 +673,29 @@ class SamplingDenoiserExecution:
 
 
 @dataclass(frozen=True)
+class CustomSamplingRestriction:
+    when: Callable[[object], bool]
+    message: str
+    required_sampler_id: str | None = None
+    forbidden_sampler_id: str | None = None
+    refuses_denoise_mask: bool = False
+    refuses_inpaint: bool = False
+    refuses_context_windows: bool = False
+    refuses_guidance: bool = False
+
+
+@dataclass(frozen=True)
+class CustomSamplingCapabilities:
+    supports_inpaint: Callable[[object], bool] = lambda runtime: bool(
+        getattr(runtime, "supports_inpaint", False)
+    )
+    supports_context_windows: Callable[[object], bool] = lambda runtime: bool(
+        getattr(runtime, "supports_context_windows", False)
+    )
+    restrictions: tuple[CustomSamplingRestriction, ...] = ()
+
+
+@dataclass(frozen=True)
 class SamplingExecutionRegistration:
     latent: SamplingLatentAdapter
     denoiser: Callable[[object, torch.dtype, SamplingAdapterContext], SamplingDenoiserExecution]
@@ -686,6 +711,16 @@ class SamplingExecutionRegistration:
     prepare_guidance: (
         Callable[[object, SamplingExecutionInputs], SamplingExecutionInputs] | None
     ) = None
+    context_windows_option: str | None = None
+    capabilities: CustomSamplingCapabilities = CustomSamplingCapabilities()
+    forbidden_options: frozenset[str] = frozenset()
+    forbidden_options_message: str = "sampling option is not supported"
+
+
+def validate_sampling_options(runtime: object, options: Mapping[str, object]) -> None:
+    registration = cast("SamplingExecutionRuntime", runtime).sampling_execution_registration
+    if registration.forbidden_options.intersection(options):
+        raise TypeError(registration.forbidden_options_message)
 
 
 class DistributedGuidanceAdmission(Protocol):
@@ -844,6 +879,7 @@ def sampling_execution(
     denoise_mask: CustomSamplingLatentValue | None = None,
     inpaint: object | None = None,
     context_windows: ContextWindowsSpec | None = None,
+    noise_inds: Sequence[int] | None = None,
     on_step: StepCallback | None = None,
     on_state: SamplingStateCallback | None = None,
     sampling_shift: float | None = None,
@@ -861,11 +897,21 @@ def sampling_execution(
         cancelled = sampling_environment_cancellation()
     owner = cast("SamplingExecutionRuntime", runtime)
     registration = owner.sampling_execution_registration
+    options = dict(adapter_options)
+    validate_sampling_options(owner, options)
+    context_windows_option = registration.context_windows_option
+    if context_windows_option is not None and context_windows_option in options:
+        if context_windows is not None:
+            raise owner.sampling_error(
+                f"{context_windows_option} and context_windows cannot both be supplied"
+            )
+        context_windows = cast("ContextWindowsSpec", options.pop(context_windows_option))
     adapter_context = SamplingAdapterContext(
         guidance,
         inpaint,
         context_windows,
-        MappingProxyType(dict(adapter_options)),
+        noise_inds,
+        MappingProxyType(options),
         seed=seed,
         sampling_shift=sampling_shift,
         cancelled=cancelled,
@@ -1178,6 +1224,7 @@ def run_ksampler_as_custom(
         "denoise_mask",
         "inpaint",
         "context_windows",
+        "noise_inds",
         "on_step",
         "on_state",
     }
@@ -1198,7 +1245,9 @@ def run_ksampler_as_custom(
         segment=segment,
         device=device,
     )
-    request = CustomSamplingRequest(sampler, (), schedule.pre_offset)
+    request = CustomSamplingRequest(
+        sampler, (), schedule.pre_offset, source_scheduler_id=scheduler_id
+    )
     runtime.check_custom_sampling(
         request,
         has_denoise_mask=denoise_mask is not None,
@@ -1253,6 +1302,7 @@ def run_ksampler_as_custom(
         denoise_mask=denoise_mask,
         inpaint=inpaint,
         context_windows=context_windows,
+        noise_inds=noise_inds,
         on_step=on_step,
         on_state=on_state,
         **extra_kwargs,

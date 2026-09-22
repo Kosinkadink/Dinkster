@@ -534,8 +534,16 @@ def test_z_image_runtime_refuses_scheduled_gain_for_off_grid_sampler(
 
 
 def test_z_image_runtime_refuses_nonlatent_and_unsupported_inputs() -> None:
+    class Assembled:
+        family = Z_IMAGE
+
+        @staticmethod
+        def compute_dtype(role: str) -> torch.dtype:
+            del role
+            return torch.bfloat16
+
     runtime = object.__new__(ZImageRuntime)
-    runtime.assembled = cast("Any", type("Assembled", (), {"family": Z_IMAGE})())
+    runtime.assembled = cast("Any", Assembled())
     runtime._samplers = torch_sampler_registry()  # pyright: ignore[reportPrivateUsage]
     runtime._schedulers = torch_scheduler_registry()  # pyright: ignore[reportPrivateUsage]
     runtime._guidance = None  # pyright: ignore[reportPrivateUsage]

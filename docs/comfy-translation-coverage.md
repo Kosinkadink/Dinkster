@@ -9,8 +9,8 @@ The previous 580-workflow denominator remains in [the historical baseline](resea
 
 | Status | Node occurrences |
 | --- | ---: |
-| mapped | 5876 |
-| quarantine | 5199 |
+| mapped | 6009 |
+| quarantine | 5066 |
 | unavailable | 0 |
 | unsupported | 217 |
 | structural | 1569 |
@@ -24,7 +24,7 @@ Evidence-supported workflows (weakest link T2 or stronger): 0 / 602.
 
 | Mapping kind | Tier | Declarations | Mapped occurrences | Receipt cases |
 | --- | --- | ---: | ---: | ---: |
-| op | exact | 156 | 2928 | 68 |
+| op | exact | 158 | 3061 | 68 |
 | op | parametric | 99 | 2557 | 27 |
 | op | equivalent | 34 | 391 | 3 |
 | op | grouped | 26 | 0 | 5 |
@@ -37,7 +37,7 @@ Receipt results: 103 passing, 0 failing, 103 total. Each canonical receipt and i
 
 ## Source-parity receipt debt
 
-99 / 312 maintained translation declarations have at least one verified passing source/native receipt; 213 remain unreceipted. The parity unit is one unique maintained mapping, not a receipt-case count.
+99 / 314 maintained translation declarations have at least one verified passing source/native receipt; 215 remain unreceipted. The parity unit is one unique maintained mapping, not a receipt-case count.
 
 3 maintained fail-closed mappings are reported as refused and excluded from parity counts; they make no native-equivalence claim.
 
@@ -51,7 +51,7 @@ Snapshot `2026-08-26` contains 5322 packs and 111293288 downloads. Rank 355 reac
 
 | Source band | Mapped | Quarantine | Unavailable | Unsupported | Structural |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| core | 5685 | 4536 | 0 | 0 | 0 |
+| core | 5818 | 4403 | 0 | 0 | 0 |
 | top-355 | 191 | 622 | 0 | 0 | 0 |
 | rank-356-900 | 0 | 0 | 0 | 0 | 0 |
 | outside-top-900 | 0 | 41 | 0 | 0 | 0 |
@@ -70,7 +70,6 @@ Snapshot `2026-08-26` contains 5322 packs and 111293288 downloads. Rank 355 reac
 | quarantine | `PrimitiveFloat` | `comfy-core` | 172 | 61 | no-maintained-native-alias |
 | quarantine | `KSamplerSelect` | `comfy-core` | 122 | 77 | no-maintained-native-alias |
 | quarantine | `PrimitiveStringMultiline` | `comfy-core` | 122 | 71 | no-maintained-native-alias |
-| quarantine | `SamplerCustomAdvanced` | `comfy-core` | 109 | 66 | no-maintained-native-alias |
 | quarantine | `RandomNoise` | `comfy-core` | 101 | 62 | no-maintained-native-alias |
 | quarantine | `VAEEncode` | `comfy-core` | 98 | 50 | no-maintained-native-alias |
 | quarantine | `CFGGuider` | `comfy-core` | 82 | 44 | no-maintained-native-alias |
@@ -86,3 +85,4 @@ Snapshot `2026-08-26` contains 5322 packs and 111293288 downloads. Rank 355 reac
 | quarantine | `FluxKontextMultiReferenceLatentMethod` | `comfy-core` | 48 | 14 | no-maintained-native-alias |
 | quarantine | `CFGNorm` | `comfy-core` | 44 | 26 | no-maintained-native-alias |
 | quarantine | `SaveGLB` | `comfy-core` | 43 | 33 | no-maintained-native-alias |
+| quarantine | `ManualSigmas` | `comfy-core` | 41 | 23 | no-maintained-native-alias |

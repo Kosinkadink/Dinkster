@@ -746,10 +746,10 @@ def test_checked_in_source_parity_baseline_has_explicit_non_parity_dispositions(
     )
 
     assert baseline["measured"] == {
-        "passingReceiptCases": 17,
-        "receiptBackedMappings": 17,
-        "translationDeclarations": 230,
-        "unreceiptedMappings": 213,
+        "passingReceiptCases": 103,
+        "receiptBackedMappings": 99,
+        "translationDeclarations": 314,
+        "unreceiptedMappings": 215,
     }
     assert baseline["excludedFromParityCounts"] == [
         "maintained-native-refusals",
@@ -1211,8 +1211,8 @@ def test_generated_report_describes_the_pinned_corpus_and_loaded_registries(
     assert all(not report_records[node_class]["target"]["available"] for node_class in refused)
     source_parity = report["sourceParity"]
     assert source_parity["receiptBackedMappings"] == 99
-    assert source_parity["translationDeclarations"] == 312
-    assert source_parity["unreceiptedMappings"] == 213
+    assert source_parity["translationDeclarations"] == 314
+    assert source_parity["unreceiptedMappings"] == 215
     assert source_parity["refusedMappings"] == 3
     backed = set(report["receipts"]["recordsWithPassingReceipts"])
     assert {

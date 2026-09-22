@@ -159,6 +159,7 @@ class _CustomRuntime:
         ) = None,
         inpaint: InpaintConditioning[_FakeTensor] | None = None,
         context_windows: ContextWindowsSpec | None = None,
+        noise_inds: Sequence[int] | None = None,
         on_step: StepCallback | None = None,
         on_state: SamplingStateCallback | None = None,
     ) -> (
@@ -167,7 +168,7 @@ class _CustomRuntime:
         | CustomSamplingResult[SparseLatent[_FakeTensor]]
     ):
         del noise, cond, cfg, request, seed, guidance, denoise_mask, inpaint, on_step, on_state
-        del context_windows
+        del context_windows, noise_inds
         if type(latent) is MultiStreamLatent:
             return CustomSamplingResult(latent, latent)
         if type(latent) is SparseLatent:

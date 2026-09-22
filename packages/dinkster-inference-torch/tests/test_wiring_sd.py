@@ -968,7 +968,6 @@ class TestSample:
             "sd15_attention_contributions": contributions,
             "compute_dtype": torch.float32,
             "device": "cpu",
-            "capture_denoised": False,
         }
 
     def test_custom_control_executes_identically_through_facade_and_direct_seam(

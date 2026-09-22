@@ -416,7 +416,12 @@ def test_flux2_runtime_sample_delegates_ksampler_composition(
 def test_flux2_ksampler_refuses_private_compute_placement(
     runtime_type: type[Flux2Runtime] | type[Flux2DiffusionRuntime], private_argument: str
 ) -> None:
-    runtime = object.__new__(runtime_type)
+    prepared = _bare_runtime(RecordingFlux())
+    runtime = cast("Any", object.__new__(runtime_type))
+    runtime.assembled = prepared.assembled
+    runtime._samplers = prepared._samplers  # pyright: ignore[reportPrivateUsage]
+    runtime._schedulers = prepared._schedulers  # pyright: ignore[reportPrivateUsage]
+    runtime._guidance = None
     with pytest.raises(TypeError, match="private compute placement"):
         runtime.sample(
             torch.zeros((1, 128, 2, 2)),
@@ -424,6 +429,34 @@ def test_flux2_ksampler_refuses_private_compute_placement(
             sampler_id="dinkster.euler",
             scheduler_id="dinkster.simple",
             steps=1,
+            **cast(
+                "Any",
+                {
+                    private_argument: torch.float64
+                    if private_argument == "_compute_dtype"
+                    else "meta"
+                },
+            ),
+        )
+
+
+@pytest.mark.parametrize("runtime_type", (Flux2Runtime, Flux2DiffusionRuntime))
+@pytest.mark.parametrize("private_argument", ("_compute_dtype", "_device"))
+def test_flux2_custom_sampler_refuses_private_compute_placement(
+    runtime_type: type[Flux2Runtime] | type[Flux2DiffusionRuntime], private_argument: str
+) -> None:
+    runtime = object.__new__(runtime_type)
+    sampler = torch_sampler_registry().get("dinkster.euler")
+    assert sampler is not None
+    latent = torch.zeros((1, 128, 2, 2))
+    with pytest.raises(TypeError, match="private compute placement"):
+        runtime.sample_custom(
+            latent,
+            noise=torch.zeros_like(latent),
+            cond=Conditioning(torch.zeros((1, 3, 8))),
+            cfg=None,
+            request=CustomSamplingRequest(sampler, (), (1.0, 0.0)),
+            seed=1,
             **cast(
                 "Any",
                 {

@@ -178,7 +178,7 @@ def test_ksampler_is_sugar_over_seedvr2_custom_sampling(
     sample_custom = runtime.sample_custom
 
     def record_capture(*args: object, **kwargs: object) -> object:
-        captured.append(cast("bool", kwargs["capture_denoised"]))
+        captured.append(cast("bool", kwargs.get("capture_denoised", True)))
         return cast("Any", sample_custom)(*args, **kwargs)
 
     monkeypatch.setattr(runtime, "sample_custom", record_capture)
@@ -192,7 +192,7 @@ def test_ksampler_is_sugar_over_seedvr2_custom_sampling(
         denoise=1.0,
         seed=123,
     )
-    assert captured == [False]
+    assert captured == [True]
     monkeypatch.setattr(runtime, "sample_custom", sample_custom)
     result = run_ksampler_as_custom(
         runtime,

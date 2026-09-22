@@ -21,6 +21,7 @@ class NoiseSelection:
 @dataclass(frozen=True, slots=True)
 class SigmaSchedule:
     values: tuple[float, ...]
+    source_scheduler_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +42,13 @@ def _encode(type_id: str, obj: object) -> bytes:
             type(value) not in (int, float) or not math.isfinite(value) for value in obj.values
         ):
             raise ValueError("sigmas must be a tuple of finite numbers")
+        if obj.source_scheduler_id is not None and (
+            type(obj.source_scheduler_id) is not str or not obj.source_scheduler_id
+        ):
+            raise ValueError("sigmas source scheduler id must be None or a nonempty string")
         record = {"values": obj.values}
+        if obj.source_scheduler_id is not None:
+            record["source_scheduler_id"] = obj.source_scheduler_id
     elif type_id == "dinkster.sampler" and type(obj) in (BuiltinSamplerSelection, SamplerSelection):
         selection = cast("BuiltinSamplerSelection", obj)
         selection.__post_init__()
