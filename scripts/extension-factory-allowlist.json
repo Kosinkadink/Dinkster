@@ -201,7 +201,7 @@
       "kind": "registryFactory",
       "call": "default_text_recipe_registry",
       "path": "packages/dinkster-inference/src/dinkster_inference/text_recipes.py",
-      "line": 271,
+      "line": 279,
       "column": 20,
       "issue": 120
     },

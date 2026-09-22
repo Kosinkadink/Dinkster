@@ -3723,14 +3723,27 @@ def _plan_krea2_extracted(
             raise AssemblyError("diffusion: Krea 2 weights require floating-point storage")
         return cast("ComponentPlan[object]", _plan(role, extracted, config))
     text_layout = krea2_text_layout()
+    canonical_keys = {
+        key: (
+            KREA2_LANGUAGE_SUBTREE + key.removeprefix("model.")
+            if key.startswith("model.")
+            and KREA2_LANGUAGE_SUBTREE + key.removeprefix("model.") in text_layout
+            else key
+        )
+        for key in extracted.geometries
+    }
+    if len(set(canonical_keys.values())) != len(canonical_keys):
+        raise AssemblyError("qwen3vl_4b: duplicate canonical text keys")
     text_geometries = {
-        key: geometry for key, geometry in extracted.geometries.items() if key in text_layout
+        canonical_keys[key]: geometry
+        for key, geometry in extracted.geometries.items()
+        if canonical_keys[key] in text_layout
     }
     try:
         config = detect_krea2_text_config(text_geometries)
     except Krea2TextDetectError as error:
         raise AssemblyError(f"qwen3vl_4b: {error}") from error
-    extras = set(extracted.geometries) - set(text_layout)
+    extras = {key for key, canonical in canonical_keys.items() if canonical not in text_layout}
     if extras - {"lm_head.weight"}:
         raise AssemblyError(
             "qwen3vl_4b: unexpected text keys: "
@@ -3740,11 +3753,15 @@ def _plan_krea2_extracted(
     # language subtree prefix and ignore the vision tower, whose weights
     # anchor detection but are never executed for this family.
     renames = {
-        key: key.removeprefix(KREA2_LANGUAGE_SUBTREE)
-        for key in text_layout
-        if key.startswith(KREA2_LANGUAGE_SUBTREE)
+        key: canonical.removeprefix(KREA2_LANGUAGE_SUBTREE)
+        for key, canonical in canonical_keys.items()
+        if canonical.startswith(KREA2_LANGUAGE_SUBTREE)
     }
-    vision_keys = frozenset(key for key in text_layout if key.startswith(KREA2_VISION_SUBTREE))
+    vision_keys = frozenset(
+        key
+        for key, canonical in canonical_keys.items()
+        if canonical.startswith(KREA2_VISION_SUBTREE)
+    )
     return cast(
         "ComponentPlan[object]",
         _plan(

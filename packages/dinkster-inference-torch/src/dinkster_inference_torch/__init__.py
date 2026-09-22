@@ -856,6 +856,7 @@ if _TYPE_CHECKING:
         T5TextEncoder,
         T5TextModel,
         compose_flux_conditioning,
+        compose_flux_t5_conditioning,
         relative_position_bucket,
     )
     from .taehv import TAEHVDecoder, TAEHVMemBlock, TAEHVTGrow
@@ -1814,6 +1815,7 @@ _EXPORTS: dict[str, tuple[str, str | None]] = {
     "T5TextEncoder": ("t5_text", "T5TextEncoder"),
     "T5TextModel": ("t5_text", "T5TextModel"),
     "compose_flux_conditioning": ("t5_text", "compose_flux_conditioning"),
+    "compose_flux_t5_conditioning": ("t5_text", "compose_flux_t5_conditioning"),
     "relative_position_bucket": ("t5_text", "relative_position_bucket"),
     "TAEHVDecoder": ("taehv", "TAEHVDecoder"),
     "TAEHVMemBlock": ("taehv", "TAEHVMemBlock"),
@@ -2744,6 +2746,7 @@ __all__ = [
     "cast_to_device",
     "cast_weight",
     "compose_flux_conditioning",
+    "compose_flux_t5_conditioning",
     "compose_wan21_animate2_conditioning",
     "compose_wan21_animate_conditioning",
     "compose_wan21_humo_conditioning",

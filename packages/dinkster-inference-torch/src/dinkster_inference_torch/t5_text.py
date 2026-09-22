@@ -670,3 +670,19 @@ def compose_flux_conditioning(
     if token_count is None:
         return conditioning
     return declare_text_conditioning(conditioning, token_count)
+
+
+def compose_flux_t5_conditioning(
+    t5: Conditioning[torch.Tensor],
+) -> Conditioning[torch.Tensor]:
+    """Supply the neutral CLIP-L vector for a Flux recipe containing only T5."""
+    pooled = torch.zeros(
+        (t5.embeddings.shape[0], 768),
+        dtype=t5.embeddings.dtype,
+        device=t5.embeddings.device,
+    )
+    conditioning = Conditioning(t5.embeddings, pooled)
+    token_count = declared_token_count(t5)
+    if token_count is None:
+        return conditioning
+    return declare_text_conditioning(conditioning, token_count)

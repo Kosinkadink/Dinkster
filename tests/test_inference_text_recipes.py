@@ -179,6 +179,20 @@ def test_same_detected_bytes_have_type_selected_profiles_and_identity() -> None:
     )
 
 
+def test_flux_binding_accepts_the_documented_single_t5_source() -> None:
+    matches = (detected("t5xxl"),)
+
+    binding = resolve_text_recipe(matches, "flux")
+
+    assert binding.id == "dinkster.text_flux"
+    assert binding.family_id == "dinkster.flux_dev"
+    assert [(part.source_index, part.role) for part in binding.components] == [(0, "t5xxl")]
+    assert binding.composer == "dinkster_inference_torch.t5_text:compose_flux_t5_conditioning"
+    assert binding.composition_roles == ("t5xxl",)
+    assert binding.components[0].profile is not None
+    assert binding.components[0].profile.tokenizer.min_length == 256
+
+
 def test_reversing_sources_retains_the_role_assignment_and_recipe_order() -> None:
     matches = (detected("clip_l"), detected("t5xxl"))
     forward = resolve_text_recipe(matches, "flux").recipe(sources(), "float32")

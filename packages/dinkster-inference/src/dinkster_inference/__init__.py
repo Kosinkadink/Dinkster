@@ -526,6 +526,13 @@ from .flux2_assembly import (
     flux2_component_runtime_identity,
     plan_flux2_split_component,
 )
+from .flux_component import (
+    FluxComponentAssemblyError,
+    FluxComponentRole,
+    flux_component_runtime_identity,
+    plan_flux_component,
+    plan_flux_split_component,
+)
 from .gemma_text import (
     GEMMA2_LUMINA_2B_CONFIG,
     GEMMA3_LTX_12B_CONFIG,
@@ -2257,6 +2264,8 @@ __all__ = [
     "Flux2ComponentRole",
     "Flux2PlannedComponent",
     "FluxAssemblyPlan",
+    "FluxComponentAssemblyError",
+    "FluxComponentRole",
     "ZImageAssemblyPlan",
     "ZImageControlPlan",
     "QwenImageControlPlan",
@@ -3091,6 +3100,7 @@ __all__ = [
     "derive_music_seed",
     "flux_layout",
     "flux2_component_runtime_identity",
+    "flux_component_runtime_identity",
     "flux2_empirical_mu",
     "flux2_layout",
     "flux_linear1_qkv_key_map",
@@ -3203,6 +3213,8 @@ __all__ = [
     "plan_anima_split_component",
     "plan_chroma_component",
     "plan_chroma_split_component",
+    "plan_flux_component",
+    "plan_flux_split_component",
     "plan_lumina2_assembly",
     "plan_lumina2_artifact_components",
     "plan_lumina2_checkpoint",

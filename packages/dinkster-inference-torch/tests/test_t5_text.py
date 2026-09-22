@@ -48,10 +48,14 @@ from dinkster_inference_torch import (
     T5TextEncoder,
     T5TextModel,
     compose_flux_conditioning,
+    compose_flux_t5_conditioning,
     relative_position_bucket,
     select_attention,
 )
-from dinkster_inference_torch._conditioning_layout import declared_token_count
+from dinkster_inference_torch._conditioning_layout import (
+    declare_text_conditioning,
+    declared_token_count,
+)
 
 GOLDENS = json.loads((Path(__file__).parent / "goldens" / "t5_text_goldens.json").read_text())
 
@@ -249,6 +253,21 @@ def test_flux_composition_requires_clip_pooled() -> None:
     cond = Conditioning(torch.randn(1, 16, 8), None)
     with pytest.raises(T5EncodeError, match="pooled"):
         compose_flux_conditioning(cond, Conditioning(torch.randn(1, 4, 8)))
+
+
+def test_flux_t5_composition_supplies_neutral_clip_vector() -> None:
+    embeddings = torch.randn(2, 16, 8, dtype=torch.float64)
+    t5 = declare_text_conditioning(Conditioning(embeddings), 11)
+
+    got = compose_flux_t5_conditioning(t5)
+
+    assert got.embeddings is embeddings
+    assert got.pooled is not None
+    assert got.pooled.shape == (2, 768)
+    assert got.pooled.dtype == embeddings.dtype
+    assert got.pooled.device == embeddings.device
+    assert torch.count_nonzero(got.pooled).item() == 0
+    assert declared_token_count(got) == 11
 
 
 # ----------------------------------------------------- encode policy

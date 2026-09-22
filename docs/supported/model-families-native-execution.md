@@ -34,7 +34,9 @@
 <!-- capability:dinkster.flux_dev -->
 <!-- capability:dinkster.flux_schnell -->
 - Flux (dev and schnell), including bounded unequal-length classifier-free
-  guidance batching
+  guidance batching. Exact split diffusion and T5-XXL files load through Load
+  Diffusion Model and Load CLIP; Flux Dev workflows that omit CLIP-L use a
+  neutral pooled vector for the model's vector-conditioning input.
 <!-- capability:dinkster.chroma -->
 <!-- capability:dinkster.chroma_radiance -->
 - Chroma and Chroma Radiance, with strict independent diffusion, PixArt T5-XXL,
