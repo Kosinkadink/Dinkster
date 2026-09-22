@@ -34,6 +34,7 @@ from dinkster_api.v1 import (
     encode_image_array,
     image_array_fingerprint,
     image_array_meta,
+    image_input,
     register_save_target_type,
     render_image_png,
 )
@@ -57,6 +58,7 @@ def register_dev_types(registry: TypeRegistry) -> None:
         decode=decode_image_array,
         fingerprint=image_array_fingerprint(DEV_IMAGE),
         meta=image_array_meta,
+        input_convert=image_input,
     )
     registry.register_rendition(
         DEV_IMAGE,

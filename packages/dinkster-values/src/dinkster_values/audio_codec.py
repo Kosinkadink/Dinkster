@@ -30,6 +30,7 @@ from .audio_lazy import (
 from .image_codec import encode_canonical_png
 from .model import stable_hash
 from .registry import InvalidRenditionRequest, RenditionUnavailable
+from .storage import array_storage_meta, storage_dtype
 
 AUDIO_WAVEFORM_VERSION = "rgba-v1"
 AUDIO_WINDOW_VERSION = "pcm16-v1"
@@ -79,6 +80,10 @@ def _numpy() -> Any:
 
 
 def _as_array(obj: object) -> Any:
+    if hasattr(obj, "detach") and hasattr(obj, "dtype"):
+        tensor = cast("Any", obj)
+        kind = str(tensor.dtype).removeprefix("torch.")
+        return tensor if kind in ("int16", "float32") else tensor.detach().float()
     if hasattr(obj, "detach"):
         obj = cast("Any", obj).detach().cpu().numpy()
     np = _numpy()
@@ -296,11 +301,13 @@ def audio_encoded_meta(data: bytes | memoryview) -> Mapping[str, object]:
         facts = effective_audio_facts(header)
         expected = {**facts, "shape": (facts["batch"], facts["channels"], facts["frames"])}
         resident = 0
+        storage_kinds: set[str] = set()
         refs: dict[str, dict[str, object]] = {}
         for _, source, chunk in _wire_records(header, payload):
             if "inline_pcm" in source:
                 shape, dtype = _npy_header(chunk, inline=True)
                 resident += math.prod(shape) * dtype.itemsize
+                storage_kinds.add(storage_dtype(_numpy().empty(0, dtype=dtype)))
             elif "inline_encoded" in source:
                 resident += len(chunk)
             else:
@@ -311,6 +318,8 @@ def audio_encoded_meta(data: bytes | memoryview) -> Mapping[str, object]:
             asset_refs=list(refs.values()),
             cost={"ram": resident},
         )
+        if len(storage_kinds) == 1:
+            expected["storage_dtype"] = storage_kinds.pop()
     return expected
 
 
@@ -347,28 +356,35 @@ def audio_meta(obj: object) -> Mapping[str, object]:
         value = coerce_audio(cast(object, obj))
         facts = effective_audio_facts(value)
         resident = 0
+        storage_kinds: set[str] = set()
         refs: dict[str, dict[str, object]] = {}
         for record in _records(value):
             source = record["source"]
             if isinstance(source, bytes):
                 resident += len(source)
             elif isinstance(source, Mapping) and "pcm" in source:
-                resident += mapping(cast(object, source), "source")["pcm"].nbytes
+                pcm = mapping(cast(object, source), "source")["pcm"]
+                resident += pcm.nbytes
+                storage_kinds.add(storage_dtype(pcm))
             else:
                 ref = asset_wire(cast(object, source))
                 refs.setdefault(cast(str, ref["digest"]), ref)
-        return {
+        result = {
             **facts,
             "shape": (facts["batch"], facts["channels"], facts["frames"]),
             "codec_version": 2,
             "asset_refs": list(refs.values()),
             "cost": {"ram": resident},
         }
+        if len(storage_kinds) == 1:
+            result["storage_dtype"] = storage_kinds.pop()
+        return result
     waveform, sample_rate = audio_parts(cast(object, obj))
     return {
         "sample_rate": sample_rate,
         "shape": tuple(int(n) for n in waveform.shape),
         "duration": int(waveform.shape[2]) / sample_rate,
+        **array_storage_meta(waveform),
     }
 
 

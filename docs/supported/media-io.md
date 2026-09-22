@@ -2,7 +2,10 @@
 
 - Typed PNG, JPEG, and WebP image loading with EXIF orientation, ICC-to-sRGB
   conversion, alpha masks, bounded metadata inspection, and input- or
-  output-category asset selection
+  output-category asset selection. Media outputs retain compact pixel or PCM
+  storage with actual host-RAM byte accounting; ordinary typed consumers
+  receive normalized float32 values at invocation, while inputs that declare
+  compact-storage support receive the retained dtype unchanged
 - Ordered animated and multipage image loading; pages with different dimensions
   from the first page are omitted from the batch
 - Ordered mounted image saving to PNG, JPEG, or WebP; Save Image defaults to a

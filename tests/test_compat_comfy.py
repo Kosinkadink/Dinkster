@@ -1665,11 +1665,29 @@ def test_unique_id_nodes_are_not_shared_across_engine_cache_keys() -> None:
 
 
 def test_opaque_values_flow_between_compat_nodes() -> None:
-    """IMAGE from one v1 node feeds another: envelopes carry what the
-    engine cannot introspect (a dict here; a tensor on the real thing)."""
+    """Unknown value types use the default boundary without media conversion."""
+
+    class OpaqueBlend(V1Blend):
+        RETURN_TYPES = ("OPAQUE",)
+        RETURN_NAMES = ("image",)
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: N802
+            inputs = super().INPUT_TYPES()
+            inputs["required"]["image_a"] = ("OPAQUE",)
+            inputs["required"]["image_b"] = ("OPAQUE",)
+            return inputs
+
+    class OpaqueDup(V1Collide):
+        RETURN_TYPES = ("OPAQUE", "OPAQUE")
+        RETURN_NAMES = ("image", "other_image")
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: N802
+            return {"required": {"x": ("OPAQUE",)}}
 
     async def scenario() -> None:
-        translation = translate_mappings({"Blend": V1Blend, "Dup": V1Collide})
+        translation = translate_mappings({"Blend": OpaqueBlend, "Dup": OpaqueDup})
         engine = compat_engine(translation)
         graph = Graph(
             nodes={
