@@ -714,7 +714,9 @@ def test_h3_projection_storage_matches_comfyui_model_dtype(
     source["blocks.0.attn.q_proj.weight_scale"] = torch.tensor(0.125)
 
     rounded = assembly._round_h3_projection_storage(  # pyright: ignore[reportPrivateUsage]
-        cast("Any", object()), source, diffusion_dtype=diffusion_dtype
+        cast("Any", SimpleNamespace(time_embedding_kind="mlp")),
+        source,
+        diffusion_dtype=diffusion_dtype,
     )
 
     expected = torch.tensor([1.001], dtype=torch.float32).to(diffusion_dtype)
@@ -723,6 +725,10 @@ def test_h3_projection_storage_matches_comfyui_model_dtype(
         "video_patch_proj.bias",
         "audio_patch_proj.weight",
         "audio_patch_proj.bias",
+        "time_embedder.proj_in.weight",
+        "time_embedder.proj_in.bias",
+        "time_embedder.proj_out.weight",
+        "time_embedder.proj_out.bias",
         "final_layer.video_out.weight",
         "final_layer.video_out.bias",
         "final_layer.audio_out.weight",
@@ -737,11 +743,17 @@ def test_h3_projection_storage_matches_comfyui_model_dtype(
         assert torch.equal(rounded[key], expected)
     assert rounded["blocks.0.attn.q_proj.weight_scale"].dtype is torch.float32
     quantized = assembly._round_h3_projection_storage(  # pyright: ignore[reportPrivateUsage]
-        cast("Any", object()),
+        cast("Any", SimpleNamespace(time_embedding_kind="mlp")),
         {"blocks.0.adaln_proj.linear.weight": torch.ones(2, 2, dtype=torch.int8)},
         diffusion_dtype=diffusion_dtype,
     )
     assert quantized["blocks.0.adaln_proj.linear.weight"].dtype is torch.int8
+    curve = assembly._round_h3_projection_storage(  # pyright: ignore[reportPrivateUsage]
+        cast("Any", SimpleNamespace(time_embedding_kind="curve")),
+        {"blocks.0.adaln_proj.linear.bias": torch.ones(2, dtype=torch.float32)},
+        diffusion_dtype=torch.bfloat16,
+    )
+    assert curve["blocks.0.adaln_proj.linear.bias"].dtype is torch.float32
 
 
 def test_artifact_paths_refuse_incomplete_duplicate_and_mutable_authority(

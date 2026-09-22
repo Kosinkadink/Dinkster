@@ -546,6 +546,10 @@ _COMFYUI_MODEL_DTYPE_PROJECTION_KEYS = frozenset(
         "video_patch_proj.bias",
         "audio_patch_proj.weight",
         "audio_patch_proj.bias",
+        "time_embedder.proj_in.weight",
+        "time_embedder.proj_in.bias",
+        "time_embedder.proj_out.weight",
+        "time_embedder.proj_out.bias",
         "final_layer.video_out.weight",
         "final_layer.video_out.bias",
         "final_layer.audio_out.weight",
@@ -554,15 +558,16 @@ _COMFYUI_MODEL_DTYPE_PROJECTION_KEYS = frozenset(
 )
 
 
-def _uses_comfyui_model_dtype(key: str) -> bool:
+def _uses_comfyui_model_dtype(key: str, *, time_embedding_kind: str) -> bool:
     return key in _COMFYUI_MODEL_DTYPE_PROJECTION_KEYS or (
-        key.endswith((".adaln_proj.linear.weight", ".adaln_proj.linear.bias"))
+        time_embedding_kind == "mlp"
+        and key.endswith((".adaln_proj.linear.weight", ".adaln_proj.linear.bias"))
         and (key.startswith("blocks.") or key.startswith("final_layer."))
     )
 
 
 def _round_h3_projection_storage(
-    _module: MiniMaxH3DiT,
+    module: MiniMaxH3DiT,
     state: dict[str, torch.Tensor],
     *,
     diffusion_dtype: torch.dtype,
@@ -571,7 +576,8 @@ def _round_h3_projection_storage(
         return state
     return {
         key: tensor.to(diffusion_dtype)
-        if tensor.is_floating_point() and _uses_comfyui_model_dtype(key)
+        if tensor.is_floating_point()
+        and _uses_comfyui_model_dtype(key, time_embedding_kind=module.time_embedding_kind)
         else tensor
         for key, tensor in state.items()
     }
