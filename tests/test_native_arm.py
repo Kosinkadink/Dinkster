@@ -14137,6 +14137,15 @@ def test_native_sampler_uses_assembled_diffusion_dtype(dtype: str) -> None:
     assert arm._compute_dtype(runtime) == dtype
 
 
+def test_native_sampler_requires_assembled_diffusion_dtype() -> None:
+    arm = _native_arm()
+    runtime = _runtime()
+    runtime.assembled.compute_dtype = lambda _component: None
+
+    with pytest.raises(RuntimeError, match="has no assembled diffusion dtype"):
+        arm._compute_dtype(runtime)
+
+
 def test_native_sampler_is_neutral_to_context_node_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -31213,8 +31222,8 @@ def test_trellis2_split_runtime_builds_and_retains_all_flow_sources(
     inference_torch = SimpleNamespace(
         load_trellis2_flow_artifact=load_flow,
         Trellis2FlowBundle=lambda **kwargs: SimpleNamespace(**kwargs),
-        AssembledTrellis2=lambda diffusion, selected_plan: SimpleNamespace(
-            diffusion=diffusion, plan=selected_plan
+        AssembledTrellis2=lambda diffusion, selected_plan, compute_dtype: SimpleNamespace(
+            diffusion=diffusion, plan=selected_plan, compute_dtype=compute_dtype
         ),
         Trellis2DiffusionRuntime=lambda assembled, **kwargs: SimpleNamespace(
             assembled=assembled, **kwargs
@@ -31255,6 +31264,7 @@ def test_trellis2_split_runtime_builds_and_retains_all_flow_sources(
     assert all(item[2] == FakeTorch.bfloat16 for item in loaded)
     assembled = cast("Any", handle.runtime).assembled
     assert assembled.plan == plan
+    assert assembled.compute_dtype is FakeTorch.bfloat16
     assert (
         assembled.diffusion.structure,
         assembled.diffusion.shape,
