@@ -185,7 +185,7 @@ class GuidanceAttentionTransform(Protocol[T]):
     def __call__(self, positive: T, negative: T) -> T: ...
 
 
-def _validate_descriptor(
+def validate_descriptor(
     id: str,
     callback: object,
     metadata: tuple[tuple[str, BehaviorValue], ...],
@@ -227,8 +227,8 @@ class GuidanceEvaluationWrapperDescriptor(Generic[T]):
     behavior_metadata: tuple[tuple[str, BehaviorValue], ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_descriptor(self.id, self.wrapper, self.behavior_metadata)
-        _validate_order(self.order)
+        validate_descriptor(self.id, self.wrapper, self.behavior_metadata)
+        validate_order(self.order)
         _validate_requires_uncond(self.requires_uncond)
 
 
@@ -241,8 +241,8 @@ class GuidancePlanAugmentationDescriptor(Generic[T]):
     behavior_metadata: tuple[tuple[str, BehaviorValue], ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_descriptor(self.id, self.augment, self.behavior_metadata)
-        _validate_order(self.order)
+        validate_descriptor(self.id, self.augment, self.behavior_metadata)
+        validate_order(self.order)
         _validate_requires_uncond(self.requires_uncond)
 
 
@@ -255,8 +255,8 @@ class GuidanceScaleDescriptor(Generic[T]):
     behavior_metadata: tuple[tuple[str, BehaviorValue], ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_descriptor(self.id, self.transform, self.behavior_metadata)
-        _validate_order(self.order)
+        validate_descriptor(self.id, self.transform, self.behavior_metadata)
+        validate_order(self.order)
         _validate_requires_uncond(self.requires_uncond)
 
 
@@ -269,8 +269,8 @@ class GuidancePreCFGDescriptor(Generic[T]):
     behavior_metadata: tuple[tuple[str, BehaviorValue], ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_descriptor(self.id, self.transform, self.behavior_metadata)
-        _validate_order(self.order)
+        validate_descriptor(self.id, self.transform, self.behavior_metadata)
+        validate_order(self.order)
         _validate_requires_uncond(self.requires_uncond)
 
 
@@ -286,7 +286,7 @@ class GuidanceStrategyDescriptor(Generic[T]):
     compatible_post_cfg_kinds: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_descriptor(self.id, self.plan, self.behavior_metadata)
+        validate_descriptor(self.id, self.plan, self.behavior_metadata)
         if not callable(self.reduce):
             raise TypeError("guidance reduce must be callable")
         if not isinstance(self.participation, GuidancePhaseParticipation):  # pyright: ignore[reportUnnecessaryIsInstance]
@@ -313,8 +313,8 @@ class GuidancePostCFGDescriptor(Generic[T]):
     composition_kind: str | None = None
 
     def __post_init__(self) -> None:
-        _validate_descriptor(self.id, self.transform, self.behavior_metadata)
-        _validate_order(self.order)
+        validate_descriptor(self.id, self.transform, self.behavior_metadata)
+        validate_order(self.order)
         _validate_requires_uncond(self.requires_uncond)
         raw_kind = cast("object", self.composition_kind)
         if raw_kind is not None and (not isinstance(raw_kind, str) or not raw_kind):
@@ -339,11 +339,11 @@ class AttentionGuidanceDescriptor(Generic[T]):
     behavior_metadata: tuple[tuple[str, BehaviorValue], ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_descriptor(self.id, self.transform, self.behavior_metadata)
+        validate_descriptor(self.id, self.transform, self.behavior_metadata)
         _validate_requires_uncond(self.requires_uncond)
 
 
-def _validate_order(order: int) -> None:
+def validate_order(order: int) -> None:
     if type(order) is not int or not -(2**31) <= order < 2**31:
         raise ValueError("order must be a signed 32-bit integer")
 

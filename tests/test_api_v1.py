@@ -31,6 +31,20 @@ from dinkster_schema import build_node_types, build_schemas
 from dinkster_values import register_core_types
 from dinkster_workers import InProcessWorker
 
+# Names the v1 door may hand out from two internal packages: deliberate
+# re-exports (surface constants defined in dinkster_protocol and re-exported
+# by dinkster_inference for pack authoring). Identity is still asserted.
+DUAL_SOURCE_V1_NAMES = frozenset(
+    {
+        "CustomWidgetDescriptor",
+        "ATTENTION_BACKEND_SURFACE",
+        "ATTENTION_OUTPUT_SURFACE",
+        "ATTENTION_QKV_SURFACE",
+        "ATTENTION_WRAPPER_SURFACE",
+        "BLOCK_INJECTION_SURFACE",
+    }
+)
+
 GOLDEN_V1_SURFACE = (
     "FrontendContribution",
     "FrontendModule",
@@ -83,6 +97,7 @@ GOLDEN_V1_SURFACE = (
     "AttentionBackendDescriptor",
     "AttentionCallContext",
     "AttentionContribution",
+    "AttentionGuidanceDescriptor",
     "AttentionKernelFn",
     "AttentionOutputDescriptor",
     "AttentionOutputTransform",
@@ -105,6 +120,7 @@ GOLDEN_V1_SURFACE = (
     "GuidanceEvaluationPlan",
     "GuidanceEvaluationRequest",
     "GuidanceEvaluationWrapperDescriptor",
+    "GuidancePlanAugmentationDescriptor",
     "GuidancePlanContext",
     "GuidancePostCFGContext",
     "GuidancePostCFGDescriptor",
@@ -551,7 +567,7 @@ def test_reexports_are_the_internal_objects() -> None:
         exported = getattr(api, name)
         owners = [m for m in sources if name in m.__all__]
         assert owners, f"{name} is not exported by any internal package"
-        expected_owners = 2 if name == "CustomWidgetDescriptor" else 1
+        expected_owners = 2 if name in DUAL_SOURCE_V1_NAMES else 1
         assert len(owners) == expected_owners, f"{name} exported by unexpected internal packages"
         assert all(getattr(owner, name) is exported for owner in owners), (
             f"{name} is a wrapper/copy"

@@ -29,7 +29,7 @@ from dinkster_protocol import (
     KeyedContribution,
 )
 
-from .guidance import _validate_descriptor, _validate_order
+from .guidance import validate_descriptor, validate_order
 from .patches import SizedTensor
 from .sampling import SamplingExecutionContext
 
@@ -74,7 +74,7 @@ class AttentionSelector:
 
     @staticmethod
     def _selector_word(value: str) -> bool:
-        return value == "*" or (type(value) is str and value and not value.isspace())
+        return value == "*" or (type(value) is str and value.strip() != "")
 
     def matches(self, family: str, block: str, kind: str) -> bool:
         """Whether this selector covers one concrete attention site.
@@ -110,6 +110,10 @@ class AttentionTokenSpan:
     stream: str
 
     def __post_init__(self) -> None:
+        if type(self.condition_id) is not str or not self.condition_id:
+            raise ValueError("span condition_id must be a nonempty string")
+        if type(self.role) is not str or not self.role:
+            raise ValueError("span role must be a nonempty string")
         if self.axis not in ATTENTION_AXES:
             raise ValueError("span axis must be 'query' or 'key'")
         for name, value in (("start", self.start), ("end", self.end)):
@@ -149,29 +153,30 @@ class AttentionCallContext:
     state: MutableMapping[str, object]
 
     def __post_init__(self) -> None:
-        if not self.family:
-            raise ValueError("attention context family must be nonempty")
-        if not self.block:
-            raise ValueError("attention context block must be nonempty")
+        if type(self.family) is not str or not self.family:
+            raise ValueError("attention context family must be a nonempty string")
+        if type(self.block) is not str or not self.block:
+            raise ValueError("attention context block must be a nonempty string")
         if self.kind not in ATTENTION_KINDS:
             raise ValueError("attention context kind must be one of: " + ", ".join(ATTENTION_KINDS))
         if type(self.heads) is not int or self.heads < 1:
             raise ValueError("attention context heads must be a positive int")
         shape = cast("object", self.spatial_shape)
-        if (
-            not isinstance(shape, tuple)
-            or len(shape) != 2
-            or any(type(dim) is not int or dim < 1 for dim in cast("tuple[object, ...]", shape))
-        ):
+        if not isinstance(shape, tuple):
+            raise ValueError("attention context spatial_shape must be two positive ints")
+        dims = cast("tuple[object, ...]", shape)
+        if len(dims) != 2 or any(type(dim) is not int or dim < 1 for dim in dims):
             raise ValueError("attention context spatial_shape must be two positive ints")
         spans = cast("object", self.spans)
         if not isinstance(spans, tuple) or not all(
             isinstance(span, AttentionTokenSpan) for span in cast("tuple[object, ...]", spans)
         ):
             raise TypeError("spans must contain AttentionTokenSpan values")
-        if not isinstance(self.execution, SamplingExecutionContext):
+        execution = cast("object", self.execution)
+        if not isinstance(execution, SamplingExecutionContext):
             raise TypeError("execution must be a SamplingExecutionContext")
-        if not isinstance(self.state, MutableMapping):
+        state = cast("object", self.state)
+        if not isinstance(state, MutableMapping):
             raise TypeError("state must be a MutableMapping")
 
 
@@ -221,8 +226,8 @@ class AttentionQKVDescriptor(Generic[T]):
     behavior_metadata: tuple[tuple[str, BehaviorValue], ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_descriptor(self.id, self.transform, self.behavior_metadata, label="attention")
-        _validate_order(self.order)
+        validate_descriptor(self.id, self.transform, self.behavior_metadata, label="attention")
+        validate_order(self.order)
         _validate_selector(self.selector)
 
 
@@ -244,8 +249,8 @@ class AttentionWrapperDescriptor(Generic[T]):
     behavior_metadata: tuple[tuple[str, BehaviorValue], ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_descriptor(self.id, self.wrapper, self.behavior_metadata, label="attention")
-        _validate_order(self.order)
+        validate_descriptor(self.id, self.wrapper, self.behavior_metadata, label="attention")
+        validate_order(self.order)
         _validate_selector(self.selector)
         if type(self.terminal) is not bool:
             raise TypeError("terminal must be bool")
@@ -262,8 +267,8 @@ class AttentionOutputDescriptor(Generic[T]):
     behavior_metadata: tuple[tuple[str, BehaviorValue], ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_descriptor(self.id, self.transform, self.behavior_metadata, label="attention")
-        _validate_order(self.order)
+        validate_descriptor(self.id, self.transform, self.behavior_metadata, label="attention")
+        validate_order(self.order)
         _validate_selector(self.selector)
 
 
@@ -282,7 +287,7 @@ class AttentionBackendDescriptor(Generic[T]):
     behavior_metadata: tuple[tuple[str, BehaviorValue], ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_descriptor(self.id, self.kernel, self.behavior_metadata, label="attention")
+        validate_descriptor(self.id, self.kernel, self.behavior_metadata, label="attention")
         if type(self.family) is not str or not self.family or self.family == "*":
             raise ValueError("attention backend family must be an exact nonempty family id")
 
@@ -299,8 +304,8 @@ class BlockInjectionDescriptor(Generic[T]):
     behavior_metadata: tuple[tuple[str, BehaviorValue], ...] = ()
 
     def __post_init__(self) -> None:
-        _validate_descriptor(self.id, self.transform, self.behavior_metadata, label="attention")
-        _validate_order(self.order)
+        validate_descriptor(self.id, self.transform, self.behavior_metadata, label="attention")
+        validate_order(self.order)
         _validate_selector(self.selector)
         if self.phase not in BLOCK_INJECTION_PHASES:
             raise ValueError("phase must be 'before' or 'after'")
@@ -507,6 +512,5 @@ __all__ = [
     "BlockInjectionDescriptor",
     "BlockInjectionTransform",
     "attention_declarations",
-    "attention_declaration_metadata",
     "check_attention_pins",
 ]

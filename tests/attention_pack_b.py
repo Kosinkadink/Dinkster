@@ -7,6 +7,7 @@ from typing import Any
 from dinkster_api.v1 import (
     AttentionBackendDescriptor,
     AttentionContribution,
+    AttentionOutputDescriptor,
     AttentionQKVDescriptor,
     AttentionSelector,
     AttentionWrapperDescriptor,
@@ -67,6 +68,24 @@ def register_duplicate_id() -> InferenceContribution:
                     "attention_a.qkv",
                     AttentionSelector(family="unet"),
                     lambda q, k, v, context: (q, k, v),
+                ),
+            ),
+            torch_version="2.13.0+cpu",
+            aimdo_version="0.5.5",
+        )
+    )
+
+
+def register_duplicate_output_id() -> InferenceContribution:
+    # Same id as pack A's QKV descriptor but on the output surface: attention
+    # descriptor ids are globally unique across all attention surfaces.
+    return InferenceContribution(
+        attention=AttentionContribution(
+            outputs=(
+                AttentionOutputDescriptor(
+                    "attention_a.qkv",
+                    AttentionSelector(family="unet"),
+                    lambda output, context: output,
                 ),
             ),
             torch_version="2.13.0+cpu",
