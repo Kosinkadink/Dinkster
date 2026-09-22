@@ -18,11 +18,12 @@ records what they produced.
 
 Each case uses the tiny SD15-style UNet behind a CPU ModelPatcher (the
 CheckpointLoader product shape) with deterministic weights from
-``unet_fill.fill_state_dict`` and hashed inputs. Cases record the plain
-and perturbed predictions, the baseline and PAG outputs, and prove at
-generation time that the active run differs from the baseline while the
-scale 0 run is bit-identical to it (the reference callback returns the
-CFG result unchanged at scale 0).
+``unet_fill.fill_state_dict`` and hashed inputs. Cases record the exact
+sigmas, the first model input/timestep seam, the plain and perturbed
+predictions, and the baseline and PAG outputs, and prove at generation
+time that the active run differs from the baseline while the scale 0
+run is bit-identical to it (the reference callback returns the CFG
+result unchanged, without running its auxiliary pass, at scale 0).
 
 The executed values drift by ULPs across CPU microarchitectures, so the
 fixture records the mint host CPU (pin_cpu) and the replay suite skips on
@@ -33,6 +34,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
+import importlib.metadata
 import json
 import os
 import subprocess
@@ -83,8 +86,14 @@ from comfy.cli_args import args  # noqa: E402
 
 args.cpu = True
 
-from comfy import model_base, model_patcher, ops, sample as comfy_sample  # noqa: E402
-from comfy import samplers, supported_models  # noqa: E402
+from comfy import (  # noqa: E402
+    model_base,
+    model_patcher,
+    ops,
+    samplers,
+    supported_models,
+)
+from comfy import sample as comfy_sample  # noqa: E402
 from comfy.ldm.modules import attention as _attention  # noqa: E402
 from comfy_extras import nodes_pag  # noqa: E402
 from unet_fill import fill_state_dict, hashed_input  # noqa: E402
@@ -157,10 +166,12 @@ class _CondBatchObserver:
     ``comfy.samplers.calc_cond_batch`` at call time, so wrapping the
     module attribute observes both the main cond+uncond pass and the
     callback's single-conditional PAG pass without touching their code.
+    Each record keeps the batched model input and timestep so the
+    fixture pins the exact seam the model forward saw.
     """
 
     def __init__(self) -> None:
-        self.records: list[tuple[int, list[torch.Tensor]]] = []
+        self.records: list[tuple[int, list[torch.Tensor], torch.Tensor, torch.Tensor]] = []
         self._original = samplers.calc_cond_batch
 
     def install(self) -> None:
@@ -171,11 +182,24 @@ class _CondBatchObserver:
 
     def _observe(self, model, conds, x_in, timestep, model_options):
         out = self._original(model, conds, x_in, timestep, model_options)
-        self.records.append((len(conds), [tensor.detach().clone() for tensor in out]))
+        self.records.append(
+            (
+                len(conds),
+                [tensor.detach().clone() for tensor in out],
+                x_in.detach().clone(),
+                timestep.detach().clone(),
+            )
+        )
         return out
 
-    def by_cond_count(self, count: int) -> list[list[torch.Tensor]]:
-        return [tensors for size, tensors in self.records if size == count]
+    def by_cond_count(
+        self, count: int
+    ) -> list[tuple[list[torch.Tensor], torch.Tensor, torch.Tensor]]:
+        return [
+            (tensors, x_in, timestep)
+            for size, tensors, x_in, timestep in self.records
+            if size == count
+        ]
 
 
 def enc(value: torch.Tensor) -> dict[str, object]:
@@ -219,27 +243,21 @@ def run_case(name: str, pag_scale: float) -> dict[str, Any]:
 
     baseline_observer = _CondBatchObserver()
     baseline = sample(base, baseline_observer)
+    if len(baseline_observer.by_cond_count(2)) != 1:
+        raise SystemExit(
+            f"case {name}: expected one baseline cond+uncond pass, saw {baseline_observer.records}"
+        )
 
     active_observer = _CondBatchObserver()
     active = sample(patched, active_observer)
 
     main_passes = active_observer.by_cond_count(2)
     auxiliary_passes = active_observer.by_cond_count(1)
-    if len(main_passes) != 1 or len(main_passes[0]) != 2:
-        raise SystemExit(f"case {name}: expected one cond+uncond pass, saw {active_observer.records}")
-    cond_pred, uncond_pred = main_passes[0]
-    if len(auxiliary_passes) != 1 or len(auxiliary_passes[0]) != 1:
+    if len(main_passes) != 1 or len(main_passes[0][0]) != 2:
         raise SystemExit(
-            f"case {name}: expected exactly one PAG auxiliary pass, saw {active_observer.records}"
+            f"case {name}: expected one cond+uncond pass, saw {active_observer.records}"
         )
-    pag_pred = auxiliary_passes[0][0]
-    # The auxiliary pass reruns the conditional under the reference attn1
-    # middle-block-0 replacement; if the replacement did not engage, the
-    # pass would reproduce the conditional prediction bit for bit.
-    if torch.equal(cond_pred, pag_pred):
-        raise SystemExit(f"case {name}: the PAG auxiliary pass did not perturb attention")
-    if torch.equal(baseline, active):
-        raise SystemExit(f"case {name}: the PAG output did not change the sample")
+    (cond_pred, uncond_pred), first_input, first_timestep = main_passes[0]
 
     case: dict[str, Any] = {
         "params": {
@@ -251,30 +269,88 @@ def run_case(name: str, pag_scale: float) -> dict[str, Any]:
             "scheduler": SCHEDULER,
             "denoise": DENOISE,
         },
+        # The exact schedule the run walked (KSampler.set_steps: scheduler
+        # + discard-penultimate + denoise trim), so replay reconstructs
+        # the sigmas without a reference checkout.
+        "sigmas": [
+            float(sigma)
+            for sigma in samplers.KSampler(
+                base,
+                steps=STEPS,
+                device=CPU,
+                sampler=SAMPLER,
+                scheduler=SCHEDULER,
+                denoise=DENOISE,
+            ).sigmas
+        ],
         "config": TINY_SD1,
         "state_dict": sorted(
-            (key, list(value.shape)) for key, value in base.model.diffusion_model.state_dict().items()
+            (key, list(value.shape))
+            for key, value in base.model.diffusion_model.state_dict().items()
         ),
         "latent_image": enc(latent),
         "positive_context": enc(positive_context),
         "negative_context": enc(negative_context),
+        "first_pass_input": enc(first_input),
+        "first_pass_timestep": enc(first_timestep),
         "prediction_cond": enc(cond_pred),
         "prediction_uncond": enc(uncond_pred),
-        "prediction_pag": enc(pag_pred),
         "output_baseline": enc(baseline),
         "output": enc(active),
     }
 
     if pag_scale == 0:
+        # The reference callback returns the CFG result unchanged at
+        # scale 0 and never runs the auxiliary pass.
+        if auxiliary_passes:
+            raise SystemExit(f"case {name}: scale 0 still ran the PAG auxiliary pass")
+    else:
+        if len(auxiliary_passes) != 1 or len(auxiliary_passes[0][0]) != 1:
+            raise SystemExit(
+                f"case {name}: expected exactly one PAG auxiliary pass,"
+                f" saw {active_observer.records}"
+            )
+        (pag_pred,), pag_input, pag_timestep = auxiliary_passes[0]
+        # The auxiliary pass reruns the conditional under the reference
+        # attn1 middle-block-0 replacement; if the replacement did not
+        # engage, the pass would reproduce the conditional prediction
+        # bit for bit.
+        if torch.equal(cond_pred, pag_pred):
+            raise SystemExit(f"case {name}: the PAG auxiliary pass did not perturb attention")
+        case["pag_pass_input"] = enc(pag_input)
+        case["pag_pass_timestep"] = enc(pag_timestep)
+        case["prediction_pag"] = enc(pag_pred)
+
+        if torch.equal(baseline, active):
+            raise SystemExit(f"case {name}: the PAG output did not change the sample")
+
+    if pag_scale == 0:
         zero_observer = _CondBatchObserver()
         zero = sample(patched, zero_observer)
         if zero_observer.by_cond_count(1):
-            raise SystemExit(f"case {name}: scale 0 still ran the PAG auxiliary pass")
+            raise SystemExit(f"case {name}: scale 0 rerun still ran the PAG auxiliary pass")
         if not torch.equal(zero, baseline):
             raise SystemExit(f"case {name}: scale 0 output is not bit-identical to the baseline")
         case["output_scale_zero"] = enc(zero)
 
     return case
+
+
+def dependency_provenance() -> dict[str, str]:
+    """Versions (or source paths) of the ComfyUI companion packages the
+    run actually imported: the pinned reference's ops and attention layers
+    pull these in, so their identities belong in the fixture provenance."""
+    deps: dict[str, str] = {}
+    for distribution, module in (
+        ("comfy-aimdo", "comfy_aimdo"),
+        ("comfy-kitchen", "comfy_kitchen"),
+    ):
+        imported = importlib.import_module(module)
+        try:
+            deps[distribution] = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            deps[distribution] = str(Path(imported.__file__ or "").resolve())
+    return deps
 
 
 def main() -> None:
@@ -284,7 +360,7 @@ def main() -> None:
 
     cases = {
         "pag_default_scale": run_case("pag_default_scale", 3.0),
-        "pag_quarter_scale": run_case("pag_quarter_scale", 0.75),
+        "pag_three_quarter_scale": run_case("pag_three_quarter_scale", 0.75),
         "pag_scale_zero": run_case("pag_scale_zero", 0.0),
     }
 
@@ -295,6 +371,7 @@ def main() -> None:
             "torch": torch.__version__,
             "attention": ATTENTION_BACKEND,
         },
+        "dependencies": dependency_provenance(),
         "cases": cases,
     }
     provenance = tuple_provenance(str(torch.__version__), pin_cpu=True)
