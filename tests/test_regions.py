@@ -1037,6 +1037,41 @@ def test_map_gather_preserves_generic_payload_type_and_exact_values(
     asyncio.run(scenario())
 
 
+def test_fold_state_preserves_heterogeneous_list_backed_value() -> None:
+    async def scenario() -> None:
+        heterogeneous_type_id = "test.heterogeneous"
+        heterogeneous = TypeExpr.concrete(heterogeneous_type_id)
+        region = RegionNode(
+            kind="fold",
+            body=Graph(
+                nodes={"identity": GraphNode("test.generic_identity", {"value": port("carry")})}
+            ),
+            ports={"item": INT, "carry": heterogeneous},
+            inputs={"item": [0, 1], "carry": [7, "7"]},
+            element_ports=("item",),
+            state_ports=("carry",),
+            outputs={
+                "carry": RegionOutput(Link("identity", "value"), mode="state"),
+                "observed": RegionOutput(Link("identity", "value")),
+            },
+        )
+        result = await make_engine(extra_types=(heterogeneous_type_id,)).run(
+            Graph(nodes={"f": region}), ["f"]
+        )
+
+        assert result.outputs["f"]["carry"].type_id == heterogeneous_type_id
+        assert result.outputs["f"]["carry"].resolve() == [7, "7"]
+        observed = list_children(result.outputs["f"]["observed"])
+        assert observed is not None
+        assert [value.type_id for value in observed] == [
+            heterogeneous_type_id,
+            heterogeneous_type_id,
+        ]
+        assert [value.resolve() for value in observed] == [[7, "7"], [7, "7"]]
+
+    asyncio.run(scenario())
+
+
 def test_map_region_selects_lazy_branch_per_iteration() -> None:
     async def scenario() -> None:
         AddOne.ran.clear()
