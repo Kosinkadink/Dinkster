@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import ipaddress
 import json
 import os
 import re
@@ -39,7 +40,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, NamedTuple
 
 __all__ = [
     "CELLS",
@@ -133,19 +134,21 @@ def _validate_version(value: object, what: str) -> None:
 
 
 def _validate_object_key(value: object, what: str) -> None:
-    """Require a strictly relative POSIX object key with nothing to exploit."""
+    """Require a strictly relative POSIX object key with nothing to exploit.
+
+    Keys are literal POSIX paths: any percent-encoding is rejected outright,
+    so encoded separators, encoded traversal, mixed ``%2e``, and
+    double-encoded escapes cannot survive URL normalization.
+    """
     if not isinstance(value, str) or not value:
         raise EngineFeedError(f"{what} must be a nonempty string")
     if "\\" in value:
         raise EngineFeedError(f"{what} must not contain backslashes")
     if _CONTROL_CHARS.search(value):
         raise EngineFeedError(f"{what} must not contain control characters")
-    for character in "?#@:":
+    for character in "?#@:%":
         if character in value:
             raise EngineFeedError(f"{what} must not contain {character!r}")
-    lowered = value.lower()
-    if "%2f" in lowered or "%5c" in lowered:
-        raise EngineFeedError(f"{what} must not contain encoded path separators")
     if value.startswith("/") or value.endswith("/"):
         raise EngineFeedError(f"{what} must be relative without leading or trailing slashes")
     for segment in value.split("/"):
@@ -541,12 +544,25 @@ def parse_channel(data: bytes) -> EngineChannel:
 
 
 def _is_loopback_host(host: str) -> bool:
-    return host == "localhost" or host == "::1" or host.startswith("127.")
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+_ENCODED_ESCAPES = ("%2e", "%2f", "%5c", "%25")
+"""Percent escapes that can smuggle traversal or separators past prefix checks."""
+
+
+def _encoded_escapes_present(path: str) -> bool:
+    lowered = path.lower()
+    return any(token in lowered for token in _ENCODED_ESCAPES)
 
 
 def _path_under_prefix(path: str, base_path: str) -> bool:
-    segments = path.split("/")
-    if ".." in segments or "%2e%2e" in path.lower():
+    if ".." in path.split("/") or _encoded_escapes_present(path):
         return False
     if not base_path:
         return True
@@ -633,21 +649,25 @@ class Mirror:
         Data streams into a sibling ``.part`` file. A partial ``.part`` is
         resumed with a byte-range request; an ignored or invalid range resets
         the part instead of concatenating bad bytes. Every interruption a
-        later attempt may resolve is retried up to a bounded number of times
-        and leaves the partial bytes in place. Data that completes but fails
-        verification is deleted. An existing destination is reverified
-        against the artifact's size and digest first; a corrupt destination
-        is deleted. The destination is replaced atomically only after the
-        exact size and SHA-256 digest have been verified.
+        later attempt may resolve - including reads interrupted mid-response -
+        is retried up to a bounded number of times and leaves the partial
+        bytes in place. Data that completes but fails verification is
+        deleted. An existing destination is reverified against the artifact's
+        size and digest first; a corrupt destination is deleted. Symlinked
+        destinations and partial files are rejected. The destination is
+        replaced atomically only after the exact size and SHA-256 digest
+        have been verified.
         """
         destination = Path(destination)
         if destination.is_dir():
             raise EngineFeedError(f"download destination is a directory: {destination}")
+        _reject_symlink(destination, "download destination")
+        part = destination.with_name(destination.name + ".part")
+        _reject_symlink(part, "download partial file")
         if destination.exists():
             if _file_matches(destination, artifact):
                 return destination
             destination.unlink()  # complete data that no longer verifies is corrupt
-        part = destination.with_name(destination.name + ".part")
         destination.parent.mkdir(parents=True, exist_ok=True)
         for attempt in range(_MAX_DOWNLOAD_ATTEMPTS):
             if self._stream_once(artifact, part):
@@ -666,6 +686,7 @@ class Mirror:
         every recoverable failure returns False and leaves the partial bytes
         in place for the next attempt.
         """
+        _reject_symlink(part, "download partial file")
         part_size = part.stat().st_size if part.exists() else 0
         if part_size > artifact.size:
             _truncate(part)
@@ -679,38 +700,58 @@ class Mirror:
         headers = {"Range": f"bytes={part_size}-"} if resuming else {}
         try:
             response = self._open(urllib.request.Request(self._url(artifact.path), headers=headers))
-            with response:
-                status = response.status
-                if status == 206:
-                    if not resuming or not _content_range_continues(
-                        response.headers.get("Content-Range"), part_size, artifact.size
-                    ):
-                        _truncate(part)
-                        return False
-                elif status == 200 and resuming:
-                    # The server ignored the range request: retry from zero
-                    # rather than appending a second copy of the object.
-                    _truncate(part)
-                    return False
-                elif status == 416:
-                    _truncate(part)
-                    return False
-                elif status != 200:
-                    raise EngineFeedError(f"mirror returned HTTP {status} for {artifact.path}")
-                digest = hashlib.sha256()
-                if part_size:
-                    _hash_file(part, digest)
-                remaining = artifact.size - part_size
-                with part.open("ab") as sink:
-                    while remaining > 0:
-                        chunk = response.read(min(_CHUNK_BYTES, remaining))
-                        if not chunk:
-                            break  # the connection ended before the object did
-                        sink.write(chunk)
-                        digest.update(chunk)
-                        remaining -= len(chunk)
         except _RecoverableTransfer:
             return False
+        with response:
+            status = response.status
+            if status == 206:
+                parsed = _parse_content_range(response.headers.get("Content-Range"))
+                if (
+                    not resuming
+                    or parsed is None
+                    or parsed.start != part_size
+                    or parsed.end < parsed.start
+                    or parsed.end >= artifact.size
+                    or parsed.total != artifact.size
+                ):
+                    _truncate(part)
+                    return False
+                expected = parsed.end - parsed.start + 1
+                content_length = response.headers.get("Content-Length")
+                if (
+                    content_length is not None
+                    and content_length.strip().isdigit()
+                    and int(content_length) != expected
+                ):
+                    # The body length disagrees with the advertised range.
+                    _truncate(part)
+                    return False
+            elif status == 200 and resuming:
+                # The server ignored the range request: retry from zero
+                # rather than appending a second copy of the object.
+                _truncate(part)
+                return False
+            elif status == 416:
+                _truncate(part)
+                return False
+            elif status != 200:
+                raise EngineFeedError(f"mirror returned HTTP {status} for {artifact.path}")
+            digest = hashlib.sha256()
+            if part_size:
+                _hash_file(part, digest)
+            remaining = artifact.size - part_size
+            with part.open("ab") as sink:
+                while remaining > 0:
+                    try:
+                        chunk = response.read(min(_CHUNK_BYTES, remaining))
+                    except (http.client.HTTPException, TimeoutError, OSError):
+                        # An interrupted read: keep the partial bytes and retry.
+                        return False
+                    if not chunk:
+                        break  # the connection ended before the object did
+                    sink.write(chunk)
+                    digest.update(chunk)
+                    remaining -= len(chunk)
         if remaining:
             return False  # truncated transfer; partial bytes stay for the next resume
         if digest.hexdigest() != artifact.sha256:
@@ -764,18 +805,25 @@ def _parse_base_url(base_url: object, allow_local_http: bool) -> tuple[str, str,
         port = split.port
     except ValueError as error:
         raise EngineFeedError(f"{what} has an invalid port") from error
-    if ".." in split.path.split("/"):
-        raise EngineFeedError(f"{what} must not contain traversal segments")
+    if ".." in split.path.split("/") or _encoded_escapes_present(split.path):
+        raise EngineFeedError(f"{what} must not contain traversal segments or encoded escapes")
     return scheme, host, port, split.path.rstrip("/")
 
 
-def _content_range_continues(header: object, offset: int, total: int) -> bool:
+class _ContentRange(NamedTuple):
+    start: int
+    end: int
+    total: int
+
+
+def _parse_content_range(header: object) -> _ContentRange | None:
+    """Parse a ``bytes start-end/total`` Content-Range value; None when malformed."""
     if not isinstance(header, str):
-        return False
+        return None
     match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", header.strip())
     if match is None:
-        return False
-    return int(match.group(1)) == offset and int(match.group(3)) == total
+        return None
+    return _ContentRange(int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
 def _hash_file(path: Path, digest: Any) -> None:
@@ -793,6 +841,11 @@ def _file_matches(path: Path, artifact: Artifact) -> bool:
     except OSError:
         return False
     return digest.hexdigest() == artifact.sha256
+
+
+def _reject_symlink(path: Path, what: str) -> None:
+    if path.is_symlink():
+        raise EngineFeedError(f"{what} must not be a symlink: {path}")
 
 
 def _truncate(part: Path) -> None:
