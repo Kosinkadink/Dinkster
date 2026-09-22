@@ -15,6 +15,7 @@ from dinkster_inference_torch import (
     SeedVR2DiffusionRuntime,
     materialize_seedvr2_conditioning,
     seedvr2_conditioning,
+    seedvr2_conditioning_to_carrier,
 )
 from dinkster_inference_torch.checkpoint_runtime import (
     ComponentAssembly,
@@ -373,6 +374,7 @@ def test_custom_sampling_route_uses_matching_wrapped_seedvr2_runtime() -> None:
     wrapper = DescriptorEquivalentWrapper(runtime)
     handle = SimpleNamespace(
         runtime=wrapper,
+        load_device=torch.device("cpu"),
         recipe=SimpleNamespace(
             family_id="dinkster.seedvr2",
             sources=(SimpleNamespace(role="diffusion"),),
@@ -381,31 +383,27 @@ def test_custom_sampling_route_uses_matching_wrapped_seedvr2_runtime() -> None:
     )
     latent = torch.zeros((1, 16, 1, 2, 2))
     positive, negative = seedvr2_conditioning(latent, component_identity=identity)
-
-    def rows(conditioning: object) -> list[list[object]]:
-        typed = cast("Any", conditioning)
-        return [
-            [
-                typed.embeddings,
-                {"dinkster.native/prepared-conditioning": conditioning},
-            ]
-        ]
-
-    positive_rows = rows(positive)
-    negative_rows = rows(negative)
+    positive_carrier = seedvr2_conditioning_to_carrier(positive)
+    negative_carrier = seedvr2_conditioning_to_carrier(negative)
     selected = arm.resolve_seedvr2_component_execution(
-        handle, positive_rows, negative_rows, inference
+        handle, positive_carrier, negative_carrier, inference
     )
     assert selected is not None
     assert selected[0] is runtime
-    assert selected[1] is positive_rows
-    assert selected[2] is negative_rows
+    materialized_positive = selected[1][0][1]["dinkster.native/prepared-conditioning"]
+    materialized_negative = selected[2][0][1]["dinkster.native/prepared-conditioning"]
+    assert materialized_positive.branch == "positive"
+    assert materialized_negative.branch == "negative"
+    assert torch.equal(materialized_positive.embeddings, positive.embeddings)
+    assert torch.equal(materialized_negative.embeddings, negative.embeddings)
 
     wrapper.component_sampling_runtime = DescriptorEquivalentRuntime(
         "native:dinkster.seedvr2:other"
     )
     with pytest.raises(TypeError, match="sampling runtime identity"):
-        arm.resolve_seedvr2_component_execution(handle, positive_rows, negative_rows, inference)
+        arm.resolve_seedvr2_component_execution(
+            handle, positive_carrier, negative_carrier, inference
+        )
 
     wrapper.component_sampling_runtime = runtime
     wrong_positive, wrong_negative = seedvr2_conditioning(
@@ -413,11 +411,17 @@ def test_custom_sampling_route_uses_matching_wrapped_seedvr2_runtime() -> None:
     )
     with pytest.raises(ValueError, match="different model"):
         arm.resolve_seedvr2_component_execution(
-            handle, rows(wrong_positive), negative_rows, inference
+            handle,
+            seedvr2_conditioning_to_carrier(wrong_positive),
+            negative_carrier,
+            inference,
         )
     with pytest.raises(ValueError, match="different model"):
         arm.resolve_seedvr2_component_execution(
-            handle, positive_rows, rows(wrong_negative), inference
+            handle,
+            positive_carrier,
+            seedvr2_conditioning_to_carrier(wrong_negative),
+            inference,
         )
 
 
