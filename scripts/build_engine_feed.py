@@ -534,6 +534,11 @@ def build_base(uv: str, config: CellConfig, feed_dir: Path) -> BaseBuild:
                 "install",
                 "--python",
                 str(staging_python),
+                # The base is the standalone interpreter itself: installing
+                # its pinned torch closure into that root is the intent, so
+                # the externally-managed marker does not apply here.
+                "--no-config",
+                "--break-system-packages",
                 "--index-url",
                 config.recipe.index_url,
                 config.recipe.torch_requirement,
@@ -753,10 +758,34 @@ def wheel_matches_cell(filename: str, os_name: str, arch: str) -> bool:
     return any(_native_platform_ok(platform, os_name, arch) for platform in platforms)
 
 
+def _platform_preference(platform: str) -> tuple[int, int]:
+    """Broadest compatible native tag first: versioned tags sort by their
+    floor version ascending (more machines can run them), plain linux last."""
+    versioned = re.fullmatch(r"(manylinux|macosx)_(\d+)_(\d+)", platform)
+    if versioned:
+        return (1, int(versioned.group(2)) * 1000 + int(versioned.group(3)))
+    if platform.startswith("linux_"):
+        return (2, 0)
+    return (3, 0)
+
+
+def _wheel_preference(filename: str) -> tuple[int, tuple[int, int], str]:
+    interpreter, abi, platforms = wheel_filename_tags(filename)
+    abi_score = 0 if abi in ("cp312", "none") else 1
+    platform_score = min(_platform_preference(platform) for platform in platforms)
+    return (abi_score, platform_score, filename)
+
+
 def select_cell_wheel(
     lock_name: str, wheels: list[dict[str, Any]], os_name: str, arch: str
 ) -> dict[str, Any]:
-    """The one locked wheel for the cell, or a refusal naming the distribution."""
+    """The locked wheel the cell installs, or a refusal naming the distribution.
+
+    A distribution can ship several wheels valid for one cell (abi3 across
+    interpreter baselines, layered manylinux policies); the exact
+    interpreter ABI and then the broadest native platform tag win. Only
+    indistinguishable duplicates stay ambiguous.
+    """
     candidates = [
         wheel
         for wheel in wheels
@@ -766,12 +795,19 @@ def select_cell_wheel(
         raise FeedError(
             f"distribution {lock_name} has no wheel for cell platform {os_name}/{arch} in uv.lock"
         )
-    if len(candidates) > 1:
+    ranked = sorted(
+        candidates, key=lambda wheel: _wheel_preference(wheel["url"].rsplit("/", 1)[-1])
+    )
+    best_key = _wheel_preference(ranked[0]["url"].rsplit("/", 1)[-1])
+    tied = [
+        wheel for wheel in ranked if _wheel_preference(wheel["url"].rsplit("/", 1)[-1]) == best_key
+    ]
+    if len(tied) > 1:
         raise FeedError(
             f"distribution {lock_name} has {len(candidates)} candidate wheels for "
             f"{os_name}/{arch}; the lock is ambiguous"
         )
-    return candidates[0]
+    return ranked[0]
 
 
 def _build_workspace_wheels(uv: str, root: Path, output: Path) -> dict[str, Path]:
