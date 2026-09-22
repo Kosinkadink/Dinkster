@@ -1431,9 +1431,14 @@ def default_pack_specs() -> tuple[PackSpec, ...]:
     return tuple(by_name[name] for name in order)
 
 
-def model_pack_specs() -> tuple[PackSpec, ...]:
+def model_pack_specs(
+    runtime_pins: Mapping[str, str],
+) -> tuple[PackSpec, ...]:
     """Resolve the installed first-party model packs in stable order."""
-    return tuple(default_pack_spec(pack_id) for pack_id in _MODEL_PACK_IDS)
+    return tuple(
+        replace(default_pack_spec(pack_id), runtime_pins=runtime_pins)
+        for pack_id in _MODEL_PACK_IDS
+    )
 
 
 def training_pack_specs(journal_path: Path | str) -> tuple[PackSpec, PackSpec]:

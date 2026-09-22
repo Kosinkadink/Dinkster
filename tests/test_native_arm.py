@@ -1182,6 +1182,46 @@ def test_native_arm_sources_have_zero_literal_family_gates() -> None:
     assert findings == (), "literal family gates remain:\n" + "\n".join(findings)
 
 
+def test_native_triposplat_loaders_supply_worker_owned_publisher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_native.families import triposplat
+
+    NativeLoadTripoSplatDecoder = triposplat.NativeLoadTripoSplatDecoder
+    NativeLoadTripoSplatVisionEncoder = triposplat.NativeLoadTripoSplatVisionEncoder
+
+    calls: list[tuple[str, object, object]] = []
+
+    def load_vision_encoder(*, vision_encoder: object, publisher: object) -> dict[str, object]:
+        calls.append(("vision", vision_encoder, publisher))
+        return {"vision": "loaded-vision"}
+
+    def load_decoder(*, decoder: object, publisher: object) -> dict[str, object]:
+        calls.append(("decoder", decoder, publisher))
+        return {"decoder": "loaded-decoder"}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_model_triposplat.provider",
+        SimpleNamespace(
+            execute_load_triposplat_vision_encoder=load_vision_encoder,
+            execute_load_triposplat_decoder=load_decoder,
+        ),
+    )
+    publisher = object()
+    monkeypatch.setattr(triposplat, "_component_publisher", lambda: publisher)
+
+    vision_asset = object()
+    decoder_asset = object()
+    assert NativeLoadTripoSplatVisionEncoder.execute(vision_asset) == {"vision": "loaded-vision"}
+    assert NativeLoadTripoSplatDecoder.execute(decoder_asset) == {"decoder": "loaded-decoder"}
+    assert [(kind, asset) for kind, asset, _publisher in calls] == [
+        ("vision", vision_asset),
+        ("decoder", decoder_asset),
+    ]
+    assert calls[0][2] is calls[1][2] is publisher
+
+
 def test_native_arm_source_modules_stay_below_size_limit() -> None:
     line_counts = {
         str(path.relative_to(REPO_ROOT)): len(path.read_text(encoding="utf-8").splitlines())
@@ -1195,6 +1235,7 @@ def test_native_arm_import_and_schemas_are_torch_free() -> None:
     code = """
 import sys
 import dinkster_compat_comfy.native_residency
+from dinkster_model_triposplat import TRIPOSPLAT_MODEL_NODES
 from dinkster_schema import schema_signature
 from dinkster_compat_comfy.native import NATIVE_NODES
 from dinkster_compat_comfy.native_arm import (
@@ -1214,6 +1255,7 @@ assert [node.schema().aliases for node in NATIVE_SCHEDULING_NODES] == [
 assert all(node.schema().node_type.startswith("dinkster.") for node in NATIVE_SCHEDULING_NODES)
 defaults = {node.schema().node_type: node for node in NATIVE_NODES}
 defaults.update({node.schema().node_type: node for node in GENERATION_PROVIDER_NODES})
+defaults.update({node.schema().node_type: node for node in TRIPOSPLAT_MODEL_NODES})
 scheduled = [
     "dinkster.create_hook_lora", "dinkster.create_hook_keyframe", "dinkster.set_hook_keyframes",
     "dinkster.conditioning_timesteps_range", "dinkster.conditioning_set_properties_and_combine",
@@ -1231,6 +1273,9 @@ assert [node.schema().node_type for node in GENERATION_PROVIDER_NODES] == [
     "dinkster.trellis2_shape_stage", "dinkster.trellis2_upsample_stage",
     "dinkster.vae_decode_shape_trellis", "dinkster.trellis2_texture_stage",
     "dinkster.vae_decode_texture_trellis",
+    "dinkster.load_triposplat_vision_encoder", "dinkster.load_triposplat_decoder",
+    "dinkster.triposplat_preprocess_image", "dinkster.triposplat_decode",
+    "dinkster.triposplat_conditioning",
     "dinkster.load_geometry_model", "dinkster.estimate_geometry", "dinkster.geometry_to_fov",
     "dinkster.load_background_removal", "dinkster.remove_background",
     "dinkster.image_crop_to_mask", "dinkster.preview_mask", "dinkster.voxel_to_mesh",
@@ -6476,6 +6521,10 @@ def test_manifest_declares_exact_native_arm_with_matching_schemas() -> None:
         "dinkster.load_diffusion_components",
         "dinkster.empty_trellis2_latent_structure",
         "dinkster.trellis2_conditioning",
+        "dinkster.load_triposplat_vision_encoder",
+        "dinkster.load_triposplat_decoder",
+        "dinkster.triposplat_preprocess_image",
+        "dinkster.triposplat_decode",
         "dinkster.pixal3d_conditioning",
         "dinkster.vae_decode_structure_trellis2",
         "dinkster.trellis2_shape_stage",
@@ -6483,6 +6532,7 @@ def test_manifest_declares_exact_native_arm_with_matching_schemas() -> None:
         "dinkster.vae_decode_shape_trellis",
         "dinkster.trellis2_texture_stage",
         "dinkster.vae_decode_texture_trellis",
+        "dinkster.triposplat_conditioning",
         "dinkster.load_geometry_model",
         "dinkster.estimate_geometry",
         "dinkster.geometry_to_fov",
@@ -6597,8 +6647,11 @@ def test_manifest_declares_exact_native_arm_with_matching_schemas() -> None:
     assert manifest.arm_nodes_entry == "dinkster_compat_comfy.entry:ARM_NODES"
     assert tuple(node.schema().node_type for node in arm.NATIVE_ARM_NODES) == expected
 
+    from dinkster_model_triposplat import TRIPOSPLAT_MODEL_NODES
+
     defaults = {node.schema().node_type: node for node in native.NATIVE_NODES}
     defaults.update({node.schema().node_type: node for node in arm.GENERATION_PROVIDER_NODES})
+    defaults.update({node.schema().node_type: node for node in TRIPOSPLAT_MODEL_NODES})
     for native_node in arm.NATIVE_ARM_NODES[8:]:
         default = defaults[native_node.schema().node_type]
         assert schema_signature(native_node.schema()) == schema_signature(default.schema())

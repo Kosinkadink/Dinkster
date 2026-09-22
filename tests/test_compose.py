@@ -57,6 +57,7 @@ from dinkster.compose import (
     compose_serving,
     default_pack_spec,
     default_pack_specs,
+    model_pack_specs,
     order_pack_entries_by_requirements,
     resolve_manifest_path,
 )
@@ -1443,7 +1444,7 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:89fc8de3ac0477fad3622c57fbc884facb6546125757115eb6bdb9223530892f",
+            "blake3:b82471d1be18e63aeab337077771bfefb87dd58255a8f314b881fd04d784d998",
         ),
         (
             "dinkster-nodes-image",
@@ -1487,6 +1488,16 @@ def test_foundation_default_pack_ships_docs() -> None:
         b"The `sum` output is their arithmetic sum.\n"
     )
     assert page.digest == "sha256:" + hashlib.sha256(page.data).hexdigest()
+
+
+def test_model_pack_specs_carry_the_serving_runtime_baseline() -> None:
+    runtime_pins = {"torch": "2.13.0+cu130", "dinkster-aimdo": "0.5.5.post2"}
+
+    specs = model_pack_specs(runtime_pins)
+
+    assert len(specs) == 3
+    assert all(spec.in_process for spec in specs)
+    assert all(dict(spec.runtime_pins) == runtime_pins for spec in specs)
 
 
 def test_default_pack_artifact_files_have_explicit_line_ending_policy() -> None:

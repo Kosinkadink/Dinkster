@@ -32,6 +32,8 @@ uv pip install --python .venv-xpu/bin/python \
     -e packages/dinkster-video \
     -e packages/dinkster-api \
     -e packages/dinkster-nodes-generation \
+    -e packages/dinkster-nodes-media-io \
+    -e packages/dinkster-model-triposplat \
     -e packages/dinkster-native \
     -e packages/dinkster-compat-comfy
 

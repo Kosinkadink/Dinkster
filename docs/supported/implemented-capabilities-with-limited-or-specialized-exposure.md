@@ -438,7 +438,7 @@ Training capabilities are delivered by the separately versioned
   runs through the native and generation KSampler arms, the decomposed
   custom-sampling seam (noise/guider/sampler/sigmas nodes) executes the
   family with optional negative conditioning and the shared scheduler
-  surfaces, and the
-  dinkster-model-triposplat pack exposes the vision-encoder and gaussian-decoder
-  loaders, the reference image preprocessor, the DINOv3+reference-latent
-  conditioning node, and the splat decode node
+  surfaces. The universal generation pack exposes schemas for the
+  vision-encoder and gaussian-decoder loaders, reference image preprocessor,
+  DINOv3+reference-latent conditioning node, and splat decode node; the
+  isolated native arm provides their implementations.

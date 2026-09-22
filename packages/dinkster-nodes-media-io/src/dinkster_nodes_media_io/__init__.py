@@ -7,14 +7,9 @@ from dinkster_api.v1 import (
     IMAGE_BATCH_MERGER_ID,
     PNG_CONTAINER_VERSION,
     SAVE_TARGET_TYPE,
-    SPLAT_FILE_DECODER_ID,
-    SPLAT_PLY_MIME,
     TypeRegistry,
     decode_image_array,
-    decode_splat,
-    decode_splat_file,
     encode_image_array,
-    encode_splat,
     image_array_fingerprint,
     image_array_meta,
     mask_array_meta,
@@ -25,15 +20,12 @@ from dinkster_api.v1 import (
     register_curve_type,
     register_model3d_type,
     register_save_target_type,
+    register_splat_type,
     register_video_value_type,
     render_image_png,
     render_mask_png,
-    render_splat_ply,
     resolver_from_env,
-    splat_fingerprint,
-    splat_meta,
     validate_image_encoded,
-    validate_splat_encoded,
 )
 from dinkster_api.v1 import video_document as document_codec
 
@@ -214,26 +206,7 @@ def register_media_types(registry: TypeRegistry) -> None:
     if VIDEO_TYPE not in registry:
         register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
     register_model3d_type(registry, MODEL3D_TYPE)
-    if SPLAT_TYPE not in registry:
-        registry.register(
-            SPLAT_TYPE,
-            encode=encode_splat,
-            decode=decode_splat,
-            fingerprint=splat_fingerprint(SPLAT_TYPE),
-            meta=splat_meta,
-            validate_encoded_buffer=validate_splat_encoded,
-        )
-        registry.register_rendition(
-            SPLAT_TYPE,
-            "ply",
-            mime=SPLAT_PLY_MIME,
-            render=render_splat_ply,
-        )
-        registry.register_asset_decoder(
-            SPLAT_TYPE,
-            provider_id=SPLAT_FILE_DECODER_ID,
-            decode=decode_splat_file,
-        )
+    register_splat_type(registry, SPLAT_TYPE)
 
 
 __all__ = [

@@ -10,7 +10,9 @@ dependencies = [
     "dinkster-inference",
     "dinkster-inference-torch",
     "dinkster-memory",
+    "dinkster-model-triposplat",
     "dinkster-nodes-generation",
+    "dinkster-nodes-media-io",
     "dinkster-protocol",
     "dinkster-schema",
     "dinkster-values",
@@ -38,7 +40,9 @@ dinkster-image-document = { workspace = true }
 dinkster-inference = { workspace = true }
 dinkster-inference-torch = { workspace = true }
 dinkster-memory = { workspace = true }
+dinkster-model-triposplat = { workspace = true }
 dinkster-nodes-generation = { workspace = true }
+dinkster-nodes-media-io = { workspace = true }
 dinkster-protocol = { workspace = true }
 dinkster-schema = { workspace = true }
 dinkster-values = { workspace = true }

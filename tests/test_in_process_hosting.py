@@ -20,7 +20,7 @@ from dinkster_graph import Graph, GraphNode
 from dinkster_memory import ModelTenantHandle, TenantRegistration
 from dinkster_registry import InstallError, LockedPack, Lockfile, PlanRecord
 from dinkster_server import PackInfo, create_app
-from dinkster_values import TypeRegistry, register_core_types
+from dinkster_values import TypeRegistry, process_instance_token, register_core_types
 from dinkster_workers import InProcessWorker, ManifestError
 from dinkster_workers.doctor import DoctorReport, Finding
 
@@ -40,6 +40,15 @@ from dinkster.installer import (
     lock_local_pack,
 )
 from dinkster.manager import _validated_plan_topology
+
+
+def test_in_process_worker_advertises_its_resident_value_owner() -> None:
+    registry = TypeRegistry()
+    register_core_types(registry)
+
+    worker = InProcessWorker({}, registry)
+
+    assert worker.instance_token == process_instance_token()
 
 
 def test_in_process_full_release_rejects_malformed_consumer_result() -> None:

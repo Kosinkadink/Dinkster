@@ -12,6 +12,15 @@ from .nodes import (
 )
 from .prompt_enhance import clean_enhanced_prompt, prepare_ltx2_prompt
 from .trellis2 import TRELLIS2_NODE_IDS, TRELLIS2_NODES
+from .triposplat import (
+    TRIPOSPLAT_SCHEMA_NODE_IDS,
+    TRIPOSPLAT_SCHEMA_NODES,
+    LoadTripoSplatDecoderSchema,
+    LoadTripoSplatVisionEncoderSchema,
+    TripoSplatConditioningSchema,
+    TripoSplatDecodeSchema,
+    TripoSplatPreprocessImageSchema,
+)
 
 __all__ = [
     "GENERATION_COMPAT_CARRIER_NODE_IDS",
@@ -24,6 +33,13 @@ __all__ = [
     "MODEL3D_GENERATION_NODES",
     "TRELLIS2_NODE_IDS",
     "TRELLIS2_NODES",
+    "TRIPOSPLAT_SCHEMA_NODE_IDS",
+    "TRIPOSPLAT_SCHEMA_NODES",
+    "LoadTripoSplatDecoderSchema",
+    "LoadTripoSplatVisionEncoderSchema",
+    "TripoSplatConditioningSchema",
+    "TripoSplatDecodeSchema",
+    "TripoSplatPreprocessImageSchema",
     "clean_enhanced_prompt",
     "generation_choices",
     "prepare_ltx2_prompt",

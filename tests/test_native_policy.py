@@ -67,6 +67,7 @@ from dinkster_inference.minimax_h3_assembly import (
     MiniMaxH3CommonComponentRole,
     minimax_h3_component_runtime_identity,
 )
+from dinkster_nodes_generation.triposplat import TRIPOSPLAT_SCHEMA_NODES
 from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
 from dinkster_schema import NodeSchema, schema_from_wire, schema_signature, schema_to_wire
 from dinkster_server import ServerLibrary
@@ -2980,6 +2981,25 @@ def test_minimax_h3_modality_node_refuses_conflicting_component_producers() -> N
         )
 
 
+def test_triposplat_nodes_always_select_one_native_arm() -> None:
+    schemas = {node.schema().node_type: node.schema() for node in TRIPOSPLAT_SCHEMA_NODES}
+    policy = NativeDispatchPolicy(
+        lambda _digest: None,
+        _ignore_diagnostic,
+        schemas=lambda: schemas,
+    )
+    conflicting_inputs = {
+        "owner": _resident("owner", "compat"),
+        "native": _resident("native", "compat@native"),
+    }
+
+    for node_type in schemas:
+        selection = asyncio.run(policy.select(node_type, conflicting_inputs, ARMS))
+        assert selection is not None
+        assert selection.target == "compat@native"
+        assert selection.cache_tag == "native-default"
+
+
 @pytest.mark.parametrize(
     ("inputs", "match"),
     [
@@ -3052,14 +3072,18 @@ def test_native_dispatch_schema_inventory_and_current_wire_compatibility() -> No
         schema.node_type: schema
         for schema in (node.schema() for node in (*NATIVE_NODES, *NATIVE_ARM_NODES))
     }
+    native_affinity_schemas = {
+        **NATIVE_DISPATCH_SCHEMAS,
+        **{node.schema().node_type: node.schema() for node in TRIPOSPLAT_SCHEMA_NODES},
+    }
     assert {
         node_type
         for node_type, schema in catalog_schemas.items()
         if schema.dispatch_affinity == "native"
-    } == set(NATIVE_DISPATCH_SCHEMAS)
+    } == set(native_affinity_schemas)
     synthetic = NodeSchema("extension.synthetic", dispatch_affinity="native")
 
-    for schema in (*NATIVE_DISPATCH_SCHEMAS.values(), synthetic):
+    for schema in (*native_affinity_schemas.values(), synthetic):
         wire = schema_to_wire(schema)
         assert wire["dispatchAffinity"] == "native"
         assert schema_from_wire(wire) == schema

@@ -33,6 +33,8 @@ uv pip install --python .venv-xpu\Scripts\python.exe `
     -e packages/dinkster-video `
     -e packages/dinkster-api `
     -e packages/dinkster-nodes-generation `
+    -e packages/dinkster-nodes-media-io `
+    -e packages/dinkster-model-triposplat `
     -e packages/dinkster-native `
     -e packages/dinkster-compat-comfy
 if ($LASTEXITCODE -ne 0) { exit 1 }

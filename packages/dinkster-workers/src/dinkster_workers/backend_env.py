@@ -88,6 +88,8 @@ _EDITABLE_PACKAGES = (
     "packages/dinkster-video",
     "packages/dinkster-api",
     "packages/dinkster-nodes-generation",
+    "packages/dinkster-nodes-media-io",
+    "packages/dinkster-model-triposplat",
     "packages/dinkster-native",
     "packages/dinkster-compat-comfy",
 )

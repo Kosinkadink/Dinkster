@@ -57,7 +57,8 @@ fi
 
 # ---------------------------------------------------------------- .venv
 echo "==> .venv (torch-free root env)"
-UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --project "$PWD" --python 3.12 --all-packages
+UV_PROJECT_ENVIRONMENT="$PWD/.venv" uv sync --project "$PWD" --python 3.12 --all-packages \
+    --reinstall-package dinkster-nodes-std
 
 # ---------------------------------------------------------- .venv-torch
 echo "==> .venv-torch (CPU torch test env)"
@@ -78,7 +79,8 @@ fi
 # dinkster-workers (and its values/protocol/assets/caches deps) makes
 # the benchmark scripts in dinkster-evidence importable, so torch-dependent
 # benchmark-harness tests can run in this venv.
-uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "scipy>=1.11" \
+uv pip install --python .venv-torch/bin/python --reinstall-package dinkster-nodes-std \
+    pytest packaging "numpy>=1.26" "scipy>=1.11" \
     "simpleeval==1.0.3" \
     "onnxruntime==1.29.0" "opencv-python-headless==5.0.0.93" "pillow==12.0.0" \
     "safetensors==0.8.0" "sentencepiece==0.2.1" "transformers==5.16.1" \
@@ -96,12 +98,14 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     -e packages/dinkster-native \
     -e packages/dinkster-inference-torch \
     -e packages/dinkster-nodes-generation \
+    -e packages/dinkster-nodes-media-io \
     -e packages/dinkster-compat-comfy \
     -e packages/dinkster-model-ipadapter \
     -e packages/dinkster-model-qwen-image \
     -e packages/dinkster-model-triposplat \
     -e packages/dinkster-nodes-vision \
-    -e packages/dinkster-workers
+    -e packages/dinkster-workers \
+    -e .
 if [ "$install_acceptance" = 1 ]; then
     uv pip install --python .venv-torch/bin/python --no-deps --no-sources \
         -e "$acceptance_package"
@@ -114,7 +118,7 @@ uv pip install --python .venv-torch/bin/python "$kitchen_cpu_wheel"
 if [ "$os" != "Darwin" ]; then
     uv pip install --python .venv-torch/bin/python "dinkster-aimdo==0.5.5.post2"
 fi
-.venv-torch/bin/python -c "from importlib.metadata import version; assert version('dinkster-kitchen') == '0.2.35.post1'"
+.venv-torch/bin/python -I -c "from importlib.metadata import version; import site; import av, dinkster.serve, dinkster_model_triposplat.provider, torch; assert site.ENABLE_USER_SITE is False; assert version('av') == '17.0.0'; assert version('dinkster-kitchen') == '0.2.35.post1'"
 
 # ------------------------------------------------ shared Python headers
 # Torch inductor CPU and CUDA compilation both include Python.h. The CPU and
@@ -172,13 +176,14 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
     echo "==> .venv-gpu (CUDA torch test env)"
     [ -x .venv-gpu/bin/python ] || uv venv .venv-gpu --python 3.12
     uv pip install --python .venv-gpu/bin/python \
-        --index-url https://download.pytorch.org/whl/cu130 torch==2.13.0+cu130
+        --index-url https://download.pytorch.org/whl/cu130 \
+        torch==2.13.0+cu130 torchvision==0.28.0+cu130
     # scipy, torchsde, tqdm, and Pillow satisfy the pinned ComfyUI
     # k_diffusion import chain used by the native GPU reference proofs;
     # safetensors and sentencepiece support the package's model fixtures.
-    uv pip install --python .venv-gpu/bin/python \
+    uv pip install --python .venv-gpu/bin/python --reinstall-package dinkster-nodes-std \
         pytest numpy scipy torchsde tqdm pillow packaging \
-        "safetensors==0.8.0" "sentencepiece==0.2.1" \
+        "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
         dinkster-kitchen==0.2.35.post1 dinkster-aimdo==0.5.5.post2 \
         -e packages/dinkster-api \
         -e packages/dinkster-schema \
@@ -195,14 +200,17 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         -e packages/dinkster-inference-torch \
         -e packages/dinkster-workers \
         -e packages/dinkster-nodes-generation \
+        -e packages/dinkster-nodes-media-io \
         -e packages/dinkster-compat-comfy \
         -e packages/dinkster-model-ipadapter \
         -e packages/dinkster-model-triposplat \
-        -e packages/dinkster-model-wan
+        -e packages/dinkster-model-wan \
+        -e .
     if [ "$install_acceptance" = 1 ]; then
         uv pip install --python .venv-gpu/bin/python --no-deps --no-sources \
             -e "$acceptance_package"
     fi
+    .venv-gpu/bin/python -I -c "from importlib.metadata import version; import site; import av, dinkster.serve, dinkster_model_triposplat.provider, torch; assert site.ENABLE_USER_SITE is False; assert version('av') == '17.0.0'; assert torch.__version__ == '2.13.0+cu130'; assert version('torchvision') == '0.28.0+cu130'; assert version('tokenizers') == '0.23.1'"
 
 else
     echo "==> no NVIDIA GPU detected - skipping .venv-gpu (the GPU gate"

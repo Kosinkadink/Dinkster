@@ -22,6 +22,9 @@ from dinkster_inference import (
     register_conditioning_type,
     register_inference_types,
 )
+from dinkster_model_triposplat.types import (  # pyright: ignore[reportMissingTypeStubs]
+    register_triposplat_types,
+)
 from dinkster_schema import Node
 from dinkster_values import TypeRegistry, register_resident_type
 from dinkster_workers import CompatGateDiagnostic
@@ -149,6 +152,7 @@ def register_types(registry: TypeRegistry) -> None:
     # tracked, and sheddable (device state only; stubs keep resolving).
     _TRANSLATION.register_types(registry, resident_meta=comfy_resident_meta, table=default_pool())
     register_native_types(registry)
+    register_triposplat_types(registry)
     for type_id in (
         MODEL_TYPE_ID,
         CLIP_TYPE_ID,

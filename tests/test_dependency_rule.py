@@ -107,7 +107,9 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_inference",
         "dinkster_inference_torch",
         "dinkster_protocol",
+        "dinkster_model_triposplat",
         "dinkster_nodes_generation",
+        "dinkster_nodes_media_io",
         "dinkster_workers",
     },
     # Shared materialization consumes portable values, never packs or the scheduler.
@@ -138,6 +140,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_graph",
         "dinkster_inference",
         "dinkster_inference_torch",
+        "dinkster_model_triposplat",
         "dinkster_native",
         "dinkster_protocol",
         "dinkster_nodes_generation",
@@ -165,7 +168,13 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_nodes_generation": {"dinkster_api"},
     "dinkster_model_wan": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     "dinkster_model_qwen_image": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
-    "dinkster_model_triposplat": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
+    "dinkster_model_triposplat": {
+        "dinkster_api",
+        "dinkster_inference",
+        "dinkster_inference_torch",
+        "dinkster_nodes_generation",
+        "dinkster_values",
+    },
     "dinkster_model_ipadapter": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     # Model-backed vision providers execute stable owner schemas through the
     # pack-author door and stay independent of the host scheduler.
@@ -332,6 +341,18 @@ def test_bundled_video_preview_imports_only_the_pack_api() -> None:
     assert modules
     for module in modules:
         assert dinkster_imports(module) <= {"dinkster_api", "dinkster_video_preview"}
+
+
+def test_media_packages_share_comfyuis_pyav_runtime() -> None:
+    for package in ("dinkster-nodes-media-io", "dinkster-video"):
+        project = tomllib.loads(
+            (REPO_ROOT / f"packages/{package}/pyproject.toml").read_text(encoding="utf-8")
+        )
+        assert "av==17.0.0" in project["project"]["dependencies"]
+
+    locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    packages = {package["name"]: package for package in locked["package"]}
+    assert packages["av"]["version"] == "17.0.0"
 
 
 def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:

@@ -7,7 +7,10 @@ import tomllib
 from pathlib import Path
 
 from dinkster_model_triposplat import TRIPOSPLAT_MODEL_NODE_IDS, TRIPOSPLAT_MODEL_NODES
+from dinkster_model_triposplat.nodes import TripoSplatConditioning
+from dinkster_model_triposplat.types import register_triposplat_types
 from dinkster_schema import NumberWidget, build_schemas
+from dinkster_values import TypeRegistry
 from dinkster_workers import load_manifest
 
 from dinkster.compose import PackSpec, ServingComposer, default_pack_spec
@@ -23,6 +26,7 @@ def test_triposplat_manifest_declares_native_requirements() -> None:
     manifest = load_manifest(MANIFEST)
 
     assert manifest.name == "dinkster-model-triposplat"
+    assert manifest.types_entry == "dinkster_model_triposplat:register_triposplat_types"
     assert manifest.schema_only == ()
     assert manifest.executes == ()
     assert manifest.capabilities == ()
@@ -39,20 +43,19 @@ def test_triposplat_manifest_declares_native_requirements() -> None:
     }
 
 
-def test_triposplat_package_does_not_import_the_generation_owner() -> None:
+def test_triposplat_package_uses_the_generation_schema_owner() -> None:
     metadata = tomllib.loads((PACKAGE / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert metadata["project"]["dependencies"] == [
         "dinkster-api",
         "dinkster-inference",
         "dinkster-inference-torch",
+        "dinkster-nodes-generation",
+        "dinkster-values",
         "numpy>=1.26",
         "pillow>=10",
     ]
-    assert not any(
-        "dinkster_nodes_generation" in path.read_text(encoding="utf-8")
-        for path in (PACKAGE / "src").rglob("*.py")
-    )
+    assert TripoSplatConditioning.__mro__[1].__module__ == "dinkster_nodes_generation.triposplat"
 
 
 def test_triposplat_schemas_publish_component_and_splat_boundaries() -> None:
@@ -89,7 +92,7 @@ def test_triposplat_schemas_publish_component_and_splat_boundaries() -> None:
     assert preprocess_inputs["erode_radius"].widget == NumberWidget(min=0, max=16, step=1)
     assert preprocess_inputs["size"].widget == NumberWidget(min=256, max=4096, step=16)
 
-    conditioning = schemas["dinkster.triposplat_conditioning"]
+    conditioning = TripoSplatConditioning.schema()
     assert {item.id: item.type.types for item in conditioning.inputs} == {
         "vision": ("dinkster.triposplat_vision",),
         "vae": ("dinkster.vae",),
@@ -113,9 +116,27 @@ def test_triposplat_schemas_publish_component_and_splat_boundaries() -> None:
     assert decode_inputs["seed"].widget == NumberWidget(min=0, control_after_generate="randomize")
     assert decode.outputs[0].type.types == ("dinkster.splat",)
     assert decode.outputs[0].preview is True
+    assert all(schema.dispatch_affinity == "native" for schema in schemas.values())
+    assert TripoSplatConditioning.schema().dispatch_affinity == "native"
 
 
-def test_triposplat_schemas_compose_with_universal_generation() -> None:
+def test_triposplat_component_handles_have_resident_value_codecs() -> None:
+    registry = TypeRegistry()
+    register_triposplat_types(registry)
+    register_triposplat_types(registry)
+
+    for type_id in ("dinkster.triposplat_vision", "dinkster.triposplat_decoder"):
+        handle = object()
+        value = registry.wrap(type_id, handle)
+        assert value.type_id == type_id
+        assert value.payload.load() is handle
+        assert registry.spec(type_id).declared_codec
+    assert registry.spec("dinkster.splat").declared_codec
+    assert registry.asset_decoder_for("dinkster.splat") is not None
+    assert registry.renditions_of("dinkster.splat")
+
+
+def test_triposplat_pack_registers_types_without_root_execution_provider() -> None:
     async def scenario() -> None:
         composer = ServingComposer()
         try:
@@ -127,7 +148,9 @@ def test_triposplat_schemas_compose_with_universal_generation() -> None:
             delta = await composer.add_pack(
                 PackSpec(MANIFEST, trust_reserved=True, in_process=True)
             )
-            assert tuple(delta.schemas) == TRIPOSPLAT_MODEL_NODE_IDS
+            assert delta.schemas == {}
+            for type_id in ("dinkster.triposplat_vision", "dinkster.triposplat_decoder"):
+                assert composer.composition._registry.spec(type_id).declared_codec
             assert composer.incomplete_generation_removals()["dinkster-model-triposplat"] == ()
         finally:
             await composer.close()

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from dinkster_model_triposplat.types import (  # pyright: ignore[reportMissingTypeStubs]
+    register_triposplat_types,
+)
+from dinkster_nodes_media_io import register_media_types  # pyright: ignore[reportMissingTypeStubs]
 from dinkster_schema import Node
 from dinkster_values import TypeRegistry
 
@@ -35,3 +39,5 @@ def combo_choices() -> Mapping[str, Sequence[str]]:
 
 def register_types(registry: TypeRegistry) -> None:
     register_native_types(registry)
+    register_media_types(registry)
+    register_triposplat_types(registry)

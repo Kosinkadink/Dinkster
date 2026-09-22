@@ -31,6 +31,7 @@ from typing import Any, cast
 
 from .latent_codec import EncodedLatentTensor, tensor_record
 from .model import stable_hash
+from .registry import TypeRegistry
 
 __all__ = [
     "SPLAT_CODEC_MAGIC",
@@ -41,6 +42,7 @@ __all__ = [
     "decode_splat_file",
     "encode_splat",
     "parse_ply_splat",
+    "register_splat_type",
     "render_splat_ply",
     "splat_fingerprint",
     "splat_meta",
@@ -444,3 +446,29 @@ def decode_splat_file(asset: object) -> object:
     except ValueError as exc:
         name = getattr(asset, "name", "") or "asset"
         raise ValueError(f"cannot decode '{name}' as a gaussian splat: {exc}") from exc
+
+
+def register_splat_type(registry: TypeRegistry, type_id: str = "dinkster.splat") -> None:
+    """Register the structural splat codec, preview rendition, and asset decoder."""
+
+    if type_id in registry:
+        return
+    registry.register(
+        type_id,
+        encode=encode_splat,
+        decode=decode_splat,
+        fingerprint=splat_fingerprint(type_id),
+        meta=splat_meta,
+        validate_encoded_buffer=validate_splat_encoded,
+    )
+    registry.register_rendition(
+        type_id,
+        "ply",
+        mime=SPLAT_PLY_MIME,
+        render=render_splat_ply,
+    )
+    registry.register_asset_decoder(
+        type_id,
+        provider_id=SPLAT_FILE_DECODER_ID,
+        decode=decode_splat_file,
+    )

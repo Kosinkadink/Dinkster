@@ -141,7 +141,13 @@ _COMFY_ARM_SCHEMAS = (
 class _CompatSchemaWorker(InProcessWorker):
     def __init__(self, registry: TypeRegistry) -> None:
         super().__init__(
-            build_node_types((*GENERATION_PROVIDER_NODES, *NATIVE_NODES, *_COMFY_ARM_SCHEMAS)),
+            build_node_types(
+                (
+                    *GENERATION_PROVIDER_NODES,
+                    *NATIVE_NODES,
+                    *_COMFY_ARM_SCHEMAS,
+                )
+            ),
             registry,
             attention_capabilities=_attention_capabilities(),
             attention_route_token=_attention_token(),
@@ -204,6 +210,11 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
             "dinkster.vae_decode_shape_trellis",
             "dinkster.trellis2_texture_stage",
             "dinkster.vae_decode_texture_trellis",
+            "dinkster.load_triposplat_vision_encoder",
+            "dinkster.load_triposplat_decoder",
+            "dinkster.triposplat_preprocess_image",
+            "dinkster.triposplat_decode",
+            "dinkster.triposplat_conditioning",
             "dinkster.load_geometry_model",
             "dinkster.estimate_geometry",
             "dinkster.geometry_to_fov",
@@ -394,6 +405,11 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
         "dinkster.vae_decode_shape_trellis": "Decode TRELLIS.2 Shape",
         "dinkster.trellis2_texture_stage": "TRELLIS.2 Texture Stage",
         "dinkster.vae_decode_texture_trellis": "Decode TRELLIS.2 Texture",
+        "dinkster.load_triposplat_vision_encoder": "Load TripoSplat Vision Encoder",
+        "dinkster.load_triposplat_decoder": "Load TripoSplat Decoder",
+        "dinkster.triposplat_preprocess_image": "TripoSplat Preprocess Image",
+        "dinkster.triposplat_decode": "TripoSplat Decode",
+        "dinkster.triposplat_conditioning": "TripoSplat Conditioning",
         "dinkster.load_geometry_model": "Load Geometry Model",
         "dinkster.estimate_geometry": "Estimate Geometry",
         "dinkster.geometry_to_fov": "Geometry to Field of View",
@@ -664,6 +680,44 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
             {
                 "positive": ("dinkster.conditioning",),
                 "negative": ("dinkster.conditioning",),
+            },
+        ),
+        "dinkster.load_triposplat_vision_encoder": (
+            {"vision_encoder": ("dinkster.asset",)},
+            {"vision": ("dinkster.triposplat_vision",)},
+        ),
+        "dinkster.load_triposplat_decoder": (
+            {"decoder": ("dinkster.asset",)},
+            {"decoder": ("dinkster.triposplat_decoder",)},
+        ),
+        "dinkster.triposplat_preprocess_image": (
+            {
+                "image": ("dinkster.image",),
+                "mask": ("dinkster.mask",),
+                "erode_radius": ("core.int",),
+                "size": ("core.int",),
+            },
+            {"image": ("dinkster.image",)},
+        ),
+        "dinkster.triposplat_decode": (
+            {
+                "samples": ("dinkster.latent",),
+                "decoder": ("dinkster.triposplat_decoder",),
+                "num_gaussians": ("core.int",),
+                "seed": ("core.int",),
+            },
+            {"splat": ("dinkster.splat",)},
+        ),
+        "dinkster.triposplat_conditioning": (
+            {
+                "vision": ("dinkster.triposplat_vision",),
+                "vae": ("dinkster.vae",),
+                "image": ("dinkster.image",),
+            },
+            {
+                "positive": ("dinkster.conditioning",),
+                "negative": ("dinkster.conditioning",),
+                "latent": ("dinkster.latent",),
             },
         ),
         "dinkster.pixal3d_conditioning": (
@@ -2979,6 +3033,8 @@ def test_compat_provider_executes_every_generation_schema_exactly() -> None:
         "dinkster.easy_cache",
         "dinkster.attention_schedule",
         "dinkster.load_background_removal",
+        "dinkster.load_triposplat_decoder",
+        "dinkster.load_triposplat_vision_encoder",
         "dinkster.load_diffusion_components",
         "dinkster.load_diffusion_model",
         "dinkster.load_geometry_model",
@@ -3018,6 +3074,9 @@ def test_compat_provider_executes_every_generation_schema_exactly() -> None:
         "dinkster.t5_tokenizer_options",
         "dinkster.text_generate",
         "dinkster.trellis2_conditioning",
+        "dinkster.triposplat_conditioning",
+        "dinkster.triposplat_decode",
+        "dinkster.triposplat_preprocess_image",
         "dinkster.trellis2_shape_stage",
         "dinkster.trellis2_texture_stage",
         "dinkster.trellis2_upsample_stage",

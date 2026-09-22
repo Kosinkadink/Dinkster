@@ -7,6 +7,8 @@ dependencies = [
     "dinkster-api",
     "dinkster-inference",
     "dinkster-inference-torch",
+    "dinkster-nodes-generation",
+    "dinkster-values",
     "numpy>=1.26",
     "pillow>=10",
 ]
@@ -26,3 +28,5 @@ packages = ["src/dinkster_model_triposplat"]
 dinkster-api = { workspace = true }
 dinkster-inference = { workspace = true }
 dinkster-inference-torch = { workspace = true }
+dinkster-nodes-generation = { workspace = true }
+dinkster-values = { workspace = true }

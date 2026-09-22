@@ -51,6 +51,7 @@ from .families.seedvr2 import (
     NativeVAEDecodeAudio,
     NativeVAEDecodeAudioTiled,
 )
+from .families.triposplat import TRIPOSPLAT_NATIVE_NODES, TripoSplatConditioning
 from .families.wan21 import (
     NativeBerniniConditioning,
     NativeClipTextEncode,
@@ -298,6 +299,8 @@ GENERATION_PROVIDER_NODES: tuple[type[Node], ...] = (
     GenerationVaeDecodeShapeTrellis,
     GenerationTrellis2TextureStage,
     GenerationVaeDecodeTextureTrellis,
+    *TRIPOSPLAT_NATIVE_NODES,
+    TripoSplatConditioning,
     GenerationLoadGeometryModel,
     GenerationEstimateGeometry,
     GenerationGeometryToFOV,
@@ -497,6 +500,7 @@ NATIVE_ARM_NODES: tuple[type[Node], ...] = (
     GenerationLoadDiffusionComponents,
     GenerationEmptyTrellis2LatentStructure,
     GenerationTrellis2Conditioning,
+    *TRIPOSPLAT_NATIVE_NODES,
     GenerationPixal3DConditioning,
     GenerationVaeDecodeStructureTrellis2,
     GenerationTrellis2ShapeStage,
@@ -504,6 +508,7 @@ NATIVE_ARM_NODES: tuple[type[Node], ...] = (
     GenerationVaeDecodeShapeTrellis,
     GenerationTrellis2TextureStage,
     GenerationVaeDecodeTextureTrellis,
+    TripoSplatConditioning,
     GenerationLoadGeometryModel,
     GenerationEstimateGeometry,
     GenerationGeometryToFOV,

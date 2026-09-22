@@ -27,7 +27,7 @@ def _powershell_package_array(source: str, name: str) -> list[str]:
 
 
 def _powershell_dependency_array(source: str, name: str) -> list[str]:
-    match = re.search(rf"\${name} = @\((.*?)\n\s*\) \+", source, re.DOTALL)
+    match = re.search(rf"\${name} = @\((.*?)\n[ \t]*\) \+", source, re.DOTALL)
     assert match is not None
     dependencies = re.findall(r'"([^\"]+)"', match.group(1))
     if "$KitchenCpuWheel" in match.group(1):
@@ -46,7 +46,7 @@ def test_powershell_setup_matches_posix_editable_package_closure() -> None:
 
     assert _powershell_package_array(powershell, "CpuEditablePackages") == _posix_editables(
         posix,
-        "uv pip install --python .venv-torch/bin/python pytest packaging",
+        "uv pip install --python .venv-torch/bin/python --reinstall-package dinkster-nodes-std",
         "# The direct PyPI URL forces",
     )
     assert _powershell_package_array(powershell, "GpuEditablePackages") == _posix_editables(
@@ -81,6 +81,27 @@ def test_gpu_setup_installs_model_packs_imported_by_gpu_tests() -> None:
     )
 
 
+def test_torch_environments_include_server_without_host_package_leakage() -> None:
+    powershell = POWERSHELL_SETUP.read_text()
+    posix = POSIX_SETUP.read_text()
+
+    assert posix.count("-e .") == 2
+    assert powershell.count('@("-e", $RepoRoot)') == 2
+    for setup in (powershell, posix):
+        assert (
+            setup.count(
+                "import site; import av, dinkster.serve, dinkster_model_triposplat.provider, torch"
+            )
+            == 2
+        )
+        assert setup.count("assert site.ENABLE_USER_SITE is False") == 2
+        assert setup.count("assert version('av') == '17.0.0'") == 2
+        assert "--system-site-packages" not in setup
+        assert "PYTHONPATH" not in setup
+    assert posix.count("/python -I -c") == 2
+    assert powershell.count('"-I"') == 2
+
+
 def test_powershell_setup_pins_native_windows_test_environments() -> None:
     setup = POWERSHELL_SETUP.read_text()
 
@@ -109,13 +130,14 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "packaging",
         "safetensors==0.8.0",
         "sentencepiece==0.2.1",
+        "tokenizers==0.23.1",
         "dinkster-kitchen==0.2.35.post1",
         "dinkster-aimdo==0.5.5.post2",
         "triton-windows==3.7.1.post27",
     ]
     assert '"3.12"' in setup
     assert '"torch==2.13.0+cpu", "torchvision==0.28.0+cpu"' in setup
-    assert '"torch==2.13.0+cu130"' in setup
+    assert '"torch==2.13.0+cu130", "torchvision==0.28.0+cu130"' in setup
     assert '"triton-windows==3.7.1.post27"' in setup
     assert (
         "dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256="
@@ -165,7 +187,9 @@ def test_powershell_setup_isolates_root_sync_and_prints_runnable_gates() -> None
 
     assert '[Environment]::SetEnvironmentVariable("UV_PROJECT", $null, "Process")' in sync
     assert '"UV_PROJECT_ENVIRONMENT", $RootEnvironment, "Process"' in sync
-    assert '"sync", "--project", $RepoRoot, "--python", "3.12", "--all-packages"' in sync
+    assert '"sync", "--project", $RepoRoot, "--python", "3.12", "--all-packages",' in sync
+    assert setup.count('"--reinstall-package", "dinkster-nodes-std"') == 3
+    assert POSIX_SETUP.read_text().count("--reinstall-package dinkster-nodes-std") == 3
     assert "$PreviousProject" not in sync
     cleanup = setup.rsplit("finally {", 1)[1]
     assert '"UV_PROJECT", $PreviousProject, "Process"' in cleanup

@@ -31,6 +31,7 @@ from dinkster_api.v1 import (
 
 from .model3d import MODEL3D_GENERATION_NODES
 from .trellis2 import TRELLIS2_NODES
+from .triposplat import TRIPOSPLAT_SCHEMA_NODES
 
 MODEL_TYPE = "dinkster.model"
 CLIP_TYPE = "dinkster.clip"
@@ -5641,6 +5642,7 @@ class LatentInjectNoise(_SchemaOnlyNode):
 
 GENERATION_NODES: tuple[type[Node], ...] = (
     *TRELLIS2_NODES,
+    *TRIPOSPLAT_SCHEMA_NODES,
     *MODEL3D_GENERATION_NODES,
     LoadModelProfile,
     LoadCheckpoint,

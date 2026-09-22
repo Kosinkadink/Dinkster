@@ -10,6 +10,7 @@ dependencies = [
     "dinkster-inference",
     "dinkster-inference-torch",
     "dinkster-memory",
+    "dinkster-model-triposplat",
     "dinkster-native",
     "dinkster-nodes-generation",
     "dinkster-protocol",
@@ -38,6 +39,7 @@ dinkster-assets = { workspace = true }
 dinkster-image-document = { workspace = true }
 dinkster-inference = { workspace = true }
 dinkster-inference-torch = { workspace = true }
+dinkster-model-triposplat = { workspace = true }
 dinkster-native = { workspace = true }
 dinkster-nodes-generation = { workspace = true }
 dinkster-protocol = { workspace = true }

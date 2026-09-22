@@ -45,6 +45,7 @@ import tomllib
 import traceback
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, cast
 
@@ -423,6 +424,18 @@ print(json.dumps(result, sort_keys=True))
     ):
         raise RuntimeError("native runtime package versions are malformed")
     return raw
+
+
+def _serving_runtime_pins() -> Mapping[str, str]:
+    """Return exact in-process model runtime pins when this interpreter has them."""
+
+    pins: dict[str, str] = {}
+    for name in ("torch", "dinkster-aimdo"):
+        try:
+            pins[name] = version(name)
+        except PackageNotFoundError:
+            pass
+    return pins if set(pins) == {"torch", "dinkster-aimdo"} else {}
 
 
 #: Derived compat mounts: when --comfy-root is configured, the install's
@@ -1731,7 +1744,7 @@ def main(argv: list[str] | None = None) -> None:
             # cannot hide another pack's nodes.
             default_pack_failures[pack_id] = exc
     if not args.no_default_packs:
-        specs.extend(model_pack_specs())
+        specs.extend(model_pack_specs(_serving_runtime_pins()))
     try:
         compat_specs = (
             comfy_compat_specs(

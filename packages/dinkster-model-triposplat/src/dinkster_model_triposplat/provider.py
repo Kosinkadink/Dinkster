@@ -26,6 +26,7 @@ from dinkster_inference import (
     triposplat_component_runtime_identity,
 )
 from dinkster_inference_torch import (
+    ComponentPublisher,
     TripoSplatConditioning,
     component_publisher,
     kl_codec_plugin,
@@ -98,7 +99,12 @@ def _asset(value: object, name: str) -> AssetRef:
     return value
 
 
-def _load_component(asset: AssetRef, role: TripoSplatComponentRole) -> object:
+def _load_component(
+    asset: AssetRef,
+    role: TripoSplatComponentRole,
+    *,
+    publisher: ComponentPublisher | None = None,
+) -> object:
     path = asset.local_path()
     source = load_safetensors_header(path, asset_digest=asset.digest, asset_size=asset.size)
     planned = plan_triposplat_split_component(source, role=role, path=path)
@@ -110,17 +116,26 @@ def _load_component(asset: AssetRef, role: TripoSplatComponentRole) -> object:
         expected_identity=identity,
         compute_dtype=torch.bfloat16,
     )
-    return component_publisher().publish(loaded.module, resource_identity=identity)
+    active_publisher = component_publisher() if publisher is None else publisher
+    return active_publisher.publish(loaded.module, resource_identity=identity)
 
 
-def execute_load_triposplat_vision_encoder(*, vision_encoder: object) -> Mapping[str, object]:
+def execute_load_triposplat_vision_encoder(
+    *,
+    vision_encoder: object,
+    publisher: ComponentPublisher | None = None,
+) -> Mapping[str, object]:
     asset = _asset(vision_encoder, "vision_encoder")
-    return {"vision": _load_component(asset, _VISION_ROLE)}
+    return {"vision": _load_component(asset, _VISION_ROLE, publisher=publisher)}
 
 
-def execute_load_triposplat_decoder(*, decoder: object) -> Mapping[str, object]:
+def execute_load_triposplat_decoder(
+    *,
+    decoder: object,
+    publisher: ComponentPublisher | None = None,
+) -> Mapping[str, object]:
     asset = _asset(decoder, "decoder")
-    return {"decoder": _load_component(asset, _DECODER_ROLE)}
+    return {"decoder": _load_component(asset, _DECODER_ROLE, publisher=publisher)}
 
 
 def _triposplat_component(
@@ -274,7 +289,8 @@ def execute_triposplat_conditioning(
             pixel_values = pixel.to(device=cast("Any", vision_handle.load_device)).float()
             mean = pixel_values.new_tensor(config.image_mean).view(1, 3, 1, 1)
             std = pixel_values.new_tensor(config.image_std).view(1, 3, 1, 1)
-            sequence = module((pixel_values - mean) / std)
+            normalized = ((pixel_values - mean) / std).to(dtype=next(module.parameters()).dtype)
+            sequence = module(normalized)
             features = functional.layer_norm(sequence.float(), sequence.shape[-1:]).cpu()
     reference = _encoded_reference(vae, pixel)
     if reference.ndim != 4 or reference.shape[0] != features.shape[0]:

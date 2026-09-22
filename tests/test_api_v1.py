@@ -330,6 +330,7 @@ GOLDEN_V1_SURFACE = (
     "SaveTarget",
     "SaveTargetWidget",
     "register_save_target_type",
+    "register_splat_type",
     "register_audio_value_type",
     "register_video_value_type",
     "DITHERS",

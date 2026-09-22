@@ -67,6 +67,7 @@ from dinkster_values import (
     is_absent,
     list_children,
     make_absent_value,
+    process_instance_token,
 )
 
 from .error_hints import hints_for
@@ -260,7 +261,7 @@ class InProcessWorker:
 
     @property
     def instance_token(self) -> str:
-        return "in-process"
+        return process_instance_token()
 
     @property
     def attention_route_token(self) -> AttentionRouteToken | None:

@@ -48,7 +48,7 @@ async def _default_pack_names() -> tuple[str, ...]:
     composer = ServingComposer()
     try:
         specs = composer.order_pack_entries(
-            (*default_pack_specs(), *model_pack_specs(), *comfy_compat_specs())
+            (*default_pack_specs(), *model_pack_specs({}), *comfy_compat_specs())
         )
         return tuple(load_manifest(Path(spec.manifest)).name for spec in specs)
     finally:
@@ -1842,7 +1842,7 @@ def test_comfy_root_defaults_include_compat_specs_in_ordering(
             asyncio.run(awaitable)  # type: ignore[arg-type]
 
     monkeypatch.setattr(serve, "default_pack_ids", lambda: ())
-    monkeypatch.setattr(serve, "model_pack_specs", lambda: ())
+    monkeypatch.setattr(serve, "model_pack_specs", lambda _runtime_pins: ())
     monkeypatch.setattr(serve, "comfy_compat_specs", lambda *_args, **_kwargs: compat)
     monkeypatch.setattr(serve, "_order_default_pack_specs", capture_ordering)
     monkeypatch.setattr(serve.web, "run_app", run_app)
@@ -1861,6 +1861,27 @@ def test_comfy_root_defaults_include_compat_specs_in_ordering(
     serve.main()
 
     assert captured == [(2, 2)]
+
+
+def test_serving_runtime_pins_are_complete_or_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    from importlib.metadata import PackageNotFoundError
+
+    from dinkster import serve
+
+    versions = {"torch": "2.13.0+cpu"}
+
+    def package_version(name: str) -> str:
+        try:
+            return versions[name]
+        except KeyError as exc:
+            raise PackageNotFoundError(name) from exc
+
+    monkeypatch.setattr(serve, "version", package_version)
+
+    assert serve._serving_runtime_pins() == {}
+
+    versions["dinkster-aimdo"] = "0.5.5.post2"
+    assert serve._serving_runtime_pins() == versions
 
 
 @pytest.mark.parametrize("mode", [None, "auto", "on", "off"])
@@ -2888,7 +2909,14 @@ def test_library_startup_composes_without_pack_workers(
             assert p2p["state"] == ("disabled" if disable_p2p else "running"), p2p
             if disable_p2p:
                 assert p2p["sidecar"] is None, p2p
-            assert len(server.children(recursive=True)) == (0 if disable_p2p else 1)
+            descendants = server.children(recursive=True)
+            if disable_p2p:
+                assert not descendants
+            else:
+                assert descendants
+                assert all("dinkster_p2p" in " ".join(child.cmdline()) for child in descendants), (
+                    descendants
+                )
 
     try:
         asyncio.run(scenario())
@@ -2991,7 +3019,7 @@ def test_degraded_default_ordering_places_generation_before_model_packs(
         '[pack.entry]\nnodes = "probe_ordering_nodes:NODES"\n',
         encoding="utf-8",
     )
-    defaults = (*default_pack_specs(), *model_pack_specs(), *comfy_compat_specs())
+    defaults = (*default_pack_specs(), *model_pack_specs({}), *comfy_compat_specs())
     specs = (*defaults, PackSpec(manifest=broken / "dinkster-pack.toml"))
     composer = ServingComposer()
     try:

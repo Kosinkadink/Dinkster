@@ -111,6 +111,7 @@ assert nodes['dinkster.render_uv_atlas'] is GenerationRenderUVAtlas
 assert nodes['dinkster.apply_texture_to_mesh'] is GenerationApplyTextureToMesh
 assert 'dinkster.geometry_to_fov' in nodes
 assert 'dinkster.preview_mask' in nodes
+assert nodes['dinkster.triposplat_conditioning'] in ARM_NODES['native']
 assert NATIVE_SCHEDULING_NODE_TYPES.keys() == NATIVE_SCHEDULING_SOURCE_NODE_NAMES.keys()
 for symbol, node_type in NATIVE_SCHEDULING_NODE_TYPES.items():
     source_name = NATIVE_SCHEDULING_SOURCE_NODE_NAMES[symbol]
@@ -145,6 +146,27 @@ print(json.dumps(sorted(nodes)))
     )
     assert result.returncode == 0, result.stderr
     assert "dinkster.clip_text_encode" in json.loads(result.stdout)
+
+
+def test_compat_entry_registers_triposplat_arm_value_types(tmp_path: Path) -> None:
+    script = """
+from dinkster_compat_comfy.entry import register_types
+from dinkster_values import TypeRegistry, register_core_types
+registry = TypeRegistry()
+register_core_types(registry)
+register_types(registry)
+for type_id in ('dinkster.triposplat_vision', 'dinkster.triposplat_decoder'):
+    assert registry.spec(type_id).declared_codec
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env={**os.environ, "DINKSTER_COMFY_NATIVE_ONLY": "1", "DINKSTER_COMFYUI_ROOT": ""},
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize(
@@ -237,6 +259,7 @@ def test_native_entry_registers_every_schema_value_type() -> None:
 
 @pytest.mark.parametrize("native_only", [True, False])
 def test_native_manifest_catalogs_match_provider_claims(tmp_path: Path, native_only: bool) -> None:
+    from dinkster_model_triposplat import TRIPOSPLAT_MODEL_NODES
     from dinkster_native.native_arm import GENERATION_PROVIDER_NODES, NATIVE_ARM_NODES
     from dinkster_native.native_catalog import COMFY_RUNTIME_NODE_IDS
     from dinkster_native.usdu import USDU_CARRIER_NODES
@@ -246,14 +269,19 @@ def test_native_manifest_catalogs_match_provider_claims(tmp_path: Path, native_o
     owner_manifest = load_manifest(generation.manifest)
     provider_manifest = load_manifest(provider.manifest)
     excluded = COMFY_RUNTIME_NODE_IDS if native_only else frozenset()
-    owner_types = {node.schema().node_type for node in GENERATION_SCHEMA_NODES}
+    owner_types = {
+        node.schema().node_type for node in (*GENERATION_SCHEMA_NODES, *TRIPOSPLAT_MODEL_NODES)
+    }
     assert set(generation.optional_execution) == excluded
     assert COMFY_RUNTIME_NODE_IDS <= owner_types
     assert set(owner_manifest.schema_only) <= owner_types
     assert set(provider_manifest.executes) <= owner_types
     assert (
         set(provider_manifest.executes)
-        == {node.schema().node_type for node in (*GENERATION_PROVIDER_NODES, *USDU_CARRIER_NODES)}
+        == {
+            node.schema().node_type
+            for node in (*GENERATION_PROVIDER_NODES, *USDU_CARRIER_NODES, *TRIPOSPLAT_MODEL_NODES)
+        }
         - excluded
     )
     assert dict(provider_manifest.arms)["native"] == tuple(

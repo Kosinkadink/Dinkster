@@ -723,7 +723,9 @@ dedicated CUDA venv, `.venv-gpu`. Testing policy
 (user directive, 2026-07-26): validation environments run
 **torch >= 2.10** - the `torch>=2.5` extra stays as the
 backwards-compatibility floor for consumers, but our own test venvs
-track current torch.
+track current torch. `scripts/setup_envs.sh` and `scripts/setup_envs.ps1`
+install the root server into the CPU and CUDA torch environments so in-process
+model packs can be served without exposing system or user site packages.
 
 Machine-sensitive comparisons from executed-reference fixtures without CPU
 provenance run portable shape, dtype, finiteness, range, and schedule contracts
@@ -740,12 +742,14 @@ The native GPU reference proof requires the pinned ComfyUI checkout at
 # prebuilt _C.abi3.so - no nvcc needed)
 uv venv .venv-gpu --python 3.12
 uv pip install --python .venv-gpu/bin/python \
-    --index-url https://download.pytorch.org/whl/cu130 torch==2.13.0+cu130
+    --index-url https://download.pytorch.org/whl/cu130 \
+    torch==2.13.0+cu130 torchvision==0.28.0+cu130
 # scipy, torchsde, tqdm, and Pillow satisfy the pinned ComfyUI
 # k_diffusion import chain used by the native GPU reference proofs;
 # sentencepiece backs the Gemma tokenizer.
 uv pip install --python .venv-gpu/bin/python \
     pytest numpy scipy torchsde tqdm pillow packaging safetensors sentencepiece \
+    tokenizers==0.23.1 \
     dinkster-kitchen==0.2.35.post1 dinkster-aimdo==0.5.5.post2 \
     -e packages/dinkster-api \
     -e packages/dinkster-schema \
@@ -756,7 +760,8 @@ uv pip install --python .venv-gpu/bin/python \
     -e packages/dinkster-inference-torch \
     -e packages/dinkster-model-ipadapter \
     -e packages/dinkster-model-triposplat \
-    -e packages/dinkster-model-wan
+    -e packages/dinkster-model-wan \
+    -e .
 # setup_envs.sh checks the shared Python 3.12 base interpreter once and, when
 # needed, extracts matching headers for both CPU and CUDA compilation.
 DINKSTER_ENABLE_GPU_TESTS=1 DINKSTER_VALIDATE_REFERENCE_GOLDENS=1 \

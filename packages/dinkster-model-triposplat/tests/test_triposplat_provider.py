@@ -99,12 +99,14 @@ class _CodecHandle:
         (provider.execute_load_triposplat_decoder, "decoder", "decoder", "gaussian-decoder"),
     ),
 )
+@pytest.mark.parametrize("explicit_publisher", (False, True))
 def test_loaders_plan_load_and_publish(
     monkeypatch: pytest.MonkeyPatch,
     execute: Callable[..., dict[str, object]],
     input_name: str,
     output_name: str,
     role: str,
+    explicit_publisher: bool,
 ) -> None:
     class Asset:
         digest = "blake3:" + "1" * 64
@@ -152,9 +154,20 @@ def test_loaders_plan_load_and_publish(
     monkeypatch.setattr(provider, "plan_triposplat_split_component", plan)
     monkeypatch.setattr(provider, "triposplat_component_runtime_identity", identity)
     monkeypatch.setattr(provider, "load_triposplat_component", load)
-    monkeypatch.setattr(provider, "component_publisher", lambda: Publisher())
+    publisher = Publisher()
+    if explicit_publisher:
+        monkeypatch.setattr(
+            provider,
+            "component_publisher",
+            lambda: (_ for _ in ()).throw(AssertionError("context publisher must not be used")),
+        )
+    else:
+        monkeypatch.setattr(provider, "component_publisher", lambda: publisher)
 
-    result = execute(**{input_name: Asset()})
+    kwargs: dict[str, object] = {input_name: Asset()}
+    if explicit_publisher:
+        kwargs["publisher"] = publisher
+    result = execute(**kwargs)
     assert result == {output_name: published}
     assert calls == [
         ("header", Path("component.safetensors"), Asset.digest, 123),
@@ -241,9 +254,15 @@ def test_preprocess_erode_can_empty_a_small_subject(monkeypatch: pytest.MonkeyPa
 class _VisionModule:
     config = SimpleNamespace(image_mean=(0.5, 0.5, 0.5), image_std=(0.5, 0.5, 0.5))
 
-    def __init__(self, sequence: torch.Tensor) -> None:
+    def __init__(
+        self, sequence: torch.Tensor, parameter_dtype: torch.dtype = torch.float32
+    ) -> None:
         self.sequence = sequence
         self.pixel_values: list[torch.Tensor] = []
+        self._parameter = torch.zeros((1,), dtype=parameter_dtype)
+
+    def parameters(self):
+        return iter((self._parameter,))
 
     def __call__(self, pixel_values: torch.Tensor) -> torch.Tensor:
         self.pixel_values.append(pixel_values)
@@ -253,7 +272,7 @@ class _VisionModule:
 def test_conditioning_builds_component_bound_lanes_and_empty_latent() -> None:
     torch.manual_seed(7)
     sequence = torch.randn((1, 6, TRIPOSPLAT_CONFIG.cond_channels))
-    module = _VisionModule(sequence)
+    module = _VisionModule(sequence, parameter_dtype=torch.bfloat16)
     vision = _ComponentHandle("1", module)
     encoded = torch.randn((1, TRIPOSPLAT_CONFIG.cond2_channels, 2, 2))
     codec = _CodecHandle(TRIPOSPLAT_CONFIG.cond2_channels, encoded)
@@ -275,7 +294,8 @@ def test_conditioning_builds_component_bound_lanes_and_empty_latent() -> None:
 
     expected_pixel = (torch.full((1, 3, 32, 32), _GRAY) - 0.5) / 0.5
     assert len(module.pixel_values) == 1
-    assert torch.allclose(module.pixel_values[0], expected_pixel)
+    assert module.pixel_values[0].dtype is torch.bfloat16
+    assert torch.allclose(module.pixel_values[0], expected_pixel.to(torch.bfloat16))
     assert len(codec.contents) == 1
     assert torch.allclose(codec.contents[0], torch.full((1, 3, 32, 32), _GRAY))
 

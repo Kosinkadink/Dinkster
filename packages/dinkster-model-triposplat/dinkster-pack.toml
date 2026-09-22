@@ -22,7 +22,8 @@ dinkster-nodes-media-io = ">=0.0.1,<1"
 "dinkster.generation.schemas" = ">=1.0.0,<2"
 
 [pack.entry]
-nodes = "dinkster_model_triposplat:TRIPOSPLAT_MODEL_NODES"
+nodes = "dinkster_model_triposplat:TRIPOSPLAT_PACK_NODES"
+types = "dinkster_model_triposplat:register_triposplat_types"
 
 # BEGIN GENERATED STARTER TEMPLATES
 

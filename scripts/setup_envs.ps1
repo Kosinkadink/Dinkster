@@ -63,6 +63,7 @@ $CpuEditablePackages = @(
     "packages/dinkster-native",
     "packages/dinkster-inference-torch",
     "packages/dinkster-nodes-generation",
+    "packages/dinkster-nodes-media-io",
     "packages/dinkster-compat-comfy",
     "packages/dinkster-model-ipadapter",
     "packages/dinkster-model-qwen-image",
@@ -86,6 +87,7 @@ $GpuEditablePackages = @(
     "packages/dinkster-inference-torch",
     "packages/dinkster-workers",
     "packages/dinkster-nodes-generation",
+    "packages/dinkster-nodes-media-io",
     "packages/dinkster-compat-comfy",
     "packages/dinkster-model-ipadapter",
     "packages/dinkster-model-triposplat",
@@ -114,7 +116,8 @@ try {
         "UV_PROJECT_ENVIRONMENT", $RootEnvironment, "Process"
     )
     Invoke-Native "uv" @(
-        "sync", "--project", $RepoRoot, "--python", "3.12", "--all-packages"
+        "sync", "--project", $RepoRoot, "--python", "3.12", "--all-packages",
+        "--reinstall-package", "dinkster-nodes-std"
     )
     [Environment]::SetEnvironmentVariable("UV_PROJECT_ENVIRONMENT", $null, "Process")
 
@@ -134,8 +137,11 @@ try {
         "safetensors==0.8.0", "sentencepiece==0.2.1", "transformers==5.16.1",
         $KitchenCpuWheel,
         "dinkster-aimdo==0.5.5.post2"
-    ) + (Get-EditableArguments $CpuEditablePackages)
-    Invoke-Native "uv" (@("pip", "install", "--python", $TorchPython) + $CpuDependencies)
+    ) + (Get-EditableArguments $CpuEditablePackages) + @("-e", $RepoRoot)
+    Invoke-Native "uv" (@(
+        "pip", "install", "--python", $TorchPython,
+        "--reinstall-package", "dinkster-nodes-std"
+    ) + $CpuDependencies)
     if ($InstallAcceptance) {
         Invoke-Native "uv" @(
             "pip", "install", "--python", $TorchPython,
@@ -143,8 +149,9 @@ try {
         )
     }
     Invoke-Native $TorchPython @(
+        "-I",
         "-c",
-        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'"
+        "from importlib.metadata import version; import site; import av, dinkster.serve, dinkster_model_triposplat.provider, torch; assert site.ENABLE_USER_SITE is False; assert version('av') == '17.0.0'; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'"
     )
 
     $PythonInclude = (& $TorchPython -c "import sysconfig; print(sysconfig.get_paths()['include'])")
@@ -171,15 +178,18 @@ try {
         Invoke-Native "uv" @(
             "pip", "install", "--python", $GpuPython,
             "--index-url", "https://download.pytorch.org/whl/cu130",
-            "torch==2.13.0+cu130"
+            "torch==2.13.0+cu130", "torchvision==0.28.0+cu130"
         )
         $GpuDependencies = @(
             "pytest", "numpy", "scipy", "torchsde", "tqdm", "pillow", "packaging",
-            "safetensors==0.8.0", "sentencepiece==0.2.1",
+            "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
             "dinkster-kitchen==0.2.35.post1", "dinkster-aimdo==0.5.5.post2",
             "triton-windows==3.7.1.post27"
-        ) + (Get-EditableArguments $GpuEditablePackages)
-        Invoke-Native "uv" (@("pip", "install", "--python", $GpuPython) + $GpuDependencies)
+        ) + (Get-EditableArguments $GpuEditablePackages) + @("-e", $RepoRoot)
+        Invoke-Native "uv" (@(
+            "pip", "install", "--python", $GpuPython,
+            "--reinstall-package", "dinkster-nodes-std"
+        ) + $GpuDependencies)
         if ($InstallAcceptance) {
             Invoke-Native "uv" @(
                 "pip", "install", "--python", $GpuPython,
@@ -187,8 +197,9 @@ try {
             )
         }
         Invoke-Native $GpuPython @(
+            "-I",
             "-c",
-            "import torch, triton; assert torch.__version__ == '2.13.0+cu130'; assert triton.__version__ == '3.7.1'"
+            "from importlib.metadata import version; import site; import av, dinkster.serve, dinkster_model_triposplat.provider, torch, triton; assert site.ENABLE_USER_SITE is False; assert version('av') == '17.0.0'; assert torch.__version__ == '2.13.0+cu130'; assert version('torchvision') == '0.28.0+cu130'; assert version('tokenizers') == '0.23.1'; assert triton.__version__ == '3.7.1'"
         )
     }
     else {
