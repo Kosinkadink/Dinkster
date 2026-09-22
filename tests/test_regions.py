@@ -62,6 +62,7 @@ INT = TypeExpr.concrete("core.int")
 BOOL = TypeExpr.concrete("core.boolean")
 COMBO = TypeExpr.concrete("core.combo")
 STRING = TypeExpr.concrete("core.string")
+GENERIC = TypeExpr.variable("T")
 
 
 class AddOne(Node):
@@ -246,6 +247,20 @@ class Sleeper(Node):
         return cls.outputs(out=value)
 
 
+class GenericIdentity(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.generic_identity",
+            inputs=(InputSpec("value", GENERIC),),
+            outputs=(OutputSpec("value", GENERIC),),
+        )
+
+    @classmethod
+    def execute(cls, value: object) -> Mapping[str, object]:
+        return cls.outputs(value=value)
+
+
 NODES: tuple[type[Node], ...] = (
     AddOne,
     AddPair,
@@ -258,16 +273,20 @@ NODES: tuple[type[Node], ...] = (
     MaybeList,
     FailOnOdd,
     Sleeper,
+    GenericIdentity,
 )
 
 
 def make_engine(
     events: list[EngineEvent] | None = None,
     extra_nodes: Sequence[type[Node]] = (),
+    extra_types: Sequence[str] = (),
 ) -> Engine:
     node_types = (*NODES, *extra_nodes)
     registry = TypeRegistry()
     register_core_types(registry)
+    for type_id in extra_types:
+        registry.register(type_id)
     return Engine(
         schemas=build_schemas(node_types),
         registry=registry,
@@ -935,8 +954,85 @@ def test_map_region_executes_per_element() -> None:
         expanded = next(e for e in events if e.kind == "region_expanded")
         assert expanded.node_id == "m"
         assert expanded.detail["iterations"] == 3
+        started = [
+            cast(int, e.detail["iteration"]) for e in events if e.kind == "region_iteration_started"
+        ]
+        completed = [
+            cast(int, e.detail["iteration"])
+            for e in events
+            if e.kind == "region_iteration_finished"
+        ]
+        assert sorted(started) == [0, 1, 2]
+        assert sorted(completed) == [0, 1, 2]
+        for iteration in range(3):
+            assert next(
+                i
+                for i, event in enumerate(events)
+                if event.kind == "region_iteration_started"
+                and event.detail["iteration"] == iteration
+            ) < next(
+                i
+                for i, event in enumerate(events)
+                if event.kind == "region_iteration_finished"
+                and event.detail["iteration"] == iteration
+            )
         finished = next(e for e in events if e.kind == "region_finished")
         assert finished.detail["iterations"] == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("type_id", "payloads"),
+    [
+        ("comfy.IMAGE", [[[[0.0, 0.25, 0.5], [0.75, 1.0, 0.125]]], [[[1.0, 0.5, 0.0]]]]),
+        ("comfy.LATENT", [{"samples": [[[[1.5, -2.0], [3.25, 4.5]]]]}, {"samples": [[[[9.0]]]]}]),
+        ("dinkster.conditioning", [{"tokens": [1, 4], "weight": 0.75}, {"tokens": [9]}]),
+        ("comfy.MASK", [[[0.0, 1.0], [0.25, 0.75]], [[1.0]]]),
+        (
+            "comfy.AUDIO",
+            [
+                {"waveform": [[0.0, -0.5, 0.5]], "sample_rate": 48000},
+                {"waveform": [[1.0]], "sample_rate": 44100},
+            ],
+        ),
+        ("comfy.VIDEO", [{"frames": ["a", "b"], "fps": 24.0}, {"frames": ["c"], "fps": 30.0}]),
+        (
+            "dinkster.asset",
+            [
+                {"digest": "blake3:" + "1" * 64, "name": "one.png"},
+                {"digest": "blake3:" + "2" * 64, "name": "two.wav"},
+            ],
+        ),
+        ("core.string", ["alpha", "beta"]),
+        ("core.int", [7, -3]),
+        ("core.float", [1.25, -8.5]),
+    ],
+)
+def test_map_gather_preserves_generic_payload_type_and_exact_values(
+    type_id: str, payloads: list[object]
+) -> None:
+    async def scenario() -> None:
+        value_type = TypeExpr.concrete(type_id)
+        region = RegionNode(
+            kind="map",
+            body=Graph(
+                nodes={"identity": GraphNode("test.generic_identity", {"value": port("item")})}
+            ),
+            ports={"item": value_type},
+            inputs={"item": payloads},
+            element_ports=("item",),
+            outputs={"results": RegionOutput(Link("identity", "value"))},
+        )
+        core_types = {"core.string", "core.int", "core.float"}
+        engine = make_engine(extra_types=() if type_id in core_types else (type_id,))
+        result = await engine.run(Graph(nodes={"m": region}), ["m"])
+        gathered = result.outputs["m"]["results"]
+        assert gathered.type_id == f"list<{type_id}>"
+        children = list_children(gathered)
+        assert children is not None
+        assert [child.type_id for child in children] == [type_id, type_id]
+        assert [child.resolve() for child in children] == payloads
 
     asyncio.run(scenario())
 
@@ -1768,6 +1864,20 @@ def test_while_region_iterates_until_continue_false() -> None:
         engine = make_engine(events)
         result = await engine.run(Graph(nodes={"w": while_region()}), ["w"])
         assert result.outputs["w"]["count"].resolve() == 5
+        assert [e.detail["iteration"] for e in events if e.kind == "region_iteration_started"] == [
+            0,
+            1,
+            2,
+            3,
+            4,
+        ]
+        assert [e.detail["iteration"] for e in events if e.kind == "region_iteration_finished"] == [
+            0,
+            1,
+            2,
+            3,
+            4,
+        ]
         finished = next(e for e in events if e.kind == "region_finished")
         assert finished.detail["iterations"] == 5
 
@@ -1933,6 +2043,7 @@ def test_compact_gather_omits_absent_iterations_in_order() -> None:
 
 def test_compact_gather_does_not_turn_failed_iterations_into_absence() -> None:
     async def scenario() -> None:
+        events: list[EngineEvent] = []
         region = RegionNode(
             kind="map",
             body=Graph(nodes={"fail": GraphNode("test.fail_on_odd", {"value": port("item")})}),
@@ -1942,7 +2053,17 @@ def test_compact_gather_does_not_turn_failed_iterations_into_absence() -> None:
             outputs={"results": RegionOutput(Link("fail", "out"), mode="compact")},
         )
         with pytest.raises(ExecutionError, match="odd input failed"):
-            await make_engine().run(Graph(nodes={"m": region}), ["m"])
+            await make_engine(events).run(Graph(nodes={"m": region}), ["m"])
+        failed_iteration_started = any(
+            event.kind == "region_iteration_started" and event.detail["iteration"] == 1
+            for event in events
+        )
+        failed_iteration_finished = any(
+            event.kind == "region_iteration_finished" and event.detail["iteration"] == 1
+            for event in events
+        )
+        assert failed_iteration_started
+        assert not failed_iteration_finished
 
     asyncio.run(scenario())
 

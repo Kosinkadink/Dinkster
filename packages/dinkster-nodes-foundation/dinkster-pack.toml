@@ -22,8 +22,36 @@ nodes = "dinkster_nodes_foundation:FOUNDATION_NODES"
 types = "dinkster_nodes_foundation:register_foundation_types"
 
 [[pack.templates]]
-id = "map-and-gather"
-name = "Map and Gather"
-description = "Map integers through a subgraph and gather the sums."
-tags = ["map", "gather", "subgraph"]
-file = "src/dinkster_nodes_foundation/map_and_gather_template.json"
+id = "loop-map-images"
+name = "Loop: Map Images"
+description = "Map a real image list through an image-processing subgraph."
+tags = ["loop", "map", "image"]
+file = "src/dinkster_nodes_foundation/loop_map_images_template.json"
+
+[[pack.templates]]
+id = "loop-gather-image-batch"
+name = "Loop: Gather Image Batch"
+description = "Gather per-item images in input order and merge them into a batch."
+tags = ["loop", "gather", "image", "batch"]
+file = "src/dinkster_nodes_foundation/loop_gather_batch_template.json"
+
+[[pack.templates]]
+id = "loop-fold-scan-images"
+name = "Loop: Fold and Scan Images"
+description = "Fold image strips onto a canvas and gather every running state."
+tags = ["loop", "fold", "scan", "image"]
+file = "src/dinkster_nodes_foundation/loop_fold_scan_template.json"
+
+[[pack.templates]]
+id = "loop-while-until"
+name = "Loop: While / Until"
+description = "Repeat a state transition until its continuation becomes false."
+tags = ["loop", "while", "until", "state"]
+file = "src/dinkster_nodes_foundation/loop_while_until_template.json"
+
+[[pack.templates]]
+id = "loop-per-item-image-spawn"
+name = "Loop: Per-item Image Spawn"
+description = "Spawn independent image work for every item in a list."
+tags = ["loop", "map", "spawn", "image"]
+file = "src/dinkster_nodes_foundation/loop_per_item_spawn_template.json"
