@@ -8,7 +8,7 @@
   { "kind": "keybinding", "implemented": true },
   { "kind": "setting", "implemented": true },
   { "kind": "canvasLayer", "implemented": true },
-  { "kind": "nodeDecoration", "implemented": false },
+  { "kind": "nodeDecoration", "implemented": true },
   { "kind": "hostUi", "implemented": true },
   { "kind": "searchProvider", "implemented": true },
   { "kind": "workflowObserver", "implemented": false },
