@@ -11,7 +11,9 @@ Because fingerprints travel in the envelope and cache keys derive from
 them, a manifest written by one process is a hit in any other - restart
 persistence and cross-machine sharing are the same mechanism. A lock file
 serializes manifest publication, trimming, and garbage collection across
-store instances and processes sharing the root.
+store instances and processes sharing the root. Queued-write cancellation
+is store-local; overlapping writes from another store serialize in lock
+order and can publish after an invalidation.
 
 What never lands here: entries carrying resource stubs (references to live
 process state - dangling after restart) and values with no bytes to store
@@ -124,6 +126,7 @@ class DiskCacheStore:
         self._entries_dir.mkdir(parents=True, exist_ok=True)
         self._thread_lock = _root_thread_lock(root)
         self._lock_path = root / ".lock"
+        self._pending_writes: dict[CacheKey, object] = {}
         self.hits = 0
         self.misses = 0
         self._with_lock(self._recover)
@@ -145,7 +148,18 @@ class DiskCacheStore:
         encoded = encode_entry(outputs, self._registry)
         if encoded is None:
             return  # structurally unpersistable (stubs / no bytes); not an error
-        await asyncio.to_thread(self._with_lock, self._put, key, encoded)
+        token = object()
+        self._pending_writes[key] = token
+        try:
+            await asyncio.to_thread(self._with_lock, self._put_pending, key, encoded, token)
+        finally:
+            if self._pending_writes.get(key) is token:
+                del self._pending_writes[key]
+
+    def _put_pending(self, key: CacheKey, encoded: dict[str, EncodedValue], token: object) -> None:
+        # This store's invalidation can precede a queued writer taking the lock.
+        if self._pending_writes.get(key) is token:
+            self._put(key, encoded)
 
     # -- invalidation (ReleaseGuard contract) -----------------------------
 
@@ -156,7 +170,19 @@ class DiskCacheStore:
 
     def clear(self) -> int:
         """Remove every manifest and its now-orphaned payload blobs."""
+        self._pending_writes.clear()
         return self._with_lock(self._clear)
+
+    def discard(self, key: CacheKey) -> None:
+        """Invalidate a replaced key, including this store's queued publication."""
+        self._pending_writes.pop(key, None)
+        self._with_lock(self._discard, key)
+
+    def _discard(self, key: CacheKey) -> None:
+        path = self._entry_path(key)
+        if path.exists():
+            self._remove_entry(path)
+            self._gc_blobs()
 
     # -- peer export (the server's cache-sharing endpoints call these) ----
 
@@ -227,7 +253,7 @@ class DiskCacheStore:
 
     @staticmethod
     def _remove_entry(path: Path) -> None:
-        with contextlib.suppress(OSError):
+        with contextlib.suppress(FileNotFoundError):
             path.unlink()
 
     def _write_entry(self, key: CacheKey, encoded: dict[str, EncodedValue]) -> None:

@@ -14208,6 +14208,15 @@ def test_native_sampler_uses_assembled_diffusion_dtype(dtype: str) -> None:
     assert arm._compute_dtype(runtime) == dtype
 
 
+def test_native_sampler_requires_assembled_diffusion_dtype() -> None:
+    arm = _native_arm()
+    runtime = _runtime()
+    runtime.assembled.compute_dtype = lambda _component: None
+
+    with pytest.raises(RuntimeError, match="has no assembled diffusion dtype"):
+        arm._compute_dtype(runtime)
+
+
 def test_native_sampler_is_neutral_to_context_node_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -17273,6 +17282,7 @@ def test_native_sampler_executes_composed_qwen_components_and_application(
         coordinator=coordinator,
         recipe=recipe,
     )
+    assert arm._diffusion_unload_roles(handle) == ()
     application_events: list[object] = []
 
     class ApplicationHandle:
@@ -18851,7 +18861,7 @@ def test_generation_ksampler_prepares_descriptor_fallback_once(
     assert events == ["resolve", "prepare", "prepare", "sample"]
     assert prepared == [positive, negative]
     assert len(stages) == 1
-    assert stages[0]["unload_before"] == ()
+    assert stages[0]["unload_before"] == (("text",) if combined else ())
 
 
 @pytest.mark.parametrize("generation", [False, True])
@@ -21186,7 +21196,7 @@ def test_generation_custom_sampling_routes_wan_causalar_selection_and_metadata(
         def sample_custom(
             latent: MultiStreamLatent[FakeTensor], **kwargs: object
         ) -> CustomSamplingResult[Any]:
-            assert text_module.weight.device == torch.device("cuda:0" if registered else "cpu")
+            assert text_module.weight.device == torch.device("cpu")
             assert diffusion_module.weight.device == torch.device("cuda:0")
             if kwargs.get("sampling_shift") is not None:
                 raise ValueError("Wan CausalAR sampling shift is fixed at 5.0")
@@ -21270,7 +21280,7 @@ def test_generation_custom_sampling_routes_wan_causalar_selection_and_metadata(
     assert events == ["resolve", "prepare", *(["prepare"] if with_negative else []), "sample"]
     assert prepared == [carrier, *([negative] if with_negative else [])]
     assert len(stages) == 1
-    assert stages[0]["unload_before"] == (() if registered else ("text",))
+    assert stages[0]["unload_before"] == ("text",)
     assert len(checks) == 2
     assert checks[0].sampler.id == "dinkster.ar_video"
     assert checks[0].options == (("num_frame_per_block", 2),)
@@ -22354,9 +22364,15 @@ def test_native_ksampler_composes_diffusion_without_text_and_codec_methods(
     assert not isinstance(runtime, FamilyRuntime)
     monkeypatch.setattr(arm, "_torch", lambda: torch)
     inputs = _ksampler_inputs(arm, runtime, torch)
+    handle = cast("Any", inputs["model"])
+    with handle.stage("text"):
+        pass
     result = arm.NativeKSampler.execute(**inputs)
     assert len(calls) == 1
     assert result["latent"]["custom"] == "preserved"
+    text = cast("FakeMechanism", handle.mechanisms[1])
+    assert text.loaded_bytes() == 0
+    assert text.unload_calls == 1
 
 
 @pytest.mark.parametrize("advanced", [False, True])
@@ -23471,6 +23487,8 @@ def test_generation_custom_sampling_routes_anima_components_and_normalizes_video
 
     runtime = Runtime()
     handle = _handle(arm, runtime, torch, recipe=recipe)
+    with handle.stage("text"):
+        pass
     rows = [
         [
             prepared_positive.embeddings,
@@ -23553,6 +23571,9 @@ def test_generation_custom_sampling_routes_anima_components_and_normalizes_video
     assert isinstance(request, CustomSamplingRequest)
     assert request.sampler.id == "dinkster.euler"
     assert request.sigmas == (1.0, 0.5, 0.0)
+    text = cast("FakeMechanism", handle.mechanisms[1])
+    assert text.loaded_bytes() == 0
+    assert text.unload_calls == 1
 
     calls.clear()
     with pytest.raises(ValueError, match="rank-5 latent"):
@@ -25288,12 +25309,13 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
     events: list[object] = []
 
     class Handle:
-        pass
+        recipe = SimpleNamespace(family_id="dinkster.seedvr2")
 
     class Codec:
         descriptor = SEEDVR2_CODEC
         load_device = FakeDevice("cuda:0")
         resource_identity = "native:dinkster.seedvr2:" + "1" * 64
+        sequence_content = True
         accepts_batched_video = True
         accepts_image_batch_latent = True
         manages_input_device = True
@@ -25307,7 +25329,8 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
             yield
 
         def encode_content(self, content: FakeTensor) -> FakeTensor:
-            return content
+            events.append(("encode-direct", content.shape))
+            return FakeTensor((content.shape[0], 16, content.shape[2], 4, 6), "encoded")
 
         def decode_latent(self, latent: FakeTensor) -> FakeTensor:
             return latent
@@ -25336,10 +25359,18 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
 
     codec = Codec()
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_native_component_codec", lambda _value: codec)
+    monkeypatch.setattr(
+        arm,
+        "_native_component_codec",
+        lambda value: arm._RegisteredComponentCodec(value, codec),
+    )
     monkeypatch.setattr(arm, "_torch", lambda: torch)
     handle = Handle()
 
+    encoded_direct = arm.GenerationVAEEncode.execute(
+        pixels=FakeTensor((5, 32, 48, 3), "pixels"),
+        vae=handle,
+    )
     encoded = arm.GenerationVAEEncodeTiled.execute(
         pixels=FakeTensor((1, 5, 32, 48, 3), "pixels"),
         vae=handle,
@@ -25365,10 +25396,19 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
         temporal_overlap=8,
     )
 
+    assert cast("Mapping[str, FakeTensor]", encoded_direct["latent"])["samples"].shape == (
+        1,
+        16,
+        5,
+        4,
+        6,
+    )
     assert cast("Mapping[str, FakeTensor]", encoded["latent"])["samples"].shape == (1, 16, 2, 4, 6)
     assert cast("FakeTensor", decoded["image"]).shape == (2, 32, 48, 3)
     assert cast("FakeTensor", decoded_image_batch["image"]).shape == (2, 32, 48, 3)
     assert events == [
+        "stage",
+        ("encode-direct", (1, 3, 5, 32, 48)),
         "stage",
         ("encode", (1, 3, 5, 32, 48), (64, 512, 512), (8, 128, 128)),
         "stage",
@@ -31265,8 +31305,8 @@ def test_trellis2_split_runtime_builds_and_retains_all_flow_sources(
     inference_torch = SimpleNamespace(
         load_trellis2_flow_artifact=load_flow,
         Trellis2FlowBundle=lambda **kwargs: SimpleNamespace(**kwargs),
-        AssembledTrellis2=lambda diffusion, selected_plan: SimpleNamespace(
-            diffusion=diffusion, plan=selected_plan
+        AssembledTrellis2=lambda diffusion, selected_plan, compute_dtype: SimpleNamespace(
+            diffusion=diffusion, plan=selected_plan, compute_dtype=compute_dtype
         ),
         Trellis2DiffusionRuntime=lambda assembled, **kwargs: SimpleNamespace(
             assembled=assembled, **kwargs
@@ -31307,6 +31347,7 @@ def test_trellis2_split_runtime_builds_and_retains_all_flow_sources(
     assert all(item[2] == FakeTorch.bfloat16 for item in loaded)
     assembled = cast("Any", handle.runtime).assembled
     assert assembled.plan == plan
+    assert assembled.compute_dtype is FakeTorch.bfloat16
     assert (
         assembled.diffusion.structure,
         assembled.diffusion.shape,

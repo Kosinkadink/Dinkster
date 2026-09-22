@@ -633,11 +633,10 @@ test venv:
 .\scripts\setup_envs.ps1
 ```
 
-The scripts require `uv`; they do not require any sibling repository. If a
-`dinkster-evidence` checkout exists beside Dinkster, or
-`DINKSTER_EVIDENCE_ROOT` points to one, its optional `dinkster-acceptance`
-package is installed. Otherwise setup prints a skip notice and completes the
-root and execution environments normally.
+The scripts require `uv`; they do not require any sibling repository. If
+`DINKSTER_EVIDENCE_ROOT` selects a maintainer evidence checkout, its optional
+`dinkster-acceptance` package is installed. Otherwise setup prints a skip
+notice and completes the root and execution environments normally.
 
 On macOS (Apple Silicon) the same script builds `.venv-torch` from the
 native arm64 PyPI wheels: torch's mac build ships MPS support in the

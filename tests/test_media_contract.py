@@ -262,8 +262,14 @@ def test_semantic_codec_and_shared_memory_roundtrip(mask: bool, monkeypatch) -> 
         received, stat = codec.decode(wire, blobs, consumed)
         assert stat.transport == "shm"
         assert consumed == [segment.name for segment in segments]
-        assert json.dumps(dict(received.meta.entries), sort_keys=True) == json.dumps(
-            dict(metadata(annotated)), sort_keys=True
+        received_meta = dict(received.meta.entries)
+        expected_meta = dict(metadata(annotated))
+        assert received_meta.keys() == expected_meta.keys()
+        assert received_meta["cost"] == {"ram": len(encoded)}
+        assert json.dumps(
+            {key: value for key, value in received_meta.items() if key != "cost"}, sort_keys=True
+        ) == json.dumps(
+            {key: value for key, value in expected_meta.items() if key != "cost"}, sort_keys=True
         )
         assert media_semantics(received.resolve()) == media_semantics(annotated)
     finally:
@@ -370,7 +376,9 @@ def test_merge_preserves_semantics_and_normalizes_mixed_alpha_modes() -> None:
     single = merge_image_batches([image])
     uniform = merge_image_batches([image, image])
     assert media_semantics(single) == media_semantics(uniform) == media_semantics(image)
-    mixed = merge_image_batches([image, np.ones((1, 2, 2, 3), dtype=np.float32)])
+    mixed = merge_image_batches(
+        [image, annotate_image(np.ones((1, 2, 2, 3), dtype=np.float32), color=color)]
+    )
     assert media_semantics(mixed) == {"color": color}
     np.testing.assert_array_equal(np.asarray(mixed)[0, ..., :3], 1)
     np.testing.assert_array_equal(np.asarray(mixed)[0, ..., 3], 0.5)
