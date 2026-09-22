@@ -75,15 +75,17 @@
   WanDancer music-driven image-to-video with local/global FPS paths. TI2V and
   5B Fun use 48-channel video latents; 14B I2V, Fun, S2V, Bernini, and
   WanDancer use Wan 2.1 latents. KSampler and decomposed custom sampling share
-  the same flow engine.
+  the same flow engine. The official TI2V 5B diffusion file also loads
+  independently through Load Diffusion Model.
 <!-- capability:dinkster.z_image -->
 <!-- capability:dinkster.z_image_pixel_space -->
 - Z-Image Base and Turbo (latent, non-Omni), Zeta-Chroma pixel-space Z-Image,
   and the official Turbo Fun ControlNet Union model patch with image
   conditioning, typed timeline/site/guidance-lane gains at its six injection
   blocks, immutable control-latent binding, asset-proven model identity, and
-  KSampler or custom sampling through the same shift-3 flow engine. Fun
-  control chains and effect/source masks are refused.
+  KSampler or custom sampling through the same shift-3 flow engine. Latent
+  Z-Image diffusion files also load independently through Load Diffusion Model.
+  Fun control chains and effect/source masks are refused.
 <!-- capability:dinkster.lumina2 -->
 - Lumina Image 2.0, including Neta Lumina, NetaYume, and compatible Lumina2
   fine-tunes. All-in-one checkpoints support Load Checkpoint with shared

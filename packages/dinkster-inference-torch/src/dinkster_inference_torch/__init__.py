@@ -1015,6 +1015,7 @@ if _TYPE_CHECKING:
         ZImageTimestepEmbedder,
         z_image_timestep_embedding,
     )
+    from .z_image_component import ZImageLoadedComponent, load_z_image_component
     from .z_image_control import (
         ZImageControl,
         ZImageControlBindingError,
@@ -1022,7 +1023,7 @@ if _TYPE_CHECKING:
         z_image_control_hint_digest,
         z_image_control_resource_digest,
     )
-    from .z_image_runtime import ZImageDenoiser, ZImageRuntimeError
+    from .z_image_runtime import ZImageDenoiser, ZImageDiffusionRuntime, ZImageRuntimeError
 
 
 _EXPORTS: dict[str, tuple[str, str | None]] = {
@@ -1974,7 +1975,10 @@ _EXPORTS: dict[str, tuple[str, str | None]] = {
     "z_image_control_hint_digest": ("z_image_control", "z_image_control_hint_digest"),
     "z_image_control_resource_digest": ("z_image_control", "z_image_control_resource_digest"),
     "ZImageDenoiser": ("z_image_runtime", "ZImageDenoiser"),
+    "ZImageDiffusionRuntime": ("z_image_runtime", "ZImageDiffusionRuntime"),
+    "ZImageLoadedComponent": ("z_image_component", "ZImageLoadedComponent"),
     "ZImageRuntimeError": ("z_image_runtime", "ZImageRuntimeError"),
+    "load_z_image_component": ("z_image_component", "load_z_image_component"),
     "adapters": ("adapters", None),
     "aimdo": ("aimdo", None),
     "aimdo_activation": ("aimdo_activation", None),
@@ -2855,6 +2859,7 @@ __all__ = [
     "load_minimax_h3_component",
     "load_minimax_music3_component",
     "load_wan21_component",
+    "load_z_image_component",
     "load_minimax_h3_model",
     "anima_conditioning_to_carrier",
     "materialize_anima_conditioning",
@@ -3009,6 +3014,8 @@ __all__ = [
     "ZImageControlBindingError",
     "ZImageControlConditioning",
     "ZImageDenoiser",
+    "ZImageDiffusionRuntime",
+    "ZImageLoadedComponent",
     "ZImageRuntime",
     "ZImageRuntimeError",
     "ZImageFeedForward",

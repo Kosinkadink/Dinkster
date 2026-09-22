@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, cast
 
 import torch
 from dinkster_inference import (
+    Z_IMAGE,
     CodecDescriptor,
     Conditioning,
     ContributionGain,
@@ -480,8 +481,53 @@ class ZImageRuntime(SingleStreamSamplingRuntime):
         return self.codec.encode(content)
 
 
+@dataclass(frozen=True)
+class _ZImageDiffusionAssembly:
+    family: ModelFamily
+    diffusion: ZImage
+    diffusion_dtype: torch.dtype
+
+    def compute_dtype(self, component: str) -> torch.dtype | None:
+        return self.diffusion_dtype if component == "diffusion" else None
+
+
+class ZImageDiffusionRuntime(ZImageRuntime):
+    """Diffusion-only Z-Image sampling facade."""
+
+    def __init__(
+        self,
+        diffusion: ZImage,
+        *,
+        runtime_identity: str,
+        compute_dtype: torch.dtype,
+        sampler_registry: Registry[SamplerDescriptor[Any]] | None = None,
+        scheduler_registry: Registry[SchedulerDescriptor] | None = None,
+    ) -> None:
+        if type(diffusion) is not ZImage:
+            raise ValueError("Z-Image diffusion runtime requires exact latent Z-Image")
+        self.assembled = _ZImageDiffusionAssembly(Z_IMAGE, diffusion, compute_dtype)
+        self.attention_status = MappingProxyType({})
+        self._runtime_identity = runtime_identity
+        self._samplers = torch_sampler_registry(sampler_registry)
+        self._schedulers = _exact_scheduler_registry(scheduler_registry)
+        self._guidance = None
+
+    def encode_text(self, text: str) -> Conditioning[torch.Tensor]:
+        del text
+        raise ZImageRuntimeError("diffusion-only Z-Image runtime has no text encoder")
+
+    def decode_latent(self, latent: torch.Tensor) -> torch.Tensor:
+        del latent
+        raise ZImageRuntimeError("diffusion-only Z-Image runtime has no codec")
+
+    def encode_content(self, content: torch.Tensor) -> torch.Tensor:
+        del content
+        raise ZImageRuntimeError("diffusion-only Z-Image runtime has no codec")
+
+
 __all__ = [
     "ZImageDenoiser",
+    "ZImageDiffusionRuntime",
     "ZImageRuntime",
     "ZImageRuntimeError",
 ]

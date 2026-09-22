@@ -23,6 +23,7 @@ from dinkster_inference_torch import (
     ZImageControlBindingError,
     ZImageControlConditioning,
     ZImageDenoiser,
+    ZImageDiffusionRuntime,
     ZImageRuntime,
     ZImageRuntimeError,
     select_attention,
@@ -36,6 +37,7 @@ from dinkster_inference_torch.denoise import prepare_noise
 from dinkster_inference_torch.operations import INITLESS
 from dinkster_inference_torch.schedules import torch_scheduler_registry
 from dinkster_inference_torch.solvers import torch_sampler_registry
+from dinkster_inference_torch.z_image import ZImage
 
 
 class RecordingZImage(torch.nn.Module):
@@ -49,6 +51,24 @@ class RecordingZImage(torch.nn.Module):
     ) -> torch.Tensor:
         self.calls.append((latent, timestep, context))
         return torch.full_like(latent, self.value)
+
+
+def test_diffusion_runtime_uses_latent_z_image_sampling_contract() -> None:
+    with torch.device("meta"):
+        model = ZImage()
+    runtime = ZImageDiffusionRuntime(
+        model,
+        runtime_identity="native:dinkster.z_image:" + "1" * 64,
+        compute_dtype=torch.bfloat16,
+    )
+
+    assert runtime.family is Z_IMAGE
+    assert runtime.assembled.diffusion is model
+    assert runtime.assembled.compute_dtype("diffusion") is torch.bfloat16
+    with pytest.raises(ZImageRuntimeError, match="no text encoder"):
+        runtime.encode_text("prompt")
+    with pytest.raises(ZImageRuntimeError, match="no codec"):
+        runtime.decode_latent(torch.zeros(1))
 
 
 def _control_conditioning(

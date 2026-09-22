@@ -1732,6 +1732,7 @@ from .wan21 import (
 from .wan21_component import (
     Wan21ComponentAssemblyError,
     plan_wan21_split_component,
+    plan_wan22_split_component,
     wan21_component_runtime_identity,
 )
 from .wan21_multitalk import WAN21_MULTITALK, Wan21MultiTalkConfig
@@ -1840,6 +1841,11 @@ from .z_image import (
     detect_z_image,
     z_image_layout,
     z_image_pixel_layout,
+)
+from .z_image_component import (
+    ZImageComponentAssemblyError,
+    plan_z_image_split_component,
+    z_image_component_runtime_identity,
 )
 from .z_image_token_layout import ZImageTokenPlan, plan_z_image_token_layout
 
@@ -2239,6 +2245,7 @@ __all__ = [
     "WAN21_VAE_CONFIG",
     "WAN21_FLOW_RVS_VAE_CONFIG",
     "Wan21ComponentAssemblyError",
+    "ZImageComponentAssemblyError",
     "Z_IMAGE_QWEN_PREFIX",
     "FamilyDetector",
     "FamilyRegistry",
@@ -3225,6 +3232,7 @@ __all__ = [
     "plan_qwen_image_control",
     "plan_qwen_image_diffsynth",
     "plan_z_image_assembly",
+    "plan_z_image_split_component",
     "plan_z_image_control",
     "plan_minimax_h3_dit_assembly",
     "plan_minimax_h3_common_component",
@@ -3251,9 +3259,11 @@ __all__ = [
     "plan_wan21_assembly",
     "plan_wan21_multitalk",
     "plan_wan21_split_component",
+    "plan_wan22_split_component",
     "plan_wan21_standalone_component",
     "plan_wan21_uni3c",
     "plan_wan22_assembly",
+    "z_image_component_runtime_identity",
     "plan_wan21_token_layout",
     "wan21_vae_layout",
     "wan22_vae_layout",

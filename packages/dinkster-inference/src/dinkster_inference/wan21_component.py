@@ -20,11 +20,12 @@ from .assembly import (
     plan_wan_vae_component,
     plan_wan_vision_component,
 )
-from .catalog import WAN21
+from .catalog import WAN21, WAN22
 from .devices import DType
 from .identity import build_runtime_identity_from_facts, runtime_component_identity
 from .t5_text import T5Config
-from .wan21_vae import WAN21_FLOW_RVS_VAE_CONFIG, WAN21_VAE_CONFIG
+from .wan21 import WAN22_TI2V_5B, Wan21Config
+from .wan21_vae import WAN21_FLOW_RVS_VAE_CONFIG, WAN21_VAE_CONFIG, Wan21VAEConfig
 from .weights import AssetIdentifiedSource, WeightSource
 
 if TYPE_CHECKING:
@@ -176,6 +177,47 @@ def plan_wan21_split_component(
     return replace(planned, component=component)
 
 
+def plan_wan22_split_component(
+    source: WeightSource,
+    *,
+    role: Wan21StandaloneComponentRole,
+    path: Path,
+    bind_asset_identity: bool = True,
+) -> Wan21StandaloneComponentPlan | ComponentPlan[Any] | WanCheckpointText:
+    """Plan the split Wan 2.2 TI2V diffusion component."""
+    if role != "diffusion":
+        raise Wan21ComponentAssemblyError(f"unsupported Wan 2.2 component role {role!r}")
+    source_path = getattr(source, "path", None)
+    if source_path != path:
+        raise Wan21ComponentAssemblyError("Wan 2.2 diffusion source path differs from selection")
+    try:
+        component = plan_wan_diffusion_component(family=WAN22, diffusion=source)
+    except (AssemblyError, ValueError) as error:
+        raise Wan21ComponentAssemblyError(f"Wan 2.2 diffusion: {error}") from error
+    if component.config is not WAN22_TI2V_5B:
+        raise Wan21ComponentAssemblyError("Wan 2.2 diffusion is not the exact TI2V 5B layout")
+    if not bind_asset_identity:
+        return component
+    if not isinstance(source, AssetIdentifiedSource):
+        raise Wan21ComponentAssemblyError("Wan 2.2 diffusion source must carry asset identity")
+    digest = source.asset_digest
+    size = source.asset_size
+    if not digest or type(size) is not int or size < 0:
+        raise Wan21ComponentAssemblyError("Wan 2.2 diffusion source must carry asset identity")
+    component = replace(
+        component,
+        identity_facts=(
+            *component.identity_facts,
+            f"asset_digest={digest}",
+            f"asset_size={size}",
+        ),
+    )
+    return Wan21StandaloneComponentPlan(
+        "diffusion",
+        cast("ComponentPlan[Wan21Config | T5Config | Wan21VAEConfig]", component),
+    )
+
+
 def wan21_component_runtime_identity(
     planned: Wan21StandaloneComponentPlan,
     compute_dtype: DType,
@@ -184,9 +226,10 @@ def wan21_component_runtime_identity(
 
     role = planned.role
     component = planned.component
+    family_id = "dinkster.wan22" if component.config is WAN22_TI2V_5B else "dinkster.wan21"
     return build_runtime_identity_from_facts(
-        "dinkster.wan21",
-        runtime_component_identity("dinkster.wan21", (component,)),
+        family_id,
+        runtime_component_identity(family_id, (component,)),
         diffusion_dtype=compute_dtype.name if role == "diffusion" else "unloaded",
         text_dtype=compute_dtype.name if role == "umt5xxl" else "unloaded",
         vae_dtype=compute_dtype.name if role == "vae" else "unloaded",
@@ -198,5 +241,6 @@ def wan21_component_runtime_identity(
 __all__ = [
     "Wan21ComponentAssemblyError",
     "plan_wan21_split_component",
+    "plan_wan22_split_component",
     "wan21_component_runtime_identity",
 ]

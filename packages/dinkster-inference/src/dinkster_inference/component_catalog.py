@@ -271,6 +271,13 @@ def default_component_registry() -> ComponentRegistry:
             native_encode_text="dinkster_native.families.anima:encode_text",
             native_load="dinkster_native.families.anima:load_component",
         ),
+        _descriptor(
+            catalog.Z_IMAGE,
+            "plan_z_image_split_component",
+            "load_z_image_component",
+            "ZImageDiffusionRuntime",
+            default_text_dtype=FLOAT32,
+        ),
         ComponentDescriptor(
             catalog.LUMINA2,
             _lumina2_detector,
@@ -403,6 +410,16 @@ def default_component_registry() -> ComponentRegistry:
             native_decode=_NATIVE_COMPONENT_DECODE,
             native_encode=_NATIVE_COMPONENT_ENCODE,
             native_load=_NATIVE_COMPONENT_LOAD,
+        ),
+        _descriptor(
+            catalog.WAN22,
+            "plan_wan22_split_component",
+            "load_wan21_component",
+            "Wan21DiffusionRuntime",
+            default_text_dtype=FLOAT32,
+            runtime_factory="dinkster_inference_torch.component_runtime:wan_runtime",
+            prepare_conditioning="prepare_conditioning",
+            conditioning_format="multistream",
         ),
         _descriptor(
             catalog.LTXV,

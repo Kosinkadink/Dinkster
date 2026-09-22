@@ -9,9 +9,23 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from dinkster_inference import BFLOAT16, LUMINA2, ComponentPlan, TensorGeometry, WeightEntry
+from dinkster_inference import (
+    BFLOAT16,
+    LUMINA2,
+    WAN22_TI2V_5B,
+    ComponentPlan,
+    TensorGeometry,
+    WeightEntry,
+    wan21_layout,
+    z_image_layout,
+    z_image_pixel_layout,
+)
 from dinkster_inference.component_catalog import default_component_registry
-from dinkster_inference.component_registry import ComponentDescriptor, ComponentRegistry
+from dinkster_inference.component_registry import (
+    ComponentDescriptor,
+    ComponentRegistry,
+    component_plans,
+)
 from dinkster_inference.recipe import WeightSourceRef
 from dinkster_inference.registry import RegistryError
 from dinkster_inference.weights import WeightSource
@@ -29,6 +43,23 @@ class Header:
         if key not in self.names:
             raise KeyError(key)
         return WeightEntry(key, TensorGeometry((2, 2), BFLOAT16), 0, 8)
+
+    def metadata(self) -> dict[str, str]:
+        return {}
+
+
+@dataclass(frozen=True)
+class IdentifiedLayoutHeader:
+    layout: dict[str, tuple[int, ...]]
+    path: Path
+    asset_digest: str = "blake3:" + "1" * 64
+    asset_size: int = 1
+
+    def keys(self) -> tuple[str, ...]:
+        return tuple(self.layout)
+
+    def entry(self, key: str) -> WeightEntry:
+        return WeightEntry(key, TensorGeometry(self.layout[key], BFLOAT16), 0, 1)
 
     def metadata(self) -> dict[str, str]:
         return {}
@@ -152,6 +183,42 @@ def test_unknown_and_wrong_role_diagnostics_do_not_assign_a_default_family(
         registry.select(unknown, Path("unknown.safetensors"), "model")
     with pytest.raises(ValueError, match="detected Synthetic words"):
         registry.select(Header(("words.weight",)), Path("text.safetensors"), "model")
+
+
+@pytest.mark.parametrize(
+    ("family_id", "filename", "layout"),
+    (
+        ("dinkster.z_image", "z_image_turbo_bf16.safetensors", dict(z_image_layout())),
+        (
+            "dinkster.wan22",
+            "wan2.2_ti2v_5B_fp16.safetensors",
+            dict(wan21_layout(WAN22_TI2V_5B)),
+        ),
+    ),
+)
+def test_default_registry_selects_split_diffusion_for_builtin_assembly_family(
+    family_id: str,
+    filename: str,
+    layout: dict[str, tuple[int, ...]],
+) -> None:
+    source = IdentifiedLayoutHeader(layout, Path(filename))
+
+    descriptor, role, plan = default_component_registry().select(
+        source, source.path, "model", family_id=family_id
+    )
+
+    assert descriptor.family_for(plan) == family_id
+    assert role == "diffusion"
+    assert component_plans(plan)[0].keys == {key: key for key in layout}
+
+
+def test_default_registry_does_not_claim_z_image_pixel_as_latent_z_image() -> None:
+    source = IdentifiedLayoutHeader(
+        dict(z_image_pixel_layout()), Path("zeta-chroma-pixel.safetensors")
+    )
+
+    with pytest.raises(ValueError, match="no matching component architecture"):
+        default_component_registry().select(source, source.path, "model")
 
 
 def test_ambiguous_geometry_requires_evidence_not_registration_order() -> None:
