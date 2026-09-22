@@ -4,6 +4,11 @@
     "descriptorCatalog": 17,
     "registryFactory": 8
   },
+  "slack": {
+    "assemblyBuilder": 0,
+    "descriptorCatalog": 0,
+    "registryFactory": 0
+  },
   "sites": [
     {
       "kind": "assemblyBuilder",

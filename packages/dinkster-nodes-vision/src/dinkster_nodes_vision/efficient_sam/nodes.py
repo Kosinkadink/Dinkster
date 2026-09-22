@@ -27,6 +27,8 @@ from dinkster_api.v1 import (
     encode_region,
     image_array_fingerprint,
     image_array_meta,
+    image_input,
+    mask_array_meta,
     prepare_image_array_encoding,
     region_meta,
 )
@@ -113,7 +115,8 @@ def _register_array(registry: TypeRegistry, type_id: str) -> None:
             decode=decode_image_array,
             prepare_buffer_encoding=prepare_image_array_encoding,
             fingerprint=image_array_fingerprint(type_id),
-            meta=image_array_meta,
+            meta=mask_array_meta if type_id == MASK_TYPE else image_array_meta,
+            input_convert=image_input,
         )
 
 

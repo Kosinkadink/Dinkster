@@ -79,6 +79,7 @@ extraPaths = [
     "src",
     "../dinkster-inference/src",
     "../dinkster-native/src",
+    "../dinkster-values/src",
     "../dinkster-model-wan/src",
     "../dinkster-model-qwen-image/src",
     "../dinkster-model-ipadapter/src",
