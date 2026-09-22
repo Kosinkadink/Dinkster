@@ -540,6 +540,34 @@ def test_ltxv_checkpoint_codec_preserves_existing_float32_boundary(dtype: torch.
     assert checkpoint_codec(assembly(diffusion)) is None
 
 
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
+def test_ltxav_checkpoint_codec_preserves_existing_float32_boundary(dtype: torch.dtype) -> None:
+    from dinkster_inference_torch.ltxav_runtime import LTXAVVideoCodecRuntime, checkpoint_codec
+    from test_ltxav_runtime import _VAE  # pyright: ignore[reportPrivateUsage]
+
+    diffusion = Diffusion()
+    vae = _VAE()
+    assembled = replace(
+        assembly(diffusion),
+        components={"model": diffusion.assembled.diffusion, "vae": cast("Any", vae)},
+        component_dtypes={"model": torch.float32, "vae": dtype},
+    )
+    codec = checkpoint_codec(assembled)
+    assert codec is not None
+    reference = LTXAVVideoCodecRuntime(cast("Any", vae), compute_dtype=dtype)
+    runtime = ComponentCheckpointRuntime(diffusion, assembled, codec=codec)
+    content = torch.linspace(0, 1, 33 * 65).reshape(1, 1, 1, 33, 65)
+    actual = runtime.encode_content(content.clone())
+    expected = reference.encode_content(content.clone())
+    assert actual.dtype == expected.dtype == torch.float32
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    actual = runtime.decode_latent(actual.clone())
+    expected = reference.decode_latent(expected.clone())
+    assert actual.dtype == expected.dtype == torch.float32
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    assert checkpoint_codec(assembly(diffusion)) is None
+
+
 @pytest.mark.parametrize("attention_policy", ["auto", "sdpa"])
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
 def test_ltxv_realizer_preserves_real_diffusion_weights_and_execution(

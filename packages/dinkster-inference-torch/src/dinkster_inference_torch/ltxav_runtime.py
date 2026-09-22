@@ -6,7 +6,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 from dinkster_inference import (
@@ -100,6 +100,9 @@ from .sampling_runtime import MultiStreamSamplingRuntime
 from .schedules import (
     torch_scheduler_registry,
 )
+
+if TYPE_CHECKING:
+    from .checkpoint_runtime import ComponentAssembly
 from .solvers import torch_sampler_registry
 
 
@@ -1362,6 +1365,24 @@ class LTXAVVideoCodecRuntime:
 
     def decode_latent(self, latent: torch.Tensor) -> torch.Tensor:
         return self.codec.decode(latent).float()
+
+
+class _LTXAVCheckpointCodec(LTXAVVideoCodecRuntime):
+    descriptor = LTXAV_VIDEO_CODEC
+    encode = LTXAVVideoCodecRuntime.encode_content
+    decode = LTXAVVideoCodecRuntime.decode_latent
+
+
+def checkpoint_codec(assembled: ComponentAssembly) -> _LTXAVCheckpointCodec | None:
+    vae = assembled.components.get("vae")
+    return (
+        None
+        if vae is None
+        else _LTXAVCheckpointCodec(
+            cast("LTXVideoVAE | LTXDiffusionVideoVAE", vae),
+            compute_dtype=assembled.compute_dtype("vae"),
+        )
+    )
 
 
 class LTXAVAudioCodecRuntime:

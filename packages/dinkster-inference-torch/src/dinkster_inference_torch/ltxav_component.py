@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import BinaryIO, cast
+from typing import TYPE_CHECKING, BinaryIO, cast
 
 import torch
 from dinkster_assets import AssetError, AssetRef
@@ -51,6 +51,9 @@ from .ltxav_model import LTXAVModel
 from .operations import Operations
 from .quant_linear import Fp8Linear, Int8Linear, Nvfp4Linear
 from .sources import load_tensors_from_file
+
+if TYPE_CHECKING:
+    from .attention import AttentionKernel
 
 _IDENTITY_DTYPES: Mapping[torch.dtype, DType] = {
     torch.bfloat16: BFLOAT16,
@@ -127,6 +130,84 @@ class _PinnedSource:
         return self.source.read_uint8_configuration_from_file(self.file, key)
 
 
+def realize_ltxav_component(
+    plan: ComponentPlan[object],
+    *,
+    compute_dtype: torch.dtype,
+    source_file: BinaryIO | None = None,
+    source: SafetensorsSource | None = None,
+    fp8_matmul: bool = False,
+    attention_kernels: Mapping[AttentionRole, AttentionKernel] | None = None,
+    attention_kernel: AttentionKernel | None = None,
+) -> torch.nn.Module:
+    """Construct one validated LTX-2 checkpoint component."""
+    role = cast("LTXAVStandaloneComponentRole", plan.component)
+    attention_role: AttentionRole = "qwen" if role.startswith("gemma") else "flux"
+    kernel = (
+        attention_kernels[attention_role] if attention_kernels is not None else attention_kernel
+    )
+    builder: Callable[..., torch.nn.Module]
+    if role == "diffusion":
+        if kernel is None:
+            raise ValueError("LTX-2 diffusion realization requires an attention kernel")
+        builder = partial(LTXAVModel, attention_kernel=kernel)
+    elif role in ("gemma3_12b", "gemma4_12b"):
+        if kernel is None:
+            raise ValueError("LTX-2 Gemma realization requires an attention kernel")
+        builder = partial(GemmaTextModel, attention_kernel=kernel)
+    elif role == "text_projection":
+        if plan.config == "single_linear":
+
+            def build_projection(_config: object, *, operations: Operations) -> torch.nn.Module:
+                return operations.linear(
+                    LTX_TEXT_STACK_FEATURES,
+                    LTXAV_19B_CONFIG.caption_channels,
+                    bias=False,
+                )
+        else:
+
+            def build_projection(_config: object, *, operations: Operations) -> torch.nn.Module:
+                return LtxDualTextProjection(
+                    LTX_TEXT_STACK_FEATURES,
+                    LTXAV_22B_V23_CONFIG.cross_attention_dim,
+                    LTXAV_22B_V23_CONFIG.audio_cross_attention_dim,
+                    operations=operations,
+                )
+
+        builder = build_projection
+    elif role == "connectors":
+        if kernel is None:
+            raise ValueError("LTX-2 connector realization requires an attention kernel")
+        builder = partial(LtxTextConnectors, attention_kernel=kernel)
+    elif role == "duration_head":
+        builder = LTXDurationHead
+    elif role == "latent_upscaler":
+        builder = LTXLatentUpsampler
+    elif plan.config is LTXAV_22B_V25_VAE_CONFIG:
+        builder = LTXDiffusionVideoVAE
+    else:
+        builder = LTXVideoVAE
+    module = _load_component(
+        plan,
+        builder,
+        compute_dtype=compute_dtype,
+        fp8_matmul=fp8_matmul,
+        source_file=source_file,
+        source=source,
+        transform=(
+            (lambda _module, state: {key: value.float() for key, value in state.items()})
+            if role == "duration_head"
+            else None
+        ),
+    )
+    if role in ("gemma3_12b", "gemma4_12b"):
+        for layer in module.modules():
+            if isinstance(layer, Fp8Linear | Int8Linear | Nvfp4Linear):
+                layer.compute_dtype = torch.float32
+                layer.full_precision_matmul = True
+    return module
+
+
 def load_ltxav_component(
     path: Path,
     *,
@@ -193,13 +274,7 @@ def load_ltxav_component(
             )
         component = planned.component
         tokenizer_model = None
-        builder: Callable[..., torch.nn.Module]
-        if expected_role == "diffusion":
-            assert attention_kernel is not None
-            builder = partial(LTXAVModel, attention_kernel=attention_kernel)
-        elif expected_role in ("gemma3_12b", "gemma4_12b"):
-            assert attention_kernel is not None
-            builder = partial(GemmaTextModel, attention_kernel=attention_kernel)
+        if expected_role in ("gemma3_12b", "gemma4_12b"):
             tokenizer = load_tensors_from_file(
                 handle,
                 source,
@@ -211,55 +286,14 @@ def load_ltxav_component(
                     "nonempty rank-1 uint8"
                 )
             tokenizer_model = tokenizer.contiguous().numpy().tobytes()
-        elif expected_role == "text_projection":
-            if component.config == "single_linear":
-
-                def build_projection(_config: object, *, operations: Operations) -> torch.nn.Module:
-                    return operations.linear(
-                        LTX_TEXT_STACK_FEATURES,
-                        LTXAV_19B_CONFIG.caption_channels,
-                        bias=False,
-                    )
-            else:
-
-                def build_projection(_config: object, *, operations: Operations) -> torch.nn.Module:
-                    return LtxDualTextProjection(
-                        LTX_TEXT_STACK_FEATURES,
-                        LTXAV_22B_V23_CONFIG.cross_attention_dim,
-                        LTXAV_22B_V23_CONFIG.audio_cross_attention_dim,
-                        operations=operations,
-                    )
-
-            builder = build_projection
-        elif expected_role == "connectors":
-            assert attention_kernel is not None
-            builder = partial(LtxTextConnectors, attention_kernel=attention_kernel)
-        elif expected_role == "duration_head":
-            builder = LTXDurationHead
-        elif expected_role == "latent_upscaler":
-            builder = LTXLatentUpsampler
-        elif component.config is LTXAV_22B_V25_VAE_CONFIG:
-            builder = LTXDiffusionVideoVAE
-        else:
-            builder = LTXVideoVAE
-        module = _load_component(
-            component,
-            builder,
+        module = realize_ltxav_component(
+            cast("ComponentPlan[object]", component),
             compute_dtype=compute_dtype,
             fp8_matmul=ltxav_component_uses_fp8_matmul(expected_role, component),
             source_file=handle,
             source=source,
-            transform=(
-                (lambda _module, state: {key: value.float() for key, value in state.items()})
-                if expected_role == "duration_head"
-                else None
-            ),
+            attention_kernel=attention_kernel,
         )
-        if expected_role in ("gemma3_12b", "gemma4_12b"):
-            for layer in module.modules():
-                if isinstance(layer, Fp8Linear | Int8Linear | Nvfp4Linear):
-                    layer.compute_dtype = torch.float32
-                    layer.full_precision_matmul = True
         if expected_role in ("gemma3_12b", "gemma4_12b"):
             assert tokenizer_model is not None
             module = LTXAVGemmaComponent(cast("GemmaTextModel", module), tokenizer_model)
@@ -354,4 +388,5 @@ __all__ = [
     "LTXAVLoadedComponent",
     "load_ltxav_audio_codec",
     "load_ltxav_component",
+    "realize_ltxav_component",
 ]

@@ -17,6 +17,7 @@ from dinkster_inference.component_checkpoint import (
 )
 from dinkster_inference.component_registry import ComponentRegistry
 from dinkster_inference.quantization import LayerQuant
+from test_inference_assembly import ltxav_checkpoint
 from test_inference_component_registry import Header, synthetic_descriptor
 
 
@@ -205,6 +206,12 @@ def test_detected_components_without_output_behavior_name_the_missing_contract()
         plan_component_checkpoint(
             CheckpointHeader(("diffusion.weight",)), component_registry=registry
         )
+
+
+def test_ltxav_all_in_one_checkpoint_has_a_generic_composition_contract() -> None:
+    plan = plan_component_checkpoint(checkpoint=ltxav_checkpoint())
+    assert plan.descriptor.id == "dinkster.ltxav"
+    assert tuple(plan.components) == ("diffusion", "text_projection", "connectors", "vae")
 
 
 def test_composition_ambiguity_does_not_depend_on_registration_order() -> None:

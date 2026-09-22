@@ -230,8 +230,13 @@ def test_unknown_header_defaults_to_model_with_diagnostic(tmp_path: Path) -> Non
     assert profile.document["diagnostics"]
 
 
-@pytest.mark.parametrize("family", ["dinkster.wan21", "dinkster.ltxav"])
-def test_standalone_profiles_normalize_real_component_plans(family: str) -> None:
+@pytest.mark.parametrize(
+    ("family", "expected_kind"),
+    [("dinkster.wan21", "model"), ("dinkster.ltxav", "checkpoint")],
+)
+def test_standalone_profiles_normalize_real_component_plans(
+    family: str, expected_kind: output_profiles.ModelProfileKind
+) -> None:
     planned_source = (
         wan21_split_sources("t2v-14b")["diffusion"]
         if family == "dinkster.wan21"
@@ -245,7 +250,7 @@ def test_standalone_profiles_normalize_real_component_plans(family: str) -> None
         asset_size=0,
     )
     profile = output_profiles.probe_model_output_profile(source)
-    assert profile.kind == "model"
+    assert profile.kind == expected_kind
     assert profile.document["diagnostics"] == []
     components = cast(dict[str, object], profile.document["components"])
     assert components["family"] == family

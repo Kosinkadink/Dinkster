@@ -401,6 +401,8 @@ Training capabilities are delivered by the separately versioned
   guidance is available through the Python inference API and nodes. LTX-2.5
   also supports the neighborhood-attention diffusion video VAE, prompt duration
   prediction, spatio-temporal guidance, and audio-video modality guidance.
+  Load Checkpoint composes detected LTX-2 diffusion, text-projection,
+  connector, and video-VAE components from an all-in-one checkpoint.
   Load CLIP type `ltxv` accepts ordered standalone Gemma and projection
   assets for LTX-2: Gemma 3 with a single projection and checkpoint
   connectors, Gemma 3 with a dual projection, or Gemma 4 with its matching
