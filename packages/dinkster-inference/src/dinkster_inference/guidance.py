@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Generic, Protocol, TypeVar, cast
@@ -116,6 +117,15 @@ class GuidancePostCFGContext(Generic[T]):
     predictions: GuidancePredictions[T]
     reduced: T
     cfg_scale: float
+    evaluate_conditions: Callable[[GuidanceEvaluationRequest[T]], GuidancePredictions[T]] | None = (
+        None
+    )
+    """Bounded non-reentrant raw model-evaluation service for auxiliary
+    predictions (PAG-style), provided by the torch guidance executor; it
+    bypasses guidance wrappers and the pre/reduce/post phases. The caller
+    may pass a replaced request/plan but must preserve the original
+    request's input, sigma, and execution context. ``None`` keeps the
+    previous shape for existing constructors."""
 
 
 @dataclass(frozen=True)
