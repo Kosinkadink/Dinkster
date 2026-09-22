@@ -71,6 +71,7 @@ from dinkster_values import (
     parse_list_type_id,
     stable_hash,
 )
+from dinkster_values.storage import encoded_storage_meta
 
 #: Windows and macOS report shared-memory mappings rounded up to a page
 #: multiple (macOS ftruncates POSIX shm to 16 KiB pages on Apple Silicon);
@@ -736,7 +737,7 @@ class ValueCodec:
         value = Value(
             type_id=type_id,
             fingerprint=fingerprint,
-            meta=meta,
+            meta=ValueMeta(encoded_storage_meta(meta.entries, size_bytes)),
             payload=(
                 EncodedPayload.from_buffer(
                     type_id,

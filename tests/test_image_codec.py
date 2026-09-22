@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import io
 import struct
+import sys
 import threading
+import types
 import warnings
 import zlib
 from dataclasses import dataclass
@@ -66,8 +68,9 @@ class FakeTensor:
 class FakeBFloat16Tensor(FakeTensor):
     dtype: str = "torch.bfloat16"
 
-    def float(self) -> FakeTensor:
-        return FakeTensor(self.array.astype(np.float32))
+    def view(self, dtype: object) -> FakeTensor:
+        assert dtype == "uint16"
+        return FakeTensor((self.array.view(np.uint32) >> 16).astype(np.uint16))
 
     def numpy(self) -> np.ndarray:
         raise TypeError("Got unsupported ScalarType BFloat16")
@@ -147,7 +150,7 @@ def test_direct_buffer_encoding_matches_dtype_metadata_warning() -> None:
 def test_direct_buffer_encoding_matches_npy_v3_bytes_and_warnings(
     metadata: dict[str, str] | None,
 ) -> None:
-    fields = [("漢", "i4")]
+    fields = [("\u6f22", "i4")]
     dtype = np.dtype(fields) if metadata is None else np.dtype(fields, metadata=metadata)
     array = np.array([(1,)], dtype=dtype)
     with warnings.catch_warnings(record=True) as expected_warnings:
@@ -239,11 +242,13 @@ def test_torch_shaped_objects_encode_by_duck_type() -> None:
     assert tensor_bytes == encode_image_array(array)
 
 
-def test_bfloat16_torch_shaped_objects_encode_as_float32() -> None:
+def test_bfloat16_torch_shaped_objects_preserve_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(uint16="uint16"))
     array = np.linspace(0.0, 1.0, 12, dtype=np.float32).reshape(1, 2, 2, 3)
     loaded = np.asarray(decode_image_array(encode_image_array(FakeBFloat16Tensor(array))))
-    assert loaded.dtype == np.float32
-    assert np.array_equal(loaded, array)
+    assert loaded.dtype == np.dtype([("bfloat16", "<u2")])
+    assert loaded.nbytes == array.size * 2
+    assert np.array_equal(loaded["bfloat16"], (array.view(np.uint32) >> 16).astype(np.uint16))
 
 
 def test_fingerprint_is_runtime_form_independent() -> None:
@@ -299,6 +304,8 @@ def test_meta_reports_shape_and_dtype() -> None:
     assert meta == {
         "shape": (1, 4, 6, 3),
         "dtype": "float32",
+        "storage_dtype": "fp32",
+        "cost": {"ram": 288},
         "channels": {"layout": "rgb", "alpha": "none"},
         "color": {"primaries": 1, "transfer": 13, "range": 2},
     }
@@ -643,11 +650,9 @@ def test_decode_image_file_without_profile_preserves_rgb_bytes() -> None:
         dtype=np.uint8,
     )
     decoded = np.asarray(decode_image_file(BytesAsset(png_bytes(pixels))))
-    expected = pixels.astype(np.float32) / 255.0
     assert decoded.shape == (1, 2, 3, 3)
-    assert decoded.dtype == np.float32
-    assert decoded.min() >= 0.0 and decoded.max() <= 1.0
-    assert decoded[0].tobytes() == expected.tobytes()
+    assert decoded.dtype == np.uint8
+    assert decoded[0].tobytes() == pixels.tobytes()
 
 
 def test_decode_image_file_applies_embedded_icc_profile() -> None:
@@ -669,13 +674,13 @@ def test_decode_image_file_applies_embedded_icc_profile() -> None:
         outputMode="RGB",
     )
     assert transformed is not None
-    expected = np.asarray(transformed, dtype=np.float32) / 255.0
-    naive = pixels.astype(np.float32) / 255.0
+    expected = np.asarray(transformed, dtype=np.uint8)
+    naive = pixels
     decoded = np.asarray(decode_image_file(BytesAsset(buffer.getvalue())))
 
     assert not np.array_equal(expected, naive)
-    assert decoded[0, 0, 0, 1] > 0.9 and decoded[0, 0, 0, 0] < 0.1
-    assert decoded[0, 0, 1, 0] > 0.9 and decoded[0, 0, 1, 1] < 0.1
+    assert decoded[0, 0, 0, 1] > 0.9 * 255 and decoded[0, 0, 0, 0] < 0.1 * 255
+    assert decoded[0, 0, 1, 0] > 0.9 * 255 and decoded[0, 0, 1, 1] < 0.1 * 255
     assert np.array_equal(decoded[0], expected)
 
 
@@ -690,8 +695,7 @@ def test_decode_image_file_malformed_icc_profile_falls_back_to_rgb() -> None:
     )
 
     decoded = np.asarray(decode_image_file(BytesAsset(buffer.getvalue())))
-    expected = pixels.astype(np.float32) / 255.0
-    assert decoded[0].tobytes() == expected.tobytes()
+    assert decoded[0].tobytes() == pixels.tobytes()
 
 
 def test_decode_image_file_cmyk_with_profile_returns_rgb_batch() -> None:
@@ -713,13 +717,12 @@ def test_decode_image_file_cmyk_with_profile_returns_rgb_batch() -> None:
         outputMode="RGB",
     )
     assert transformed is not None
-    expected = np.asarray(transformed, dtype=np.float32) / 255.0
-    naive = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+    expected = np.asarray(transformed, dtype=np.uint8)
+    naive = np.asarray(image.convert("RGB"), dtype=np.uint8)
 
     decoded = np.asarray(decode_image_file(BytesAsset(buffer.getvalue(), name="cmyk.tiff")))
     assert decoded.shape == (1, 2, 2, 3)
-    assert decoded.dtype == np.float32
-    assert decoded.min() >= 0.0 and decoded.max() <= 1.0
+    assert decoded.dtype == np.uint8
     assert not np.array_equal(expected, naive)
     assert np.array_equal(decoded[0], expected)
 
@@ -737,7 +740,7 @@ def test_decode_image_file_preserves_rgba() -> None:
     PIL.Image.fromarray(rgba, mode="RGBA").save(buffer, format="PNG")
     decoded = np.asarray(decode_image_file(BytesAsset(buffer.getvalue())))
     assert decoded.shape == (1, 2, 2, 4)
-    np.testing.assert_array_equal(decoded[0], rgba.astype(np.float32) / 255.0)
+    np.testing.assert_array_equal(decoded[0], rgba)
 
 
 def test_decode_image_file_preserves_palette_transparency() -> None:
@@ -750,7 +753,7 @@ def test_decode_image_file_preserves_palette_transparency() -> None:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG", transparency=0)
     decoded = np.asarray(decode_image_file(BytesAsset(buffer.getvalue())))
-    np.testing.assert_array_equal(decoded, [[[[1, 0, 0, 0], [0, 1, 0, 1]]]])
+    np.testing.assert_array_equal(decoded, [[[[255, 0, 0, 0], [0, 255, 0, 255]]]])
 
 
 def test_decode_image_file_rejects_non_images() -> None:
