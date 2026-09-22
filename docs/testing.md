@@ -41,10 +41,10 @@ makes, and these rules keep it that way as the codebase grows.
 ## Platform golden evidence
 
 Portable golden baselines remain in Dinkster. Platform-specific variants live
-only in the sibling `dinkster-evidence` checkout under
+only in the maintainer evidence checkout under
 `platform-goldens/files/<Dinkster-relative-path>`; its manifest records each
 path, platform key, and SHA-256 digest. `DINKSTER_EVIDENCE_ROOT` selects that
-checkout and defaults to the sibling `dinkster-evidence` directory.
+checkout and defaults to the expected sibling location.
 
 Golden generators write Linux baselines to Dinkster. On other platforms they
 route variant output to the evidence layout instead of creating a sidecar in
