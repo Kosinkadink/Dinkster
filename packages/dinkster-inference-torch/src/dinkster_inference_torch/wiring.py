@@ -29,7 +29,7 @@ import importlib
 import math
 from collections.abc import Callable, Mapping, Sequence
 from copy import copy
-from dataclasses import replace
+from dataclasses import fields, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
 
@@ -2624,7 +2624,12 @@ def load_runtime(
     if family_registry is not None:
         registered_family = family_registry.get(plan.family.id)
         if registered_family is not None:
-            plan = cast(NativeAssemblyPlan, replace(cast(Any, plan), family=registered_family))
+            family_field = next(
+                (field for field in fields(cast(Any, plan)) if field.name == "family"),
+                None,
+            )
+            if family_field is not None and family_field.init:
+                plan = cast(NativeAssemblyPlan, replace(cast(Any, plan), family=registered_family))
     loader = _resolve_assembly_loader(resolution.registration)
     if diffusion_dtype is None:
         diffusion_dtype = _torch_dtype(default_diffusion_dtype(plan.family.id))
