@@ -173,7 +173,13 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
-    subprocess.run(["git", "-C", str(root), "commit", "-m", "fixture"], check=True)
+    tree = subprocess.run(
+        ["git", "-C", str(root), "write-tree"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (root / ".git/HEAD").write_text(f"{tree}\n", encoding="ascii")
     archive = build_source_archive(root, "1.2.3", tmp_path)
     with zipfile.ZipFile(archive) as source:
         assert source.namelist() == ["scripts/", "src/", "src/package.py"]
