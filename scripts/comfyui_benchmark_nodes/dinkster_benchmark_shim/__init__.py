@@ -78,6 +78,7 @@ _QUALITY_CAPTURED = False
 _QUALITY_CAPTURE_ARMED = False
 _QUALITY_CAPTURE_SEED: int | None = None
 _FIRST_STEP_CAPTURE = None
+_SECOND_STEP_CAPTURE = None
 _H3_FORWARD_TRACE = None
 _H3_FORWARD_ORIGINAL = None
 _ALLOCATOR_WINDOW: dict[str, object] | None = None
@@ -104,19 +105,21 @@ def _capture_prepare_callback(model, steps, x0_output):
     callback = _original_prepare_callback(model, steps, x0_output)
 
     def capture(step, denoised, current, total):
-        global _FIRST_STEP_CAPTURE
+        global _FIRST_STEP_CAPTURE, _SECOND_STEP_CAPTURE
         callback(step, denoised, current, total)
-        if (
-            step == 1
-            and _QUALITY_CAPTURE_ARMED
-            and _FIRST_STEP_CAPTURE is None
-            and _QUALITY_OUTPUT_DIR
-        ):
-            _FIRST_STEP_CAPTURE = _capture_nested_tensor(
-                current,
-                Path(_QUALITY_OUTPUT_DIR),
-                "first_step",
-            )
+        if _QUALITY_CAPTURE_ARMED and _QUALITY_OUTPUT_DIR:
+            if step == 1 and _FIRST_STEP_CAPTURE is None:
+                _FIRST_STEP_CAPTURE = _capture_nested_tensor(
+                    current,
+                    Path(_QUALITY_OUTPUT_DIR),
+                    "first_step",
+                )
+            elif step == 2 and _SECOND_STEP_CAPTURE is None:
+                _SECOND_STEP_CAPTURE = _capture_nested_tensor(
+                    current,
+                    Path(_QUALITY_OUTPUT_DIR),
+                    "second_step",
+                )
 
     return capture
 
@@ -455,6 +458,8 @@ class DinksterBenchmarkSink:
                 )
             if _FIRST_STEP_CAPTURE is not None:
                 capture["first_step"] = _FIRST_STEP_CAPTURE
+            if _SECOND_STEP_CAPTURE is not None:
+                capture["second_step"] = _SECOND_STEP_CAPTURE
             if _H3_FORWARD_TRACE is not None:
                 capture["forward_trace"] = _H3_FORWARD_TRACE
             observation["quality_capture"] = capture
