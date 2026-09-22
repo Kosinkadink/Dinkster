@@ -13,9 +13,9 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from dinkster.engine_feed import parse_channel, parse_manifest
 
 import scripts.build_engine_feed as builder
+from dinkster.engine_feed import parse_channel, parse_manifest
 from scripts.build_engine_feed import (
     CONTROL_ENVIRONMENT,
     EXECUTION_ENVIRONMENT,
@@ -28,6 +28,8 @@ from scripts.build_engine_feed import (
     build_manifest,
     cell_marker_environment,
     code_lock_closure,
+    control_runtime_descriptor,
+    control_runtime_lock_closure,
     create_base_archive,
     load_cell_config,
     normalize_name,
@@ -617,6 +619,15 @@ def test_archive_preserves_internal_links_and_rejects_external(tmp_path: Path) -
     assert members["lib/link.so"].issym() and members["lib/link.so"].linkname == "real.so"
 
 
+@pytest.mark.parametrize("name", ["back\\slash", "control\nname", "delete\x7fname"])
+def test_archive_rejects_nonportable_member_names(tmp_path: Path, name: str) -> None:
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / name).write_text("unsafe")
+    with pytest.raises(FeedError, match="not portable"):
+        create_base_archive(staging, tmp_path / "out.tar.gz")
+
+
 def test_native_only_builds_are_enforced() -> None:
     config = load_cell_config(CELLS_PATH, "mac-arm64")
     with pytest.raises(FeedError, match="natively only"):
@@ -969,4 +980,105 @@ def test_code_layer_requires_frontend_wheel(tmp_path: Path) -> None:
             load_cell_config(CELLS_PATH, "linux-cu128"),
             {"torch": "2.11.0+cu128"},
             tmp_path / "missing.whl",
+        )
+
+
+def test_pack_wheels_preserve_manifest_relative_static_paths() -> None:
+    def strings(value: object):
+        if isinstance(value, dict):
+            for child in value.values():
+                yield from strings(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from strings(child)
+        elif isinstance(value, str):
+            yield value
+
+    for manifest_path in sorted((ROOT / "packages").glob("*/dinkster-pack.toml")):
+        manifest = builder.tomllib.loads(manifest_path.read_text())
+        references = {value for value in strings(manifest) if value.startswith("src/")}
+        if not references:
+            continue
+        project = builder.tomllib.loads((manifest_path.parent / "pyproject.toml").read_text())
+        included = project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
+        pack_root = Path(included["dinkster-pack.toml"]).parent.as_posix()
+        for reference in references:
+            destinations = [
+                destination + reference.removeprefix(source)
+                for source, destination in included.items()
+                if reference == source or reference.startswith(source + "/")
+            ]
+            assert f"{pack_root}/{reference}" in destinations, (
+                f"{manifest_path}: wheel does not preserve {reference} relative to its manifest"
+            )
+
+
+def test_control_runtime_is_bounded_to_management_dependencies() -> None:
+    closure = control_runtime_lock_closure(
+        builder.load_lock(ROOT), load_cell_config(CELLS_PATH, "linux-cu128")
+    )
+    assert set(closure) == {
+        "blake3",
+        "dinkster",
+        "dinkster-assets",
+        "dinkster-caches",
+        "dinkster-memory",
+        "dinkster-protocol",
+        "dinkster-registry",
+        "dinkster-schema",
+        "dinkster-values",
+        "dinkster-workers",
+        "packaging",
+        "psutil",
+    }
+    assert not any(name.startswith("dinkster-model-") for name in closure)
+
+
+def test_control_runtime_descriptor_is_relative_and_canonical() -> None:
+    descriptor = control_runtime_descriptor(
+        commit=COMMIT,
+        platform="linux-x86_64",
+        artifact_path="control/linux-x86_64/" + "b" * 64 + ".tar.gz",
+        sha256="b" * 64,
+        size=123,
+        python="bin/python3",
+    )
+    assert descriptor == {
+        "format": "dinkster.control-runtime/1",
+        "commit": COMMIT,
+        "platform": "linux-x86_64",
+        "artifact": {
+            "path": "control/linux-x86_64/" + "b" * 64 + ".tar.gz",
+            "sha256": "b" * 64,
+            "size": 123,
+        },
+        "python": "bin/python3",
+        "invocation": ["<python>", "-I", "-m", "dinkster.cli"],
+    }
+    with pytest.raises(FeedError, match="normalized relative"):
+        control_runtime_descriptor(
+            commit=COMMIT,
+            platform="linux-x86_64",
+            artifact_path="../escape.tgz",
+            sha256="b" * 64,
+            size=123,
+            python="bin/python3",
+        )
+    with pytest.raises(FeedError, match="normalized relative"):
+        control_runtime_descriptor(
+            commit=COMMIT,
+            platform="linux-x86_64",
+            artifact_path="control/runtime.tgz",
+            sha256="b" * 64,
+            size=123,
+            python="/bin/python",
+        )
+    with pytest.raises(FeedError, match="content-addressed"):
+        control_runtime_descriptor(
+            commit=COMMIT,
+            platform="linux-x86_64",
+            artifact_path="control/linux-x86_64/runtime.tar.gz",
+            sha256="b" * 64,
+            size=123,
+            python="bin/python3",
         )

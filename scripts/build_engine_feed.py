@@ -12,11 +12,11 @@ cross-build. The base archive contains a python-build-standalone interpreter
 installed by uv, exactly the pinned torch/torchvision build for the cell and
 the transitive closure that resolution actually installs, and a pinned uv
 executable the installer uses with UV_OFFLINE=1. The base id hashes only the
-canonical cell/platform/interpreter identity plus the resolved base closure,
-so kitchen, aimdo and every other code-layer pin can change without a new
-base. The code layer is the hash-locked wheelhouse uv.lock names for the cell
-through marker-true runtime edges, minus the distributions the built base
-actually installed, plus the workspace release wheels, the git
+canonical cell/platform/interpreter identity, bundled uv digest and resolved
+base closure, so kitchen, aimdo and every other code-layer pin can change
+without a new base. The code layer is the hash-locked wheelhouse uv.lock names
+for the cell through marker-true runtime edges, minus the distributions the
+built base actually installed, plus the workspace release wheels, the git
 dependency built to a local wheel, and the pinned frontend bundle wheel from
 scripts/build_release.py and scripts/release_sources.json. Each wheel record
 carries its exact distribution name, version and sha256, from which the
@@ -29,9 +29,11 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import importlib
 import ipaddress
 import json
 import os
+import posixpath
 import re
 import shutil
 import stat
@@ -41,11 +43,11 @@ import tarfile
 import tempfile
 import time
 import tomllib
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass
-from email.message import Message
 from email.parser import Parser
 from pathlib import Path
 from typing import Any
@@ -59,6 +61,7 @@ MANIFEST_FORMAT = "dinkster.engine/1"
 CHANNEL_FORMAT = "dinkster.engine-channel/1"
 CELLS_FORMAT = "dinkster.engine-cells/1"
 BASE_IDENTITY_SCHEMA = "dinkster.engine-base-id/1"
+CONTROL_RUNTIME_FORMAT = "dinkster.control-runtime/1"
 MINIMUM_LAUNCHER_VERSION = "0.0.1"
 
 CONTROL_ENVIRONMENT = "control"
@@ -70,6 +73,29 @@ STORE_DIR = "store"
 ENGINE_DIR = "engine"
 CHANNELS_DIR = "channels"
 RECORDS_PATH = f"{BASE_DIR}/records.json"
+CONTROL_DIR = "control"
+
+CONTROL_RUNTIME_ROOTS = frozenset(
+    {
+        "dinkster",
+        "dinkster-assets",
+        "dinkster-caches",
+        "dinkster-memory",
+        "dinkster-protocol",
+        "dinkster-registry",
+        "dinkster-schema",
+        "dinkster-values",
+        "dinkster-workers",
+    }
+)
+CONTROL_RUNTIME_FORBIDDEN = frozenset(
+    {
+        "dinkster-frontend",
+        "dinkster-inference-torch",
+        "torch",
+        "torchvision",
+    }
+)
 
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 _GZIP_EMPTY_MTIME = 0
@@ -350,16 +376,20 @@ def _validated_link_target(member_rel: str, target: str) -> None:
     Absolute targets and escapes would break relocatability or point outside
     the archive, so the build refuses them instead of shipping them.
     """
-    if target.startswith("/"):
+    if not target or target.startswith("/") or re.match(r"^[A-Za-z]:", target):
         raise FeedError(f"base archive would contain absolute symlink {member_rel} -> {target}")
-    parent = os.path.dirname(member_rel)
-    resolved = os.path.normpath(os.path.join(parent, target))
-    if resolved.startswith(".."):
+    if "\\" in target or any(ord(char) < 32 or ord(char) == 127 for char in target):
+        raise FeedError(f"base archive symlink target is not portable: {target!r}")
+    parent = posixpath.dirname(member_rel)
+    resolved = posixpath.normpath(posixpath.join(parent, target))
+    if resolved == ".." or resolved.startswith("../"):
         raise FeedError(f"base archive symlink {member_rel} -> {target} escapes the base root")
 
 
 def _tar_entry_info(path: Path, staging_root: Path) -> tarfile.TarInfo:
     relative = path.relative_to(staging_root).as_posix()
+    if "\\" in relative or any(ord(char) < 32 or ord(char) == 127 for char in relative):
+        raise FeedError(f"base archive path is not portable: {relative!r}")
     link_target = None
     if path.is_symlink():
         link_target = os.readlink(path)
@@ -718,6 +748,29 @@ def code_lock_closure(
     return {name: entry for name, entry in closure.items() if name not in base_packages}
 
 
+def control_runtime_lock_closure(
+    lock: dict[str, dict[str, Any]], config: CellConfig
+) -> dict[str, dict[str, Any]]:
+    """The intentionally small closure used by the packaged bootstrap.
+
+    The umbrella wheel is installed without dependencies because its metadata
+    describes the complete execution product. The other roots are the control
+    modules imported by engine installation and generation management; their
+    ordinary runtime dependencies are followed from the lock.
+    """
+    closure = locked_closure(
+        lock,
+        set(CONTROL_RUNTIME_ROOTS - {"dinkster"}),
+        cell_marker_environment(config),
+    )
+    closure["dinkster"] = lock["dinkster"]
+    forbidden = sorted(CONTROL_RUNTIME_FORBIDDEN & closure.keys())
+    forbidden.extend(sorted(name for name in closure if name.startswith("dinkster-model-")))
+    if forbidden:
+        raise FeedError(f"control runtime includes forbidden distributions: {forbidden}")
+    return closure
+
+
 def wheel_filename_tags(filename: str) -> tuple[str, str, frozenset[str]]:
     if not filename.endswith(".whl"):
         raise FeedError(f"not a wheel filename: {filename}")
@@ -802,7 +855,7 @@ def _wheel_semantic_rank(filename: str) -> tuple[int, int, tuple[int, int, int]]
     return (abi_class, baseline, min(_platform_preference(platform) for platform in platforms))
 
 
-def _wheel_preference(filename: str) -> tuple[int, tuple[int, int, int], str]:
+def _wheel_preference(filename: str) -> tuple[int, int, tuple[int, int, int], str]:
     """The semantic rank, with the filename only for deterministic order."""
     return (*_wheel_semantic_rank(filename), filename)
 
@@ -889,18 +942,18 @@ def _download_locked_wheel(wheel: dict[str, Any], destination: Path) -> str:
                         break
                     digest.update(block)
                     target.write(block)
-            break
+            partial.replace(destination)
+            actual = digest.hexdigest()
+            if actual != expected_sha:
+                destination.unlink(missing_ok=True)
+                raise FeedError(f"downloaded {url} hashes to {actual}, uv.lock says {expected_sha}")
+            return actual
         except (urllib.error.URLError, OSError) as error:
             partial.unlink(missing_ok=True)
             if attempt == 2:
                 raise FeedError(f"wheel download failed after retries, {url}: {error}") from None
             time.sleep(5 * (attempt + 1))
-    partial.replace(destination)
-    actual = digest.hexdigest()
-    if actual != expected_sha:
-        destination.unlink(missing_ok=True)
-        raise FeedError(f"downloaded {url} hashes to {actual}, uv.lock says {expected_sha}")
-    return actual
+    raise AssertionError("download retry loop exhausted without returning")
 
 
 @dataclass(frozen=True)
@@ -956,7 +1009,7 @@ def _refuse_base_code_overlap(base_packages: dict[str, str], entries: list[Wheel
         raise FeedError(f"distributions present in both base and code layers: {duplicated}")
 
 
-def _wheel_requires_dist(wheel_file: Path) -> list[Message]:
+def _wheel_requires_dist(wheel_file: Path) -> list[str]:
     with zipfile.ZipFile(wheel_file) as archive:
         metadata_paths = [
             name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
@@ -1057,6 +1110,147 @@ def build_code_layer(
 
 
 # ---------------------------------------------------------------------------
+# Packaged control runtime
+
+
+def control_runtime_descriptor(
+    *,
+    commit: str,
+    platform: str,
+    artifact_path: str,
+    sha256: str,
+    size: int,
+    python: str,
+) -> dict[str, object]:
+    """Create the canonical descriptor consumed by native packaging."""
+    if COMMIT_PATTERN.fullmatch(commit) is None:
+        raise FeedError("control runtime commit must be a full Git commit")
+    if re.fullmatch(r"[a-z0-9_]+-[a-z0-9_]+", platform) is None:
+        raise FeedError("control runtime platform must be a normalized OS-architecture key")
+    for label, value in (("artifact", artifact_path), ("python", python)):
+        path = Path(value)
+        if path.is_absolute() or not value or ".." in path.parts or path.as_posix() != value:
+            raise FeedError(f"control runtime {label} path must be a normalized relative path")
+    if re.fullmatch(r"[0-9a-f]{64}", sha256) is None or size < 1:
+        raise FeedError("control runtime artifact identity is invalid")
+    if artifact_path != f"{CONTROL_DIR}/{platform}/{sha256}.tar.gz":
+        raise FeedError("control runtime artifact path must be content-addressed by its SHA-256")
+    return {
+        "format": CONTROL_RUNTIME_FORMAT,
+        "commit": commit,
+        "platform": platform,
+        "artifact": {"path": artifact_path, "sha256": sha256, "size": size},
+        "python": python,
+        "invocation": ["<python>", "-I", "-m", "dinkster.cli"],
+    }
+
+
+def build_control_runtime(
+    uv: str,
+    root: Path,
+    feed_dir: Path,
+    config: CellConfig,
+    commit: str,
+) -> dict[str, object]:
+    """Build the immutable bootstrap used before an engine is installed."""
+    require_native_cell(config)
+    platform_name = f"{config.os_name}-{config.arch}"
+    lock = load_lock(root)
+    closure = control_runtime_lock_closure(lock, config)
+    interpreter_dir = _uv_python_install_dir(uv, config.python_version)
+
+    with tempfile.TemporaryDirectory(prefix="dinkster-control-") as work:
+        work_dir = Path(work)
+        staging_root = work_dir / "runtime"
+        wheels_dir = work_dir / "wheels"
+        wheels_dir.mkdir()
+        shutil.copytree(interpreter_dir, staging_root, symlinks=True)
+        python = _staging_python(staging_root, config.os_name)
+        built = _build_workspace_wheels(uv, root, wheels_dir / "workspace")
+        wheels: list[Path] = []
+        for name, entry in sorted(closure.items()):
+            source = entry["source"]
+            if _is_local_source(source):
+                wheel = built.get(normalize_name(name))
+                if wheel is None:
+                    raise FeedError(f"workspace build produced no wheel for {name}")
+            elif "git" in source:
+                output = wheels_dir / f"git-{name}"
+                output.mkdir()
+                wheel = _build_git_dependency_wheel(uv, source["git"], output)
+            else:
+                locked = select_cell_wheel(
+                    name, entry.get("wheels", []), config.os_name, config.arch
+                )
+                output = wheels_dir / locked["url"].rsplit("/", 1)[-1]
+                _download_locked_wheel(locked, output)
+                wheel = output
+            wheels.append(wheel)
+        _run(
+            [
+                uv,
+                "pip",
+                "install",
+                "--python",
+                str(python),
+                "--no-config",
+                "--break-system-packages",
+                "--no-deps",
+                *map(str, wheels),
+            ]
+        )
+        installed = _installed_packages(python)
+        missing = sorted(CONTROL_RUNTIME_ROOTS - installed.keys())
+        forbidden = sorted(CONTROL_RUNTIME_FORBIDDEN & installed.keys())
+        forbidden.extend(sorted(name for name in installed if name.startswith("dinkster-model-")))
+        if missing or forbidden:
+            raise FeedError(
+                f"invalid control runtime packages; missing={missing}, forbidden={forbidden}"
+            )
+        probe_root = work_dir / "probe-root"
+        _run(
+            [
+                str(python),
+                "-I",
+                "-m",
+                "dinkster.cli",
+                "generations",
+                "--root",
+                str(probe_root),
+                "--json",
+            ]
+        )
+        shutil.rmtree(probe_root)
+        _clean_site_caches(staging_root)
+        python_rel = python.relative_to(staging_root).as_posix()
+        temporary_archive = work_dir / "control-runtime.tar.gz"
+        create_base_archive(staging_root, temporary_archive)
+        digest = sha256_file(temporary_archive)
+        archive_rel = f"{CONTROL_DIR}/{platform_name}/{digest}.tar.gz"
+        archive = feed_dir / archive_rel
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        if archive.is_file() and sha256_file(archive) != digest:
+            raise FeedError(f"existing control runtime does not match its digest: {archive}")
+        if not archive.is_file():
+            shutil.copyfile(temporary_archive, archive)
+
+    descriptor = control_runtime_descriptor(
+        commit=commit,
+        platform=platform_name,
+        artifact_path=archive_rel,
+        sha256=digest,
+        size=archive.stat().st_size,
+        python=python_rel,
+    )
+    descriptor_path = feed_dir / CONTROL_DIR / commit / f"{platform_name}.json"
+    descriptor_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor_path.write_text(
+        json.dumps(descriptor, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return descriptor
+
+
+# ---------------------------------------------------------------------------
 # Manifests
 
 
@@ -1131,7 +1325,7 @@ def upload_feed(feed_dir: Path, endpoint: str, bucket: str) -> int:
         except ValueError:
             raise FeedError(f"refusing non-loopback upload endpoint {endpoint}") from None
     try:
-        import boto3
+        boto3 = importlib.import_module("boto3")
     except ImportError as error:  # build-only dependency
         raise FeedError(f"upload requires boto3: {error}") from None
     client = boto3.client("s3", endpoint_url=endpoint)
@@ -1152,6 +1346,11 @@ def git_commit(root: Path) -> str:
     return commit
 
 
+def require_clean_checkout(root: Path) -> None:
+    if _run(["git", "-C", str(root), "status", "--porcelain"]):
+        raise FeedError("control runtime must be built from a clean checkout")
+
+
 # ---------------------------------------------------------------------------
 # CLI
 
@@ -1167,6 +1366,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--evidence-file", type=Path, help="github-live validation evidence JSON")
     parser.add_argument("--upload-endpoint", help="loopback-only S3 endpoint for upload")
     parser.add_argument("--upload-bucket", help="S3 bucket for upload")
+    parser.add_argument(
+        "--control-runtime",
+        action="store_true",
+        help="build the minimal packaged bootstrap instead of an engine feed cell",
+    )
     args = parser.parse_args(argv)
     try:
         return _main(args)
@@ -1179,15 +1383,23 @@ def _main(args: argparse.Namespace) -> int:
     root = Path(__file__).resolve().parent.parent
     feed_dir = args.feed.resolve()
     commit = git_commit(root)
+    if getattr(args, "control_runtime", False):
+        require_clean_checkout(root)
 
     if args.channel is not None:
         _write_channel(root, feed_dir, commit, args)
     else:
         if not args.cells:
             raise FeedError("nothing to do: pass --cells or --channel")
-        frontend_wheel = _resolve_frontend_wheel(root, args)
+        frontend_wheel = None if args.control_runtime else _resolve_frontend_wheel(root, args)
         for cell_name in [cell.strip() for cell in args.cells.split(",") if cell.strip()]:
             config = load_cell_config(root / "scripts/engine_cells.json", cell_name)
+            if args.control_runtime:
+                descriptor = build_control_runtime(args.uv, root, feed_dir, config, commit)
+                artifact = descriptor["artifact"]
+                assert isinstance(artifact, dict)
+                print(f"control runtime written: {artifact['path']}")
+                continue
             base = build_base(args.uv, config, feed_dir)
             entries = build_code_layer(
                 args.uv, root, feed_dir, config, base.packages, frontend_wheel

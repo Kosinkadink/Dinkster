@@ -83,7 +83,7 @@ def test_efficient_sam_wheel_contains_pack_runtime_and_manifest() -> None:
     assert included["dinkster_vision_efficient_sam_pack"] == "dinkster_vision_efficient_sam_pack"
     assert (
         included["src/dinkster_nodes_vision/efficient_sam"]
-        == "dinkster_vision_efficient_sam_pack/dinkster_nodes_vision/efficient_sam"
+        == "dinkster_vision_efficient_sam_pack/src/dinkster_nodes_vision/efficient_sam"
     )
 
 

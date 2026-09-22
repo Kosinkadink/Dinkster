@@ -344,6 +344,27 @@ def test_configured_serving_python_skips_standard_pack_provisioning(
     assert prepared.python == "/runtime/python"
 
 
+def test_execution_python_skips_standard_pack_provisioning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster import serve
+    from dinkster.compose import default_pack_spec
+
+    def unexpected(*_args: object, **_kwargs: object) -> Path:
+        raise AssertionError("engine execution interpreter must not provision")
+
+    monkeypatch.delenv("DINKSTER_SERVING_PYTHON")
+    monkeypatch.setattr(serve, "ensure_pack_venv", unexpected)
+    prepared = serve._prepare_default_pack(
+        default_pack_spec("dinkster-vision-hed"),
+        venv_root=tmp_path / "runtime-venvs",
+        accelerator="cpu",
+        execution_python="/engine/execution/python",
+    )
+
+    assert prepared.python == "/engine/execution/python"
+
+
 def test_only_standard_vision_defaults_are_selected_for_runtime_provisioning() -> None:
     from dinkster import serve
     from dinkster.compose import default_pack_spec
@@ -396,6 +417,45 @@ def test_bundled_standard_pack_exposes_its_artifact_module(
     assert prepared.python == str(selected_python)
     assert prepared.env["PYTHONPATH"] == str(artifact)
     assert calls[0]["workspace_packages"] == ()
+
+
+def test_bundled_standard_pack_preserves_src_relative_artifact_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_server import PackInfo
+
+    from dinkster import serve
+    from dinkster.compose import PackSpec
+
+    artifact = tmp_path / "artifact"
+    module = artifact / "src" / "bundled_pack"
+    module.mkdir(parents=True)
+    (module / "__init__.py").write_text("")
+    legacy_stub = artifact / "bundled_pack"
+    legacy_stub.mkdir()
+    (legacy_stub / "__init__.py").write_text("")
+    manifest = artifact / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "bundled-pack"\nnamespaces = ["bundled"]\n'
+        '[pack.entry]\nnodes = "bundled_pack:NODES"\n'
+    )
+    monkeypatch.setenv("DINKSTER_SERVING_PYTHON", "/runtime/python")
+
+    prepared = serve._prepare_default_pack(
+        PackSpec(
+            manifest=manifest,
+            packs={
+                "bundled-pack": PackInfo(
+                    display_name="Bundled pack",
+                    artifact_digest=f"blake3:{'1' * 64}",
+                )
+            },
+        ),
+        venv_root=tmp_path / "runtime-venvs",
+        accelerator="cpu",
+    )
+
+    assert prepared.env["PYTHONPATH"] == str(artifact / "src")
 
 
 _ADA = "0, GPU-aaaaaaaa-1111-2222-3333-444444444444, 8.9, NVIDIA GeForce RTX 4090"

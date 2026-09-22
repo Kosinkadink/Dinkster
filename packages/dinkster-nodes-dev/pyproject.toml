@@ -12,5 +12,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/dinkster_nodes_dev"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"dinkster-pack.toml" = "dinkster_nodes_dev_pack/dinkster-pack.toml"
+"src/dinkster_nodes_dev" = "dinkster_nodes_dev_pack/src/dinkster_nodes_dev"
+
 [tool.uv.sources]
 dinkster-api = { workspace = true }

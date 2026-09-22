@@ -75,9 +75,12 @@ def supervisor_command(
     *,
     host: str = "127.0.0.1",
     port: int = 3639,
+    instance: str | None = None,
     engine_args: tuple[str, ...] = (),
 ) -> list[str]:
     root, data_root = root.resolve(), data_root.resolve()
+    if instance == "":
+        raise InstallError("supervisor instance must not be empty")
     if data_root.is_relative_to(root) or root.is_relative_to(data_root):
         raise InstallError("data root must be separate from the engine install root")
     installer = Installer(root)
@@ -100,7 +103,7 @@ def supervisor_command(
         "--port",
         str(port),
         "--instance",
-        uuid.uuid4().hex,
+        instance if instance is not None else uuid.uuid4().hex,
         "--",
         str(control),
         "-I",
@@ -119,7 +122,22 @@ def supervisor_command(
     ]
 
 
-def serve(root: Path, data_root: Path, *, host: str, port: int, args: tuple[str, ...] = ()) -> int:
+def serve(
+    root: Path,
+    data_root: Path,
+    *,
+    host: str,
+    port: int,
+    instance: str | None = None,
+    args: tuple[str, ...] = (),
+) -> int:
     return subprocess.call(
-        supervisor_command(root, data_root, host=host, port=port, engine_args=args)
+        supervisor_command(
+            root,
+            data_root,
+            host=host,
+            port=port,
+            instance=instance,
+            engine_args=args,
+        )
     )

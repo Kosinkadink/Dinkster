@@ -16,7 +16,7 @@ packages = ["src/dinkster_nodes_generation"]
 "dinkster-pack.toml" = "dinkster_nodes_generation_pack/dinkster-pack.toml"
 "comfy-aliases.json" = "dinkster_nodes_generation_pack/comfy-aliases.json"
 "comfy-groups.json" = "dinkster_nodes_generation_pack/comfy-groups.json"
-"src/dinkster_nodes_generation" = "dinkster_nodes_generation_pack/dinkster_nodes_generation"
+"src/dinkster_nodes_generation" = "dinkster_nodes_generation_pack/src/dinkster_nodes_generation"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }

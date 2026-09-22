@@ -29,7 +29,7 @@ packages = ["src/dinkster_native"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "dinkster-pack.toml" = "dinkster_native_pack/dinkster-pack.toml"
-"src/dinkster_native" = "dinkster_native_pack/dinkster_native"
+"src/dinkster_native" = "dinkster_native_pack/src/dinkster_native"
 
 [tool.uv.sources]
 dinkster-assets = { workspace = true }

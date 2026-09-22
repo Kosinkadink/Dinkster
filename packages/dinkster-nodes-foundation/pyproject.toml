@@ -16,7 +16,7 @@ packages = ["src/dinkster_nodes_foundation"]
 "dinkster-pack.toml" = "dinkster_nodes_foundation_pack/dinkster-pack.toml"
 "comfy-aliases.json" = "dinkster_nodes_foundation_pack/comfy-aliases.json"
 "docs" = "dinkster_nodes_foundation_pack/docs"
-"src/dinkster_nodes_foundation" = "dinkster_nodes_foundation_pack/dinkster_nodes_foundation"
+"src/dinkster_nodes_foundation" = "dinkster_nodes_foundation_pack/src/dinkster_nodes_foundation"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }

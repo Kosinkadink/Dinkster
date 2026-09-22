@@ -23,7 +23,7 @@ packages = ["src/dinkster_nodes_media_io"]
 [tool.hatch.build.targets.wheel.force-include]
 "dinkster-pack.toml" = "dinkster_nodes_media_io_pack/dinkster-pack.toml"
 "comfy-aliases.json" = "dinkster_nodes_media_io_pack/comfy-aliases.json"
-"src/dinkster_nodes_media_io" = "dinkster_nodes_media_io_pack/dinkster_nodes_media_io"
+"src/dinkster_nodes_media_io" = "dinkster_nodes_media_io_pack/src/dinkster_nodes_media_io"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }

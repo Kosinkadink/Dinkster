@@ -15,3 +15,9 @@
 - Named projects have independent install roots and supervisor processes while
   sharing downloaded engine objects. Installation and engine garbage collection
   do not change project data roots.
+- Project serving accepts a launcher identity that the supervisor reports from
+  its status endpoint for exact-instance readiness checks.
+- Native packaging can bundle a Dinkster-built control runtime containing only
+  the interpreter and engine installation/generation management dependencies.
+  Its canonical descriptor pins the source commit, artifact path, byte size,
+  SHA-256 digest, interpreter path, and isolated `dinkster.cli` invocation.

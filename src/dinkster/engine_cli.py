@@ -18,6 +18,12 @@ from .installer import Installer
 from .setup import default_roots
 
 
+def _nonempty_instance(value: str) -> str:
+    if not value:
+        raise argparse.ArgumentTypeError("instance must not be empty")
+    return value
+
+
 def _generation(installer: Installer, number: int) -> dict[str, object]:
     environment = installer.environment_of(number)
     result: dict[str, object] = {
@@ -58,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--data-root", type=Path)
             command.add_argument("--host", default="127.0.0.1")
             command.add_argument("--port", type=int, default=3639)
+            command.add_argument("--instance", type=_nonempty_instance)
     project = commands.add_parser("project")
     project_commands = project.add_subparsers(dest="action", required=True)
     create = project_commands.add_parser("create")
@@ -90,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.data_root or library,
                     host=args.host,
                     port=args.port,
+                    instance=args.instance,
                     args=tuple(remaining),
                 )
             installer = Installer(

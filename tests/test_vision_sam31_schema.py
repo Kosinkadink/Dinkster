@@ -178,7 +178,7 @@ def test_sam31_wheel_contains_pack_runtime_manifest_and_license() -> None:
     assert included["dinkster_vision_sam31_pack"] == "dinkster_vision_sam31_pack"
     assert (
         included["src/dinkster_nodes_vision/sam31"]
-        == "dinkster_vision_sam31_pack/dinkster_nodes_vision/sam31"
+        == "dinkster_vision_sam31_pack/src/dinkster_nodes_vision/sam31"
     )
 
 

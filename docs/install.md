@@ -111,6 +111,42 @@ delete that data root. Project creation records its path without changing its
 contents. Existing model folders can remain elsewhere and be mounted into the
 project library.
 
+### Packaged bootstrap runtime
+
+Desktop installers bundle a Dinkster-built control runtime rather than an
+engine ZIP. Build it natively from the pinned Dinkster commit:
+
+```sh
+python -m scripts.build_engine_feed --feed /path/to/output --cells linux-cu128 --control-runtime
+```
+
+Use `win-cu128` on Windows and `mac-arm64` on macOS. The cell selects the native
+OS, architecture and Python build only; the resulting runtime contains no
+accelerator, model, frontend or installed-engine payload. The output contract
+is:
+
+```text
+control/<commit>/<os>-<architecture>.json
+control/<os>-<architecture>/<archive-sha256>.tar.gz
+```
+
+The descriptor format is `dinkster.control-runtime/1`. Its complete fields are
+`format`, `commit`, `platform`, `artifact`, `python` and `invocation`.
+`artifact` contains `path`, `sha256` and `size`; the path is relative to the
+feed output and the digest and size cover the compressed `.tar.gz` bytes.
+`python` is a normalized descriptor-relative path (`bin/python3` on Linux and
+macOS, `python.exe` on Windows). `invocation` is exactly
+`["<python>", "-I", "-m", "dinkster.cli"]`, where `<python>` means the
+extracted runtime root joined with `python`.
+
+The archive is a deterministic GNU tar compressed with gzip. Extract only
+after verifying its compressed size and SHA-256. Extraction must reject
+absolute paths, `..` traversal, special files, hard links, and symlinks whose
+relative target escapes the extraction root. Extract into a fresh staging
+directory, verify that the descriptor's interpreter resolves to a file inside
+that directory, then move the complete runtime into its immutable packaged
+location.
+
 ## Develop from source
 
 Clone the backend and frontend as sibling directories, then run:

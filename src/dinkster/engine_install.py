@@ -72,7 +72,10 @@ class EngineInstaller:
         for key in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "UV_INDEX", "UV_INDEX_URL"):
             env.pop(key, None)
         env.update(UV_OFFLINE="1", UV_PYTHON_DOWNLOADS="never", PYTHONNOUSERSITE="1")
-        subprocess.run(command, check=True, env=env)
+        result = subprocess.run(command, capture_output=True, text=True, env=env)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise InstallError(f"engine environment command failed: {detail or result.returncode}")
 
     def install(
         self,
@@ -194,7 +197,9 @@ class EngineInstaller:
                         requirements = wheelhouse / f"{kind}.txt"
                         requirements.write_text(
                             "".join(
-                                f"{wheel.name}=={wheel.version} --hash=sha256:{wheel.sha256}\n"
+                                f"{wheel.name} @ "
+                                f"{(wheelhouse / wheel.filename).as_uri()} "
+                                f"--hash=sha256:{wheel.sha256}\n"
                                 for wheel in manifest.wheels
                                 if kind in wheel.environments
                             ),
@@ -212,6 +217,7 @@ class EngineInstaller:
                                 "--no-index",
                                 "--find-links",
                                 str(wheelhouse),
+                                "--no-deps",
                                 "--require-hashes",
                                 "--only-binary",
                                 ":all:",
@@ -223,13 +229,11 @@ class EngineInstaller:
                         )
                         self._run(
                             [
-                                str(uv),
-                                "--no-config",
-                                "--offline",
+                                str(environment_python(venv)),
+                                "-I",
+                                "-m",
                                 "pip",
                                 "check",
-                                "--python",
-                                str(environment_python(venv)),
                             ]
                         )
                 self._run(

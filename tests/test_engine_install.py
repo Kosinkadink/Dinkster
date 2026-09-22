@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import tarfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -119,7 +120,15 @@ def native_commands(monkeypatch: pytest.MonkeyPatch):
     commands: list[list[str]] = []
 
     def run(_self: EngineInstaller, command: list[str]) -> None:
-        commands.append(command)
+        captured = list(command)
+        if "--requirement" in command:
+            captured.extend(
+                [
+                    "--captured-requirements",
+                    Path(command[command.index("--requirement") + 1]).read_text(),
+                ]
+            )
+        commands.append(captured)
         if "venv" in command:
             python = environment_python(Path(command[-1]))
             python.parent.mkdir(parents=True)
@@ -133,6 +142,33 @@ def tree(root: Path) -> dict[str, bytes]:
     return {
         str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()
     }
+
+
+def test_native_commands_do_not_pollute_cli_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    captured: dict[str, object] = {}
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.update(command=command, **kwargs)
+        return subprocess.CompletedProcess(command, 0, stdout="success chatter\n", stderr="")
+
+    monkeypatch.setattr("dinkster.engine_install.subprocess.run", run)
+    EngineInstaller(Installer(tmp_path / "install"))._run(["native-tool", "check"])
+    assert capsys.readouterr() == ("", "")
+    assert captured["capture_output"] is True
+    assert captured["text"] is True
+
+
+def test_native_command_failure_reports_captured_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, stdout="", stderr="broken environment\n")
+
+    monkeypatch.setattr("dinkster.engine_install.subprocess.run", run)
+    with pytest.raises(InstallError, match="broken environment"):
+        EngineInstaller(Installer(tmp_path / "install"))._run(["native-tool", "check"])
 
 
 def test_stage_install_rollback_and_gc_preserve_data(
@@ -163,7 +199,15 @@ def test_stage_install_rollback_and_gc_preserve_data(
     installs = [command for command in native_commands if "install" in command]
     assert len(installs) == 4
     assert all("--offline" in command and "--no-index" in command for command in installs)
+    assert all("--no-deps" in command for command in installs)
     assert all("--require-hashes" in command for command in installs)
+    assert all("sample-runtime @ file://" in command[-1] for command in installs)
+    assert all(
+        f"--hash=sha256:{digest(b'immutable code wheel fixture')}" in command[-1]
+        for command in installs
+    )
+    checks = [command for command in native_commands if command[-3:] == ["-m", "pip", "check"]]
+    assert len(checks) == 4
     assert all(
         "--system-site-packages" in command for command in native_commands if "venv" in command
     )
@@ -256,12 +300,31 @@ def test_project_cli_keeps_data_separate_and_uses_project_supervisor(
     engine = EngineInstaller(Installer(Path(record["root"])))
     engine.install(client, channel="github-live", cell="linux-cu128")
     command = projects.supervisor_command(
-        Path(record["root"]), Path(record["dataRoot"]), port=19373
+        Path(record["root"]),
+        Path(record["dataRoot"]),
+        port=19373,
+        instance="desktop-launch-123",
     )
     assert command[command.index("--port") + 1] == "19373"
+    assert command[command.index("--instance") + 1] == "desktop-launch-123"
+    assert command.index("--instance") < command.index("--")
     assert command[0] == str(engine.interpreters(1)[0])
     assert command[command.index("--execution-python") + 1] == str(engine.interpreters(1)[1])
     assert "dinkster_supervisor.supervisor" in command
+    generated = projects.supervisor_command(Path(record["root"]), Path(record["dataRoot"]))
+    generated_instance = generated[generated.index("--instance") + 1]
+    assert len(generated_instance) == 32
+    assert set(generated_instance) <= set("0123456789abcdef")
+    called: list[list[str]] = []
+    monkeypatch.setattr(projects.subprocess, "call", lambda value: called.append(value) or 0)
+    assert main(["serve", "--project", "art", "--instance", "desktop-cli-456"]) == 0
+    assert called[0][called[0].index("--instance") + 1] == "desktop-cli-456"
+    assert called[0].index("--instance") < called[0].index("--")
+    assert called[0].count("desktop-cli-456") == 1
+    with pytest.raises(SystemExit):
+        main(["serve", "--project", "art", "--instance", ""])
+    with pytest.raises(InstallError, match="must not be empty"):
+        projects.supervisor_command(Path(record["root"]), Path(record["dataRoot"]), instance="")
     assert main(["--project", "art", "generations", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)[0]["current"] is True
 

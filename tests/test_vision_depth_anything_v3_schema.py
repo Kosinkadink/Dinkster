@@ -93,7 +93,7 @@ def test_depth_anything_v3_wheel_contains_pack_runtime_and_manifest() -> None:
     )
     assert (
         included["src/dinkster_nodes_vision/depth_anything_v3"]
-        == "dinkster_vision_depth_anything_v3_pack/dinkster_nodes_vision/depth_anything_v3"
+        == "dinkster_vision_depth_anything_v3_pack/src/dinkster_nodes_vision/depth_anything_v3"
     )
 
 

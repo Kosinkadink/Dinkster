@@ -298,6 +298,27 @@ def test_in_process_placement_is_byte_identical_for_schema_provenance_and_invoca
     asyncio.run(scenario())
 
 
+def test_in_process_pack_imports_entry_from_manifest_relative_src(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        root = tmp_path / "src-layout"
+        module = root / "src" / "src_layout_nodes.py"
+        module.parent.mkdir(parents=True)
+        module.write_text("NODES = []\n")
+        manifest = root / "dinkster-pack.toml"
+        manifest.write_text(
+            '[pack]\nname = "src-layout"\nnamespaces = ["src-layout"]\n'
+            '[pack.entry]\nnodes = "src_layout_nodes:NODES"\n'
+        )
+        composer = _composer()
+        try:
+            await composer.add_pack(PackSpec(manifest, in_process=True, runtime_pins=PINS))
+            assert "src-layout" in composer.composition.packs
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_runtime_pinned_pack_owns_component_publisher_until_pack_removal(
     tmp_path: Path,
     component_publisher_events: dict[str, list[object]],

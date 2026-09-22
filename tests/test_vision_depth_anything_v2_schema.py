@@ -165,7 +165,7 @@ def test_depth_provider_wheel_contains_pack_runtime_and_manifest() -> None:
         "dinkster_vision_depth_anything_v2_pack"
     )
     assert included["src/dinkster_nodes_vision/depth_anything_v2"] == (
-        "dinkster_vision_depth_anything_v2_pack/dinkster_nodes_vision/depth_anything_v2"
+        "dinkster_vision_depth_anything_v2_pack/src/dinkster_nodes_vision/depth_anything_v2"
     )
 
 
