@@ -924,7 +924,7 @@ def test_standalone_component_load_preserves_plan_identity(
     assert loaded.plan is plan
     assert loaded.runtime_identity == expected_identity
     assert loaded_compute_dtype is (torch.float32 if role == "qwen3vl-32b-conditioner" else dtype)
-    quantized = loaded.module[0]
+    quantized = cast(torch.nn.Sequential, loaded.module)[0]
     assert isinstance(quantized, Int8Linear)
     assert quantized.compute_dtype is (
         torch.float32 if role == "qwen3vl-32b-conditioner" else dtype
