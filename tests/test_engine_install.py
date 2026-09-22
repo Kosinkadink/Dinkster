@@ -16,7 +16,7 @@ from dinkster_registry import InstallError
 
 from dinkster import projects
 from dinkster.cli import main
-from dinkster.engine_feed import Mirror
+from dinkster.engine_feed import EngineFeedError, Mirror
 from dinkster.engine_install import EngineInstaller, environment_python
 from dinkster.installer import Installer
 
@@ -211,6 +211,25 @@ def test_failed_provision_and_missing_rollback_leave_current(
     with pytest.raises(InstallError, match="native installation failed"):
         engine.install(client, channel="github-live", cell="linux-cu128")
     assert engine.installer.current_number() == second
+
+
+def test_corrupt_update_artifact_leaves_current_generation(
+    tmp_path: Path, mirror, native_commands
+) -> None:
+    client, objects = mirror
+    engine = EngineInstaller(Installer(tmp_path / "install"))
+    first = engine.install(client, channel="github-live", cell="linux-cu128")
+    objects.update(feed("b"))
+    base_path = next(path for path in objects if path.startswith("base/") and "b" * 64 in path)
+    corrupt = bytearray(objects[base_path])
+    corrupt[-1] ^= 0xFF
+    objects[base_path] = bytes(corrupt)
+
+    with pytest.raises(EngineFeedError, match="sha256"):
+        engine.install(client, channel="github-live", cell="linux-cu128")
+
+    assert engine.installer.current_number() == first
+    assert engine.installer.generation_numbers() == (first,)
 
 
 def test_gc_refuses_linked_owned_namespace(tmp_path: Path) -> None:
