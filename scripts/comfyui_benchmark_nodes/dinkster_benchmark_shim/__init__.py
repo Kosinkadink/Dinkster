@@ -761,6 +761,7 @@ def _install_h3_forward_trace(model, output_dir: Path):
             model.audio_patch_proj.register_forward_pre_hook(pre("audio_patch_input")),
             model.audio_patch_proj.register_forward_hook(post("audio_patch_projection")),
             model.blocks[0].register_forward_pre_hook(pre("block0_input")),
+            model.blocks[0].adaln_proj.register_forward_pre_hook(pre("block0_adaln_input")),
             model.blocks[0].adaln_proj.register_forward_hook(post("block0_adaln")),
             model.blocks[0].norm1.register_forward_hook(post("block0_norm1")),
             model.blocks[0].attn.qkv_proj.register_forward_hook(post("block0_qkv")),
