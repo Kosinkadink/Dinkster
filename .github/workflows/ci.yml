@@ -20,7 +20,7 @@ concurrency:
 jobs:
   fast:
     name: format, lint, types and unit subset
-    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.simulate-fork) && '["ubuntu-latest"]' || (vars.DINKSTER_PR_RUNNER || '["self-hosted", "linux", "x64"]')) }}
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS)[((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.simulate-fork) && 'forkLinux' || 'linux'] }}
     timeout-minutes: 10
     env:
       OMP_NUM_THREADS: "4"
@@ -55,7 +55,7 @@ jobs:
 
   engine-tests:
     name: engine tests (${{ matrix.name }})
-    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.simulate-fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64", "cpu-golden-avx2"]') }}
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS)[((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.simulate-fork) && 'forkLinux' || 'linux'] }}
     timeout-minutes: 30
     permissions:
       contents: read

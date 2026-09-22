@@ -158,13 +158,12 @@ def _condition_matches(expression: str, context: dict[str, str]) -> bool:
     return all(matches)
 
 
-def _assert_fork_runner(expression: str, trusted_labels: str) -> None:
-    assert expression.startswith("${{ fromJSON(")
-    assert "github.event_name == 'pull_request'" in expression
-    assert "github.event.pull_request.head.repo.full_name != github.repository" in expression
-    assert "inputs.simulate-fork" in expression
-    assert "'[\"ubuntu-latest\"]'" in expression
-    assert trusted_labels in expression
+def _assert_ci_runner(expression: str) -> None:
+    assert expression == (
+        "${{ fromJSON(vars.CI_RUNNERS)[((github.event_name == 'pull_request' && "
+        "github.event.pull_request.head.repo.full_name != github.repository) || "
+        "inputs.simulate-fork) && 'forkLinux' || 'linux'] }}"
+    )
 
 
 def test_every_cpu_composite_caller_declares_its_model_test_allocation() -> None:
@@ -179,10 +178,7 @@ def test_every_cpu_composite_caller_declares_its_model_test_allocation() -> None
                     "true" if name in {"engine-tests", "model-tests"} else "false"
                 )
                 if path.name == "ci.yml":
-                    _assert_fork_runner(
-                        job["runs-on"],
-                        '\'["self-hosted", "Linux", "X64", "cpu-golden-avx2"]\'',
-                    )
+                    _assert_ci_runner(job["runs-on"])
                 else:
                     assert job["runs-on"] == [
                         "self-hosted",
@@ -202,14 +198,8 @@ def test_every_cpu_composite_caller_declares_its_model_test_allocation() -> None
 
 def test_fork_pull_requests_use_hosted_runners_and_record_private_jobs_not_run() -> None:
     assert set(PR_JOBS) == {"fast", "engine-tests"}
-    _assert_fork_runner(
-        PR_JOBS["fast"]["runs-on"],
-        'vars.DINKSTER_PR_RUNNER || \'["self-hosted", "linux", "x64"]\'',
-    )
-    _assert_fork_runner(
-        PR_JOBS["engine-tests"]["runs-on"],
-        '\'["self-hosted", "Linux", "X64", "cpu-golden-avx2"]\'',
-    )
+    _assert_ci_runner(PR_JOBS["fast"]["runs-on"])
+    _assert_ci_runner(PR_JOBS["engine-tests"]["runs-on"])
     for job_name in PR_JOBS:
         steps = PR_JOBS[job_name]["steps"]
         guard = steps[1]
@@ -561,6 +551,23 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
                 )
 
 
+def test_public_frontend_checkout_does_not_require_repository_credentials() -> None:
+    steps = JOBS["test"]["steps"]
+    (checkout,) = [
+        step
+        for step in steps
+        if step.get("with", {}).get("repository") == "Kosinkadink/Dinkster-Frontend"
+    ]
+    assert checkout["uses"] == "actions/checkout@v4"
+    assert "token" not in checkout["with"]
+    assert "ssh-key" not in checkout["with"]
+    assert all(
+        step.get("with", {}).get("repository") != "Kosinkadink/Dinkster-Frontend"
+        for step in steps
+        if step.get("uses") == "./.github/actions/configure-private-repository"
+    )
+
+
 def test_validation_inputs_expose_existing_git_bash_only_on_windows() -> None:
     helper_path = ROOT / ".github/actions/prepare-validation-inputs/action.yml"
     helper = yaml.safe_load(helper_path.read_text(encoding="utf-8"))
@@ -748,10 +755,7 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
 
 def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> None:
     job = PR_JOBS["engine-tests"]
-    _assert_fork_runner(
-        job["runs-on"],
-        '\'["self-hosted", "Linux", "X64", "cpu-golden-avx2"]\'',
-    )
+    _assert_ci_runner(job["runs-on"])
     assert job["timeout-minutes"] == 30
     assert job["permissions"] == {"contents": "read"}
     assert job["strategy"] == {

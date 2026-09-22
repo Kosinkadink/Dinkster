@@ -140,11 +140,6 @@ jobs:
         run: uv run --locked pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
         env:
           DINKSTER_CATALOG_WIRE_OUTPUT: ${{ runner.temp }}/default-catalog.json
-      - uses: ./.github/actions/configure-private-repository
-        if: matrix.os == 'linux' && matrix.python-version == '3.12'
-        with:
-          repository: Kosinkadink/Dinkster-Frontend
-          deploy-key: ${{ secrets.DINKSTER_FRONTEND_READ_KEY }}
       - uses: actions/checkout@v4
         if: matrix.os == 'linux' && matrix.python-version == '3.12'
         with:

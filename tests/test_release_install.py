@@ -58,6 +58,13 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     )
     assert frontend_checkout["with"]["ref"] == "${{ steps.frontend.outputs.ref }}"
     assert frontend_checkout["with"]["persist-credentials"] is False
+    assert "token" not in frontend_checkout["with"]
+    assert "ssh-key" not in frontend_checkout["with"]
+    assert all(
+        step.get("with", {}).get("repository") != "Kosinkadink/Dinkster-Frontend"
+        for step in build["steps"]
+        if step.get("uses") == "./.github/actions/configure-private-repository"
+    )
     assert all(
         step.get("with", {}).get("repository") != "Kosinkadink/dinkster-identity"
         for step in build["steps"]

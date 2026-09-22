@@ -26,10 +26,6 @@ jobs:
         with:
           clean: true
           persist-credentials: false
-      - uses: ./.github/actions/configure-private-repository
-        with:
-          repository: Kosinkadink/Dinkster-Frontend
-          deploy-key: ${{ secrets.DINKSTER_FRONTEND_READ_KEY }}
       - name: Select the pinned frontend source
         id: frontend
         run: |
