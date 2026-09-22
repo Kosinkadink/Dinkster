@@ -1,0 +1,61 @@
+{
+  "ceiling": 7,
+  "sites": [
+    {
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+      "line": 1957,
+      "column": 12,
+      "type": "FluxAssemblyPlan",
+      "classification": "boundary",
+      "reason": "Reject the wrong plan type before the Flux loader reads family-specific fields."
+    },
+    {
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+      "line": 2033,
+      "column": 12,
+      "type": "QwenImageAssemblyPlan",
+      "classification": "boundary",
+      "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
+    },
+    {
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+      "line": 2096,
+      "column": 12,
+      "type": "SDAssemblyPlan",
+      "classification": "boundary",
+      "reason": "Reject the wrong plan type before the SD loader reads family-specific fields."
+    },
+    {
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+      "line": 2180,
+      "column": 12,
+      "type": "Wan21AssemblyPlan",
+      "classification": "boundary",
+      "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
+    },
+    {
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+      "line": 2244,
+      "column": 12,
+      "type": "ZImageAssemblyPlan",
+      "classification": "boundary",
+      "reason": "Reject the wrong plan type before the Z-Image loader reads family-specific fields."
+    },
+    {
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+      "line": 2311,
+      "column": 12,
+      "type": "Flux2AssemblyPlan",
+      "classification": "boundary",
+      "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
+    },
+    {
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+      "line": 2380,
+      "column": 12,
+      "type": "Lumina2AssemblyPlan",
+      "classification": "boundary",
+      "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
+    }
+  ]
+}
