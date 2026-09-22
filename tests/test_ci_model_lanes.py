@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import subprocess
 import tomllib
 from pathlib import Path
@@ -25,6 +24,9 @@ WORKFLOW = yaml.safe_load(
 JOBS = WORKFLOW["jobs"]
 PR_WORKFLOW = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
 PR_JOBS = PR_WORKFLOW["jobs"]
+RELEASE_WORKFLOW = yaml.safe_load(
+    (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+)
 PRIVATE_DEPENDENCIES_AVAILABLE = "steps.private-dependencies.outputs.available == 'true'"
 MODEL_CONDITION = "inputs.run-model-tests == 'true'"
 MODEL_GROUP_ENV = "env.DINKSTER_MODEL_TEST_GROUP"
@@ -48,42 +50,119 @@ VISION_SUITES = (
 )
 MODEL_GROUPS = (
     {
-        "name": "inference and IPAdapter",
+        "name": "inference and IPAdapter, shard 1 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 1/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 2 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 2/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 3 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 3/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 4 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 4/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 5 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 5/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 6 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 6/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 7 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 7/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 8 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 8/8",
     },
     {
         "name": "acceptance and benchmark",
         "group": "acceptance",
         "suites": "acceptance-sampling,benchmark-loader",
+        "pytest-args": "",
     },
     {
         "name": "HED, upscale and EfficientSAM",
         "group": "vision-fast",
         "suites": "hed,upscale,efficient-sam",
+        "pytest-args": "",
     },
     {
         "name": "Depth Anything V2, DETR and RT-DETR",
         "group": "vision-detection",
         "suites": "depth-anything-v2,detr,rtdetr",
+        "pytest-args": "",
     },
     {
         "name": "BiRefNet and Depth Anything V3",
         "group": "vision-large",
         "suites": "birefnet,depth-anything-v3",
+        "pytest-args": "",
     },
-    {"name": "SAM 3.1", "group": "vision-sam", "suites": "sam31"},
+    {"name": "SAM 3.1", "group": "vision-sam", "suites": "sam31", "pytest-args": ""},
 )
 PR_MODEL_GROUPS = (
     {
-        "name": "inference and IPAdapter, shard 1",
+        "name": "inference and IPAdapter, shard 1 of 8",
         "group": "inference",
-        "pytest-args": "-p tools.pytest_file_shard --file-shard 1/2",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 1/8",
     },
     {
-        "name": "inference and IPAdapter, shard 2",
+        "name": "inference and IPAdapter, shard 2 of 8",
         "group": "inference",
-        "pytest-args": "-p tools.pytest_file_shard --file-shard 2/2",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 2/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 3 of 8",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 3/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 4 of 8",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 4/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 5 of 8",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 5/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 6 of 8",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 6/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 7 of 8",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 7/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 8 of 8",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 8/8",
     },
     {"name": "HED, upscale and EfficientSAM", "group": "vision-fast", "pytest-args": ""},
     {
@@ -158,15 +237,6 @@ def _condition_matches(expression: str, context: dict[str, str]) -> bool:
     return all(matches)
 
 
-def _assert_fork_runner(expression: str, trusted_labels: str) -> None:
-    assert expression.startswith("${{ fromJSON(")
-    assert "github.event_name == 'pull_request'" in expression
-    assert "github.event.pull_request.head.repo.full_name != github.repository" in expression
-    assert "inputs.simulate-fork" in expression
-    assert "'[\"ubuntu-latest\"]'" in expression
-    assert trusted_labels in expression
-
-
 def test_every_cpu_composite_caller_declares_its_model_test_allocation() -> None:
     callers = []
     for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
@@ -178,37 +248,22 @@ def test_every_cpu_composite_caller_declares_its_model_test_allocation() -> None
                 assert step["with"]["run-model-tests"] == (
                     "true" if name in {"engine-tests", "model-tests"} else "false"
                 )
-                if path.name == "ci.yml":
-                    _assert_fork_runner(
-                        job["runs-on"],
-                        '\'["self-hosted", "Linux", "X64", "cpu-golden-avx2"]\'',
-                    )
-                else:
-                    assert job["runs-on"] == [
-                        "self-hosted",
-                        "Linux",
-                        "X64",
-                        "cpu-golden-avx2",
-                    ]
+                assert job["runs-on"] == "${{ fromJSON(vars.CI_RUNNERS).linux }}"
     assert set(callers) == {
-        ("ci.yml", "engine-tests"),
         ("full-validation.yml", "model-tests"),
         ("full-validation.yml", "torch-cpu"),
     }
-    assert len(callers) == 3
+    assert len(callers) == 2
     assert ACTION["inputs"]["run-model-tests"]["default"] == "false"
     assert ACTION["inputs"]["pytest-args"]["default"] == ""
 
 
 def test_fork_pull_requests_use_hosted_runners_and_record_private_jobs_not_run() -> None:
-    assert set(PR_JOBS) == {"fast", "engine-tests"}
-    _assert_fork_runner(
-        PR_JOBS["fast"]["runs-on"],
-        'vars.DINKSTER_PR_RUNNER || \'["self-hosted", "linux", "x64"]\'',
-    )
-    _assert_fork_runner(
-        PR_JOBS["engine-tests"]["runs-on"],
-        '\'["self-hosted", "Linux", "X64", "cpu-golden-avx2"]\'',
+    assert set(PR_JOBS) == {"fast"}
+    assert PR_JOBS["fast"]["runs-on"] == (
+        "${{ fromJSON(vars.CI_RUNNERS)[((github.event_name == 'pull_request' && "
+        "github.event.pull_request.head.repo.full_name != github.repository) || "
+        "inputs.simulate-fork) && 'forkLinux' || 'linux'] }}"
     )
     for job_name in PR_JOBS:
         steps = PR_JOBS[job_name]["steps"]
@@ -223,7 +278,15 @@ def test_fork_pull_requests_use_hosted_runners_and_record_private_jobs_not_run()
                 "force-not-run": "${{ inputs.simulate-fork }}",
             },
         }
-        assert all(step["if"] == PRIVATE_DEPENDENCIES_AVAILABLE for step in steps[2:])
+        assert all(step["if"] == PRIVATE_DEPENDENCIES_AVAILABLE for step in steps[2:-1])
+        assert steps[-1] == {
+            "name": "Refuse green validation without private inputs",
+            "if": "always() && steps.private-dependencies.outputs.available != 'true'",
+            "run": (
+                'echo "Required private inputs were unavailable; pull request validation did '
+                'not run." >> "$GITHUB_STEP_SUMMARY"\nexit 1\n'
+            ),
+        }
 
 
 @pytest.mark.parametrize(
@@ -286,7 +349,7 @@ def test_private_dependency_check_reports_each_missing_secret(
     assert actual_summary == summary
 
 
-def test_torch_cpu_has_one_contract_guard_and_an_unconditional_suite() -> None:
+def test_torch_cpu_runs_the_unconditional_suite_on_hosted_linux() -> None:
     assert [name for name in JOBS if name.startswith("torch-cpu")] == ["torch-cpu"]
     job = JOBS["torch-cpu"]
     # timeout-minutes bounds the whole job (comfy-vibe-station#245); the exact
@@ -294,10 +357,9 @@ def test_torch_cpu_has_one_contract_guard_and_an_unconditional_suite() -> None:
     assert set(job) == {"needs", "if", "runs-on", "env", "timeout-minutes", "steps"}
     assert job["needs"] == "validation-plan"
     assert job["if"] == "needs.validation-plan.outputs.run-heavy == 'true'"
-    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "cpu-golden-avx2"]
+    assert job["runs-on"] == "${{ fromJSON(vars.CI_RUNNERS).linux }}"
     assert job["env"] == {"ATEN_CPU_CAPABILITY": "avx2", "ONEDNN_MAX_CPU_ISA": "AVX2"}
-    guard, checkout, suite = job["steps"]
-    assert set(guard) == {"name", "run"}
+    checkout, suite = job["steps"]
     assert checkout == {
         "uses": "actions/checkout@v4",
         "with": {"clean": True, "persist-credentials": False},
@@ -311,55 +373,14 @@ def test_torch_cpu_has_one_contract_guard_and_an_unconditional_suite() -> None:
     }
 
 
-@pytest.mark.skipif(os.name != "posix", reason="Linux CPU guard runs in Bash")
-@pytest.mark.parametrize(
-    ("vendor", "flags", "accepted"),
-    [
-        ("AuthenticAMD", "sse2 avx avx2", True),
-        ("GenuineIntel", "sse2 avx avx2", False),
-        ("AuthenticAMD", "sse2 avx", False),
-        ("AuthenticAMD", "sse2 avx avx2 avx512f", False),
-        ("AuthenticAMD", "sse2 avx avx20", False),
-    ],
-)
-def test_torch_cpu_guard_executes_the_golden_contract(
-    tmp_path: Path, vendor: str, flags: str, accepted: bool
-) -> None:
-    cpuinfo = tmp_path / "cpu info"
-    cpuinfo.write_text(
-        f"model name : Test CPU\nvendor_id : {vendor}\nflags : {flags}\n", encoding="utf-8"
-    )
-    script = JOBS["torch-cpu"]["steps"][0]["run"]
-    assert "/proc/cpuinfo" in script
-    result = subprocess.run(
-        [
-            "bash",
-            "-e",
-            "-o",
-            "pipefail",
-            "-c",
-            script.replace("/proc/cpuinfo", shlex.quote(str(cpuinfo))),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == (0 if accepted else 1), result.stderr
-    if not accepted:
-        assert (
-            "CPU golden contract requires AuthenticAMD with AVX2 and without AVX-512"
-            in result.stderr
-        )
-
-
-def test_artifact_smoke_uses_only_available_self_hosted_platforms() -> None:
+def test_artifact_smoke_uses_every_hosted_platform() -> None:
     assert JOBS["p2p-artifact-smoke"]["strategy"]["matrix"] == {
         "os": ["linux", "windows", "macos"],
         "python-version": ["3.12"],
         "include": [
-            {"os": "linux", "labels": ["self-hosted", "linux", "x64"]},
-            {"os": "windows", "labels": ["self-hosted", "windows", "x64"]},
-            {"os": "macos", "labels": ["self-hosted", "macos", "arm64"]},
+            {"os": "linux", "runner": "linux"},
+            {"os": "windows", "runner": "windows"},
+            {"os": "macos", "runner": "macos"},
         ],
     }
 
@@ -397,7 +418,7 @@ def test_all_model_downloads_and_model_pytest_lanes_require_opt_in(enabled: str)
         if is_download:
             downloads.append(step)
         if is_execution:
-            assert '"$HOME/comfy-vibe-station/run_counted_suite.sh"' in command
+            assert "run_counted_suite" not in command
             executions.append(step)
     assert len(downloads) == 9
     assert len(executions) == 12
@@ -418,7 +439,6 @@ def test_acceptance_sampling_runs_only_in_the_model_lane() -> None:
     )
     assert common["if"] == f"{MODEL_GROUP_ENV} == ''"
     assert sampling["run"].strip() == (
-        '"$HOME/comfy-vibe-station/run_counted_suite.sh" '
         f".venv-torch/bin/python -m pytest -q {ACCEPTANCE_SAMPLING_TEST}"
     )
     assert sampling["if"] == (f"{MODEL_CONDITION} && {MODEL_GROUP_ENV} == 'acceptance'")
@@ -448,7 +468,7 @@ def test_model_lane_commands_artifact_pins_and_environments_match_reviewed_contr
         if step.get("if", "").startswith(f"{MODEL_CONDITION} &&")
     ]
     assert hashlib.sha256(json.dumps(steps, sort_keys=True).encode()).hexdigest() == (
-        "282f057a4d097d1df57613c22dd51c6fcd0136355acbff41cb281519f04a6812"
+        "0484b2100ec9c82b75b71278c52445faa827924eccc4beeb0e5d87f1fdb234b9"
     )
 
 
@@ -496,7 +516,7 @@ def test_source_receipts_and_torch_typechecks_remain_hosted() -> None:
         "Acquire pinned Impact Pack source",
         "Verify source-generated parity receipts",
         "Test source-parity receipt generation",
-        "Assert pinned CPU dispatch",
+        "Assert pinned AVX2 dispatch",
     }
 
 
@@ -561,6 +581,23 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
                 )
 
 
+def test_public_frontend_checkout_does_not_require_repository_credentials() -> None:
+    steps = JOBS["test"]["steps"]
+    (checkout,) = [
+        step
+        for step in steps
+        if step.get("with", {}).get("repository") == "Kosinkadink/Dinkster-Frontend"
+    ]
+    assert checkout["uses"] == "actions/checkout@v4"
+    assert "token" not in checkout["with"]
+    assert "ssh-key" not in checkout["with"]
+    assert all(
+        step.get("with", {}).get("repository") != "Kosinkadink/Dinkster-Frontend"
+        for step in steps
+        if step.get("uses") == "./.github/actions/configure-private-repository"
+    )
+
+
 def test_validation_inputs_expose_existing_git_bash_only_on_windows() -> None:
     helper_path = ROOT / ".github/actions/prepare-validation-inputs/action.yml"
     helper = yaml.safe_load(helper_path.read_text(encoding="utf-8"))
@@ -620,7 +657,7 @@ def test_model_job_runs_only_in_trusted_full_validation(
         )
         and repository == "Kosinkadink/Dinkster"
     )
-    assert job["runs-on"] == ["self-hosted", "Linux", "X64", "cpu-golden-avx2"]
+    assert job["runs-on"] == "${{ fromJSON(vars.CI_RUNNERS).linux }}"
     assert job["needs"] == "validation-plan"
     for name, hosted in JOBS.items():
         if name not in {"model-tests", "model-tests-gate", "validation-plan"}:
@@ -648,8 +685,11 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         for group in job["strategy"]["matrix"]["include"]
         for suite in group["suites"].split(",")
     ]
-    assert len(suites) == len(set(suites))
     assert set(suites) == EXPECTED_MODEL_SUITES
+    assert all(
+        suites.count(suite) == (8 if suite in {"inference-torch", "model-ipadapter"} else 1)
+        for suite in EXPECTED_MODEL_SUITES
+    )
     assert job["permissions"] == {"contents": "read"}
     assert job["steps"][0] == {
         "uses": "actions/checkout@v4",
@@ -660,6 +700,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         "with": {
             "run-model-tests": "true",
             "evidence-deploy-key": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
+            "pytest-args": "${{ matrix.pytest-args }}",
         },
     }
     assert job["env"] == {
@@ -675,7 +716,8 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
             "always() && needs.validation-plan.outputs.run-heavy == 'true' && "
             "github.repository == 'Kosinkadink/Dinkster'"
         ),
-        "runs-on": ["self-hosted", "linux", "x64"],
+        "runs-on": "${{ fromJSON(vars.CI_RUNNERS).linux }}",
+        "timeout-minutes": 2,
         "steps": [
             {
                 "name": "Verify every model-test group passed",
@@ -688,7 +730,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
 
 
 def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
-    assert set(PR_JOBS) == {"fast", "engine-tests"}
+    assert set(PR_JOBS) == {"fast"}
     assert set(PR_WORKFLOW[True]) == {"pull_request", "workflow_dispatch"}
     assert PR_WORKFLOW[True]["workflow_dispatch"] == {
         "inputs": {
@@ -715,7 +757,7 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
     }
     job = PR_JOBS["fast"]
     assert job["timeout-minutes"] == 10
-    assert job["steps"][-1] == {
+    assert job["steps"][-2] == {
         "if": PRIVATE_DEPENDENCIES_AVAILABLE,
         "run": "bash scripts/ci-fast.sh",
     }
@@ -748,62 +790,12 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
 
 
 def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> None:
-    job = PR_JOBS["engine-tests"]
-    _assert_fork_runner(
-        job["runs-on"],
-        '\'["self-hosted", "Linux", "X64", "cpu-golden-avx2"]\'',
-    )
-    assert job["timeout-minutes"] == 30
-    assert job["permissions"] == {"contents": "read"}
-    assert job["strategy"] == {
-        "fail-fast": False,
-        "matrix": {"include": list(PR_MODEL_GROUPS)},
+    assert "engine-tests" not in PR_JOBS
+    assert JOBS["model-tests"]["timeout-minutes"] == 20
+    assert [row["group"] for row in MODEL_GROUPS].count("inference") == 8
+    assert {row["pytest-args"] for row in MODEL_GROUPS if row["group"] == "inference"} == {
+        f"-p tools.pytest_file_shard --file-shard {shard}/8" for shard in range(1, 9)
     }
-    assert [row["group"] for row in PR_MODEL_GROUPS] == [
-        "inference",
-        "inference",
-        "vision-fast",
-        "vision-detection",
-        "vision-large",
-        "vision-sam",
-    ]
-    assert {row["pytest-args"] for row in PR_MODEL_GROUPS if row["group"] == "inference"} == {
-        "-p tools.pytest_file_shard --file-shard 1/2",
-        "-p tools.pytest_file_shard --file-shard 2/2",
-    }
-    assert all(row["pytest-args"] == "" for row in PR_MODEL_GROUPS if row["group"] != "inference")
-    assert job["env"] == {
-        "ATEN_CPU_CAPABILITY": "avx2",
-        "ONEDNN_MAX_CPU_ISA": "AVX2",
-        "OMP_NUM_THREADS": "4",
-        "MKL_NUM_THREADS": "4",
-        "DINKSTER_MODEL_TEST_GROUP": "${{ matrix.group }}",
-    }
-    assert job["steps"] == [
-        {
-            "uses": "actions/checkout@v4",
-            "with": {"clean": True, "persist-credentials": False},
-        },
-        {
-            "name": "Check private dependency access",
-            "id": "private-dependencies",
-            "uses": PRIVATE_DEPENDENCY_ACTION_PATH,
-            "with": {
-                "secret-name-1": "DINKSTER_EVIDENCE_READ_KEY",
-                "secret-value-1": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
-                "force-not-run": "${{ inputs.simulate-fork }}",
-            },
-        },
-        {
-            "uses": ACTION_PATH,
-            "if": PRIVATE_DEPENDENCIES_AVAILABLE,
-            "with": {
-                "evidence-deploy-key": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
-                "run-model-tests": "true",
-                "pytest-args": "${{ matrix.pytest-args }}",
-            },
-        },
-    ]
 
 
 def test_pr_inference_step_applies_only_the_declared_pytest_arguments() -> None:
@@ -944,7 +936,7 @@ def test_full_validation_batches_pushes_without_cancelling_active_runs() -> None
     ):
         assert required in script
     for name, job in JOBS.items():
-        if name == "validation-plan":
+        if name in {"validation-plan", "main-status"}:
             continue
         needs = job["needs"] if isinstance(job["needs"], list) else [job["needs"]]
         assert "validation-plan" in needs, name
@@ -956,14 +948,76 @@ def test_full_validation_batches_pushes_without_cancelling_active_runs() -> None
     assert "git merge-base --is-ancestor" in docs
 
 
-@pytest.mark.parametrize("environment", ["github-hosted", "self-hosted"])
-def test_destructive_disk_reclaim_never_runs_on_self_hosted(environment: str) -> None:
+def test_destructive_disk_reclaim_runs_only_on_github_hosted() -> None:
     steps = [step for step in ACTION["runs"]["steps"] if "sudo rm" in step.get("run", "")]
     assert len(steps) == 1
     assert steps[0]["if"] == "runner.environment == 'github-hosted'"
-    assert _condition_matches(steps[0]["if"], {"runner.environment": environment}) == (
-        environment == "github-hosted"
+    assert _condition_matches(steps[0]["if"], {"runner.environment": "github-hosted"})
+
+
+def test_one_required_variable_controls_every_hosted_eligible_job() -> None:
+    workflows = (PR_WORKFLOW, WORKFLOW, RELEASE_WORKFLOW)
+    for workflow in workflows:
+        for name, job in workflow["jobs"].items():
+            if "uses" in job:
+                continue
+            assert "vars.CI_RUNNERS" in str(job["runs-on"]), name
+    source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / ".github/workflows").glob("*.yml"))
     )
+    assert "DINKSTER_PR_RUNNER" not in source
+
+
+def test_full_suites_run_directly_on_hosted_runners() -> None:
+    test_commands = "\n".join(str(step.get("run", "")) for step in JOBS["test"]["steps"])
+    coverage_commands = "\n".join(str(step.get("run", "")) for step in JOBS["coverage"]["steps"])
+    assert "run_counted_suite" not in test_commands
+    assert "run_counted_suite" not in coverage_commands
+
+
+def test_coverage_shards_combine_before_enforcing_the_unchanged_floor() -> None:
+    coverage = JOBS["coverage"]
+    assert coverage["strategy"] == {
+        "fail-fast": False,
+        "matrix": {"shard": [1, 2, 3, 4]},
+    }
+    source = "\n".join(str(step.get("run", "")) for step in coverage["steps"])
+    assert "--file-shard=${{ matrix.shard }}/4" in source
+    assert "--cov-report=" in source
+    assert "--cov-fail-under" not in source
+    gate = JOBS["coverage-gate"]
+    gate_source = "\n".join(str(step.get("run", "")) for step in gate["steps"])
+    assert "test '${{ needs.coverage.result }}' = success" in gate_source
+    assert "coverage combine coverage-data" in gate_source
+    assert "coverage report --fail-under=80" in gate_source
+
+
+def test_main_status_records_and_requires_every_complete_lane() -> None:
+    status = JOBS["main-status"]
+    assert status["if"] == "always()"
+    assert status["needs"] == [
+        "validation-plan",
+        "test",
+        "p2p-descriptor-macos",
+        "p2p-artifact-smoke",
+        "torch-cpu",
+        "model-tests-gate",
+        "coverage-gate",
+        "translation-coverage",
+    ]
+    source = "\n".join(str(step.get("run", "")) for step in status["steps"])
+    assert "main-validation-status.json" in source
+    for result in (
+        "TEST_RESULT",
+        "MACOS_RESULT",
+        "ARTIFACT_RESULT",
+        "TORCH_RESULT",
+        "MODEL_RESULT",
+        "COVERAGE_RESULT",
+        "TRANSLATION_RESULT",
+    ):
+        assert f'test "${result}" = success' in source
 
 
 def test_full_validation_pytest_and_demo_jobs_are_timeout_bounded() -> None:
@@ -989,15 +1043,19 @@ def test_full_validation_pytest_and_demo_jobs_are_timeout_bounded() -> None:
     test_job = JOBS["test"]
     assert test_job["timeout-minutes"] == "${{ matrix.timeout-minutes }}"
     assert [row["timeout-minutes"] for row in test_job["strategy"]["matrix"]["include"]] == [
-        60,
-        60,
-        30,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
     ]
     assert JOBS["p2p-descriptor-macos"]["timeout-minutes"] == 15
     assert JOBS["p2p-artifact-smoke"]["timeout-minutes"] == 15
-    assert JOBS["torch-cpu"]["timeout-minutes"] == 45
-    assert JOBS["model-tests"]["timeout-minutes"] == 60
-    assert JOBS["coverage"]["timeout-minutes"] == 60
+    assert JOBS["torch-cpu"]["timeout-minutes"] == 20
+    assert JOBS["model-tests"]["timeout-minutes"] == 20
+    assert JOBS["coverage"]["timeout-minutes"] == 20
+    assert JOBS["coverage-gate"]["timeout-minutes"] == 5
     assert JOBS["translation-coverage"]["timeout-minutes"] == 15
     # A hung pytest run self-identifies the stuck test through pytest's
     # bundled faulthandler_timeout before the job bound releases the runner;

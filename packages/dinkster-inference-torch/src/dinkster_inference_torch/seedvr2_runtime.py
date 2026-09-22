@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
@@ -13,17 +13,21 @@ from dinkster_inference import (
     SEEDVR2_CODEC,
     SEEDVR2_SIGMAS,
     Conditioning,
+    ConditioningCarrier,
+    ConditioningSet,
     GuidanceRole,
     ModelFamily,
     Registry,
     SamplerDescriptor,
     SchedulerDescriptor,
     SigmaSpace,
+    make_conditioning_carrier,
 )
 
 if TYPE_CHECKING:
     from .checkpoint_runtime import ComponentAssembly
 
+from .conditioning_adapters import basic_conditioning_to_carrier, materialize_basic_conditioning
 from .guidance import (
     ConditioningBatch,
     GuidanceExecutor,
@@ -83,6 +87,54 @@ class SeedVR2Conditioning(Conditioning[torch.Tensor]):
             raise SeedVR2RuntimeError("SeedVR2 conditioning branch must be positive or negative")
         if type(self.component_identity) is not str or not self.component_identity:
             raise SeedVR2RuntimeError("SeedVR2 conditioning requires a component identity")
+
+
+_SEEDVR2_BRANCH_KEY = "dinkster.seedvr2/branch"
+_SEEDVR2_COMPONENT_IDENTITY_KEY = "dinkster.seedvr2/component-identity"
+
+
+def seedvr2_conditioning_to_carrier(value: SeedVR2Conditioning) -> ConditioningCarrier:
+    if type(value) is not SeedVR2Conditioning:
+        raise TypeError("value must be exact SeedVR2Conditioning")
+    basic = basic_conditioning_to_carrier(value)
+    record = replace(
+        basic.conditioning.records[0],
+        extension_metadata=(
+            (_SEEDVR2_BRANCH_KEY, value.branch),
+            (_SEEDVR2_COMPONENT_IDENTITY_KEY, value.component_identity),
+        ),
+    )
+    return make_conditioning_carrier(ConditioningSet((record,)), basic.bindings)
+
+
+def materialize_seedvr2_conditioning(
+    carrier: ConditioningCarrier,
+    *,
+    device: torch.device | str,
+) -> SeedVR2Conditioning:
+    if type(carrier) is not ConditioningCarrier:
+        raise TypeError("carrier must be exact ConditioningCarrier")
+    records = carrier.conditioning.records
+    if len(records) != 1:
+        raise SeedVR2RuntimeError("SeedVR2 conditioning requires one record")
+    record = records[0]
+    metadata = dict(record.extension_metadata)
+    if set(metadata) != {_SEEDVR2_BRANCH_KEY, _SEEDVR2_COMPONENT_IDENTITY_KEY}:
+        raise SeedVR2RuntimeError("SeedVR2 conditioning metadata is incomplete")
+    branch = metadata[_SEEDVR2_BRANCH_KEY]
+    component_identity = metadata[_SEEDVR2_COMPONENT_IDENTITY_KEY]
+    if type(branch) is not str or type(component_identity) is not str:
+        raise SeedVR2RuntimeError("SeedVR2 conditioning metadata must contain strings")
+    stripped = make_conditioning_carrier(
+        ConditioningSet((replace(record, extension_metadata=()),)), carrier.bindings
+    )
+    basic = materialize_basic_conditioning(stripped, device=device)
+    return SeedVR2Conditioning(
+        basic.embeddings,
+        basic.pooled,
+        branch=branch,
+        component_identity=component_identity,
+    )
 
 
 def seedvr2_conditioning(
@@ -301,6 +353,23 @@ class SeedVR2DiffusionRuntime(SingleStreamSamplingRuntime):
     @property
     def runtime_identity(self) -> str:
         return self._runtime_identity
+
+    @property
+    def conditioning_identity(self) -> str:
+        return "dinkster.seedvr2.conditioning:v1"
+
+    def prepare_single_stream_conditioning(
+        self, carrier: ConditioningCarrier
+    ) -> SeedVR2Conditioning:
+        conditioning = materialize_seedvr2_conditioning(
+            carrier,
+            device=module_compute_device(self.assembled.diffusion),
+        )
+        if conditioning.component_identity != self.runtime_identity:
+            raise SeedVR2RuntimeError(
+                "SeedVR2 conditioning was built for a different diffusion component"
+            )
+        return conditioning
 
     def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
         return SEEDVR2_SIGMAS
@@ -551,5 +620,7 @@ __all__ = [
     "SeedVR2Denoiser",
     "SeedVR2DiffusionRuntime",
     "SeedVR2RuntimeError",
+    "materialize_seedvr2_conditioning",
     "seedvr2_conditioning",
+    "seedvr2_conditioning_to_carrier",
 ]
