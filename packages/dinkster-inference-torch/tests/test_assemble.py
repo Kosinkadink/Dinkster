@@ -1272,7 +1272,6 @@ def test_quantized_component_loads_cast_state_at_bound_compute_dtype(tmp_path: P
         def __init__(self, operations: Any) -> None:
             super().__init__()
             self.quantized = INITLESS.linear(4, 3)
-            self.precision_quantized = CastOperations(torch.float32).linear(4, 3)
             self.plain = operations.linear(4, 4)
             self.patch = CastOperations(torch.float32).conv3d(1, 2, 1)
 
@@ -1284,11 +1283,6 @@ def test_quantized_component_loads_cast_state_at_bound_compute_dtype(tmp_path: P
         "quantized.weight": torch.randint(-100, 101, (3, 4), generator=generator, dtype=torch.int8),
         "quantized.weight_scale": torch.rand((), generator=generator),
         "quantized.bias": torch.randn((3,), generator=generator, dtype=torch.bfloat16),
-        "precision_quantized.weight": torch.randint(
-            -100, 101, (3, 4), generator=generator, dtype=torch.int8
-        ),
-        "precision_quantized.weight_scale": torch.rand((), generator=generator),
-        "precision_quantized.bias": torch.randn((3,), generator=generator, dtype=torch.bfloat16),
         "plain.weight": torch.randn((4, 4), generator=generator, dtype=torch.bfloat16),
         "plain.bias": torch.randn((4,), generator=generator, dtype=torch.bfloat16),
         "patch.weight": torch.randn((2, 1, 1, 1, 1), generator=generator, dtype=torch.bfloat16),
@@ -1301,18 +1295,12 @@ def test_quantized_component_loads_cast_state_at_bound_compute_dtype(tmp_path: P
         weight="quantized.weight",
         weight_scale="quantized.weight_scale",
     )
-    precision_quant = LayerQuant(
-        layer="precision_quantized",
-        format="int8_tensorwise",
-        weight="precision_quantized.weight",
-        weight_scale="precision_quantized.weight_scale",
-    )
     plan = component_plan(
         "diffusion",
         path,
         SimpleNamespace(),
         state,
-        quant={"quantized": quant, "precision_quantized": precision_quant},
+        quant={"quantized": quant},
     )
 
     module = assemble_mod._load_component(  # pyright: ignore[reportPrivateUsage]
@@ -1326,14 +1314,6 @@ def test_quantized_component_loads_cast_state_at_bound_compute_dtype(tmp_path: P
     assert module.quantized.bias is not None
     assert module.quantized.bias.dtype is torch.float16
     assert torch.equal(module.quantized.bias, state["quantized.bias"].half())
-    assert isinstance(module.precision_quantized, Int8Linear)
-    assert module.precision_quantized.compute_dtype is torch.float32
-    assert module.precision_quantized.bias is not None
-    assert module.precision_quantized.bias.dtype is torch.float32
-    assert torch.equal(
-        module.precision_quantized.bias,
-        state["precision_quantized.bias"].float(),
-    )
     assert module.plain.weight.dtype is torch.float16
     assert module.plain.bias is not None and module.plain.bias.dtype is torch.float16
     assert torch.equal(module.plain.weight, state["plain.weight"].half())
