@@ -540,6 +540,34 @@ def _load_verified_diffusion(
     return component
 
 
+_COMFYUI_BF16_FP32_PROJECTION_KEYS = frozenset(
+    {
+        "video_patch_proj.weight",
+        "video_patch_proj.bias",
+        "audio_patch_proj.weight",
+        "audio_patch_proj.bias",
+        "final_layer.video_out.weight",
+        "final_layer.video_out.bias",
+        "final_layer.audio_out.weight",
+        "final_layer.audio_out.bias",
+    }
+)
+
+
+def _round_h3_projection_storage(
+    _module: MiniMaxH3DiT,
+    state: dict[str, torch.Tensor],
+    *,
+    diffusion_dtype: torch.dtype,
+) -> dict[str, torch.Tensor]:
+    if diffusion_dtype is torch.float32:
+        return state
+    return {
+        key: tensor.to(diffusion_dtype) if key in _COMFYUI_BF16_FP32_PROJECTION_KEYS else tensor
+        for key, tensor in state.items()
+    }
+
+
 def _build_diffusion(
     layout: MiniMaxH3DiTLayout,
     *,
@@ -738,6 +766,9 @@ def load_minimax_h3_model(
             artifact,
             compute_dtype=diffusion_dtype,
             attention_selection=attention_selection,
+            transform=lambda module, state: _round_h3_projection_storage(
+                module, state, diffusion_dtype=diffusion_dtype
+            ),
         )
     assembled = AssembledMiniMaxH3Model(
         diffusion,

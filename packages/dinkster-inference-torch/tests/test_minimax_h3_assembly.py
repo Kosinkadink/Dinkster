@@ -700,6 +700,35 @@ def test_verified_diffusion_declares_route_materialization_ceilings(
     assert store.max_materialized_itemsize("bias") == 2
 
 
+@pytest.mark.parametrize("diffusion_dtype", [torch.bfloat16, torch.float32])
+def test_h3_projection_storage_matches_comfyui_model_dtype(
+    diffusion_dtype: torch.dtype,
+) -> None:
+    keys = assembly._COMFYUI_BF16_FP32_PROJECTION_KEYS  # pyright: ignore[reportPrivateUsage]
+    source = {key: torch.tensor([1.001], dtype=torch.float32) for key in keys}
+    source["blocks.0.attn.q_proj.weight_scale"] = torch.tensor(0.125)
+
+    rounded = assembly._round_h3_projection_storage(  # pyright: ignore[reportPrivateUsage]
+        cast("Any", object()), source, diffusion_dtype=diffusion_dtype
+    )
+
+    expected = torch.tensor([1.001], dtype=torch.float32).to(diffusion_dtype)
+    assert keys == {
+        "video_patch_proj.weight",
+        "video_patch_proj.bias",
+        "audio_patch_proj.weight",
+        "audio_patch_proj.bias",
+        "final_layer.video_out.weight",
+        "final_layer.video_out.bias",
+        "final_layer.audio_out.weight",
+        "final_layer.audio_out.bias",
+    }
+    for key in keys:
+        assert rounded[key].dtype is diffusion_dtype
+        assert torch.equal(rounded[key], expected)
+    assert rounded["blocks.0.attn.q_proj.weight_scale"].dtype is torch.float32
+
+
 def test_artifact_paths_refuse_incomplete_duplicate_and_mutable_authority(
     tmp_path: Path,
 ) -> None:
