@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -15,10 +16,15 @@ from scripts.build_release import build_source_archive, release_version, workspa
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_release_workflow_is_tag_only_and_publishes_after_platform_installs() -> None:
+def test_release_workflow_validates_tag_before_building_and_publishing() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     assert workflow[True] == {"push": {"tags": ["v*.*.*"]}}
-    assert set(workflow["jobs"]) == {"build", "install", "release"}
+    assert set(workflow["jobs"]) == {"validation", "build", "install", "release"}
+    assert workflow["jobs"]["validation"] == {
+        "uses": "./.github/workflows/full-validation.yml",
+        "secrets": "inherit",
+    }
+    assert workflow["jobs"]["build"]["needs"] == "validation"
     assert workflow["jobs"]["install"]["needs"] == "build"
     assert workflow["jobs"]["release"]["needs"] == "install"
     assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
@@ -42,7 +48,7 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     commands = "\n".join(step.get("run", "") for step in build["steps"])
     assert "scripts/build_release.py" in commands
     assert '--tag "$GITHUB_REF_NAME"' in commands
-    assert "--identity-root .release/identity" in commands
+    assert "--identity-root" not in commands
     assert "uvx twine check dist/*.whl" in commands
     assert "pnpm --filter @dinkster/app build" in commands
     frontend_checkout = next(
@@ -53,23 +59,40 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
     )
     assert frontend_checkout["with"]["ref"] == "${{ steps.frontend.outputs.ref }}"
     assert frontend_checkout["with"]["persist-credentials"] is False
-    identity_checkout = next(
-        step
+    assert "token" not in frontend_checkout["with"]
+    assert "ssh-key" not in frontend_checkout["with"]
+    assert all(
+        step.get("with", {}).get("repository") != "Kosinkadink/Dinkster-Frontend"
         for step in build["steps"]
-        if step.get("uses") == "actions/checkout@v4"
-        and step.get("with", {}).get("repository") == "Kosinkadink/dinkster-identity"
+        if step.get("uses") == "./.github/actions/configure-private-repository"
     )
-    assert identity_checkout["with"]["ref"] == "${{ steps.identity.outputs.ref }}"
-    assert identity_checkout["with"]["persist-credentials"] is False
+    assert all(
+        step.get("with", {}).get("repository") != "Kosinkadink/dinkster-identity"
+        for step in build["steps"]
+    )
+
+
+def test_release_resolves_the_public_token_verifier() -> None:
+    server = tomllib.loads(
+        (ROOT / "packages/dinkster-server/pyproject.toml").read_text(encoding="utf-8")
+    )
+    verifier = (
+        "dinkster-token-verifier @ "
+        "https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/"
+        "v0.1.1/dinkster_token_verifier-0.1.1-py3-none-any.whl"
+        "#sha256=b10f09c26c113016b1633701c73958d6dbe41f7dca318d5677e449ec04a643ae"
+    )
+    assert verifier in server["project"]["dependencies"]
+    assert "dinkster-identity" not in server["tool"]["uv"]["sources"]
 
 
 def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     assert workflow["jobs"]["install"]["strategy"]["matrix"] == {
         "include": [
-            {"os": "linux", "labels": ["self-hosted", "linux", "x64"]},
-            {"os": "windows", "labels": ["self-hosted", "windows", "x64"]},
-            {"os": "macos", "labels": ["self-hosted", "macos", "arm64"]},
+            {"os": "linux", "runner": "linux"},
+            {"os": "windows", "runner": "windows"},
+            {"os": "macos", "runner": "macos"},
         ]
     }
     bootstrap = workflow["jobs"]["install"]["steps"][0]
@@ -91,7 +114,6 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     assert "from dinkster_frontend import bundle_path" in command
     assert all(
         step.get("uses") != "./.github/actions/configure-dinkster-identity"
-        or step.get("if") == "matrix.os == 'linux'"
         for step in workflow["jobs"]["install"]["steps"]
     )
 
@@ -154,8 +176,7 @@ def test_repository_versions_match_first_release_tag() -> None:
     frontend = json.loads((ROOT / "scripts/release_sources.json").read_text(encoding="utf-8"))
     assert frontend["repository"] == "Kosinkadink/Dinkster-Frontend"
     assert len(frontend["commit"]) == 40
-    assert frontend["identityRepository"] == "Kosinkadink/dinkster-identity"
-    assert len(frontend["identityCommit"]) == 40
+    assert set(frontend) == {"repository", "commit"}
 
 
 def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path) -> None:
@@ -174,7 +195,13 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
-    subprocess.run(["git", "-C", str(root), "commit", "-m", "fixture"], check=True)
+    tree = subprocess.run(
+        ["git", "-C", str(root), "write-tree"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (root / ".git/HEAD").write_text(f"{tree}\n", encoding="ascii")
     archive = build_source_archive(root, "1.2.3", tmp_path)
     with zipfile.ZipFile(archive) as source:
         assert source.namelist() == ["scripts/", "src/", "src/package.py"]

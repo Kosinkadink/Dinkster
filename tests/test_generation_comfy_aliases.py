@@ -117,6 +117,13 @@ CHROMA_WORKFLOW_CARRIERS = frozenset(
 
 GUIDER_CARRIERS = frozenset({"dinkster.scheduled_cfg_guider"})
 
+CUSTOM_SAMPLING_CARRIERS = frozenset(
+    {
+        "dinkster.sampler_custom",
+        "dinkster.sampler_custom_advanced",
+    }
+)
+
 TRELLIS2_WORKFLOW_CARRIERS = frozenset(
     {
         "dinkster.apply_texture_to_mesh",
@@ -207,6 +214,7 @@ def test_generation_comfy_alias_replacements_validate_against_native_schemas() -
         | SEEDVR2_WORKFLOW_CARRIERS
         | CHROMA_WORKFLOW_CARRIERS
         | GUIDER_CARRIERS
+        | CUSTOM_SAMPLING_CARRIERS
         | TRELLIS2_WORKFLOW_CARRIERS
     )
 
@@ -279,6 +287,56 @@ def test_seedvr2_workflow_aliases_cover_current_core_surface() -> None:
     }
     assert chunk_cases[0]["slotVariants"] == {"chunking_mode": "manual"}
     assert chunk_cases[1]["slotVariants"] == {"chunking_mode": "auto"}
+
+
+def test_custom_sampling_aliases_copy_every_shared_input() -> None:
+    records = {record["source"]["nodeClass"]: record for record in _registry()["records"]}
+    expected = {
+        "SamplerCustom": (
+            "dinkster.sampler_custom",
+            (
+                "model",
+                "add_noise",
+                "noise_seed",
+                "cfg",
+                "positive",
+                "negative",
+                "sampler",
+                "sigmas",
+                "latent_image",
+            ),
+        ),
+        "SamplerCustomAdvanced": (
+            "dinkster.sampler_custom_advanced",
+            ("noise", "guider", "sampler", "sigmas", "latent_image"),
+        ),
+    }
+    source_schemas = {
+        schema.node_type: schema for schema in map(schema_from_wire, _registry()["sourceSchemas"])
+    }
+    for node_class, (carrier, input_ids) in expected.items():
+        record = records[node_class]
+        assert record["carrier"] == carrier
+        assert record["source"] == {
+            "pack": "comfy-core",
+            "nodeClass": node_class,
+            "nodeType": f"comfy.{node_class}",
+            "revision": "b78cec87",
+        }
+        case = record["replacement"]["cases"][0]
+        assert case["to"] == carrier
+        assert case["inputs"] == {
+            input_id: {"kind": "copy", "input": input_id} for input_id in input_ids
+        }
+        assert case["outputs"] == {"output": "output", "denoised_output": "denoised_output"}
+        # The pinned source schema must expose exactly the ports the alias
+        # maps, so no Comfy input can be silently left unmapped.
+        source = source_schemas[f"comfy.{node_class}"]
+        assert tuple(item.id for item in source.inputs) == input_ids
+        assert tuple(item.id for item in source.outputs) == (
+            "output",
+            "denoised_output",
+        )
 
 
 def test_controlnet_native_owner_schemas_match_source_contracts() -> None:

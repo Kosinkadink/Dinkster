@@ -37,6 +37,18 @@ FIXTURES = Path(__file__).parent
 ATTENTION_PROVIDER = FIXTURES / "fixtures/attention_provider"
 EXTENSION_CONTRACT_PACK = FIXTURES / "fixtures/extension-contract-pack"
 PROOF_MODULES = ("s1_sampler_pack_a", "s1_sampler_pack_b")
+_MODULE_REGISTRY_PROVIDERS = {
+    "s1_sampler_pack_a": {
+        "dinkster.samplers": ("proof_a.scaled_euler",),
+        "dinkster.schedulers": ("proof_a.scheduler",),
+    },
+    "s1_sampler_pack_b": {"dinkster.samplers": ("proof_b.context_probe",)},
+    "s1_sampler_reloaded": {"dinkster.samplers": ("proof_a.reloaded",)},
+    "s1_collision_builtin": {"dinkster.samplers": ("dinkster.euler",)},
+    "s1_collision_alias": {"dinkster.samplers": ("collision.other",)},
+    "s1_scheduler_collision_a": {"dinkster.schedulers": ("scheduler_a.value",)},
+    "s1_scheduler_collision_b": {"dinkster.schedulers": ("scheduler_b.value",)},
+}
 
 
 def _host_manifest(root: Path) -> Path:
@@ -61,9 +73,18 @@ def _extension_manifest(
     *,
     namespace: str | None = None,
     contract: str = "",
+    declare_inference: bool = True,
 ) -> Path:
     root.mkdir(parents=True)
     manifest = root / "dinkster-pack.toml"
+    providers = _MODULE_REGISTRY_PROVIDERS.get(module, {}) if declare_inference else {}
+    provider_contract = ""
+    if providers:
+        lines = ["", "[pack.provides.registry]"]
+        for registry, descriptor_ids in providers.items():
+            values = ", ".join(f'"{descriptor_id}"' for descriptor_id in descriptor_ids)
+            lines.append(f'"{registry}" = [{values}]')
+        provider_contract = "\n".join(lines) + "\n"
     manifest.write_text(
         f'[pack]\nname = "{name}"\n'
         f'namespaces = ["{namespace or name}"]\n\n'
@@ -71,6 +92,7 @@ def _extension_manifest(
         "[pack.extension]\n"
         f'inference = "{module}:register"\n'
         'privileges = ["inference"]\n'
+        f"{provider_contract}"
         f"{contract}",
         encoding="utf-8",
     )
@@ -311,10 +333,6 @@ def test_pack_registry_provider_orders_consumer_and_executes_declared_sampler(
         tmp_path / "proof_a",
         "proof_a",
         "s1_sampler_pack_a",
-        contract=(
-            '\n[pack.provides.registry]\n"dinkster.samplers" = ["proof_a.scaled_euler"]\n'
-            '"dinkster.schedulers" = ["proof_a.scheduler"]\n'
-        ),
     )
     consumer = _extension_manifest(
         tmp_path / "proof_b",
@@ -380,6 +398,7 @@ def test_pack_registry_provider_must_match_materialized_contribution(tmp_path: P
         "proof_a",
         "s1_sampler_pack_a",
         contract=('\n[pack.provides.registry]\n"dinkster.samplers" = ["proof_a.missing"]\n'),
+        declare_inference=False,
     )
 
     async def scenario() -> None:
@@ -526,7 +545,10 @@ def test_sampler_collision_and_activation_failure_roll_back_staged_generation(
             before_choices = dict(composer.composition.choices)
             before_specs = composer.pack_specs()
 
-            with pytest.raises(CompositionError, match="dinkster.euler.*already registered"):
+            with pytest.raises(
+                CompositionError,
+                match="dinkster.samplers:dinkster.euler is provided by both",
+            ):
                 await composer.add_pack(
                     PackSpec(
                         _extension_manifest(

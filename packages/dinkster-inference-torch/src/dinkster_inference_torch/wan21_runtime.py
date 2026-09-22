@@ -28,7 +28,6 @@ from dinkster_inference import (
     ConditioningChannel,
     ConditioningRecord,
     ConditioningSet,
-    CustomSamplingRequest,
     CustomSamplingResult,
     DualSamplingGuidance,
     FlowSigmas,
@@ -77,7 +76,6 @@ from .assemble import AssembledWan21
 from .codecs import CodecPlugin
 from .context_windows import apply_freenoise, windowed_conditioning_evaluation
 from .denoise import (
-    FluxGuidance,
     prepare_multistream_noise,
     prepare_noise,
     to_batch,
@@ -87,9 +85,11 @@ from .operations import bound_compute_device, bound_compute_dtype
 from .parameterizations import calculate_denoised, calculate_input
 from .payloads import TensorPayloadError, payload_binding_to_tensor, tensor_to_payload_binding
 from .sampling_execution import (
+    CustomSamplingCapabilities,
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
+    CustomSamplingRestriction,
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
     SamplingDenoiserExecution,
@@ -2795,6 +2795,71 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
             cast("Wan21Runtime", runtime).assembled.compute_dtype("diffusion") or torch.bfloat16
         ),
         flow=True,
+        capabilities=CustomSamplingCapabilities(
+            restrictions=(
+                CustomSamplingRestriction(
+                    when=lambda runtime: (
+                        type(cast("Wan21Runtime", runtime).assembled.diffusion) is Wan21CausalModel
+                    ),
+                    required_sampler_id="dinkster.ar_video",
+                    message="Wan CausalAR requires the ar_video sampler",
+                ),
+                CustomSamplingRestriction(
+                    when=lambda runtime: (
+                        type(cast("Wan21Runtime", runtime).assembled.diffusion) is Wan21CausalModel
+                    ),
+                    refuses_denoise_mask=True,
+                    refuses_inpaint=True,
+                    message="Wan CausalAR does not support masks or inpaint conditioning",
+                ),
+                CustomSamplingRestriction(
+                    when=lambda runtime: (
+                        type(cast("Wan21Runtime", runtime).assembled.diffusion) is Wan21CausalModel
+                    ),
+                    refuses_context_windows=True,
+                    message="Wan CausalAR does not support context windows",
+                ),
+                CustomSamplingRestriction(
+                    when=lambda runtime: (
+                        type(cast("Wan21Runtime", runtime).assembled.diffusion) is Wan21CausalModel
+                    ),
+                    refuses_guidance=True,
+                    message="Wan CausalAR does not support distilled guidance",
+                ),
+                CustomSamplingRestriction(
+                    when=lambda runtime: (
+                        type(cast("Wan21Runtime", runtime).assembled.diffusion)
+                        is not Wan21CausalModel
+                    ),
+                    forbidden_sampler_id="dinkster.ar_video",
+                    message="ar_video requires the Wan CausalAR profile",
+                ),
+                CustomSamplingRestriction(
+                    when=lambda runtime: (
+                        type(cast("Wan21Runtime", runtime).assembled.diffusion)
+                        is not Wan21CausalModel
+                        and (
+                            cast("Wan21Runtime", runtime).assembled.diffusion.config.model_variant
+                            != "base"
+                            or cast("Wan21Runtime", runtime).assembled.diffusion.config.model_type
+                            != "t2v"
+                        )
+                    ),
+                    refuses_context_windows=True,
+                    message="Wan context windows support only the base text-to-video profiles",
+                ),
+                CustomSamplingRestriction(
+                    when=lambda runtime: (
+                        type(cast("Wan21Runtime", runtime).assembled.diffusion)
+                        is not Wan21CausalModel
+                        and cast("Wan21Runtime", runtime).assembled.diffusion.config.vace_layers
+                        is not None
+                    ),
+                    refuses_context_windows=True,
+                    message="Wan context windows do not support VACE models",
+                ),
+            )
+        ),
     )
 
     def __init__(
@@ -3356,47 +3421,6 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
     def _custom_sampling_process_out(self, latent: torch.Tensor) -> torch.Tensor:
         return self._latent_process_out(latent)
 
-    def check_custom_sampling(
-        self,
-        request: CustomSamplingRequest[torch.Tensor],
-        *,
-        has_denoise_mask: bool,
-        has_inpaint: bool,
-        has_context_windows: bool,
-        guidance: FluxGuidance = None,
-    ) -> None:
-        MultiStreamSamplingRuntime.check_custom_sampling(
-            self,
-            request,
-            has_denoise_mask=has_denoise_mask,
-            has_inpaint=has_inpaint,
-            has_context_windows=has_context_windows,
-            guidance=guidance,
-        )
-        model = self.assembled.diffusion
-        if type(model) is Wan21CausalModel:
-            if request.sampler.id != "dinkster.ar_video":
-                raise Wan21RuntimeError("Wan CausalAR requires the ar_video sampler")
-            if has_denoise_mask or has_inpaint:
-                raise Wan21RuntimeError(
-                    "Wan CausalAR does not support masks or inpaint conditioning"
-                )
-            if has_context_windows:
-                raise Wan21RuntimeError("Wan CausalAR does not support context windows")
-            if guidance is not None:
-                raise Wan21RuntimeError("Wan CausalAR does not support distilled guidance")
-        else:
-            if request.sampler.id == "dinkster.ar_video":
-                raise Wan21RuntimeError("ar_video requires the Wan CausalAR profile")
-            if has_context_windows and (
-                model.config.model_variant != "base" or model.config.model_type != "t2v"
-            ):
-                raise Wan21RuntimeError(
-                    "Wan context windows support only the base text-to-video profiles"
-                )
-            if has_context_windows and model.config.vace_layers is not None:
-                raise Wan21RuntimeError("Wan context windows do not support VACE models")
-
     def _sampling_denoiser(
         self,
         compute_dtype: torch.dtype,
@@ -3501,13 +3525,6 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
         return MultiStreamLatent.from_pairs(
             (("video", _validate_video_latent(latent, channels=channels)),)
         )
-
-    def _ksampler_kwargs(
-        self, scheduler_id: str, noise_inds: Sequence[int] | None, kwargs: dict[str, object]
-    ) -> dict[str, object]:
-        if type(self.assembled.diffusion) is Wan21CausalModel:
-            raise Wan21RuntimeError("Wan CausalAR requires the ar_video custom sampler")
-        return MultiStreamSamplingRuntime._ksampler_kwargs(self, scheduler_id, noise_inds, kwargs)
 
     def _ksampler_noise(
         self,
@@ -5306,7 +5323,6 @@ class Wan21DiffusionRuntime(MultiStreamSamplingRuntime):
     prepare_phantom_conditioning = Wan21Runtime.prepare_phantom_conditioning
     prepare_fun_conditioning = Wan21Runtime.prepare_fun_conditioning
     prepare_vace_conditioning = Wan21Runtime.prepare_vace_conditioning
-    check_custom_sampling = Wan21Runtime.check_custom_sampling
     sample_custom = sampling_execution
     sampling_execution_registration = Wan21Runtime.sampling_execution_registration
     _sampling_denoiser = Wan21Runtime._sampling_denoiser  # pyright: ignore[reportPrivateUsage]
@@ -5319,7 +5335,6 @@ class Wan21DiffusionRuntime(MultiStreamSamplingRuntime):
     custom_sampling_latent_kwargs = Wan21Runtime.custom_sampling_latent_kwargs
     prepare_custom_sampling_noise = Wan21Runtime.prepare_custom_sampling_noise
     adapt_multistream_latent = Wan21Runtime.adapt_multistream_latent
-    _ksampler_kwargs = Wan21Runtime._ksampler_kwargs  # pyright: ignore[reportPrivateUsage]
     _ksampler_noise = Wan21Runtime._ksampler_noise  # pyright: ignore[reportPrivateUsage]
     _custom_sampling_process_in = Wan21Runtime._custom_sampling_process_in  # pyright: ignore[reportPrivateUsage]
     _custom_sampling_process_out = Wan21Runtime._custom_sampling_process_out  # pyright: ignore[reportPrivateUsage]
@@ -5375,7 +5390,6 @@ class Wan21CausalDiffusionRuntime(MultiStreamSamplingRuntime):
     conditioning_identity = Wan21Runtime.conditioning_identity  # pyright: ignore[reportIncompatibleMethodOverride]
     prepare_text_conditioning = Wan21Runtime.prepare_text_conditioning
     prepare_conditioning = Wan21Runtime.prepare_conditioning
-    check_custom_sampling = Wan21Runtime.check_custom_sampling
     sample_custom = sampling_execution
     sampling_execution_registration = Wan21Runtime.sampling_execution_registration
     _sampling_denoiser = Wan21Runtime._sampling_denoiser  # pyright: ignore[reportPrivateUsage]
@@ -5387,7 +5401,6 @@ class Wan21CausalDiffusionRuntime(MultiStreamSamplingRuntime):
     custom_sampling_latent_kwargs = Wan21Runtime.custom_sampling_latent_kwargs
     prepare_custom_sampling_noise = Wan21Runtime.prepare_custom_sampling_noise
     adapt_multistream_latent = Wan21Runtime.adapt_multistream_latent
-    _ksampler_kwargs = Wan21Runtime._ksampler_kwargs  # pyright: ignore[reportPrivateUsage]
     _custom_sampling_process_in = Wan21Runtime._custom_sampling_process_in  # pyright: ignore[reportPrivateUsage]
     _custom_sampling_process_out = Wan21Runtime._custom_sampling_process_out  # pyright: ignore[reportPrivateUsage]
 

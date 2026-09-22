@@ -13,13 +13,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from dinkster_workers import load_manifest
 
 from dinkster.cli import main
+
+REGISTRY_DECLARATION = """\
+[pack.provides.registry]
+"dinkster.samplers" = ["degraded.fast_solver"]
+"dinkster.schedulers" = ["degraded.stepped_schedule"]
+"""
+DEGRADED_SAMPLER_PACK = Path(__file__).parent / "fixtures/degraded-sampler-pack"
 
 HEALTHY_MANIFEST = """\
 [pack]
@@ -110,6 +119,31 @@ def test_sysargv_commands_get_threaded_args_and_argv_restored(capsys) -> None:
     assert excinfo.value.code == 0
     assert "install root" in capsys.readouterr().out
     assert sys.argv == before
+
+
+def test_pack_registry_declaration_prints_exact_toml(capsys) -> None:
+    assert main(["pack", "registry-declaration", str(DEGRADED_SAMPLER_PACK)]) == 0
+    assert capsys.readouterr().out == REGISTRY_DECLARATION
+
+
+def test_pack_registry_declaration_write_updates_manifest(tmp_path: Path, capsys) -> None:
+    pack = tmp_path / "pack"
+    shutil.copytree(DEGRADED_SAMPLER_PACK, pack, ignore=shutil.ignore_patterns("__pycache__"))
+    manifest_path = pack / "dinkster-pack.toml"
+    source = manifest_path.read_text(encoding="utf-8")
+    manifest_path.write_text(
+        source.replace('"dinkster.schedulers" = ["degraded.stepped_schedule"]\n', ""),
+        encoding="utf-8",
+    )
+
+    assert main(["pack", "registry-declaration", str(pack), "--write"]) == 0
+    assert capsys.readouterr().out == REGISTRY_DECLARATION
+    assert manifest_path.read_text(encoding="utf-8").endswith("\n" + REGISTRY_DECLARATION)
+    manifest = load_manifest(manifest_path)
+    assert {(provider.registry, provider.id) for provider in manifest.provides.registry} == {
+        ("dinkster.samplers", "degraded.fast_solver"),
+        ("dinkster.schedulers", "degraded.stepped_schedule"),
+    }
 
 
 def test_dispatcher_imports_lazily_and_module_form_works() -> None:

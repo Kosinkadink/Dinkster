@@ -20,7 +20,7 @@ concurrency:
 jobs:
   fast:
     name: format, lint, types and unit subset
-    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.simulate-fork) && '["ubuntu-latest"]' || (vars.DINKSTER_PR_RUNNER || '["self-hosted", "linux", "x64"]')) }}
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS)[((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.simulate-fork) && 'forkLinux' || 'linux'] }}
     timeout-minutes: 10
     env:
       OMP_NUM_THREADS: "4"
@@ -38,79 +38,24 @@ jobs:
         with:
           secret-name-1: DINKSTER_EVIDENCE_READ_KEY
           secret-value-1: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          secret-name-2: DINKSTER_IDENTITY_DEPLOY_KEY
-          secret-value-2: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
           force-not-run: ${{ inputs.simulate-fork }}
       - uses: ./.github/actions/prepare-validation-inputs
         if: steps.private-dependencies.outputs.available == 'true'
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           coverage: "false"
-      - uses: ./.github/actions/configure-dinkster-identity
-        if: steps.private-dependencies.outputs.available == 'true'
-        with:
-          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
       - uses: astral-sh/setup-uv@v5
         if: steps.private-dependencies.outputs.available == 'true'
         with:
           python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - if: steps.private-dependencies.outputs.available == 'true'
         run: uv sync --locked --all-packages
       - if: steps.private-dependencies.outputs.available == 'true'
         run: bash scripts/ci-fast.sh
-
-  engine-tests:
-    name: engine tests (${{ matrix.name }})
-    runs-on: ${{ fromJSON(((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.simulate-fork) && '["ubuntu-latest"]' || '["self-hosted", "Linux", "X64", "cpu-golden-avx2"]') }}
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: inference and IPAdapter, shard 1
-            group: inference
-            pytest-args: -p tools.pytest_file_shard --file-shard 1/2
-          - name: inference and IPAdapter, shard 2
-            group: inference
-            pytest-args: -p tools.pytest_file_shard --file-shard 2/2
-          - name: HED, upscale and EfficientSAM
-            group: vision-fast
-            pytest-args: ""
-          - name: Depth Anything V2, DETR and RT-DETR
-            group: vision-detection
-            pytest-args: ""
-          - name: BiRefNet and Depth Anything V3
-            group: vision-large
-            pytest-args: ""
-          - name: SAM 3.1
-            group: vision-sam
-            pytest-args: ""
-    env:
-      ATEN_CPU_CAPABILITY: avx2
-      ONEDNN_MAX_CPU_ISA: AVX2
-      OMP_NUM_THREADS: "4"
-      MKL_NUM_THREADS: "4"
-      DINKSTER_MODEL_TEST_GROUP: ${{ matrix.group }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          persist-credentials: false
-      - name: Check private dependency access
-        id: private-dependencies
-        uses: ./.github/actions/check-private-dependencies
-        with:
-          secret-name-1: DINKSTER_IDENTITY_DEPLOY_KEY
-          secret-value-1: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          secret-name-2: DINKSTER_EVIDENCE_READ_KEY
-          secret-value-2: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          force-not-run: ${{ inputs.simulate-fork }}
-      - uses: ./.github/actions/torch-cpu-suite
-        if: steps.private-dependencies.outputs.available == 'true'
-        with:
-          identity-deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-          evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
-          run-model-tests: "true"
-          pytest-args: ${{ matrix.pytest-args }}
+      - name: Refuse green validation without private inputs
+        if: always() && steps.private-dependencies.outputs.available != 'true'
+        run: |
+          echo "Required private inputs were unavailable; pull request validation did not run." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
