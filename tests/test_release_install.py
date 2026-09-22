@@ -75,9 +75,9 @@ def test_release_install_matrix_covers_supported_desktop_platforms() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
     assert workflow["jobs"]["install"]["strategy"]["matrix"] == {
         "include": [
-            {"os": "linux", "labels": ["self-hosted", "linux", "x64"]},
-            {"os": "windows", "labels": ["self-hosted", "windows", "x64"]},
-            {"os": "macos", "labels": ["self-hosted", "macos", "arm64"]},
+            {"os": "linux", "runner": "linux"},
+            {"os": "windows", "runner": "windows"},
+            {"os": "macos", "runner": "macos"},
         ]
     }
     bootstrap = workflow["jobs"]["install"]["steps"][0]
@@ -180,7 +180,13 @@ def test_maintainer_source_archive_excludes_non_release_material(tmp_path: Path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
     subprocess.run(["git", "-C", str(root), "add", "."], check=True)
-    subprocess.run(["git", "-C", str(root), "commit", "-m", "fixture"], check=True)
+    tree = subprocess.run(
+        ["git", "-C", str(root), "write-tree"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (root / ".git/HEAD").write_text(f"{tree}\n", encoding="ascii")
     archive = build_source_archive(root, "1.2.3", tmp_path)
     with zipfile.ZipFile(archive) as source:
         assert source.namelist() == ["scripts/", "src/", "src/package.py"]
