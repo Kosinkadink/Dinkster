@@ -255,24 +255,58 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: inference and IPAdapter
+          - name: inference and IPAdapter, shard 1 of 8
             group: inference
             suites: inference-torch,model-ipadapter
+            pytest-args: -p tools.pytest_file_shard --file-shard 1/8
+          - name: inference and IPAdapter, shard 2 of 8
+            group: inference
+            suites: inference-torch,model-ipadapter
+            pytest-args: -p tools.pytest_file_shard --file-shard 2/8
+          - name: inference and IPAdapter, shard 3 of 8
+            group: inference
+            suites: inference-torch,model-ipadapter
+            pytest-args: -p tools.pytest_file_shard --file-shard 3/8
+          - name: inference and IPAdapter, shard 4 of 8
+            group: inference
+            suites: inference-torch,model-ipadapter
+            pytest-args: -p tools.pytest_file_shard --file-shard 4/8
+          - name: inference and IPAdapter, shard 5 of 8
+            group: inference
+            suites: inference-torch,model-ipadapter
+            pytest-args: -p tools.pytest_file_shard --file-shard 5/8
+          - name: inference and IPAdapter, shard 6 of 8
+            group: inference
+            suites: inference-torch,model-ipadapter
+            pytest-args: -p tools.pytest_file_shard --file-shard 6/8
+          - name: inference and IPAdapter, shard 7 of 8
+            group: inference
+            suites: inference-torch,model-ipadapter
+            pytest-args: -p tools.pytest_file_shard --file-shard 7/8
+          - name: inference and IPAdapter, shard 8 of 8
+            group: inference
+            suites: inference-torch,model-ipadapter
+            pytest-args: -p tools.pytest_file_shard --file-shard 8/8
           - name: acceptance and benchmark
             group: acceptance
             suites: acceptance-sampling,benchmark-loader
+            pytest-args: ""
           - name: HED, upscale and EfficientSAM
             group: vision-fast
             suites: hed,upscale,efficient-sam
+            pytest-args: ""
           - name: Depth Anything V2, DETR and RT-DETR
             group: vision-detection
             suites: depth-anything-v2,detr,rtdetr
+            pytest-args: ""
           - name: BiRefNet and Depth Anything V3
             group: vision-large
             suites: birefnet,depth-anything-v3
+            pytest-args: ""
           - name: SAM 3.1
             group: vision-sam
             suites: sam31
+            pytest-args: ""
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
@@ -288,6 +322,7 @@ jobs:
         with:
           evidence-deploy-key: ${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}
           run-model-tests: "true"
+          pytest-args: ${{ matrix.pytest-args }}
 
   model-tests-gate:
     needs: [validation-plan, model-tests]

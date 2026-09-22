@@ -48,42 +48,119 @@ VISION_SUITES = (
 )
 MODEL_GROUPS = (
     {
-        "name": "inference and IPAdapter",
+        "name": "inference and IPAdapter, shard 1 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 1/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 2 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 2/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 3 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 3/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 4 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 4/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 5 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 5/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 6 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 6/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 7 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 7/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 8 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 8/8",
     },
     {
         "name": "acceptance and benchmark",
         "group": "acceptance",
         "suites": "acceptance-sampling,benchmark-loader",
+        "pytest-args": "",
     },
     {
         "name": "HED, upscale and EfficientSAM",
         "group": "vision-fast",
         "suites": "hed,upscale,efficient-sam",
+        "pytest-args": "",
     },
     {
         "name": "Depth Anything V2, DETR and RT-DETR",
         "group": "vision-detection",
         "suites": "depth-anything-v2,detr,rtdetr",
+        "pytest-args": "",
     },
     {
         "name": "BiRefNet and Depth Anything V3",
         "group": "vision-large",
         "suites": "birefnet,depth-anything-v3",
+        "pytest-args": "",
     },
-    {"name": "SAM 3.1", "group": "vision-sam", "suites": "sam31"},
+    {"name": "SAM 3.1", "group": "vision-sam", "suites": "sam31", "pytest-args": ""},
 )
 PR_MODEL_GROUPS = (
     {
-        "name": "inference and IPAdapter, shard 1",
+        "name": "inference and IPAdapter, shard 1 of 8",
         "group": "inference",
-        "pytest-args": "-p tools.pytest_file_shard --file-shard 1/2",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 1/8",
     },
     {
-        "name": "inference and IPAdapter, shard 2",
+        "name": "inference and IPAdapter, shard 2 of 8",
         "group": "inference",
-        "pytest-args": "-p tools.pytest_file_shard --file-shard 2/2",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 2/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 3 of 8",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 3/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 4 of 8",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 4/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 5 of 8",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 5/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 6 of 8",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 6/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 7 of 8",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 7/8",
+    },
+    {
+        "name": "inference and IPAdapter, shard 8 of 8",
+        "group": "inference",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 8/8",
     },
     {"name": "HED, upscale and EfficientSAM", "group": "vision-fast", "pytest-args": ""},
     {
@@ -648,8 +725,11 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         for group in job["strategy"]["matrix"]["include"]
         for suite in group["suites"].split(",")
     ]
-    assert len(suites) == len(set(suites))
     assert set(suites) == EXPECTED_MODEL_SUITES
+    assert all(
+        suites.count(suite) == (8 if suite in {"inference-torch", "model-ipadapter"} else 1)
+        for suite in EXPECTED_MODEL_SUITES
+    )
     assert job["permissions"] == {"contents": "read"}
     assert job["steps"][0] == {
         "uses": "actions/checkout@v4",
@@ -660,6 +740,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
         "with": {
             "run-model-tests": "true",
             "evidence-deploy-key": "${{ secrets.DINKSTER_EVIDENCE_READ_KEY }}",
+            "pytest-args": "${{ matrix.pytest-args }}",
         },
     }
     assert job["env"] == {
@@ -761,14 +842,26 @@ def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> 
     assert [row["group"] for row in PR_MODEL_GROUPS] == [
         "inference",
         "inference",
+        "inference",
+        "inference",
+        "inference",
+        "inference",
+        "inference",
+        "inference",
         "vision-fast",
         "vision-detection",
         "vision-large",
         "vision-sam",
     ]
     assert {row["pytest-args"] for row in PR_MODEL_GROUPS if row["group"] == "inference"} == {
-        "-p tools.pytest_file_shard --file-shard 1/2",
-        "-p tools.pytest_file_shard --file-shard 2/2",
+        "-p tools.pytest_file_shard --file-shard 1/8",
+        "-p tools.pytest_file_shard --file-shard 2/8",
+        "-p tools.pytest_file_shard --file-shard 3/8",
+        "-p tools.pytest_file_shard --file-shard 4/8",
+        "-p tools.pytest_file_shard --file-shard 5/8",
+        "-p tools.pytest_file_shard --file-shard 6/8",
+        "-p tools.pytest_file_shard --file-shard 7/8",
+        "-p tools.pytest_file_shard --file-shard 8/8",
     }
     assert all(row["pytest-args"] == "" for row in PR_MODEL_GROUPS if row["group"] != "inference")
     assert job["env"] == {

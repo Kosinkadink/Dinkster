@@ -63,12 +63,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: inference and IPAdapter, shard 1
+          - name: inference and IPAdapter, shard 1 of 8
             group: inference
-            pytest-args: -p tools.pytest_file_shard --file-shard 1/2
-          - name: inference and IPAdapter, shard 2
+            pytest-args: -p tools.pytest_file_shard --file-shard 1/8
+          - name: inference and IPAdapter, shard 2 of 8
             group: inference
-            pytest-args: -p tools.pytest_file_shard --file-shard 2/2
+            pytest-args: -p tools.pytest_file_shard --file-shard 2/8
+          - name: inference and IPAdapter, shard 3 of 8
+            group: inference
+            pytest-args: -p tools.pytest_file_shard --file-shard 3/8
+          - name: inference and IPAdapter, shard 4 of 8
+            group: inference
+            pytest-args: -p tools.pytest_file_shard --file-shard 4/8
+          - name: inference and IPAdapter, shard 5 of 8
+            group: inference
+            pytest-args: -p tools.pytest_file_shard --file-shard 5/8
+          - name: inference and IPAdapter, shard 6 of 8
+            group: inference
+            pytest-args: -p tools.pytest_file_shard --file-shard 6/8
+          - name: inference and IPAdapter, shard 7 of 8
+            group: inference
+            pytest-args: -p tools.pytest_file_shard --file-shard 7/8
+          - name: inference and IPAdapter, shard 8 of 8
+            group: inference
+            pytest-args: -p tools.pytest_file_shard --file-shard 8/8
           - name: HED, upscale and EfficientSAM
             group: vision-fast
             pytest-args: ""
