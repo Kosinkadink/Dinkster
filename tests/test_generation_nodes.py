@@ -2982,6 +2982,8 @@ def test_compat_provider_executes_every_generation_schema_exactly() -> None:
         "dinkster.load_diffusion_components",
         "dinkster.load_diffusion_model",
         "dinkster.load_geometry_model",
+        "dinkster.load_ltxav_audio_vae",
+        "dinkster.load_ltxav_text_encoder",
         "dinkster.load_model_profile",
         "dinkster.ltxav_audio_vae_decode",
         "dinkster.ltxav_id_lora_reference_audio",
