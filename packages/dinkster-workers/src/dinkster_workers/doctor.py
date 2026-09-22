@@ -965,11 +965,14 @@ def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Find
                         raw_metadata = declaration.get("behavior_metadata", ())
                         metadata: tuple[tuple[str, object], ...] = ()
                         if isinstance(raw_metadata, list):
-                            metadata = tuple(
-                                (str(item[0]), item[1])
-                                for item in cast("list[object]", raw_metadata)
-                                if isinstance(item, list) and len(item) == 2
-                            )
+                            entries: list[tuple[str, object]] = []
+                            for item in cast("list[object]", raw_metadata):
+                                if not isinstance(item, list):
+                                    continue
+                                pair = cast("list[object]", item)
+                                if len(pair) == 2:
+                                    entries.append((str(pair[0]), pair[1]))
+                            metadata = tuple(entries)
                         attention_points.append((surface_id, descriptor_id, metadata))
     if attention_points:
         points = "; ".join(

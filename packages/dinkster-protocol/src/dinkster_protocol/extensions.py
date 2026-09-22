@@ -157,6 +157,9 @@ GUIDANCE_SURFACES = (
     "inference.guidance.attention",
 )
 
+GUIDANCE_PLAN_AUGMENTATION_SURFACE = GUIDANCE_SURFACES[4]
+GUIDANCE_ATTENTION_SURFACE = GUIDANCE_SURFACES[5]
+
 ATTENTION_QKV_SURFACE = "inference.attention.qkv"
 ATTENTION_WRAPPER_SURFACE = "inference.attention.wrapper"
 ATTENTION_OUTPUT_SURFACE = "inference.attention.output"

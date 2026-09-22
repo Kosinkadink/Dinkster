@@ -21,6 +21,7 @@ from dinkster_inference import (
     BLOCK_INJECTION_SURFACE,
     SamplerExtensionEntry,
     materialize_inference_generation,
+    release_inference_generation,
     sampling_execution_context,
     write_sampler_catalog,
 )
@@ -44,6 +45,7 @@ from dinkster_protocol import (
     ATTENTION_SURFACES,
     ActiveExtension,
     ExtensionSnapshot,
+    KeyedContribution,
     extension_behavior_hash,
 )
 
@@ -164,9 +166,11 @@ def test_token_spans_reject_empty_or_negative_ranges_and_unknown_vocabularies() 
         _span(start=-1, end=4)
     with pytest.raises(ValueError, match="batch range"):
         _span(batch_start=3, batch_end=3)
-    with pytest.raises(ValueError, match="condition_id must be nonempty"):
+    with pytest.raises(ValueError, match="condition_id must be a nonempty string"):
         _span(condition_id="")
-    with pytest.raises(ValueError, match="role must be nonempty"):
+    with pytest.raises(ValueError, match="condition_id must be a nonempty string"):
+        _span(condition_id=["cond.prompt"])
+    with pytest.raises(ValueError, match="role must be a nonempty string"):
         _span(role="")
     with pytest.raises(ValueError, match="stream must be one of"):
         _span(stream="audio")
@@ -187,6 +191,41 @@ def test_call_context_requires_execution_context_and_mutable_state() -> None:
         _call_context(heads=0)
     with pytest.raises(ValueError, match="kind must be one of"):
         _call_context(kind="*")
+    with pytest.raises(ValueError, match="family must be a nonempty string"):
+        _call_context(family=["flux"])
+    with pytest.raises(ValueError, match="block must be a nonempty string"):
+        _call_context(block=None)
+
+
+def test_catalog_attention_guidance_orders_renumber_to_combined_positions() -> None:
+    from dinkster_protocol import GUIDANCE_ATTENTION_SURFACE, GUIDANCE_PLAN_AUGMENTATION_SURFACE
+
+    from dinkster.compose import _renumber_attention_guidance_orders
+
+    def attention(order: int) -> KeyedContribution:
+        return KeyedContribution(
+            GUIDANCE_ATTENTION_SURFACE,
+            "proof.att",
+            behavior_metadata=(("contractVersion", 1), ("order", order), ("requiresUncond", False)),
+        )
+
+    plan = KeyedContribution(
+        GUIDANCE_PLAN_AUGMENTATION_SURFACE,
+        "proof.plan",
+        behavior_metadata=(("contractVersion", 1), ("order", 7)),
+    )
+    by_extension = {
+        "pack_a": (attention(0), plan),
+        "pack_b": (attention(0),),
+    }
+    entries = (
+        SamplerExtensionEntry("pack_a", "a:register"),
+        SamplerExtensionEntry("pack_b", "b:register"),
+    )
+    _renumber_attention_guidance_orders(entries, by_extension)
+
+    assert [dict(item.behavior_metadata)["order"] for item in by_extension["pack_a"]] == [0, 7]
+    assert [dict(item.behavior_metadata)["order"] for item in by_extension["pack_b"]] == [1]
 
 
 def test_attention_contribution_requires_explicit_pins_and_unique_ids() -> None:
@@ -368,6 +407,44 @@ def test_duplicate_attention_descriptor_ids_refuse_across_packs(
         )
 
 
+def test_duplicate_attention_descriptor_ids_refuse_across_surfaces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(attention_module, "_installed_version", _matching_versions)
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "'attention_a\\.qkv'.*'pack_a'.*surface 'inference\\.attention\\.qkv'.*"
+            "'pack_b'.*surface 'inference\\.attention\\.output'"
+        ),
+    ):
+        _materialize(
+            tmp_path,
+            (
+                SamplerExtensionEntry("pack_a", "attention_pack_a:register"),
+                SamplerExtensionEntry("pack_b", "attention_pack_b:register_duplicate_output_id"),
+            ),
+        )
+
+
+def test_cached_unchecked_generation_rechecks_pins_on_checked_request(tmp_path: Path) -> None:
+    key = "generation-cache-pins"
+    catalog = _catalog(tmp_path)
+    write_sampler_catalog(
+        catalog, key, (SamplerExtensionEntry("pack_b", "attention_pack_b:register_mismatched_pin"),)
+    )
+    try:
+        unchecked = materialize_inference_generation(key, catalog_path=catalog, check_pins=False)
+        assert unchecked.attention_contributions
+
+        with pytest.raises(
+            AttentionPinError, match="torch pin '999\\.0\\.0'.*recreate the execution environment"
+        ):
+            materialize_inference_generation(key, catalog_path=catalog)
+    finally:
+        release_inference_generation(key)
+
+
 def test_attention_declaration_drift_fails_expected_extensions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -467,12 +544,12 @@ def test_composition_refuses_attention_pin_mismatch_with_guidance(tmp_path: Path
         root.mkdir(parents=True)
         path = root / "dinkster-pack.toml"
         path.write_text(
-            f'[pack]\\nname = "{name}"\\n'
-            f'namespaces = ["{name}"]\\n\\n'
-            '[pack.entry]\\nnodes = "s1_sampler_empty:NODES"\\n\\n'
-            "[pack.extension]\\n"
-            f'inference = "{entry}"\\n'
-            'privileges = ["inference"]\\n',
+            f'[pack]\nname = "{name}"\n'
+            f'namespaces = ["{name}"]\n\n'
+            '[pack.entry]\nnodes = "s1_sampler_empty:NODES"\n\n'
+            "[pack.extension]\n"
+            f'inference = "{entry}"\n'
+            'privileges = ["inference"]\n',
             encoding="utf-8",
         )
         return path
@@ -485,7 +562,7 @@ def test_composition_refuses_attention_pin_mismatch_with_guidance(tmp_path: Path
             )
             with pytest.raises(
                 CompositionError,
-                match="torch pin '999\\.0\\.0'.*reinstall|recreate the execution environment",
+                match="torch pin '999\\.0\\.0'.*(reinstall|recreate the execution environment)",
             ):
                 await composer.add_pack(
                     PackSpec(

@@ -23,6 +23,8 @@ from typing import Any, cast
 from dinkster_protocol import (
     GRAPH_COMPILE_ERROR_UNKNOWN_GENERATION,
     GRAPH_COMPILERS_SURFACE,
+    GUIDANCE_ATTENTION_SURFACE,
+    GUIDANCE_PLAN_AUGMENTATION_SURFACE,
     GUIDANCE_SURFACES,
     GraphCompilerRegistrySnapshot,
     GuidanceRegistrySnapshot,
@@ -148,8 +150,8 @@ class MaterializedInferenceGeneration:
 
 
 _GUIDANCE_SURFACES = GUIDANCE_SURFACES
-_PLAN_AUGMENTATION_SURFACE = GUIDANCE_SURFACES[4]
-_GUIDANCE_ATTENTION_SURFACE = GUIDANCE_SURFACES[5]
+_PLAN_AUGMENTATION_SURFACE = GUIDANCE_PLAN_AUGMENTATION_SURFACE
+_GUIDANCE_ATTENTION_SURFACE = GUIDANCE_ATTENTION_SURFACE
 
 
 def guidance_declarations(
@@ -586,6 +588,12 @@ def _materialize_inference_generation(
         if cacheable:
             cached = _inference_cache.get(key)
             if cached is not None:
+                if check_pins:
+                    # The cached generation may have been materialized with
+                    # check_pins disabled, so enforce pins before handing the
+                    # callbacks out under the default checked contract.
+                    for extension_id, contribution in cached.attention_contributions:
+                        check_attention_pins(extension_id, contribution)
                 return cached
         if catalog_path is None:
             raw_path = os.environ.get(SAMPLER_CATALOG_ENV)
@@ -600,7 +608,7 @@ def _materialize_inference_generation(
         materialized_guidance: list[tuple[str, GuidanceContribution[Any]]] = []
         graph_compilers: list[GraphCompilerDescriptor] = []
         materialized_attention: list[tuple[str, AttentionContribution[Any]]] = []
-        attention_declared: dict[tuple[str, str], str] = {}
+        attention_declared: dict[str, tuple[str, str]] = {}
         backend_families: dict[str, tuple[str, str]] = {}
         attention_guidance_count = 0
         for entry in entries:
@@ -629,16 +637,19 @@ def _materialize_inference_generation(
                     check_attention_pins(entry.extension_id, contribution.attention)
                 produced_attention = attention_declarations(contribution.attention)
                 for declaration in produced_attention:
-                    key_pair = (declaration.surface_id, declaration.id)
-                    owner = attention_declared.get(key_pair)
-                    if owner is not None and owner != entry.extension_id:
+                    owner = attention_declared.get(declaration.id)
+                    if owner is not None and owner[0] != entry.extension_id:
                         raise RuntimeError(
-                            f"attention descriptor {declaration.id!r} on surface "
-                            f"{declaration.surface_id!r} is declared by extensions "
-                            f"{owner!r} and {entry.extension_id!r}: attention descriptor "
-                            "ids must be globally unique"
+                            f"attention descriptor {declaration.id!r} is declared by "
+                            f"extensions {owner[0]!r} (surface {owner[1]!r}) and "
+                            f"{entry.extension_id!r} (surface "
+                            f"{declaration.surface_id!r}): attention descriptor ids "
+                            "must be globally unique"
                         )
-                    attention_declared[key_pair] = entry.extension_id
+                    attention_declared[declaration.id] = (
+                        entry.extension_id,
+                        declaration.surface_id,
+                    )
                 for backend in contribution.attention.backends:
                     conflict = backend_families.get(backend.family)
                     if conflict is not None:
