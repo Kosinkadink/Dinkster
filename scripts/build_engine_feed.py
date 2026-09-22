@@ -27,6 +27,8 @@ touches GitHub or PyPI: all wheels are resolved before install.
 from __future__ import annotations
 
 import argparse
+import base64
+import csv
 import gzip
 import hashlib
 import importlib
@@ -350,11 +352,72 @@ def _installed_packages(staging_python: Path) -> dict[str, str]:
     return {normalize_name(name): version for name, version in json.loads(output).items()}
 
 
-def _clean_site_caches(staging_root: Path) -> None:
-    for site_packages in staging_root.glob("lib/python*/site-packages"):
+def _normalize_installed_environment(staging_root: Path) -> None:
+    """Remove install-location metadata and regenerate deterministic RECORD files."""
+    site_packages_roots = [
+        *staging_root.glob("lib/python*/site-packages"),
+        staging_root / "Lib" / "site-packages",
+    ]
+    for site_packages in site_packages_roots:
+        if not site_packages.is_dir():
+            continue
         for cache in site_packages.rglob("__pycache__"):
             if cache.is_dir():
                 shutil.rmtree(cache, ignore_errors=True)
+        for dist_info in site_packages.glob("*.dist-info"):
+            for name in ("direct_url.json", "uv_cache.json"):
+                (dist_info / name).unlink(missing_ok=True)
+
+    runtime_root = staging_root.resolve()
+    script_roots = {(staging_root / "bin").resolve(), (staging_root / "Scripts").resolve()}
+    for site_packages in site_packages_roots:
+        if not site_packages.is_dir():
+            continue
+        for record in site_packages.glob("*.dist-info/RECORD"):
+            with record.open(newline="", encoding="utf-8") as handle:
+                for source in csv.reader(handle):
+                    if not source:
+                        continue
+                    installed = (site_packages / Path(*source[0].split("/"))).resolve()
+                    if not installed.is_relative_to(runtime_root):
+                        raise FeedError(f"installed RECORD escapes runtime root: {source[0]}")
+                    if installed.parent in script_roots and installed.is_file():
+                        installed.unlink()
+
+    staging_paths = {
+        str(staging_root).encode(),
+        staging_root.as_posix().encode(),
+    }
+    for scripts in (staging_root / "bin", staging_root / "Scripts"):
+        if not scripts.is_dir():
+            continue
+        for path in scripts.iterdir():
+            if path.is_file() and not path.is_symlink():
+                content = path.read_bytes()
+                if any(prefix in content for prefix in staging_paths):
+                    path.unlink()
+
+    for site_packages in site_packages_roots:
+        if not site_packages.is_dir():
+            continue
+        for record in site_packages.glob("*.dist-info/RECORD"):
+            rows: list[list[str]] = []
+            with record.open(newline="", encoding="utf-8") as handle:
+                source_rows = list(csv.reader(handle))
+            for source in source_rows:
+                if not source:
+                    continue
+                installed = (site_packages / Path(*source[0].split("/"))).resolve()
+                if not installed.is_relative_to(runtime_root):
+                    raise FeedError(f"installed RECORD escapes runtime root: {source[0]}")
+                if installed == record.resolve():
+                    rows.append([source[0], "", ""])
+                elif installed.is_file():
+                    content = installed.read_bytes()
+                    digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=")
+                    rows.append([source[0], f"sha256={digest.decode()}", str(len(content))])
+            with record.open("w", newline="", encoding="utf-8") as handle:
+                csv.writer(handle, lineterminator="\n").writerows(rows)
 
 
 def _copy_uv_binary(uv: str, staging_root: Path, os_name: str) -> tuple[str, str]:
@@ -582,7 +645,7 @@ def build_base(uv: str, config: CellConfig, feed_dir: Path) -> BaseBuild:
                 raise FeedError(
                     f"base for cell {config.name} resolved without {required}: {sorted(packages)}"
                 )
-        _clean_site_caches(staging_root)
+        _normalize_installed_environment(staging_root)
         _, bundled_uv_sha256 = _copy_uv_binary(uv, staging_root, config.os_name)
         python_rel = staging_python.relative_to(staging_root).as_posix()
         base_id = base_identity_hash(
@@ -1221,7 +1284,7 @@ def build_control_runtime(
             ]
         )
         shutil.rmtree(probe_root)
-        _clean_site_caches(staging_root)
+        _normalize_installed_environment(staging_root)
         python_rel = python.relative_to(staging_root).as_posix()
         temporary_archive = work_dir / "control-runtime.tar.gz"
         create_base_archive(staging_root, temporary_archive)

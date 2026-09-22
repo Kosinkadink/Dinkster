@@ -619,6 +619,59 @@ def test_archive_preserves_internal_links_and_rejects_external(tmp_path: Path) -
     assert members["lib/link.so"].issym() and members["lib/link.so"].linkname == "real.so"
 
 
+@pytest.mark.parametrize(
+    ("site_relative", "scripts_relative", "wrapper_name", "record_parent"),
+    [
+        (Path("lib/python3.12/site-packages"), Path("bin"), "example", "../../.."),
+        (Path("Lib/site-packages"), Path("Scripts"), "example.exe", "../.."),
+    ],
+)
+def test_installed_environment_normalization_removes_temporary_paths(
+    tmp_path: Path,
+    site_relative: Path,
+    scripts_relative: Path,
+    wrapper_name: str,
+    record_parent: str,
+) -> None:
+    staging = tmp_path / "runtime"
+    site = staging / site_relative
+    dist_info = site / "example-1.0.dist-info"
+    scripts = staging / scripts_relative
+    cache = site / "example/__pycache__"
+    dist_info.mkdir(parents=True)
+    scripts.mkdir(parents=True)
+    cache.mkdir(parents=True)
+    module = site / "example/__init__.py"
+    module.parent.mkdir(exist_ok=True)
+    module.write_text("VALUE = 1\n", encoding="utf-8")
+    wrapper = scripts / wrapper_name
+    wrapper.write_text(f"#!{staging}/bin/python3\n", encoding="utf-8")
+    (cache / "module.pyc").write_bytes(b"cache")
+    (dist_info / "direct_url.json").write_text(str(staging), encoding="utf-8")
+    (dist_info / "uv_cache.json").write_text("timestamp", encoding="utf-8")
+    record = dist_info / "RECORD"
+    record.write_text(
+        "example/__init__.py,,\n"
+        "example-1.0.dist-info/direct_url.json,,\n"
+        "example-1.0.dist-info/uv_cache.json,,\n"
+        f"{record_parent}/{scripts_relative.as_posix()}/{wrapper_name},,\n"
+        "example-1.0.dist-info/RECORD,,\n",
+        encoding="utf-8",
+    )
+
+    builder._normalize_installed_environment(staging)
+    normalized = record.read_bytes()
+    builder._normalize_installed_environment(staging)
+
+    assert not wrapper.exists()
+    assert not cache.exists()
+    assert not (dist_info / "direct_url.json").exists()
+    assert not (dist_info / "uv_cache.json").exists()
+    assert str(staging).encode() not in normalized
+    assert record.read_bytes() == normalized
+    assert normalized.decode().splitlines()[-1] == "example-1.0.dist-info/RECORD,,"
+
+
 @pytest.mark.parametrize("name", ["back\\slash", "control\nname", "delete\x7fname"])
 def test_archive_rejects_nonportable_member_names(tmp_path: Path, name: str) -> None:
     staging = tmp_path / "staging"
