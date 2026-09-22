@@ -570,7 +570,9 @@ def _round_h3_projection_storage(
     if diffusion_dtype is torch.float32:
         return state
     return {
-        key: tensor.to(diffusion_dtype) if _uses_comfyui_model_dtype(key) else tensor
+        key: tensor.to(diffusion_dtype)
+        if tensor.is_floating_point() and _uses_comfyui_model_dtype(key)
+        else tensor
         for key, tensor in state.items()
     }
 

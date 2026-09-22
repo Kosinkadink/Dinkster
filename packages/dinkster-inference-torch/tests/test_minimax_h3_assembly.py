@@ -736,6 +736,12 @@ def test_h3_projection_storage_matches_comfyui_model_dtype(
         assert rounded[key].dtype is diffusion_dtype
         assert torch.equal(rounded[key], expected)
     assert rounded["blocks.0.attn.q_proj.weight_scale"].dtype is torch.float32
+    quantized = assembly._round_h3_projection_storage(  # pyright: ignore[reportPrivateUsage]
+        cast("Any", object()),
+        {"blocks.0.adaln_proj.linear.weight": torch.ones(2, 2, dtype=torch.int8)},
+        diffusion_dtype=diffusion_dtype,
+    )
+    assert quantized["blocks.0.adaln_proj.linear.weight"].dtype is torch.int8
 
 
 def test_artifact_paths_refuse_incomplete_duplicate_and_mutable_authority(
