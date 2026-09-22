@@ -19,7 +19,6 @@ Each `vX.Y.Z` release contains:
 - one wheel for every Dinkster workspace package;
 - the `dinkster` meta-package wheel with its `default` extra;
 - a `dinkster-frontend` wheel containing the built browser application;
-- the pinned private `dinkster-identity` dependency wheel;
 - `constraints.txt`, exported from `uv.lock` with hashes;
 - `release-manifest.json` and `SHA256SUMS`; and
 - `dinkster-source-X.Y.Z.zip`, a maintainer source archive.
