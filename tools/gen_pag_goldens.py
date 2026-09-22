@@ -1,12 +1,13 @@
 """Generate PerturbedAttentionGuidance goldens from the ComfyUI reference.
 
 Usage:
+    git -C /path/to/ComfyUI fetch origin master
     COMFYUI_REFERENCE=/path/to/ComfyUI-goldenref \
       /path/to/torch-venv/bin/python tools/gen_pag_goldens.py
 
-The reference may instead be supplied with ``--comfy-root``. The checkout
-must be clean and exactly at the audited commit. Every case drives real
-reference code end to end: the node's own
+The reference may instead be supplied with ``--comfy-root``. The checkout must
+be clean and exactly at ``--reference-commit``, which defaults to the freshly
+fetched ``origin/master``. Every case drives real reference code end to end: the node's own
 ``comfy_extras.nodes_pag.PerturbedAttentionGuidance.execute`` registers the
 post-CFG callback on a cloned ModelPatcher, and ``comfy_sample.sample``
 runs ``comfy.samplers.sampling_function`` -> ``calc_cond_batch`` -> the
@@ -25,9 +26,9 @@ time that the active run differs from the baseline while the scale 0
 run is bit-identical to it (the reference callback returns the CFG
 result unchanged, without running its auxiliary pass, at scale 0).
 
-The executed values drift by ULPs across CPU microarchitectures, so the
-fixture records the mint host CPU (pin_cpu) and the replay suite skips on
-other hosts.
+The executed values drift by ULPs across CPU microarchitectures and intra-op
+thread counts, so the fixture records the mint host CPU (pin_cpu), pins 16
+threads, and the replay suite skips on other hosts.
 """
 
 from __future__ import annotations
@@ -46,23 +47,25 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from golden_platform import platform_golden_path, tuple_provenance  # noqa: E402
 
-REFERENCE_COMMIT = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
 REPO = Path(__file__).resolve().parent.parent
-OUT = REPO / "packages/dinkster-inference-torch/tests/goldens/pag_goldens.json"
 
 
-def reference_root() -> Path:
+def reference_settings() -> tuple[Path, str]:
     parser = argparse.ArgumentParser()
     parser.add_argument("--comfy-root", type=Path)
+    parser.add_argument(
+        "--reference-commit",
+        default=os.environ.get("COMFYUI_REFERENCE_COMMIT", "origin/master"),
+    )
     args, remaining = parser.parse_known_args()
     sys.argv[1:] = remaining
     value = args.comfy_root or os.environ.get("COMFYUI_REFERENCE")
     if value is None:
         raise SystemExit("pass --comfy-root or set COMFYUI_REFERENCE")
-    return Path(value).resolve()
+    return Path(value).resolve(), args.reference_commit
 
 
-COMFY_ROOT = reference_root()
+COMFY_ROOT, REFERENCE_REVISION = reference_settings()
 
 
 def git_output(*args: str) -> str:
@@ -72,11 +75,16 @@ def git_output(*args: str) -> str:
 
 
 commit = git_output("rev-parse", "HEAD")
+expected_commit = git_output("rev-parse", f"{REFERENCE_REVISION}^{{commit}}")
+commit_date = git_output("show", "-s", "--format=%cI", commit)
 dirty = git_output("status", "--porcelain")
-if commit != REFERENCE_COMMIT:
-    raise SystemExit(f"reference is at {commit}; required {REFERENCE_COMMIT}")
+if commit != expected_commit:
+    raise SystemExit(
+        f"reference is at {commit}; {REFERENCE_REVISION} resolves to {expected_commit}"
+    )
 if dirty:
     raise SystemExit(f"reference checkout must be clean:\n{dirty}")
+OUT = REPO / "packages/dinkster-inference-torch/tests/goldens" / f"pag_goldens_{commit[:8]}.json"
 
 sys.path.insert(0, str(REPO / "packages" / "dinkster-inference-torch" / "tests"))
 sys.path.insert(0, str(COMFY_ROOT))
@@ -105,6 +113,8 @@ _attention.optimized_attention_masked = _attention.attention_pytorch
 ATTENTION_BACKEND = "attention_pytorch"
 
 CPU = torch.device("cpu")
+TORCH_NUM_THREADS = 16
+torch.set_num_threads(TORCH_NUM_THREADS)
 
 #: Tiny SD1-style geometry: one transformer block in each input stage and
 #: the middle block, so the PAG middle-block-0 attn1 replacement has a
@@ -338,7 +348,7 @@ def run_case(name: str, pag_scale: float) -> dict[str, Any]:
 
 def dependency_provenance() -> dict[str, str]:
     """Versions (or source paths) of the ComfyUI companion packages the
-    run actually imported: the pinned reference's ops and attention layers
+    run actually imported: the fetched reference's ops and attention layers
     pull these in, so their identities belong in the fixture provenance."""
     deps: dict[str, str] = {}
     for distribution, module in (
@@ -368,7 +378,9 @@ def main() -> None:
         "reference": {
             "repo": "ComfyUI",
             "commit": commit,
+            "commit_date": commit_date,
             "torch": torch.__version__,
+            "torch_num_threads": torch.get_num_threads(),
             "attention": ATTENTION_BACKEND,
         },
         "dependencies": dependency_provenance(),

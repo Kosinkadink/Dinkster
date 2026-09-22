@@ -80,9 +80,11 @@ from typing import NamedTuple, Protocol, cast
 
 import torch
 import torch.nn.functional as F
+from dinkster_inference import AttentionCallContext
 from dinkster_inference.flux import FluxConfig
 
 from .attention import AttentionKernel, select_attention
+from .attention_extensions import AttentionExecution
 from .model_prefetch import (
     close_prefetch_queue,
     make_prefetch_queue,
@@ -281,6 +283,8 @@ def _attention(
     pe: torch.Tensor,
     attention_kernel: AttentionKernel,
     rope_kernel: _RopeKernel,
+    attention_extensions: AttentionExecution | None = None,
+    call: AttentionCallContext | None = None,
 ) -> torch.Tensor:
     """RoPE + SDPA over [batch, heads, seq, head_dim] inputs, output
     re-fused to [batch, seq, heads * head_dim]
@@ -289,7 +293,11 @@ def _attention(
     SDP_BATCH_LIMIT leg."""
     q, k = rope_kernel(q, k, pe)
     batch, heads, _, dim_head = q.shape
-    out = attention_kernel(q, k, v)
+    out = (
+        attention_kernel(q, k, v)
+        if attention_extensions is None or call is None
+        else attention_extensions.attention(q, k, v, attention_kernel, call)
+    )
     return out.transpose(1, 2).reshape(batch, -1, heads * dim_head)
 
 
@@ -522,6 +530,8 @@ class DoubleStreamBlock(torch.nn.Module):
         txt: torch.Tensor,
         vec: torch.Tensor | tuple[tuple[ModulationOut, ...], tuple[ModulationOut, ...]],
         pe: torch.Tensor,
+        attention_extensions: AttentionExecution | None = None,
+        call: AttentionCallContext | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if isinstance(vec, torch.Tensor):
             if self.img_mod is None or self.txt_mod is None:
@@ -557,6 +567,8 @@ class DoubleStreamBlock(torch.nn.Module):
             pe,
             self._attention_kernel,
             self._rope_kernel,
+            attention_extensions,
+            call,
         )
         del q, k, v
         txt_attn, img_attn = attn[:, : txt.shape[1]], attn[:, txt.shape[1] :]
@@ -628,6 +640,8 @@ class SingleStreamBlock(torch.nn.Module):
         x: torch.Tensor,
         vec: torch.Tensor | ModulationOut,
         pe: torch.Tensor,
+        attention_extensions: AttentionExecution | None = None,
+        call: AttentionCallContext | None = None,
     ) -> torch.Tensor:
         if isinstance(vec, torch.Tensor):
             if self.modulation is None:
@@ -645,7 +659,16 @@ class SingleStreamBlock(torch.nn.Module):
         q, k, v = _heads_first(qkv, self.num_heads)
         del qkv
         q, k = self.norm(q, k, v)
-        attn = _attention(q, k, v, pe, self._attention_kernel, self._rope_kernel)
+        attn = _attention(
+            q,
+            k,
+            v,
+            pe,
+            self._attention_kernel,
+            self._rope_kernel,
+            attention_extensions,
+            call,
+        )
         del q, k, v
         if self.yak_mlp:
             up, gate = mlp.split(self.mlp_hidden_dim, dim=-1)
@@ -872,7 +895,15 @@ class Flux(torch.nn.Module):
         guidance: torch.Tensor | None = None,
         image_position_ids: torch.Tensor | None = None,
         ref_latents: Sequence[torch.Tensor] | None = None,
+        attention_extensions: AttentionExecution | None = None,
     ) -> torch.Tensor:
+        if attention_extensions is not None:
+            sites = tuple(
+                (f"double_blocks.{index}", "joint") for index in range(len(self.double_blocks))
+            ) + tuple(
+                (f"single_blocks.{index}", "joint") for index in range(len(self.single_blocks))
+            )
+            attention_extensions.validate_sites("flux", sites, sites)
         config = self.config
         batch, _, height, width = x.shape
         if timesteps.shape != (batch,):
@@ -906,6 +937,7 @@ class Flux(torch.nn.Module):
 
         img, img_ids = self._patchify(x, image_position_ids)
         img_tokens = img.shape[1]
+        reference_tokens: list[int] = []
         if ref_latents:
             if image_position_ids is not None:
                 raise ValueError(
@@ -939,6 +971,7 @@ class Flux(torch.nn.Module):
                     height_offset=(height_offset + patch // 2) // patch,
                     width_offset=(width_offset + patch // 2) // patch,
                 )
+                reference_tokens.append(reference_img.shape[1])
                 img = torch.cat((img, reference_img), dim=1)
                 img_ids = torch.cat((img_ids, reference_ids), dim=1)
         txt_ids = torch.zeros(
@@ -980,11 +1013,44 @@ class Flux(torch.nn.Module):
             single_vec = vec
 
         pe = self.pe_embedder(torch.cat((txt_ids, img_ids), dim=1))
+
+        def extension_context(block: str) -> AttentionCallContext | None:
+            if attention_extensions is None:
+                return None
+            return attention_extensions.context(
+                family="flux",
+                block=block,
+                kind="joint",
+                heads=config.num_heads,
+                spatial_shape=(
+                    (height + config.patch_size - 1) // config.patch_size,
+                    (width + config.patch_size - 1) // config.patch_size,
+                ),
+                query_tokens=txt.shape[1] + img.shape[1],
+                key_tokens=txt.shape[1] + img.shape[1],
+                text_tokens=txt.shape[1],
+                reference_tokens=tuple(reference_tokens),
+            )
+
         double_prefetch = make_prefetch_queue(self.double_blocks)
         try:
-            for block in self.double_blocks:
+            for index, block in enumerate(self.double_blocks):
                 prefetch_queue_pop(double_prefetch, block)
-                img, txt = block(img, txt, double_vec, pe)
+                call = extension_context(f"double_blocks.{index}")
+                if attention_extensions is None or call is None:
+                    img, txt = block(img, txt, double_vec, pe)
+                else:
+                    if attention_extensions.registry.blocks:
+                        combined = attention_extensions.block(
+                            torch.cat((txt, img), dim=1), call, "before"
+                        )
+                        txt, img = combined[:, : txt.shape[1]], combined[:, txt.shape[1] :]
+                    img, txt = block(img, txt, double_vec, pe, attention_extensions, call)
+                    if attention_extensions.registry.blocks:
+                        combined = attention_extensions.block(
+                            torch.cat((txt, img), dim=1), call, "after"
+                        )
+                        txt, img = combined[:, : txt.shape[1]], combined[:, txt.shape[1] :]
             prefetch_queue_pop(double_prefetch, None)
         finally:
             close_prefetch_queue(double_prefetch)
@@ -994,9 +1060,15 @@ class Flux(torch.nn.Module):
         tokens = torch.cat((txt, img), dim=1)
         single_prefetch = make_prefetch_queue(self.single_blocks)
         try:
-            for block in self.single_blocks:
+            for index, block in enumerate(self.single_blocks):
                 prefetch_queue_pop(single_prefetch, block)
-                tokens = block(tokens, single_vec, pe)
+                call = extension_context(f"single_blocks.{index}")
+                if attention_extensions is None or call is None:
+                    tokens = block(tokens, single_vec, pe)
+                else:
+                    tokens = attention_extensions.block(tokens, call, "before")
+                    tokens = block(tokens, single_vec, pe, attention_extensions, call)
+                    tokens = attention_extensions.block(tokens, call, "after")
             prefetch_queue_pop(single_prefetch, None)
         finally:
             close_prefetch_queue(single_prefetch)

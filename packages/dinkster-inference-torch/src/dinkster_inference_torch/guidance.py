@@ -12,6 +12,7 @@ from typing import Any, Generic, Protocol, TypeVar, cast, runtime_checkable
 
 import torch
 from dinkster_inference import (
+    AttentionContribution,
     AttentionGuidanceDescriptor,
     CancellationToken,
     Conditioning,
@@ -44,6 +45,7 @@ from dinkster_inference import (
 )
 from dinkster_inference.guidance import GuidancePhaseParticipation
 
+from .attention_extensions import AttentionExecution, AttentionRegistry
 from .cfg import cfg_combine
 from .memory import get_free_memory
 from .parameterizations import calculate_denoised
@@ -416,6 +418,13 @@ class ConditioningEvaluation(Generic[PreparedCondition]):
         Callable[[Sequence[int], tuple[PreparedCondition, ...]], int] | None
     ) = None
     standard_activation_memory_factor: float | None = None
+    evaluate_batch_extensions: (
+        Callable[
+            [torch.Tensor, float, tuple[PreparedCondition, ...], AttentionExecution],
+            tuple[torch.Tensor, ...],
+        ]
+        | None
+    ) = None
 
     def __post_init__(self) -> None:
         if self.batchable is not None and self.evaluate_batch is None:
@@ -903,6 +912,7 @@ class ConditioningPlanCompiler(Generic[PreparedCondition]):
         request: GuidanceEvaluationRequest[torch.Tensor],
         on_plan: Callable[[CompiledConditioningPlan], None] | None = None,
         attention: tuple[AttentionGuidanceDescriptor[torch.Tensor], ...] = (),
+        extensions: AttentionRegistry | None = None,
     ) -> GuidancePredictions[torch.Tensor]:
         prepared_plan = next(
             (item for item in self._plans if item.matches(request.plan)),
@@ -927,7 +937,32 @@ class ConditioningPlanCompiler(Generic[PreparedCondition]):
             if lane.conditioning is None
         }
         for group in prepared_plan.groups:
-            if attention_group is not None and group is attention_group:
+            if extensions is not None and extensions.active:
+                evaluate_extensions = self._evaluation.evaluate_batch_extensions
+                if evaluate_extensions is None:
+                    raise GuidanceContractError(
+                        "the active family evaluator does not consume declared attention points"
+                    )
+                if attention_group is not None:
+                    raise GuidanceContractError(
+                        "legacy fused attention guidance cannot combine with attention point packs"
+                    )
+                values = evaluate_extensions(
+                    x,
+                    sigma,
+                    tuple(item.condition for item in group),
+                    AttentionExecution(
+                        extensions,
+                        request.execution,
+                        tuple(request.plan.lanes[item.index] for item in group),
+                        x.shape[0],
+                    ),
+                )
+                if type(values) is not tuple or len(values) != len(group):
+                    raise GuidanceContractError(
+                        "attention evaluator returned wrong prediction count"
+                    )
+            elif attention_group is not None and group is attention_group:
                 evaluate_batch_attention = self._evaluation.evaluate_batch_attention
                 if evaluate_batch_attention is None:
                     raise GuidanceContractError("conditioning attention evaluator is missing")
@@ -985,9 +1020,13 @@ class GuidanceRegistry:
     """Process-local callbacks retained with their owning extension identity."""
 
     def __init__(
-        self, contributions: tuple[tuple[str, GuidanceContribution[torch.Tensor]], ...] = ()
+        self,
+        contributions: tuple[tuple[str, GuidanceContribution[torch.Tensor]], ...] = (),
+        *,
+        attention_contributions: tuple[tuple[str, AttentionContribution[torch.Tensor]], ...] = (),
     ):
         self.contributions = tuple(contributions)
+        self.attention_extensions = AttentionRegistry(attention_contributions)
         wrappers: list[_Owned] = []
         scale: list[_Owned] = []
         pre: list[_Owned] = []
@@ -1084,6 +1123,7 @@ class GuidanceRegistry:
             or self.post
             or self.strategy
             or self.attention
+            or self.attention_extensions.active
         )
 
     @property
@@ -1124,7 +1164,14 @@ def merged_guidance_executor(
                 f"per-run guidance transform owner {owner!r} is already registered"
             )
         registered.add(owner)
-    return GuidanceExecutor(GuidanceRegistry(base + transforms))
+    return GuidanceExecutor(
+        GuidanceRegistry(
+            base + transforms,
+            attention_contributions=(
+                () if executor is None else executor.registry.attention_extensions.contributions
+            ),
+        )
+    )
 
 
 def _standard_plan_values(
@@ -1500,18 +1547,57 @@ class GuidanceExecutor:
         )
         self._validate_tensor(request.input, reduced, reducer_owner)
         if compose:
+            auxiliary_active = False
+            auxiliary_open = False
+
+            def evaluate_conditions(
+                auxiliary: GuidanceEvaluationRequest[torch.Tensor],
+            ) -> GuidancePredictions[torch.Tensor]:
+                nonlocal auxiliary_active
+                if not auxiliary_open:
+                    raise GuidanceContractError("auxiliary evaluation is outside its callback")
+                if auxiliary_active:
+                    raise GuidanceContractError("auxiliary condition evaluation cannot recurse")
+                if (
+                    auxiliary.input is not request.input
+                    or auxiliary.sigma is not request.sigma
+                    or auxiliary.execution is not request.execution
+                ):
+                    raise GuidanceContractError(
+                        "auxiliary evaluation must preserve input, sigma and invocation context"
+                    )
+                auxiliary_active = True
+                try:
+                    cancel()
+                    result = evaluate(auxiliary)
+                    cancel()
+                    _validate_predictions(auxiliary, result, "auxiliary evaluation")
+                    return result
+                finally:
+                    auxiliary_active = False
+
             for owned in self.registry.post:
-                reduced = cast(
-                    "torch.Tensor",
-                    self._call(
-                        cancel,
-                        owned.value.id,
-                        owned,
-                        "post",
-                        owned.value.transform,
-                        GuidancePostCFGContext(request, predictions, reduced, context.cfg_scale),
-                    ),
-                )
+                auxiliary_open = True
+                try:
+                    reduced = cast(
+                        "torch.Tensor",
+                        self._call(
+                            cancel,
+                            owned.value.id,
+                            owned,
+                            "post",
+                            owned.value.transform,
+                            GuidancePostCFGContext(
+                                request,
+                                predictions,
+                                reduced,
+                                context.cfg_scale,
+                                evaluate_conditions,
+                            ),
+                        ),
+                    )
+                finally:
+                    auxiliary_open = False
                 self._validate_tensor(
                     request.input,
                     reduced,
@@ -1638,6 +1724,10 @@ class GuidedDenoiser:
         self._execution = execution
         self._evaluation = 0
         self._attention = tuple(item.value for item in executor.registry.attention)
+        if executor.registry.attention_extensions.active and replica_evaluator_factory is not None:
+            raise GuidanceContractError(
+                "declared attention points require a model-call context on every replica"
+            )
         if self._attention and replica_evaluator_factory is not None:
             ids = ", ".join(item.id for item in self._attention)
             raise GuidanceContractError(
@@ -1723,9 +1813,10 @@ class GuidedDenoiser:
                     sigma,
                     value,
                     attention=self._attention,
+                    extensions=self._executor.registry.attention_extensions,
                 )
 
-            if cache is not None:
+            if cache is not None and not self._executor.registry.attention_extensions.active:
                 return cache.evaluate(request, plan, evaluate_conditioning)
             return evaluate_conditioning(request)
 

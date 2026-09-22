@@ -1,0 +1,18 @@
+[pack]
+name = "proof_couple"
+namespaces = ["proof_couple"]
+requires = ["torch==2.13.0+cu130", "dinkster-aimdo==0.5.5.post2"]
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+inference = "dinkster-inference/1"
+
+[pack.entry]
+nodes = "attention_couple_pack:NODES"
+
+[pack.extension]
+inference = "attention_couple_pack:register"
+privileges = ["inference"]
+
+[pack.sandbox]

@@ -158,9 +158,14 @@ def _load_runtime(
     guidance_executor = None
     materialize = getattr(inference, "materialize_inference_generation", None)
     generation = None if materialize is None else materialize(extension_snapshot_digest)
-    if generation is not None and generation.guidance_contributions:
+    if generation is not None and (
+        generation.guidance_contributions or generation.attention_contributions
+    ):
         inference_torch = importlib.import_module("dinkster_inference_torch")
-        registry = inference_torch.GuidanceRegistry(generation.guidance_contributions)
+        registry = inference_torch.GuidanceRegistry(
+            generation.guidance_contributions,
+            attention_contributions=generation.attention_contributions,
+        )
         if registry.active:
             guidance_executor = inference_torch.GuidanceExecutor(registry)
     kwargs = {
@@ -790,8 +795,11 @@ def _materialize_single_recipe_handle(
             extension_behavior_hash=recipe.knobs.extension_behavior_hash,
         )
         generation = inference.materialize_inference_generation(registry_token)
-        if generation.guidance_contributions:
-            guidance_registry = inference_torch.GuidanceRegistry(generation.guidance_contributions)
+        if generation.guidance_contributions or generation.attention_contributions:
+            guidance_registry = inference_torch.GuidanceRegistry(
+                generation.guidance_contributions,
+                attention_contributions=generation.attention_contributions,
+            )
             if guidance_registry.active:
                 load_kwargs["guidance_executor"] = inference_torch.GuidanceExecutor(
                     guidance_registry
@@ -976,9 +984,10 @@ def _prevalidate_recipe_materializations(
                 extension_behavior_hash=current.knobs.extension_behavior_hash,
             )
             generation = inference.materialize_inference_generation(registry_token)
-            if generation.guidance_contributions:
+            if generation.guidance_contributions or generation.attention_contributions:
                 guidance_registry = inference_torch.GuidanceRegistry(
-                    generation.guidance_contributions
+                    generation.guidance_contributions,
+                    attention_contributions=generation.attention_contributions,
                 )
                 if guidance_registry.active:
                     load_extras["guidance_executor"] = inference_torch.GuidanceExecutor(

@@ -1,0 +1,18 @@
+[pack]
+name = "proof_pag"
+namespaces = ["proof_pag"]
+requires = ["torch==2.13.0+cu130", "dinkster-aimdo==0.5.5.post2"]
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+inference = "dinkster-inference/1"
+
+[pack.entry]
+nodes = "pag_pack:NODES"
+
+[pack.extension]
+inference = "pag_pack:register"
+privileges = ["inference"]
+
+[pack.sandbox]

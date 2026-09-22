@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import cast
 
 import torch
 from dinkster_inference import (
@@ -57,6 +56,7 @@ from ._conditioning_layout import (
     declared_token_count,
     repeat_cross_attn,
 )
+from .attention_extensions import AttentionExecution
 from .controlnet import (
     SDControlProvider,
     SDControlResiduals,
@@ -618,6 +618,7 @@ class SDDenoiser:
         lane_ids: tuple[str, ...],
         repeats: list[int] | None = None,
         attention_guidance: AttentionGuidanceContext | None = None,
+        attention_extensions: AttentionExecution | None = None,
     ) -> torch.Tensor:
         """One UNet call over the engine-stacked conditioning lanes.
 
@@ -796,6 +797,17 @@ class SDDenoiser:
                     control.down_channels,
                     control.down_scales,
                 )
+        if attention_extensions is not None:
+            return self.model(
+                xc,
+                timesteps,
+                context=context,
+                y=y,
+                control=control,
+                attention_guidance=attention_guidance,
+                ipadapter=ipadapter,
+                attention_extensions=attention_extensions,
+            ).float()
         if control is None:
             if ipadapter is not None:
                 return self.model(
@@ -883,7 +895,8 @@ class SDDenoiser:
             [condition[1] for condition in conditions],
             tuple(condition[2] for condition in conditions),
             repeats,
-            cast("AttentionGuidanceContext | None", batch.context),
+            batch.context if isinstance(batch.context, AttentionGuidanceContext) else None,
+            batch.context if isinstance(batch.context, AttentionExecution) else None,
         )
 
     def _conditioning_denoised(

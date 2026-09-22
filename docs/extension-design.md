@@ -199,18 +199,17 @@ report-06). First-class re-entrant `evaluate_conditions` service for PAG/SEG-
 style auxiliary predictions, with explicit phase participation and recursion
 isolation.
 
-S3 ships the non-re-entrant vertical slice: worker-local exclusive strategy
+The guidance pipeline ships worker-local exclusive strategy
 and reducer contributions, delegating cond-evaluation wrappers, ordered pre-
 and post-CFG transforms, typed lane plans and prediction provenance, explicit
 compose/bypass participation, deterministic ownership/order, strict callback
 validation and cancellation boundaries, transactional unload, and native
 SD/Flux wiring. Executed ComfyUI goldens cover ordinary CFG and CFG-rescale;
-the empty registry preserves the exact prior native identity and active
-PAG/SEG/auxiliary re-entry and terminal wrappers stay in S6; regional/masked
-conditioning and per-condition scale vectors stay in conditioning scheduling;
-ControlNet stays in S8. The
-other retained boundaries and their exact revival triggers are recorded in
-ROADMAP "S3 guidance retained deferrals".
+the empty registry preserves the exact prior native identity. The bounded
+`evaluate_conditions` service supports auxiliary predictions without
+re-entering guidance phases, and attention wrappers may terminate explicitly.
+Regional/masked conditioning and per-condition scale vectors stay in
+conditioning scheduling; ControlNet stays in S8.
 
 Published inference generations are retained for the lifetime of their
 sampling worker. Retention is therefore bounded by activation cycle count,
@@ -226,10 +225,11 @@ before model evaluation but after solver entry.
 Three composable layers: q/k/v input transforms (ordered), kernel wrappers with
 `next(q,k,v,ctx)` (termination must be explicit), output transforms (ordered).
 Semantic block selectors resolved by adapters per P3; per-call context carries
-shape/heads/polarity metadata; invocation-local scratch for paired pre/post
-patches (attention-couple). Per-model attention-backend registry instead of a
-host-global function. Reference/style read/write hooks (AdaIN etc.) as declared
-points, not block-forward replacement (reports 01, 02, 06, 07).
+shape, heads, conditioning token spans and invocation-local scratch for paired
+pre/post operations. A per-model attention-backend registry replaces a
+host-global function. Exact torch and aimdo pins are checked when the inference
+generation materializes. Reference/style read/write hooks remain declared
+points rather than block-forward replacement (reports 01, 02, 06, 07).
 
 ### 3.6 Sampling as a library
 Re-entrant sampling service callable from any extension: model-or-guider,
@@ -393,17 +393,17 @@ in [comfy-vibe-station#120](https://github.com/Kosinkadink/comfy-vibe-station/is
   loop. Proof: one out-of-tree sampler pack, zero core edits.
 - **S2. Normalized patch identity + aimdo adapter, then model-handle
   clone/lifecycle** (3.2 core, 3.3 descriptors). Proof: LoRA-style pack.
-- **S3. Guidance phases - SHIPPED 2026-07-29** (3.4). Proved by two
+- **Guidance phases - SHIPPED 2026-07-29** (3.4). Proved by two
   coexisting out-of-tree packs, a CFG-rescale contribution, native-arm and
-  identity tests, and executed ComfyUI guidance goldens. PAG remains deferred
-  to S6; all retained boundaries and triggers are ledgered in ROADMAP.
+  identity tests, and executed ComfyUI guidance goldens. Auxiliary prediction
+  and attention execution are covered by the semantic attention proof below.
 - **Conditioning records, graph compilation, and schedule-aware text
   encoding** (3.7, 3.8). Proof: prompt-scheduling pack.
 - **S5. Server routes + event bus + managed jobs** (4, JSON only). Proof:
   monitoring pack. Parallelizable with guidance and conditioning scheduling.
-- **S6. Semantic block/attention points + auxiliary prediction** (3.5, rest of
-  3.4). Proof: PAG and a reference/attention-couple behavior on two different
-  architectures.
+- **Semantic block/attention points + auxiliary prediction - SHIPPED** (3.5,
+  rest of 3.4). Proved by independently composed PAG, attention-couple and
+  reference-attention packs on UNet and DiT architectures.
 - **S7. Re-entrant sampling + exact noise + nested progress** (3.6 minus
   driver/checkpoints). Proof: base/refiner continuation (not a full detailer).
 - **S8. Image ControlNet pipeline** (3.10). Proof: first-party ControlNet pack.

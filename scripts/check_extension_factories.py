@@ -11,13 +11,19 @@ from pathlib import Path
 from typing import TypedDict
 
 SPECIAL_CALL_KINDS = {
+    "AttentionRegistry": "attentionFactory",
+    "AttentionQKVDescriptor": "attentionFactory",
+    "AttentionWrapperDescriptor": "attentionFactory",
+    "AttentionOutputDescriptor": "attentionFactory",
+    "AttentionBackendDescriptor": "attentionFactory",
+    "BlockInjectionDescriptor": "attentionFactory",
     "build_builtin_assembly_registry": "assemblyBuilder",
     "builtin_families": "descriptorCatalog",
     "builtin_sampler_snapshot": "descriptorCatalog",
     "builtin_samplers": "descriptorCatalog",
     "builtin_schedulers": "descriptorCatalog",
 }
-SITE_KINDS = ("assemblyBuilder", "descriptorCatalog", "registryFactory")
+SITE_KINDS = ("assemblyBuilder", "attentionFactory", "descriptorCatalog", "registryFactory")
 REGISTRY_FACTORY = re.compile(r"^(?:builtin|default)_.+_registry$")
 
 

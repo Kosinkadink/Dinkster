@@ -48,6 +48,7 @@ from dinkster_inference import AttentionGuidanceDescriptor
 from dinkster_inference.unet import UNetConfig
 
 from .attention import AttentionKernel, select_attention
+from .attention_extensions import AttentionExecution
 from .ipadapter import SD15AttentionExecutionContext
 from .model_prefetch import (
     close_prefetch_queue,
@@ -240,6 +241,7 @@ class CrossAttention(torch.nn.Module):
         *,
         ipadapter: SD15AttentionExecutionContext | None = None,
         spatial_shape: tuple[int, int] | None = None,
+        attention_extensions: AttentionExecution | None = None,
     ) -> torch.Tensor:
         source = context if context is not None else x
         q = self.to_q(x)
@@ -251,7 +253,21 @@ class CrossAttention(torch.nn.Module):
             return t.view(batch, -1, self.heads, self.dim_head).transpose(1, 2)
 
         q, k, v = heads_first(q), heads_first(k), heads_first(v)
-        out = self._attention_kernel(q, k, v)
+        if attention_extensions is None:
+            out = self._attention_kernel(q, k, v)
+        else:
+            if self.site_id is None or spatial_shape is None:
+                raise ValueError("attention extensions require a declared site and spatial shape")
+            call = attention_extensions.context(
+                family="unet",
+                block=self.site_id.rsplit(".", 1)[0],
+                kind="self" if context is None else "cross",
+                heads=self.heads,
+                spatial_shape=spatial_shape,
+                query_tokens=q.shape[2],
+                key_tokens=k.shape[2],
+            )
+            out = attention_extensions.attention(q, k, v, self._attention_kernel, call)
         if ipadapter is not None:
             if self.site_id is None or spatial_shape is None:
                 raise ValueError("IP-Adapter requires a canonical attn2 site and spatial shape")
@@ -307,6 +323,7 @@ class BasicTransformerBlock(torch.nn.Module):
         site_id: str | None = None,
     ) -> None:
         super().__init__()
+        self.block_id = None if site_id is None else site_id.rsplit(".", 1)[0]
         self.attn1 = CrossAttention(
             dim,
             None,
@@ -315,6 +332,7 @@ class BasicTransformerBlock(torch.nn.Module):
             dropout=dropout,
             operations=operations,
             attention_kernel=attention_kernel,
+            site_id=None if self.block_id is None else f"{self.block_id}.attn1",
         )
         self.attn2 = CrossAttention(
             dim,
@@ -338,8 +356,25 @@ class BasicTransformerBlock(torch.nn.Module):
         attention_guidance: AttentionGuidanceContext | None = None,
         ipadapter: SD15AttentionExecutionContext | None = None,
         spatial_shape: tuple[int, int] | None = None,
+        attention_extensions: AttentionExecution | None = None,
     ) -> torch.Tensor:
-        n = self.attn1(self.norm1(x))
+        call = None
+        if attention_extensions is not None:
+            if self.block_id is None or spatial_shape is None:
+                raise ValueError("block injection requires a declared site and spatial shape")
+            call = attention_extensions.context(
+                family="unet",
+                block=self.block_id,
+                kind="self",
+                heads=self.attn1.heads,
+                spatial_shape=spatial_shape,
+                query_tokens=x.shape[1],
+                key_tokens=x.shape[1],
+            )
+            x = attention_extensions.block(x, call, "before")
+        n = self.attn1(
+            self.norm1(x), spatial_shape=spatial_shape, attention_extensions=attention_extensions
+        )
         if attention_guidance is not None:
             n = attention_guidance.apply(n)
         x = n + x
@@ -349,10 +384,16 @@ class BasicTransformerBlock(torch.nn.Module):
                 context=context,
                 ipadapter=ipadapter,
                 spatial_shape=spatial_shape,
+                attention_extensions=attention_extensions,
             )
             + x
         )
-        return self.ff(self.norm3(x)) + x
+        x = self.ff(self.norm3(x)) + x
+        return (
+            attention_extensions.block(x, call, "after")
+            if attention_extensions is not None and call is not None
+            else x
+        )
 
 
 class SpatialTransformer(torch.nn.Module):
@@ -413,6 +454,7 @@ class SpatialTransformer(torch.nn.Module):
         context: torch.Tensor,
         attention_guidance: AttentionGuidanceContext | None = None,
         ipadapter: SD15AttentionExecutionContext | None = None,
+        attention_extensions: AttentionExecution | None = None,
     ) -> torch.Tensor:
         _, _, height, width = x.shape
         x_in = x
@@ -432,6 +474,7 @@ class SpatialTransformer(torch.nn.Module):
                     attention_guidance,
                     ipadapter,
                     (height, width),
+                    attention_extensions,
                 )
             prefetch_queue_pop(prefetch, None)
         finally:
@@ -456,12 +499,13 @@ class _Layers(torch.nn.Sequential):
         output_shape: tuple[int, ...] | None = None,
         attention_guidance: AttentionGuidanceContext | None = None,
         ipadapter: SD15AttentionExecutionContext | None = None,
+        attention_extensions: AttentionExecution | None = None,
     ) -> torch.Tensor:
         for layer in self:
             if isinstance(layer, ResBlock):
                 x = layer(x, emb)
             elif isinstance(layer, SpatialTransformer):
-                x = layer(x, context, attention_guidance, ipadapter)
+                x = layer(x, context, attention_guidance, ipadapter, attention_extensions)
             elif isinstance(layer, Upsample):
                 x = layer(x, output_shape=output_shape)
             else:
@@ -589,7 +633,18 @@ class UNetModel(torch.nn.Module):
         control: SDControlResiduals | None = None,
         attention_guidance: AttentionGuidanceContext | None = None,
         ipadapter: SD15AttentionExecutionContext | None = None,
+        attention_extensions: AttentionExecution | None = None,
     ) -> torch.Tensor:
+        if attention_extensions is not None:
+            attention_extensions.validate_sites(
+                "unet",
+                tuple(
+                    (site.rsplit(".", 1)[0], kind)
+                    for site, _ in self.attention_sites
+                    for kind in ("self", "cross")
+                ),
+                tuple((site.rsplit(".", 1)[0], "self") for site, _ in self.attention_sites),
+            )
         if (y is None) == (self.config.adm_in_channels is not None):
             raise ValueError(
                 "y must be provided if and only if the model is"
@@ -618,6 +673,7 @@ class UNetModel(torch.nn.Module):
                     context,
                     attention_guidance=attention_guidance,
                     ipadapter=ipadapter,
+                    attention_extensions=attention_extensions,
                 )
                 hs.append(h)
             prefetch_queue_pop(input_prefetch, None)
@@ -629,6 +685,7 @@ class UNetModel(torch.nn.Module):
             context,
             attention_guidance=attention_guidance,
             ipadapter=ipadapter,
+            attention_extensions=attention_extensions,
         )
         if control is not None:
             if len(control.down) != len(hs):
@@ -645,7 +702,15 @@ class UNetModel(torch.nn.Module):
                     skip = skip + control.down[len(hs)].to(skip.dtype)
                 h = torch.cat([h, skip], dim=1)
                 output_shape = hs[-1].shape if hs else None
-                h = module(h, emb, context, output_shape, attention_guidance, ipadapter)
+                h = module(
+                    h,
+                    emb,
+                    context,
+                    output_shape,
+                    attention_guidance,
+                    ipadapter,
+                    attention_extensions,
+                )
             prefetch_queue_pop(output_prefetch, None)
         finally:
             close_prefetch_queue(output_prefetch)

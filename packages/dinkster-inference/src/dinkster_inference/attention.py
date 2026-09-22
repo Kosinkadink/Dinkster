@@ -1,6 +1,6 @@
 """Torch-free authoring contract for attention and block-level extensions.
 
-Packs declare per-model attention backends, Q/K/V transforms, attention
+Packs declare runtime-adapter attention backends, Q/K/V transforms, attention
 wrappers, output transforms, and block-level residual/state injections
 through :class:`AttentionContribution`. Declarations are projected to
 canonical keyed surfaces at composition and executed inside the inference
@@ -52,10 +52,11 @@ AIMDO_DISTRIBUTION = "dinkster-aimdo"
 class AttentionSelector:
     """Where one attention extension point applies.
 
-    ``family`` is the model family id (matched exactly, never a pattern).
-    ``block`` is a stable block name or the whole ``*`` wildcard; ``kind``
-    is ``*`` or one of :data:`ATTENTION_KINDS`. Only a standalone ``*``
-    wildcards - a name containing it elsewhere matches nothing.
+    ``family`` is the runtime attention adapter key (matched exactly, never
+    a pattern), such as ``unet`` or ``flux``. ``block`` is a stable block
+    name or the whole ``*`` wildcard; ``kind`` is ``*`` or one of
+    :data:`ATTENTION_KINDS`. Only a standalone ``*`` is a wildcard - a name
+    containing it elsewhere matches nothing.
     """
 
     family: str
@@ -277,10 +278,10 @@ class AttentionOutputDescriptor(Generic[T]):
 
 @dataclass(frozen=True)
 class AttentionBackendDescriptor(Generic[T]):
-    """Replace the attention kernel of one model family.
+    """Replace the attention kernel of one runtime attention adapter.
 
-    ``family`` must be an exact family id - no wildcard. Each family
-    admits exactly one backend; a second declaration for the same family
+    ``family`` must be an exact adapter key - no wildcard. Each adapter
+    admits exactly one backend; a second declaration for the same adapter
     refuses at composition naming both packs and descriptor ids.
     """
 

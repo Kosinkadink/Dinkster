@@ -63,6 +63,7 @@ from dinkster_inference.sampling import (
 )
 
 from ._conditioning_layout import cross_attn_repeat, declared_token_count, repeat_cross_attn
+from .attention_extensions import AttentionExecution
 from .brownian import BrownianTreeNoise
 from .flux import Flux
 from .flux_window import flux_window_position_ids
@@ -277,6 +278,7 @@ class FluxDenoiser:
         sigma: float,
         conds: Sequence[FluxCondition],
         repeats: list[int],
+        attention_extensions: AttentionExecution | None = None,
     ) -> torch.Tensor:
         """One transformer call over the engine-stacked conditioning lanes."""
         batch = xc.shape[0] // len(conds)
@@ -312,6 +314,18 @@ class FluxDenoiser:
         guidance = None
         if self.guidance is not None:
             guidance = torch.full((total,), self.guidance, device=device, dtype=self.compute_dtype)
+        if attention_extensions is not None:
+            if self.image_grid_indices is not None:
+                raise DenoiseError("attention extensions require full-grid Flux evaluation")
+            return self.model(
+                xc,
+                timesteps,
+                context,
+                y,
+                guidance,
+                ref_latents=references,
+                attention_extensions=attention_extensions,
+            ).float()
         if self.image_grid_indices is None:
             if not references:
                 return self.model(xc, timesteps, context, y, guidance).float()
@@ -377,6 +391,7 @@ class FluxDenoiser:
             batch.sigma,
             batch.conditions,
             repeats,
+            batch.context if isinstance(batch.context, AttentionExecution) else None,
         )
 
     def _grouped_conditioning_forward(

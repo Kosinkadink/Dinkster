@@ -26,6 +26,7 @@ SHARED_ENGINE_FILES = (
     "packages/dinkster-inference/src/dinkster_inference/taesd.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/assemble.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/_portable_solvers.py",
+    "packages/dinkster-inference-torch/src/dinkster_inference_torch/attention_extensions.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/component_runtime.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/denoise.py",
     "packages/dinkster-inference-torch/src/dinkster_inference_torch/memory.py",
