@@ -73,5 +73,5 @@ def test_compat_pack_bundles_manifest_nodes_and_alias_registry() -> None:
     assert included == {
         "dinkster-pack.toml": "dinkster_compat_comfy_pack/dinkster-pack.toml",
         "comfy-aliases.json": "dinkster_compat_comfy_pack/comfy-aliases.json",
-        "src/dinkster_compat_comfy": "dinkster_compat_comfy_pack/dinkster_compat_comfy",
+        "src/dinkster_compat_comfy": "dinkster_compat_comfy_pack/src/dinkster_compat_comfy",
     }
