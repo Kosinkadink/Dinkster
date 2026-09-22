@@ -734,6 +734,7 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
     assert re.findall(r"tests/\S+\.py", script) == [
         "tests/test_extension_contract_pack.py",
         "tests/test_extension_factory_guard.py",
+        "tests/test_family_isinstance_guard.py",
         "tests/test_family_registration_gates.py",
         "tests/test_release_install.py",
         "tests/test_schema.py",
