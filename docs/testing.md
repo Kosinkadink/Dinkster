@@ -57,11 +57,11 @@ the evidence repository. Generation fails if the evidence checkout or its
 
 ## Pull requests and full validation
 
-`.github/workflows/ci.yml` runs a fast job with a ten-minute limit alongside
-the engine-test matrix. After installing the locked workspace and fetching
-pinned evidence for type resolution (not model weights or coverage inputs),
-the fast job runs `bash scripts/ci-fast.sh`: Ruff format, Ruff lint, Pyright,
-and this fixed path-based unit subset:
+`.github/workflows/ci.yml` runs one fast job with a ten-minute limit. After
+installing the locked workspace and fetching pinned evidence for type
+resolution (not model weights or coverage inputs), it runs
+`bash scripts/ci-fast.sh`: Ruff format, Ruff lint, Pyright, and this fixed
+path-based unit subset:
 
 - `tests/test_extension_contract_pack.py`: a real CPU server composed with only
   the ordinary extension fixture pack, proving two custom nodes linked through
@@ -83,10 +83,16 @@ remain required locally before landing; this subset is fast PR feedback,
 not a replacement for full validation. Reproduce the job after
 `uv sync --locked --all-packages` with `bash scripts/ci-fast.sh`.
 
-The PR job defaults to `[self-hosted, linux, x64]`. To use hosted Linux
-without editing the job, set repository variable `DINKSTER_PR_RUNNER` to
-the JSON string `"ubuntu-latest"`. No local wrapper or machine path is used
-by the fast checks.
+The required `CI_RUNNERS` repository variable controls every job. Its
+`linux`, `windows`, `macos`, and `forkLinux` values select GitHub-hosted
+images. CPU Torch jobs pin AVX2 dispatch in their environment rather than
+depending on machine labels.
+When required private inputs are unavailable, the PR job records an explicit
+not-run reason and fails instead of reporting unexecuted validation as green.
+
+```json
+{"linux":["ubuntu-latest"],"windows":["windows-latest"],"macos":["macos-latest"],"forkLinux":["ubuntu-latest"]}
+```
 
 `.github/workflows/full-validation.yml` runs on every main push, every two
 hours from 06:00 through 22:00 Pacific, daily at 10:23 UTC, on manual
@@ -101,10 +107,13 @@ next completed run at a descendant head. Find candidate runs in the Actions
 `full-validation` history, then confirm coverage from a local clone with
 `git merge-base --is-ancestor <merge-sha> <run-head-sha>`. Scheduled,
 dispatched and release-called runs use a separate non-cancelling durable group,
-so push traffic neither queues nor replaces them. Full validation retains the
-Python 3.12 Linux suite, both Python 3.12 Windows shards, branch coverage
-with the 80% floor, model tests, one torch CPU job, translation coverage,
-artifact smoke checks and the macOS descriptor test. Select a branch in Actions'
+so push traffic neither queues nor replaces them. Full validation runs the
+Python 3.12 Linux suite as four whole-file shards, both Python 3.12 Windows
+shards, branch coverage as four shards combined before enforcing the unchanged
+80% floor, model tests, one torch CPU job, translation coverage, artifact
+smoke checks and the macOS descriptor test. Every complete lane has a
+20-minute or lower job timeout. `main-status` uploads one JSON artifact with
+every aggregate result and fails unless every selected lane passed. Select a branch in Actions'
 "Run workflow" menu, or pass the dispatch ref explicitly:
 
 ```bash
@@ -118,17 +127,15 @@ selected branch must contain the workflow. The daily audit uses main.
 `release.yml` runs only for version tags. It calls full validation for the
 exact tagged commit before building the complete wheel set, then installs and
 launch-checks those exact artifacts on Linux, Windows and macOS before
-publishing the GitHub Release.
+publishing the GitHub Release. Its hosted-eligible jobs use the same
+`CI_RUNNERS` variable.
 
 Both workflows use Python 3.12 only. Package requirements and the dependency
 lock continue to support Python 3.13. Heavy jobs run independently; the
-torch CPU job asserts its golden-data CPU contract and fails on mismatch,
-without retry jobs or an aggregate.
+torch CPU job pins AVX2 dispatch without retry jobs.
 
-Linux ARM64 artifact smoke and release installation are **not run** until
-Dinkster goes public ([ruling](https://github.com/Kosinkadink/comfy-vibe-station/issues/162)).
-Their matrices retain self-hosted Linux x64, Windows x64 and macOS ARM64;
-the unavailable Linux ARM64 leg is neither a pass nor a failure.
+Linux ARM64 artifact smoke and release installation are not part of the
+supported matrix. Linux x64, Windows x64, and macOS use GitHub-hosted images.
 
 ## Coverage
 
@@ -220,35 +227,18 @@ where applicable. No CI input or repository variable changes local pytest
 selection.
 
 The `model-tests` matrix runs in full validation in `Kosinkadink/Dinkster` on
-main pushes, the daily schedule and manual dispatch. PR labels never enable
-heavy jobs; dispatch full validation against the branch when model evidence
-is needed before landing. Six fixed groups cover inference and IPAdapter;
-acceptance sampling and the benchmark loader; HED, upscale and EfficientSAM;
-Depth Anything V2, DETR and RT-DETR; BiRefNet and Depth Anything V3; and SAM
-3.1. Every vision test is selected from the single
-`packages/dinkster-nodes-vision/tests` tree. All six groups may run
-concurrently on runners carrying the `cpu-golden-avx2` label. The `torch-cpu`
-job requires the same label; other CPU-only full validation jobs retain the
-generic Linux labels and can use RipperPC and LesserRipperPC. The model suites
-still execute with CPU Torch and the pinned AVX2 dispatch. `model-tests-gate`
-requires every group to pass. The contract test asserts the complete suite
-manifest so a suite cannot be silently omitted or assigned twice. Each group
-uses the same composite action with
-`run-model-tests: "true"` and the existing read-only identity and evidence
-deploy keys.
-
-The runner must have an AuthenticAMD CPU with AVX2 and **without AVX-512**,
-`MKL_CBWR` unset, and sufficient disk/RAM for the pinned CPU workloads.
-The `torch-cpu` job checks the vendor and instruction flags before checkout
-or dependency setup and fails with the required CPU golden contract on mismatch.
-A GPU-equipped machine still runs CPU parity with Torch 2.13.0+cpu and the
-existing AVX2 dispatch pins; this does not switch to GPU goldens. Checkouts
-clean the workspace and do not persist credentials. Deploy keys live in
-per-step SSH agents with post-job cleanup, and downloads use `RUNNER_TEMP`.
-Linux full suites use the host's counted-suite launcher. The disk-reclaim
-step that removes hosted image tooling is guarded by
-`runner.environment == 'github-hosted'` and
-never runs on a self-hosted machine.
+main pushes, the daily schedule and manual dispatch. Pull requests run only
+the fast tier. Eight whole-file inference and IPAdapter shards run beside
+fixed groups for acceptance sampling and the benchmark loader; HED, upscale
+and EfficientSAM; Depth Anything V2, DETR and RT-DETR; BiRefNet and Depth
+Anything V3; and SAM 3.1. Every vision test is selected from the single
+`packages/dinkster-nodes-vision/tests` tree. All groups run on GitHub-hosted
+Linux with CPU Torch and pinned AVX2 dispatch. `model-tests-gate` requires
+every group to pass. The contract test asserts the complete suite manifest so
+a suite cannot be silently omitted or assigned twice. Each group uses the
+same composite action with `run-model-tests: "true"` and the existing
+read-only identity and evidence deploy keys. Checkouts do not persist
+credentials, downloads use `RUNNER_TEMP`, and full suites execute directly.
 
 ## Tooling enforcement
 

@@ -75,7 +75,13 @@ from dinkster_values import (
     list_children,
 )
 from dinkster_values.model import PyObjPayload
-from dinkster_workers import DispatchWorker, GroupMemberWorker, ReplicaEndpoint, load_manifest
+from dinkster_workers import (
+    ArmWorker,
+    DispatchWorker,
+    GroupMemberWorker,
+    ReplicaEndpoint,
+    load_manifest,
+)
 
 from dinkster.compose import (
     ArmRecord,
@@ -87,6 +93,7 @@ from dinkster.compose import (
     _SingleJobWorkerPool,
     compose_serving,
 )
+from dinkster.lazy_worker import LazyWorker
 
 
 def _resource_value(resource_id: str, rank: int) -> Value:
@@ -1794,6 +1801,110 @@ def test_composer_keeps_portable_attention_arms_and_respects_placement() -> None
             assert selected.target == preferred
             assert selected.attention_route_token is not None
             assert selected.attention_route_token.version == (3 if preferred == "weak" else 1)
+
+    asyncio.run(scenario())
+
+
+def test_composer_replans_attention_when_concurrent_node_starts_selected_lazy_worker() -> None:
+    class RacingLazyWorker(LazyWorker):
+        def __init__(self, capabilities: AttentionCapabilityEvidence) -> None:
+            self.started = False
+            self.starts = 0
+            self._capabilities = capabilities
+            self._token = derive_attention_route_token(capabilities, AttentionPolicyConfig())
+
+        @property
+        def cold(self) -> bool:
+            return not self.started
+
+        @property
+        def alive(self) -> bool:
+            return self.started
+
+        @property
+        def instance_token(self) -> str | None:
+            return "started-worker" if self.started else None
+
+        @property
+        def attention_capabilities(self) -> AttentionCapabilityEvidence | None:
+            return self._capabilities if self.started else None
+
+        @property
+        def attention_route_token(self) -> AttentionRouteToken | None:
+            return self._token if self.started else None
+
+        async def ensure_started(self) -> object:
+            if not self.started:
+                self.starts += 1
+            self.started = True
+            return self
+
+        def validate_schema(self, node_type: str) -> None:
+            assert node_type == "nativepack.echo"
+
+    async def scenario() -> None:
+        worker = RacingLazyWorker(_attention_capabilities())
+        arm = ArmRecord(
+            name="nativepack@native",
+            worker=ArmWorker(worker, "native"),  # type: ignore[arg-type]
+            domain=_ResidencyDomain(worker, "nativepack"),
+            instance_token=lambda: worker.instance_token,
+            default_cache_tag="native:identity",
+            default_arm="nativepack",
+            owner_worker=worker,
+        )
+
+        class CoordinateConcurrentSelection:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.first_waiting = asyncio.Event()
+                self.release_first = asyncio.Event()
+
+            async def select(
+                self,
+                node_type: str,
+                inputs: object,
+                candidates: tuple[str, object],
+                *,
+                run_id: str | None = None,
+                attention_routes: Mapping[str, AttentionRouteToken | None],
+            ) -> ExecutionSelection:
+                del node_type, inputs, run_id
+                self.calls += 1
+                if self.calls == 1:
+                    self.first_waiting.set()
+                    await self.release_first.wait()
+                target = candidates[0]
+                token = attention_routes[target]
+                return ExecutionSelection(
+                    target=target,
+                    cache_tag="native:identity",
+                    attention_policy="auto" if token is None else token.requested_policy,
+                    attention_route_token=token,
+                )
+
+        policy = CoordinateConcurrentSelection()
+        composer = ServingComposer(native_policy=policy)  # type: ignore[arg-type]
+
+        async def plan() -> ExecutionSelection | None:
+            return await composer._plan_execution(
+                "nativepack.echo",
+                NodeSchema(node_type="nativepack.echo"),
+                {},
+                topology={"nativepack.echo": (arm,)},
+            )
+
+        first = asyncio.create_task(plan())
+        await policy.first_waiting.wait()
+        second = await plan()
+        policy.release_first.set()
+        selected = await first
+
+        assert selected is not None
+        assert second is not None
+        assert selected.attention_route_token == worker._token
+        assert second.attention_route_token == worker._token
+        assert worker.starts == 1
 
     asyncio.run(scenario())
 

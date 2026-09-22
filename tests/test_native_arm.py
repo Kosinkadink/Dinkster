@@ -25226,12 +25226,13 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
     events: list[object] = []
 
     class Handle:
-        pass
+        recipe = SimpleNamespace(family_id="dinkster.seedvr2")
 
     class Codec:
         descriptor = SEEDVR2_CODEC
         load_device = FakeDevice("cuda:0")
         resource_identity = "native:dinkster.seedvr2:" + "1" * 64
+        sequence_content = True
         accepts_batched_video = True
         accepts_image_batch_latent = True
         manages_input_device = True
@@ -25245,7 +25246,8 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
             yield
 
         def encode_content(self, content: FakeTensor) -> FakeTensor:
-            return content
+            events.append(("encode-direct", content.shape))
+            return FakeTensor((content.shape[0], 16, content.shape[2], 4, 6), "encoded")
 
         def decode_latent(self, latent: FakeTensor) -> FakeTensor:
             return latent
@@ -25274,10 +25276,18 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
 
     codec = Codec()
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_native_component_codec", lambda _value: codec)
+    monkeypatch.setattr(
+        arm,
+        "_native_component_codec",
+        lambda value: arm._RegisteredComponentCodec(value, codec),
+    )
     monkeypatch.setattr(arm, "_torch", lambda: torch)
     handle = Handle()
 
+    encoded_direct = arm.GenerationVAEEncode.execute(
+        pixels=FakeTensor((5, 32, 48, 3), "pixels"),
+        vae=handle,
+    )
     encoded = arm.GenerationVAEEncodeTiled.execute(
         pixels=FakeTensor((1, 5, 32, 48, 3), "pixels"),
         vae=handle,
@@ -25303,10 +25313,19 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
         temporal_overlap=8,
     )
 
+    assert cast("Mapping[str, FakeTensor]", encoded_direct["latent"])["samples"].shape == (
+        1,
+        16,
+        5,
+        4,
+        6,
+    )
     assert cast("Mapping[str, FakeTensor]", encoded["latent"])["samples"].shape == (1, 16, 2, 4, 6)
     assert cast("FakeTensor", decoded["image"]).shape == (2, 32, 48, 3)
     assert cast("FakeTensor", decoded_image_batch["image"]).shape == (2, 32, 48, 3)
     assert events == [
+        "stage",
+        ("encode-direct", (1, 3, 5, 32, 48)),
         "stage",
         ("encode", (1, 3, 5, 32, 48), (64, 512, 512), (8, 128, 128)),
         "stage",
