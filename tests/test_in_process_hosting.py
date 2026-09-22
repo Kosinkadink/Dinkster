@@ -432,6 +432,13 @@ def test_in_process_installer_skips_venv_and_exact_pin_refusal_is_not_overridabl
     sidecar = _decode_hosting_record(root / "generations" / "1.hosting.json")
     assert sidecar.in_process == ("alpha",)
     assert dict(sidecar.runtime_pins) == PINS
+    generation = json.loads((root / "generations" / "1.json").read_text())
+    assert generation["hosting"] == {
+        "format": "dinkster.hosting/1",
+        "inProcess": ["alpha"],
+        "runtimePins": PINS,
+        "venvGroups": {},
+    }
     snapshot = installer.snapshot()
     assert snapshot.in_process == ("alpha",)
     assert dict(snapshot.runtime_pins) == PINS

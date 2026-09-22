@@ -275,6 +275,15 @@ class _HostingTopology:
     runtime_pins: tuple[tuple[str, str], ...] = ()
 
 
+def _hosting_record(topology: _HostingTopology) -> dict[str, object]:
+    return {
+        "format": "dinkster.hosting/1",
+        "inProcess": list(topology.in_process),
+        "runtimePins": dict(topology.runtime_pins),
+        "venvGroups": {name: list(members) for name, members in topology.groups},
+    }
+
+
 def _load_hosting_topology(root: Path, lockfile: Lockfile) -> _HostingTopology:
     """Read and validate the install root's optional venv-group policy."""
     path = root / "hosting.toml"
@@ -675,17 +684,7 @@ class Installer:
             return
         staged = path.with_suffix(".json.tmp")
         staged.write_text(
-            json.dumps(
-                {
-                    "format": "dinkster.hosting/1",
-                    "inProcess": list(topology.in_process),
-                    "runtimePins": dict(topology.runtime_pins),
-                    "venvGroups": {name: list(members) for name, members in topology.groups},
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n"
+            json.dumps(_hosting_record(topology), sort_keys=True, separators=(",", ":")) + "\n"
         )
         os.replace(staged, path)
 
@@ -1405,6 +1404,7 @@ class Installer:
             record = json.loads(target.record_json())
             if selected_environment is not None:
                 record["engine"] = selected_environment.record()
+            record["hosting"] = _hosting_record(topology)
             record["previousGeneration"] = current_number
             staged.write_text(json.dumps(record, sort_keys=True, separators=(",", ":")))
             try:

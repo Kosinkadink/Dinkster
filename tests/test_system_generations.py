@@ -26,6 +26,13 @@ def test_engine_change_creates_generation_with_identical_pack_lock(tmp_path: Pat
     assert installer.environment_of(second) == environment("b")
     assert installer.current_number() == second
     assert installer.apply(Lockfile(), environment=environment("b"))[0] == second
+    record = json.loads((installer.root / "generations/2.json").read_text())
+    assert record["hosting"] == {
+        "format": "dinkster.hosting/1",
+        "inProcess": [],
+        "runtimePins": {},
+        "venvGroups": {},
+    }
 
 
 def test_pack_apply_inherits_engine_and_explicit_none_clears_it(tmp_path: Path) -> None:
