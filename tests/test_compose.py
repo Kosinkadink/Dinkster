@@ -1440,7 +1440,7 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:e8bcdf5de8f13314cdfe603e73640384c2c428e664470d33fa01a157dbc9fec1",
+            "blake3:136426543185952dec319b9af35009b28eb1fb1d0b4386c001056c46478eb77a",
         ),
         (
             "dinkster-nodes-media-io",
