@@ -581,6 +581,23 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
                 )
 
 
+def test_public_frontend_checkout_does_not_require_repository_credentials() -> None:
+    steps = JOBS["test"]["steps"]
+    (checkout,) = [
+        step
+        for step in steps
+        if step.get("with", {}).get("repository") == "Kosinkadink/Dinkster-Frontend"
+    ]
+    assert checkout["uses"] == "actions/checkout@v4"
+    assert "token" not in checkout["with"]
+    assert "ssh-key" not in checkout["with"]
+    assert all(
+        step.get("with", {}).get("repository") != "Kosinkadink/Dinkster-Frontend"
+        for step in steps
+        if step.get("uses") == "./.github/actions/configure-private-repository"
+    )
+
+
 def test_validation_inputs_expose_existing_git_bash_only_on_windows() -> None:
     helper_path = ROOT / ".github/actions/prepare-validation-inputs/action.yml"
     helper = yaml.safe_load(helper_path.read_text(encoding="utf-8"))
