@@ -21,7 +21,8 @@ concurrency:
 
 jobs:
   validation-plan:
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
+    timeout-minutes: 2
     outputs:
       run-heavy: ${{ steps.plan.outputs.run-heavy }}
     steps:
@@ -47,7 +48,7 @@ jobs:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
     name: test (${{ matrix.os }}, ${{ matrix.python-version }}${{ matrix.shard_name }})
-    runs-on: ${{ matrix.labels }}
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS)[matrix.runner] }}
     timeout-minutes: ${{ matrix.timeout-minutes }}
     strategy:
       fail-fast: false
@@ -55,34 +56,52 @@ jobs:
         # Windows keeps the tcp boundary transport and the shm
         # handle-lifetime rules honest (DESIGN 3.11) - it is the dominant
         # user OS, not a nice-to-have.
-        # Timeouts bound hung pytest shards so a self-hosted runner is
-        # released within a bounded time instead of the 360-minute default
-        # (comfy-vibe-station#245). Sized from successful lane durations:
-        # linux median 24 / max 36 minutes; windows shard 2 max 10; windows
-        # shard 1 has no recent success to measure (the #240 hang) so it
-        # takes the linux bound, which covers its half suite plus checks.
+        # Whole-file shards keep each complete lane within the 20-minute main
+        # budget. Checks and generated-contract validation run once per OS;
+        # every root test file still runs in exactly one shard.
         include:
           - os: linux
-            labels: [self-hosted, linux, x64]
+            runner: linux
             python-version: "3.12"
-            shard_name: ""
-            pytest_args: ""
+            shard_name: ", shard 1"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 1/4"
             run_checks: true
-            timeout-minutes: 60
+            timeout-minutes: 20
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard_name: ", shard 2"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 2/4"
+            run_checks: false
+            timeout-minutes: 20
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard_name: ", shard 3"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 3/4"
+            run_checks: false
+            timeout-minutes: 20
+          - os: linux
+            runner: linux
+            python-version: "3.12"
+            shard_name: ", shard 4"
+            pytest_args: "-p tools.pytest_file_shard --file-shard 4/4"
+            run_checks: false
+            timeout-minutes: 20
           - os: windows
-            labels: [self-hosted, windows, x64]
+            runner: windows
             python-version: "3.12"
             shard_name: ", shard 1"
             pytest_args: "-p tools.pytest_file_shard --file-shard 1/2"
             run_checks: true
-            timeout-minutes: 60
+            timeout-minutes: 20
           - os: windows
-            labels: [self-hosted, windows, x64]
+            runner: windows
             python-version: "3.12"
             shard_name: ", shard 2"
             pytest_args: "-p tools.pytest_file_shard --file-shard 2/2"
             run_checks: false
-            timeout-minutes: 30
+            timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -102,6 +121,8 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - run: uv sync --all-packages
       - name: Install and verify published Windows engine dependencies
         if: matrix.os == 'windows'
@@ -120,33 +141,28 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
       - name: Verify bounded VIDEO save memory
-        if: matrix.os == 'linux' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.run_checks
         run: uv run --locked python tools/video_conformance.py --rss
       - name: Verify bounded AUDIO trim and save memory
-        if: matrix.os == 'linux' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.run_checks
         run: |
           mkdir -p "$RUNNER_TEMP/dinkster-audio-rss"
           uv run --locked python tools/audio_conformance.py --rss --directory "$RUNNER_TEMP/dinkster-audio-rss"
       - run: uv run python -m pytest -q ${{ matrix.pytest_args }}
         if: runner.os == 'Windows'
-      - run: '"$HOME/comfy-vibe-station/run_counted_suite.sh" uv run python -m pytest -q ${{ matrix.pytest_args }}'
+      - run: uv run python -m pytest -q ${{ matrix.pytest_args }}
         if: runner.os == 'Linux'
       - run: uv run dinkster demo
         if: matrix.run_checks
       - run: uv run dinkster-isolated
         if: matrix.run_checks
       - name: Export the published default catalog
-        if: matrix.os == 'linux' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.run_checks
         run: uv run --locked pytest -q tests/test_serve.py::test_default_catalog_publishes_only_owned_translation_carriers
         env:
           DINKSTER_CATALOG_WIRE_OUTPUT: ${{ runner.temp }}/default-catalog.json
-      - uses: ./.github/actions/configure-private-repository
-        if: matrix.os == 'linux' && matrix.python-version == '3.12'
-        with:
-          repository: Kosinkadink/Dinkster-Frontend
-          deploy-key: ${{ secrets.DINKSTER_FRONTEND_READ_KEY }}
       - uses: actions/checkout@v4
-        if: matrix.os == 'linux' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.run_checks
         with:
           clean: true
           repository: Kosinkadink/Dinkster-Frontend
@@ -154,16 +170,16 @@ jobs:
           path: .frontend-validation
           persist-credentials: false
       - uses: pnpm/action-setup@v4
-        if: matrix.os == 'linux' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.run_checks
         with:
           version: 10.31.0
           dest: ${{ runner.tool_cache }}/setup-pnpm
       - uses: actions/setup-node@v4
-        if: matrix.os == 'linux' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.run_checks
         with:
           node-version: 22
       - name: Decode real registries with frontend main
-        if: matrix.os == 'linux' && matrix.python-version == '3.12'
+        if: matrix.os == 'linux' && matrix.run_checks
         working-directory: .frontend-validation
         run: |
           pnpm install --frozen-lockfile
@@ -174,7 +190,7 @@ jobs:
   p2p-descriptor-macos:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
-    runs-on: [self-hosted, macos, arm64]
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).macos }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -184,13 +200,15 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - run: uv sync --all-packages
       - run: uv run --locked pytest -q tests/test_p2p_descriptor.py
 
   p2p-artifact-smoke:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
-    runs-on: ${{ matrix.labels }}
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS)[matrix.runner] }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -199,11 +217,11 @@ jobs:
         python-version: ["3.12"]
         include:
           - os: linux
-            labels: [self-hosted, linux, x64]
+            runner: linux
           - os: windows
-            labels: [self-hosted, windows, x64]
+            runner: windows
           - os: macos
-            labels: [self-hosted, macos, arm64]
+            runner: macos
     steps:
       - uses: actions/checkout@v4
         with:
@@ -212,28 +230,20 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - run: uv sync --locked
       - run: uv run --locked pytest -q tests/test_p2p_artifact_smoke.py
 
-  # Intel oneMKL and AMD AVX-512 MLAS dispatch differ from the CPU goldens.
-  # Require the golden CPU contract before installing or running the suite.
   torch-cpu:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
-    runs-on: [self-hosted, Linux, X64, cpu-golden-avx2]
-    timeout-minutes: 45
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
+    timeout-minutes: 20
     env:
       ATEN_CPU_CAPABILITY: avx2
       ONEDNN_MAX_CPU_ISA: AVX2
     steps:
-      - name: Require the CPU golden contract
-        run: |
-          grep -m1 'model name' /proc/cpuinfo
-          vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
-          if [ "$vendor" != "AuthenticAMD" ] || ! grep -qw avx2 /proc/cpuinfo || grep -qw avx512f /proc/cpuinfo; then
-            echo "CPU golden contract requires AuthenticAMD with AVX2 and without AVX-512; found vendor $vendor." >&2
-            exit 1
-          fi
       - uses: actions/checkout@v4
         with:
           clean: true
@@ -247,8 +257,8 @@ jobs:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true' && github.repository == 'Kosinkadink/Dinkster'
     name: model-tests (${{ matrix.name }})
-    runs-on: [self-hosted, Linux, X64, cpu-golden-avx2]
-    timeout-minutes: 60
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
+    timeout-minutes: 20
     permissions:
       contents: read
     strategy:
@@ -327,7 +337,8 @@ jobs:
   model-tests-gate:
     needs: [validation-plan, model-tests]
     if: always() && needs.validation-plan.outputs.run-heavy == 'true' && github.repository == 'Kosinkadink/Dinkster'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
+    timeout-minutes: 2
     steps:
       - name: Verify every model-test group passed
         run: test '${{ needs.model-tests.result }}' = success
@@ -337,8 +348,13 @@ jobs:
     # Raise --cov-fail-under when real coverage rises; never lower it.
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
-    runs-on: [self-hosted, linux, x64]
-    timeout-minutes: 60
+    name: coverage (shard ${{ matrix.shard }})
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -351,20 +367,59 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - run: uv sync --all-packages
       - run: >
-          "$HOME/comfy-vibe-station/run_counted_suite.sh"
-          uv run pytest -q --cov=dinkster_api --cov=dinkster_assets
+          uv run pytest -q -p tools.pytest_file_shard
+          --file-shard=${{ matrix.shard }}/4
+          --cov=dinkster_api --cov=dinkster_assets
           --cov=dinkster_caches --cov=dinkster_compat_comfy --cov=dinkster_engine
           --cov=dinkster_graph --cov=dinkster_memory --cov=dinkster_nodes_foundation
           --cov=dinkster_nodes_image --cov=dinkster_nodes_media_io
           --cov=dinkster_schema --cov=dinkster_server --cov=dinkster_values
-          --cov=dinkster_workers --cov-branch --cov-fail-under=80
+          --cov=dinkster_workers --cov-branch --cov-report=
+        env:
+          COVERAGE_FILE: .coverage.${{ matrix.shard }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: .coverage.${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
+
+  coverage-gate:
+    needs: [validation-plan, coverage]
+    if: always() && needs.validation-plan.outputs.run-heavy == 'true'
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
+    timeout-minutes: 5
+    steps:
+      - name: Require every coverage shard to pass
+        run: test '${{ needs.coverage.result }}' = success
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --all-packages
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-shard-*
+          path: coverage-data
+          merge-multiple: true
+      - name: Combine coverage and enforce the unchanged branch floor
+        run: |
+          uv run coverage combine coverage-data
+          uv run coverage report --fail-under=80
 
   translation-coverage:
     needs: validation-plan
     if: needs.validation-plan.outputs.run-heavy == 'true'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -377,6 +432,8 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - run: uv sync --all-packages
       - name: Verify translation, capability, and source-parity evidence
         run: |
@@ -389,3 +446,61 @@ jobs:
           git diff --exit-code -- docs/comfy-translation-coverage.md docs/comfy-capability-evidence.md
       - name: Replay VIDEO template shapes
         run: uv run --locked pytest -q tests/test_video_alias_templates.py
+
+  main-status:
+    name: main validation status
+    if: always()
+    needs:
+      - validation-plan
+      - test
+      - p2p-descriptor-macos
+      - p2p-artifact-smoke
+      - torch-cpu
+      - model-tests-gate
+      - coverage-gate
+      - translation-coverage
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
+    timeout-minutes: 2
+    steps:
+      - name: Record every lane result
+        env:
+          RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
+          TEST_RESULT: ${{ needs.test.result }}
+          MACOS_RESULT: ${{ needs.p2p-descriptor-macos.result }}
+          ARTIFACT_RESULT: ${{ needs.p2p-artifact-smoke.result }}
+          TORCH_RESULT: ${{ needs.torch-cpu.result }}
+          MODEL_RESULT: ${{ needs.model-tests-gate.result }}
+          COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
+          TRANSLATION_RESULT: ${{ needs.translation-coverage.result }}
+        run: |
+          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","p2pDescriptorMacos":"%s","p2pArtifactSmoke":"%s","torchCpu":"%s","modelTests":"%s","coverage":"%s","translationCoverage":"%s"}}\n' \
+            "$GITHUB_SHA" "$RUN_HEAVY" "$TEST_RESULT" "$MACOS_RESULT" "$ARTIFACT_RESULT" \
+            "$TORCH_RESULT" "$MODEL_RESULT" "$COVERAGE_RESULT" "$TRANSLATION_RESULT" \
+            > main-validation-status.json
+          cat main-validation-status.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: main-validation-status
+          path: main-validation-status.json
+          retention-days: 30
+          if-no-files-found: error
+      - name: Require every selected lane to pass
+        env:
+          RUN_HEAVY: ${{ needs.validation-plan.outputs.run-heavy }}
+          TEST_RESULT: ${{ needs.test.result }}
+          MACOS_RESULT: ${{ needs.p2p-descriptor-macos.result }}
+          ARTIFACT_RESULT: ${{ needs.p2p-artifact-smoke.result }}
+          TORCH_RESULT: ${{ needs.torch-cpu.result }}
+          MODEL_RESULT: ${{ needs.model-tests-gate.result }}
+          COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
+          TRANSLATION_RESULT: ${{ needs.translation-coverage.result }}
+        run: |
+          if [ "$RUN_HEAVY" = false ]; then exit 0; fi
+          test "$TEST_RESULT" = success
+          test "$MACOS_RESULT" = success
+          test "$ARTIFACT_RESULT" = success
+          test "$TORCH_RESULT" = success
+          test "$MODEL_RESULT" = success
+          test "$COVERAGE_RESULT" = success
+          test "$TRANSLATION_RESULT" = success

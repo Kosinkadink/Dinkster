@@ -320,9 +320,7 @@ def write_custom_type_pack(root: Path) -> Path:
 
 
 @pytest.mark.parametrize("in_process", [False, True])
-def test_custom_type_is_available_for_first_typed_literal(
-    tmp_path: Path, in_process: bool
-) -> None:
+def test_custom_type_is_available_for_first_typed_literal(tmp_path: Path, in_process: bool) -> None:
     manifest = write_custom_type_pack(tmp_path)
     assert diagnose(manifest).ok
     catalog = read_catalog(load_manifest(manifest))

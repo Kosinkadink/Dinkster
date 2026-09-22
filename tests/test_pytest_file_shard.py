@@ -33,14 +33,24 @@ def _passed_node_ids(result: subprocess.CompletedProcess[str]) -> set[str]:
     }
 
 
-@pytest.mark.parametrize("count", (2, 4, 8))
-def test_file_shards_are_stable_disjoint_and_complete(count: int) -> None:
+def test_file_shards_are_stable_disjoint_and_complete() -> None:
     expected = {
-        2: {
-            "tests/test_serve.py": 2,
-            "tests/test_compose.py": 1,
-            "packages/dinkster-nodes-remote/tests/test_remote_nodes.py": 2,
-        },
+        "tests/test_serve.py": 2,
+        "tests/test_compose.py": 1,
+        "packages/dinkster-nodes-remote/tests/test_remote_nodes.py": 2,
+    }
+    actual = {path: file_shard(path, 2) for path in expected}
+    first = {path for path, shard in actual.items() if shard == 1}
+    second = {path for path, shard in actual.items() if shard == 2}
+
+    assert actual == expected
+    assert first.isdisjoint(second)
+    assert first | second == set(expected)
+
+
+@pytest.mark.parametrize("count", (4, 8))
+def test_file_shards_support_extended_counts(count: int) -> None:
+    expected = {
         4: {
             "tests/test_serve.py": 2,
             "tests/test_compose.py": 1,
@@ -73,9 +83,15 @@ def test_parse_file_shard_refuses_invalid_values(value: str) -> None:
 
 @pytest.mark.parametrize(
     ("value", "expected"),
+    (("1/2", 1), ("2/2", 2)),
+)
+def test_parse_file_shard_accepts_two_shards(value: str, expected: int) -> None:
+    assert parse_file_shard(value) == (expected, 2)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
     (
-        ("1/2", (1, 2)),
-        ("2/2", (2, 2)),
         ("1/4", (1, 4)),
         ("4/4", (4, 4)),
         ("1/8", (1, 8)),

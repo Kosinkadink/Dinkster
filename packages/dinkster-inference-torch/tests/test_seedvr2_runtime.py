@@ -9,6 +9,8 @@ import torch
 from dinkster_inference import (
     SEEDVR2_SIGMAS,
     Conditioning,
+    ConditioningCarrier,
+    ConditioningRuntime,
     CustomSamplingRequest,
     CustomSamplingRuntime,
     SamplingGuidance,
@@ -20,7 +22,9 @@ from dinkster_inference_torch import (
     SeedVR2Denoiser,
     SeedVR2DiffusionRuntime,
     SeedVR2RuntimeError,
+    materialize_seedvr2_conditioning,
     seedvr2_conditioning,
+    seedvr2_conditioning_to_carrier,
 )
 from dinkster_inference_torch.sampling_execution import run_ksampler_as_custom
 from dinkster_inference_torch.schedules import torch_scheduler_registry
@@ -108,6 +112,33 @@ def test_seedvr2_conditioning_appends_exact_mask_and_branches() -> None:
     assert positive.embeddings is negative.embeddings
     assert torch.equal(positive.embeddings[:, :16], latent)
     assert torch.equal(positive.embeddings[:, 16:], torch.ones((1, 1, 2, 3, 4)))
+
+
+def test_seedvr2_conditioning_carrier_round_trips_branch_and_component_identity() -> None:
+    positive, negative = _conditioning()
+    runtime = _runtime(RecordingSeedVR2())
+    assert isinstance(runtime, ConditioningRuntime)
+    assert runtime.conditioning_identity == "dinkster.seedvr2.conditioning:v1"
+
+    for original in (positive, negative):
+        carrier = seedvr2_conditioning_to_carrier(original)
+        assert type(carrier) is ConditioningCarrier
+        materialized = materialize_seedvr2_conditioning(carrier, device="cpu")
+        assert materialized.branch == original.branch
+        assert materialized.component_identity == IDENTITY
+        assert torch.equal(materialized.embeddings, original.embeddings)
+        prepared = runtime.prepare_single_stream_conditioning(carrier)
+        assert prepared.branch == materialized.branch
+        assert prepared.component_identity == materialized.component_identity
+        assert torch.equal(prepared.embeddings, materialized.embeddings)
+
+    foreign = SeedVR2Conditioning(
+        positive.embeddings,
+        branch="positive",
+        component_identity="native:dinkster.seedvr2:other",
+    )
+    with pytest.raises(SeedVR2RuntimeError, match="different diffusion"):
+        runtime.prepare_single_stream_conditioning(seedvr2_conditioning_to_carrier(foreign))
 
 
 def test_seedvr2_denoiser_uses_branch_context_condition_latent_and_flow_math() -> None:

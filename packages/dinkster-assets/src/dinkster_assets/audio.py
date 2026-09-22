@@ -30,6 +30,7 @@ from dinkster_values.audio_codec import (
     validate_audio_encoded,
 )
 from dinkster_values.audio_lazy import LazyAudio
+from dinkster_values.storage import audio_input
 
 from .identity import AssetError, new_hasher
 from .model import AssetRef, AssetResolver
@@ -90,6 +91,7 @@ def register_audio_value_type(
         coerce=lambda obj: bind_audio_value(obj, resolver),
         fingerprint=audio_fingerprint(type_id),
         meta=audio_meta,
+        input_convert=audio_input,
         validate_encoded_buffer=validate_audio_encoded,
     )
     registry.register_rendition(type_id, "wav", mime="audio/wav", render=render_audio_wav)
