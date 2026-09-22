@@ -704,7 +704,12 @@ def test_verified_diffusion_declares_route_materialization_ceilings(
 def test_h3_projection_storage_matches_comfyui_model_dtype(
     diffusion_dtype: torch.dtype,
 ) -> None:
-    keys = assembly._COMFYUI_BF16_FP32_PROJECTION_KEYS  # pyright: ignore[reportPrivateUsage]
+    keys = assembly._COMFYUI_MODEL_DTYPE_PROJECTION_KEYS | {  # pyright: ignore[reportPrivateUsage]
+        "blocks.0.adaln_proj.linear.weight",
+        "blocks.49.adaln_proj.linear.bias",
+        "final_layer.adaln_proj.linear.weight",
+        "final_layer.adaln_proj.linear.bias",
+    }
     source = {key: torch.tensor([1.001], dtype=torch.float32) for key in keys}
     source["blocks.0.attn.q_proj.weight_scale"] = torch.tensor(0.125)
 
@@ -722,6 +727,10 @@ def test_h3_projection_storage_matches_comfyui_model_dtype(
         "final_layer.video_out.bias",
         "final_layer.audio_out.weight",
         "final_layer.audio_out.bias",
+        "blocks.0.adaln_proj.linear.weight",
+        "blocks.49.adaln_proj.linear.bias",
+        "final_layer.adaln_proj.linear.weight",
+        "final_layer.adaln_proj.linear.bias",
     }
     for key in keys:
         assert rounded[key].dtype is diffusion_dtype

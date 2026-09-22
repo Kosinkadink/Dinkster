@@ -540,7 +540,7 @@ def _load_verified_diffusion(
     return component
 
 
-_COMFYUI_BF16_FP32_PROJECTION_KEYS = frozenset(
+_COMFYUI_MODEL_DTYPE_PROJECTION_KEYS = frozenset(
     {
         "video_patch_proj.weight",
         "video_patch_proj.bias",
@@ -554,6 +554,13 @@ _COMFYUI_BF16_FP32_PROJECTION_KEYS = frozenset(
 )
 
 
+def _uses_comfyui_model_dtype(key: str) -> bool:
+    return key in _COMFYUI_MODEL_DTYPE_PROJECTION_KEYS or (
+        key.endswith((".adaln_proj.linear.weight", ".adaln_proj.linear.bias"))
+        and (key.startswith("blocks.") or key.startswith("final_layer."))
+    )
+
+
 def _round_h3_projection_storage(
     _module: MiniMaxH3DiT,
     state: dict[str, torch.Tensor],
@@ -563,7 +570,7 @@ def _round_h3_projection_storage(
     if diffusion_dtype is torch.float32:
         return state
     return {
-        key: tensor.to(diffusion_dtype) if key in _COMFYUI_BF16_FP32_PROJECTION_KEYS else tensor
+        key: tensor.to(diffusion_dtype) if _uses_comfyui_model_dtype(key) else tensor
         for key, tensor in state.items()
     }
 
