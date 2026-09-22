@@ -3593,6 +3593,7 @@ class ServingComposer:
         planned_arms: list[ArmRecord] = []
         attention_routes: dict[str, AttentionRouteToken | None] = {}
         attention_diagnostics: dict[str, str] = {}
+        cold_arms: set[str] = set()
         for arm in arms:
             fallback_reason: str | None = None
             execution_worker = arm.execution_worker
@@ -3603,6 +3604,7 @@ class ServingComposer:
                     attention_route_token=execution_worker.attention_route_token,
                 )
             if getattr(execution_worker, "cold", False):
+                cold_arms.add(arm.name)
                 token = None
             elif arm.attention_capabilities is not None:
                 try:
@@ -3797,7 +3799,7 @@ class ServingComposer:
             raise RuntimeError(
                 f"execution policy selected unknown arm {target!r} for {node_type!r}"
             )
-        if getattr(arm.execution_worker, "cold", False):
+        if arm.name in cold_arms:
             await arm.execution_worker.ensure_started()
             # Re-select with live capability evidence so policy cache identities
             # and fallback decisions never use a catalog as runtime authority.
