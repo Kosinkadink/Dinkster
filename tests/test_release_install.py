@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -69,6 +70,20 @@ def test_release_workflow_builds_all_wheels_and_checks_tag_metadata() -> None:
         step.get("with", {}).get("repository") != "Kosinkadink/dinkster-identity"
         for step in build["steps"]
     )
+
+
+def test_release_resolves_the_public_token_verifier() -> None:
+    server = tomllib.loads(
+        (ROOT / "packages/dinkster-server/pyproject.toml").read_text(encoding="utf-8")
+    )
+    verifier = (
+        "dinkster-token-verifier @ "
+        "https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/"
+        "v0.1.1/dinkster_token_verifier-0.1.1-py3-none-any.whl"
+        "#sha256=b10f09c26c113016b1633701c73958d6dbe41f7dca318d5677e449ec04a643ae"
+    )
+    assert verifier in server["project"]["dependencies"]
+    assert "dinkster-identity" not in server["tool"]["uv"]["sources"]
 
 
 def test_release_install_matrix_covers_supported_desktop_platforms() -> None:

@@ -778,6 +778,16 @@ def test_invalid_template_is_a_publish_gate_error(tmp_path: Path) -> None:
     assert "JSON" in finding.message
     assert finding.fix
 
+    # A declaration whose file is absent is an explicit gate error, not a
+    # successful pack with an empty template list.
+    (tmp_path / "tppack" / "starter.json").unlink()
+    report = diagnose(manifest_path)
+    assert not report.ok
+    finding = next(f for f in report.findings if f.code == "templates.invalid")
+    assert finding.severity == "error"
+    assert "starter.json" in finding.message
+    assert "unreadable" in finding.message
+
     # A dangling asset reference is its own code - the loader would drop
     # the template because its acquisition plan cannot be constructed.
     (tmp_path / "tppack" / "starter.json").write_text('{"graphs": {}}')

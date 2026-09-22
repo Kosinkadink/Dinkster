@@ -26,6 +26,7 @@ from .native_arm_core import (
     _CustomNoiseValue,
     _CustomSamplerValue,
     _CustomSigmasValue,
+    _diffusion_unload_roles,
     _DualCFGGuiderValue,
     _DualModelGuiderValue,
     _effective_flux_guidance,
@@ -285,7 +286,7 @@ def _execute_generation_custom_sampling(
         empty, empty_guidance = _split_flux_guidance(empty)
         if empty_guidance is not None:
             raise ValueError("perp-neg empty conditioning does not accept FluxGuidance")
-    runtime, positive, negative, component_execution, prepared_rows = _resolve_sampling_model(
+    runtime, positive, negative, _component_execution, prepared_rows = _resolve_sampling_model(
         handle,
         positive,
         negative,
@@ -698,7 +699,7 @@ def _execute_generation_custom_sampling(
             "diffusion",
             memory_required=sampling_memory[0],
             minimum_memory=sampling_memory[1],
-            unload_before=(() if component_execution else ("text",)),
+            unload_before=_diffusion_unload_roles(handle),
         ),
         (
             negative_handle.stage("diffusion")

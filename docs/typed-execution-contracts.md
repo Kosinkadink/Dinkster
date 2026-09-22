@@ -1698,7 +1698,9 @@ inline data reports its actual encoded-byte residency. Deferred components
 report their actual component storage cost without claiming they are an
 encoded container. Source byte size and transfer cost are separate facts.
 The value has no GPU residency until a materializing consumer creates it.
-Host-local residency accounting belongs to #1251, not the serialized edits.
+Materialized media reports its actual host-local storage; serialized edits do
+not predict that residency. Device-local media residency is outside this
+contract.
 
 ### 11.3 Process, machine, and cloud boundaries
 
@@ -1846,3 +1848,18 @@ children, to the configured asset
 vault without losing edits or layout. WAV previews select the first batch
 and at most ten seconds. Onset output uses the foundation
 CURVE schema, whose points are `{position: seconds, value: strength}` objects.
+
+## 14. Compact media storage at typed inputs
+
+IMAGE and AUDIO values retain their produced storage dtype in envelopes,
+cache entries, and transports. Metadata reports that dtype and the bytes of
+the actual backing allocation in host RAM; receivers account their own local
+allocation rather than trusting a sender's residency claim. Device-local media
+residency is outside this contract.
+
+Conversion is an invocation-boundary property, not a transport conversion.
+Ordinary IMAGE inputs receive float32 samples, with uint8 and uint16 normalized
+to `[0, 1]`. Ordinary AUDIO inputs receive float32 samples, with int16 PCM
+divided by 32768. An input declaring `accepts_storage` receives the retained
+storage dtype unchanged. Lists apply the same rule to each typed member.
+Conversion never mutates the stored value, its fingerprint, or output identity.

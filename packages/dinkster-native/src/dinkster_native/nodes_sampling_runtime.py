@@ -26,6 +26,7 @@ from .native_arm_core import (
     VAEEncode,
     _active_inference_registries,
     _condition_entries,
+    _diffusion_unload_roles,
     _effective_flux_guidance,
     _inference_registries,
     _not_cancelled,
@@ -89,14 +90,50 @@ class _RegisteredComponentCodec:
         self._decode = registry.registered_callable(value, "native_decode")
         self._encode = registry.registered_callable(value, "native_encode")
 
+    @property
+    def descriptor(self) -> Any:
+        return self._codec.descriptor
+
+    @property
+    def resource_identity(self) -> str:
+        return cast("str", self._codec.resource_identity)
+
+    @property
+    def load_device(self) -> object:
+        return self._codec.load_device
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._codec, name)
+
+    def require_active(self) -> None:
+        self._codec.require_active()
+
+    def stage(self, *args: Any, **kwargs: Any) -> Any:
+        return self._codec.stage(*args, **kwargs)
 
     def decode_latent(self, latent: Any) -> Any:
         return self._decode(self._codec, latent)
 
+    def decode_latent_tiled(
+        self,
+        latent: Any,
+        *,
+        tile: tuple[int, ...],
+        overlap: tuple[int, ...],
+    ) -> Any:
+        return self._codec.decode_latent_tiled(latent, tile=tile, overlap=overlap)
+
     def encode_content(self, content: Any) -> Any:
         return self._encode(self._codec, content)
+
+    def encode_content_tiled(
+        self,
+        content: Any,
+        *,
+        tile: tuple[int, ...],
+        overlap: tuple[int, ...],
+    ) -> Any:
+        return self._codec.encode_content_tiled(content, tile=tile, overlap=overlap)
 
 
 def _native_component_codec(value: object) -> Any:
@@ -385,12 +422,7 @@ class NativeKSampler(KSampler):
         torch = _torch()
         active_runtime = component_runtime if component_runtime is not None else handle.runtime
         runtime_family = getattr(getattr(active_runtime, "family", None), "id", None)
-        unload_text_before_diffusion = (
-            ()
-            if component_execution
-            or tuple(source.role for source in handle.recipe.sources) == ("diffusion",)
-            else ("text",)
-        )
+        unload_text_before_diffusion = _diffusion_unload_roles(handle)
         classic_control_binding = _select_classic_control_binding(positive, negative)
         if classic_control_binding is not None:
             if z_image_control is not None:
@@ -678,6 +710,7 @@ class NativeKSampler(KSampler):
                         "diffusion",
                         memory_required=sampling_memory[0],
                         minimum_memory=sampling_memory[1],
+                        unload_before=unload_text_before_diffusion,
                     )
                 )
                 if z_image_control is not None:

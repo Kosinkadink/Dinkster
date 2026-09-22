@@ -145,7 +145,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 4633,
+      "line": 4635,
       "column": 28,
       "issue": 120
     },
