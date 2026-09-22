@@ -37,8 +37,7 @@ from different releases. Models and accelerator runtimes are not bundled.
 
 The registry server is a separate deployment, not part of the Dinkster wheel
 set. Hosted PostgreSQL and self-hosted SQLite deployments use the same
-`dinkster-registry-service` package and `dinkster-registry` command from the
-[registry repository](https://github.com/Kosinkadink/dinkster-registry).
+`dinkster-registry-service` package and `dinkster-registry` command.
 Dinkster remains a client of that service for browsing, publishing, resolving,
 and downloading exact pack releases.
 
@@ -65,10 +64,11 @@ repository root with `./scripts/setup_envs.sh`, or
 `.\scripts\setup_envs.ps1` on Windows. The scripts require `uv` and create
 `.venv-torch` for CPU execution and for MPS execution on macOS Apple Silicon.
 On Linux and Windows with a detected NVIDIA GPU, they also create `.venv-gpu`
-for CUDA execution. A `dinkster-evidence` sibling checkout is not required.
-When it is present, the scripts also install its optional `dinkster-acceptance`
-package; otherwise they print a skip notice and complete normally. Set
-`DINKSTER_EXECUTION_PYTHON` to the selected environment's Python when launching:
+for CUDA execution. A maintainer evidence checkout is not required. When
+`DINKSTER_EVIDENCE_ROOT` selects one, the scripts also install its optional
+`dinkster-acceptance` package; otherwise they print a skip notice and complete
+normally. Set `DINKSTER_EXECUTION_PYTHON` to the selected environment's Python
+when launching:
 
 | Platform | Execution interpreter |
 | --- | --- |
