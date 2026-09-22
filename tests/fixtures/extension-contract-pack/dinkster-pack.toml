@@ -40,4 +40,5 @@ contributions = [
   { id = "dinkster-extension-contract-fixture.event", kind = "eventConsumer", event = "fixture.extension-contract.executed" },
   { id = "dinkster-extension-contract-fixture.status", kind = "hostUi" },
   { id = "dinkster-extension-contract-fixture.canvas", kind = "canvasLayer" },
+  { id = "dinkster-extension-contract-fixture.node-decoration", kind = "nodeDecoration" },
 ]
