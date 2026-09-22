@@ -759,22 +759,52 @@ def wheel_matches_cell(filename: str, os_name: str, arch: str) -> bool:
     return any(_native_platform_ok(platform, os_name, arch) for platform in platforms)
 
 
-def _platform_preference(platform: str) -> tuple[int, int]:
-    """Broadest compatible native tag first: versioned tags sort by their
-    floor version ascending (more machines can run them), plain linux last."""
-    versioned = re.fullmatch(r"(manylinux|macosx)_(\d+)_(\d+)", platform)
-    if versioned:
-        return (1, int(versioned.group(2)) * 1000 + int(versioned.group(3)))
+_LEGACY_MANYLINUX_FLOORS = {"1": (2, 5), "2010": (2, 12), "2014": (2, 17)}
+
+
+def _platform_preference(platform: str) -> tuple[int, int, int]:
+    """Smaller is broader: the tag installs on more machines.
+
+    Tags are matched whole, architecture included: versioned glibc and macOS
+    tags rank by their floor version ascending, legacy ``manylinuxN`` aliases
+    resolve to the same floor as their modern spelling (manylinux2014 is
+    manylinux_2_17), and a plain ``linux_`` tag is a last resort.
+    """
+    modern = re.fullmatch(r"manylinux_(\d+)_(\d+)_.+", platform)
+    if modern:
+        return (1, int(modern.group(1)), int(modern.group(2)))
+    legacy = re.fullmatch(r"manylinux(1|2010|2014)_.+", platform)
+    if legacy:
+        major, minor = _LEGACY_MANYLINUX_FLOORS[legacy.group(1)]
+        return (1, major, minor)
+    macos = re.fullmatch(r"macosx_(\d+)_(\d+)_.+", platform)
+    if macos:
+        return (1, int(macos.group(1)), int(macos.group(2)))
     if platform.startswith("linux_"):
-        return (2, 0)
-    return (3, 0)
+        return (2, 0, 0)
+    return (3, 0, 0)
 
 
-def _wheel_preference(filename: str) -> tuple[int, tuple[int, int], str]:
+def _wheel_semantic_rank(filename: str) -> tuple[int, int, tuple[int, int, int]]:
+    """Interpreter ABI closeness, then broadest native platform, no filename.
+
+    For the fixed CPython 3.12 interpreter an exact cp312 wheel outranks
+    abi3, and abi3 wheels rank by the highest CPython baseline they require
+    (cp311 before cp39): the closer ABI has the more specific code paths.
+    """
     interpreter, abi, platforms = wheel_filename_tags(filename)
-    abi_score = 0 if abi in ("cp312", "none") else 1
-    platform_score = min(_platform_preference(platform) for platform in platforms)
-    return (abi_score, platform_score, filename)
+    if abi == "cp312":
+        abi_class, baseline = 0, 0
+    elif abi == "abi3":
+        abi_class, baseline = 1, -int(interpreter[len("cp3") :])
+    else:
+        abi_class, baseline = 2, 0
+    return (abi_class, baseline, min(_platform_preference(platform) for platform in platforms))
+
+
+def _wheel_preference(filename: str) -> tuple[int, tuple[int, int, int], str]:
+    """The semantic rank, with the filename only for deterministic order."""
+    return (*_wheel_semantic_rank(filename), filename)
 
 
 def select_cell_wheel(
@@ -784,26 +814,20 @@ def select_cell_wheel(
 
     A distribution can ship several wheels valid for one cell (abi3 across
     interpreter baselines, layered manylinux policies); the exact
-    interpreter ABI and then the broadest native platform tag win. Only
-    indistinguishable duplicates stay ambiguous.
+    interpreter ABI and then the broadest native platform tag win. Equal
+    semantic ranks stay ambiguous rather than picking by filename.
     """
+    filename_of = lambda wheel: wheel["url"].rsplit("/", 1)[-1]  # noqa: E731
     candidates = [
-        wheel
-        for wheel in wheels
-        if wheel_matches_cell(wheel["url"].rsplit("/", 1)[-1], os_name, arch)
+        wheel for wheel in wheels if wheel_matches_cell(filename_of(wheel), os_name, arch)
     ]
     if not candidates:
         raise FeedError(
             f"distribution {lock_name} has no wheel for cell platform {os_name}/{arch} in uv.lock"
         )
-    ranked = sorted(
-        candidates, key=lambda wheel: _wheel_preference(wheel["url"].rsplit("/", 1)[-1])
-    )
-    best_key = _wheel_preference(ranked[0]["url"].rsplit("/", 1)[-1])
-    tied = [
-        wheel for wheel in ranked if _wheel_preference(wheel["url"].rsplit("/", 1)[-1]) == best_key
-    ]
-    if len(tied) > 1:
+    ranked = sorted(candidates, key=lambda wheel: _wheel_preference(filename_of(wheel)))
+    best_key = _wheel_semantic_rank(filename_of(ranked[0]))
+    if sum(1 for wheel in candidates if _wheel_semantic_rank(filename_of(wheel)) == best_key) > 1:
         raise FeedError(
             f"distribution {lock_name} has {len(candidates)} candidate wheels for "
             f"{os_name}/{arch}; the lock is ambiguous"

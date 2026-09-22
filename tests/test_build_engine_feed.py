@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 import tarfile
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -322,6 +323,103 @@ def test_multiple_valid_wheels_select_broadest_tag() -> None:
     abi3_only = [wheel for wheel in wheels if "abi3" in wheel["url"]]
     selected = select_cell_wheel("cryptography", abi3_only, "linux", "x86_64")
     assert "manylinux_2_17" in selected["url"]
+
+
+def test_wheel_preference_ranks_exact_abi_over_platform_breadth() -> None:
+    exact = {"url": "https://example.org/x/pkg-1.0-cp312-cp312-manylinux_2_28_x86_64.whl"}
+    broad = {"url": "https://example.org/x/pkg-1.0-cp39-abi3-manylinux_2_17_x86_64.whl"}
+    selected = select_cell_wheel("pkg", [broad, exact], "linux", "x86_64")
+    assert "cp312-cp312" in selected["url"]
+
+
+def test_wheel_preference_ranks_lower_glibc_floor() -> None:
+    newer = {"url": "https://example.org/x/pkg-1.0-cp312-cp312-manylinux_2_28_x86_64.whl"}
+    older = {"url": "https://example.org/x/pkg-1.0-cp312-cp312-manylinux_2_17_x86_64.whl"}
+    selected = select_cell_wheel("pkg", [newer, older], "linux", "x86_64")
+    assert "manylinux_2_17" in selected["url"]
+
+
+def test_abi3_wheels_rank_by_highest_cpython_baseline() -> None:
+    cp311 = {"url": "https://example.org/x/pkg-1.0-cp311-abi3-manylinux_2_17_x86_64.whl"}
+    cp39 = {"url": "https://example.org/x/pkg-1.0-cp39-abi3-manylinux_2_17_x86_64.whl"}
+    selected = select_cell_wheel("pkg", [cp39, cp311], "linux", "x86_64")
+    assert "cp311-abi3" in selected["url"]
+
+
+def test_legacy_manylinux_alias_is_equivalent_and_ambiguous() -> None:
+    legacy = {"url": "https://example.org/x/pkg-1.0-cp312-cp312-manylinux2014_x86_64.whl"}
+    modern = {"url": "https://example.org/x/pkg-1.0-cp312-cp312-manylinux_2_17_x86_64.whl"}
+    assert builder._platform_preference("manylinux2014_x86_64") == builder._platform_preference(
+        "manylinux_2_17_x86_64"
+    )
+    with pytest.raises(FeedError, match="ambiguous"):
+        select_cell_wheel("pkg", [legacy, modern], "linux", "x86_64")
+
+
+class _FakeResponse:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = list(chunks)
+
+    def read(self, size: int) -> bytes:
+        return self._chunks.pop(0) if self._chunks else b""
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+
+def test_wheel_download_retries_transient_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"wheel-bytes"
+    locked = {
+        "url": "https://example.org/x/pkg-1.0-py3-none-any.whl",
+        "hash": "sha256:" + hashlib.sha256(payload).hexdigest(),
+    }
+    attempts = {"count": 0}
+
+    def fake_urlopen(url: str, timeout: int) -> _FakeResponse:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise urllib.error.URLError("connection reset")
+        return _FakeResponse([b"wheel-", b"bytes"])
+
+    monkeypatch.setattr(builder.urllib.request, "urlopen", fake_urlopen)
+    destination = tmp_path / "pkg-1.0-py3-none-any.whl"
+    digest = builder._download_locked_wheel(locked, destination)
+    assert digest == hashlib.sha256(payload).hexdigest()
+    assert destination.read_bytes() == payload
+    assert attempts["count"] == 2
+    assert list(tmp_path.glob("*.partial*")) == [], "the failed attempt must leave no partial"
+
+
+def test_wheel_download_terminal_failure_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    locked = {"url": "https://example.org/x/pkg-1.0-py3-none-any.whl", "hash": "sha256:" + "0" * 64}
+
+    def always_reset(url: str, timeout: int) -> _FakeResponse:
+        raise urllib.error.URLError("connection reset")
+
+    monkeypatch.setattr(builder.urllib.request, "urlopen", always_reset)
+    with pytest.raises(FeedError, match="failed after retries"):
+        builder._download_locked_wheel(locked, tmp_path / "pkg.whl")
+    assert list(tmp_path.glob("*")) == [], "no partial or destination file may survive"
+
+
+def test_place_wheel_normalizes_underscore_metadata_name(tmp_path: Path) -> None:
+    wheel = make_wheel(
+        tmp_path / "src" / "pydantic_core-2.46.5-cp312-cp312-manylinux_2_17_x86_64.whl",
+        "pydantic_core",
+        "2.46.5",
+    )
+    entry = builder._place_wheel(wheel, tmp_path)
+    assert entry.name == "pydantic-core"
+    manifest = build_manifest(COMMIT, "linux-cu128", base_build(), [entry])
+    parsed = parse_manifest(json.dumps(manifest).encode("utf-8"))
+    assert parsed.wheels[0].name == "pydantic-core"
 
 
 # ---------------------------------------------------------------------------
