@@ -124,26 +124,40 @@ def test_isolated_worker_keeps_pack_modules_out_of_parent(tmp_path: Path) -> Non
     asyncio.run(scenario())
 
 
-def test_attention_contributions_refuse_extension_declaration() -> None:
-    from dinkster_inference import AttentionGuidanceDescriptor, GuidanceContractError
+def test_attention_contribution_declares_canonical_surface() -> None:
+    from dinkster_inference import AttentionGuidanceDescriptor
 
     contribution: GuidanceContribution[Any] = GuidanceContribution(
         attention=AttentionGuidanceDescriptor("proof.att", lambda positive, negative: positive)
     )
-    with pytest.raises(GuidanceContractError, match="cannot be declared by an inference extension"):
-        guidance_declarations(contribution)
+    declarations = guidance_declarations(contribution, attention_order=2)
+    assert tuple((item.surface_id, item.id) for item in declarations) == (
+        ("inference.guidance.attention", "proof.att"),
+    )
+    metadata = dict(declarations[0].behavior_metadata)
+    assert metadata["contractVersion"] == 1
+    assert metadata["order"] == 2
+    assert metadata["requiresUncond"] is False
+    GuidanceRegistrySnapshot(declarations)
 
 
-def test_plan_augmentations_refuse_extension_declaration() -> None:
-    from dinkster_inference import GuidanceContractError
-
+def test_plan_augmentations_declare_canonical_surface() -> None:
     contribution: GuidanceContribution[Any] = GuidanceContribution(
         plan_augmentations=(
-            GuidancePlanAugmentationDescriptor("proof.plan", lambda context, plan: plan),
+            GuidancePlanAugmentationDescriptor(
+                "proof.plan", lambda context, plan: plan, order=4, requires_uncond=True
+            ),
         )
     )
-    with pytest.raises(GuidanceContractError, match="cannot be declared by an inference extension"):
-        guidance_declarations(contribution)
+    declarations = guidance_declarations(contribution)
+    assert tuple((item.surface_id, item.id) for item in declarations) == (
+        ("inference.guidance.plan-augmentation", "proof.plan"),
+    )
+    metadata = dict(declarations[0].behavior_metadata)
+    assert metadata["contractVersion"] == 1
+    assert metadata["order"] == 4
+    assert metadata["requiresUncond"] is True
+    GuidanceRegistrySnapshot(declarations)
 
 
 def test_exclusive_strategies_are_rejected() -> None:

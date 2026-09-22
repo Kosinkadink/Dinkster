@@ -333,7 +333,9 @@ def probe(manifest_path: str) -> dict[str, Any]:
                         key,
                         (inference.SamplerExtensionEntry(manifest.name, inference_entry),),
                     )
-                    generation = inference.materialize_inference_generation(key, catalog_path=path)
+                    generation = inference.materialize_inference_generation(
+                        key, catalog_path=path, check_pins=False
+                    )
                     report["catalog"]["inferenceContributions"] = [
                         asdict(item) for item in generation.extensions[0][1]
                     ]

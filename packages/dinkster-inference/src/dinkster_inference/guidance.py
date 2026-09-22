@@ -176,13 +176,16 @@ class GuidanceAttentionTransform(Protocol[T]):
 
 
 def _validate_descriptor(
-    id: str, callback: object, metadata: tuple[tuple[str, BehaviorValue], ...]
+    id: str,
+    callback: object,
+    metadata: tuple[tuple[str, BehaviorValue], ...],
+    label: str = "guidance",
 ) -> None:
     validate_registry_id(id)
     if "." not in id:
-        raise ValueError("guidance descriptor id must be namespace-qualified")
+        raise ValueError(f"{label} descriptor id must be namespace-qualified")
     if not callable(callback):
-        raise TypeError("guidance callback must be callable")
+        raise TypeError(f"{label} callback must be callable")
     raw_metadata = cast("object", metadata)
     valid_metadata = isinstance(raw_metadata, tuple)
     if valid_metadata:
