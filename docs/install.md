@@ -43,6 +43,74 @@ set. Hosted PostgreSQL and self-hosted SQLite deployments use the same
 Dinkster remains a client of that service for browsing, publishing, resolving,
 and downloading exact pack releases.
 
+## Engine mirror and projects
+
+An engine feed contains a platform base and a hash-locked code layer. The base
+contains a relocatable Python interpreter, torch, torchvision, their runtime
+dependencies and the offline installation tool. Kitchen, aimdo, Dinkster and
+the frontend bundle belong to the code layer. Updating those wheels does not
+require rebuilding a base whose Python and torch pins are unchanged.
+
+With the bootstrap `dinkster` command installed, select a mirror explicitly:
+
+```sh
+dinkster project create studio --data-root /path/to/studio-data
+dinkster --project studio install --mirror https://mirror.example/dinkster --channel github-live --cell linux-cu128
+dinkster --project studio serve --port 3639
+```
+
+`mirror.example` is a placeholder, not a production download service. A local
+S3-compatible development feed can use `--allow-local-http` with a loopback
+HTTP URL. Other mirrors require HTTPS. `DINKSTER_ENGINE_MIRROR` sets the default
+mirror. The first native cells are `linux-cu128`, `win-cu128` and `mac-arm64`;
+the selected channel must actually contain the requested cell. A cell names
+an environment variant, not a hardware admission requirement.
+
+Both `stable` and `github-live` channels use the same layout:
+
+```text
+channels/stable.json
+channels/github-live.json
+engine/<commit>/<cell>.json
+base/<cell>/<base-id>.tar.gz
+store/<wheel-sha256>
+```
+
+The channel pins each manifest's digest and size. Each manifest pins its base
+archive and every wheel. Downloads resume from partial files and must pass
+size and SHA-256 verification before installation. The installer reads only
+the configured mirror; environment creation and wheel installation run
+offline with no package index. A missing wheel is an error, not permission
+to resolve it from PyPI or GitHub. Failed acquisition or installation leaves
+the active generation unchanged.
+
+`dinkster project list` lists named roots. Each project stores its own
+`generations/` and `current` under `<DINKSTER_HOME>/projects/<name>` and shares
+downloaded objects in `<DINKSTER_HOME>/engine-store`. Each generation selects
+its base, code manifest, pack lockfile and hosting policy. Every project runs
+the supervisor installed in its own active generation; choose distinct ports
+when serving several projects concurrently.
+
+For a launcher that owns stop/start, use `install --stage-only --json`, stop
+the project's supervisor, then `activate --generation N --json` and start it
+again. Activation refuses a staged generation if another update changed its
+predecessor. `generations --json` includes the control and execution Python
+paths. `rollback` restores the previously activated environment, not an update
+that was staged but never activated. Stop and restart the supervisor around
+rollback as well; a running process never changes interpreters in place.
+
+`gc` previews unreferenced engine objects, bases and environments;
+`gc --apply` deletes that preview after recomputing it under the store lock.
+All recorded generations retain their referenced content, including content
+used by another registered project. Pack garbage collection remains available
+as `dinkster pack gc`.
+
+Models, outputs, history, settings and the library belong in a separate data
+root. Installation, activation, rollback and engine GC never enumerate or
+delete that data root. Project creation records its path without changing its
+contents. Existing model folders can remain elsewhere and be mounted into the
+project library.
+
 ## Develop from source
 
 Clone the backend and frontend as sibling directories, then run:

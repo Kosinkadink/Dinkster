@@ -1276,7 +1276,7 @@ class Installer:
         hosting_in_process: Sequence[str] | None = None,
         hosting_runtime_pins: Mapping[str, str] | None = None,
         environment: EngineEnvironment | Literal["current"] | None = "current",
-        stage_environment: Callable[[], EngineEnvironment] | None = None,
+        stage_environment: Callable[[], EngineEnvironment | None] | None = None,
         activate: bool = True,
         expected_current: int | Literal["any"] | None = "any",
     ) -> tuple[int, InstallPlan]:
@@ -1418,7 +1418,12 @@ class Installer:
                 self._activate_pointer(number)
         return number, steps
 
-    def rollback(self, *, venvs: bool = True) -> int:
+    def rollback(
+        self,
+        *,
+        venvs: bool = True,
+        validate_environment: Callable[[EngineEnvironment], None] | None = None,
+    ) -> int:
         """Re-activate the previous active generation, as a
         new generation. Its content is still staged unless gc removed it -
         in which case this fails loudly instead of activating a hole."""
@@ -1437,13 +1442,20 @@ class Installer:
         ):
             raise InstallError("no earlier activated generation exists to roll back to")
         previous_topology = self._hosting_of(previous_number)
+        previous_environment = self.environment_of(previous_number)
+
+        def restore_environment() -> EngineEnvironment | None:
+            if previous_environment is not None and validate_environment is not None:
+                validate_environment(previous_environment)
+            return previous_environment
+
         number, _ = self.apply(
             self.lockfile_of(previous_number),
             venvs=venvs,
             hosting_groups=previous_topology.groups,
             hosting_in_process=previous_topology.in_process,
             hosting_runtime_pins=dict(previous_topology.runtime_pins),
-            environment=self.environment_of(previous_number),
+            stage_environment=restore_environment,
             expected_current=current,
         )
         return number
