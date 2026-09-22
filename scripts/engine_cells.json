@@ -40,8 +40,8 @@
     "linux-cpu": {"recipe": "cpu-py312", "os": "linux", "arch": "x86_64"},
     "win-cpu": {"recipe": "cpu-py312", "os": "windows", "arch": "amd64"},
     "linux-rocm": {"recipe": "rocm714-py312", "os": "linux", "arch": "x86_64"},
-    "win-rocm": {"recipe": "rocm714-py312", "os": "windows", "arch": "amd64"},
+    "windows-rocm": {"recipe": "rocm714-py312", "os": "windows", "arch": "amd64"},
     "linux-xpu": {"recipe": "xpu-py312", "os": "linux", "arch": "x86_64"},
-    "win-xpu": {"recipe": "xpu-py312", "os": "windows", "arch": "amd64"}
+    "windows-xpu": {"recipe": "xpu-py312", "os": "windows", "arch": "amd64"}
   }
 }
