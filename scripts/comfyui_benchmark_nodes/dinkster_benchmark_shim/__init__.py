@@ -756,9 +756,18 @@ def _install_h3_forward_trace(model, output_dir: Path):
         (
             model.condition_proj.register_forward_hook(post("condition_projection")),
             model.token_refiner.register_forward_hook(post("token_refiner")),
+            model.video_patch_proj.register_forward_pre_hook(pre("video_patch_input")),
             model.video_patch_proj.register_forward_hook(post("video_patch_projection")),
+            model.audio_patch_proj.register_forward_pre_hook(pre("audio_patch_input")),
             model.audio_patch_proj.register_forward_hook(post("audio_patch_projection")),
             model.blocks[0].register_forward_pre_hook(pre("block0_input")),
+            model.blocks[0].adaln_proj.register_forward_hook(post("block0_adaln")),
+            model.blocks[0].norm1.register_forward_hook(post("block0_norm1")),
+            model.blocks[0].attn.qkv_proj.register_forward_hook(post("block0_qkv")),
+            model.blocks[0].attn.out_proj.register_forward_hook(post("block0_attention")),
+            model.blocks[0].norm2.register_forward_hook(post("block0_norm2")),
+            model.blocks[0].mlp.fc1.register_forward_hook(post("block0_mlp_input")),
+            model.blocks[0].mlp.fc2.register_forward_hook(post("block0_mlp_output")),
             model.blocks[0].register_forward_hook(post("block0_output")),
             model.final_layer.register_forward_pre_hook(pre("final_input")),
         )
