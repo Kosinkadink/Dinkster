@@ -112,6 +112,11 @@ from dinkster_native.memory import plan_reservations
 from dinkster_native.native_residency import NativeComponentPublisher
 from dinkster_native.pool import default_pool
 from dinkster_protocol import (
+    ATTENTION_BACKEND_SURFACE,
+    ATTENTION_OUTPUT_SURFACE,
+    ATTENTION_QKV_SURFACE,
+    ATTENTION_WRAPPER_SURFACE,
+    BLOCK_INJECTION_SURFACE,
     GRAPH_COMPILERS_SURFACE,
     GUIDANCE_SURFACES,
     WORKGROUP_DATA_PLANE_CAPABILITY,
@@ -4775,6 +4780,12 @@ class ServingComposer:
                         if surface_id == GRAPH_COMPILERS_SURFACE
                         else CompositionMode.WRAPPER_CHAIN
                         if surface_id == GUIDANCE_SURFACES[0]
+                        else CompositionMode.WRAPPER_CHAIN
+                        if surface_id == ATTENTION_WRAPPER_SURFACE
+                        # Backend exclusivity is per model family, not per
+                        # surface, and is enforced against both packs during
+                        # worker materialization; the surface itself composes
+                        # as an ordered list.
                         else CompositionMode.ORDERED_LIST
                     )
                     surface_key = (ExtensionScope.INFERENCE, surface_id)
@@ -4802,6 +4813,11 @@ class ServingComposer:
                     INFERENCE_ASSEMBLIES_SURFACE,
                     GRAPH_COMPILERS_SURFACE,
                     *GUIDANCE_SURFACES,
+                    ATTENTION_QKV_SURFACE,
+                    ATTENTION_WRAPPER_SURFACE,
+                    ATTENTION_OUTPUT_SURFACE,
+                    ATTENTION_BACKEND_SURFACE,
+                    BLOCK_INJECTION_SURFACE,
                 ):
                     raise CompositionError(
                         f"extension {name!r} produced contribution {contribution.id!r} on "
