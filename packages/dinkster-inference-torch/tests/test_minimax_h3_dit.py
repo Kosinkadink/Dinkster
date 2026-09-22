@@ -2608,6 +2608,20 @@ def test_audio_carry_and_velocity_conversion_consume_exact_s2_coefficients(
     assert torch.equal(output.by_role("video"), torch.full_like(value.by_role("video"), 2.0))
 
 
+def test_h3_stream_sigmas_use_reference_float32_kernels() -> None:
+    video_value = 0.9956331849098206
+    video, audio = dit_module._h3_stream_sigmas(  # pyright: ignore[reportPrivateUsage]
+        video_value, MINIMAX_H3_SIGMAS, torch.device("cpu")
+    )
+    expected_video = torch.tensor(video_value, dtype=torch.float32)
+    base = expected_video / (12.0 + expected_video * (1.0 - 12.0))
+    expected_audio = 3.0 * base / (1.0 + (3.0 - 1.0) * base)
+
+    assert torch.equal(video, expected_video)
+    assert torch.equal(audio, expected_audio)
+    assert float(audio) != MINIMAX_H3_SIGMAS.audio_sigma(video_value)
+
+
 def test_keyframe_reference_tags_and_generic_control_refuse_before_projection() -> None:
     model = _reduced_model()
     value, context = _inputs()

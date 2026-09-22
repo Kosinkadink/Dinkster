@@ -69,6 +69,17 @@ def _h3_latent(video: torch.Tensor, audio: torch.Tensor) -> MultiStreamLatent[to
     return MultiStreamLatent((LatentStream("video", video), LatentStream("audio", audio)))
 
 
+def _h3_stream_sigmas(
+    video_sigma: float,
+    sigmas: MiniMaxH3Sigmas,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    sigma = torch.tensor(video_sigma, dtype=torch.float32, device=device).clamp(min=1e-6)
+    base = sigma / (sigmas.video.shift + sigma * (1.0 - sigmas.video.shift))
+    audio = sigmas.audio_shift * base / (1.0 + (sigmas.audio_shift - 1.0) * base)
+    return sigma, audio
+
+
 @dataclass(frozen=True, slots=True)
 class MiniMaxH3AttentionProviderEvidence:
     """Exact immutable evidence for the selected H3 attention provider."""
@@ -1323,7 +1334,10 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         if type(sigmas) is not MiniMaxH3Sigmas:
             raise TypeError("sigmas must be an exact MiniMaxH3Sigmas")
         video_source, audio_source = value.by_role("video"), value.by_role("audio")
-        audio_carry = sigmas.audio_state_factor(video_sigma)
+        video_sigma_tensor, audio_sigma_tensor = _h3_stream_sigmas(
+            video_sigma, sigmas, video_source.device
+        )
+        audio_carry = (audio_sigma_tensor / video_sigma_tensor).to(audio_source.dtype)
         network_input = _h3_latent(video_source, audio_source * audio_carry)
         if attention_kernel_factory is None:
             output = self._forward_network(
@@ -1355,7 +1369,10 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 attention_kernel_factory=attention_kernel_factory,
                 sequence_sharding=sequence_sharding,
             )
-        first, second = sigmas.audio_velocity_factors(video_sigma)
+        first = 1.0 - sigmas.audio_scale
+        second = (1.0 + (sigmas.audio_scale - 1.0) * audio_sigma_tensor).to(
+            output.by_role("audio").dtype
+        )
         audio_output = first * network_input.by_role("audio") + second * output.by_role("audio")
         return _h3_latent(output.by_role("video"), audio_output.to(audio_source.dtype))
 
@@ -1405,9 +1422,11 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 if sequence_sharding.facts != facts:
                     raise ValueError("sequence sharding facts do not match the packed invocation")
                 sequence_sharding.validate_kernel(attention_kernel, self.config.attention_heads)
-        video_sigma_audio = sigmas.audio_sigma(video_sigma)
-        video_time = 1.0 - video_sigma
-        audio_time = 1.0 - video_sigma_audio
+        video_sigma_tensor, audio_sigma_tensor = _h3_stream_sigmas(
+            video_sigma, sigmas, video_source.device
+        )
+        video_time = float(1.0 - video_sigma_tensor)
+        audio_time = float(1.0 - audio_sigma_tensor)
         segment_time = {
             "text": video_time,
             "video": video_time,
@@ -1426,7 +1445,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 self.config.patch,
             )
             if video_values is not None:
-                video_rows_time = (1.0 - video_values * video_sigma).clamp(
+                video_rows_time = (1.0 - video_values * video_sigma_tensor).clamp(
                     max=max(video_time, _VISUAL_CONDITION_TIMESTEP)
                 )
                 if video_rows_time.unique().numel() == 1:
@@ -1434,7 +1453,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                     video_rows_time = None
             audio_values = _audio_mask_row_values(denoise_mask.by_role("audio"))
             if audio_values is not None:
-                audio_rows_time = (1.0 - audio_values * video_sigma_audio).clamp(
+                audio_rows_time = (1.0 - audio_values * audio_sigma_tensor).clamp(
                     max=max(audio_time, _AUDIO_CONDITION_TIMESTEP)
                 )
                 if audio_rows_time.unique().numel() == 1:
