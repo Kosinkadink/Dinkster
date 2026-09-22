@@ -173,7 +173,7 @@ def as_pil(image: torch.Tensor) -> Image.Image:
     value = image[0]
     if value.shape[0] in (3, 4):
         value = value[:3].permute(1, 2, 0)
-    return Image.fromarray((value.clamp(0, 1).numpy() * 255).round().to(torch.uint8).numpy())
+    return Image.fromarray((value.clamp(0, 1) * 255).round().to(torch.uint8).numpy())
 
 
 def clip_metrics(

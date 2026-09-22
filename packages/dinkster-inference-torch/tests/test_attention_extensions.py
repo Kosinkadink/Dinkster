@@ -76,6 +76,17 @@ def proof_pack(directory):
     return runpy.run_path(str(module))["make"]
 
 
+def test_proof_runner_converts_chw_tensor_to_rgb_image():
+    runner = Path(__file__).parents[3] / "tools" / "run_attention_pack_proofs.py"
+    as_pil = runpy.run_path(str(runner))["as_pil"]
+    image = torch.tensor([[[[0.0, 1.0]], [[0.5, 0.25]], [[1.0, 0.0]]]])
+
+    converted = as_pil(image)
+
+    assert converted.size == (2, 1)
+    assert list(converted.getdata()) == [(0, 128, 255), (255, 64, 0)]
+
+
 @pytest.mark.parametrize(
     ("family", "block", "kind"),
     (
