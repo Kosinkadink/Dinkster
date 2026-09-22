@@ -62,6 +62,7 @@ from dinkster_values import (
     encode_latent,
     image_array_fingerprint,
     image_array_meta,
+    image_input,
     latent_fingerprint,
     mask_array_meta,
     merge_image_batches,
@@ -167,6 +168,7 @@ def register_comfy_host_types(registry: TypeRegistry) -> None:
             prepare_buffer_encoding=prepare_image_array_encoding,
             fingerprint=image_array_fingerprint(COMFY_IMAGE_TYPE),
             meta=image_array_meta,
+            input_convert=image_input,
             validate_encoded=validate_image_encoded,
             validate_encoded_buffer=validate_image_encoded,
         )
@@ -198,6 +200,7 @@ def register_comfy_host_types(registry: TypeRegistry) -> None:
             prepare_buffer_encoding=prepare_image_array_encoding,
             fingerprint=image_array_fingerprint(COMFY_MASK_TYPE),
             meta=mask_array_meta,
+            input_convert=image_input,
             validate_encoded=validate_image_encoded,
             validate_encoded_buffer=validate_image_encoded,
         )

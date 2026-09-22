@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from typing import cast
 
 import numpy as np
-from dinkster_api.v1 import decode_image_array, encode_image_array
+from dinkster_api.v1 import (
+    COST_META_KEY,
+    array_storage_meta,
+    decode_image_array,
+    encode_image_array,
+)
 from dinkster_image_document.format import BLEND_MODES
 
 from .support import check_output_size
@@ -609,8 +614,23 @@ def decode_layer_stack(data: bytes) -> object:
 
 def layer_stack_meta(obj: object) -> Mapping[str, object]:
     stack = coerce_layer_stack(obj)
+    rasters = {
+        id(array): array
+        for layer in stack.layers
+        for array in (layer.image, layer.mask)
+        if array is not None
+    }
+    costs: dict[str, int] = {}
+    dtypes: set[str] = set()
+    for array in rasters.values():
+        storage = array_storage_meta(array)
+        dtypes.add(cast(str, storage["storage_dtype"]))
+        for device, size in cast(Mapping[str, int], storage[COST_META_KEY]).items():
+            costs[device] = costs.get(device, 0) + size
     return {
         "layers": sum(layer.frame_count for layer in stack.layers),
+        "storage_dtype": sorted(dtypes),
+        COST_META_KEY: costs,
         "canvas": (
             None
             if stack.canvas_width is None

@@ -153,6 +153,11 @@ class TypeSpec:
     """Optionally prepare the declared codec's exact bytes for direct writes
     into caller-owned storage. Other transports continue to use ``encode``."""
 
+    input_convert: CoerceFn | None = None
+    """Convert storage to the ordinary input form at invocation, without
+    mutating the stored object. None preserves it; accepts_storage bypasses
+    this hook. Unlike coerce, this never changes output storage or identity."""
+
 
 @dataclass(frozen=True)
 class RenditionSpec:
@@ -303,6 +308,7 @@ class TypeRegistry:
         fingerprint: FingerprintFn | None = None,
         meta: MetaFn | None = None,
         coerce: CoerceFn | None = None,
+        input_convert: CoerceFn | None = None,
         inline: InlineFn | None = None,
         validate_encoded: ValidateEncodedFn | None = None,
         validate_encoded_buffer: ValidateEncodedBufferFn | None = None,
@@ -328,6 +334,7 @@ class TypeRegistry:
             declared_codec=encode is not None,
             prepare_buffer_encoding=prepare_buffer_encoding,
             coerce=coerce,
+            input_convert=input_convert,
             inline=inline,
             validate_encoded=validate_encoded,
             validate_encoded_buffer=validate_encoded_buffer,
@@ -743,6 +750,20 @@ class TypeRegistry:
             return self._types[base]
         except KeyError:
             raise KeyError(f"unregistered value type: {type_id}") from None
+
+    def input_object(self, type_id: TypeId, obj: object) -> object:
+        """Convert a resolved typed input, recursively through list storage.
+
+        Asset references stay references until worker-side decoding supplies
+        the target type. Unknown types keep the default pass-through behavior.
+        """
+        element = parse_list_type_id(type_id)
+        if element is not None:
+            return [self.input_object(element, item) for item in cast(Sequence[object], obj)]
+        spec = self._types.get(type_id)
+        return (
+            spec.input_convert(obj) if spec is not None and spec.input_convert is not None else obj
+        )
 
     def wrap(self, type_id: TypeId, obj: object) -> Value:
         """Build an envelope for a raw object. Worker shims call this; node

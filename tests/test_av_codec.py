@@ -83,6 +83,8 @@ def test_audio_fingerprint_is_numpy_torch_form_independent() -> None:
         "sample_rate": 6,
         "shape": (1, 2, 6),
         "duration": 1.0,
+        "storage_dtype": "fp32",
+        "cost": {"ram": 48},
     }
 
 
