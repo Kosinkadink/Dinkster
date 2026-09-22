@@ -39,6 +39,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import tomllib
 import urllib.parse
 import urllib.request
@@ -850,14 +851,27 @@ def _download_locked_wheel(wheel: dict[str, Any], destination: Path) -> str:
     scheme, _, expected_sha = expected.partition(":")
     if scheme != "sha256" or len(expected_sha) != 64:
         raise FeedError(f"locked wheel hash is not a sha256 digest: {expected}")
-    with urllib.request.urlopen(url, timeout=300) as response, destination.open("wb") as target:
-        digest = hashlib.sha256()
-        while True:
-            block = response.read(1024 * 1024)
-            if not block:
-                break
-            digest.update(block)
-            target.write(block)
+    # A long build crosses many single-wheel fetches; a transient connection
+    # reset should cost a retry, not the build. The download lands at a
+    # temporary name first, so a failed attempt leaves no partial wheel.
+    for attempt in range(3):
+        partial = destination.with_name(destination.name + f".partial{attempt}")
+        try:
+            with urllib.request.urlopen(url, timeout=300) as response, partial.open("wb") as target:
+                digest = hashlib.sha256()
+                while True:
+                    block = response.read(1024 * 1024)
+                    if not block:
+                        break
+                    digest.update(block)
+                    target.write(block)
+            break
+        except (urllib.error.URLError, OSError) as error:
+            partial.unlink(missing_ok=True)
+            if attempt == 2:
+                raise FeedError(f"wheel download failed after retries, {url}: {error}") from None
+            time.sleep(5 * (attempt + 1))
+    partial.replace(destination)
     actual = digest.hexdigest()
     if actual != expected_sha:
         destination.unlink(missing_ok=True)
@@ -895,7 +909,9 @@ def _place_wheel(source: Path, feed_dir: Path) -> WheelEntry:
         sha256=digest,
         size=store_path.stat().st_size,
         filename=source.name,
-        name=name,
+        # Wheel metadata names may use underscores; the manifest contract
+        # and the installer's requirements both speak normalized names.
+        name=normalize_name(name),
         version=version,
         environments=ENVIRONMENTS,
     )
