@@ -188,7 +188,11 @@ _TEXT_RUNTIME_SOURCE_ROLES = frozenset(("checkpoint", "clip_l", "gemma3_12b", "q
 
 def _diffusion_unload_roles(handle: NativeRuntimeHandle) -> tuple[str, ...]:
     source_roles = frozenset(source.role for source in handle.recipe.sources)
-    return ("text",) if source_roles & _TEXT_RUNTIME_SOURCE_ROLES else ()
+    return (
+        ("text",)
+        if source_roles & _TEXT_RUNTIME_SOURCE_ROLES and handle.has_residency_stage("text")
+        else ()
+    )
 
 
 def _not_cancelled() -> bool:

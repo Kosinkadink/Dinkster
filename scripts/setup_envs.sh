@@ -81,7 +81,8 @@ fi
 uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "scipy>=1.11" \
     "simpleeval==1.0.3" \
     "onnxruntime==1.29.0" "opencv-python-headless==5.0.0.93" "pillow==12.0.0" \
-    "safetensors==0.8.0" "sentencepiece==0.2.1" "transformers==5.16.1" \
+    "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
+    "transformers==5.16.1" \
     -e packages/dinkster-api \
     -e packages/dinkster-schema \
     -e packages/dinkster-values \
@@ -175,10 +176,10 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         --index-url https://download.pytorch.org/whl/cu130 torch==2.13.0+cu130
     # scipy, torchsde, tqdm, and Pillow satisfy the pinned ComfyUI
     # k_diffusion import chain used by the native GPU reference proofs;
-    # safetensors and sentencepiece support the package's model fixtures.
+    # safetensors, sentencepiece, and tokenizers support the package's model fixtures.
     uv pip install --python .venv-gpu/bin/python \
         pytest numpy scipy torchsde tqdm pillow packaging \
-        "safetensors==0.8.0" "sentencepiece==0.2.1" \
+        "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
         dinkster-kitchen==0.2.35.post1 dinkster-aimdo==0.5.5.post2 \
         -e packages/dinkster-api \
         -e packages/dinkster-schema \

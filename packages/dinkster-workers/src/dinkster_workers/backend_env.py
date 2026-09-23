@@ -70,6 +70,7 @@ _SUPPORT_PACKAGES = (
     "tqdm",
     "pillow",
     "packaging",
+    "tokenizers==0.23.1",
     _KITCHEN_REQUIREMENT,
 )
 

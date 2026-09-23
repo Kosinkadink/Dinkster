@@ -43,8 +43,8 @@ non-empty scope, single-user mode is the reserved scope "local"):
                                           unsupported protocolVersion;
                                           429 rate-limited with
                                           retryAfterMs above 60 ops/sec,
-                                          burst 240, per principal/kind;
-                                          agents get half that budget
+                                          burst 240, per principal; agents
+                                          also have a half-size sub-budget
 - GET    /api/sessions/{sessionId}/ops?after=N
                                           catch-up: retained ops with
                                           revision > N, in order; 410
@@ -69,8 +69,9 @@ non-empty scope, single-user mode is the reserved scope "local"):
                                           are relayed to the OTHER
                                           subscribers and never stored;
                                           excess frames above 100/sec,
-                                          burst 200, per principal/kind
-                                          are dropped; agents get half
+                                          burst 200, per principal are
+                                          dropped; agents also have a
+                                          half-size sub-budget
 
 Ops mutate through HTTP POST only - the WS is delivery plus ephemeral
 presence, never an ingestion path, so ordering has exactly one door.
@@ -174,6 +175,7 @@ class _Subscriber:
     sender: asyncio.Task[None]
     principal_id: str
     authorized: Callable[[], bool]
+    authorization_reason: Callable[[], str] = lambda: "authorization-expired"
 
 
 _SUBSCRIBERS_KEY = web.AppKey("dinkster_collab_subscribers", dict[str, set[_Subscriber]])
@@ -192,33 +194,61 @@ class _TokenBucketLimiter:
         self._rate = rate
         self._burst = float(burst)
         self._clock = clock
-        self._buckets: dict[tuple[str, str], _Bucket] = {}
+        self._principal_buckets: dict[str, _Bucket] = {}
+        self._agent_buckets: dict[str, _Bucket] = {}
 
     def consume(self, principal_id: str, actor_kind: str) -> int | None:
         now = self._clock()
-        # An idle full bucket carries no state. Never evict a depleted bucket.
-        self._buckets = {
+        lifetime = self._burst / self._rate * 2
+        self._principal_buckets = {
             key: bucket
-            for key, bucket in self._buckets.items()
-            if now - bucket.updated_at < self._burst / self._rate * 2
+            for key, bucket in self._principal_buckets.items()
+            if now - bucket.updated_at < lifetime
         }
-        key = (principal_id, actor_kind)
-        ratio = 0.5 if actor_kind == "agent" else 1.0
-        burst, rate = max(1.0, self._burst * ratio), self._rate * ratio
-        bucket = self._buckets.get(key)
-        if bucket is None:
-            if len(self._buckets) >= 4096:
-                return 1000
-            bucket = _Bucket(burst, now)
-            self._buckets[key] = bucket
-        else:
-            elapsed = max(0.0, now - bucket.updated_at)
-            bucket.tokens = min(burst, bucket.tokens + elapsed * rate)
-            bucket.updated_at = now
-        if bucket.tokens >= 1.0:
-            bucket.tokens -= 1.0
-            return None
-        return max(1, math.ceil((1.0 - bucket.tokens) / rate * 1000))
+        self._agent_buckets = {
+            key: bucket
+            for key, bucket in self._agent_buckets.items()
+            if now - bucket.updated_at < lifetime
+        }
+
+        def bucket(buckets: dict[str, _Bucket], burst: float, rate: float) -> _Bucket | None:
+            found = buckets.get(principal_id)
+            if found is None:
+                if len(buckets) >= 4096:
+                    return None
+                found = _Bucket(burst, now)
+                buckets[principal_id] = found
+            else:
+                elapsed = max(0.0, now - found.updated_at)
+                found.tokens = min(burst, found.tokens + elapsed * rate)
+                found.updated_at = now
+            return found
+
+        limits = [(bucket(self._principal_buckets, self._burst, self._rate), self._rate)]
+        if actor_kind == "agent":
+            limits.append(
+                (
+                    bucket(
+                        self._agent_buckets,
+                        max(1.0, self._burst * 0.5),
+                        self._rate * 0.5,
+                    ),
+                    self._rate * 0.5,
+                )
+            )
+        if any(found is None for found, _rate in limits):
+            return 1000
+        waits = [
+            max(1, math.ceil((1.0 - found.tokens) / rate * 1000))
+            for found, rate in limits
+            if found is not None and found.tokens < 1.0
+        ]
+        if waits:
+            return max(waits)
+        for found, _rate in limits:
+            assert found is not None
+            found.tokens -= 1.0
+        return None
 
 
 _OPS_LIMITER_KEY = web.AppKey("dinkster_collab_ops_limiter", _TokenBucketLimiter)
@@ -355,7 +385,9 @@ async def _send_frames(subscriber: _Subscriber, subscribers: set[_Subscriber]) -
     try:
         while True:
             if not subscriber.authorized():
-                await subscriber.ws.close(code=1008, message=b"authorization-expired")
+                await subscriber.ws.close(
+                    code=1008, message=subscriber.authorization_reason().encode()
+                )
                 return
             try:
                 encoded = await asyncio.wait_for(subscriber.queue.get(), timeout=1)
@@ -363,7 +395,9 @@ async def _send_frames(subscriber: _Subscriber, subscribers: set[_Subscriber]) -
                 continue
             try:
                 if not subscriber.authorized():
-                    await subscriber.ws.close(code=1008, message=b"authorization-expired")
+                    await subscriber.ws.close(
+                        code=1008, message=subscriber.authorization_reason().encode()
+                    )
                     return
                 await subscriber.ws.send_str(encoded)
             finally:
@@ -655,6 +689,14 @@ async def handle_session_events(request: web.Request) -> web.WebSocketResponse:
         sender=placeholder,
         principal_id=principal_id,
         authorized=lambda: _principal(request).allows_in(session.scope, "sessions:read"),
+        authorization_reason=lambda: (
+            (
+                f"delegation-revoked:{getattr(_principal(request), 'delegation_id', '')}"
+                if getattr(_principal(request), "authorization_error", None) == "delegation-revoked"
+                else getattr(_principal(request), "authorization_error", None)
+            )
+            or "authorization-expired"
+        ),
     )
     subscriber.sender = asyncio.create_task(_send_frames(subscriber, subscribers))
     subscribers.add(subscriber)

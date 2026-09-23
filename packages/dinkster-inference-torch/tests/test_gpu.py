@@ -2735,6 +2735,73 @@ def test_cuda_residency_leases_and_prefetch_mark_source_pins_active() -> None:
     resident.unload()
 
 
+def test_cuda_residency_prefetch_executes_inside_a_captured_graph() -> None:
+    require_gpu_tests_enabled()
+    script = textwrap.dedent(
+        """
+        import torch
+        from dinkster_inference_torch import ResidentWeights
+        from dinkster_inference_torch.model_prefetch import (
+            close_prefetch_queue,
+            make_prefetch_queue,
+            prefetch_queue_pop,
+        )
+
+        class OffloadedBlock(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+                self.resident = ResidentWeights(
+                    {"weight": torch.arange(16, dtype=torch.float32).reshape(4, 4)},
+                    load_device="cuda:0",
+                    offload_device="cpu",
+                )
+
+            def residency_prefetch(self):
+                return self.resident, (("weight", torch.float32),)
+
+            def forward(self, value):
+                self.calls += 1
+                with self.resident.lease("weight") as lease:
+                    return value @ lease.get("weight", dtype=torch.float32)
+
+        block = OffloadedBlock()
+        queue = make_prefetch_queue((block,))
+        assert prefetch_queue_pop(queue, block)
+        graph = torch.cuda.CUDAGraph()
+        capture_stream = torch.cuda.Stream()
+        current_stream = torch.cuda.current_stream()
+        capture_stream.wait_stream(current_stream)
+        static_input = torch.ones((1, 4), device="cuda:0")
+        static_output = torch.empty((1, 4), device="cuda:0")
+        torch.ones((1, 4), device="cuda:0") @ torch.ones((4, 4), device="cuda:0")
+        torch.cuda.synchronize()
+        with torch.cuda.graph(graph, stream=capture_stream):
+            static_output.copy_(block(static_input))
+        current_stream.wait_stream(capture_stream)
+
+        static_input.fill_(2)
+        graph.replay()
+        torch.cuda.synchronize()
+        assert block.calls == 1
+        assert torch.equal(
+            static_output.cpu(),
+            torch.tensor([[48.0, 56.0, 64.0, 72.0]]),
+        )
+
+        close_prefetch_queue(queue)
+        block.resident.unload()
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_resident_weights_moves_storage_to_cuda_and_back() -> None:
     """Full load moves storage (patched in place) onto the GPU; unload
     restores the patched key's EXACT original object and moves
