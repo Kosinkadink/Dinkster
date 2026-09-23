@@ -51,6 +51,7 @@ from .operations import (
     INITLESS,
     Operations,
     ResidencyRouted,
+    materialized_linear_parameters,
     materialized_rms_norm_weight,
 )
 from .quant_linear import Int8Linear, linear_input_act
@@ -880,6 +881,9 @@ class _MiniMaxH3FinalLayer(torch.nn.Module):
         time: torch.Tensor,
         video_segment: _ModulationSegment,
         audio_segment: _ModulationSegment,
+        video_sigma: float = 1.0,
+        sampler_sigmas: tuple[float, ...] | None = None,
+        schedule_shifts: tuple[float, float] = (12.0, 3.0),
     ) -> tuple[torch.Tensor, torch.Tensor]:
         shift, scale = self.adaln_proj(time)
         video_start, video_stop, video_row = video_segment
@@ -890,7 +894,100 @@ class _MiniMaxH3FinalLayer(torch.nn.Module):
         audio = (
             self.norm(hidden[audio_start:audio_stop]) * (1.0 + scale[audio_row]) + shift[audio_row]
         ).float()
-        return self.video_out(video), self.audio_out(audio)
+        with (
+            materialized_linear_parameters(self.video_out) as video_parameters,
+            materialized_linear_parameters(self.audio_out) as audio_parameters,
+        ):
+            video_weight, video_bias = video_parameters
+            audio_weight, audio_bias = audio_parameters
+            video_heads = video_weight.shape[0] // self.video_out.out_features
+            audio_heads = audio_weight.shape[0] // self.audio_out.out_features
+            if video_heads != audio_heads:
+                raise ValueError("MiniMax H3 PDD video and audio head-bank sizes differ")
+            if video_heads == 1:
+                return (
+                    F.linear(video, video_weight, video_bias),
+                    F.linear(audio, audio_weight, audio_bias),
+                )
+            if not sampler_sigmas:
+                raise ValueError("MiniMax H3 PDD heads require the sampler sigma schedule")
+            index = min(
+                range(len(sampler_sigmas)),
+                key=lambda item: abs(sampler_sigmas[item] - video_sigma),
+            )
+            sigma_next = sampler_sigmas[min(index + 1, len(sampler_sigmas) - 1)]
+            start, stop = (
+                round(
+                    (
+                        1.0
+                        - sigma
+                        / (
+                            schedule_shifts[0]
+                            + sigma * (1.0 - schedule_shifts[0])
+                        )
+                    )
+                    * video_heads
+                )
+                for sigma in (video_sigma, sigma_next)
+            )
+            start = min(start, video_heads - 1)
+            stop = max(stop, start + 1)
+            return (
+                _minimax_h3_pdd_head(
+                    video,
+                    video_weight,
+                    video_bias,
+                    self.video_out.out_features,
+                    video_heads,
+                    start,
+                    stop,
+                    schedule_shifts[0],
+                ),
+                _minimax_h3_pdd_head(
+                    audio,
+                    audio_weight,
+                    audio_bias,
+                    self.audio_out.out_features,
+                    audio_heads,
+                    start,
+                    stop,
+                    schedule_shifts[1],
+                ),
+            )
+
+
+def _minimax_h3_pdd_head(
+    hidden: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None,
+    output_width: int,
+    heads: int,
+    start: int,
+    stop: int,
+    schedule_shift: float,
+) -> torch.Tensor:
+    grid = torch.linspace(1.0, 0.0, heads + 1, dtype=torch.float64, device=hidden.device)
+    shifted = 1.0 - schedule_shift * grid / (1.0 + (schedule_shift - 1.0) * grid)
+    coefficients = shifted.diff()[start:stop]
+    coefficients = (coefficients / coefficients.sum()).to(hidden)
+    rows = weight.reshape(heads, output_width, weight.shape[1])
+    selected_weight = rows[0]
+    first_offset = max(start, 1)
+    if first_offset < stop:
+        selected_weight = selected_weight + torch.einsum(
+            "n,noi->oi", coefficients[first_offset - start :], rows[first_offset:stop]
+        )
+    selected_bias = None
+    if bias is not None:
+        bias_rows = bias.reshape(heads, output_width)
+        selected_bias = bias_rows[0]
+        if first_offset < stop:
+            selected_bias = selected_bias + torch.einsum(
+                "n,no->o",
+                coefficients[first_offset - start :],
+                bias_rows[first_offset:stop],
+            )
+    return F.linear(hidden, selected_weight, selected_bias)
 
 
 class _MiniMaxH3RoPE(ResidencyRouted, torch.nn.Module):
@@ -1330,6 +1427,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         *,
         conditioning: MiniMaxH3DiTConditioning | None = None,
         sigmas: MiniMaxH3Sigmas = MINIMAX_H3_SIGMAS,
+        sampler_sigmas: tuple[float, ...] | None = None,
         control: object | None = None,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
         attention_kernel_factory: MiniMaxH3AttentionKernelFactory | None = None,
@@ -1359,6 +1457,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 context,
                 selected_conditioning,
                 sigmas,
+                sampler_sigmas,
                 denoise_mask=denoise_mask,
             )
         elif sequence_sharding is None:
@@ -1368,6 +1467,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 context,
                 selected_conditioning,
                 sigmas,
+                sampler_sigmas,
                 denoise_mask=denoise_mask,
                 attention_kernel_factory=attention_kernel_factory,
             )
@@ -1378,6 +1478,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 context,
                 selected_conditioning,
                 sigmas,
+                sampler_sigmas,
                 denoise_mask=denoise_mask,
                 attention_kernel_factory=attention_kernel_factory,
                 sequence_sharding=sequence_sharding,
@@ -1396,6 +1497,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         context: torch.Tensor,
         conditioning: MiniMaxH3DiTConditioning,
         sigmas: MiniMaxH3Sigmas,
+        sampler_sigmas: tuple[float, ...] | None,
         *,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
         attention_kernel_factory: MiniMaxH3AttentionKernelFactory | None = None,
@@ -1654,7 +1756,13 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
             if kind == "audio"
         )
         video_rows, audio_rows = self.final_layer(
-            hidden[0], time_embedding, video_segment, audio_segment
+            hidden[0],
+            time_embedding,
+            video_segment,
+            audio_segment,
+            video_sigma,
+            sampler_sigmas,
+            (sigmas.video.shift, sigmas.audio_shift),
         )
         video_output = _unpatchify_video(
             video_rows,

@@ -43,9 +43,11 @@
   prompts, and unsupported dynamic or opaque stacks are refused.
 - Diffusers-format Z-Image LoRAs, including split Q/K/V adapters over native
   fused attention weights; auto mode precalculates adapters with offset targets
-- PEFT-layout MiniMax H3 FL2VA and REF2VA DiT LoRAs through Load LoRA (Model
-  Only). Native runtimes without scheduled patch resolution, including MiniMax
-  H3, Wan, and split LTX-Video, warn and precalculate explicit attach requests.
+- PEFT-layout MiniMax H3 FL2VA and REF2VA DiT LoRAs, including official PDD
+  output-head banks and direct DiffSynth/ModelScope key stems, through Load LoRA
+  (Model Only). Native runtimes without scheduled patch resolution, including
+  MiniMax H3, Wan, and split LTX-Video, warn and precalculate explicit attach
+  requests.
 - Native per-step strength curves for simple LoRA patches on owned linear and
   two-dimensional convolution weights through hook keyframes
 - Conditioning-scoped regional LoRA execution with float32 masks, optional

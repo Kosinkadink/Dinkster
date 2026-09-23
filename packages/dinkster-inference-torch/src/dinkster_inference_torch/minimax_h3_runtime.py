@@ -1707,6 +1707,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                         context,
                         conditioning=dit_conditioning,
                         sigmas=sigmas,
+                        sampler_sigmas=schedule,
                         denoise_mask=model_denoise_mask,
                         attention_kernel_factory=sequence_factory,
                         sequence_sharding=sharding,
@@ -1720,6 +1721,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             context,
                             conditioning=dit_conditioning,
                             sigmas=sigmas,
+                            sampler_sigmas=schedule,
                             denoise_mask=model_denoise_mask,
                         )
                     else:
@@ -1729,6 +1731,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             context,
                             conditioning=dit_conditioning,
                             sigmas=sigmas,
+                            sampler_sigmas=schedule,
                             denoise_mask=model_denoise_mask,
                             attention_kernel_factory=attention_kernel_factory,
                         )
