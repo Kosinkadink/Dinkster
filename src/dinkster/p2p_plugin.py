@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib
 from collections.abc import Callable
 from dataclasses import dataclass
-from types import ModuleType
 from typing import Any
 
 from dinkster_assets import P2PPluginRegistration, register_p2p_plugin
@@ -15,13 +14,6 @@ from dinkster_assets import P2PPluginRegistration, register_p2p_plugin
 class P2PPlugin:
     controller: type[Any]
     add_routes: Callable[..., None]
-
-
-def _enabled_defaults(plugin: ModuleType) -> dict[str, object]:
-    settings = plugin.default_p2p_settings()
-    settings["downloadsEnabled"] = True
-    settings["seedingEnabled"] = True
-    return settings
 
 
 def load_p2p_plugin() -> P2PPlugin | None:
@@ -34,7 +26,7 @@ def load_p2p_plugin() -> P2PPlugin | None:
         return None
     register_p2p_plugin(
         P2PPluginRegistration(
-            default_settings=lambda: _enabled_defaults(plugin),
+            default_settings=plugin.default_p2p_settings,
             normalize_settings=plugin.normalize_p2p_settings,
             lan_interfaces=plugin.lan_interfaces,
         )

@@ -1440,7 +1440,7 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:4b2babc83d81f1275238b69031fd1c8a5e5aed07065ed75b56fc432c23a8f064",
+            "blake3:136426543185952dec319b9af35009b28eb1fb1d0b4386c001056c46478eb77a",
         ),
         (
             "dinkster-nodes-media-io",
@@ -1477,7 +1477,7 @@ def test_foundation_default_pack_ships_docs() -> None:
     assert docs is not None
     assert [(page.kind, page.id, page.locale) for page in docs.pages] == [
         ("node", "std.math.add_ints", "en"),
-        ("guide", "map-and-gather", "en"),
+        ("guide", "loops", "en"),
     ]
     page = next(page for page in docs.pages if page.kind == "node")
     assert page.title == "Add Integers"
