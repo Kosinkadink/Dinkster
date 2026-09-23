@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import cast
+from typing import Any, cast
 
 import torch
 from dinkster_inference import (
@@ -92,6 +92,7 @@ from .minimax_h3_conditioning import (
     MiniMaxH3VisionValue,
     realize_minimax_h3_conditioner_inputs,
 )
+from .minimax_h3_control import MiniMaxH3FunControlConditioning
 from .minimax_h3_dit import (
     MiniMaxH3Attention,
     MiniMaxH3DiT,
@@ -1155,12 +1156,18 @@ class _H3LatentAdapter:
         owner = cast("MiniMaxH3DiTRuntime", runtime)
         unknown = set(context.options) - {
             "attention_kernel_factory",
+            "control",
             "noise_inds",
             "scheduler_label",
         }
         if unknown:
             raise MiniMaxH3RuntimeError(
                 "MiniMax H3 sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+            )
+        control = context.options.get("control")
+        if control is not None and type(control) is not MiniMaxH3FunControlConditioning:
+            raise MiniMaxH3RuntimeError(
+                "MiniMax H3 control must be exact MiniMaxH3FunControlConditioning"
             )
         if type(latent) is not MultiStreamLatent:
             raise MiniMaxH3RuntimeError(
@@ -1400,6 +1407,9 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             "MiniMaxH3AttentionKernelFactory | None",
             context.options.get("attention_kernel_factory"),
         )
+        control_conditioning = cast(
+            "MiniMaxH3FunControlConditioning | None", context.options.get("control")
+        )
         scheduler_label = request.source_scheduler_id or "custom"
         model_role = self._model_role
         model = self._model
@@ -1411,6 +1421,8 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             raise MiniMaxH3RuntimeError(
                 "single-job sequence mode owns the attention kernel factory"
             )
+        if requested_sequence and control_conditioning is not None:
+            raise MiniMaxH3RuntimeError("MiniMax H3 control does not support sequence sharding")
         sigmas = MINIMAX_H3_SIGMAS
         if requested_sequence:
             assert requested_distributed is not None
@@ -1513,6 +1525,19 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 component_role="diffusion",
                 device=str(x.device),
             ):
+                control = (
+                    None
+                    if control_conditioning is None
+                    else control_conditioning.patch_for_sigma(sigma, sigmas.percent_to_sigma)
+                )
+                model_options: dict[str, Any] = {
+                    "conditioning": dit_conditioning,
+                    "sigmas": sigmas,
+                    "sample_sigmas": schedule,
+                    "denoise_mask": model_denoise_mask,
+                }
+                if control is not None:
+                    model_options["control"] = control
                 local_rank_zero = rank_zero_sampling_active()
                 if use_sequence and not local_rank_zero:
                     assert distributed is not None
@@ -1671,9 +1696,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                         av,
                         sigma,
                         context,
-                        conditioning=dit_conditioning,
-                        sigmas=sigmas,
-                        denoise_mask=model_denoise_mask,
+                        **model_options,
                         attention_kernel_factory=sequence_factory,
                         sequence_sharding=sharding,
                     )
@@ -1684,18 +1707,14 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             av,
                             sigma,
                             context,
-                            conditioning=dit_conditioning,
-                            sigmas=sigmas,
-                            denoise_mask=model_denoise_mask,
+                            **model_options,
                         )
                     else:
                         velocity = model(
                             av,
                             sigma,
                             context,
-                            conditioning=dit_conditioning,
-                            sigmas=sigmas,
-                            denoise_mask=model_denoise_mask,
+                            **model_options,
                             attention_kernel_factory=attention_kernel_factory,
                         )
                 packed_velocity, _ = pack_latent_streams(velocity)

@@ -1231,10 +1231,9 @@ def selector_lazy_inputs(
         ):
             return frozenset()
         expressions: list[TypeExpr] = []
-        for branch_type, config, required in branches:
+        for branch_type, config, _required in branches:
             if (
-                not required
-                or not _is_exact_v3_type(branch_type, V3_MATCHTYPE_IO_TYPE)
+                not _is_exact_v3_type(branch_type, V3_MATCHTYPE_IO_TYPE)
                 or config is None
                 or not config.get("lazy")
             ):
@@ -1270,7 +1269,6 @@ def selector_lazy_inputs(
         or bool(getattr(switch, "lazy", False))
         or len(output_seq) != 1
         or any(io_type(branch) != V3_MATCHTYPE_IO_TYPE for branch in branches)
-        or any(bool(getattr(branch, "optional", False)) for branch in branches)
         or any(not bool(getattr(branch, "lazy", False)) for branch in branches)
         or io_type(output_seq[0]) != V3_MATCHTYPE_IO_TYPE
         or bool(getattr(output_seq[0], "is_output_list", False))

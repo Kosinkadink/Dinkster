@@ -1,11 +1,12 @@
 ## Text generation
 
-- Native raw-prompt text generation from the Anima Qwen3-0.6B component,
-  exposed as Generate Text (`TextGenerate`) and Enhance Prompt
-  (`TextGenerateLTX2Prompt`). Both nodes support greedy generation or an
-  ordered seeded sampler chain with temperature, top-k, min-p, top-p,
-  repetition penalty, and presence penalty. Generation is cancellable and
-  uses the component's resident placement.
+- Native text generation from the Anima Qwen3-0.6B component, exposed as
+  Generate Text (`TextGenerate`). It accepts an optional system prompt, applies
+  the model chat template by default, and returns response and thinking text
+  separately. Disabling the template preserves the user prompt as raw text.
+  Greedy generation and an ordered seeded sampler chain support temperature,
+  top-k, min-p, top-p, repetition penalty, and presence penalty. Generation is
+  cancellable and uses the component's resident placement.
 - Native provider callers can opt into fixed-capacity continuous generation
   with chunked prompt prefill, bounded decode priority, round-robin decode
   cohorts, and same-position decode batching. Sessions, cancellation,
@@ -16,8 +17,12 @@
   per-device residency mechanisms; direct and continuous generation transfer
   activations only at range and tied-output boundaries. Automatic placement is
   not supported.
-- Enhance Prompt applies the LTX-2 text-to-video instruction and removes
-  reasoning and channel markers from the result.
+- Dinkster's Qwen-specific Enhance Prompt (`DinksterQwenPromptEnhance`) applies
+  the LTX-2 text-to-video instruction while preserving separate response and
+  thinking outputs.
+- ComfyUI compatibility execution retains the source `TextGenerateLTX2Prompt`
+  node and its Gemma 3/Gemma 4 text/image formatting instead of substituting
+  the native Qwen enhancer.
 - The torch-free OpenAI-compatible provider API supports text completion and
   chat endpoints, SSE and non-streaming JSON responses, cancellation, bounded
   timeouts, and usage reporting. Standard OpenAI mode supports greedy,

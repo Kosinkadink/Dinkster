@@ -55,6 +55,7 @@ AUDIO_OPS_ALIAS_CLASSES = {
     "AudioEqualizer3Band": "dinkster.audio.equalizer",
 }
 VIDEO_OPS_ALIAS_CLASSES = {
+    "ConcatenateVideo": "dinkster.video.concatenate",
     "CreateVideo": "dinkster.video.assemble",
     "GetVideoComponents": "dinkster.video.disassemble",
     "VideoTrim": "dinkster.video.trim",
@@ -74,6 +75,7 @@ IMAGE_ALIAS_CLASSES = {
     "PreviewImage": "dinkster.preview_image",
     "SaveAnimatedPNG": "dinkster.save_animated_image",
     "SaveAnimatedWEBP": "dinkster.save_animated_image",
+    "SaveImageAdvanced": "dinkster.save_avif",
 }
 MODEL3D_ALIAS_CLASSES = {
     "Preview3DAdvanced": "dinkster.preview_model3d",
@@ -284,7 +286,7 @@ def test_media_comfy_aliases_preserve_pinned_video_ops_semantics() -> None:
 
     create = source_schemas["comfy.CreateVideo"]
     inputs = {item["id"]: item for item in create["interface"] if item["role"] == "input"}
-    assert set(inputs) == {"images", "fps", "audio", "bit_depth", "color_space"}
+    assert set(inputs) == {"images", "fps", "audio", "bit_depth", "color_space", "codec"}
     assert inputs["fps"]["default"] == 30.0
     assert inputs["bit_depth"]["default"] == "auto"
     assert inputs["bit_depth"]["widget"]["options"] == ["auto", "8", "10"]
@@ -298,10 +300,32 @@ def test_media_comfy_aliases_preserve_pinned_video_ops_semantics() -> None:
         "audio": {"kind": "copy", "input": "audio"},
         "bit_depth": {"kind": "copy", "input": "bit_depth"},
         "color_space": {"kind": "copy", "input": "color_space"},
+        "codec": {"kind": "copy", "input": "codec"},
     }
     assert set(case["outputs"]) == {"video"}
     assert "bit_depth" in record["replacement"]["note"]
     assert "color_space" in record["replacement"]["note"]
+
+    concatenate = source_schemas["comfy.ConcatenateVideo"]
+    family = next(item for item in concatenate["interface"] if item["role"] == "inputFamily")
+    assert family["id"] == "videos"
+    assert family["memberPrefix"] == "video"
+    assert family["minMembers"] == 1
+    assert family["maxMembers"] == 100
+    record = records["ConcatenateVideo"]
+    case = record["replacement"]["cases"][0]
+    assert case["inputs"] == {
+        "codec": {"kind": "copy", "input": "codec"},
+        "complete_audio": {"kind": "copy", "input": "complete_audio"},
+    }
+    assert case["inputFamilies"] == {
+        "videos": {
+            "kind": "copy",
+            "sourceFamily": "videos",
+            "inputs": {"value": {"kind": "copy", "input": "video"}},
+        }
+    }
+    assert case["outputs"] == {"video": "_0_VIDEO_"}
 
     components = source_schemas["comfy.GetVideoComponents"]
     outputs = {item["id"]: item for item in components["interface"] if item["role"] == "output"}
@@ -321,7 +345,7 @@ def test_current_seedvr2_media_aliases_preserve_supported_paths() -> None:
     records = {record["source"]["nodeClass"]: record for record in registry["records"]}
 
     load = records["LoadVideo"]
-    assert load["source"]["revision"] == "15eb748b"
+    assert load["source"]["revision"] == "95539f56"
     assert load["confidence"]["tier"] == "exact"
     assert load["replacement"]["cases"][0] == {
         "to": "dinkster.load_video_value",
@@ -334,7 +358,7 @@ def test_current_seedvr2_media_aliases_preserve_supported_paths() -> None:
     assert load_input["widget"]["accept"] == ["video/mp4", "video/webm"]
 
     save = records["SaveVideo"]
-    assert save["source"]["revision"] == "15eb748b"
+    assert save["source"]["revision"] == "95539f56"
     assert save["confidence"]["tier"] == "parametric"
     for save_case in save["replacement"]["cases"]:
         assert save_case["to"] == "dinkster.save_video"
@@ -346,7 +370,7 @@ def test_current_seedvr2_media_aliases_preserve_supported_paths() -> None:
         }
 
     trim = records["Video Slice"]
-    assert trim["source"]["revision"] == "15eb748b"
+    assert trim["source"]["revision"] == "95539f56"
     assert trim["confidence"]["tier"] == "parametric"
     trim_case = trim["replacement"]["cases"][0]
     assert trim_case["inputs"] == {
@@ -357,6 +381,36 @@ def test_current_seedvr2_media_aliases_preserve_supported_paths() -> None:
     assert "intersect" in trim["replacement"]["note"]
 
     assert "ImageCompare" not in records
+
+    advanced = records["SaveImageAdvanced"]
+    assert advanced["source"]["revision"] == "95539f56"
+    assert advanced["confidence"]["tier"] == "parametric"
+    advanced_schema = source_schemas["comfy.SaveImageAdvanced"]
+    advanced_inputs = {
+        item["id"]: item for item in advanced_schema["interface"] if item["role"] == "input"
+    }
+    assert advanced_inputs["bit_depth"]["default"] == "auto"
+    assert advanced_inputs["bit_depth"]["widget"]["options"] == [
+        "auto",
+        "8-bit YUV420",
+        "10-bit YUV420",
+    ]
+    assert advanced_inputs["input_color_space"]["widget"]["options"] == [
+        "sRGB",
+        "HDR",
+        "HDR PQ",
+    ]
+    still, animated, refusal = advanced["replacement"]["cases"]
+    assert still["when"]["of"] == [
+        {"kind": "valueEquals", "input": "format", "value": "avif"},
+        {"kind": "valueEquals", "input": "save_mode", "value": "still images"},
+    ]
+    assert still["inputs"]["animated"] == {"kind": "constant", "value": False}
+    assert animated["when"]["of"][1]["value"] == "animated"
+    assert animated["inputs"]["animated"] == {"kind": "constant", "value": True}
+    assert animated["inputs"]["fps"] == {"kind": "copy", "input": "fps"}
+    assert animated["inputs"]["loop"] == {"kind": "copy", "input": "loop_count"}
+    assert refusal["inputs"]["images"]["transform"] == {"kind": "enumRename", "map": {}}
 
 
 def test_media_comfy_aliases_preserve_pinned_audio_ops_semantics() -> None:
@@ -508,7 +562,7 @@ def test_media_comfy_alias_confidence_has_pinned_evidence() -> None:
         assert (
             record["source"]["revision"]
             in {
-                "comfy-core": {"b78cec87", "8a33128f", "15eb748b"},
+                "comfy-core": {"b78cec87", "8a33128f", "15eb748b", "95539f56"},
                 "comfyui-videohelpersuite": {"4d907bee61e92c2e65af3bd6383a4e4d356126d1"},
                 "audio-separation-nodes-comfyui": {"ac339561973f0c1e56db2f9d40f11b0fddda6763"},
             }[record["source"]["pack"]]

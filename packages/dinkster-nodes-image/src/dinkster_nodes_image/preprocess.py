@@ -84,8 +84,10 @@ def _hwc3(array: np.ndarray) -> np.ndarray:
     )
 
 
-def _uint8_frames(image: object) -> list[np.ndarray]:
+def _uint8_frames(image: object, *, ignore_alpha: bool = False) -> list[np.ndarray]:
     array = _image_array(image)
+    if ignore_alpha and array.shape[3] == 4:
+        array = array[..., :3]
     minimum = float(np.min(array))
     maximum = float(np.max(array))
     if not math.isfinite(minimum) or not math.isfinite(maximum):
@@ -136,8 +138,15 @@ def _resize_with_pad(
     return np.ascontiguousarray(padded), remove_pad
 
 
-def _map_frames(image: object, transform: Callable[[np.ndarray], np.ndarray]) -> np.ndarray:
-    return _image_output([_hwc3(transform(frame)) for frame in _uint8_frames(image)])
+def _map_frames(
+    image: object,
+    transform: Callable[[np.ndarray], np.ndarray],
+    *,
+    ignore_alpha: bool = False,
+) -> np.ndarray:
+    return _image_output(
+        [_hwc3(transform(frame)) for frame in _uint8_frames(image, ignore_alpha=ignore_alpha)]
+    )
 
 
 def _limited_unique_color_count(frame: np.ndarray, limit: int = 200) -> int:
@@ -341,7 +350,7 @@ class EdgePreprocessor(Node):
             )
             return remove_pad(result)
 
-        return cls.outputs(image=_map_frames(image, transform))
+        return cls.outputs(image=_map_frames(image, transform, ignore_alpha=True))
 
 
 class LineartPreprocessor(Node):

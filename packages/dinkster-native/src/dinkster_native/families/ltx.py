@@ -926,6 +926,586 @@ class GenerationLTXVAddGuide(Node):
         )
 
 
+class GenerationLTXVAddLatentGuide(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _generation_provider_schema("dinkster.ltxv_add_latent_guide")
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: object,
+        negative: object,
+        vae: object,
+        latent: object,
+        guiding_latent: object,
+        latent_idx: int,
+        strength: float,
+        attention_mask: object = None,
+    ) -> Mapping[str, object]:
+        if type(latent_idx) is not int:
+            raise TypeError("latent_idx must be an int")
+        metadata, streams, video = _ltxv_media_latent(latent, "latent")
+        _, _, guide = _ltxv_media_latent(guiding_latent, "guiding_latent")
+        if guide.shape[:2] != video.shape[:2]:
+            raise ValueError("guiding_latent batch and channels must match latent")
+        if latent_idx + guide.shape[2] > video.shape[2]:
+            raise ValueError("guiding_latent runs past the end of latent")
+        if video.shape[3] % guide.shape[3] or video.shape[4] % guide.shape[4]:
+            raise ValueError("guiding_latent spatial size must divide latent by a whole number")
+        height_scale = video.shape[3] // guide.shape[3]
+        width_scale = video.shape[4] // guide.shape[4]
+        if height_scale != width_scale:
+            raise ValueError("guiding_latent spatial ratio must be square")
+
+        original_shape = tuple(int(size) for size in guide.shape[2:])
+        guide_mask = None
+        if width_scale > 1:
+            torch = _torch()
+            dilated = torch.zeros(
+                (
+                    guide.shape[0],
+                    guide.shape[1],
+                    guide.shape[2],
+                    video.shape[3],
+                    video.shape[4],
+                ),
+                device=guide.device,
+                dtype=guide.dtype,
+            )
+            dilated[..., ::width_scale, ::width_scale] = guide
+            guide_mask = torch.full(
+                (guide.shape[0], 1, guide.shape[2], video.shape[3], video.shape[4]),
+                -1.0,
+                device=guide.device,
+                dtype=guide.dtype,
+            )
+            guide_mask[..., ::width_scale, ::width_scale] = 1.0
+            guide = dilated
+
+        codec = _ltxv_media_codec(vae)
+        descriptor = codec.descriptor.latent
+        time_scale = descriptor.temporal_downscale
+        frame_index = (
+            latent_idx * time_scale if latent_idx <= 0 else 1 + (latent_idx - 1) * time_scale
+        )
+        result = importlib.import_module("dinkster_inference_torch").ltxv_add_guide(
+            positive,
+            negative,
+            streams,
+            guide,
+            frame_index=frame_index,
+            strength=float(strength),
+            denoise_mask=metadata.get("noise_mask"),
+            attention_mask=cast("Any", attention_mask),
+            scale_factors=(time_scale, descriptor.spatial_downscale, descriptor.spatial_downscale),
+            latent_downscale_factor=width_scale,
+            original_latent_shape=original_shape,
+            guide_mask=guide_mask,
+            negative_from_end=False,
+            align_frame_index=False,
+        )
+        return cls.outputs(
+            positive=result.positive,
+            negative=result.negative,
+            latent=_ltxv_media_output(metadata, result.latent, result.denoise_mask),
+        )
+
+
+class GenerationLTXVFreezeLatent(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _generation_provider_schema("dinkster.ltxv_freeze_latent")
+
+    @classmethod
+    def execute(cls, *, latent: object) -> Mapping[str, object]:
+        if not isinstance(latent, Mapping):
+            raise TypeError("latent must be a latent mapping")
+        result = dict(cast("Mapping[object, object]", latent))
+        samples = result.get("samples")
+        torch = _torch()
+        if type(samples) is not torch.Tensor:
+            raise ValueError("Freeze Latent expects a plain tensor, not a concatenated AV latent")
+        samples = cast("Any", samples)
+        if samples.ndim == 5:
+            mask_shape = (samples.shape[0], 1, samples.shape[2], 1, 1)
+        elif samples.ndim == 4:
+            mask_shape = (samples.shape[0], 1, samples.shape[2], 1)
+        else:
+            raise ValueError("Freeze Latent expects a 4D audio or 5D video latent")
+        result["noise_mask"] = torch.zeros(mask_shape, dtype=torch.float32, device=samples.device)
+        return cls.outputs(latent=result)
+
+
+def _ltxav_generated_keyframes(value: object, name: str) -> tuple[Any, Any]:
+    inference_torch = importlib.import_module("dinkster_inference_torch")
+    inference = importlib.import_module("dinkster_inference")
+    if type(value) is inference.ConditioningCarrier:
+        _, generated = importlib.import_module(
+            "dinkster_inference_torch.ltx_media"
+        ).materialize_ltxv_generated_keyframes(value)
+        return value, generated
+    prepared = _prepared_multistream_carrier(value, inference, name)
+    if prepared is None or type(prepared.payload) is not inference_torch.LTXAVPreparedConditioning:
+        raise TypeError(f"{name} must contain LTX-2 audio-video conditioning")
+    return prepared, prepared.payload.generated_keyframes
+
+
+def _set_ltxav_generated_keyframes(value: object, name: str, generated: object) -> object:
+    inference = importlib.import_module("dinkster_inference")
+    if type(value) is inference.ConditioningCarrier:
+        return importlib.import_module(
+            "dinkster_inference_torch.ltx_media"
+        ).ltxv_generated_keyframes_metadata(value, generated)
+    prepared, _ = _ltxav_generated_keyframes(value, name)
+    payload = replace(prepared.payload, generated_keyframes=generated)
+    metadata: dict[str, object] = {}
+    return [
+        [inference.PreparedMultiStreamConditioning(prepared.runtime_identity, payload), metadata]
+    ]
+
+
+def _parse_ltxv_frame_indices(value: str, first: int, last: int) -> list[int]:
+    parts = [part for part in re.split(r"[,\s]+", value.strip()) if part]
+    if not parts:
+        raise ValueError("frame_indices is empty")
+    try:
+        indices = [int(part) for part in parts]
+    except ValueError:
+        raise ValueError("frame_indices must be a comma-separated list of integers") from None
+    if len(set(indices)) != len(indices):
+        raise ValueError("frame_indices must not contain duplicate pixel frames")
+    if any(index < first or index > last for index in indices):
+        raise ValueError(f"frame_indices must lie between {first} and {last}")
+    return indices
+
+
+def _ltxv_occupied_frames(
+    metadata: Mapping[object, object],
+    samples: Any,
+    latent_frames: int,
+    num_pixel_frames: int,
+    scale: int,
+) -> set[int]:
+    inference = importlib.import_module("dinkster_inference")
+    torch = _torch()
+    mask: Any = metadata.get("noise_mask")
+    if type(mask) is inference.MultiStreamLatent:
+        mask = mask.by_role("video")
+    occupied: set[int] = set()
+
+    def add(index: int) -> None:
+        if index <= 0:
+            occupied.add(0)
+        elif index >= latent_frames - 1:
+            occupied.add(num_pixel_frames - 1)
+        else:
+            occupied.add(index * scale)
+
+    if type(mask) is torch.Tensor and mask.ndim >= 3:
+        for index in range(min(mask.shape[2], latent_frames)):
+            if bool(torch.any(mask[:, :, index : index + 1] < 1.0 - 1e-4)):
+                add(index)
+        return occupied
+    for index in range(latent_frames):
+        if bool(torch.any(samples[:, :, index : index + 1] != 0)):
+            add(index)
+    return occupied
+
+
+def _ltxv_guide_pixel_frames(guides: tuple[Any, ...]) -> set[int]:
+    return {
+        int(frame)
+        for guide in guides
+        for frame in guide.keyframe_indices[:, 0, :, 0].reshape(-1).tolist()
+    }
+
+
+def _ltxv_generated_keyframe_samples(
+    keyframes: object, samples: Any, indices: list[int], temporal_scale: int
+) -> Any:
+    metadata, _, keyframe_samples = _ltxv_media_latent(keyframes, "keyframes")
+    count = len(indices)
+    if keyframe_samples.shape[2] == 1 and keyframe_samples.shape[0] != samples.shape[0]:
+        if keyframe_samples.shape[0] % samples.shape[0]:
+            raise ValueError("keyframes batch must be a multiple of the video latent batch")
+        stacked = keyframe_samples.shape[0] // samples.shape[0]
+        keyframe_samples = (
+            keyframe_samples.reshape(
+                samples.shape[0], stacked, keyframe_samples.shape[1], 1, *keyframe_samples.shape[3:]
+            )
+            .movedim(1, 2)
+            .squeeze(3)
+        )
+    recorded = metadata.get("generated_keyframe_indices")
+    if recorded is None and keyframe_samples.shape[2] > count:
+        nearest = [
+            min(max(round(index / temporal_scale), 0), keyframe_samples.shape[2] - 1)
+            for index in indices
+        ]
+        keyframe_samples = _torch().cat(
+            tuple(keyframe_samples[:, :, index : index + 1] for index in nearest), dim=2
+        )
+    expected = (samples.shape[0], samples.shape[1], samples.shape[3], samples.shape[4])
+    if (
+        keyframe_samples.shape[0] != expected[0]
+        or keyframe_samples.shape[1] != expected[1]
+        or keyframe_samples.shape[3:] != expected[2:]
+    ):
+        raise ValueError("keyframes must contain whole latent frames at the target spatial size")
+    if keyframe_samples.shape[2] > count:
+        raise ValueError(f"keyframes contains more frames than the {count} available positions")
+    if keyframe_samples.shape[2] < count:
+        padding = _torch().zeros(
+            (
+                samples.shape[0],
+                samples.shape[1],
+                count - keyframe_samples.shape[2],
+                samples.shape[3],
+                samples.shape[4],
+            ),
+            device=keyframe_samples.device,
+            dtype=keyframe_samples.dtype,
+        )
+        keyframe_samples = _torch().cat((keyframe_samples, padding), dim=2)
+    return keyframe_samples.to(samples)
+
+
+class GenerationLTXVAddGeneratedKeyframes(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _generation_provider_schema("dinkster.ltxv_add_generated_keyframes")
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: object,
+        negative: object,
+        vae: object,
+        latent: object,
+        interval_frames: int = 24,
+        keyframes: object = None,
+        frame_indices: str = "",
+    ) -> Mapping[str, object]:
+        metadata, streams, samples = _ltxv_media_latent(latent, "latent")
+        inference = importlib.import_module("dinkster_inference")
+        if type(positive) is inference.ConditioningCarrier:
+            without_rate, _ = _split_ltx_frame_rate(positive, inference)
+            _, guides = importlib.import_module(
+                "dinkster_inference_torch.ltx_media"
+            ).materialize_ltxv_guides(without_rate)
+        else:
+            guides = ()
+        guide_frames = sum(guide.latent_shape[0] for guide in guides)
+        _, existing = _ltxav_generated_keyframes(positive, "positive")
+        _, negative_existing = _ltxav_generated_keyframes(negative, "negative")
+        if existing != negative_existing:
+            raise ValueError("positive and negative generated keyframes must match")
+        tokens_per_frame = samples.shape[3] * samples.shape[4]
+        if existing is None:
+            first_frame = samples.shape[2]
+            previous_indices: tuple[int, ...] = ()
+        else:
+            if existing.tokens_per_frame != tokens_per_frame:
+                raise ValueError(
+                    "existing generated keyframes were added at a different spatial size"
+                )
+            if (
+                existing.first_latent_frame + existing.num_keyframes
+                != samples.shape[2] - guide_frames
+            ):
+                raise ValueError("generated keyframes must remain a contiguous final block")
+            first_frame = existing.first_latent_frame
+            previous_indices = existing.frame_indices
+
+        codec = _ltxv_media_codec(vae)
+        temporal_scale = codec.descriptor.latent.temporal_downscale
+        if existing is None:
+            first_frame -= guide_frames
+        num_pixel_frames = (first_frame - 1) * temporal_scale + 1
+        if num_pixel_frames <= 1:
+            raise ValueError("target has no pixel frames available for generated keyframes")
+        if frame_indices.strip():
+            indices = _parse_ltxv_frame_indices(frame_indices, 1, num_pixel_frames - 1)
+        else:
+            if type(interval_frames) is not int or interval_frames <= 0:
+                raise ValueError("interval_frames must be a positive integer")
+            count = max(1, round((num_pixel_frames - 1) / interval_frames))
+            indices = [round(step * (num_pixel_frames - 1) / count) for step in range(1, count + 1)]
+            occupied = (
+                _ltxv_occupied_frames(
+                    metadata, samples, first_frame, num_pixel_frames, temporal_scale
+                )
+                | set(previous_indices)
+                | _ltxv_guide_pixel_frames(guides)
+            )
+            indices = [index for index in indices if index not in occupied]
+        occupied = (
+            _ltxv_occupied_frames(metadata, samples, first_frame, num_pixel_frames, temporal_scale)
+            | set(previous_indices)
+            | _ltxv_guide_pixel_frames(guides)
+        )
+        if set(indices) & occupied:
+            raise ValueError("frame_indices reuses an existing keyframe or guide")
+        if not indices:
+            raise ValueError("no free generated-keyframe positions remain")
+
+        torch = _torch()
+        count = len(indices)
+        if keyframes is None:
+            keyframe_samples = torch.zeros(
+                (samples.shape[0], samples.shape[1], count, samples.shape[3], samples.shape[4]),
+                device=samples.device,
+                dtype=samples.dtype,
+            )
+        else:
+            keyframe_samples = _ltxv_generated_keyframe_samples(
+                keyframes, samples, indices, temporal_scale
+            )
+
+        generated = inference.LTXGeneratedKeyframes(
+            tokens_per_frame,
+            first_frame,
+            len(previous_indices) + count,
+            previous_indices + tuple(indices),
+            num_pixel_frames,
+        )
+        positive = _set_ltxav_generated_keyframes(positive, "positive", generated)
+        negative = _set_ltxav_generated_keyframes(negative, "negative", generated)
+        output = torch.cat(
+            (
+                samples[:, :, : first_frame + len(previous_indices)],
+                keyframe_samples,
+                samples[:, :, first_frame + len(previous_indices) :],
+            ),
+            dim=2,
+        )
+        mask: Any = metadata.get("noise_mask")
+        if type(mask) is inference.MultiStreamLatent:
+            mask = mask.by_role("video")
+        if type(mask) is not torch.Tensor:
+            mask = torch.ones(
+                (samples.shape[0], 1, samples.shape[2], samples.shape[3], samples.shape[4]),
+                device=samples.device,
+                dtype=torch.float32,
+            )
+        keyframe_mask = torch.ones(
+            (mask.shape[0], 1, count, mask.shape[3], mask.shape[4]),
+            device=mask.device,
+            dtype=mask.dtype,
+        )
+        return cls.outputs(
+            positive=positive,
+            negative=negative,
+            latent=_ltxv_media_output(
+                metadata,
+                streams.replace("video", output),
+                inference.MultiStreamLatent.from_pairs(
+                    (
+                        (
+                            "video",
+                            torch.cat(
+                                (
+                                    mask[:, :, : first_frame + len(previous_indices)],
+                                    keyframe_mask,
+                                    mask[:, :, first_frame + len(previous_indices) :],
+                                ),
+                                dim=2,
+                            ),
+                        ),
+                    )
+                ),
+            ),
+        )
+
+
+class GenerationLTXVSeparateGeneratedKeyframes(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _generation_provider_schema("dinkster.ltxv_separate_generated_keyframes")
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: object,
+        negative: object,
+        latent: object,
+        keyframes_to_batch: bool = False,
+    ) -> Mapping[str, object]:
+        if type(keyframes_to_batch) is not bool:
+            raise TypeError("keyframes_to_batch must be a bool")
+        _, generated = _ltxav_generated_keyframes(positive, "positive")
+        _, negative_generated = _ltxav_generated_keyframes(negative, "negative")
+        if generated is None or generated != negative_generated:
+            raise ValueError("conditioning has no matching generated keyframes")
+        metadata, streams, samples = _ltxv_media_latent(latent, "latent")
+        tokens_per_frame = samples.shape[3] * samples.shape[4]
+        if generated.tokens_per_frame != tokens_per_frame:
+            raise ValueError("generated keyframes were added at a different spatial size")
+        first = generated.first_latent_frame
+        end = first + generated.num_keyframes
+        if end > samples.shape[2]:
+            raise ValueError("generated keyframes were recorded against a different latent")
+        keyframe_samples = samples[:, :, first:end].clone()
+        if keyframes_to_batch:
+            keyframe_samples = keyframe_samples.movedim(2, 1).reshape(
+                samples.shape[0] * generated.num_keyframes,
+                samples.shape[1],
+                1,
+                samples.shape[3],
+                samples.shape[4],
+            )
+        torch = _torch()
+        video = torch.cat((samples[:, :, :first], samples[:, :, end:]), dim=2)
+        inference = importlib.import_module("dinkster_inference")
+        mask: Any = metadata.get("noise_mask")
+        if type(mask) is inference.MultiStreamLatent:
+            mask = mask.by_role("video")
+        output_mask = None
+        if type(mask) is _torch().Tensor:
+            output_mask = _torch().cat((mask[:, :, :first], mask[:, :, end:]), dim=2)
+        output = dict(metadata)
+        output["samples"] = streams.replace("video", video)
+        if output_mask is not None:
+            output["noise_mask"] = inference.MultiStreamLatent.from_pairs((("video", output_mask),))
+        return cls.outputs(
+            positive=_set_ltxav_generated_keyframes(positive, "positive", None),
+            negative=_set_ltxav_generated_keyframes(negative, "negative", None),
+            latent=output,
+            keyframes={
+                "samples": keyframe_samples,
+                "generated_keyframe_indices": list(generated.frame_indices),
+                "generated_keyframe_num_frames": generated.num_pixel_frames,
+            },
+        )
+
+
+class GenerationLTXVGeneratedKeyframesToGuides(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _generation_provider_schema("dinkster.ltxv_generated_keyframes_to_guides")
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        positive: object,
+        negative: object,
+        vae: object,
+        latent: object,
+        keyframes: object,
+        strength: float,
+        override_frame_indices: str = "",
+    ) -> Mapping[str, object]:
+        if not isinstance(keyframes, Mapping):
+            raise TypeError("keyframes must be a latent mapping")
+        keyframe_mapping = cast("Mapping[object, object]", keyframes)
+        recorded = keyframe_mapping.get("generated_keyframe_indices")
+        if not isinstance(recorded, list):
+            raise ValueError("keyframes must carry generated keyframe positions")
+        recorded_values = cast("list[object]", recorded)
+        if any(type(index) is not int for index in recorded_values):
+            raise ValueError("keyframes must carry generated keyframe positions")
+        recorded_indices = cast("list[int]", recorded_values)
+        _, _, video = _ltxv_media_latent(latent, "latent")
+        keyframe_input = cast("object", keyframe_mapping)
+        _, _, keyframe_samples = _ltxv_media_latent(keyframe_input, "keyframes")
+        if keyframe_samples.shape[2] == 1 and keyframe_samples.shape[0] != video.shape[0]:
+            if keyframe_samples.shape[0] % video.shape[0]:
+                raise ValueError("generated keyframe batch does not match the target batch")
+            count = keyframe_samples.shape[0] // video.shape[0]
+            keyframe_samples = (
+                keyframe_samples.reshape(
+                    video.shape[0], count, keyframe_samples.shape[1], 1, *keyframe_samples.shape[3:]
+                )
+                .movedim(1, 2)
+                .squeeze(3)
+            )
+        if video.shape[0] != 1 or keyframe_samples.shape[0] != 1:
+            raise ValueError("generated keyframe guides require a batch size of 1")
+        if keyframe_samples.shape[2] != len(recorded_indices):
+            raise ValueError("keyframe count does not match recorded positions")
+        codec = _ltxv_media_codec(vae)
+        descriptor = codec.descriptor.latent
+        inference = importlib.import_module("dinkster_inference")
+        if type(positive) is inference.ConditioningCarrier:
+            without_rate, _ = _split_ltx_frame_rate(positive, inference)
+            _, existing_guides = importlib.import_module(
+                "dinkster_inference_torch.ltx_media"
+            ).materialize_ltxv_guides(without_rate)
+        else:
+            existing_guides = ()
+        canvas_frames = video.shape[2] - sum(guide.latent_shape[0] for guide in existing_guides)
+        num_pixel_frames = (canvas_frames - 1) * descriptor.temporal_downscale + 1
+        if override_frame_indices.strip():
+            indices = _parse_ltxv_frame_indices(override_frame_indices, 1, num_pixel_frames - 1)
+            if len(indices) != len(recorded_indices):
+                raise ValueError("override_frame_indices must list one position per keyframe")
+        else:
+            old_frames = keyframe_mapping.get("generated_keyframe_num_frames")
+            if type(old_frames) is int and old_frames != num_pixel_frames:
+                scale = (num_pixel_frames - 1) / (old_frames - 1)
+                indices = [round(index * scale) for index in recorded_indices]
+            else:
+                indices = list(recorded_indices)
+        if len(set(indices)) != len(indices) or any(
+            index <= 0 or index >= num_pixel_frames for index in indices
+        ):
+            raise ValueError("generated keyframe guide positions are invalid for this canvas")
+
+        result_latent: object = latent
+        same_size = keyframe_samples.shape[3:] == video.shape[3:]
+        for ordinal, frame_index in enumerate(indices):
+            guide = keyframe_samples[:, :, ordinal : ordinal + 1]
+            if same_size:
+                current_metadata, current_streams, _ = _ltxv_media_latent(result_latent, "latent")
+                conditioned = importlib.import_module("dinkster_inference_torch").ltxv_add_guide(
+                    positive,
+                    negative,
+                    current_streams,
+                    guide,
+                    frame_index=frame_index,
+                    strength=float(strength),
+                    denoise_mask=current_metadata.get("noise_mask"),
+                    scale_factors=(
+                        descriptor.temporal_downscale,
+                        descriptor.spatial_downscale,
+                        descriptor.spatial_downscale,
+                    ),
+                    align_frame_index=False,
+                )
+                positive = conditioned.positive
+                negative = conditioned.negative
+                result_latent = _ltxv_media_output(
+                    current_metadata, conditioned.latent, conditioned.denoise_mask
+                )
+            else:
+                with codec.stage():
+                    with _torch().inference_mode():
+                        decoded = codec.decode_latent(guide.to(codec.load_device))
+                if type(decoded) is not _torch().Tensor or decoded.ndim != 5:
+                    raise TypeError("LTX-Video VAE decode must return [B,C,T,H,W]")
+                image = decoded[0].movedim(0, -1)
+                added = GenerationLTXVAddGuide.execute(
+                    positive=positive,
+                    negative=negative,
+                    vae=codec,
+                    latent=result_latent,
+                    image=image,
+                    frame_idx=frame_index,
+                    strength=strength,
+                )
+                positive, negative, result_latent = (
+                    added["positive"],
+                    added["negative"],
+                    added["latent"],
+                )
+        return cls.outputs(positive=positive, negative=negative, latent=result_latent)
+
+
 class GenerationLTXVCropGuides(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:

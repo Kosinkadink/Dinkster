@@ -16,6 +16,11 @@ from pathlib import Path
 from dinkster_api.v1 import ComboWidget, InputSpec, TypeExpr
 from dinkster_compat_comfy import CompatTranslation, translate_v3_schema
 from dinkster_schema import (
+    InputFamilyMapping,
+    ReplacementRule,
+    ValueTransform,
+)
+from dinkster_schema import (
     MappingSource as M,
 )
 from dinkster_schema import (
@@ -30,16 +35,13 @@ from dinkster_schema import (
 from dinkster_schema import (
     ReplacementPredicate as P,
 )
-from dinkster_schema import (
-    ReplacementRule,
-    ValueTransform,
-)
 from dinkster_schema.model import DynamicComboSpec, NodeSchema
 from dinkster_schema.replace import rule_to_wire
 from dinkster_schema.wire import schema_to_wire
 
-BASELINE = "15eb748b3ec5f8a0a2d470b7fb280e2d7579f916"
+BASELINE = "95539f56344958339e39b7582a476267d489b0ee"
 VIDEO_CLASSES = {
+    "ConcatenateVideo",
     "LoadVideo",
     "SaveVideo",
     "SaveWEBM",
@@ -304,7 +306,15 @@ def build_registry(comfy_root: Path) -> dict:
                 ),
                 "CreateVideo": (
                     "video.assemble",
-                    {key: key for key in ("images", "fps", "audio", "bit_depth", "color_space")},
+                    {
+                        key: key
+                        for key in ("images", "fps", "audio", "bit_depth", "color_space", "codec")
+                    },
+                    {"video": schema.outputs[0].id},
+                ),
+                "ConcatenateVideo": (
+                    "video.concatenate",
+                    {"codec": "codec", "complete_audio": "complete_audio"},
                     {"video": schema.outputs[0].id},
                 ),
                 "GetVideoComponents": (
@@ -341,6 +351,27 @@ def build_registry(comfy_root: Path) -> dict:
                     outputs=outputs,
                 ),
             )
+            if name == "ConcatenateVideo":
+                cases = (
+                    C.build(
+                        "dinkster.video.concatenate",
+                        inputs={
+                            "codec": M.copy("codec"),
+                            "complete_audio": M.copy("complete_audio"),
+                        },
+                        input_families={
+                            "videos": InputFamilyMapping.copy(
+                                "videos", inputs={"value": M.copy("video")}
+                            )
+                        },
+                        outputs=outputs,
+                    ),
+                )
+                note = (
+                    "Segments stay lazy until export. Compatible encoded inputs use bounded "
+                    "packet copy; incompatible or component-backed inputs share one encoding. "
+                    "Codec preference and complete soundtrack override are preserved."
+                )
             if name == "CreateVideo":
                 cases = (
                     replace(cases[0], when=_present("fps")),

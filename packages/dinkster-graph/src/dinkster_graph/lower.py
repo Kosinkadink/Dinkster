@@ -101,6 +101,10 @@ def lower_selectors(
             return LoweringResult(graph, target_tuple, (problem,))
         branch_id = selector.branches["true" if selected else "false"]
         if branch_id not in node.inputs:
+            branch = schema.input(branch_id)
+            if branch is not None and not branch.required:
+                runtime_selectors.add(selector_id)
+                continue
             problem = LoweringProblem(
                 "prompt.missing_branch",
                 f"selected branch input {branch_id!r} is absent",

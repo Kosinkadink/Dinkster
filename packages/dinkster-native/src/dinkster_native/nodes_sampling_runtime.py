@@ -55,8 +55,10 @@ from .native_arm_runtime import (
     _controlled_conditioning,
     _ControlledConditioning,
     _materialized_application_kwargs,
+    _MiniMaxH3ControlBinding,
     _native_handle,
     _native_model,
+    _native_model_h3_control,
     _native_model_sampling_space,
     _require_classic_control_keyword,
     _sampling_space_runtime,
@@ -209,6 +211,81 @@ def _materialize_z_image_control(
         control_latent,
         model_digest,
         hint_digest,
+    )
+
+
+def _materialize_minimax_h3_control(
+    binding: _MiniMaxH3ControlBinding,
+    samples: Any,
+    torch: Any,
+    inference: Any,
+    inference_torch: Any,
+) -> Any:
+    video = samples.by_role("video")
+    target_shape = tuple(video.shape)
+    latent_frames, latent_height, latent_width = target_shape[2:]
+    frame_count = max((latent_frames - 2) // 5, 0) * 17 + 5
+    width = latent_width * 16
+    height = latent_height * 16
+    resize = importlib.import_module("dinkster_inference_torch.resize").common_upscale
+
+    def fit(frames: Any) -> Any:
+        indices = torch.arange(frame_count, device=frames.device).clamp(max=frames.shape[0] - 1)
+        return resize(frames[indices], width, height, "bilinear", "center")
+
+    def encode(frames: Any) -> Any:
+        content = frames.permute(1, 0, 2, 3).unsqueeze(0).to(binding.vae_handle.load_device)
+        latent = cast("Any", binding.vae_runtime).encode_video(content).to(torch.float32)
+        if tuple(latent.shape) != target_shape:
+            raise ValueError(
+                f"MiniMax H3 Fun VAE output shape {tuple(latent.shape)} "
+                f"does not match the target {target_shape}"
+            )
+        return latent
+
+    with binding.vae_handle.stage(observer_stage="encode"), torch.inference_mode():
+        hint = None
+        if binding.control_video is not None:
+            hint = encode(fit(cast("Any", binding.control_video)))
+        if binding.mask is not None:
+            bound_mask = cast("Any", binding.mask)
+            mask = bound_mask.reshape(-1, 1, *bound_mask.shape[-2:])
+            mask = (mask > 0.5).to(torch.float32)
+            indices = torch.arange(frame_count, device=mask.device).clamp(max=mask.shape[0] - 1)
+            mask = resize(mask[indices], width, height, "bilinear", "center")
+            visibility = 1.0 - (mask > 0.5).to(torch.float32)
+            source = (
+                torch.zeros(frame_count, 3, height, width, dtype=visibility.dtype)
+                if binding.source_video is None
+                else fit(cast("Any", binding.source_video))
+            )
+            masked = inference_torch.minimax_h3_inpaint_mask_fill(
+                source,
+                visibility,
+                cast("Any", binding.control_handle.module).inpaint_post_norm,
+            )
+            masked_latent = encode(masked)
+            if hint is None:
+                hint = torch.zeros_like(masked_latent)
+            visibility_latent = torch.nn.functional.interpolate(
+                visibility.squeeze(1)[None, None].to(hint.device),
+                size=(latent_frames, latent_height, latent_width),
+                mode="trilinear",
+                align_corners=False,
+            )
+            hint = torch.cat([hint, visibility_latent, masked_latent.to(hint.device)], dim=1)
+    if hint is None:
+        raise RuntimeError("MiniMax H3 Fun control requires control video or mask input")
+    hint_digest = inference_torch.minimax_h3_fun_control_hint_digest(hint)
+    return inference_torch.MiniMaxH3FunControlConditioning(
+        inference.ControlApplication(
+            "minimax-h3-fun",
+            inference.PayloadReference(hint_digest),
+            binding.strength,
+            inference.PercentRange(binding.start_percent, binding.end_percent),
+        ),
+        binding.control_handle.module,
+        hint,
     )
 
 
@@ -372,6 +449,7 @@ class NativeKSampler(KSampler):
             context_windows,
             chroma_radiance_options,
         ) = _native_model(model, "model")
+        h3_control = _native_model_h3_control(model)
         guidance_transforms, disable_cfg1_optimization = _cfg1_optimization_setting(
             guidance_transforms
         )
@@ -497,6 +575,16 @@ class NativeKSampler(KSampler):
                 if plain_output
                 else _move_multistream_latent(cast("Any", latent_samples), handle.load_device)
             )
+            h3_control_kwargs: dict[str, object] = {}
+            if h3_control is not None:
+                inference_torch = importlib.import_module("dinkster_inference_torch")
+                h3_control_kwargs["control"] = _materialize_minimax_h3_control(
+                    h3_control,
+                    load_streams,
+                    torch,
+                    inference,
+                    inference_torch,
+                )
             preview = (
                 sampling_preview_emitter(handle, stream_role=load_streams.roles[0])
                 if plain_output
@@ -521,6 +609,7 @@ class NativeKSampler(KSampler):
                 "parent_span_id",
                 "sampling_shift",
                 *context_windows_kwargs,
+                "control",
             }
             with native_execution_span("sample", "sample", device=str(handle.load_device)) as span:
                 parent = None if span is None else span.span_id
@@ -529,7 +618,12 @@ class NativeKSampler(KSampler):
                         extension_ids, context.cancelled if context is not None else _not_cancelled
                     ),
                     _staged_applications(applications, handle, stage_runtime=False),
+                    ExitStack() as control_stages,
                 ):
+                    if h3_control is not None:
+                        control_stages.enter_context(
+                            h3_control.control_handle.stage(observer_stage="sample")
+                        )
                     with torch.inference_mode():
                         application_kwargs = _application_kwargs(
                             applications,
@@ -573,6 +667,7 @@ class NativeKSampler(KSampler):
                                 parent_span_id=parent,
                                 **noise_kwargs,
                                 **context_windows_kwargs,
+                                **h3_control_kwargs,
                                 **application_kwargs,
                             )
             if (
@@ -588,6 +683,10 @@ class NativeKSampler(KSampler):
             return cls.outputs(latent=output)
         if structural_latent:
             raise TypeError("model does not provide multi-stream sampling")
+        if h3_control is not None:
+            raise TypeError(
+                "MiniMax H3 Fun ControlNet requires the model's multi-stream latent sampling"
+            )
         context = current_execution_context()
         sampler_registry, extension_ids, _ = _sampler_registry(
             inference,

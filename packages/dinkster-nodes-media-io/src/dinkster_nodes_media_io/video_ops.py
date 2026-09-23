@@ -13,6 +13,7 @@ from dinkster_api.v1 import (
     ABSENT,
     ComboWidget,
     CustomWidgetDescriptor,
+    InputFamilySpec,
     InputSpec,
     Node,
     NodeSchema,
@@ -241,6 +242,14 @@ class AssembleVideo(Node):
                     required=False,
                     widget=ComboWidget(options=("sRGB", "HDR", "HDR PQ")),
                 ),
+                InputSpec(
+                    "codec",
+                    COMBO,
+                    required=False,
+                    default="none",
+                    advanced=True,
+                    widget=ComboWidget(options=("none", "auto", "h264", "av1")),
+                ),
                 InputSpec("audio", AUDIO, required=False),
             ),
             outputs=(OutputSpec("video", VIDEO, preview=True),),
@@ -255,14 +264,16 @@ class AssembleVideo(Node):
         fps: float = 24.0,
         bit_depth: str = "auto",
         color_space: str | None = None,
+        codec: str = "none",
         audio: object = None,
     ) -> Mapping[str, object]:
         rate = positive_finite(fps, "fps", minimum=0.01, maximum=1000.0)
-        return cls.outputs(
-            video=assemble_video(
-                images, fps=rate, bit_depth=bit_depth, color_space=color_space, audio=audio
-            )
+        video = assemble_video(
+            images, fps=rate, bit_depth=bit_depth, color_space=color_space, audio=audio
         )
+        if codec != "none":
+            video = _video_value({**video, "preferred_codec": "h264" if codec == "auto" else codec})
+        return cls.outputs(video=video)
 
 
 class DisassembleVideo(Node):
@@ -419,6 +430,62 @@ class CropVideo(Node):
         )
 
 
+class ConcatenateVideo(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.video.concatenate",
+            display_name="Concatenate Video",
+            category="video",
+            input_families=(
+                InputFamilySpec(
+                    "videos", VIDEO, min_members=1, max_members=100, member_prefix="video"
+                ),
+            ),
+            inputs=(
+                InputSpec(
+                    "codec",
+                    COMBO,
+                    required=False,
+                    default="auto",
+                    advanced=True,
+                    widget=ComboWidget(options=("auto", "h264", "av1")),
+                ),
+                InputSpec("complete_audio", AUDIO, required=False, advanced=True),
+            ),
+            outputs=(OutputSpec("video", VIDEO, preview=True),),
+            search_terms=("append video", "join video", "combine video"),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        videos: Mapping[str, object],
+        codec: object = "auto",
+        complete_audio: object = None,
+    ) -> Mapping[str, object]:
+        values = [
+            _video_value(video)
+            for group in videos.values()
+            for video in (group if isinstance(group, list) else [group])
+        ]
+        if not values:
+            raise ValueError("videos must not be empty")
+        if isinstance(codec, list):
+            codec = codec[0] if codec else "auto"
+        if not isinstance(codec, str):
+            raise ValueError("codec must be auto, h264, or av1")
+        if isinstance(complete_audio, list):
+            complete_audio = complete_audio[0] if complete_audio else None
+        video = values[0] if len(values) == 1 else edit_video(values[0], {"concat": values[1:]})
+        if complete_audio is not None:
+            video = _video_value({**video, "complete_audio": complete_audio})
+        if codec != "auto":
+            video = _video_value({**video, "preferred_codec": codec})
+        return cls.outputs(video=video)
+
+
 class VideoInfo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -464,12 +531,14 @@ VIDEO_OPS_NODES = (
     DisassembleVideo,
     TrimVideo,
     CropVideo,
+    ConcatenateVideo,
     VideoInfo,
 )
 
 __all__ = [
     "VIDEO_OPS_NODES",
     "AssembleVideo",
+    "ConcatenateVideo",
     "DisassembleVideo",
     "TrimVideo",
     "CropVideo",

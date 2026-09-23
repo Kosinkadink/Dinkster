@@ -8,6 +8,7 @@ from ..family_registry import load_component as _load_family_component
 from ..native_arm_core import (
     _NATIVE_PREPARED_CONDITIONING_KEY,
     Any,
+    ApplyMiniMaxH3FunControlPatch,
     ConcatAVLatent,
     EmptyLTXAVLatent,
     EmptyLTXVLatent,
@@ -52,7 +53,13 @@ from ..native_arm_core import (
     replace,
 )
 from ..native_arm_runtime import (
+    _MiniMaxH3ControlBinding,
     _native_handle,
+    _native_model,
+    _native_model_h3_control,
+    _native_model_sampling_cache,
+    _native_model_sampling_space,
+    _native_model_sampling_timeline,
     _NativeModelOverlay,
     _torch_dtype,
 )
@@ -212,6 +219,101 @@ def _minimax_h3_image_batch(value: object, torch: Any, name: str) -> Any:
     ):
         raise ValueError(f"{name} must be a strided floating [batch,height,width,3] tensor")
     return tensor
+
+
+class NativeApplyMiniMaxH3FunControlPatch(ApplyMiniMaxH3FunControlPatch):
+    @classmethod
+    def execute(
+        cls,
+        *,
+        model: object,
+        model_patch: object,
+        vae: object,
+        strength: float,
+        start_percent: float,
+        end_percent: float,
+        control_video: object = None,
+        mask: object = None,
+        source_video: object = None,
+    ) -> Mapping[str, object]:
+        for name, value, low, high in (
+            ("strength", strength, 0.0, 10.0),
+            ("start_percent", start_percent, 0.0, 1.0),
+            ("end_percent", end_percent, 0.0, 1.0),
+        ):
+            if not math.isfinite(value) or not low <= value <= high:
+                raise ValueError(f"{name} must be finite and in [{low}, {high}], got {value}")
+        if start_percent > end_percent:
+            raise ValueError("start_percent must not exceed end_percent")
+        if strength == 0.0 or (control_video is None and mask is None):
+            return cls.outputs(model=model)
+        inference = importlib.import_module("dinkster_inference")
+        inference_torch = importlib.import_module("dinkster_inference_torch")
+        (
+            handle,
+            overlays,
+            resolvers,
+            z_image_control,
+            sampling_shift,
+            guidance_transforms,
+            context_windows,
+            chroma_radiance_options,
+        ) = _native_model(model, "model")
+        if handle.recipe.family_id != inference.MINIMAX_H3_CONFIG.family_id:
+            raise TypeError("MiniMax H3 Fun ControlNet requires a native MiniMax H3 model")
+        if _native_model_h3_control(model) is not None:
+            raise ValueError("a MiniMax H3 model can carry only one Fun ControlNet patch")
+        if not isinstance(model_patch, NativeComponentHandle):
+            raise TypeError("model_patch must be a native MiniMax H3 Fun control patch")
+        model_patch.require_active()
+        if type(model_patch.module) is not inference_torch.MiniMaxH3FunControl:
+            raise TypeError("model_patch must be a native MiniMax H3 Fun control patch")
+        vae_handle, vae_runtime = _minimax_h3_video_vae_runtime(vae, "vae")
+        torch = _torch()
+
+        def frames(value: object, name: str) -> object:
+            tensor = _minimax_h3_image_batch(value, torch, name)
+            return tensor[..., :3].permute(0, 3, 1, 2).detach().to("cpu").contiguous()
+
+        control_frames = None if control_video is None else frames(control_video, "control_video")
+        source_frames = (
+            None if mask is None or source_video is None else frames(source_video, "source_video")
+        )
+        control_mask = None
+        if mask is not None:
+            if type(mask) is not torch.Tensor:
+                raise TypeError("mask must be an exact torch.Tensor")
+            control_mask = cast("Any", mask)
+            if control_mask.ndim < 2 or not control_mask.is_floating_point():
+                raise ValueError("mask must be a floating tensor with spatial dimensions")
+            control_mask = control_mask.detach().to("cpu").contiguous()
+        binding = _MiniMaxH3ControlBinding(
+            model_patch,
+            vae_handle,
+            vae_runtime,
+            control_frames,
+            control_mask,
+            source_frames,
+            float(strength),
+            float(start_percent),
+            float(end_percent),
+        )
+        return cls.outputs(
+            model=_NativeModelOverlay(
+                handle,
+                overlays,
+                resolvers,
+                z_image_control,
+                sampling_shift,
+                guidance_transforms,
+                context_windows,
+                chroma_radiance_options,
+                sampling_cache=_native_model_sampling_cache(model),
+                sampling_timeline=_native_model_sampling_timeline(model),
+                sampling_space=_native_model_sampling_space(model),
+                minimax_h3_control=binding,
+            )
+        )
 
 
 def _nearest_32(value: float | int) -> int:
@@ -738,12 +840,12 @@ class NativeMiniMaxH3REF2VAConditioning(MiniMaxH3REF2VAConditioning):
         cls,
         *,
         clip: object,
-        video_vae: object,
-        audio_vae: object,
         target: object,
         prompt: str,
         references: object,
         ref_image_size: str,
+        video_vae: object = None,
+        audio_vae: object = None,
         negative_prompt: str | None = None,
     ) -> Mapping[str, object]:
         if isinstance(references, str | bytes) or not isinstance(references, Sequence):

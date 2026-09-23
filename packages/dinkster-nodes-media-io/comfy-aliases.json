@@ -2068,6 +2068,92 @@
     },
     {
       "schemaVersion": 1,
+      "nodeType": "comfy.ConcatenateVideo",
+      "version": 1,
+      "displayName": "Concatenate Video",
+      "category": "comfy/video",
+      "description": "Concatenates videos in order without decoding compatible encoded inputs.",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "codec",
+          "type": {
+            "kind": "list",
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "core.combo"
+              ]
+            }
+          },
+          "required": false,
+          "default": [
+            "auto"
+          ],
+          "doc": "Codec used to encode videos tensors. Auto uses H.264; already encoded videos remain unchanged.",
+          "advanced": true
+        },
+        {
+          "role": "input",
+          "id": "complete_audio",
+          "type": {
+            "kind": "list",
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "comfy.AUDIO"
+              ]
+            }
+          },
+          "required": false,
+          "doc": "Optional complete soundtrack for the concatenated video. Overrides audio carried by the input videos.",
+          "advanced": true
+        },
+        {
+          "role": "inputFamily",
+          "id": "videos",
+          "template": [
+            {
+              "role": "input",
+              "id": "video",
+              "type": {
+                "kind": "list",
+                "element": {
+                  "kind": "concrete",
+                  "types": [
+                    "comfy.VIDEO"
+                  ]
+                }
+              },
+              "required": true,
+              "doc": "A video segment to append."
+            }
+          ],
+          "minMembers": 1,
+          "required": true,
+          "memberPrefix": "video",
+          "maxMembers": 100,
+          "doc": "A video segment to append."
+        },
+        {
+          "role": "output",
+          "id": "_0_VIDEO_",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.VIDEO"
+            ]
+          },
+          "doc": "The concatenated video."
+        }
+      ],
+      "aliases": [
+        "ConcatenateVideo"
+      ]
+    },
+    {
+      "schemaVersion": 1,
       "nodeType": "comfy.CreateVideo",
       "version": 1,
       "displayName": "Create Video",
@@ -2158,6 +2244,29 @@
             ]
           },
           "doc": "Colorspace of the input images. HDR selects BT.2020/HLG and HDR PQ selects BT.2020/PQ."
+        },
+        {
+          "role": "input",
+          "id": "codec",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "none",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "none",
+              "auto",
+              "h264",
+              "av1"
+            ]
+          },
+          "doc": "Optionally encode the video immediately. None keeps the images in tensor form; Auto uses H.264.",
+          "advanced": true
         },
         {
           "role": "output",
@@ -3189,6 +3298,199 @@
       ],
       "aliases": [
         "VideoTrim"
+      ],
+      "outputNode": true
+    },
+    {
+      "schemaVersion": 1,
+      "nodeType": "comfy.SaveImageAdvanced",
+      "version": 1,
+      "displayName": "Save Image (Advanced)",
+      "category": "comfy/image",
+      "description": "Saves the input images to your ComfyUI output directory.",
+      "idempotent": false,
+      "interface": [
+        {
+          "role": "input",
+          "id": "images",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          },
+          "required": true,
+          "doc": "The images to save."
+        },
+        {
+          "role": "input",
+          "id": "filename_prefix",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "required": false,
+          "default": "ComfyUI",
+          "widget": {
+            "type": "STRING",
+            "multiline": false
+          },
+          "doc": "The prefix for the file to save. May include formatting tokens such as %date:yyyy-MM-dd% or %Empty Latent Image.width%."
+        },
+        {
+          "role": "input",
+          "id": "format",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "png",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "png",
+              "exr",
+              "avif"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "save_mode",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "still images",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "still images",
+              "animated"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "bit_depth",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "auto",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "auto",
+              "8-bit YUV420",
+              "10-bit YUV420"
+            ]
+          },
+          "doc": "Auto uses 8-bit YUV420 for sRGB and 10-bit YUV420 for HDR.",
+          "advanced": true
+        },
+        {
+          "role": "input",
+          "id": "input_color_space",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "sRGB",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "sRGB",
+              "HDR",
+              "HDR PQ"
+            ]
+          },
+          "doc": "Colorspace of the input images. HDR selects BT.2020/HLG and HDR PQ selects BT.2020/PQ.",
+          "advanced": true
+        },
+        {
+          "role": "input",
+          "id": "crf",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": false,
+          "default": 18,
+          "widget": {
+            "type": "NUMBER",
+            "min": 1,
+            "max": 63
+          },
+          "doc": "Lower values produce higher quality and larger files.",
+          "advanced": true
+        },
+        {
+          "role": "input",
+          "id": "fps",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "required": false,
+          "default": 6.0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0.01,
+            "max": 1000.0,
+            "step": 0.01
+          }
+        },
+        {
+          "role": "input",
+          "id": "loop_count",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "required": false,
+          "default": 0,
+          "widget": {
+            "type": "NUMBER",
+            "min": 0,
+            "max": 1000
+          },
+          "doc": "Number of times to loop the animation. 0 loops forever.",
+          "advanced": true
+        },
+        {
+          "role": "output",
+          "id": "_0_IMAGE_",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "SaveImageAdvanced"
       ],
       "outputNode": true
     }
@@ -4773,6 +5075,57 @@
       }
     },
     {
+      "id": "comfy_alias:comfy-core/ConcatenateVideo",
+      "mappingKind": "op",
+      "carrier": "dinkster.video.concatenate",
+      "source": {
+        "pack": "comfy-core",
+        "nodeClass": "ConcatenateVideo",
+        "nodeType": "comfy.ConcatenateVideo",
+        "revision": "95539f56"
+      },
+      "replacement": {
+        "from": "comfy.ConcatenateVideo",
+        "note": "Segments stay lazy until export. Compatible encoded inputs use bounded packet copy; incompatible or component-backed inputs share one encoding. Codec preference and complete soundtrack override are preserved.",
+        "cases": [
+          {
+            "to": "dinkster.video.concatenate",
+            "inputs": {
+              "codec": {
+                "kind": "copy",
+                "input": "codec"
+              },
+              "complete_audio": {
+                "kind": "copy",
+                "input": "complete_audio"
+              }
+            },
+            "inputFamilies": {
+              "videos": {
+                "kind": "copy",
+                "sourceFamily": "videos",
+                "inputs": {
+                  "value": {
+                    "kind": "copy",
+                    "input": "video"
+                  }
+                }
+              }
+            },
+            "outputs": {
+              "video": "_0_VIDEO_"
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "parametric",
+        "evidence": [
+          "tests/test_video_alias_templates.py::test_video_alias_branches_execute"
+        ]
+      }
+    },
+    {
       "id": "comfy_alias:comfy-core/CreateVideo",
       "mappingKind": "op",
       "carrier": "dinkster.video.assemble",
@@ -4780,7 +5133,7 @@
         "pack": "comfy-core",
         "nodeClass": "CreateVideo",
         "nodeType": "comfy.CreateVideo",
-        "revision": "15eb748b"
+        "revision": "95539f56"
       },
       "replacement": {
         "from": "comfy.CreateVideo",
@@ -4821,6 +5174,10 @@
               "color_space": {
                 "kind": "copy",
                 "input": "color_space"
+              },
+              "codec": {
+                "kind": "copy",
+                "input": "codec"
               }
             },
             "outputs": {
@@ -4849,6 +5206,10 @@
               "color_space": {
                 "kind": "copy",
                 "input": "color_space"
+              },
+              "codec": {
+                "kind": "copy",
+                "input": "codec"
               }
             },
             "outputs": {
@@ -4873,7 +5234,7 @@
         "pack": "comfy-core",
         "nodeClass": "GetVideoComponents",
         "nodeType": "comfy.GetVideoComponents",
-        "revision": "15eb748b"
+        "revision": "95539f56"
       },
       "replacement": {
         "from": "comfy.GetVideoComponents",
@@ -4942,7 +5303,7 @@
         "pack": "comfy-core",
         "nodeClass": "LoadVideo",
         "nodeType": "comfy.LoadVideo",
-        "revision": "15eb748b"
+        "revision": "95539f56"
       },
       "replacement": {
         "from": "comfy.LoadVideo",
@@ -4976,7 +5337,7 @@
         "pack": "comfy-core",
         "nodeClass": "SaveVideo",
         "nodeType": "comfy.SaveVideo",
-        "revision": "15eb748b"
+        "revision": "95539f56"
       },
       "replacement": {
         "from": "comfy.SaveVideo",
@@ -8909,7 +9270,7 @@
         "pack": "comfy-core",
         "nodeClass": "SaveWEBM",
         "nodeType": "comfy.SaveWEBM",
-        "revision": "15eb748b"
+        "revision": "95539f56"
       },
       "replacement": {
         "from": "comfy.SaveWEBM",
@@ -9108,7 +9469,7 @@
         "pack": "comfy-core",
         "nodeClass": "Video Slice",
         "nodeType": "comfy.Video Slice",
-        "revision": "15eb748b"
+        "revision": "95539f56"
       },
       "replacement": {
         "from": "comfy.Video Slice",
@@ -9155,7 +9516,7 @@
         "pack": "comfy-core",
         "nodeClass": "VideoCrop",
         "nodeType": "comfy.VideoCrop",
-        "revision": "15eb748b"
+        "revision": "95539f56"
       },
       "replacement": {
         "from": "comfy.VideoCrop",
@@ -9195,7 +9556,7 @@
         "pack": "comfy-core",
         "nodeClass": "VideoTrim",
         "nodeType": "comfy.VideoTrim",
-        "revision": "15eb748b"
+        "revision": "95539f56"
       },
       "replacement": {
         "from": "comfy.VideoTrim",
@@ -9228,6 +9589,178 @@
         "evidence": [
           "tests/test_video_alias_templates.py::test_video_alias_branches_execute",
           "tests/test_video_alias_templates.py::test_video_edit_widgets_are_lossless"
+        ]
+      }
+    },
+    {
+      "id": "comfy_alias:comfy-core/SaveImageAdvanced",
+      "mappingKind": "op",
+      "carrier": "dinkster.save_avif",
+      "source": {
+        "pack": "comfy-core",
+        "nodeClass": "SaveImageAdvanced",
+        "nodeType": "comfy.SaveImageAdvanced",
+        "revision": "95539f56"
+      },
+      "replacement": {
+        "from": "comfy.SaveImageAdvanced",
+        "note": "Only the AVIF branches carry over. filename_prefix becomes a literal mounted relative path without ComfyUI substitutions. Hidden prompt and extra_pnginfo metadata are not available during document migration. Native encoding fails closed above the 1 GiB output bound.",
+        "cases": [
+          {
+            "to": "dinkster.save_avif",
+            "when": {
+              "kind": "all",
+              "of": [
+                {
+                  "kind": "valueEquals",
+                  "input": "format",
+                  "value": "avif"
+                },
+                {
+                  "kind": "valueEquals",
+                  "input": "save_mode",
+                  "value": "still images"
+                }
+              ]
+            },
+            "nodes": {
+              "save_target": {
+                "type": "dinkster.set_save_target_prefix",
+                "values": {
+                  "target": {
+                    "mount": "comfy-output",
+                    "prefix": "ComfyUI"
+                  }
+                }
+              }
+            },
+            "inputs": {
+              "images": {
+                "kind": "copy",
+                "input": "images"
+              },
+              "bit_depth": {
+                "kind": "copy",
+                "input": "bit_depth"
+              },
+              "input_color_space": {
+                "kind": "copy",
+                "input": "input_color_space"
+              },
+              "crf": {
+                "kind": "copy",
+                "input": "crf"
+              },
+              "animated": {
+                "kind": "constant",
+                "value": false
+              },
+              "save_target:prefix": {
+                "kind": "copy",
+                "input": "filename_prefix"
+              }
+            },
+            "links": [
+              {
+                "from": "save_target:save_target",
+                "to": "target"
+              }
+            ],
+            "outputs": {
+              "images": "_0_IMAGE_"
+            }
+          },
+          {
+            "to": "dinkster.save_avif",
+            "when": {
+              "kind": "all",
+              "of": [
+                {
+                  "kind": "valueEquals",
+                  "input": "format",
+                  "value": "avif"
+                },
+                {
+                  "kind": "valueEquals",
+                  "input": "save_mode",
+                  "value": "animated"
+                }
+              ]
+            },
+            "nodes": {
+              "save_target": {
+                "type": "dinkster.set_save_target_prefix",
+                "values": {
+                  "target": {
+                    "mount": "comfy-output",
+                    "prefix": "ComfyUI"
+                  }
+                }
+              }
+            },
+            "inputs": {
+              "images": {
+                "kind": "copy",
+                "input": "images"
+              },
+              "bit_depth": {
+                "kind": "copy",
+                "input": "bit_depth"
+              },
+              "input_color_space": {
+                "kind": "copy",
+                "input": "input_color_space"
+              },
+              "crf": {
+                "kind": "copy",
+                "input": "crf"
+              },
+              "animated": {
+                "kind": "constant",
+                "value": true
+              },
+              "fps": {
+                "kind": "copy",
+                "input": "fps"
+              },
+              "loop": {
+                "kind": "copy",
+                "input": "loop_count"
+              },
+              "save_target:prefix": {
+                "kind": "copy",
+                "input": "filename_prefix"
+              }
+            },
+            "links": [
+              {
+                "from": "save_target:save_target",
+                "to": "target"
+              }
+            ],
+            "outputs": {
+              "images": "_0_IMAGE_"
+            }
+          },
+          {
+            "to": "dinkster.save_avif",
+            "inputs": {
+              "images": {
+                "kind": "value",
+                "input": "format",
+                "transform": {
+                  "kind": "enumRename",
+                  "map": {}
+                }
+              }
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "parametric",
+        "evidence": [
+          "tests/test_avif_alias.py::test_save_image_advanced_avif_alias_executes_still_and_animated"
         ]
       }
     }

@@ -34,7 +34,9 @@
   are supported, while unavailable platforms refuse explicitly
 - Pointwise invert, normalize, brightness, and contrast adjustment; Gaussian
   blur, sharpen, quantize, seeded noise, and bounded image morphology
-- RGB and YCbCr channel split/merge plus explicit alpha extraction and joining
+- sRGB, linear Rec.709, Rec.2020 HLG, and Rec.2020 PQ conversion with
+  straight-alpha preservation, plus RGB and YCbCr channel split/merge and
+  explicit alpha extraction and joining
 - Explicit coverage/transparency mask polarity, with migration of saved polarity
   controls; mask polarity inversion and RGBA premultiply/unpremultiply nodes
 - ComfyUI BatchImagesNode, ResizeAndPadImage, and ImageCompare translations;

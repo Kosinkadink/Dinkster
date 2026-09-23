@@ -25,6 +25,7 @@ from .native_arm_core import (
 from .native_arm_latent_utils import _check_bounds
 from .native_arm_runtime import (
     _native_model,
+    _native_model_h3_control,
     _native_model_sampling_cache,
     _native_model_sampling_space,
     _native_model_sampling_timeline,
@@ -131,6 +132,7 @@ def _model_with_guidance_transform(
         sampling_cache=_native_model_sampling_cache(model),
         sampling_timeline=_native_model_sampling_timeline(model),
         sampling_space=_native_model_sampling_space(model),
+        minimax_h3_control=_native_model_h3_control(model),
     )
 
 
@@ -258,6 +260,7 @@ class GenerationLazyCache(Node):
                 sampling_cache=cache,
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                minimax_h3_control=_native_model_h3_control(model),
             )
         )
 
@@ -307,6 +310,7 @@ class GenerationEasyCache(Node):
                 sampling_cache=cache,
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                minimax_h3_control=_native_model_h3_control(model),
             )
         )
 
@@ -411,6 +415,7 @@ class GenerationAttentionSchedule(Node):
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=schedule,
                 sampling_space=_native_model_sampling_space(model),
+                minimax_h3_control=_native_model_h3_control(model),
             )
         )
 
@@ -440,6 +445,7 @@ def _model_with_context_windows(model: object, spec: ContextWindowsSpec) -> _Nat
         sampling_cache=_native_model_sampling_cache(model),
         sampling_timeline=_native_model_sampling_timeline(model),
         sampling_space=_native_model_sampling_space(model),
+        minimax_h3_control=_native_model_h3_control(model),
     )
 
 

@@ -138,6 +138,27 @@ def test_selector_chains_regions_gc_and_refusals() -> None:
     for graph, targets, code in cases:
         assert lower_selectors(graph, targets, SCHEMAS).problems[0].code == code
 
+    optional_switch = replace(
+        SWITCH,
+        inputs=tuple(
+            replace(item, required=False) if item.id == "on" else item
+            for item in SWITCH.inputs
+        ),
+    )
+    missing_optional = Graph(
+        {
+            "s": GraphNode(optional_switch.node_type, {"switch": True}),
+            "sink": GraphNode(SINK.node_type, {"value": Link("s", "out")}),
+        }
+    )
+    optional_result = lower_selectors(
+        missing_optional,
+        ["sink"],
+        {**SCHEMAS, optional_switch.node_type: optional_switch},
+    )
+    assert optional_result.problems == ()
+    assert optional_result.graph == missing_optional
+
     computed = Graph(
         {
             "x": GraphNode(SOURCE.node_type),

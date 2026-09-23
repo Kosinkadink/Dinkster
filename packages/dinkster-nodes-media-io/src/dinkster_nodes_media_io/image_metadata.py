@@ -57,6 +57,17 @@ def _text_fields(info: Mapping[str, object]) -> dict[str, str]:
     return fields
 
 
+def image_metadata_fields(source: Any) -> dict[str, object]:
+    info = dict(source.info)
+    for value in source.getexif().values():
+        if not isinstance(value, str):
+            continue
+        key, separator, raw = value.partition(":")
+        if separator and key:
+            info.setdefault(key, raw)
+    return info
+
+
 def _json_field(raw: str, key: str, errors: list[str]) -> object | None:
     try:
         value = cast(object, json.loads(raw, parse_constant=_reject_json_constant))
@@ -159,7 +170,7 @@ def parse_image_metadata(image: AssetRef) -> dict[str, object]:
                         f"metadata source dimensions exceed {MAX_METADATA_IMAGE_DIMENSION} pixels"
                     )
                 return metadata_document(
-                    cast("Mapping[str, object]", source.info),
+                    image_metadata_fields(source),
                     name=image.name,
                     digest=image.digest,
                     media_type=image.media_type,
@@ -213,6 +224,7 @@ __all__ = [
     "MAX_METADATA_IMAGE_DIMENSION",
     "MAX_METADATA_TOTAL_BYTES",
     "METADATA_FORMAT",
+    "image_metadata_fields",
     "metadata_document",
     "parse_image_metadata",
     "parse_image_metadata_json",

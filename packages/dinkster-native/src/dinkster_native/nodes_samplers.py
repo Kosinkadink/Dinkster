@@ -44,6 +44,7 @@ from .native_arm_runtime import (
     _application_chain_model,
     _bind_model_sampling_options,
     _native_model,
+    _native_model_h3_control,
     _native_model_sampling_cache,
     _native_model_sampling_space,
     _native_model_sampling_timeline,
@@ -1205,6 +1206,7 @@ class GenerationDisableCFG1Optimization(Node):
             sampling_cache=_native_model_sampling_cache(model),
             sampling_timeline=_native_model_sampling_timeline(model),
             sampling_space=_native_model_sampling_space(model),
+            minimax_h3_control=_native_model_h3_control(model),
         )
         if applications:
             inference = importlib.import_module("dinkster_inference")

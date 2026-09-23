@@ -914,15 +914,16 @@ class StringJson(Node):
     ) -> Mapping[str, object]:
         if operation == "extract_string_legacy":
             _require_text_size(text, subject="JSON text")
-            try:
-                value: object = json.loads(text)
-            except (json.JSONDecodeError, TypeError):
-                result = ""
-            else:
-                selected = (
-                    cast("dict[str, object]", value).get(selector) if type(value) is dict else None
-                )
+            decoder = json.JSONDecoder()
+            result = ""
+            for match in re.finditer(r"\{", text):
+                try:
+                    value, _ = decoder.raw_decode(text, match.start())
+                except json.JSONDecodeError:
+                    continue
+                selected = cast("dict[str, object]", value).get(selector)
                 result = "" if selected is None else str(selected)
+                break
             return cls.outputs(text=_require_text_size(result, subject="JSON extraction result"))
         value = _strict_json_loads(text)
         if operation == "minify":

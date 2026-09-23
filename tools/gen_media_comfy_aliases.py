@@ -47,7 +47,7 @@ from gen_image_media_comfy_aliases import build_registry as build_image_registry
 from gen_video_media_comfy_aliases import merge_video_registry
 
 COMFY_BASELINE = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
-CURRENT_COMFY_BASELINE = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
+CURRENT_COMFY_BASELINE = "95539f56344958339e39b7582a476267d489b0ee"
 REPO = Path(__file__).resolve().parent.parent
 OUT = REPO / "packages" / "dinkster-nodes-media-io" / "comfy-aliases.json"
 
@@ -317,7 +317,11 @@ def _refusal_case(target_type: str, target_input: str, source_input: str) -> Rep
     )
 
 
-def _flatten_dynamic_combos(schema: NodeSchema) -> NodeSchema:
+def _flatten_dynamic_combos(
+    schema: NodeSchema,
+    *,
+    selected_options: dict[str, str] | None = None,
+) -> NodeSchema:
     selectors: dict[str, InputSpec] = {}
     child_inputs: dict[str, InputSpec] = {}
 
@@ -338,7 +342,10 @@ def _flatten_dynamic_combos(schema: NodeSchema) -> NodeSchema:
                     default=entry.default or options[0],
                     widget=ComboWidget(options=options),
                 )
+            selected = None if selected_options is None else selected_options.get(entry.id)
             for option in entry.options:
+                if selected is not None and option.key != selected:
+                    continue
                 walk(option.inputs)
 
     walk(schema.combos)
@@ -359,15 +366,17 @@ def _build_current_seedvr2_registry(comfy_root: Path) -> dict[str, object]:
     from comfy.cli_args import args as comfy_args  # pyright: ignore[reportMissingImports]
 
     comfy_args.cpu = True
-    from comfy_extras import (  # pyright: ignore[reportMissingImports]
-        nodes_video,
-    )
+    from comfy_extras import nodes_images, nodes_video  # pyright: ignore[reportMissingImports]
 
     load_video = _core_v3_schema(nodes_video.LoadVideo)
     save_video = _flatten_dynamic_combos(_core_v3_schema(nodes_video.SaveVideo))
     video_slice = _core_v3_schema(nodes_video.VideoSlice)
-    source_schemas = [load_video, save_video, video_slice]
-    revision = "b78cec87"
+    save_image_advanced = _flatten_dynamic_combos(
+        _core_v3_schema(nodes_images.SaveImageAdvanced),
+        selected_options={"format": "avif"},
+    )
+    source_schemas = [load_video, save_video, video_slice, save_image_advanced]
+    revision = "95539f56"
     alias_evidence = [
         "tests/test_media_comfy_aliases.py::"
         "test_current_seedvr2_media_aliases_preserve_supported_paths"
@@ -465,6 +474,85 @@ def _build_current_seedvr2_registry(comfy_root: Path) -> dict[str, object]:
                 *alias_evidence,
                 "tests/test_video_ops.py::test_trim_zero_window_preserves_container_bytes",
                 "tests/test_video_ops.py::test_trim_selects_requested_frame_window",
+            ],
+            revision=revision,
+        ),
+        _record(
+            node_class="SaveImageAdvanced",
+            carrier="dinkster.save_avif",
+            rule=ReplacementRule(
+                from_type=save_image_advanced.node_type,
+                note=(
+                    "Only the AVIF branches carry over. filename_prefix becomes a literal "
+                    "mounted relative path without ComfyUI substitutions. Hidden prompt and "
+                    "extra_pnginfo metadata are not available during document migration. "
+                    "Native encoding fails closed above the 1 GiB output bound."
+                ),
+                cases=(
+                    ReplacementCase.build(
+                        "dinkster.save_avif",
+                        when=ReplacementPredicate.all_of(
+                            ReplacementPredicate.value_equals("format", "avif"),
+                            ReplacementPredicate.value_equals("save_mode", "still images"),
+                        ),
+                        nodes={
+                            "save_target": ReplacementNode.build(
+                                "dinkster.set_save_target_prefix",
+                                values={
+                                    "target": {
+                                        "mount": "comfy-output",
+                                        "prefix": "ComfyUI",
+                                    }
+                                },
+                            )
+                        },
+                        inputs={
+                            "images": MappingSource.copy("images"),
+                            "bit_depth": MappingSource.copy("bit_depth"),
+                            "input_color_space": MappingSource.copy("input_color_space"),
+                            "crf": MappingSource.copy("crf"),
+                            "animated": MappingSource.constant(False),
+                            "save_target:prefix": MappingSource.copy("filename_prefix"),
+                        },
+                        links=(ReplacementLink("save_target:save_target", "target"),),
+                        outputs={"images": _only_output(save_image_advanced)},
+                    ),
+                    ReplacementCase.build(
+                        "dinkster.save_avif",
+                        when=ReplacementPredicate.all_of(
+                            ReplacementPredicate.value_equals("format", "avif"),
+                            ReplacementPredicate.value_equals("save_mode", "animated"),
+                        ),
+                        nodes={
+                            "save_target": ReplacementNode.build(
+                                "dinkster.set_save_target_prefix",
+                                values={
+                                    "target": {
+                                        "mount": "comfy-output",
+                                        "prefix": "ComfyUI",
+                                    }
+                                },
+                            )
+                        },
+                        inputs={
+                            "images": MappingSource.copy("images"),
+                            "bit_depth": MappingSource.copy("bit_depth"),
+                            "input_color_space": MappingSource.copy("input_color_space"),
+                            "crf": MappingSource.copy("crf"),
+                            "animated": MappingSource.constant(True),
+                            "fps": MappingSource.copy("fps"),
+                            "loop": MappingSource.copy("loop_count"),
+                            "save_target:prefix": MappingSource.copy("filename_prefix"),
+                        },
+                        links=(ReplacementLink("save_target:save_target", "target"),),
+                        outputs={"images": _only_output(save_image_advanced)},
+                    ),
+                    _refusal_case("dinkster.save_avif", "images", "format"),
+                ),
+            ),
+            tier="parametric",
+            evidence=[
+                "tests/test_avif_alias.py::test_save_image_advanced_avif_alias_executes_still_and_animated"
             ],
             revision=revision,
         ),
@@ -1246,6 +1334,25 @@ def main() -> None:
         return
     if len(sys.argv) == 3 and sys.argv[1] == "--current-seedvr2":
         print(json.dumps(_build_current_seedvr2_registry(Path(sys.argv[2]).resolve())))
+        return
+    if len(sys.argv) == 3 and sys.argv[1] == "--update-current":
+        registry = json.loads(OUT.read_text("utf-8"))
+        current = _build_current_seedvr2_registry(Path(sys.argv[2]).resolve())
+        current["sourceSchemas"] = [
+            item
+            for item in current["sourceSchemas"]
+            if item["nodeType"] == "comfy.SaveImageAdvanced"
+        ]
+        current["records"] = [
+            item
+            for item in current["records"]
+            if item["source"]["nodeClass"] == "SaveImageAdvanced"
+        ]
+        for key, identity in (("sourceSchemas", "nodeType"), ("records", "id")):
+            replacing = {item[identity] for item in current[key]}
+            registry[key] = [item for item in registry[key] if item[identity] not in replacing]
+            registry[key].extend(current[key])
+        OUT.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
         return
     configured = os.environ.get("COMFYUI_ROOT")
     comfy_root = Path(configured) if configured else REPO.parent / "ComfyUI"

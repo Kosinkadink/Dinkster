@@ -111,6 +111,7 @@ SAMPLER_IDS = (
     "dinkster.ipndm",
     "dinkster.ipndm_v",
     "dinkster.deis",
+    "dinkster.cfgpp_ud10_ab",
     "dinkster.res_multistep",
     "dinkster.res_multistep_cfg_pp",
     "dinkster.res_multistep_ancestral",
@@ -1049,9 +1050,17 @@ def _text_generation_schema(
                 "use_default_template",
                 BOOLEAN,
                 required=False,
-                default=False,
+                default=True,
                 advanced=True,
             ),
+            InputSpec(
+                "mtp",
+                COMBO,
+                required=False,
+                default="auto",
+                widget=ComboWidget(options=("auto", "off", "2", "3", "4", "5")),
+            ),
+            InputSpec("system_prompt", STRING, required=False, force_input=True),
         ),
         combos=(
             DynamicComboSpec(
@@ -1088,7 +1097,7 @@ def _text_generation_schema(
                                 "repetition_penalty",
                                 FLOAT,
                                 default=1.05,
-                                widget=NumberWidget(min=0.01, max=5.0, step=0.01),
+                                widget=NumberWidget(min=0.0, max=5.0, step=0.01),
                             ),
                             InputSpec(
                                 "seed",
@@ -1096,7 +1105,7 @@ def _text_generation_schema(
                                 default=0,
                                 widget=NumberWidget(
                                     min=0,
-                                    max=2**53 - 1,
+                                    max=0xFFFFFFFFFFFFFFFF,
                                     step=1,
                                     control_after_generate="randomize",
                                 ),
@@ -1116,7 +1125,7 @@ def _text_generation_schema(
                 display_name="Sampling Mode",
             ),
         ),
-        outputs=(OutputSpec("generated_text", STRING),),
+        outputs=(OutputSpec("generated_text", STRING), OutputSpec("thinking", STRING)),
         aliases=(alias,),
         search_terms=search_terms,
     )
@@ -1138,8 +1147,8 @@ class PromptEnhance(_SchemaOnlyNode):
     def define_schema(cls) -> NodeSchema:
         return _text_generation_schema(
             "dinkster.prompt_enhance",
-            "Enhance Prompt",
-            "TextGenerateLTX2Prompt",
+            "Enhance Prompt with Qwen",
+            "DinksterQwenPromptEnhance",
             ("prompt", "enhance", "llm", "ltx", "qwen"),
         )
 
@@ -2223,6 +2232,138 @@ class LTXVAddGuide(_SchemaOnlyNode):
             ),
             aliases=("LTXVAddGuide",),
             search_terms=("ltx", "guide", "first frame", "last frame"),
+        )
+
+
+class LTXVAddLatentGuide(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.ltxv_add_latent_guide",
+            display_name="LTXV Add Latent Guide",
+            category="model/conditioning/ltxv",
+            inputs=(
+                InputSpec("positive", CONDITIONING),
+                InputSpec("negative", CONDITIONING),
+                InputSpec("vae", VAE),
+                InputSpec("latent", LATENT),
+                InputSpec("guiding_latent", LATENT),
+                InputSpec(
+                    "latent_idx",
+                    INT,
+                    default=0,
+                    widget=NumberWidget(min=-9999, max=9999, step=1),
+                ),
+                InputSpec(
+                    "strength",
+                    FLOAT,
+                    default=1.0,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.01),
+                ),
+                InputSpec("attention_mask", MASK, required=False),
+            ),
+            outputs=(
+                OutputSpec("positive", CONDITIONING),
+                OutputSpec("negative", CONDITIONING),
+                OutputSpec("latent", LATENT),
+            ),
+            aliases=("LTXVAddLatentGuide",),
+            search_terms=("ltx", "latent guide", "guide latent"),
+        )
+
+
+class LTXVFreezeLatent(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.ltxv_freeze_latent",
+            display_name="LTXV Freeze Latent",
+            category="model/latent/ltxv",
+            inputs=(InputSpec("latent", LATENT),),
+            outputs=(OutputSpec("latent", LATENT),),
+            aliases=("LTXVFreezeLatent",),
+            search_terms=("ltx", "noise mask", "freeze audio", "freeze video"),
+        )
+
+
+class LTXVAddGeneratedKeyframes(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.ltxv_add_generated_keyframes",
+            display_name="LTXV Add Generated Keyframes",
+            category="model/conditioning/ltxv",
+            inputs=(
+                InputSpec("positive", CONDITIONING),
+                InputSpec("negative", CONDITIONING),
+                InputSpec("vae", VAE),
+                InputSpec("latent", LATENT),
+                InputSpec("interval_frames", INT, required=False, default=24),
+                InputSpec("keyframes", LATENT, required=False),
+                InputSpec("frame_indices", STRING, required=False, default=""),
+            ),
+            outputs=(
+                OutputSpec("positive", CONDITIONING),
+                OutputSpec("negative", CONDITIONING),
+                OutputSpec("latent", LATENT),
+            ),
+            aliases=("LTXVAddGeneratedKeyframes",),
+            search_terms=("ltx", "detailing", "dfr", "generated keyframes"),
+        )
+
+
+class LTXVSeparateGeneratedKeyframes(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.ltxv_separate_generated_keyframes",
+            display_name="LTXV Separate Generated Keyframes",
+            category="model/conditioning/ltxv",
+            inputs=(
+                InputSpec("positive", CONDITIONING),
+                InputSpec("negative", CONDITIONING),
+                InputSpec("latent", LATENT),
+                InputSpec("keyframes_to_batch", BOOLEAN, default=False),
+            ),
+            outputs=(
+                OutputSpec("positive", CONDITIONING),
+                OutputSpec("negative", CONDITIONING),
+                OutputSpec("latent", LATENT),
+                OutputSpec("keyframes", LATENT),
+            ),
+            aliases=("LTXVSeparateGeneratedKeyframes",),
+            search_terms=("ltx", "detailing", "dfr", "peel keyframes"),
+        )
+
+
+class LTXVGeneratedKeyframesToGuides(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.ltxv_generated_keyframes_to_guides",
+            display_name="LTXV Generated Keyframes to Guides",
+            category="model/conditioning/ltxv",
+            inputs=(
+                InputSpec("positive", CONDITIONING),
+                InputSpec("negative", CONDITIONING),
+                InputSpec("vae", VAE),
+                InputSpec("latent", LATENT),
+                InputSpec("keyframes", LATENT),
+                InputSpec(
+                    "strength",
+                    FLOAT,
+                    default=1.0,
+                    widget=NumberWidget(min=0.0, max=10.0, step=0.01),
+                ),
+                InputSpec("override_frame_indices", STRING, required=False, default=""),
+            ),
+            outputs=(
+                OutputSpec("positive", CONDITIONING),
+                OutputSpec("negative", CONDITIONING),
+                OutputSpec("latent", LATENT),
+            ),
+            aliases=("LTXVGeneratedKeyframesToGuides",),
+            search_terms=("ltx", "detailing", "dfr", "keyframe guides"),
         )
 
 
@@ -5699,6 +5840,11 @@ GENERATION_NODES: tuple[type[Node], ...] = (
     LTXVImageToVideo,
     LTXVImageToVideoInplace,
     LTXVAddGuide,
+    LTXVAddLatentGuide,
+    LTXVFreezeLatent,
+    LTXVAddGeneratedKeyframes,
+    LTXVSeparateGeneratedKeyframes,
+    LTXVGeneratedKeyframesToGuides,
     LTXVCropGuides,
     LTXVLatentUpsampler,
     ConditioningMerge,

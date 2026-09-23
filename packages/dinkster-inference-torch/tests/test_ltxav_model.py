@@ -267,6 +267,44 @@ def test_generated_keyframes_require_the_same_latent_grid() -> None:
         model(**inputs)
 
 
+def test_generated_keyframe_coordinates_do_not_require_the_learned_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = replace(case_config("ltxav_per_frame"), use_keyframes_abs_pos_embedding=False)
+    model = LTXAVModel(config)
+    model.load_state_dict(
+        fill_state_dict(sorted((key, list(shape)) for key, shape in ltxav_layout(config).items())),
+        strict=True,
+    )
+    inputs = case_inputs("ltxav_per_frame")
+    video = cast("torch.Tensor", inputs["video"])
+    tokens_per_frame = video.shape[3] * video.shape[4]
+    inputs["generated_keyframes"] = LTXGeneratedKeyframes(
+        tokens_per_frame,
+        2,
+        1,
+        (7,),
+    )
+    captured: list[torch.Tensor] = []
+    original = ltxav_model_module._split_rope  # pyright: ignore[reportPrivateUsage]
+
+    def capture(coordinates: torch.Tensor, *args: Any, **kwargs: Any) -> Any:
+        captured.append(coordinates.detach().clone())
+        return original(coordinates, *args, **kwargs)
+
+    monkeypatch.setattr(ltxav_model_module, "_split_rope", capture)
+    with torch.no_grad():
+        model(**inputs)
+
+    generated = captured[0][:, 0, 2 * tokens_per_frame : 3 * tokens_per_frame, 0]
+    torch.testing.assert_close(
+        generated,
+        torch.full_like(generated, 7.0 / inputs["frame_rate"]),
+        rtol=0,
+        atol=1e-7,
+    )
+
+
 # ---------------------------------------------------- golden replay
 
 

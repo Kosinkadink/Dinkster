@@ -71,6 +71,7 @@ from dinkster_inference_torch.minimax_h3_dit import (
     MiniMaxH3Attention,
     MiniMaxH3AttentionGeometry,
     MiniMaxH3AttentionProviderEvidence,
+    MiniMaxH3ControlPatch,
     MiniMaxH3DiT,
     MiniMaxH3DiTConditioning,
     MiniMaxH3KeyframeLatent,
@@ -2036,9 +2037,76 @@ def test_mlp_final_layer_keeps_bf16_adaln_and_fp32_output_heads() -> None:
             parameter.fill_(0.01)
     hidden = torch.ones(4, config.hidden_width, dtype=torch.bfloat16)
     time = torch.ones(2, 2688, dtype=torch.bfloat16)
-    video, audio = layer(hidden, time, (0, 2, 0), (2, 4, 1))
+    video, audio = layer(hidden, time, (0, 2, 0), (2, 4, 1), 0.5, None, (12.0, 3.0))
     assert video.dtype is torch.float32
     assert audio.dtype is torch.float32
+    assert video.shape == (2, 96)
+    assert audio.shape == (2, 32)
+
+
+def test_pdd_head_uses_base_head_plus_dt_weighted_offsets() -> None:
+    head = InitlessOperations().linear(2, 2)
+    head.weight = torch.nn.Parameter(
+        torch.tensor(
+            (
+                (1.0, 0.0),
+                (0.0, 1.0),
+                (2.0, 1.0),
+                (1.0, -1.0),
+                (-1.0, 3.0),
+                (4.0, 2.0),
+            )
+        )
+    )
+    head.bias = torch.nn.Parameter(torch.tensor((0.5, -0.5, 1.0, 2.0, -1.0, 0.25)))
+
+    output = dit_module._pdd_head(  # pyright: ignore[reportPrivateUsage]
+        head, torch.tensor(((2.0, -1.0),)), 3, 1, 3, 12.0
+    )
+
+    torch.testing.assert_close(
+        output,
+        torch.tensor(((-2.4285715, 4.6160712),)),
+        rtol=0.0,
+        atol=1e-6,
+    )
+
+
+def test_pdd_final_layer_requires_and_consumes_sampler_schedule() -> None:
+    config = cast(MiniMaxH3Config, _ReducedConfig())
+    layer = dit_module._MiniMaxH3FinalLayer(  # pyright: ignore[reportPrivateUsage]
+        config,
+        apply_silu=True,
+        operations=InitlessOperations(),
+        fp32_operations=InitlessOperations(),
+    )
+    layer.video_out.weight = torch.nn.Parameter(
+        torch.full((layer.video_out.out_features * 2, config.hidden_width), 0.01)
+    )
+    layer.video_out.bias = torch.nn.Parameter(torch.zeros(layer.video_out.out_features * 2))
+    layer.audio_out.weight = torch.nn.Parameter(
+        torch.full((layer.audio_out.out_features * 2, config.hidden_width), 0.01)
+    )
+    layer.audio_out.bias = torch.nn.Parameter(torch.zeros(layer.audio_out.out_features * 2))
+    with torch.no_grad():
+        layer.norm.weight.fill_(1.0)
+        for parameter in layer.adaln_proj.parameters():
+            parameter.zero_()
+    hidden = torch.ones(4, config.hidden_width)
+    time = torch.ones(2, 2688)
+
+    with pytest.raises(ValueError, match="need the sampler's sigma schedule"):
+        layer(hidden, time, (0, 2, 0), (2, 4, 1), 0.5, None, (12.0, 3.0))
+
+    video, audio = layer(
+        hidden,
+        time,
+        (0, 2, 0),
+        (2, 4, 1),
+        0.5,
+        (0.8, 0.5, 0.0),
+        (12.0, 3.0),
+    )
     assert video.shape == (2, 96)
     assert audio.shape == (2, 32)
 
@@ -2379,9 +2447,14 @@ def test_fractional_masks_drive_block_and_final_row_timesteps(
         time: torch.Tensor,
         video_segment: Any,
         audio_segment: Any,
+        video_sigma: float,
+        sample_sigmas: tuple[float, ...] | None,
+        shifts: tuple[float, float],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         final_segments.append((video_segment, audio_segment))
-        return original_final(hidden, time, video_segment, audio_segment)
+        return original_final(
+            hidden, time, video_segment, audio_segment, video_sigma, sample_sigmas, shifts
+        )
 
     monkeypatch.setattr(model, "_curve_time_embedding", MethodType(curve, model))
     monkeypatch.setattr(dit_module, "_modulate", modulate)
@@ -2483,9 +2556,14 @@ def test_uniform_fractional_masks_use_scalar_block_and_final_rows(
         time: torch.Tensor,
         video_segment: Any,
         audio_segment: Any,
+        video_sigma: float,
+        sample_sigmas: tuple[float, ...] | None,
+        shifts: tuple[float, float],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         final_segments.append((video_segment, audio_segment))
-        return original_final(hidden, time, video_segment, audio_segment)
+        return original_final(
+            hidden, time, video_segment, audio_segment, video_sigma, sample_sigmas, shifts
+        )
 
     monkeypatch.setattr(model, "_curve_time_embedding", MethodType(curve, model))
     monkeypatch.setattr(dit_module, "_modulate", modulate)
@@ -2563,10 +2641,17 @@ def test_audio_carry_and_velocity_conversion_consume_exact_s2_coefficients(
         _context: torch.Tensor,
         _conditioning: MiniMaxH3DiTConditioning,
         _sigmas: MiniMaxH3Sigmas,
+        _sample_sigmas: tuple[float, ...] | None,
         *,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
+        control: MiniMaxH3ControlPatch | None = None,
+        attention_kernel_factory: object | None = None,
+        sequence_sharding: object | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
         assert denoise_mask is None
+        assert control is None
+        assert attention_kernel_factory is None
+        assert sequence_sharding is None
         seen.append(carried)
         return _h3(
             torch.full_like(carried.by_role("video"), 2.0),

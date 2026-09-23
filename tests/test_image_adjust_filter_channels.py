@@ -9,7 +9,12 @@ from typing import cast
 import numpy as np
 import pytest
 from dinkster_nodes_image.adjust import ADJUST_OPERATIONS, ImageAdjust
-from dinkster_nodes_image.channels import ImageAlphaJoin, ImageChannelMerge, ImageChannelSplit
+from dinkster_nodes_image.channels import (
+    ImageAlphaJoin,
+    ImageChannelMerge,
+    ImageChannelSplit,
+    ImageColorSpace,
+)
 from dinkster_nodes_image.filters import DITHER_MODES, FILTER_OPERATIONS, ImageFilter
 
 GOLDEN = cast(
@@ -225,6 +230,47 @@ def test_core_channel_mappings_match_comfy_goldens(mask_polarity: str) -> None:
     )
 
 
+def test_image_color_space_srgb_linear_breakpoints_and_alpha() -> None:
+    values = np.asarray((0.0, 0.04045, 0.5, 1.0), dtype=np.float32)
+    rgb = np.repeat(values.reshape(1, 1, 4, 1), 3, axis=3)
+    alpha = np.asarray((0.0, 0.23, 0.71, 1.0), dtype=np.float32).reshape(1, 1, 4, 1)
+    rgba = np.concatenate((rgb, alpha), axis=3)
+    expected = np.where(
+        values <= 0.04045,
+        values / 12.92,
+        np.power((values + 0.055) / 1.055, 2.4),
+    )
+
+    linear = np.asarray(
+        ImageColorSpace.execute(image=rgba, source="sRGB", destination="linear")["image"]
+    )
+    restored = np.asarray(
+        ImageColorSpace.execute(image=linear, source="linear", destination="sRGB")["image"]
+    )
+
+    np.testing.assert_allclose(
+        linear[0, 0, :, :3], np.repeat(expected[:, None], 3, axis=1), rtol=0, atol=2e-7
+    )
+    np.testing.assert_array_equal(linear[..., 3], rgba[..., 3])
+    np.testing.assert_allclose(restored, rgba, rtol=0, atol=3e-6)
+
+
+@pytest.mark.parametrize("encoded", ["HDR", "HDR PQ"])
+def test_image_color_space_hdr_round_trip_preserves_extended_linear_values(encoded: str) -> None:
+    linear = np.asarray([[[[0.02, 0.18, 0.75], [1.5, 0.4, 0.1]]]], dtype=np.float32)
+    encoded_image = cast(
+        "np.ndarray",
+        ImageColorSpace.execute(image=linear, source="linear", destination=encoded)["image"],
+    )
+    restored = cast(
+        "np.ndarray",
+        ImageColorSpace.execute(image=encoded_image, source=encoded, destination="linear")["image"],
+    )
+
+    assert np.isfinite(encoded_image).all()
+    np.testing.assert_allclose(restored, linear, rtol=3e-5, atol=3e-6)
+
+
 def test_adjust_operations_match_core_formulas_and_preserve_layout() -> None:
     image = np.asarray([[[[0.0, 0.25, 0.75], [1.0, 0.5, 0.1]]]], dtype=np.float32)
     invert = ImageAdjust.execute(image=image, operation="invert")["image"]
@@ -249,6 +295,43 @@ def test_adjust_operations_match_core_formulas_and_preserve_layout() -> None:
         for value in (invert, normalized, brightness, contrast)
     )
     assert set(ADJUST_OPERATIONS) == {"invert", "normalize", "brightness", "contrast"}
+
+
+@pytest.mark.parametrize(
+    ("operation", "parameters"),
+    [
+        ("invert", {}),
+        ("normalize", {"mean": 0.5, "standard_deviation": 0.25}),
+        ("brightness", {"factor": 1.5}),
+        ("contrast", {"factor": 1.5}),
+    ],
+)
+def test_rgba_adjustments_preserve_alpha(operation: str, parameters: dict[str, float]) -> None:
+    source = np.full((1, 2, 3, 4), 0.25, dtype=np.float32)
+    source[..., 3] = np.asarray([[0.0, 0.37, 0.91]], dtype=np.float32)
+    original = source.copy()
+
+    result = np.asarray(
+        ImageAdjust.execute(image=source, operation=operation, **parameters)["image"]
+    )
+
+    np.testing.assert_array_equal(result[..., 3], source[..., 3])
+    assert not np.array_equal(result[..., :3], source[..., :3])
+    np.testing.assert_array_equal(source, original)
+
+
+def test_rgba_noise_preserves_alpha_and_changes_color() -> None:
+    source = np.full((1, 3, 4, 4), 0.5, dtype=np.float32)
+    source[..., 3] = np.linspace(0.0, 1.0, 4, dtype=np.float32)
+    original = source.copy()
+
+    result = np.asarray(
+        ImageFilter.execute(image=source, operation="noise", strength=0.5, seed=7)["image"]
+    )
+
+    np.testing.assert_array_equal(result[..., 3], source[..., 3])
+    assert not np.array_equal(result[..., :3], source[..., :3])
+    np.testing.assert_array_equal(source, original)
 
 
 def test_adjust_rejects_invalid_parameters() -> None:

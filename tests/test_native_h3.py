@@ -64,6 +64,9 @@ class FakeTensor:
         self.contiguous_calls += 1
         return self
 
+    def detach(self) -> FakeTensor:
+        return self
+
     def is_floating_point(self) -> bool:
         return True
 
@@ -137,6 +140,7 @@ def test_h3_schemas_use_declared_resident_graph_types() -> None:
     nodes = {node.schema().node_type: node for node in NATIVE_NODES}
     arms = {node.schema().node_type: node for node in native_arm.NATIVE_ARM_NODES}
     expected = {
+        "dinkster.apply_minimax_h3_fun_control_patch",
         "dinkster.empty_minimax_h3_av",
         "dinkster.set_latent_mask_from_frames",
         "dinkster.set_latent_mask_from_time_ranges",
@@ -156,6 +160,19 @@ def test_h3_schemas_use_declared_resident_graph_types() -> None:
     assert expected <= nodes.keys()
     assert expected <= arms.keys()
     assert "dinkster.frame_range_mask" in nodes
+    control_schema = nodes["dinkster.apply_minimax_h3_fun_control_patch"].schema()
+    assert tuple(item.id for item in control_schema.inputs) == (
+        "model",
+        "model_patch",
+        "vae",
+        "strength",
+        "start_percent",
+        "end_percent",
+        "control_video",
+        "mask",
+        "source_video",
+    )
+    assert control_schema.aliases == ("MiniMaxH3FunControlNetApply",)
     empty_schema = nodes["dinkster.empty_minimax_h3_av"].schema()
     assert tuple(item.id for item in empty_schema.inputs) == ("width", "height", "frame_count")
     assert empty_schema.outputs[0].type.types == ("dinkster.latent",)
@@ -191,12 +208,13 @@ def test_h3_schemas_use_declared_resident_graph_types() -> None:
     assert tuple(item.id for item in fl2va.inputs[:2]) == ("clip", "video_vae")
     assert (fl2va.inputs[0].type, fl2va.inputs[1].type) == (CLIP, VAE)
     ref2va = nodes["dinkster.minimax_h3_ref2va_conditioning"].schema()
-    assert tuple(item.id for item in ref2va.inputs[:3]) == (
-        "clip",
-        "video_vae",
-        "audio_vae",
-    )
-    assert tuple(item.type for item in ref2va.inputs[:3]) == (CLIP, VAE, VAE)
+    ref2va_inputs = {item.id: item for item in ref2va.inputs}
+    assert ref2va_inputs["clip"].type == CLIP
+    assert ref2va_inputs["video_vae"].type == ref2va_inputs["audio_vae"].type == VAE
+    assert ref2va_inputs["video_vae"].required is False
+    assert ref2va_inputs["video_vae"].default is None
+    assert ref2va_inputs["audio_vae"].required is False
+    assert ref2va_inputs["audio_vae"].default is None
     guide = nodes["dinkster.minimax_h3_add_guide"].schema()
     assert tuple(item.id for item in guide.inputs) == (
         "positive",
@@ -279,6 +297,78 @@ def test_h3_schemas_use_declared_resident_graph_types() -> None:
     inspect = nodes["dinkster.inspect_latent_mask"].schema()
     assert tuple(item.type for item in inspect.inputs) == (LATENT, VAE)
     assert tuple(item.type for item in inspect.outputs) == (MASK, STRING)
+
+
+def test_h3_fun_control_apply_binds_inputs_and_preserves_noop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    family = importlib.import_module("dinkster_native.families.minimax_h3")
+    original = object()
+    assert (
+        native_arm.NativeApplyMiniMaxH3FunControlPatch.execute(
+            model=original,
+            model_patch=object(),
+            vae=object(),
+            strength=0.0,
+            start_percent=0.0,
+            end_percent=1.0,
+            control_video=FakeTensor((2, 8, 12, 3)),
+        )["model"]
+        is original
+    )
+
+    class ControlModel:
+        pass
+
+    class ComponentHandle:
+        def __init__(self, module: object) -> None:
+            self.module = module
+            self.dependents: list[object] = []
+
+        def require_active(self) -> None:
+            pass
+
+        def register_dependent(self, value: object) -> None:
+            self.dependents.append(value)
+
+    model_handle = SimpleNamespace(recipe=SimpleNamespace(family_id="dinkster.minimax_h3"))
+    control_handle = ComponentHandle(ControlModel())
+    vae_handle = ComponentHandle(object())
+    monkeypatch.setattr(family, "NativeComponentHandle", ComponentHandle)
+    monkeypatch.setattr(
+        family,
+        "_native_model",
+        lambda _model, _name: (model_handle, (), {}, None, None, (), None, ()),
+    )
+    monkeypatch.setattr(
+        family,
+        "_minimax_h3_video_vae_runtime",
+        lambda _vae, _name: (vae_handle, object()),
+    )
+    monkeypatch.setattr(family, "_torch", _fake_torch)
+    real_import = importlib.import_module
+    fake_torch_inference = SimpleNamespace(MiniMaxH3FunControl=ControlModel)
+    monkeypatch.setattr(
+        family.importlib,
+        "import_module",
+        lambda name: (
+            fake_torch_inference if name == "dinkster_inference_torch" else real_import(name)
+        ),
+    )
+    result = native_arm.NativeApplyMiniMaxH3FunControlPatch.execute(
+        model=model_handle,
+        model_patch=control_handle,
+        vae=vae_handle,
+        strength=0.75,
+        start_percent=0.2,
+        end_percent=0.8,
+        control_video=FakeTensor((2, 8, 12, 3)),
+    )
+    binding = cast("Any", result["model"]).minimax_h3_control
+    assert binding.control_handle is control_handle
+    assert binding.vae_handle is vae_handle
+    assert binding.control_video.shape == (2, 3, 8, 12)
+    assert (binding.strength, binding.start_percent, binding.end_percent) == (0.75, 0.2, 0.8)
 
 
 def test_deleted_h3_bundle_loader_is_an_unknown_node_type() -> None:
@@ -785,10 +875,16 @@ def test_task_specific_conditioning_adapts_target_before_geometry(
         resource_identity="native:dinkster.minimax_h3:" + "1" * 64,
         stage=lambda **_kwargs: nullcontext(),
     )
+    component_args: list[tuple[object, ...]] = []
+
+    def conditioner_runtime(*args: object) -> tuple[object, tuple[object, ...], Runtime]:
+        component_args.append(args)
+        return conditioner, (), Runtime()
+
     monkeypatch.setattr(
         native_arm,
         "_minimax_h3_conditioner_runtime",
-        lambda *_args: (conditioner, (), Runtime()),
+        conditioner_runtime,
     )
     monkeypatch.setattr(native_arm, "_torch", _fake_torch)
     _install_upscale(monkeypatch)
@@ -806,8 +902,6 @@ def test_task_specific_conditioning_adapts_target_before_geometry(
     else:
         result = native_arm.NativeMiniMaxH3REF2VAConditioning.execute(
             clip=object(),
-            video_vae=object(),
-            audio_vae=object(),
             target=target,
             prompt="prompt",
             references=(MiniMaxH3ImageReferenceValue(FakeTensor((1, 512, 768, 3))),),
@@ -824,6 +918,8 @@ def test_task_specific_conditioning_adapts_target_before_geometry(
     ]
     assert cast("Any", conditions[0]["target"]).roles == ("video", "audio")
     assert conditions[0]["frame_count"] == 1
+    if task == "ref2va":
+        assert component_args[0][1:] == (None, None)
 
 
 def test_conditioning_negative_prompt_prepares_matching_component_lane(
@@ -1737,3 +1833,77 @@ def test_reference_order_limits_and_video_geometry(monkeypatch: pytest.MonkeyPat
     assert frames.shape == (39, 768, 1344, 3)
     assert indices == (0, 12, 24, 36)
     assert calls == [(1344, 768, "disabled")]
+
+
+def test_ksampler_forwards_h3_fun_control_and_stages_the_patch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inference = __import__("dinkster_inference")
+    sampled = _streams()
+    calls: list[dict[str, object]] = []
+    stage_calls: list[object] = []
+    materialized: list[tuple[object, object]] = []
+    prepared = SimpleNamespace(task=inference.MiniMaxH3Task.T2VA)
+    control_conditioning = object()
+    identity = "native:dinkster.minimax_h3:" + "1" * 64
+
+    class Runtime:
+        def run_ksampler_as_custom(self, latent: object, **kwargs: object) -> object:
+            calls.append(dict(kwargs))
+            return sampled
+
+        sample_multistream = run_ksampler_as_custom
+
+    class ControlHandle:
+        def stage(self, **kwargs: object) -> object:
+            stage_calls.append(kwargs)
+            return nullcontext()
+
+    control_handle = ControlHandle()
+    binding = SimpleNamespace(control_handle=control_handle)
+    handle = SimpleNamespace(
+        load_device="cuda:0",
+        runtime=SimpleNamespace(model_role="fl2va-dit"),
+        recipe=SimpleNamespace(
+            family_id="dinkster.minimax_h3",
+            sources=(SimpleNamespace(role="diffusion"), SimpleNamespace(role="conditioner")),
+        ),
+        stage=lambda role, **_kwargs: stage_calls.append(role) or nullcontext(),
+    )
+    runtime = Runtime()
+    monkeypatch.setattr(
+        native_arm,
+        "_native_model",
+        lambda *_args: (handle, (), {}, None, None, (), None, ()),
+    )
+    monkeypatch.setattr(native_arm, "_native_model_h3_control", lambda _model: binding)
+    monkeypatch.setattr(
+        native_arm,
+        "_materialize_minimax_h3_control",
+        lambda bound, samples, *_rest: (
+            materialized.append((bound, samples)) or control_conditioning
+        ),
+    )
+    _install_sampling_runtime(monkeypatch, runtime)
+    monkeypatch.setattr(native_arm, "_torch", _fake_torch)
+    monkeypatch.setattr(native_arm, "_catalog_id", lambda _registry, value, _kind: value)
+    conditioned = [[inference.PreparedMultiStreamConditioning(identity, prepared), {}]]
+    latent = _latent()
+
+    result = native_arm.NativeKSampler.execute(
+        model=object(),
+        seed=7,
+        steps=4,
+        cfg=1.0,
+        sampler_name="euler",
+        scheduler="simple",
+        positive=conditioned,
+        negative=[],
+        latent_image=latent,
+        denoise=0.75,
+    )
+    assert cast("Any", result["latent"])["samples"] is sampled
+    assert len(materialized) == 1
+    assert materialized[0][0] is binding
+    assert cast("dict[str, object]", calls[0])["control"] is control_conditioning
+    assert stage_calls == [{"observer_stage": "sample"}, "diffusion"]

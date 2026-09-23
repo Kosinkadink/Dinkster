@@ -415,6 +415,26 @@ def test_legacy_json_operations_match_pinned_core_shapes() -> None:
     assert _json("extract_string_legacy", source, selector="object") == "{'a': 1}"
     assert _json("extract_string_legacy", source, selector="null") == ""
     assert _json("extract_string_legacy", "bad", selector="key") == ""
+
+
+def test_json_legacy_extraction_finds_first_valid_object_in_surrounding_text() -> None:
+    assert (
+        _json(
+            "extract_string_legacy",
+            'prefix {not json}\n```json\n{"answer": "yes", "count": 3}\n``` suffix',
+            selector="answer",
+        )
+        == "yes"
+    )
+    assert (
+        _json(
+            "extract_string_legacy",
+            '{"other": 1} then {"answer": "later"}',
+            selector="answer",
+        )
+        == ""
+    )
+    assert _json("extract_string_legacy", "prefix [1, 2, 3] suffix", selector="0") == ""
     assert StringJsonEmit.execute(
         value={"a": 1, "b": 2}, operation="legacy", indent=0, key_order="preserve"
     ) == {"text": '{"a": 1, "b": 2}'}

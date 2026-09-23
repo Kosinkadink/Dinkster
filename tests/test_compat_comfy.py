@@ -3050,6 +3050,8 @@ class _V3Schema:
 
 
 def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
+    missing = object()
+
     class ComfySwitchNode:
         RETURN_TYPES = ("COMFY_MATCHTYPE_V3",)
         RETURN_NAMES = ("output",)
@@ -3062,6 +3064,8 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
             return {
                 "required": {
                     "switch": ("BOOLEAN", {}),
+                },
+                "optional": {
                     "on_false": (
                         "COMFY_MATCHTYPE_V3",
                         {"template": template, "lazy": True},
@@ -3074,20 +3078,25 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
             }
 
         @classmethod
-        def check_lazy_status(cls, switch, on_false=None, on_true=None):  # noqa: ANN001, ANN202
+        def check_lazy_status(  # noqa: ANN001, ANN202
+            cls, switch, on_false=missing, on_true=missing
+        ):
             if switch and on_true is None:
                 return ["on_true"]
             if not switch and on_false is None:
                 return ["on_false"]
 
-        def run(self, switch, on_false, on_true):  # noqa: ANN001, ANN201
-            return (on_true if switch else on_false,)
+        def run(self, switch, on_false=missing, on_true=missing):  # noqa: ANN001, ANN201
+            selected = on_true if switch else on_false
+            return (None if selected is missing else selected,)
 
     translation = CompatTranslation()
     node_class = translate_node("ComfySwitchNode", ComfySwitchNode, translation)
     schema = node_class.schema()
     assert schema.selector == SelectorSpec("switch", {"false": "on_false", "true": "on_true"})
     assert [spec.lazy for spec in schema.inputs] == [False, True, True]
+    assert [spec.required for spec in schema.inputs] == [True, False, False]
+    assert ComfySwitchNode().run(True) == (None,)
 
     registry = TypeRegistry()
     register_core_types(registry)

@@ -57,6 +57,7 @@ from .native_arm_runtime import (
     _controlled_conditioning,
     _materialized_application_kwargs,
     _native_model,
+    _native_model_h3_control,
     _native_model_sampling_cache,
     _native_model_sampling_space,
     _native_model_sampling_timeline,
@@ -82,6 +83,7 @@ from .nodes_samplers import (
 )
 from .nodes_sampling_runtime import (
     _batch_index_noise_inds,
+    _materialize_minimax_h3_control,
     _materialize_z_image_control,
     _normalize_empty_latent,
     _resolve_sampling_model,
@@ -229,6 +231,7 @@ def _execute_generation_custom_sampling(
         overlay_context_windows,
         chroma_radiance_options,
     ) = _native_model(model, "model")
+    h3_control = _native_model_h3_control(model)
     if context_windows is not None and overlay_context_windows is not None:
         raise ValueError(
             "model context windows and explicit context_windows cannot both be provided"
@@ -596,6 +599,16 @@ def _execute_generation_custom_sampling(
             inference,
             inference_torch,
         )
+    if h3_control is not None:
+        if z_image_control is not None or classic_control_binding is not None:
+            raise ValueError("MiniMax H3 Fun control cannot be combined with another ControlNet")
+        control_kwargs["control"] = _materialize_minimax_h3_control(
+            h3_control,
+            samples,
+            torch,
+            inference,
+            inference_torch,
+        )
     seed = 0 if noise.seed is None else noise.seed
     if multistream_family:
 
@@ -605,9 +618,9 @@ def _execute_generation_custom_sampling(
         if noise.seed is None:
             generated_noise = samples.map(_zero_stream)
         else:
-            prepare_stream_noise = getattr(
-                runtime, "prepare_custom_sampling_noise", inference_torch.prepare_multistream_noise
-            )
+            prepare_stream_noise = getattr(runtime, "prepare_custom_sampling_noise", None)
+            if prepare_stream_noise is None:
+                prepare_stream_noise = inference_torch.prepare_multistream_noise
             generated_noise = prepare_stream_noise(samples, seed, noise_inds)
         samples = _move_multistream_latent(samples, handle.load_device)
         if type(noise_mask) is torch.Tensor:
@@ -712,6 +725,11 @@ def _execute_generation_custom_sampling(
             if z_image_control is not None
             else nullcontext()
         ),
+        (
+            h3_control.control_handle.stage(observer_stage="sample")
+            if h3_control is not None
+            else nullcontext()
+        ),
         preview_stage(preview),
         torch.inference_mode(),
         inference.use_sampling_environment(
@@ -739,6 +757,7 @@ def _execute_generation_custom_sampling(
                 "cancelled",
                 "observer",
                 "parent_span_id",
+                "control",
             },
         ) as application_kwargs,
     ):

@@ -515,7 +515,7 @@ def test_concat_trim_selects_component_audio_without_eager_concat() -> None:
     silent = assemble_video(images, fps=2)
     audible = assemble_video(images, fps=2, audio={"waveform": pcm, "sample_rate": 48000})
     joined = edit_video(silent, {"concat": [audible]})
-    with pytest.raises(ValueError, match="identical-codec concat requires encoded source clips"):
+    with pytest.raises(ValueError, match="missing or different audio stream counts"):
         disassemble_video(joined)
     selected = edit_video(joined, {"trim": {"start_time": 1, "duration": 1}})
     audio = disassemble_video(selected)["audio"]

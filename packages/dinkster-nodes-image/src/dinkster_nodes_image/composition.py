@@ -233,6 +233,13 @@ class ImageComposite(Node):
                             default=True,
                             advanced=True,
                         ),
+                        InputSpec(
+                            "preserve_destination_alpha",
+                            BOOLEAN,
+                            required=False,
+                            default=False,
+                            advanced=True,
+                        ),
                         _combo(
                             "batch_policy",
                             ("singleton_broadcast", "strict", "destination_repeat"),
@@ -287,6 +294,7 @@ class ImageComposite(Node):
         interpolation: str = "bilinear",
         mask_polarity: str = "coverage",
         clamp_output: bool = True,
+        preserve_destination_alpha: bool = False,
         batch_policy: str = "singleton_broadcast",
     ) -> Mapping[str, object]:
         if not math.isfinite(factor) or not 0.0 <= factor <= 1.0:
@@ -371,6 +379,8 @@ class ImageComposite(Node):
         composed = destination_view * (1.0 - alpha) + blended * alpha
         if clamp_output:
             composed = np.clip(composed, 0.0, 1.0)
+        if preserve_destination_alpha and composed.shape[3] == 4:
+            composed[..., 3] = destination_view[..., 3]
         output[:, destination_top:destination_bottom, destination_left:destination_right, :] = (
             composed
         )
@@ -397,7 +407,10 @@ def _porter_duff(
         output = (
             (1.0 - destination_opacity) * source_premultiplied
             + (1.0 - source_opacity) * destination_premultiplied
-            + np.minimum(source_premultiplied, destination_premultiplied)
+            + np.minimum(
+                source_premultiplied * destination_opacity,
+                destination_premultiplied * source_opacity,
+            )
         )
     elif mode == "DST":
         output_opacity = destination_opacity
@@ -422,20 +435,32 @@ def _porter_duff(
         output = (
             (1.0 - destination_opacity) * source_premultiplied
             + (1.0 - source_opacity) * destination_premultiplied
-            + np.maximum(source_premultiplied, destination_premultiplied)
+            + np.maximum(
+                source_premultiplied * destination_opacity,
+                destination_premultiplied * source_opacity,
+            )
         )
     elif mode == "MULTIPLY":
-        output_opacity = source_opacity * destination_opacity
-        output = source_premultiplied * destination_premultiplied
+        output_opacity = source_opacity + destination_opacity - source_opacity * destination_opacity
+        output = (
+            (1.0 - destination_opacity) * source_premultiplied
+            + (1.0 - source_opacity) * destination_premultiplied
+            + source_premultiplied * destination_premultiplied
+        )
     elif mode == "OVERLAY":
         output_opacity = source_opacity + destination_opacity - source_opacity * destination_opacity
-        output = np.where(
+        overlap = np.where(
             2.0 * destination_premultiplied < destination_opacity,
             2.0 * source_premultiplied * destination_premultiplied,
             source_opacity * destination_opacity
             - 2.0
-            * (destination_opacity - source_premultiplied)
-            * (source_opacity - destination_premultiplied),
+            * (source_opacity - source_premultiplied)
+            * (destination_opacity - destination_premultiplied),
+        )
+        output = (
+            (1.0 - destination_opacity) * source_premultiplied
+            + (1.0 - source_opacity) * destination_premultiplied
+            + overlap
         )
     elif mode == "SCREEN":
         output_opacity = source_opacity + destination_opacity - source_opacity * destination_opacity

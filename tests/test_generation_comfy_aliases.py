@@ -140,6 +140,7 @@ TRELLIS2_WORKFLOW_CARRIERS = frozenset(
         "dinkster.ksampler",
         "dinkster.load_background_removal",
         "dinkster.load_geometry_model",
+        "dinkster.file3d_to_mesh",
         "dinkster.mesh_to_model3d",
         "dinkster.model_sampling_sd3",
         "dinkster.paint_mesh",
@@ -272,7 +273,7 @@ def test_seedvr2_workflow_aliases_cover_current_core_surface() -> None:
     sampler_map = sampler["inputs"]["sampler_name"]["transform"]["map"]
     scheduler_map = sampler["inputs"]["scheduler"]["transform"]["map"]
     assert sampler_map["euler"] == "dinkster.euler"
-    assert "cfgpp_ud10_ab" not in sampler_map
+    assert sampler_map["cfgpp_ud10_ab"] == "dinkster.cfgpp_ud10_ab"
     assert scheduler_map["simple"] == "dinkster.simple"
 
     loader = records["UNETLoader"]["replacement"]["cases"][0]
@@ -595,7 +596,7 @@ def test_trellis2_official_workflow_surface_is_maintained() -> None:
 def test_generation_comfy_alias_confidence_has_pinned_evidence() -> None:
     registry = _registry()
     expected = {
-        "comfy-core": ({"b78cec87", "8a33128f"}, "exact"),
+        "comfy-core": ({"b78cec87", "8a33128f", "95539f56"}, "exact"),
         "comfyui-kjnodes": (
             {
                 "827fe6ee0ed7348d8daa988ed852bedf1272380c",

@@ -437,6 +437,26 @@ class _EssentialsDrawText:
         raise RuntimeError("static schema shim")
 
 
+class _ImageColorSpace:
+    @classmethod
+    def INPUT_TYPES(cls) -> dict[str, object]:
+        spaces = ["sRGB", "HDR", "HDR PQ", "linear"]
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "source": (spaces, {"default": "sRGB"}),
+                "destination": (spaces, {"default": "sRGB"}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "execute"
+    CATEGORY = "image/color"
+
+    def execute(self) -> None:
+        raise RuntimeError("static schema shim")
+
+
 def _static_schema(
     node_class: str,
     *,
@@ -2169,6 +2189,7 @@ def build_registry(comfy_root: Path) -> dict[str, object]:
             namespace="comfy-mtb",
         ).schema(),
         _core_v3_schema(nodes_images.GetImageSize),
+        translate_node("ImageColorSpace", _ImageColorSpace, CompatTranslation()).schema(),
         _core_v3_schema(nodes_mask.ImageCompositeMasked),
         _core_v3_schema(nodes_post_processing.Blend),
         _core_v3_schema(nodes_compositing.PorterDuffImageComposite),
@@ -4308,6 +4329,32 @@ def build_registry(comfy_root: Path) -> dict[str, object]:
         ),
         _record(
             source_pack="comfy-core",
+            node_class="ImageColorSpace",
+            revision="95539f56",
+            carrier="dinkster.image.color_space",
+            rule=ReplacementRule(
+                from_type="comfy.ImageColorSpace",
+                cases=(
+                    ReplacementCase.build(
+                        "dinkster.image.color_space",
+                        inputs={
+                            "image": MappingSource.copy("image"),
+                            "source": MappingSource.copy("source"),
+                            "destination": MappingSource.copy("destination"),
+                        },
+                        outputs={"image": "image"},
+                    ),
+                ),
+            ),
+            tier="equivalent",
+            evidence=[
+                "tests/test_image_adjust_filter_channels.py::test_image_color_space_srgb_linear_breakpoints_and_alpha",
+                "tests/test_image_adjust_filter_channels.py::test_image_color_space_hdr_round_trip_preserves_extended_linear_values",
+            ],
+            tolerances=[{"metric": "max_abs", "operator": "<=", "value": 3e-6}],
+        ),
+        _record(
+            source_pack="comfy-core",
             node_class="ImageCompositeMasked",
             revision="b78cec87",
             carrier="dinkster.image.composite",
@@ -4337,6 +4384,7 @@ def build_registry(comfy_root: Path) -> dict[str, object]:
                             ),
                             "mask_polarity": MappingSource.constant("coverage"),
                             "clamp_output": MappingSource.constant(False),
+                            "preserve_destination_alpha": MappingSource.constant(False),
                             "batch_policy": MappingSource.constant("destination_repeat"),
                         },
                         outputs={"image": "_0_IMAGE_"},
@@ -4382,6 +4430,7 @@ def build_registry(comfy_root: Path) -> dict[str, object]:
                             "source_resize": MappingSource.constant("fill"),
                             "interpolation": MappingSource.constant("bicubic"),
                             "clamp_output": MappingSource.constant(True),
+                            "preserve_destination_alpha": MappingSource.constant(True),
                             "batch_policy": MappingSource.constant("singleton_broadcast"),
                         },
                         outputs={"image": "_0_IMAGE_"},

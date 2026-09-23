@@ -427,7 +427,7 @@ def test_media_image_loader_owns_legacy_alias_outside_compat() -> None:
     assert schema.aliases == ("LoadImage",)
     assert schema.inputs[0].type == TypeExpr.asset_of(TypeExpr.concrete("dinkster.image"))
     assert schema.inputs[0].widget == AssetWidget(
-        ("image/png", "image/jpeg", "image/webp", "image/gif", "image/tiff"),
+        ("image/png", "image/jpeg", "image/webp", "image/gif", "image/tiff", "image/avif"),
         kind="media/image",
         allow_upload=True,
     )
@@ -2290,6 +2290,10 @@ def test_native_comfy_equivalents_keep_upstream_names_and_aliases() -> None:
             "Apply Z-Image Fun ControlNet",
             ("ZImageFunControlnet",),
         ),
+        "dinkster.apply_minimax_h3_fun_control_patch": (
+            "Apply MiniMax H3 Fun ControlNet",
+            ("MiniMaxH3FunControlNetApply",),
+        ),
         "dinkster.empty_minimax_h3_av": (
             "Empty MiniMax H3 AV Latent",
             ("EmptyMiniMaxH3LatentAV",),
@@ -2453,6 +2457,7 @@ def test_merge_native_nodes_evicts_by_claimed_legacy_name() -> None:
     trim_video_latent = stub("TrimVideoLatent")
     load_checkpoint = stub("CheckpointLoaderSimple")
     empty_latent, encode = stub("EmptyLatentImage"), stub("CLIPTextEncode")
+    ltx_prompt = stub("TextGenerateLTX2Prompt")
     ksampler = stub("KSampler")
     ksampler_advanced = stub("KSamplerAdvanced")
     ultimate_upscale = stub("UltimateSDUpscale")
@@ -2478,6 +2483,7 @@ def test_merge_native_nodes_evicts_by_claimed_legacy_name() -> None:
             load_checkpoint,
             empty_latent,
             encode,
+            ltx_prompt,
             ksampler,
             ksampler_advanced,
             ultimate_upscale,
@@ -2492,6 +2498,7 @@ def test_merge_native_nodes_evicts_by_claimed_legacy_name() -> None:
     assert resize_image_mask not in merged
     assert trim_video_latent not in merged  # evicted: native claims "TrimVideoLatent"
     assert load_checkpoint not in merged  # evicted: "CheckpointLoaderSimple"
+    assert ltx_prompt in merged
     legacy_empty = next(n for n in merged if n.schema().node_type == "comfy.EmptyLatentImage")
     assert issubclass(legacy_empty, empty_latent)
     assert legacy_empty.schema() == replace(empty_latent.schema(), aliases=())

@@ -28,6 +28,7 @@ from dinkster_inference import (
     LTXV_TIME_PROJ_CHANNELS,
     LTXV_TIMESTEP_MULTIPLIER,
     LTXV_VAE_SCALE_FACTORS,
+    LTXGeneratedKeyframes,
     LTXVConfig,
 )
 
@@ -541,12 +542,44 @@ class LTXVModel(ResidencyRouted, torch.nn.Module):
         frame_rate: float = 25.0,
         denoise_mask: torch.Tensor | None = None,
         guides: tuple[LTXVGuideConditioning, ...] = (),
+        generated_keyframes: LTXGeneratedKeyframes | None = None,
     ) -> torch.Tensor:
         if type(guides) is not tuple or any(
             type(guide) is not LTXVGuideConditioning for guide in guides
         ):
             raise TypeError("LTX-Video guides must be exact LTXVGuideConditioning values")
         batch, _, frames, height, width = x.shape
+        if generated_keyframes is not None:
+            if type(generated_keyframes) is not LTXGeneratedKeyframes:
+                raise TypeError("generated_keyframes must be exact LTXGeneratedKeyframes")
+            tokens_per_frame = height * width
+            if generated_keyframes.tokens_per_frame != tokens_per_frame:
+                raise ValueError(
+                    "LTX generated keyframes were recorded at"
+                    f" {generated_keyframes.tokens_per_frame} tokens per latent frame but"
+                    f" this latent has {tokens_per_frame}"
+                )
+            generated_coords = _pixel_coordinates(
+                batch,
+                generated_keyframes.num_keyframes,
+                height,
+                width,
+                self.config.causal_temporal_positioning,
+                x.device,
+            )
+            for offset, frame_index in enumerate(generated_keyframes.frame_indices):
+                start = offset * tokens_per_frame
+                end = start + tokens_per_frame
+                generated_coords[:, 0, start:end, 0] = frame_index
+                generated_coords[:, 0, start:end, 1] = frame_index + 1
+            guides = (
+                LTXVGuideConditioning(
+                    generated_coords,
+                    (generated_keyframes.num_keyframes, height, width),
+                    1.0,
+                ),
+                *guides,
+            )
         raw_tokens = x.flatten(2).transpose(1, 2)
         coords = _pixel_coordinates(
             batch,

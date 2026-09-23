@@ -54,14 +54,14 @@ SaveImage's legacy prefix uses the writable `comfy-output` mount, which can
 be configured without any ComfyUI directory.
 
 The bundled `core_schemas.json` records ComfyUI commit
-`15eb748b3ec5f8a0a2d470b7fb280e2d7579f916`, the fresh master comparison pin.
-It contains 641 translated core schemas and four explicit translation skips;
+`95539f56344958339e39b7582a476267d489b0ee`, the evaluated compatibility boundary.
+It contains 662 translated core schemas and six explicit translation skips;
 custom packs and partner API nodes are excluded. Regenerate from the repository
 root with Python 3.12 on Linux, without a GPU:
 
 ```sh
 git clone https://github.com/Comfy-Org/ComfyUI.git /tmp/dinkster-schema-reference
-git -C /tmp/dinkster-schema-reference checkout 15eb748b3ec5f8a0a2d470b7fb280e2d7579f916
+git -C /tmp/dinkster-schema-reference checkout 95539f56344958339e39b7582a476267d489b0ee
 uv venv --python 3.12 .venv-schemas
 uv pip install --python .venv-schemas/bin/python \
   --extra-index-url https://download.pytorch.org/whl/cpu \

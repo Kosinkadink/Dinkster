@@ -412,6 +412,8 @@ class ImageFilter(Node):
             generator = np.random.Generator(np.random.PCG64(seed))
             noise = generator.standard_normal(array.shape, dtype=np.float32)
             output = np.clip(array + strength * noise, 0.0, 1.0)
+            if array.shape[3] == 4:
+                output[..., 3] = array[..., 3]
         elif operation in FILTER_OPERATIONS[4:]:
             output = _morphology(array, operation, kernel_size)
         else:

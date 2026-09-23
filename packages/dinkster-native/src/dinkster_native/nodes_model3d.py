@@ -987,3 +987,36 @@ class GenerationMeshToModel3D(Node):
         if glb is None:
             raise ValueError("mesh is empty")
         return cls.outputs(model={"format": "glb", "bytes": glb})
+
+
+class GenerationFile3DToMesh(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _model3d_provider_schema("dinkster.file3d_to_mesh")
+
+    @classmethod
+    def execute(cls, *, model_3d: object) -> Mapping[str, object]:
+        parser = importlib.import_module("dinkster_inference_torch.mesh_file_io")
+        if isinstance(model_3d, AssetRef):
+            path = model_3d.local_path()
+            data = path.read_bytes()
+            format_name = path.suffix
+        elif isinstance(model_3d, Mapping):
+            model_mapping = cast("Mapping[object, object]", model_3d)
+            raw = model_mapping.get("bytes")
+            if not isinstance(raw, bytes):
+                raise TypeError("model_3d mapping must contain bytes")
+            data = raw
+            format_name = str(model_mapping.get("format", ""))
+        elif callable(getattr(model_3d, "get_bytes", None)):
+            file_value = cast("Any", model_3d)
+            data = file_value.get_bytes()
+            format_name = str(getattr(model_3d, "format", ""))
+        else:
+            raise TypeError("model_3d must be an AssetRef or 3D file value")
+        return cls.outputs(
+            mesh=parser.parse_mesh_file(
+                data,
+                format_name,
+            )
+        )

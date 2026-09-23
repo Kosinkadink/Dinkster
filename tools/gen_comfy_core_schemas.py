@@ -18,7 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REFERENCE = "15eb748b3ec5f8a0a2d470b7fb280e2d7579f916"
+REFERENCE = "95539f56344958339e39b7582a476267d489b0ee"
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "packages/dinkster-compat-comfy/src/dinkster_compat_comfy/core_schemas.json"
 

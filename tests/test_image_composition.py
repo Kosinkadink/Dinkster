@@ -157,6 +157,31 @@ def test_core_porter_duff_center_crops_mismatched_aspects() -> None:
     )
 
 
+@pytest.mark.parametrize("mode", ["DARKEN", "LIGHTEN", "MULTIPLY", "OVERLAY"])
+@pytest.mark.parametrize(
+    ("source_opacity", "destination_opacity"),
+    [(1.0, 0.0), (0.0, 1.0), (0.35, 0.65), (1.0, 1.0)],
+)
+def test_porter_duff_blend_modes_use_source_over_alpha(
+    mode: str, source_opacity: float, destination_opacity: float
+) -> None:
+    source = 0.8
+    destination = 0.3
+    output, opacity = _porter_duff_reference(
+        source, source_opacity, destination, destination_opacity, mode
+    )
+    result = PorterDuffComposite.execute(
+        source=_solid(source, height=1, width=1),
+        source_alpha_mask=np.full((1, 1, 1), source_opacity, dtype=np.float32),
+        destination=_solid(destination, height=1, width=1),
+        destination_alpha_mask=np.full((1, 1, 1), destination_opacity, dtype=np.float32),
+        mode=mode,
+        mask_polarity="coverage",
+    )
+    np.testing.assert_allclose(cast("np.ndarray", result["image"]), output, rtol=0, atol=2e-7)
+    np.testing.assert_allclose(cast("np.ndarray", result["alpha_mask"]), opacity, rtol=0, atol=2e-7)
+
+
 @pytest.mark.parametrize(
     ("mode", "expected"),
     [
@@ -326,6 +351,25 @@ def test_composite_reconciles_rgb_rgba_and_rejects_lossy_grayscale_destination()
         )
 
 
+@pytest.mark.parametrize("mode", BLEND_MODES)
+def test_comfy_image_blend_compatibility_preserves_destination_alpha(mode: str) -> None:
+    destination = np.full((1, 2, 3, 4), 0.8, dtype=np.float32)
+    destination[..., 3] = np.asarray([0.0, 0.37, 0.91], dtype=np.float32)
+    source = np.full((1, 2, 3, 4), 0.3, dtype=np.float32)
+    source[..., 3] = 0.1
+
+    result = ImageComposite.execute(
+        destination=destination,
+        source=source,
+        blend_mode=mode,
+        factor=0.5,
+        preserve_destination_alpha=True,
+    )["image"]
+
+    np.testing.assert_array_equal(np.asarray(result)[..., 3], destination[..., 3])
+    assert not np.array_equal(np.asarray(result)[..., :3], destination[..., :3])
+
+
 def _porter_duff_reference(
     source: float,
     source_opacity: float,
@@ -345,7 +389,10 @@ def _porter_duff_reference(
         color = (
             (1 - destination_opacity) * source_color
             + (1 - source_opacity) * destination_color
-            + min(source_color, destination_color)
+            + min(
+                source_color * destination_opacity,
+                destination_color * source_opacity,
+            )
         )
     elif mode == "DST":
         alpha, color = destination_opacity, destination_color
@@ -366,18 +413,30 @@ def _porter_duff_reference(
         color = (
             (1 - destination_opacity) * source_color
             + (1 - source_opacity) * destination_color
-            + max(source_color, destination_color)
+            + max(
+                source_color * destination_opacity,
+                destination_color * source_opacity,
+            )
         )
     elif mode == "MULTIPLY":
-        alpha = source_opacity * destination_opacity
-        color = source_color * destination_color
-    elif mode == "OVERLAY":
         alpha = source_opacity + destination_opacity - source_opacity * destination_opacity
         color = (
+            (1 - destination_opacity) * source_color
+            + (1 - source_opacity) * destination_color
+            + source_color * destination_color
+        )
+    elif mode == "OVERLAY":
+        alpha = source_opacity + destination_opacity - source_opacity * destination_opacity
+        overlap = (
             2 * source_color * destination_color
             if 2 * destination_color < destination_opacity
             else source_opacity * destination_opacity
-            - 2 * (destination_opacity - source_color) * (source_opacity - destination_color)
+            - 2 * (source_opacity - source_color) * (destination_opacity - destination_color)
+        )
+        color = (
+            (1 - destination_opacity) * source_color
+            + (1 - source_opacity) * destination_color
+            + overlap
         )
     elif mode == "SCREEN":
         alpha = source_opacity + destination_opacity - source_opacity * destination_opacity

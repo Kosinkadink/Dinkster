@@ -92,6 +92,11 @@ TRELLIS2_WORKFLOW_EVIDENCE = [
     "tests/test_generation_comfy_aliases.py::test_trellis2_official_workflow_surface_is_maintained"
 ]
 
+FILE3D_TO_MESH_EVIDENCE = [
+    "packages/dinkster-inference-torch/tests/test_mesh_file_io.py::test_obj_preserves_asymmetric_geometry_uvs_and_colors",
+    "packages/dinkster-inference-torch/tests/test_mesh_file_io.py::test_gltf_applies_scene_transform_and_corrects_reflected_winding",
+]
+
 SEEDVR2_WORKFLOW_EVIDENCE = [
     "tests/test_generation_comfy_aliases.py::test_seedvr2_workflow_aliases_cover_current_core_surface",
     "tests/test_generation_nodes.py::test_seedvr2_comfy_aliases_translate_outputs_and_manual_chunking",
@@ -330,6 +335,7 @@ def _seedvr2_workflow_records() -> list[dict[str, object]]:
         "ipndm",
         "ipndm_v",
         "deis",
+        "cfgpp_ud10_ab",
         "res_multistep",
         "res_multistep_cfg_pp",
         "res_multistep_ancestral",
@@ -2820,6 +2826,17 @@ def _trellis2_source_schemas() -> list[NodeSchema]:
             ),
             outputs=frozenset({"_0_FILE_3D_GLB_"}),
         ),
+        _with_asset_inputs(
+            _static_schema(
+                "Get3DComponents",
+                namespace="",
+                category="3d",
+                required={"model_3d": ("FILE_3D",)},
+                returns=("MESH",),
+                return_names=("mesh",),
+            ),
+            {"model_3d": ("media/model3d", True)},
+        ),
     ]
     return schemas
 
@@ -2987,6 +3004,7 @@ def _trellis2_records() -> list[dict[str, object]]:
             {"mesh": "mesh"},
         ),
         ("MeshToFile3D", "dinkster.mesh_to_model3d", ("mesh",), {"model": "_0_FILE_3D_GLB_"}),
+        ("Get3DComponents", "dinkster.file3d_to_mesh", ("model_3d",), {"mesh": "mesh"}),
     ]
     records = [
         _record(
@@ -2998,8 +3016,12 @@ def _trellis2_records() -> list[dict[str, object]]:
                 inputs={input_id: MappingSource.copy(input_id) for input_id in input_ids},
                 outputs=outputs,
             ),
-            revision=TRELLIS2_BASELINE,
-            evidence=TRELLIS2_WORKFLOW_EVIDENCE,
+            revision="95539f56" if node_class == "Get3DComponents" else TRELLIS2_BASELINE,
+            evidence=(
+                FILE3D_TO_MESH_EVIDENCE
+                if node_class == "Get3DComponents"
+                else TRELLIS2_WORKFLOW_EVIDENCE
+            ),
         )
         for node_class, carrier, input_ids, outputs in direct
     ]

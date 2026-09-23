@@ -678,6 +678,73 @@ def euler_cfg_pp() -> SolverFn[Any]:
     return euler_ancestral_cfg_pp(eta=0.0, s_noise=0.0, _what="euler_cfg_pp")
 
 
+def cfgpp_ud10_ab() -> SolverFn[Any]:
+    """CFG++ Euler with UD10 unconditioned and AB2 derivative history."""
+
+    def solve(
+        denoiser: Denoiser[TensorT],
+        x: TensorT,
+        sigmas: Sequence[float],
+        info: SamplerInfo,
+        *,
+        noise: NoiseSampler[TensorT] | None = None,
+        on_step: StepCallback | None = None,
+        on_step_begin: Callable[[int], None] | None = None,
+    ) -> TensorT:
+        pair = _require_uncond(denoiser, "cfgpp_ud10_ab")
+        flow = is_flow_parameterization(info.parameterization)
+        derivatives: list[TensorT] = []
+        denoised_history: list[TensorT] = []
+        old_uncond_d: TensorT | None = None
+        n = len(sigmas) - 1
+        for i in range(n):
+            _begin(on_step_begin, i)
+            denoised, uncond_denoised = pair.call_with_uncond(x, sigmas[i])
+            _emit(on_step, info, i, n, sigmas[i], x, denoised)
+            alpha_s = _alpha(sigmas[i], _half_log_snr(sigmas[i], flow=flow))
+            alpha_t = (
+                1.0
+                if sigmas[i + 1] == 0.0
+                else _alpha(sigmas[i + 1], _half_log_snr(sigmas[i + 1], flow=flow))
+            )
+            current_uncond_d = _to_d(x, sigmas[i], uncond_denoised * alpha_s)
+            uncond_d = current_uncond_d
+            dt = sigmas[i + 1] - sigmas[i]
+            if dt == 0.0:
+                raise ValueError("cfgpp_ud10_ab degenerate schedule: repeated sigma")
+            if i > 0:
+                assert old_uncond_d is not None
+                previous_dt = sigmas[i] - sigmas[i - 1]
+                if previous_dt == 0.0:
+                    raise ValueError("cfgpp_ud10_ab degenerate schedule: repeated sigma")
+                step_ratio = dt / previous_dt
+                uncond_d = uncond_d + (current_uncond_d - old_uncond_d) * (0.1 * step_ratio)
+            euler_step = denoised * alpha_t + uncond_d * sigmas[i + 1] - x
+            derivative = euler_step * (1.0 / dt)
+            derivatives.append(derivative)
+            if len(derivatives) > 2:
+                derivatives.pop(0)
+            if len(derivatives) == 1:
+                step = euler_step
+            else:
+                history_step = derivatives[-1] * _lms_coeff(2, sigmas, i, 0)
+                history_step = history_step + derivatives[-2] * _lms_coeff(2, sigmas, i, 1)
+                step = euler_step + (history_step - euler_step) * 0.25
+            x = x + step
+            if sigmas[i + 1] == 0.0 and denoised_history:
+                denoised_slope = (denoised - denoised_history[-1]) * (
+                    1.0 / (sigmas[i] - sigmas[i - 1])
+                )
+                x = denoised - denoised_slope * sigmas[i]
+            denoised_history.append(denoised)
+            if len(denoised_history) > 2:
+                denoised_history.pop(0)
+            old_uncond_d = current_uncond_d
+        return x
+
+    return solve
+
+
 def heun(
     *,
     s_churn: float = 0.0,
@@ -2698,6 +2765,10 @@ def _make_euler_cfg_pp(opts: Mapping[str, OptionValue]) -> SolverFn[Any]:
     return euler_cfg_pp()
 
 
+def _make_cfgpp_ud10_ab(opts: Mapping[str, OptionValue]) -> SolverFn[Any]:
+    return cfgpp_ud10_ab()
+
+
 def _make_euler_ancestral_cfg_pp(opts: Mapping[str, OptionValue]) -> SolverFn[Any]:
     return euler_ancestral_cfg_pp(eta=_f(opts, "eta"), s_noise=_f(opts, "s_noise"))
 
@@ -2944,6 +3015,15 @@ DINKSTER_EULER_CFG_PP: SamplerDescriptor[Any] = SamplerDescriptor(
     supports_step_begin=True,
     make=_make_euler_cfg_pp,
     aliases=("euler_cfg_pp",),
+    needs_uncond=True,
+)
+
+DINKSTER_CFGPP_UD10_AB: SamplerDescriptor[Any] = SamplerDescriptor(
+    id="dinkster.cfgpp_ud10_ab",
+    display_name="CFG++ UD10 AB",
+    supports_step_begin=True,
+    make=_make_cfgpp_ud10_ab,
+    aliases=("cfgpp_ud10_ab",),
     needs_uncond=True,
 )
 
@@ -3505,6 +3585,7 @@ _CANONICAL_SAMPLER_FIELDS: tuple[tuple[tuple[str, Any], ...], ...] = tuple(
         DINKSTER_IPNDM,
         DINKSTER_IPNDM_V,
         DINKSTER_DEIS,
+        DINKSTER_CFGPP_UD10_AB,
         DINKSTER_RES_MULTISTEP,
         DINKSTER_RES_MULTISTEP_CFG_PP,
         DINKSTER_RES_MULTISTEP_ANCESTRAL,
@@ -3579,6 +3660,7 @@ def select_builtin_sampler(sampler_id: str, **overrides: object) -> BuiltinSampl
 
 __all__ = [
     "DINKSTER_AR_VIDEO",
+    "DINKSTER_CFGPP_UD10_AB",
     "DINKSTER_DDIM",
     "DINKSTER_DDPM",
     "DINKSTER_DEIS",
@@ -3643,6 +3725,7 @@ __all__ = [
     "RES4LYF_RK_BETA",
     "builtin_sampler_registry",
     "builtin_samplers",
+    "cfgpp_ud10_ab",
     "ddim",
     "ddpm",
     "deis",

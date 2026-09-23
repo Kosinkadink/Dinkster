@@ -36,6 +36,9 @@
   truncation; the native extension preserves exact Dinkster 16-bit opacity
 - Bounded animated PNG and WebP saving with frame-order, timing, loop, quality,
   compression, lossless, and alpha controls
+- Bounded still and animated AVIF saving with 8/10-bit YUV420, sRGB, HLG or PQ
+  color signaling, CRF quality, loop and frame-rate controls, and ComfyUI-compatible
+  EXIF workflow metadata. AVIF loading and metadata inspection include that EXIF.
 - Asset-backed native video loading to IMAGE, optional AUDIO, fps, frame count,
   and duration, with rate, resize, start, frame-cap, and frame-selection controls
 - Native video saving through PyAV: MP4/H.264 at 8 or 10 bits, WebM/VP9 at
@@ -53,11 +56,13 @@
 - Value-level video operations on IMAGE batches and VIDEO values: frame
   windowing with skip, stride, and cap controls; exact nearest-tick frame-rate
   resampling matching native video loading; deferred assembly with optional
-  audio, 8/10-bit precision, sRGB, HLG, and HDR PQ; disassembly to frames,
-  optional audio, fps, duration, bit depth, and color space
+  audio, codec preference, 8/10-bit precision, sRGB, HLG, and HDR PQ;
+  concatenation of up to 100 videos with optional complete soundtrack override;
+  disassembly to frames, optional audio, fps, duration, bit depth, and color space
 - VIDEO values retain an encoded source or deferred components, rational
-  source probe facts, and ordered lazy trim, crop, scale, and restricted
-  identical-codec concat edits. Info and lazy edits do not decode frames.
+  source probe facts, and ordered lazy trim, crop, scale, and concat edits.
+  Compatible encoded concatenation uses packet copy; incompatible or
+  component-backed inputs share one encoding. Info and lazy edits do not decode frames.
   Encoded sources can be MP4, MKV, MOV, WebM, AVI, or GIF. Source-copy saves
   preserve original bytes; exact closed packet cuts use stream copy and
   other edits transcode frame-at-a-time. Alpha and source precision are

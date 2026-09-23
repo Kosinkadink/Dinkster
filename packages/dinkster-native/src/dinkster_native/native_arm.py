@@ -186,6 +186,9 @@ from .native_arm_registry import (
     GenerationExtendIntermediateSigmas as GenerationExtendIntermediateSigmas,
 )
 from .native_arm_registry import (
+    GenerationFile3DToMesh as GenerationFile3DToMesh,
+)
+from .native_arm_registry import (
     GenerationFlipSigmas as GenerationFlipSigmas,
 )
 from .native_arm_registry import (
@@ -363,7 +366,13 @@ from .native_arm_registry import (
     GenerationLTXAVReferenceAudio as GenerationLTXAVReferenceAudio,
 )
 from .native_arm_registry import (
+    GenerationLTXVAddGeneratedKeyframes as GenerationLTXVAddGeneratedKeyframes,
+)
+from .native_arm_registry import (
     GenerationLTXVAddGuide as GenerationLTXVAddGuide,
+)
+from .native_arm_registry import (
+    GenerationLTXVAddLatentGuide as GenerationLTXVAddLatentGuide,
 )
 from .native_arm_registry import (
     GenerationLTXVConditioning as GenerationLTXVConditioning,
@@ -381,6 +390,12 @@ from .native_arm_registry import (
     GenerationLTXVDurationPredictor as GenerationLTXVDurationPredictor,
 )
 from .native_arm_registry import (
+    GenerationLTXVFreezeLatent as GenerationLTXVFreezeLatent,
+)
+from .native_arm_registry import (
+    GenerationLTXVGeneratedKeyframesToGuides as GenerationLTXVGeneratedKeyframesToGuides,
+)
+from .native_arm_registry import (
     GenerationLTXVImageToVideo as GenerationLTXVImageToVideo,
 )
 from .native_arm_registry import (
@@ -391,6 +406,9 @@ from .native_arm_registry import (
 )
 from .native_arm_registry import (
     GenerationLTXVModalityGuidance as GenerationLTXVModalityGuidance,
+)
+from .native_arm_registry import (
+    GenerationLTXVSeparateGeneratedKeyframes as GenerationLTXVSeparateGeneratedKeyframes,
 )
 from .native_arm_registry import (
     GenerationLTXVSpatioTemporalGuidance as GenerationLTXVSpatioTemporalGuidance,
@@ -595,6 +613,9 @@ from .native_arm_registry import (
 )
 from .native_arm_registry import (
     GenerationWanContextWindowsManual as GenerationWanContextWindowsManual,
+)
+from .native_arm_registry import (
+    NativeApplyMiniMaxH3FunControlPatch as NativeApplyMiniMaxH3FunControlPatch,
 )
 from .native_arm_registry import (
     NativeApplyZImageControlPatch as NativeApplyZImageControlPatch,

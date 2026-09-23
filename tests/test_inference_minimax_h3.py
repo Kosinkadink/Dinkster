@@ -215,6 +215,7 @@ def test_minimax_h3_exact_bare_and_prefixed_headers_are_deterministic(prefix: st
         "ffn_width": 14336,
         "hidden_width": 5376,
         "key_prefix": prefix,
+        "output_heads": 1,
         "patch": "1x2x2",
         "text_width": 5120,
         "video_latent_channels": 24,
@@ -299,6 +300,22 @@ def test_minimax_h3_inconsistent_source_fails_closed_without_key_error() -> None
 def test_minimax_h3_wrong_rank_or_shape_fails_closed(key: str, shape: tuple[int, ...]) -> None:
     shapes = h3_shapes()
     shapes[key] = shape
+    assert detect_minimax_h3(HeaderSource(shapes)) is None
+
+
+def test_minimax_h3_detects_matching_pdd_output_head_banks() -> None:
+    shapes = h3_shapes()
+    shapes["final_layer.video_out.weight"] = (288, 5376)
+    shapes["final_layer.audio_out.weight"] = (96, 5376)
+    evidence = detect_minimax_h3(HeaderSource(shapes))
+    assert evidence is not None
+    assert evidence.fields["output_heads"] == 3
+
+
+def test_minimax_h3_rejects_mismatched_pdd_output_head_banks() -> None:
+    shapes = h3_shapes()
+    shapes["final_layer.video_out.weight"] = (288, 5376)
+    shapes["final_layer.audio_out.weight"] = (64, 5376)
     assert detect_minimax_h3(HeaderSource(shapes)) is None
 
 

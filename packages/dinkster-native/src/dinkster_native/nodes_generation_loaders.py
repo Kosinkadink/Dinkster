@@ -43,6 +43,7 @@ from .native_arm_runtime import (
     _ControlledConditioning,
     _native_handle,
     _native_model,
+    _native_model_h3_control,
     _native_model_sampling_cache,
     _native_model_sampling_timeline,
     _NativeCodecHandle,
@@ -719,22 +720,56 @@ def _validate_text_generation_options(inputs: Mapping[str, object]) -> None:
     thinking = inputs.get("thinking", False)
     if type(thinking) is not bool:
         raise TypeError("thinking must be a boolean")
-    if thinking:
-        raise ValueError("native Qwen generation does not support thinking mode")
-    use_default_template = inputs.get("use_default_template", False)
+    use_default_template = inputs.get("use_default_template", True)
     if type(use_default_template) is not bool:
         raise TypeError("use_default_template must be a boolean")
-    if use_default_template:
-        raise ValueError(
-            "native Qwen generation does not support model templates; "
-            "set use_default_template to false"
-        )
+    system_prompt = inputs.get("system_prompt", "")
+    if system_prompt is None:
+        system_prompt = ""
+    if type(system_prompt) is not str:
+        raise TypeError("system_prompt must be a string")
+    if inputs.get("mtp", "auto") not in ("auto", "off", "2", "3", "4", "5"):
+        raise ValueError("mtp must be auto, off, or an integer from 2 through 5")
 
 
-def _run_qwen_text_generation(inputs: Mapping[str, object], prompt: str) -> str:
+def _prepare_qwen_generation_prompt(
+    prompt: str,
+    *,
+    use_default_template: bool,
+    thinking: bool,
+    system_prompt: str,
+) -> str:
+    if not use_default_template:
+        return prompt
+    system = f"<|im_start|>system\n{system_prompt}<|im_end|>\n" if system_prompt else ""
+    suppress_thinking = "" if thinking else "<think>\n\n</think>\n\n"
+    return (
+        f"{system}<|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n{suppress_thinking}"
+    )
+
+
+def _split_generated_text(generated_text: str, prompt: str) -> tuple[str, str]:
+    reasoning, _, text = generated_text.partition("</think>")
+    if not reasoning.lstrip().startswith("<think>") and not prompt.rstrip().endswith("<think>"):
+        reasoning, text = "", generated_text
+    return text.strip(), reasoning.replace("<think>", "", 1).strip()
+
+
+def _run_qwen_text_generation(inputs: Mapping[str, object], prompt: str) -> tuple[str, str]:
     if type(prompt) is not str:
         raise TypeError("prompt must be a string")
     _validate_text_generation_options(inputs)
+    thinking = cast(bool, inputs.get("thinking", False))
+    use_default_template = cast(bool, inputs.get("use_default_template", True))
+    system_prompt = inputs.get("system_prompt", "")
+    if system_prompt is None:
+        system_prompt = ""
+    generation_prompt = _prepare_qwen_generation_prompt(
+        prompt,
+        use_default_template=use_default_template,
+        thinking=thinking,
+        system_prompt=cast(str, system_prompt),
+    )
     max_length = _generation_input_int(inputs, "max_length", 1, 32_768)
     inference = importlib.import_module("dinkster_inference")
     sampler, seed = _generation_sampler(inputs, inference)
@@ -757,7 +792,7 @@ def _run_qwen_text_generation(inputs: Mapping[str, object], prompt: str) -> str:
         request = inference.GenerationRequest(
             provider.id,
             handle.resource_identity,
-            prompt=prompt,
+            prompt=generation_prompt,
             sampler=sampler,
             stop=inference.GenerationStopConditions(max_length),
             seed=seed,
@@ -779,7 +814,7 @@ def _run_qwen_text_generation(inputs: Mapping[str, object], prompt: str) -> str:
         raise RuntimeError("generation stream ended without a terminal event")
     if terminal.result.finish_reason is inference.GenerationFinishReason.CANCELLED:
         raise inference.SamplingCancelled("text generation cancelled")
-    return terminal.result.text
+    return _split_generated_text(terminal.result.text, prompt)
 
 
 class GenerationTextGenerate(Node):
@@ -802,7 +837,8 @@ class GenerationTextGenerate(Node):
         prompt = inputs.get("prompt")
         if type(prompt) is not str:
             raise TypeError("prompt must be a string")
-        return cls.outputs(generated_text=_run_qwen_text_generation(inputs, prompt))
+        generated_text, thinking = _run_qwen_text_generation(inputs, prompt)
+        return cls.outputs(generated_text=generated_text, thinking=thinking)
 
 
 class GenerationPromptEnhance(Node):
@@ -825,8 +861,22 @@ class GenerationPromptEnhance(Node):
         prompt = inputs.get("prompt")
         if type(prompt) is not str:
             raise TypeError("prompt must be a string")
-        text = _run_qwen_text_generation(inputs, prepare_ltx2_prompt(prompt))
-        return cls.outputs(generated_text=clean_enhanced_prompt(text, prompt))
+        thinking = inputs.get("thinking", False)
+        system_prompt = inputs.get("system_prompt", "")
+        if system_prompt is None:
+            system_prompt = ""
+        formatted = prepare_ltx2_prompt(
+            prompt,
+            system_prompt=cast(str, system_prompt),
+            thinking=cast(bool, thinking),
+        )
+        prepared_inputs = dict(inputs)
+        prepared_inputs["use_default_template"] = False
+        text, reasoning = _run_qwen_text_generation(prepared_inputs, formatted)
+        return cls.outputs(
+            generated_text=clean_enhanced_prompt(text, prompt),
+            thinking=reasoning,
+        )
 
 
 class NativeMiniMaxMusic3TextEncode(MiniMaxMusic3TextEncode):
@@ -1040,6 +1090,7 @@ class GenerationModelSamplingAuraFlow(Node):
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=space,
+                minimax_h3_control=_native_model_h3_control(model),
             )
         )
 

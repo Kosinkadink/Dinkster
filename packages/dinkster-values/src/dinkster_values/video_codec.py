@@ -313,7 +313,14 @@ def coerce_video(obj: object) -> dict[str, object]:
         return result
     if ("source" in value) == ("components" in value):
         raise ValueError("VIDEO requires exactly one of source and components")
-    if set(value) - {"source", "components", "probe", "edits"}:
+    if set(value) - {
+        "source",
+        "components",
+        "probe",
+        "edits",
+        "complete_audio",
+        "preferred_codec",
+    }:
         raise ValueError("VIDEO contains unknown fields")
     result = dict(value)
     if "source" in value:
@@ -335,6 +342,15 @@ def coerce_video(obj: object) -> dict[str, object]:
         result["probe"] = _probe(value.get("probe", expected), components=True)
         if result["probe"] != expected:
             raise ValueError("component VIDEO probe does not match its components")
+    if "complete_audio" in value:
+        complete_audio = coerce_audio(value["complete_audio"])
+        if effective_audio_facts(complete_audio)["batch"] != 1:
+            raise ValueError("VIDEO complete_audio requires a single batch")
+        result["complete_audio"] = complete_audio
+    if "preferred_codec" in value:
+        if value["preferred_codec"] not in ("h264", "av1"):
+            raise ValueError("VIDEO preferred_codec must be h264 or av1")
+        result["preferred_codec"] = value["preferred_codec"]
     effective_video_facts(result)
     edits: list[object] = []
     for raw in cast("list[object]", value["edits"]):
@@ -384,6 +400,8 @@ def bind_video_sources(
         if components["audio"] is not None:
             components["audio"] = bind_audio_sources(components["audio"], factory)
         value["components"] = components
+    if "complete_audio" in value:
+        value["complete_audio"] = bind_audio_sources(value["complete_audio"], factory)
     edits: list[object] = []
     for raw in cast("list[object]", value["edits"]):
         edit = dict(mapping(raw, "VIDEO edit"))
@@ -459,6 +477,26 @@ def _pack_video(
                 chunks.append(data)
             components[key] = descriptor
         wire["components"] = components
+    if "complete_audio" in value:
+        data = encode_audio(value["complete_audio"])
+        if len(data) > 256 * 1024 * 1024:
+            raise ValueError("VIDEO complete_audio exceeds its encoded size limit")
+        metadata = dict(audio_meta(value["complete_audio"]))
+        metadata.pop(COST_META_KEY, None)
+        if identity:
+            metadata.pop("storage_dtype", None)
+        descriptor: dict[str, object] = {
+            "meta": metadata,
+            "codec": "audio",
+        }
+        if identity:
+            descriptor["digest"] = _digest(data)
+        else:
+            descriptor["chunk"] = len(chunks)
+            chunks.append(data)
+        wire["complete_audio"] = descriptor
+    if "preferred_codec" in value:
+        wire["preferred_codec"] = value["preferred_codec"]
     packed_edits: list[object] = []
     for raw in edits:
         edit = dict(mapping(raw, "VIDEO edit"))
@@ -556,6 +594,8 @@ def _unpack_video(
         "components",
         "probe",
         "edits",
+        "complete_audio",
+        "preferred_codec",
     }:
         raise ValueError("invalid VIDEO header value fields")
     budget[1] += 1
@@ -613,6 +653,15 @@ def _unpack_video(
                 raise ValueError("component VIDEO probe does not match its components")
             components[key] = data
         wire["components"] = components
+    if "complete_audio" in wire:
+        descriptor = mapping(wire["complete_audio"], "VIDEO complete_audio descriptor")
+        if set(descriptor) != {"codec", "meta", "chunk"} or descriptor.get("codec") != "audio":
+            raise ValueError("invalid VIDEO complete_audio descriptor")
+        data = take(descriptor)
+        if len(data) > 256 * 1024 * 1024:
+            raise ValueError("VIDEO complete_audio exceeds its size limit")
+        _validate_array_chunk(data, descriptor["meta"], audio=True)
+        wire["complete_audio"] = data
     edits = wire.get("edits")
     if not isinstance(edits, list):
         raise ValueError("VIDEO edits must be a list")
@@ -650,6 +699,8 @@ def _materialize_video(wire: dict[str, object]) -> dict[str, object]:
         for key, decoder in (("images", decode_image_array), ("audio", decode_audio)):
             if components[key] is not None:
                 components[key] = decoder(bytes(cast(memoryview, components[key])))
+    if "complete_audio" in wire:
+        wire["complete_audio"] = decode_audio(bytes(cast(memoryview, wire["complete_audio"])))
     for edit in cast("list[dict[str, object]]", wire["edits"]):
         if "concat" in edit:
             edit["concat"] = [
@@ -745,6 +796,13 @@ def video_meta(obj: object) -> Mapping[str, object]:
                     ref = dict(mapping(raw, "audio asset reference"))
                     refs[str(ref["digest"])] = ref
                     byte_size += cast("int", ref["size"])
+        if "complete_audio" in video:
+            audio = audio_meta(video["complete_audio"])
+            resident["ram"] += cast(int, mapping(audio["cost"], "audio cost")["ram"])
+            for raw in cast("list[object]", audio["asset_refs"]):
+                ref = dict(mapping(raw, "audio asset reference"))
+                refs[str(ref["digest"])] = ref
+                byte_size += cast("int", ref["size"])
         for raw in cast("list[object]", video["edits"]):
             edit = mapping(raw, "edit")
             for child in cast("list[object]", edit.get("concat", [])):

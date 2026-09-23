@@ -792,6 +792,7 @@ from .lora import (
     clip_lora_key_map,
     decode_lora,
     flux_linear1_qkv_key_map,
+    minimax_h3_lora_key_map,
     native_unet_key_map,
     normalize_lora_keys,
     qwen_image_lora_key_map,
@@ -1418,6 +1419,7 @@ from .sequence_partition import (
 from .signatures import Constraint, DimField, KeySignature, RankIs, ShapeIn, ShapeIs
 from .solvers import (
     DINKSTER_AR_VIDEO,
+    DINKSTER_CFGPP_UD10_AB,
     DINKSTER_CONFIGURED_SA_SOLVER,
     DINKSTER_DDIM,
     DINKSTER_DDPM,
@@ -2102,6 +2104,7 @@ __all__ = [
     "DINKSTER_DDIM_UNIFORM",
     "DINKSTER_DDPM",
     "DINKSTER_DEIS",
+    "DINKSTER_CFGPP_UD10_AB",
     "DINKSTER_ER_SDE",
     "DINKSTER_DPMPP_2M",
     "DINKSTER_DPMPP_2M_CFG_PP",
@@ -3143,6 +3146,7 @@ __all__ = [
     "remove_sampler_catalog_record",
     "native_unet_key_map",
     "load_model_output_profile",
+    "minimax_h3_lora_key_map",
     "normal_schedule",
     "normalize_flux_keys",
     "normalize_chroma_keys",

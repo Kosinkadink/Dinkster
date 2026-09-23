@@ -1227,6 +1227,8 @@ def _logical_lora_key_map(
         if not isinstance(hidden_width, int) or hidden_width <= 0:
             raise RuntimeError("native Z-Image runtime has no valid hidden width")
         key_map.update(inference.z_image_diffusers_key_map(diffusion_keys, hidden_width))
+    if handle.recipe.family_id == inference.MINIMAX_H3_CONFIG.family_id:
+        key_map.update(inference.minimax_h3_lora_key_map(diffusion_keys))
     clip_keys: list[str] = []
     for component, logical_component in (
         ("clip_l", "clip_l"),
@@ -1376,6 +1378,19 @@ class _ZImageControlBinding:
     strength: float
 
 
+@dataclass(frozen=True)
+class _MiniMaxH3ControlBinding:
+    control_handle: NativeComponentHandle
+    vae_handle: NativeComponentHandle
+    vae_runtime: object
+    control_video: object | None
+    mask: object | None
+    source_video: object | None
+    strength: float
+    start_percent: float
+    end_percent: float
+
+
 @dataclass(frozen=True, eq=False)
 class _NativeControlNetResource:
     handle: NativeComponentHandle | None
@@ -1474,12 +1489,16 @@ class _NativeModelOverlay:
     sampling_cache: Any | None = None
     sampling_timeline: Any | None = None
     sampling_space: Any | None = None
+    minimax_h3_control: _MiniMaxH3ControlBinding | None = None
 
     def __post_init__(self) -> None:
         if self.sampling_space is not None and self.sampling_shift is not None:
             raise ValueError("sampling space and sampling shift are mutually exclusive")
         if self.z_image_control is not None:
             self.z_image_control.handle.register_dependent(self)
+        if self.minimax_h3_control is not None:
+            self.minimax_h3_control.control_handle.register_dependent(self)
+            self.minimax_h3_control.vae_handle.register_dependent(self)
 
     @property
     def _dinkster_resident_owner(self) -> NativeRuntimeHandle:
@@ -1693,6 +1712,10 @@ def _native_model_sampling_timeline(value: object) -> object | None:
 
 def _native_model_sampling_space(value: object) -> Any | None:
     return value.sampling_space if isinstance(value, _NativeModelOverlay) else None
+
+
+def _native_model_h3_control(value: object) -> _MiniMaxH3ControlBinding | None:
+    return value.minimax_h3_control if isinstance(value, _NativeModelOverlay) else None
 
 
 def _cfg1_optimization_setting(

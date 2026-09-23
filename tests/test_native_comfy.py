@@ -36,14 +36,20 @@ from tools.gen_native_comfy_manifests import native_manifest
 def test_snapshot_round_trips_and_records_provenance() -> None:
     snapshot = core_schema_snapshot()
     assert snapshot["sourceRepository"] == "https://github.com/Comfy-Org/ComfyUI"
-    assert snapshot["sourceCommit"] == "15eb748b3ec5f8a0a2d470b7fb280e2d7579f916"
+    assert snapshot["sourceCommit"] == "95539f56344958339e39b7582a476267d489b0ee"
     assert snapshot["schemaWireVersion"] == SCHEMA_WIRE_VERSION
-    assert len(snapshot["schemas"]) == 641
+    assert len(snapshot["schemas"]) == 662
     for name, wire in snapshot["schemas"].items():
         assert name == wire["nodeType"]
         assert schema_to_wire(schema_from_wire(wire)) == wire
     assert "comfy.KSampler" in snapshot["schemas"]
     assert "comfy.CLIPTextEncode" in snapshot["schemas"]
+    prompt_enhance = schema_from_wire(snapshot["schemas"]["comfy.TextGenerateLTX2Prompt"])
+    assert prompt_enhance.input("system_prompt") is not None
+    assert tuple(output.id for output in prompt_enhance.outputs) == (
+        "generated_text",
+        "thinking",
+    )
 
 
 def test_native_entry_does_not_import_comfyui(tmp_path: Path) -> None:

@@ -10598,6 +10598,48 @@
     },
     {
       "schemaVersion": 1,
+      "nodeType": "comfy.Get3DComponents",
+      "version": 1,
+      "displayName": "Get3DComponents",
+      "category": "comfy/3d",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "model_3d",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "dinkster.asset"
+            ]
+          },
+          "required": true,
+          "widget": {
+            "type": "ASSET",
+            "accept": [
+              "application/octet-stream"
+            ],
+            "kind": "media/model3d"
+          }
+        },
+        {
+          "role": "output",
+          "id": "mesh",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MESH"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "Get3DComponents"
+      ]
+    },
+    {
+      "schemaVersion": 1,
       "nodeType": "comfy.KSampler",
       "version": 1,
       "displayName": "KSampler",
@@ -26707,6 +26749,42 @@
       }
     },
     {
+      "id": "comfy_alias:comfy-core/Get3DComponents",
+      "mappingKind": "op",
+      "carrier": "dinkster.file3d_to_mesh",
+      "source": {
+        "pack": "comfy-core",
+        "nodeClass": "Get3DComponents",
+        "nodeType": "comfy.Get3DComponents",
+        "revision": "95539f56"
+      },
+      "replacement": {
+        "from": "comfy.Get3DComponents",
+        "cases": [
+          {
+            "to": "dinkster.file3d_to_mesh",
+            "nodes": {},
+            "inputs": {
+              "model_3d": {
+                "kind": "copy",
+                "input": "model_3d"
+              }
+            },
+            "outputs": {
+              "mesh": "mesh"
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "exact",
+        "evidence": [
+          "packages/dinkster-inference-torch/tests/test_mesh_file_io.py::test_obj_preserves_asymmetric_geometry_uvs_and_colors",
+          "packages/dinkster-inference-torch/tests/test_mesh_file_io.py::test_gltf_applies_scene_transform_and_corrects_reflected_winding"
+        ]
+      }
+    },
+    {
       "id": "comfy_alias:comfy-core/LoadMoGeModel",
       "mappingKind": "op",
       "carrier": "dinkster.load_geometry_model",
@@ -27082,6 +27160,7 @@
                     "ipndm": "dinkster.ipndm",
                     "ipndm_v": "dinkster.ipndm_v",
                     "deis": "dinkster.deis",
+                    "cfgpp_ud10_ab": "dinkster.cfgpp_ud10_ab",
                     "res_multistep": "dinkster.res_multistep",
                     "res_multistep_cfg_pp": "dinkster.res_multistep_cfg_pp",
                     "res_multistep_ancestral": "dinkster.res_multistep_ancestral",

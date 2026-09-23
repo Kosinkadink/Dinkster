@@ -52,6 +52,14 @@ _ENCODERS = {
     "vp8": "libvpx",
 }
 _CONTAINERS = {"mkv": "matroska"}
+_SCALE_COLOR_MATRICES = {
+    1: "bt709",
+    4: "fcc",
+    5: "bt470bg",
+    6: "smpte170m",
+    7: "smpte240m",
+    9: "bt2020",
+}
 
 
 def assemble_video(
@@ -273,6 +281,65 @@ def _frame(array: np.ndarray, depth: int) -> Any:
     return av.VideoFrame.from_ndarray(pixels, format="rgba64le" if alpha else "rgb48le")
 
 
+def _encoding_frame_reformatter(
+    pixel_format: str,
+    destination_matrix: int,
+    destination_range: int,
+) -> Callable[[Any], Any]:
+    if destination_matrix != 9:
+
+        def reformat(frame: Any) -> Any:
+            return frame.reformat(
+                format=pixel_format,
+                src_colorspace=frame.colorspace if frame.colorspace not in (0, 2) else 5,
+                dst_colorspace=destination_matrix,
+                src_color_range=2 if frame.format.is_rgb else frame.color_range or 1,
+                dst_color_range=destination_range,
+            )
+
+        return reformat
+
+    signature: tuple[int, int, str, int, int] | None = None
+    graph: Any = None
+
+    def reformat_bt2020(frame: Any) -> Any:
+        nonlocal signature, graph
+        source_matrix = frame.colorspace if frame.colorspace not in (0, 2) else 5
+        source_range = 2 if frame.format.is_rgb else frame.color_range or 1
+        candidate = (
+            frame.width,
+            frame.height,
+            frame.format.name,
+            source_matrix,
+            source_range,
+        )
+        frame.time_base = frame.time_base or Fraction(1, 1_000_000)
+        if candidate != signature:
+            import av
+
+            graph = cast(Any, av).filter.Graph()
+            source = graph.add_buffer(template=frame)
+            options = [
+                "out_color_matrix=bt2020",
+                f"in_range={'full' if source_range == 2 else 'limited'}",
+                f"out_range={'full' if destination_range == 2 else 'limited'}",
+            ]
+            if not frame.format.is_rgb and source_matrix in _SCALE_COLOR_MATRICES:
+                options.append(f"in_color_matrix={_SCALE_COLOR_MATRICES[source_matrix]}")
+            scale = graph.add("scale", args=":".join(options))
+            output_format = graph.add("format", args=pixel_format)
+            sink = graph.add("buffersink")
+            source.link_to(scale)
+            scale.link_to(output_format)
+            output_format.link_to(sink)
+            graph.configure()
+            signature = candidate
+        graph.push(frame)
+        return graph.pull()
+
+    return reformat_bt2020
+
+
 def _encoder_frame(array: np.ndarray, depth: int) -> Any:
     """Convert annotated IMAGE pixels to the straight-alpha representation encoders require."""
     import numpy as np
@@ -477,13 +544,49 @@ def _audio_frames(segments: list[_Segment], index: int) -> Generator[tuple[Fract
             offset += segment.duration
 
 
+def _complete_audio_frames(
+    audio: object, duration: Fraction | None
+) -> Generator[tuple[Fraction, Any]]:
+    import av
+    import numpy as np
+
+    facts = effective_audio_facts(audio)
+    rate = facts["sample_rate"]
+    last = facts["frames"]
+    if duration is not None:
+        limit = math.ceil(duration * rate)
+        last = limit if last is None else min(last, limit)
+    start = 0
+    with AudioWindowReader(audio) as reader:
+        while last is None or start < last:
+            count = 1024 if last is None else min(1024, last - start)
+            waveform = reader.read(start, count, batch_index=0)["waveform"][0]
+            if not waveform.shape[1]:
+                break
+            frame = av.AudioFrame.from_ndarray(
+                np.ascontiguousarray(waveform), format="fltp", layout=facts["layout"]
+            )
+            frame.sample_rate = rate
+            yield Fraction(start, rate), frame
+            start += waveform.shape[1]
+
+
 def _audio_count(value: Mapping[str, object]) -> int:
+    if "complete_audio" in value:
+        return 1
     if "components" in value:
         return int(mapping(value["components"], "components").get("audio") is not None)
     return len(cast(list[object], mapping(value["probe"], "probe")["audio"]))
 
 
+def _validate_segment_audio(segments: list[_Segment]) -> None:
+    counts = {_audio_count(segment.value) for segment in segments}
+    if len(counts) > 1:
+        raise ValueError("cannot concatenate videos with missing or different audio stream counts")
+
+
 def _extract_audio(segments: list[_Segment], measured_end: Fraction) -> object:
+    _validate_segment_audio(segments)
     selected: list[object] = []
     for segment in segments:
         value = segment.value
@@ -541,7 +644,6 @@ def iter_export_frames(value: Mapping[str, object], depth: int) -> Generator[tup
         )
     probe = mapping(value["probe"], "probe")
     plan = _plan(value)
-    _validate_concat(plan)
     with closing(_video_frames(plan)) as frames:
         for timestamp, item in frames:
             array = (
@@ -576,7 +678,15 @@ def iter_video_pixels(obj: object) -> Generator[tuple[Fraction, Any]]:
 
 def iter_video_audio(obj: object, index: int = 0) -> Generator[tuple[Fraction, Any]]:
     """Yield edited audio frames without accumulating the complete waveform."""
-    with closing(_audio_frames(_plan(coerce_video(obj)), index)) as frames:
+    value = coerce_video(obj)
+    if "complete_audio" in value:
+        if index:
+            return
+        duration = cast("Fraction | None", effective_video_facts(value)["duration"])
+        frames = _complete_audio_frames(value["complete_audio"], duration)
+    else:
+        frames = _audio_frames(_plan(value), index)
+    with closing(frames):
         yield from frames
 
 
@@ -586,7 +696,6 @@ def disassemble_video(obj: object) -> dict[str, object]:
     value = coerce_video(obj)
     probe = mapping(value["probe"], "probe")
     plan = _plan(value)
-    _validate_concat(plan)
     arrays: list[np.ndarray] = []
     size = 0
     measured_end = Fraction(0)
@@ -624,9 +733,19 @@ def disassemble_video(obj: object) -> dict[str, object]:
         color["matrix"] = probe["matrix"]
     if probe["bit_depth"] is not None:
         color["bit_depth"] = probe["bit_depth"]
+    audio = None if "complete_audio" in value else _extract_audio(plan, measured_end)
+    if "complete_audio" in value:
+        complete_audio = value["complete_audio"]
+        audio_facts = effective_audio_facts(complete_audio)
+        count = math.ceil(duration * audio_facts["sample_rate"])
+        if audio_facts["frames"] is not None:
+            count = min(count, audio_facts["frames"])
+        audio = append_audio_edit(
+            complete_audio, {"trim": {"start_sample": 0, "sample_count": count}}
+        )
     return {
         "images": annotate_image(images, color=color),
-        "audio": _extract_audio(plan, measured_end),
+        "audio": audio,
         "frame_count": len(arrays),
         "fps": float(rate),
         "duration": float(duration),
@@ -668,22 +787,23 @@ def _templates(container: Any) -> tuple[object, ...]:
     return tuple(result)
 
 
-def _validate_concat(segments: list[_Segment]) -> None:
+def _concat_templates_match(segments: list[_Segment]) -> bool:
     import av
 
     if len(segments) < 2:
-        return
+        return True
     template: tuple[object, ...] | None = None
     for segment in segments:
         if "source" not in segment.value:
-            raise ValueError("identical-codec concat requires encoded source clips")
+            return False
         probe = mapping(segment.value["probe"], "probe")
         with open_video_source(video_source(segment.value)) as handle, av.open(handle) as opened:
             actual = (_templates(opened), probe["rotation"], probe["alpha"])
         if template is None:
             template = actual
         elif template != actual:
-            raise ValueError("concat requires identical video and audio stream templates")
+            return False
+    return True
 
 
 def _independent_packet(packet: Any) -> bool:
@@ -907,6 +1027,8 @@ def save_video_stream(
         probe = {**timeline_stream[0], "container": None, "video_codec": None, "pix_fmt": None}
     else:
         probe = mapping(value["probe"], "probe")
+    if codec == "auto" and value.get("preferred_codec") is not None:
+        codec = cast(str, value["preferred_codec"])
     kind = str(probe["container"] or "mp4") if container == "auto" else container
     name = (
         str(
@@ -979,7 +1101,8 @@ def save_video_stream(
     mime = video_rendition_mime({"container": kind})
     mux_options = {"movflags": "use_metadata_tags"} if kind in ("mp4", "mov") else {}
     plan = [] if timeline_stream is not None else _plan(value)
-    _validate_concat(plan)
+    if timeline_stream is None and "complete_audio" not in value:
+        _validate_segment_audio(plan)
     facts = effective_video_facts(value)
     unchanged = (
         len(plan) == 1
@@ -987,6 +1110,7 @@ def save_video_stream(
         and plan[0].start == 0
         and plan[0].duration == probe["duration"]
         and not plan[0].spatial
+        and "complete_audio" not in value
     )
     copy_requested = crf is None and profile == "auto" and audio_layout == "preserve"
     copy_requested = copy_requested and not trim_to_audio
@@ -1026,7 +1150,12 @@ def save_video_stream(
                         packet.stream = streams[packet.stream.index]
                         outgoing.mux(packet)
                 return "." + kind, mime
-    copy_safe = timeline_stream is None and _copy_preflight(plan)
+    copy_safe = (
+        timeline_stream is None
+        and "complete_audio" not in value
+        and _concat_templates_match(plan)
+        and _copy_preflight(plan)
+    )
     if copy_safe and name == probe["video_codec"] and copy_requested:
         with av.open(
             destination, "w", format=_CONTAINERS.get(kind, kind), options=mux_options
@@ -1140,6 +1269,11 @@ def save_video_stream(
         color["matrix"] = _MATRIX_FOR_PRIMARIES.get(cast(int, color["primaries"]), 2)
     destination_matrix = 0 if pixel.is_rgb else color["matrix"] if color["matrix"] != 2 else 5
     destination_range = color["range"] or 1
+    reformat_encoding_frame = _encoding_frame_reformatter(
+        pixel_format,
+        cast(int, destination_matrix),
+        cast(int, destination_range),
+    )
     with (
         av.open(
             destination, "w", format=_CONTAINERS.get(kind, kind), options=mux_options
@@ -1164,7 +1298,8 @@ def save_video_stream(
         if name == "h264":
             video.options.update({"preset": "fast", "tune": "zerolatency"})
         elif name == "hevc":
-            video.codec_context.codec_tag = "hvc1"
+            if kind in ("mp4", "mov"):
+                video.codec_context.codec_tag = "hvc1"
             video.options.update(
                 {
                     "preset": "medium",
@@ -1198,8 +1333,17 @@ def save_video_stream(
         ]
         resamplers: list[Any] = [None]
         for index in range(audio_count):
+            complete_audio = value.get("complete_audio") if timeline_stream is None else None
             decoded_audio = readers.enter_context(
-                closing(timeline_stream[2] if timeline_stream else _audio_frames(plan, index))
+                closing(
+                    timeline_stream[2]
+                    if timeline_stream
+                    else _complete_audio_frames(
+                        complete_audio, cast(Fraction | None, facts["duration"])
+                    )
+                    if complete_audio is not None
+                    else _audio_frames(plan, index)
+                )
             )
             iterator = readers.enter_context(
                 closing(
@@ -1220,7 +1364,7 @@ def save_video_stream(
 
             frame = first[1]
             layout = frame.layout.name if audio_layout == "preserve" else audio_layout
-            if audio_layout == "preserve" and "source" in value:
+            if audio_layout == "preserve" and "source" in value and "complete_audio" not in value:
                 layout = cast(
                     str, mapping(cast(list[object], probe["audio"])[index], "audio")["layout"]
                 )
@@ -1308,13 +1452,7 @@ def save_video_stream(
             )
             if index == 0:
                 coverage = _alpha_pixels(frame) if alpha and pixel.is_planar else None
-                frame = frame.reformat(
-                    format=pixel_format,
-                    src_colorspace=frame.colorspace if frame.colorspace not in (0, 2) else 5,
-                    dst_colorspace=destination_matrix,
-                    src_color_range=2 if frame.format.is_rgb else frame.color_range or 1,
-                    dst_color_range=destination_range,
-                )
+                frame = reformat_encoding_frame(frame)
                 if coverage is not None:
                     component = next(c for c in pixel.components if c.is_alpha)
                     plane = frame.planes[component.plane]

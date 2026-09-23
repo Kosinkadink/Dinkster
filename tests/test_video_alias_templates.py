@@ -188,6 +188,20 @@ def _plan(name: str, values: dict, links: dict | None = None) -> tuple[Any, dict
         if present:
             node, port = address.split(":") if ":" in address else ("", address)
             inputs[node][port] = value
+    for address, family in case.input_families:
+        source_members = links.get(family.source_family, {})
+        assert isinstance(source_members, dict)
+        members = {}
+        for suffix, source_inputs in source_members.items():
+            assert isinstance(source_inputs, dict)
+            mapped_inputs = {}
+            for target_input, source in family.inputs:
+                if source.kind == "copy" and source.input in source_inputs:
+                    mapped_inputs[target_input] = source_inputs[source.input]
+            assert set(mapped_inputs) == {"value"}
+            members[suffix] = mapped_inputs["value"]
+        node, port = address.split(":") if ":" in address else ("", address)
+        inputs[node][port] = members
     return case, nodes, inputs
 
 
@@ -240,6 +254,7 @@ def mounted_video(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     "name",
     [
         "LoadVideo",
+        "ConcatenateVideo",
         "CreateVideo",
         "GetVideoComponents",
         "Video Slice",
@@ -271,7 +286,14 @@ def test_video_alias_branches_execute(name: str, mounted_video) -> None:
     }
     if name == "SaveWEBM":
         values.update(codec="vp9", crf=32.75)
-    outputs, results = _execute(name, values, {"video": video, "images": images, "file": ref})
+    links = {"video": video, "images": images, "file": ref}
+    if name == "ConcatenateVideo":
+        values.update(codec=["h264"])
+        links["videos"] = {
+            "video0": {"video": [video]},
+            "video1": {"video": [video]},
+        }
+    outputs, results = _execute(name, values, links)
     if name in ("SaveVideo", "SaveWEBM"):
         asset = results[""]["asset"]
         assert results[""]["video"] is (
@@ -286,6 +308,9 @@ def test_video_alias_branches_execute(name: str, mounted_video) -> None:
     if name == "CreateVideo":
         assert results[""]["video"]["components"]["bit_depth"] == 10
         assert results[""]["video"]["components"]["color_space"] == "HDR PQ"
+    if name == "ConcatenateVideo":
+        assert len(results[""]["video"]["edits"][0]["concat"]) == 1
+        assert results[""]["video"]["preferred_codec"] == "h264"
     if name == "GetVideoComponents":
         assert len(outputs) == 5
         np.testing.assert_array_equal(outputs["_0_IMAGE_"], images)

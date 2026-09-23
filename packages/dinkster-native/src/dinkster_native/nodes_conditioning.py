@@ -36,6 +36,7 @@ from .native_arm_latent_utils import _check_bounds
 from .native_arm_runtime import (
     _application_chain_model,
     _native_model,
+    _native_model_h3_control,
     _native_model_sampling_cache,
     _native_model_sampling_space,
     _native_model_sampling_timeline,
@@ -319,6 +320,7 @@ class GenerationChromaRadianceOptions(Node):
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                minimax_h3_control=_native_model_h3_control(model),
             )
         )
 
@@ -360,6 +362,7 @@ class GenerationChromaModelSampling(Node):
                 radiance_options,
                 sampling_cache=_native_model_sampling_cache(model_value),
                 sampling_timeline=_native_model_sampling_timeline(model_value),
+                minimax_h3_control=_native_model_h3_control(model_value),
             )
         )
 
@@ -407,6 +410,7 @@ class GenerationModelSamplingSD3(Node):
                 radiance_options,
                 sampling_cache=_native_model_sampling_cache(model_value),
                 sampling_timeline=_native_model_sampling_timeline(model_value),
+                minimax_h3_control=_native_model_h3_control(model_value),
             )
         )
 
@@ -474,6 +478,7 @@ class GenerationModelSamplingLTXV(Node):
                 options,
                 sampling_cache=_native_model_sampling_cache(model_value),
                 sampling_timeline=_native_model_sampling_timeline(model_value),
+                minimax_h3_control=_native_model_h3_control(model_value),
             )
         )
 
@@ -540,6 +545,7 @@ class GenerationModelSamplingFlux(Node):
                     sampling_cache=_native_model_sampling_cache(model_value),
                     sampling_timeline=_native_model_sampling_timeline(model_value),
                     sampling_space=space,
+                    minimax_h3_control=_native_model_h3_control(model_value),
                 )
             ),
         )

@@ -711,6 +711,15 @@ def native_unet_key_map(model_keys: Iterable[str]) -> dict[str, str]:
     return key_map
 
 
+def minimax_h3_lora_key_map(model_keys: Iterable[str]) -> dict[str, str]:
+    """Map MiniMax H3 DiffSynth/ModelScope stems onto native weights."""
+    key_map: dict[str, str] = {}
+    for key in model_keys:
+        if key.startswith("diffusion_model.") and key.endswith(".weight"):
+            key_map[key[len("diffusion_model.") : -len(".weight")]] = key
+    return key_map
+
+
 _UNET_RESNET_TO_DIFFUSERS = {
     "in_layers.2.weight": "conv1.weight",
     "in_layers.2.bias": "conv1.bias",
@@ -1047,6 +1056,7 @@ __all__ = [
     "clip_lora_key_map",
     "decode_lora",
     "flux_linear1_qkv_key_map",
+    "minimax_h3_lora_key_map",
     "native_unet_key_map",
     "normalize_lora_keys",
     "qwen_image_lora_key_map",

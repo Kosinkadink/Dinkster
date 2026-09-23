@@ -190,6 +190,30 @@ def test_draw_text_uses_pillow_bundled_default_font_deterministically() -> None:
     )
 
 
+def test_draw_text_uses_source_over_for_rgba_images() -> None:
+    image = np.zeros((1, 40, 64, 4), dtype=np.float32)
+    image[..., :3] = 0.25
+    image[..., 3] = 0.5
+
+    result = _image(
+        _run(
+            DrawText,
+            image=image,
+            text="A",
+            x=2,
+            y=3,
+            font_size=12,
+            color="#ffffff",
+        )
+    )
+
+    covered = result[..., 3] > 0.5
+    assert np.any(covered)
+    assert np.max(result[..., 3]) > 0.5
+    assert np.all(result[..., 3] >= image[..., 3])
+    assert np.all(result[..., :3][covered] > image[..., :3][covered])
+
+
 def test_draw_region_fills_outlines_and_clips() -> None:
     image = np.zeros((1, 5, 6, 3), dtype=np.float32)
     filled = _image(

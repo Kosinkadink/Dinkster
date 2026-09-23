@@ -823,25 +823,30 @@ class LTXAVModel(ResidencyRouted, torch.nn.Module):
         v_coords = _video_coordinates(
             batch, frames, height, width, config.causal_temporal_positioning, video.device
         )
-        if self.keyframes_abs_pos_embedding is not None:
-            first_frame = v_coords[:, 0, :, 0] == 0
-            if generated_keyframes is not None:
-                if type(generated_keyframes) is not LTXGeneratedKeyframes:
-                    raise TypeError("generated_keyframes must be exact LTXGeneratedKeyframes")
-                tokens_per_frame = height * width
-                if generated_keyframes.tokens_per_frame != tokens_per_frame:
-                    raise ValueError(
-                        "LTX generated keyframes were recorded at"
-                        f" {generated_keyframes.tokens_per_frame} tokens per latent frame but"
-                        f" this latent has {tokens_per_frame}"
-                    )
-                first_token = generated_keyframes.first_latent_frame * tokens_per_frame
-                num_tokens = generated_keyframes.num_keyframes * tokens_per_frame
-                slots = torch.zeros(
-                    frames * tokens_per_frame, dtype=torch.bool, device=first_frame.device
+        first_frame = v_coords[:, 0, :, 0] == 0
+        if generated_keyframes is not None:
+            if type(generated_keyframes) is not LTXGeneratedKeyframes:
+                raise TypeError("generated_keyframes must be exact LTXGeneratedKeyframes")
+            tokens_per_frame = height * width
+            if generated_keyframes.tokens_per_frame != tokens_per_frame:
+                raise ValueError(
+                    "LTX generated keyframes were recorded at"
+                    f" {generated_keyframes.tokens_per_frame} tokens per latent frame but"
+                    f" this latent has {tokens_per_frame}"
                 )
-                slots[first_token : first_token + num_tokens] = True
-                first_frame = first_frame | slots
+            first_token = generated_keyframes.first_latent_frame * tokens_per_frame
+            num_tokens = generated_keyframes.num_keyframes * tokens_per_frame
+            for offset, frame_index in enumerate(generated_keyframes.frame_indices):
+                start = first_token + offset * tokens_per_frame
+                end = start + tokens_per_frame
+                v_coords[:, 0, start:end, 0] = frame_index
+                v_coords[:, 0, start:end, 1] = frame_index + 1
+            slots = torch.zeros(
+                frames * tokens_per_frame, dtype=torch.bool, device=first_frame.device
+            )
+            slots[first_token : first_token + num_tokens] = True
+            first_frame = first_frame | slots
+        if self.keyframes_abs_pos_embedding is not None:
             embedding = self.keyframes_abs_pos_embedding.to(
                 device=tokens.device, dtype=tokens.dtype
             )

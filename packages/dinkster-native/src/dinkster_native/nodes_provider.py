@@ -132,7 +132,8 @@ def _generation_provider_text_schema(node_type: str, display_name: str) -> NodeS
             InputSpec("audio", _COMFY_AUDIO, required=False),
             InputSpec("max_length", _INT, default=512),
             InputSpec("thinking", _BOOLEAN, required=False, default=False),
-            InputSpec("use_default_template", _BOOLEAN, required=False, default=False),
+            InputSpec("use_default_template", _BOOLEAN, required=False, default=True),
+            InputSpec("system_prompt", _STRING, required=False, force_input=True),
         ),
         combos=(
             DynamicComboSpec(
@@ -160,7 +161,7 @@ def _generation_provider_text_schema(node_type: str, display_name: str) -> NodeS
                 default="on",
             ),
         ),
-        outputs=(OutputSpec("generated_text", _STRING),),
+        outputs=(OutputSpec("generated_text", _STRING), OutputSpec("thinking", _STRING)),
     )
 
 
@@ -948,6 +949,93 @@ def _generation_provider_schema(node_type: str) -> NodeSchema:
                 InputSpec("frame_idx", _INT, default=0),
                 InputSpec("strength", _FLOAT, default=1.0),
                 InputSpec("attention_mask", _DINKSTER_MASK, required=False),
+            ),
+            outputs=(
+                OutputSpec("positive", _DINKSTER_CONDITIONING),
+                OutputSpec("negative", _DINKSTER_CONDITIONING),
+                OutputSpec("latent", _DINKSTER_LATENT),
+            ),
+        )
+    if node_type == "dinkster.ltxv_add_latent_guide":
+        return NodeSchema(
+            node_type=node_type,
+            display_name="LTXV Add Latent Guide",
+            category="model/conditioning/ltxv",
+            inputs=(
+                InputSpec("positive", _DINKSTER_CONDITIONING),
+                InputSpec("negative", _DINKSTER_CONDITIONING),
+                InputSpec("vae", _DINKSTER_VAE),
+                InputSpec("latent", _DINKSTER_LATENT),
+                InputSpec("guiding_latent", _DINKSTER_LATENT),
+                InputSpec("latent_idx", _INT, default=0),
+                InputSpec("strength", _FLOAT, default=1.0),
+                InputSpec("attention_mask", _DINKSTER_MASK, required=False),
+            ),
+            outputs=(
+                OutputSpec("positive", _DINKSTER_CONDITIONING),
+                OutputSpec("negative", _DINKSTER_CONDITIONING),
+                OutputSpec("latent", _DINKSTER_LATENT),
+            ),
+        )
+    if node_type == "dinkster.ltxv_freeze_latent":
+        return NodeSchema(
+            node_type=node_type,
+            display_name="LTXV Freeze Latent",
+            category="model/latent/ltxv",
+            inputs=(InputSpec("latent", _DINKSTER_LATENT),),
+            outputs=(OutputSpec("latent", _DINKSTER_LATENT),),
+        )
+    if node_type == "dinkster.ltxv_add_generated_keyframes":
+        return NodeSchema(
+            node_type=node_type,
+            display_name="LTXV Add Generated Keyframes",
+            category="model/conditioning/ltxv",
+            inputs=(
+                InputSpec("positive", _DINKSTER_CONDITIONING),
+                InputSpec("negative", _DINKSTER_CONDITIONING),
+                InputSpec("vae", _DINKSTER_VAE),
+                InputSpec("latent", _DINKSTER_LATENT),
+                InputSpec("interval_frames", _INT, required=False, default=24),
+                InputSpec("keyframes", _DINKSTER_LATENT, required=False),
+                InputSpec("frame_indices", _STRING, required=False, default=""),
+            ),
+            outputs=(
+                OutputSpec("positive", _DINKSTER_CONDITIONING),
+                OutputSpec("negative", _DINKSTER_CONDITIONING),
+                OutputSpec("latent", _DINKSTER_LATENT),
+            ),
+        )
+    if node_type == "dinkster.ltxv_separate_generated_keyframes":
+        return NodeSchema(
+            node_type=node_type,
+            display_name="LTXV Separate Generated Keyframes",
+            category="model/conditioning/ltxv",
+            inputs=(
+                InputSpec("positive", _DINKSTER_CONDITIONING),
+                InputSpec("negative", _DINKSTER_CONDITIONING),
+                InputSpec("latent", _DINKSTER_LATENT),
+                InputSpec("keyframes_to_batch", _BOOLEAN, default=False),
+            ),
+            outputs=(
+                OutputSpec("positive", _DINKSTER_CONDITIONING),
+                OutputSpec("negative", _DINKSTER_CONDITIONING),
+                OutputSpec("latent", _DINKSTER_LATENT),
+                OutputSpec("keyframes", _DINKSTER_LATENT),
+            ),
+        )
+    if node_type == "dinkster.ltxv_generated_keyframes_to_guides":
+        return NodeSchema(
+            node_type=node_type,
+            display_name="LTXV Generated Keyframes to Guides",
+            category="model/conditioning/ltxv",
+            inputs=(
+                InputSpec("positive", _DINKSTER_CONDITIONING),
+                InputSpec("negative", _DINKSTER_CONDITIONING),
+                InputSpec("vae", _DINKSTER_VAE),
+                InputSpec("latent", _DINKSTER_LATENT),
+                InputSpec("keyframes", _DINKSTER_LATENT),
+                InputSpec("strength", _FLOAT, default=1.0),
+                InputSpec("override_frame_indices", _STRING, required=False, default=""),
             ),
             outputs=(
                 OutputSpec("positive", _DINKSTER_CONDITIONING),

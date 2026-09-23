@@ -2556,12 +2556,13 @@
       "aliases": [
         "BlockSparseAttention"
       ],
-      "category": "comfy/advanced/model",
-      "description": "Block-sparse attention through dinkster_kitchen: each query block attends a selected subset of key blocks exactly, reducing attention compute. The relative speed gain grows with sequence length since short sequences are usually faster dense. Outside the active schedule, dense_blocks and under min_tokens, the model uses the active dense model attention backend.",
-      "displayName": "Block Sparse Attention",
+      "category": "comfy/model/patch",
+      "description": "Applies block-sparse attention to eligible model attention layers, reducing compute for long sequences. The speed gain grows with sequence length since short sequences are usually faster dense. Outside the start/end_percent, dense_blocks and under min_tokens, the model uses the dense model attention backend. Use the node Model Attention Backend to select that fallback.",
+      "displayName": "Model Sparse Attention",
       "idempotent": true,
       "interface": [
         {
+          "doc": "The model to patch.",
           "id": "model",
           "required": true,
           "role": "input",
@@ -2574,7 +2575,7 @@
         },
         {
           "default": 0.2,
-          "doc": "Dense before this point of the schedule.",
+          "doc": "Percentage point when sparse attention begins. Before this point, attention stays dense.",
           "id": "start_percent",
           "required": false,
           "role": "input",
@@ -2593,7 +2594,7 @@
         },
         {
           "default": 1.0,
-          "doc": "Dense after this point of the schedule.",
+          "doc": "Percentage point when sparse attention ends. After this point, attention returns to dense.",
           "id": "end_percent",
           "required": false,
           "role": "input",
@@ -2693,6 +2694,7 @@
         {
           "advanced": true,
           "default": false,
+          "doc": "Logs whether each attention shape used sparse attention or why it stayed dense.",
           "id": "verbose",
           "required": false,
           "role": "input",
@@ -2704,7 +2706,8 @@
           }
         },
         {
-          "doc": "How exact key blocks are chosen. Sol-Attn: per head/block adaptive threshold. top-k (SLA): fixed keep_percent everywhere, recommended only with trained weights. VSA (FastVideo): FastH3-VSA's cube tiling and coarse branch, requires weights trained for it.",
+          "displayName": "method",
+          "doc": "Method used to choose key blocks for full token-level attention. sol-attn: Sparsifying Online Attention uses a training-free adaptive threshold for each attention head and query block. sla: Sparse-Linear Attention keeps a fixed percentage of the highest-scoring key blocks; use only with model weights trained for this pattern. vsa: Video Sparse Attention (FastVideo) uses 3D video-cube tiling and a learned coarse attention branch; requires FastH3 model weights.",
           "id": "selection",
           "options": [
             {
@@ -2729,7 +2732,7 @@
                   }
                 }
               ],
-              "key": "Sol-Attn (adaptive tau)"
+              "key": "sol-attn"
             },
             {
               "inputs": [
@@ -2753,7 +2756,7 @@
                   }
                 }
               ],
-              "key": "top-k (SLA)"
+              "key": "sla"
             },
             {
               "inputs": [
@@ -2777,14 +2780,14 @@
                   }
                 }
               ],
-              "key": "VSA (FastVideo)"
+              "key": "vsa"
             }
           ],
           "required": true,
           "role": "dynamicCombo"
         },
         {
-          "id": "MODEL",
+          "id": "model",
           "role": "output",
           "type": {
             "kind": "concrete",
@@ -4210,7 +4213,8 @@
               "krea2",
               "joyimage",
               "mage",
-              "minimax"
+              "minimax",
+              "yue2"
             ],
             "type": "COMBO"
           }
@@ -6858,6 +6862,149 @@
       "schemaVersion": 1,
       "version": 1
     },
+    "comfy.ComfySwitchNode": {
+      "aliases": [
+        "ComfySwitchNode"
+      ],
+      "category": "comfy/utilities/logic",
+      "description": "",
+      "displayName": "If/Else Switch",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "switch",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.boolean"
+            ]
+          }
+        },
+        {
+          "id": "on_false",
+          "lazy": true,
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "variable",
+            "templateId": "switch"
+          }
+        },
+        {
+          "id": "on_true",
+          "lazy": true,
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "variable",
+            "templateId": "switch"
+          }
+        },
+        {
+          "id": "output",
+          "role": "output",
+          "type": {
+            "kind": "variable",
+            "templateId": "switch"
+          }
+        }
+      ],
+      "nodeType": "comfy.ComfySwitchNode",
+      "schemaVersion": 1,
+      "selector": {
+        "branches": {
+          "false": "on_false",
+          "true": "on_true"
+        },
+        "input": "switch"
+      },
+      "version": 1
+    },
+    "comfy.ConcatenateVideo": {
+      "aliases": [
+        "ConcatenateVideo"
+      ],
+      "category": "comfy/video",
+      "description": "Concatenates videos in order without decoding compatible encoded inputs.",
+      "displayName": "Concatenate Video",
+      "idempotent": true,
+      "interface": [
+        {
+          "advanced": true,
+          "default": [
+            "auto"
+          ],
+          "doc": "Codec used to encode videos tensors. Auto uses H.264; already encoded videos remain unchanged.",
+          "id": "codec",
+          "required": false,
+          "role": "input",
+          "type": {
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "core.combo"
+              ]
+            },
+            "kind": "list"
+          }
+        },
+        {
+          "advanced": true,
+          "doc": "Optional complete soundtrack for the concatenated video. Overrides audio carried by the input videos.",
+          "id": "complete_audio",
+          "required": false,
+          "role": "input",
+          "type": {
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "comfy.AUDIO"
+              ]
+            },
+            "kind": "list"
+          }
+        },
+        {
+          "id": "videos",
+          "maxMembers": 100,
+          "memberPrefix": "video",
+          "minMembers": 1,
+          "required": true,
+          "role": "inputFamily",
+          "template": [
+            {
+              "id": "value",
+              "required": true,
+              "role": "input",
+              "type": {
+                "element": {
+                  "kind": "concrete",
+                  "types": [
+                    "comfy.VIDEO"
+                  ]
+                },
+                "kind": "list"
+              }
+            }
+          ]
+        },
+        {
+          "id": "VIDEO",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.VIDEO"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.ConcatenateVideo",
+      "schemaVersion": 1,
+      "version": 1
+    },
     "comfy.ConditioningAverage": {
       "aliases": [
         "ConditioningAverage"
@@ -7011,6 +7158,41 @@
         }
       ],
       "nodeType": "comfy.ConditioningConcat",
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.ConditioningLoader": {
+      "aliases": [
+        "ConditioningLoader"
+      ],
+      "category": "comfy/model/loaders",
+      "description": "Loads a conditioning saved with Save Conditioning, or any safetensors file with a 'conditioning' tensor, from the embeddings folder.",
+      "displayName": "Load Conditioning",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "conditioning_name",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          }
+        },
+        {
+          "id": "CONDITIONING",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.ConditioningLoader",
       "schemaVersion": 1,
       "version": 1
     },
@@ -10572,8 +10754,7 @@
               "role": "input",
               "type": {
                 "element": {
-                  "kind": "variable",
-                  "templateId": "type"
+                  "kind": "wildcard"
                 },
                 "kind": "list"
               }
@@ -10585,8 +10766,7 @@
           "role": "output",
           "type": {
             "element": {
-              "kind": "variable",
-              "templateId": "type"
+              "kind": "wildcard"
             },
             "kind": "list"
           }
@@ -10685,6 +10865,29 @@
               "sRGB",
               "HDR",
               "HDR PQ"
+            ],
+            "type": "COMBO"
+          }
+        },
+        {
+          "advanced": true,
+          "default": "none",
+          "doc": "Optionally encode the video immediately. None keeps the images in tensor form; Auto uses H.264.",
+          "id": "codec",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "widget": {
+            "options": [
+              "none",
+              "auto",
+              "h264",
+              "av1"
             ],
             "type": "COMBO"
           }
@@ -12820,7 +13023,7 @@
       ],
       "category": "comfy/model/latent/cosmos",
       "description": "",
-      "displayName": "EmptyCosmosLatentVideo",
+      "displayName": "Empty Cosmos Latent Video",
       "idempotent": true,
       "interface": [
         {
@@ -13069,7 +13272,7 @@
       ],
       "category": "comfy/model/latent/hunyuan image",
       "description": "",
-      "displayName": "EmptyHunyuanImageLatent",
+      "displayName": "Empty Hunyuan Image Latent",
       "idempotent": true,
       "interface": [
         {
@@ -13146,7 +13349,7 @@
       ],
       "category": "comfy/model/latent/hunyuan video",
       "description": "",
-      "displayName": "Empty HunyuanVideo 1.0 Latent",
+      "displayName": "Empty Hunyuan Video 1.0 Latent",
       "idempotent": true,
       "interface": [
         {
@@ -13241,7 +13444,7 @@
       ],
       "category": "comfy/model/latent/hunyuan video",
       "description": "",
-      "displayName": "Empty HunyuanVideo 1.5 Latent",
+      "displayName": "Empty Hunyuan Video 1.5 Latent",
       "idempotent": true,
       "interface": [
         {
@@ -13431,7 +13634,7 @@
       ],
       "category": "comfy/model/latent/ltxv",
       "description": "",
-      "displayName": "EmptyLTXVLatentVideo",
+      "displayName": "Empty LTXV Latent Video",
       "idempotent": true,
       "interface": [
         {
@@ -13586,7 +13789,7 @@
       ],
       "category": "comfy/model/latent/hunyuan 3d",
       "description": "",
-      "displayName": "EmptyLatentHunyuan3Dv2",
+      "displayName": "Empty Hunyuan 3D v2 Latent",
       "idempotent": true,
       "interface": [
         {
@@ -13649,7 +13852,7 @@
       "idempotent": true,
       "interface": [
         {
-          "default": 512,
+          "default": 1024,
           "doc": "The width of the latent images in pixels.",
           "id": "width",
           "required": false,
@@ -13668,7 +13871,7 @@
           }
         },
         {
-          "default": 512,
+          "default": 1024,
           "doc": "The height of the latent images in pixels.",
           "id": "height",
           "required": false,
@@ -14130,7 +14333,7 @@
       ],
       "category": "comfy/model/latent/trellis",
       "description": "",
-      "displayName": "EmptyTrellis2LatentStructure",
+      "displayName": "Empty Trellis2 Latent Structure",
       "idempotent": true,
       "interface": [
         {
@@ -14163,6 +14366,155 @@
         }
       ],
       "nodeType": "comfy.EmptyTrellis2LatentStructure",
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.EmptyYuE2LatentAudio": {
+      "aliases": [
+        "EmptyYuE2LatentAudio"
+      ],
+      "category": "comfy/model/latent/yue2",
+      "description": "",
+      "displayName": "Empty YuE2 Latent Audio",
+      "idempotent": true,
+      "interface": [
+        {
+          "default": 120.0,
+          "id": "seconds",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "widget": {
+            "max": 1000.0,
+            "min": 0.04,
+            "step": 0.04,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "default": 1,
+          "id": "batch_size",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "widget": {
+            "max": 4096,
+            "min": 1,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "id": "LATENT",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.EmptyYuE2LatentAudio",
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.EndLoop": {
+      "aliases": [
+        "EndLoop"
+      ],
+      "category": "comfy/utilities/looping",
+      "description": "",
+      "displayName": "End Loop",
+      "idempotent": false,
+      "interface": [
+        {
+          "default": [
+            false
+          ],
+          "doc": "Return output_value from every iteration when enabled; otherwise return only the final iteration.",
+          "id": "accumulate",
+          "required": false,
+          "role": "input",
+          "type": {
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "core.boolean"
+              ]
+            },
+            "kind": "list"
+          }
+        },
+        {
+          "doc": "Value returned by End Loop. It returns the final iteration or all iterations according to accumulate.",
+          "id": "output_value",
+          "required": false,
+          "role": "input",
+          "type": {
+            "element": {
+              "kind": "variable",
+              "templateId": "output_value"
+            },
+            "kind": "list"
+          }
+        },
+        {
+          "doc": "Value sent from End Loop back to Start Loop for the next iteration.",
+          "id": "next_iteration_value",
+          "required": false,
+          "role": "input",
+          "type": {
+            "element": {
+              "kind": "variable",
+              "templateId": "carried_value"
+            },
+            "kind": "list"
+          }
+        },
+        {
+          "id": "terminations",
+          "maxMembers": 50,
+          "memberPrefix": "termination",
+          "minMembers": 0,
+          "required": true,
+          "role": "inputFamily",
+          "template": [
+            {
+              "id": "value",
+              "required": true,
+              "role": "input",
+              "type": {
+                "element": {
+                  "kind": "wildcard"
+                },
+                "kind": "list"
+              }
+            }
+          ]
+        },
+        {
+          "id": "outputs",
+          "role": "output",
+          "type": {
+            "element": {
+              "kind": "variable",
+              "templateId": "output_value"
+            },
+            "kind": "list"
+          }
+        }
+      ],
+      "nodeType": "comfy.EndLoop",
       "schemaVersion": 1,
       "version": 1
     },
@@ -16337,6 +16689,55 @@
       "schemaVersion": 1,
       "version": 1
     },
+    "comfy.GetItemFromList": {
+      "aliases": [
+        "GetItemFromList"
+      ],
+      "category": "comfy/utilities",
+      "description": "",
+      "displayName": "Get Item From List",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "list",
+          "required": true,
+          "role": "input",
+          "type": {
+            "element": {
+              "kind": "wildcard"
+            },
+            "kind": "list"
+          }
+        },
+        {
+          "default": [
+            0
+          ],
+          "id": "index",
+          "required": false,
+          "role": "input",
+          "type": {
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "core.int"
+              ]
+            },
+            "kind": "list"
+          }
+        },
+        {
+          "id": "*",
+          "role": "output",
+          "type": {
+            "kind": "wildcard"
+          }
+        }
+      ],
+      "nodeType": "comfy.GetItemFromList",
+      "schemaVersion": 1,
+      "version": 1
+    },
     "comfy.GetMeshInfo": {
       "aliases": [
         "GetMeshInfo"
@@ -17462,9 +17863,9 @@
       "aliases": [
         "HunyuanVideo15LatentUpscaleWithModel"
       ],
-      "category": "comfy/model/latent/hunyhuan video",
+      "category": "comfy/model/latent/hunyuan video",
       "description": "",
-      "displayName": "Hunyuan Video 15 Latent Upscale With Model",
+      "displayName": "Hunyuan Video 1.5 Latent Upscale With Model",
       "idempotent": true,
       "interface": [
         {
@@ -18277,6 +18678,85 @@
         }
       ],
       "nodeType": "comfy.ImageBlur",
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.ImageColorSpace": {
+      "aliases": [
+        "ImageColorSpace"
+      ],
+      "category": "comfy/image/color",
+      "description": "Convert sRGB, linear Rec.709, HDR (Rec.2020 HLG), and HDR PQ (Rec.2020 PQ). Linear 1.0 uses the same 203-nit reference white as sRGB; HLG uses a 1000-nit reference display. Linear output and linear-to-HDR conversions preserve extended values without tone mapping. SDR output and PQ-to-HLG conversion tone-map excess luminance across the batch and compress out-of-gamut colors. Conversions compute in float32 and return the intermediate device and dtype. Straight alpha is not color-transformed.",
+      "displayName": "Convert Image Color Space",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "image",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          }
+        },
+        {
+          "default": "sRGB",
+          "doc": "Color space of the input pixels.",
+          "id": "source",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "widget": {
+            "options": [
+              "sRGB",
+              "HDR",
+              "HDR PQ",
+              "linear"
+            ],
+            "type": "COMBO"
+          }
+        },
+        {
+          "default": "sRGB",
+          "doc": "Color space of the output pixels. Set the save node to this same color space.",
+          "id": "destination",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "widget": {
+            "options": [
+              "sRGB",
+              "HDR",
+              "HDR PQ",
+              "linear"
+            ],
+            "type": "COMBO"
+          }
+        },
+        {
+          "id": "IMAGE",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.ImageColorSpace",
       "schemaVersion": 1,
       "version": 1
     },
@@ -20858,7 +21338,7 @@
         "JsonExtractString"
       ],
       "category": "comfy/text",
-      "description": "",
+      "description": "Extract a key's value from the first valid JSON object in the text, including Markdown code blocks.",
       "displayName": "Extract Text from JSON",
       "idempotent": true,
       "interface": [
@@ -21867,6 +22347,148 @@
       "schemaVersion": 1,
       "version": 1
     },
+    "comfy.LTXVAddGeneratedKeyframes": {
+      "aliases": [
+        "LTXVAddGeneratedKeyframes"
+      ],
+      "category": "comfy/model/conditioning/ltxv",
+      "description": "Append detailing keyframes to a video latent. Each keyframe is one latent frame of tokens whose RoPE position spans a single pixel frame; they are denoised with the video and are not part of the decoded output. Placement is one slot every interval_frames pixels, skipping I2V frames, existing guides, and detailing keyframes already on the cond. Connected keyframes are content only and are re-placed on this canvas unless frame_indices is set. Pull them back out with LTXV Separate Generated Keyframes. Requires a checkpoint trained for generated keyframes (one carrying keyframes_abs_pos_embedding).",
+      "displayName": "LTXV Add Generated Keyframes",
+      "idempotent": true,
+      "interface": [
+        {
+          "doc": "Positive conditioning the keyframes are attached to.",
+          "id": "positive",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "doc": "Negative conditioning the keyframes are attached to.",
+          "id": "negative",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "doc": "Only used to read the latent scale factors.",
+          "id": "vae",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.VAE"
+            ]
+          }
+        },
+        {
+          "doc": "Plain 5D video latent to generate keyframes alongside. Add them before Concat AV Latent.",
+          "id": "latent",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        },
+        {
+          "default": 24,
+          "doc": "Pixel-frame stride for auto placement. Default 24 is about one keyframe per second at 24 fps. Occupied pixels are skipped. Ignored when frame_indices is set.",
+          "id": "interval_frames",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "widget": {
+            "max": 1024,
+            "min": 1,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "doc": "Optional content to initialize the new keyframes with. Connect keyframes from an earlier Separate (same spatial size), or a plain video latent to copy the nearest frame at each new slot (e.g. after temporal upscale). These are still denoised, not pinned as guides. Recorded indices on a keyframes latent are ignored unless frame_indices is set. Only has an effect when sampling starts below sigma 1.",
+          "id": "keyframes",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        },
+        {
+          "default": "",
+          "doc": "Optional pixel-frame indices. Leave empty to place from interval_frames on the current canvas. When set, this list is the placement (connected keyframes are matched in order). The last frame is allowed; frame 0 is not (it is already a standalone token).",
+          "id": "frame_indices",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "widget": {
+            "multiline": false,
+            "type": "STRING"
+          }
+        },
+        {
+          "id": "positive",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "negative",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "latent",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.LTXVAddGeneratedKeyframes",
+      "occupies": [
+        "gpu"
+      ],
+      "schemaVersion": 1,
+      "version": 1
+    },
     "comfy.LTXVAddGuide": {
       "aliases": [
         "LTXVAddGuide"
@@ -22024,6 +22646,159 @@
         }
       ],
       "nodeType": "comfy.LTXVAddGuide",
+      "occupies": [
+        "gpu"
+      ],
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.LTXVAddLatentGuide": {
+      "aliases": [
+        "LTXVAddLatentGuide"
+      ],
+      "category": "comfy/model/conditioning/ltxv",
+      "description": "Pins an already-encoded latent as a guide, for when the guide comes out of an earlier stage rather than an image. Same effect as LTXV Add Guide without the VAE decode/encode round trip. A guide that is spatially smaller than the target (an IC-LoRA or detailing reference) is dilated onto a sparse grid, and its RoPE end positions are expanded by the same ratio so it covers the target canvas instead of addressing only the top-left corner of it.",
+      "displayName": "LTXV Add Latent Guide",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "positive",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "negative",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "vae",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.VAE"
+            ]
+          }
+        },
+        {
+          "doc": "Target video latent the guide is pinned onto.",
+          "id": "latent",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        },
+        {
+          "doc": "Guide latent. Its spatial size must divide the target's by the same whole number on both axes; equal size pins it as-is, half size is treated as an x2 IC-LoRA reference.",
+          "id": "guiding_latent",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        },
+        {
+          "default": 0,
+          "doc": "Latent frame index to start the guide at, counted in latent frames rather than pixel frames. Negative values place the guide on frames before the start of the latent, not counted back from its end.",
+          "id": "latent_idx",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "widget": {
+            "max": 9999,
+            "min": -9999,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "default": 1.0,
+          "doc": "Capped at 1.0. A dilated guide marks its padding positions with a negative denoise mask so the model drops them; above 1.0 the kept positions would go negative too and the whole guide would be dropped. Amplify beyond 1.0 with attention_mask instead.",
+          "id": "strength",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "widget": {
+            "max": 1.0,
+            "min": 0.0,
+            "step": 0.01,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "doc": "Optional pixel-space spatial mask. Controls per-region conditioning influence via self-attention, multiplied by strength.",
+          "id": "attention_mask",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MASK"
+            ]
+          }
+        },
+        {
+          "id": "positive",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "negative",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "latent",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.LTXVAddLatentGuide",
       "occupies": [
         "gpu"
       ],
@@ -22796,7 +23571,7 @@
       ],
       "category": "comfy/model/latent/ltxv",
       "description": "",
-      "displayName": "LTXV Empty Latent Audio",
+      "displayName": "Empty LTXV Latent Audio",
       "idempotent": true,
       "interface": [
         {
@@ -22877,6 +23652,182 @@
         }
       ],
       "nodeType": "comfy.LTXVEmptyLatentAudio",
+      "occupies": [
+        "gpu"
+      ],
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.LTXVFreezeLatent": {
+      "aliases": [
+        "LTXVFreezeLatent"
+      ],
+      "category": "comfy/model/latent/ltxv",
+      "description": "Set noise_mask to 0 so this latent is kept clean during sampling. Works on video or audio. Typical uses: freeze audio before Concat AV so it only provides cross-attention, or freeze any latent that should not be denoised.",
+      "displayName": "LTXV Freeze Latent",
+      "idempotent": true,
+      "interface": [
+        {
+          "doc": "Video or audio latent to freeze. Audio is 4D; video is 5D.",
+          "id": "latent",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        },
+        {
+          "id": "latent",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.LTXVFreezeLatent",
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.LTXVGeneratedKeyframesToGuides": {
+      "aliases": [
+        "LTXVGeneratedKeyframesToGuides"
+      ],
+      "category": "comfy/model/conditioning/ltxv",
+      "description": "Pin generated keyframes from an earlier stage as frozen image guides on a later canvas. They are decoded as standalone frames, resized if needed, and written with noise_mask=0 so they are not denoised again. After a temporal upscale, recorded indices are scaled from the canvas they were generated on onto this one (same moments). Use override_frame_indices to set positions explicitly. To keep generating (and denoising) keyframes at new positions, use Add Generated Keyframes instead.",
+      "displayName": "LTXV Generated Keyframes to Guides",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "positive",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "negative",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "vae",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.VAE"
+            ]
+          }
+        },
+        {
+          "doc": "The target video latent to add the guides to, e.g. the temporally upscaled one.",
+          "id": "latent",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        },
+        {
+          "doc": "The keyframes output of LTXV Separate Generated Keyframes, which carries the pixel frame index each keyframe was generated at.",
+          "id": "keyframes",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        },
+        {
+          "default": 1.0,
+          "doc": "Guide strength. 1.0 is a hard pin; lower values relax it.",
+          "id": "strength",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "widget": {
+            "max": 10.0,
+            "min": 0.0,
+            "step": 0.01,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "default": "",
+          "doc": "Optional \u2014 pin at these pixel frames instead of the recorded (or auto-scaled) positions. Provide one index per keyframe. Leave empty to reuse recorded positions, or to scale them when the target canvas is a different length (e.g. after temporal x2).",
+          "id": "override_frame_indices",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "widget": {
+            "multiline": false,
+            "type": "STRING"
+          }
+        },
+        {
+          "id": "positive",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "negative",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "latent",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.LTXVGeneratedKeyframesToGuides",
       "occupies": [
         "gpu"
       ],
@@ -23689,6 +24640,106 @@
         }
       ],
       "nodeType": "comfy.LTXVSeparateAVLatent",
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.LTXVSeparateGeneratedKeyframes": {
+      "aliases": [
+        "LTXVSeparateGeneratedKeyframes"
+      ],
+      "category": "comfy/model/conditioning/ltxv",
+      "description": "Split the generated keyframes added by LTXV Add Generated Keyframes back out of a sampled latent, and remove them from the conditioning. Separate them before spatially upscaling the video latent. Do not run LTXV Crop Guides first \u2014 it treats generated keyframes as disposable guides and drops them.",
+      "displayName": "LTXV Separate Generated Keyframes",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "positive",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "negative",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "latent",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        },
+        {
+          "default": false,
+          "doc": "Return the keyframes as a batch of single-frame latents. Leave off to get them as one multi-frame latent, which is what the latent upsampler and a later Add Generated Keyframes expect.",
+          "id": "keyframes_to_batch",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.boolean"
+            ]
+          }
+        },
+        {
+          "id": "positive",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "negative",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "latent",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        },
+        {
+          "id": "keyframes",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.LTXVSeparateGeneratedKeyframes",
       "schemaVersion": 1,
       "version": 1
     },
@@ -27289,6 +28340,61 @@
       "schemaVersion": 1,
       "version": 1
     },
+    "comfy.MarigoldV2PostProcess": {
+      "aliases": [
+        "MarigoldV2PostProcess"
+      ],
+      "category": "comfy/image/geometry estimation",
+      "description": "Turns a decoded Marigold V2 prediction into an image: normalized depth with near as bright, unit surface normals, or sRGB albedo.",
+      "displayName": "Marigold V2 Post-Process",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "image",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          }
+        },
+        {
+          "default": "depth",
+          "id": "prediction",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "widget": {
+            "options": [
+              "depth",
+              "normals",
+              "albedo"
+            ],
+            "type": "COMBO"
+          }
+        },
+        {
+          "id": "IMAGE",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.MarigoldV2PostProcess",
+      "schemaVersion": 1,
+      "version": 1
+    },
     "comfy.MaskComposite": {
       "aliases": [
         "MaskComposite"
@@ -29387,6 +30493,25 @@
           }
         },
         {
+          "advanced": true,
+          "default": 3,
+          "doc": "MoGe-3 only: sparse volumetric refinement passes over the predicted depth. More passes sharpen fine detail and edges at a roughly linear cost. 0 disables refinement. Ignored by MoGe-1 / MoGe-2.",
+          "id": "refine_steps",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "widget": {
+            "max": 8,
+            "min": 0,
+            "type": "NUMBER"
+          }
+        },
+        {
           "id": "moge_geometry",
           "role": "output",
           "type": {
@@ -29505,6 +30630,25 @@
           "widget": {
             "max": 12,
             "min": 1,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "advanced": true,
+          "default": 3,
+          "doc": "MoGe-3 only: sparse volumetric refinement passes over the predicted depth. More passes sharpen fine detail and edges at a roughly linear cost. 0 disables refinement. Ignored by MoGe-1 / MoGe-2.",
+          "id": "refine_steps",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "widget": {
+            "max": 8,
+            "min": 0,
             "type": "NUMBER"
           }
         },
@@ -29692,11 +30836,12 @@
         "ModelAttentionBackend"
       ],
       "category": "comfy/model/patch",
-      "description": "",
+      "description": "Selects the dense attention implementation for the model. When used with Block Sparse Attention, this backend is used whenever sparse attention is inactive or unsupported.",
       "displayName": "ModelAttentionBackend",
       "idempotent": true,
       "interface": [
         {
+          "doc": "The model to patch.",
           "id": "model",
           "required": true,
           "role": "input",
@@ -29709,6 +30854,8 @@
         },
         {
           "default": "pytorch attention",
+          "displayName": "backend",
+          "doc": "The dense attention backend. Comfy Kitchen attention uses quantized INT8 attention and is available only on Nvidia and AMD GPUs.",
           "id": "attention",
           "required": false,
           "role": "input",
@@ -42711,6 +43858,26 @@
           }
         },
         {
+          "advanced": true,
+          "default": "flow",
+          "id": "sampling",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "widget": {
+            "options": [
+              "flow",
+              "img_to_img_velocity"
+            ],
+            "type": "COMBO"
+          }
+        },
+        {
           "id": "model",
           "role": "output",
           "type": {
@@ -43593,7 +44760,6 @@
           }
         },
         {
-          "advanced": true,
           "default": 0.5,
           "doc": "Mean value for normalization.",
           "id": "mean",
@@ -43612,7 +44778,6 @@
           }
         },
         {
-          "advanced": true,
           "default": 0.5,
           "doc": "Standard deviation for normalization.",
           "id": "std",
@@ -44942,9 +46107,9 @@
       "aliases": [
         "Pixal3DConditioning"
       ],
-      "category": "comfy/model/conditioning/trellis2",
+      "category": "comfy/model/conditioning/trellis",
       "description": "",
-      "displayName": "Pixal3DConditioning",
+      "displayName": "Pixal3D Conditioning",
       "idempotent": true,
       "interface": [
         {
@@ -45013,6 +46178,122 @@
         }
       ],
       "nodeType": "comfy.Pixal3DConditioning",
+      "occupies": [
+        "gpu"
+      ],
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.Pixal3DMultiViewConditioning": {
+      "aliases": [
+        "Pixal3DMultiViewConditioning"
+      ],
+      "category": "comfy/model/conditioning/trellis",
+      "description": "",
+      "displayName": "Pixal3D Multi-View Conditioning",
+      "idempotent": true,
+      "interface": [
+        {
+          "doc": "DINOv3 ViT-L/16 ClipVision with bundled NAF weights.",
+          "id": "clip_vision_model",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CLIP_VISION"
+            ]
+          }
+        },
+        {
+          "default": 20.0,
+          "doc": "Horizontal FOV in degrees of the views as framed: 20 for rig renders and most multi-view generators, or MoGeGeometryToFOV on one of the views for photos.",
+          "id": "fov",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "widget": {
+            "max": 170.0,
+            "min": 1.0,
+            "step": 0.01,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "doc": "Square view of the object's front side, with alpha or on a black background, framed like the rig: the object spans about 1/1.1 of the frame at its widest, the same scale in every view. The first connected view (front, left, back, right order) is the front the mesh is posed to.",
+          "id": "front",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          }
+        },
+        {
+          "doc": "Square view of the object's left side, with alpha or on a black background, framed like the rig: the object spans about 1/1.1 of the frame at its widest, the same scale in every view. The first connected view (front, left, back, right order) is the front the mesh is posed to.",
+          "id": "left",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          }
+        },
+        {
+          "doc": "Square view of the object's back side, with alpha or on a black background, framed like the rig: the object spans about 1/1.1 of the frame at its widest, the same scale in every view. The first connected view (front, left, back, right order) is the front the mesh is posed to.",
+          "id": "back",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          }
+        },
+        {
+          "doc": "Square view of the object's right side, with alpha or on a black background, framed like the rig: the object spans about 1/1.1 of the frame at its widest, the same scale in every view. The first connected view (front, left, back, right order) is the front the mesh is posed to.",
+          "id": "right",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          }
+        },
+        {
+          "id": "positive",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "negative",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.Pixal3DMultiViewConditioning",
       "occupies": [
         "gpu"
       ],
@@ -45329,6 +46610,7 @@
         },
         {
           "default": 1024,
+          "doc": "Render width of the viewport in pixels.",
           "id": "width",
           "required": false,
           "role": "input",
@@ -45347,6 +46629,7 @@
         },
         {
           "default": 1024,
+          "doc": "Render height of the viewport in pixels.",
           "id": "height",
           "required": false,
           "role": "input",
@@ -45377,6 +46660,7 @@
         },
         {
           "advanced": true,
+          "doc": "Viewport camera information: position, look-at target, zoom, and type.",
           "id": "camera_info",
           "required": false,
           "role": "input",
@@ -46221,6 +47505,87 @@
         }
       ],
       "nodeType": "comfy.QuadrupleCLIPLoader",
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.QwenImage21Cache": {
+      "aliases": [
+        "QwenImage21Cache"
+      ],
+      "category": "comfy/model/conditioning/qwen image",
+      "description": "Allows setting the KV cache device and quantization, by default the model uses the auto -option. Quantization potentially speeds up edit workflows when memory starved ",
+      "displayName": "Qwen Image 2.1 Cache",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "model",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MODEL"
+            ]
+          }
+        },
+        {
+          "default": "auto",
+          "doc": "auto uses spare VRAM, then RAM. cpu (RAM) is prefetched behind compute and costs little speed. off recomputes the prefix every step, which is slower but is the one way to rule the cache out.",
+          "id": "device",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "widget": {
+            "options": [
+              "auto",
+              "gpu",
+              "cpu",
+              "off"
+            ],
+            "type": "COMBO"
+          }
+        },
+        {
+          "default": "default",
+          "doc": "Storage precision. default is lossless. int8 halves the cache at about bf16 accuracy, int4 quarters it but roughly doubles the per-step error.",
+          "id": "dtype",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "widget": {
+            "options": [
+              "default",
+              "int8",
+              "int4"
+            ],
+            "type": "COMBO"
+          }
+        },
+        {
+          "id": "MODEL",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.MODEL"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.QwenImage21Cache",
+      "occupies": [
+        "gpu"
+      ],
       "schemaVersion": 1,
       "version": 1
     },
@@ -53562,6 +54927,7 @@
         },
         {
           "default": 1024,
+          "doc": "Render width of the viewport in pixels.",
           "id": "width",
           "required": false,
           "role": "input",
@@ -53580,6 +54946,7 @@
         },
         {
           "default": 1024,
+          "doc": "Render height of the viewport in pixels.",
           "id": "height",
           "required": false,
           "role": "input",
@@ -53598,6 +54965,7 @@
         },
         {
           "advanced": true,
+          "doc": "Placement of each model in the scene: position, rotation, and scale (Y-up world space).",
           "id": "model_3d_info",
           "required": false,
           "role": "input",
@@ -53610,6 +54978,7 @@
         },
         {
           "advanced": true,
+          "doc": "Viewport camera information: position, look-at target, zoom, and type.",
           "id": "camera_info",
           "required": false,
           "role": "input",
@@ -54195,6 +55564,58 @@
         }
       ],
       "nodeType": "comfy.SaveAudioOpus",
+      "outputNode": true,
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.SaveConditioning": {
+      "aliases": [
+        "SaveConditioning"
+      ],
+      "category": "comfy/model/conditioning",
+      "description": "Saves a conditioning to the output folder as safetensors; move the file to models/embeddings to load it with Load Conditioning, e.g. to skip the text encoder.",
+      "displayName": "Save Conditioning",
+      "idempotent": false,
+      "interface": [
+        {
+          "id": "conditioning",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "default": "conditioning/ComfyUI",
+          "id": "filename_prefix",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "widget": {
+            "multiline": false,
+            "type": "STRING"
+          }
+        },
+        {
+          "id": "conditioning",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.SaveConditioning",
       "outputNode": true,
       "schemaVersion": 1,
       "version": 1
@@ -56406,7 +57827,7 @@
       "aliases": [
         "SeedVR2TemporalChunk"
       ],
-      "category": "comfy/model/latent/batch",
+      "category": "comfy/model/latent/seedvr",
       "description": "Split a SeedVR2 video latent into overlapping temporal chunks small enough to sample one at a time within VRAM, wiring latents outputs to both Apply SeedVR2 Conditioning and the sampler latent input before recombining with Merge SeedVR2 Latents.",
       "displayName": "Split SeedVR2 Latent",
       "idempotent": true,
@@ -56509,7 +57930,7 @@
       "aliases": [
         "SeedVR2TemporalMerge"
       ],
-      "category": "comfy/model/latent/batch",
+      "category": "comfy/model/latent/seedvr",
       "description": "Recombine sampled SeedVR2 latent temporal chunks into one latent, crossfading each overlap with a Hann window sized by the temporal_overlap wired from Split SeedVR2 Latent.",
       "displayName": "Merge SeedVR2 Latents",
       "idempotent": true,
@@ -57143,6 +58564,75 @@
       "occupies": [
         "gpu"
       ],
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.SheetSage2AudioToABC": {
+      "aliases": [
+        "SheetSage2AudioToABC"
+      ],
+      "category": "comfy/model/conditioning/yue2",
+      "description": "Transcribes vocal and instrumental melodies from music into ABC notation. Connect abc output to YuE2 Generate Music node and use the matching mode.",
+      "displayName": "SheetSage2 Audio to ABC",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "audio_encoder",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.AUDIO_ENCODER"
+            ]
+          }
+        },
+        {
+          "id": "audio",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.AUDIO"
+            ]
+          }
+        },
+        {
+          "default": "melody",
+          "doc": "full: generates melody and chords; melody: generates melody only, recommended for covers.",
+          "id": "mode",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "widget": {
+            "options": [
+              "melody",
+              "full"
+            ],
+            "type": "COMBO"
+          }
+        },
+        {
+          "id": "abc",
+          "role": "output",
+          "type": {
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "core.string"
+              ]
+            },
+            "kind": "list"
+          }
+        }
+      ],
+      "nodeType": "comfy.SheetSage2AudioToABC",
       "schemaVersion": 1,
       "version": 1
     },
@@ -58423,7 +59913,7 @@
       ],
       "category": "comfy/model/latent/stable cascade",
       "description": "",
-      "displayName": "StableCascade_EmptyLatentImage",
+      "displayName": "Empty Stable Cascade Latent Image",
       "idempotent": true,
       "interface": [
         {
@@ -58575,7 +60065,7 @@
       ],
       "category": "comfy/model/latent/stable cascade",
       "description": "",
-      "displayName": "StableCascade_StageC_VAEEncode",
+      "displayName": "Stable Cascade Stage C VAE Encode",
       "idempotent": true,
       "interface": [
         {
@@ -59089,6 +60579,222 @@
       "occupies": [
         "gpu"
       ],
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.StartLoop": {
+      "aliases": [
+        "StartLoop"
+      ],
+      "category": "comfy/utilities/looping",
+      "description": "",
+      "displayName": "Start Loop",
+      "idempotent": false,
+      "interface": [
+        {
+          "advanced": true,
+          "default": [
+            false
+          ],
+          "doc": "Reuse unchanged iteration results from previous executions. Disable to execute every iteration again.",
+          "id": "cache_iterations",
+          "required": false,
+          "role": "input",
+          "type": {
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "core.boolean"
+              ]
+            },
+            "kind": "list"
+          }
+        },
+        {
+          "doc": "Connect iteration_index from an outer Start Loop to nest this loop.",
+          "forceInput": true,
+          "id": "parent_iteration",
+          "required": false,
+          "role": "input",
+          "type": {
+            "element": {
+              "kind": "concrete",
+              "types": [
+                "core.int"
+              ]
+            },
+            "kind": "list"
+          }
+        },
+        {
+          "doc": "Value exposed as current_iteration_value on the first iteration.",
+          "id": "initial_iteration_value",
+          "required": false,
+          "role": "input",
+          "type": {
+            "element": {
+              "kind": "variable",
+              "templateId": "carried_value"
+            },
+            "kind": "list"
+          }
+        },
+        {
+          "doc": "The loop iteration mode.",
+          "id": "mode",
+          "options": [
+            {
+              "inputs": [
+                {
+                  "default": [
+                    4
+                  ],
+                  "doc": "Number of times to execute the loop body.",
+                  "id": "num_iterations",
+                  "required": false,
+                  "role": "input",
+                  "type": {
+                    "element": {
+                      "kind": "concrete",
+                      "types": [
+                        "core.int"
+                      ]
+                    },
+                    "kind": "list"
+                  }
+                }
+              ],
+              "key": "simple"
+            },
+            {
+              "inputs": [
+                {
+                  "default": [
+                    0
+                  ],
+                  "doc": "Index of the first iteration when using For loop mode.",
+                  "id": "start_iteration_index",
+                  "required": false,
+                  "role": "input",
+                  "type": {
+                    "element": {
+                      "kind": "concrete",
+                      "types": [
+                        "core.int"
+                      ]
+                    },
+                    "kind": "list"
+                  }
+                },
+                {
+                  "default": [
+                    4
+                  ],
+                  "doc": "The exclusive stopping value for iteration_index in For mode.",
+                  "id": "max_iteration",
+                  "required": false,
+                  "role": "input",
+                  "type": {
+                    "element": {
+                      "kind": "concrete",
+                      "types": [
+                        "core.int"
+                      ]
+                    },
+                    "kind": "list"
+                  }
+                },
+                {
+                  "default": [
+                    1
+                  ],
+                  "doc": "The index step size between each iteration when using For loop mode.",
+                  "id": "step",
+                  "required": false,
+                  "role": "input",
+                  "type": {
+                    "element": {
+                      "kind": "concrete",
+                      "types": [
+                        "core.int"
+                      ]
+                    },
+                    "kind": "list"
+                  }
+                }
+              ],
+              "key": "For"
+            },
+            {
+              "inputs": [
+                {
+                  "doc": "List of items the loop iterates on. The loop body executes once per item.",
+                  "id": "list",
+                  "required": true,
+                  "role": "input",
+                  "type": {
+                    "element": {
+                      "kind": "variable",
+                      "templateId": "list_item"
+                    },
+                    "kind": "list"
+                  }
+                }
+              ],
+              "key": "List"
+            }
+          ],
+          "required": true,
+          "role": "dynamicCombo"
+        },
+        {
+          "id": "iteration_index",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          }
+        },
+        {
+          "id": "is_first",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.boolean"
+            ]
+          }
+        },
+        {
+          "id": "is_last",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.boolean"
+            ]
+          }
+        },
+        {
+          "id": "list_item",
+          "role": "output",
+          "type": {
+            "kind": "variable",
+            "templateId": "list_item"
+          }
+        },
+        {
+          "id": "current_iteration_value",
+          "role": "output",
+          "type": {
+            "kind": "variable",
+            "templateId": "carried_value"
+          }
+        }
+      ],
+      "nodeType": "comfy.StartLoop",
       "schemaVersion": 1,
       "version": 1
     },
@@ -60948,13 +62654,170 @@
       "schemaVersion": 1,
       "version": 1
     },
+    "comfy.TextEncodeQwenImage21": {
+      "aliases": [
+        "TextEncodeQwenImage21"
+      ],
+      "category": "comfy/model/conditioning/qwen image",
+      "description": "",
+      "displayName": "Text Encode Qwen Image 2.1",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "clip",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CLIP"
+            ]
+          }
+        },
+        {
+          "id": "prompt",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "widget": {
+            "dynamicPrompts": true,
+            "multiline": true,
+            "type": "STRING"
+          }
+        },
+        {
+          "id": "negative_prompt",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "widget": {
+            "dynamicPrompts": true,
+            "multiline": true,
+            "type": "STRING"
+          }
+        },
+        {
+          "default": 1024,
+          "doc": "Reference images are resized to about resolution x resolution pixels, at multiples of 32, preserving aspect ratio. 0 keeps each reference at its own size, rounded to a multiple of 32. ",
+          "id": "resolution",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "widget": {
+            "max": 4096,
+            "min": 0,
+            "step": 32,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "id": "vae",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.VAE"
+            ]
+          }
+        },
+        {
+          "id": "images",
+          "memberNames": [
+            "image_1",
+            "image_2",
+            "image_3",
+            "image_4",
+            "image_5",
+            "image_6",
+            "image_7",
+            "image_8",
+            "image_9",
+            "image_10",
+            "image_11",
+            "image_12",
+            "image_13",
+            "image_14",
+            "image_15",
+            "image_16"
+          ],
+          "minMembers": 0,
+          "required": true,
+          "role": "inputFamily",
+          "template": [
+            {
+              "id": "value",
+              "required": true,
+              "role": "input",
+              "type": {
+                "kind": "concrete",
+                "types": [
+                  "comfy.IMAGE"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "positive",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "negative",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "latent",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.LATENT"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.TextEncodeQwenImage21",
+      "occupies": [
+        "gpu"
+      ],
+      "schemaVersion": 1,
+      "version": 1
+    },
     "comfy.TextEncodeQwenImageEdit": {
       "aliases": [
         "TextEncodeQwenImageEdit"
       ],
       "category": "comfy/model/conditioning/qwen image",
       "description": "",
-      "displayName": "TextEncodeQwenImageEdit",
+      "displayName": "Text Encode Qwen Image Edit",
       "idempotent": true,
       "interface": [
         {
@@ -61030,7 +62893,7 @@
       ],
       "category": "comfy/model/conditioning/qwen image",
       "description": "",
-      "displayName": "TextEncodeQwenImageEditPlus",
+      "displayName": "Text Encode Qwen Image Edit Plus",
       "idempotent": true,
       "interface": [
         {
@@ -61360,6 +63223,47 @@
           }
         },
         {
+          "default": "auto",
+          "doc": "Speculative decoding with the checkpoint's multi-token-prediction head. No effect without MTP weights. auto adapts the draft depth; 2-5 pins it. Sampled output stays correctly distributed but differs from non-MTP output for the same seed.",
+          "id": "mtp",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "widget": {
+            "options": [
+              "auto",
+              "off",
+              "2",
+              "3",
+              "4",
+              "5"
+            ],
+            "type": "COMBO"
+          }
+        },
+        {
+          "doc": "Replaces the system prompt in the model's chat template. Ignored when the default template is not used.",
+          "forceInput": true,
+          "id": "system_prompt",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "widget": {
+            "multiline": false,
+            "type": "STRING"
+          }
+        },
+        {
           "displayName": "Sampling Mode",
           "id": "sampling_mode",
           "options": [
@@ -61508,6 +63412,16 @@
               "core.string"
             ]
           }
+        },
+        {
+          "id": "thinking",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          }
         }
       ],
       "nodeType": "comfy.TextGenerate",
@@ -61630,6 +63544,47 @@
             "types": [
               "core.boolean"
             ]
+          }
+        },
+        {
+          "default": "auto",
+          "doc": "Speculative decoding with the checkpoint's multi-token-prediction head. No effect without MTP weights. auto adapts the draft depth; 2-5 pins it. Sampled output stays correctly distributed but differs from non-MTP output for the same seed.",
+          "id": "mtp",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "widget": {
+            "options": [
+              "auto",
+              "off",
+              "2",
+              "3",
+              "4",
+              "5"
+            ],
+            "type": "COMBO"
+          }
+        },
+        {
+          "doc": "Replaces the system prompt in the model's chat template. Ignored when the default template is not used.",
+          "forceInput": true,
+          "id": "system_prompt",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "widget": {
+            "multiline": false,
+            "type": "STRING"
           }
         },
         {
@@ -61774,6 +63729,16 @@
         },
         {
           "id": "generated_text",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          }
+        },
+        {
+          "id": "thinking",
           "role": "output",
           "type": {
             "kind": "concrete",
@@ -62792,9 +64757,9 @@
       "aliases": [
         "Trellis2Conditioning"
       ],
-      "category": "comfy/model/conditioning/trellis2",
+      "category": "comfy/model/conditioning/trellis",
       "description": "",
-      "displayName": "Trellis2Conditioning",
+      "displayName": "Trellis2 Conditioning",
       "idempotent": true,
       "interface": [
         {
@@ -62852,9 +64817,9 @@
       "aliases": [
         "Trellis2ShapeStage"
       ],
-      "category": "comfy/model/conditioning/trellis2",
+      "category": "comfy/model/conditioning/trellis",
       "description": "",
-      "displayName": "Trellis2ShapeStage",
+      "displayName": "Trellis2 Shape Stage",
       "idempotent": true,
       "interface": [
         {
@@ -62930,9 +64895,9 @@
       "aliases": [
         "Trellis2TextureStage"
       ],
-      "category": "comfy/model/conditioning/trellis2",
+      "category": "comfy/model/conditioning/trellis",
       "description": "",
-      "displayName": "Trellis2TextureStage",
+      "displayName": "Trellis2 Texture Stage",
       "idempotent": true,
       "interface": [
         {
@@ -63007,7 +64972,7 @@
       "aliases": [
         "Trellis2UpsampleStage"
       ],
-      "category": "comfy/model/conditioning/trellis2",
+      "category": "comfy/model/conditioning/trellis",
       "description": "",
       "displayName": "Trellis2 Upsample Stage",
       "idempotent": true,
@@ -64486,7 +66451,7 @@
       ],
       "category": "comfy/model/latent/hunyuan 3d",
       "description": "",
-      "displayName": "VAEDecodeHunyuan3D",
+      "displayName": "Hunyuan 3D VAE Decode",
       "idempotent": true,
       "interface": [
         {
@@ -65678,7 +67643,7 @@
       ],
       "category": "comfy/model/latent/trellis",
       "description": "",
-      "displayName": "VaeDecodeShapeTrellis",
+      "displayName": "Trellis2 VAE Decode Shape",
       "idempotent": true,
       "interface": [
         {
@@ -65737,7 +67702,7 @@
       ],
       "category": "comfy/model/latent/trellis",
       "description": "",
-      "displayName": "VaeDecodeStructureTrellis2",
+      "displayName": "Trellis2 VAE Decode Structure",
       "idempotent": true,
       "interface": [
         {
@@ -65805,7 +67770,7 @@
       ],
       "category": "comfy/model/latent/trellis",
       "description": "",
-      "displayName": "VaeDecodeTextureTrellis",
+      "displayName": "Trellis2 VAE Decode Texture",
       "idempotent": true,
       "interface": [
         {
@@ -71874,6 +73839,473 @@
       "schemaVersion": 1,
       "version": 1
     },
+    "comfy.YuE2GenerateABC": {
+      "aliases": [
+        "YuE2GenerateABC"
+      ],
+      "category": "comfy/model/conditioning/yue2",
+      "description": "Generates the ABC notation of a song from style and lyrics. Connect abc to YuE2 Generate Music node.",
+      "displayName": "YuE2 Generate ABC",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "clip",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CLIP"
+            ]
+          }
+        },
+        {
+          "id": "style",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "widget": {
+            "dynamicPrompts": true,
+            "multiline": true,
+            "type": "STRING"
+          }
+        },
+        {
+          "id": "lyrics",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "widget": {
+            "dynamicPrompts": true,
+            "multiline": true,
+            "type": "STRING"
+          }
+        },
+        {
+          "default": 0,
+          "id": "seed",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "widget": {
+            "controlAfterGenerate": "randomize",
+            "min": 0,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "default": "full",
+          "doc": "full: generates melody and chords; melody: generates melody only, recommended for covers.",
+          "id": "mode",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "widget": {
+            "options": [
+              "full",
+              "melody"
+            ],
+            "type": "COMBO"
+          }
+        },
+        {
+          "advanced": true,
+          "default": 8192,
+          "id": "max_abc_tokens",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "widget": {
+            "max": 20000,
+            "min": 1,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "advanced": true,
+          "default": 0.7,
+          "id": "temperature",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "widget": {
+            "max": 5.0,
+            "min": 0.0,
+            "step": 0.05,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "advanced": true,
+          "default": 0.9,
+          "id": "top_p",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "widget": {
+            "max": 1.0,
+            "min": 0.01,
+            "step": 0.01,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "advanced": true,
+          "default": 30,
+          "id": "top_k",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "widget": {
+            "max": 32768,
+            "min": 1,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "advanced": true,
+          "default": 1.005,
+          "id": "repetition_penalty",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "widget": {
+            "max": 10.0,
+            "min": 0.01,
+            "step": 0.005,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "advanced": true,
+          "default": 100,
+          "doc": "Number of recent ABC tokens used to penalize repetition.",
+          "id": "penalty_window",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "widget": {
+            "max": 20000,
+            "min": 1,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "id": "abc",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.YuE2GenerateABC",
+      "occupies": [
+        "gpu"
+      ],
+      "schemaVersion": 1,
+      "version": 1
+    },
+    "comfy.YuE2GenerateMusic": {
+      "aliases": [
+        "YuE2GenerateMusic"
+      ],
+      "category": "comfy/model/conditioning/yue2",
+      "description": "Generates music tokens and acoustic conditioning from style, lyrics, and an ABC notation. Provide the generated seconds to the Empty YuE2 Latent Audio node. An empty ABC input ignores the selected mode.",
+      "displayName": "YuE2 Generate Music",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "clip",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CLIP"
+            ]
+          }
+        },
+        {
+          "id": "style",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "widget": {
+            "dynamicPrompts": true,
+            "multiline": true,
+            "type": "STRING"
+          }
+        },
+        {
+          "id": "lyrics",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "widget": {
+            "dynamicPrompts": true,
+            "multiline": true,
+            "type": "STRING"
+          }
+        },
+        {
+          "default": "",
+          "doc": "Connect the ABC generator or supply an edited score. Leave empty to use off mode automatically.",
+          "id": "abc",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.string"
+            ]
+          },
+          "widget": {
+            "multiline": true,
+            "type": "STRING"
+          }
+        },
+        {
+          "default": 0,
+          "id": "seed",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "widget": {
+            "controlAfterGenerate": "randomize",
+            "min": 0,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "default": "full",
+          "doc": "full: generates melody and chords; melody: generates melody only, recommended for covers.",
+          "id": "mode",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "widget": {
+            "options": [
+              "full",
+              "melody"
+            ],
+            "type": "COMBO"
+          }
+        },
+        {
+          "default": 360.0,
+          "doc": "Maximum duration in seconds. Automatically reduced for long prompts; generation can stop earlier.",
+          "id": "max_duration",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "widget": {
+            "max": 900.0,
+            "min": 0.04,
+            "step": 0.04,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "advanced": true,
+          "default": 1.0,
+          "id": "temperature",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "widget": {
+            "max": 5.0,
+            "min": 0.0,
+            "step": 0.05,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "advanced": true,
+          "default": 0.95,
+          "id": "top_p",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "widget": {
+            "max": 1.0,
+            "min": 0.01,
+            "step": 0.01,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "advanced": true,
+          "default": 100,
+          "id": "top_k",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.int"
+            ]
+          },
+          "widget": {
+            "max": 32768,
+            "min": 1,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "advanced": true,
+          "default": 1.2,
+          "id": "repetition_penalty",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "widget": {
+            "max": 10.0,
+            "min": 0.01,
+            "step": 0.01,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "advanced": true,
+          "default": 1.0,
+          "doc": "Autoregressive guidance for style and lyrics. 1.0 disables CFG, matching the ABC workflow. Use 1.01 to match the original off-mode guidance.",
+          "id": "cfg_scale",
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          },
+          "widget": {
+            "max": 100.0,
+            "min": 0.0,
+            "step": 0.01,
+            "type": "NUMBER"
+          }
+        },
+        {
+          "id": "CONDITIONING",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.CONDITIONING"
+            ]
+          }
+        },
+        {
+          "id": "seconds",
+          "role": "output",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.float"
+            ]
+          }
+        }
+      ],
+      "nodeType": "comfy.YuE2GenerateMusic",
+      "occupies": [
+        "gpu"
+      ],
+      "schemaVersion": 1,
+      "version": 1
+    },
     "comfy.ZImageFunControlnet": {
       "aliases": [
         "ZImageFunControlnet"
@@ -72179,11 +74611,13 @@
     }
   },
   "skipped": {
-    "ComfySwitchNode": "ComfySwitchNode: V3 input 'on_false' uses unsupported lazy semantics",
     "Load3D": "Load3D: input 'model_file' file_upload/model sources are not supported",
     "Load3DAdvanced": "Load3DAdvanced: input 'model_file' file_upload/model sources are not supported",
+    "LoopIteration": "LoopIteration: V3 accept_all_inputs is not supported",
+    "LoopProgress": "LoopProgress: V3 accept_all_inputs is not supported",
+    "LoopResult": "LoopResult: V3 accept_all_inputs is not supported",
     "Painter": "Painter: input 'mask' source upload cannot declare an ambient default"
   },
-  "sourceCommit": "15eb748b3ec5f8a0a2d470b7fb280e2d7579f916",
+  "sourceCommit": "95539f56344958339e39b7582a476267d489b0ee",
   "sourceRepository": "https://github.com/Comfy-Org/ComfyUI"
 }

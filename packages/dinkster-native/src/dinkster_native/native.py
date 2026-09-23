@@ -1381,6 +1381,67 @@ class ApplyZImageControlPatch(Node):
         raise RuntimeError("dinkster.apply_z_image_control_patch requires the native execution arm")
 
 
+class ApplyMiniMaxH3FunControlPatch(Node):
+    """Attach MiniMax H3 Fun ControlNet conditioning to a native model."""
+
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.apply_minimax_h3_fun_control_patch",
+            display_name="Apply MiniMax H3 Fun ControlNet",
+            category="model/patch/minimax",
+            inputs=(
+                InputSpec("model", MODEL),
+                InputSpec("model_patch", MODEL_PATCH),
+                InputSpec("vae", VAE),
+                InputSpec(
+                    "strength",
+                    FLOAT,
+                    default=1.0,
+                    widget=NumberWidget(min=0.0, max=10.0, step=0.01),
+                ),
+                InputSpec(
+                    "start_percent",
+                    FLOAT,
+                    default=0.0,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.001),
+                ),
+                InputSpec(
+                    "end_percent",
+                    FLOAT,
+                    default=1.0,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.001),
+                ),
+                InputSpec("control_video", IMAGE, required=False, default=None),
+                InputSpec("mask", MASK, required=False, default=None),
+                InputSpec("source_video", IMAGE, required=False, default=None),
+            ),
+            outputs=(OutputSpec("model", MODEL),),
+            aliases=("MiniMaxH3FunControlNetApply",),
+            search_terms=("minimax controlnet", "h3 controlnet", "video inpaint controlnet"),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        model: object,
+        model_patch: object,
+        vae: object,
+        strength: float,
+        start_percent: float,
+        end_percent: float,
+        control_video: object = None,
+        mask: object = None,
+        source_video: object = None,
+    ) -> Mapping[str, object]:
+        del model, model_patch, vae, strength, start_percent, end_percent
+        del control_video, mask, source_video
+        raise RuntimeError(
+            "dinkster.apply_minimax_h3_fun_control_patch requires the native execution arm"
+        )
+
+
 def _drop_path_reload_factories(*objects: object) -> None:
     """Remove v1's path-backed multigpu reload factories from loaded models.
 
@@ -2690,7 +2751,7 @@ SAMPLER_CHOICES: tuple[str, ...] = (
     "dpmpp_2m", "dpmpp_2m_cfg_pp", "dpmpp_2m_sde", "dpmpp_2m_sde_gpu",
     "dpmpp_2m_sde_heun", "dpmpp_2m_sde_heun_gpu",
     "dpmpp_3m_sde", "dpmpp_3m_sde_gpu", "ddpm", "lcm",
-    "ipndm", "ipndm_v", "deis",
+    "ipndm", "ipndm_v", "deis", "cfgpp_ud10_ab",
     "res_multistep", "res_multistep_cfg_pp",
     "res_multistep_ancestral", "res_multistep_ancestral_cfg_pp",
     "gradient_estimation", "gradient_estimation_cfg_pp", "er_sde",
@@ -3360,12 +3421,10 @@ class MiniMaxH3REF2VAConditioning(Node):
         return _minimax_h3_conditioning_schema(
             "dinkster.minimax_h3_ref2va_conditioning",
             "MiniMax H3 REF2VA Conditioning",
+            (InputSpec("clip", CLIP),),
             (
-                InputSpec("clip", CLIP),
-                InputSpec("video_vae", VAE),
-                InputSpec("audio_vae", VAE),
-            ),
-            (
+                InputSpec("video_vae", VAE, required=False, default=None),
+                InputSpec("audio_vae", VAE, required=False, default=None),
                 InputSpec("references", TypeExpr.list_of(MINIMAX_H3_REFERENCE)),
                 InputSpec(
                     "ref_image_size",
@@ -3381,12 +3440,12 @@ class MiniMaxH3REF2VAConditioning(Node):
         cls,
         *,
         clip: object,
-        video_vae: object,
-        audio_vae: object,
         target: object,
         prompt: str,
         references: object,
         ref_image_size: str,
+        video_vae: object = None,
+        audio_vae: object = None,
         negative_prompt: str | None = None,
     ) -> Mapping[str, object]:
         raise RuntimeError("MiniMax H3 conditioning requires the native execution arm")
@@ -3864,6 +3923,7 @@ NATIVE_NODES: tuple[type[Node], ...] = (
     Wan22ImageToVideoLatent,
     LoadZImageControlPatch,
     ApplyZImageControlPatch,
+    ApplyMiniMaxH3FunControlPatch,
     LoadVae,
     LoadVision,
     LoadClip,
@@ -3944,7 +4004,6 @@ GENERATION_CLAIMED_V1_NAMES: tuple[str, ...] = (
     "CLIPTextEncodeLumina2",
     "ModelSamplingAuraFlow",
     "TextGenerate",
-    "TextGenerateLTX2Prompt",
     "CLIPSetLastLayer",
     "T5TokenizerOptions",
     "CLIPTextEncodeControlnet",

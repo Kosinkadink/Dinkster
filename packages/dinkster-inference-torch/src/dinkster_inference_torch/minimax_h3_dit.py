@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from importlib.metadata import version as _distribution_version
-from typing import cast
+from typing import Protocol, cast, runtime_checkable
 
 import torch
 import torch.nn.functional as F
@@ -51,6 +51,7 @@ from .operations import (
     INITLESS,
     Operations,
     ResidencyRouted,
+    materialized_linear_parameters,
     materialized_rms_norm_weight,
 )
 from .quant_linear import Int8Linear, linear_input_act
@@ -559,6 +560,35 @@ class _PackedLayout:
         self.audio_update = torch.cat(audio_updates)
 
 
+@dataclass(frozen=True, slots=True)
+class MiniMaxH3ControlBlockContext:
+    """Per-forward facts a control patch needs alongside every base block."""
+
+    layout: _PackedLayout
+    time_embedding: torch.Tensor
+    segments: tuple[_ModulationSegment, ...]
+    rope_table: torch.Tensor
+    attention_kernel: AttentionKernel | None
+
+
+@runtime_checkable
+class MiniMaxH3ControlPatch(Protocol):
+    """Block-level control application around the base H3 block loop.
+
+    The patch stashes the base block's input at its first injection layer and
+    returns the controlled hidden state after each injected block.
+    """
+
+    def before_base_block(self, hidden: torch.Tensor, block_index: int) -> None: ...
+
+    def after_base_block(
+        self,
+        hidden: torch.Tensor,
+        block_index: int,
+        context: MiniMaxH3ControlBlockContext,
+    ) -> torch.Tensor: ...
+
+
 class _MiniMaxH3MLP(torch.nn.Module):
     def __init__(self, hidden: int, ffn: int, *, operations: Operations) -> None:
         super().__init__()
@@ -778,10 +808,26 @@ class _MiniMaxH3TokenRefiner(torch.nn.Module):
             close_prefetch_queue(queue)
 
 
+class MiniMaxH3BlockShapes(Protocol):
+    """Block width facts; satisfied by MiniMaxH3Config and control patch shapes."""
+
+    @property
+    def hidden_width(self) -> int: ...
+
+    @property
+    def attention_heads(self) -> int: ...
+
+    @property
+    def attention_head_dim(self) -> int: ...
+
+    @property
+    def ffn_width(self) -> int: ...
+
+
 class _MiniMaxH3Block(torch.nn.Module):
     def __init__(
         self,
-        config: MiniMaxH3Config,
+        config: MiniMaxH3BlockShapes,
         attention_kernel: AttentionKernel,
         evidence: MiniMaxH3AttentionProviderEvidence,
         *,
@@ -863,6 +909,9 @@ class _MiniMaxH3FinalLayer(torch.nn.Module):
         time: torch.Tensor,
         video_segment: _ModulationSegment,
         audio_segment: _ModulationSegment,
+        video_sigma: float,
+        sample_sigmas: tuple[float, ...] | None,
+        shifts: tuple[float, float],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         shift, scale = self.adaln_proj(time)
         video_start, video_stop, video_row = video_segment
@@ -873,7 +922,53 @@ class _MiniMaxH3FinalLayer(torch.nn.Module):
         audio = (
             self.norm(hidden[audio_start:audio_stop]) * (1.0 + scale[audio_row]) + shift[audio_row]
         ).float()
-        return self.video_out(video), self.audio_out(audio)
+        heads = self.video_out.weight.shape[0] // self.video_out.out_features
+        if heads == 1:
+            return self.video_out(video), self.audio_out(audio)
+        if sample_sigmas is None:
+            raise ValueError("MiniMax H3 PDD heads need the sampler's sigma schedule")
+        index = min(
+            range(len(sample_sigmas)), key=lambda item: abs(sample_sigmas[item] - video_sigma)
+        )
+        sigma_next = sample_sigmas[min(index + 1, len(sample_sigmas) - 1)]
+        start, stop = (
+            round((1.0 - _unshift_sigma(sigma, shifts[0])) * heads)
+            for sigma in (video_sigma, sigma_next)
+        )
+        start = min(start, heads - 1)
+        stop = max(stop, start + 1)
+        return (
+            _pdd_head(self.video_out, video, heads, start, stop, shifts[0]),
+            _pdd_head(self.audio_out, audio, heads, start, stop, shifts[1]),
+        )
+
+
+def _unshift_sigma(sigma: float, shift: float) -> float:
+    return sigma / (shift + sigma * (1.0 - shift))
+
+
+def _pdd_head(
+    head: torch.nn.Linear,
+    hidden: torch.Tensor,
+    count: int,
+    start: int,
+    stop: int,
+    shift: float,
+) -> torch.Tensor:
+    grid = torch.linspace(1.0, 0.0, count + 1, dtype=torch.float64)
+    delta = (1.0 - shift * grid / (1.0 + (shift - 1.0) * grid)).diff()[start:stop]
+    weights = (delta / delta.sum()).to(hidden)
+    with materialized_linear_parameters(head) as (weight, bias):
+        rows = weight.reshape(count, -1, weight.shape[1])
+        if bias is None:
+            raise ValueError("MiniMax H3 PDD heads require output biases")
+        bias_rows = bias.reshape(count, -1)
+        first = max(start, 1)
+        return F.linear(
+            hidden,
+            rows[0] + torch.einsum("n,noi->oi", weights[first - start :], rows[first:stop]),
+            bias_rows[0] + torch.einsum("n,no->o", weights[first - start :], bias_rows[first:stop]),
+        )
 
 
 class _MiniMaxH3RoPE(ResidencyRouted, torch.nn.Module):
@@ -997,7 +1092,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
             self.config.audio_content_channels,
         ):
             raise ValueError("MiniMax H3 audio latent must be [1,32,2,t]")
-        if control is not None:
+        if control is not None and not isinstance(control, MiniMaxH3ControlPatch):
             raise ValueError("MiniMax H3 does not support generic control")
         if type(video_sigma) is not float or not 0.0 < video_sigma <= 1.0:
             raise ValueError("video_sigma must be a float within (0, 1]")
@@ -1304,7 +1399,8 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         *,
         conditioning: MiniMaxH3DiTConditioning | None = None,
         sigmas: MiniMaxH3Sigmas = MINIMAX_H3_SIGMAS,
-        control: object | None = None,
+        sample_sigmas: tuple[float, ...] | None = None,
+        control: MiniMaxH3ControlPatch | None = None,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
         attention_kernel_factory: MiniMaxH3AttentionKernelFactory | None = None,
         sequence_sharding: MiniMaxH3SequenceSharding | None = None,
@@ -1314,6 +1410,8 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 raise TypeError("sequence_sharding must be an exact MiniMaxH3SequenceSharding")
             if attention_kernel_factory is None:
                 raise ValueError("sequence sharding requires an attention kernel factory")
+        if control is not None and sequence_sharding is not None:
+            raise ValueError("MiniMax H3 control does not support sequence sharding")
         selected_conditioning = MiniMaxH3DiTConditioning() if conditioning is None else conditioning
         self._validate_inputs(
             value, video_sigma, context, selected_conditioning, control, denoise_mask
@@ -1330,7 +1428,9 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 context,
                 selected_conditioning,
                 sigmas,
+                sample_sigmas,
                 denoise_mask=denoise_mask,
+                control=control,
             )
         elif sequence_sharding is None:
             output = self._forward_network(
@@ -1339,8 +1439,10 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 context,
                 selected_conditioning,
                 sigmas,
+                sample_sigmas,
                 denoise_mask=denoise_mask,
                 attention_kernel_factory=attention_kernel_factory,
+                control=control,
             )
         else:
             output = self._forward_network(
@@ -1349,6 +1451,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 context,
                 selected_conditioning,
                 sigmas,
+                sample_sigmas,
                 denoise_mask=denoise_mask,
                 attention_kernel_factory=attention_kernel_factory,
                 sequence_sharding=sequence_sharding,
@@ -1364,8 +1467,10 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         context: torch.Tensor,
         conditioning: MiniMaxH3DiTConditioning,
         sigmas: MiniMaxH3Sigmas,
+        sample_sigmas: tuple[float, ...] | None,
         *,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
+        control: MiniMaxH3ControlPatch | None = None,
         attention_kernel_factory: MiniMaxH3AttentionKernelFactory | None = None,
         sequence_sharding: MiniMaxH3SequenceSharding | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
@@ -1585,8 +1690,10 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         else:
             queue = make_prefetch_queue(self.blocks)
             try:
-                for block in self.blocks:
+                for index, block in enumerate(self.blocks):
                     prefetch_queue_pop(queue, block)
+                    if control is not None:
+                        control.before_base_block(hidden, index)
                     if attention_kernel is None:
                         hidden = block(hidden, time_embedding, segments_tuple, rope_table)
                     else:
@@ -1596,6 +1703,18 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                             segments_tuple,
                             rope_table,
                             attention_kernel=attention_kernel,
+                        )
+                    if control is not None:
+                        hidden = control.after_base_block(
+                            hidden,
+                            index,
+                            MiniMaxH3ControlBlockContext(
+                                layout,
+                                time_embedding,
+                                segments_tuple,
+                                rope_table,
+                                attention_kernel,
+                            ),
                         )
                 prefetch_queue_pop(queue, None)
             finally:
@@ -1620,7 +1739,13 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
             if kind == "audio"
         )
         video_rows, audio_rows = self.final_layer(
-            hidden[0], time_embedding, video_segment, audio_segment
+            hidden[0],
+            time_embedding,
+            video_segment,
+            audio_segment,
+            video_sigma,
+            sample_sigmas,
+            (sigmas.video.shift, sigmas.audio_shift),
         )
         video_output = _unpatchify_video(
             video_rows,
@@ -1730,6 +1855,9 @@ __all__ = [
     "MiniMaxH3Attention",
     "MiniMaxH3AttentionGeometry",
     "MiniMaxH3AttentionProviderEvidence",
+    "MiniMaxH3BlockShapes",
+    "MiniMaxH3ControlBlockContext",
+    "MiniMaxH3ControlPatch",
     "MiniMaxH3DiT",
     "MiniMaxH3DiTConditioning",
     "MiniMaxH3KeyframeLatent",

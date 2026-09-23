@@ -220,8 +220,11 @@ def test_concat_matches_templates_and_spatial_dimensions() -> None:
     assert _packets(output.getvalue()) == _packets(_source()) * 2
     different = video_from_source(_source(depth=10))
     incompatible = edit_video(value, {"concat": [different]})
-    with pytest.raises(ValueError, match="identical"):
-        save_video_stream(incompatible, io.BytesIO())
+    reencoded = io.BytesIO()
+    save_video_stream(incompatible, reencoded)
+    result = video_from_source(reencoded.getvalue())
+    assert cast(dict[str, Any], result["probe"])["bit_depth"] == 8
+    assert cast(np.ndarray, disassemble_video(result)["images"]).shape[0] == 40
 
 
 def test_saved_hdr_samples_do_not_quantize_to_eight_bits() -> None:
@@ -258,8 +261,7 @@ def test_concat_validates_templates_for_disassembly_and_accepts_matching_edits()
         np.ndarray, disassemble_video(video_from_source(output.getvalue()))["images"]
     ).shape == (40, 16, 32, 3)
     incompatible = edit_video(value, {"concat": [video_from_source(_source(depth=10))]})
-    with pytest.raises(ValueError, match="identical"):
-        disassemble_video(incompatible)
+    assert cast(np.ndarray, disassemble_video(incompatible)["images"]).shape == (40, 32, 64, 3)
 
 
 def test_edit_parameters_are_snapshots_not_caller_owned_mappings() -> None:

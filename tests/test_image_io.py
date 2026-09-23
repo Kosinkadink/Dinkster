@@ -7,6 +7,7 @@ import struct
 from pathlib import Path
 from typing import Any, cast
 
+import av
 import numpy as np
 import pytest
 from dinkster_api.v1 import annotate_image, annotate_mask, media_semantics
@@ -19,6 +20,7 @@ from dinkster_nodes_media_io import (
     PreviewImage,
     ReadImageMetadata,
     SaveAnimatedImage,
+    SaveAVIF,
     SaveImage,
     SaveMask,
     register_media_types,
@@ -108,7 +110,7 @@ def test_image_io_schemas_use_typed_assets_and_mounted_targets() -> None:
     save = SaveImage.schema()
     assert load.inputs[0].type == TypeExpr.asset_of(TypeExpr.concrete("dinkster.image"))
     assert load.inputs[0].widget == AssetWidget(
-        ("image/png", "image/jpeg", "image/webp", "image/gif", "image/tiff"),
+        ("image/png", "image/jpeg", "image/webp", "image/gif", "image/tiff", "image/avif"),
         kind="media/image",
         allow_upload=True,
     )
@@ -134,7 +136,7 @@ def test_image_io_schemas_use_typed_assets_and_mounted_targets() -> None:
     assert [item.id for item in paint.inputs] == ["source", "operations"]
     assert paint.inputs[0].type == TypeExpr.asset_of(TypeExpr.concrete("dinkster.image"))
     assert paint.inputs[0].widget == AssetWidget(
-        ("image/png", "image/jpeg", "image/webp", "image/gif", "image/tiff"),
+        ("image/png", "image/jpeg", "image/webp", "image/gif", "image/tiff", "image/avif"),
         kind="media/image",
         allow_upload=False,
     )
@@ -745,6 +747,67 @@ def test_save_image_rejects_alpha_jpeg_and_embeds_explicit_png_metadata(
             target={"mount": "out", "prefix": "meta/image"},
             format="webp",
             metadata_json="{}",
+        )
+
+
+def test_save_avif_preserves_depth_color_metadata_and_still_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _mount(tmp_path, monkeypatch)
+    images = np.zeros((2, 64, 64, 3), np.float32)
+    images[0, ..., 0] = 0.5
+    images[1, ..., 1] = 0.75
+    result = SaveAVIF.execute(
+        images=images,
+        target={"mount": "out", "prefix": "avif/still"},
+        bit_depth="auto",
+        input_color_space="HDR PQ",
+        crf=18,
+        metadata_json=json.dumps({"prompt": {"1": {"class_type": "LoadImage"}}}),
+    )
+    assets = cast("list[AssetRef]", result["assets"])
+    assert [asset.name for asset in assets] == ["still_00001.avif", "still_00002.avif"]
+    for asset in assets:
+        with av.open(root / "avif" / asset.name) as container:
+            stream = container.streams.video[0]
+            assert stream.codec_context.format is not None
+            assert stream.codec_context.format.name == "yuv420p10le"
+            assert stream.codec_context.color_primaries == 9
+            assert stream.codec_context.color_trc == 16
+            assert stream.codec_context.colorspace == 9
+            assert sum(1 for _ in container.decode(video=0)) == 1
+        with Image.open(root / "avif" / asset.name) as image:
+            assert 'prompt:{"1": {"class_type": "LoadImage"}}' in image.getexif().values()
+    saved = _asset(root / "avif" / assets[0].name, "image/avif")
+    document = json.loads(cast(str, ReadImageMetadata.execute(image=saved)["metadata"]))
+    assert document["raw"]["prompt"] == '{"1": {"class_type": "LoadImage"}}'
+    assert document["comfy"]["prompt"] == {"1": {"class_type": "LoadImage"}}
+    assert cast(np.ndarray, LoadImage.execute(image=saved)["image"]).shape == (1, 64, 64, 3)
+
+
+def test_save_avif_animation_and_alpha_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _mount(tmp_path, monkeypatch)
+    images = np.zeros((3, 64, 64, 3), np.float32)
+    images[:, 16:48, 16:48] = np.asarray([0.2, 0.6, 0.9], np.float32)
+    result = SaveAVIF.execute(
+        images=images,
+        target={"mount": "out", "prefix": "avif/animated"},
+        animated=True,
+        fps=8,
+        loop=2,
+    )
+    (asset,) = cast("list[AssetRef]", result["assets"])
+    with av.open(root / "avif" / asset.name) as container:
+        (sequence,) = [stream for stream in container.streams.video if stream.frames == 3]
+        assert sequence.average_rate == 8
+        assert sum(1 for _ in container.decode(sequence)) == 3
+
+    with pytest.raises(ValueError, match="does not support alpha"):
+        SaveAVIF.execute(
+            images=np.zeros((1, 64, 64, 4), np.float32),
+            target={"mount": "out", "prefix": "avif/alpha"},
         )
 
 

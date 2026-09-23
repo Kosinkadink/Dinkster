@@ -18,6 +18,7 @@ from .channels import (
     ImageAlphaUnpremultiply,
     ImageChannelMerge,
     ImageChannelSplit,
+    ImageColorSpace,
 )
 from .compare import ImageCompare
 from .composition import (
@@ -248,6 +249,7 @@ __all__ = [
     "AddLayer",
     "ImageChannelMerge",
     "ImageChannelSplit",
+    "ImageColorSpace",
     "ImageCompare",
     "ImageComposite",
     "ImageCrop",

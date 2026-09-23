@@ -161,6 +161,25 @@ def test_checkpoint_free_preprocessors_match_controlnet_aux_goldens() -> None:
         np.testing.assert_allclose(array[0], expected, rtol=0, atol=1.0 / 255.0 + 1e-7)
 
 
+@pytest.mark.parametrize("method", ["canny", "pyramid_canny"])
+def test_edge_preprocessors_ignore_rgba_alpha(method: str) -> None:
+    rgb = np.zeros((1, 16, 16, 3), dtype=np.float32)
+    rgb[:, :, 8:, :] = 1.0
+    transparent = np.concatenate((rgb, np.zeros((1, 16, 16, 1), dtype=np.float32)), axis=3)
+    patterned = transparent.copy()
+    patterned[..., 3] = np.linspace(0.0, 1.0, 16, dtype=np.float32)
+
+    expected = EdgePreprocessor.execute(image=rgb, method=method, resolution=0)["image"]
+    from_transparent = EdgePreprocessor.execute(image=transparent, method=method, resolution=0)[
+        "image"
+    ]
+    from_patterned = EdgePreprocessor.execute(image=patterned, method=method, resolution=0)["image"]
+
+    np.testing.assert_array_equal(from_transparent, expected)
+    np.testing.assert_array_equal(from_patterned, expected)
+    assert np.asarray(expected).shape[-1] == 3
+
+
 def test_preprocessor_goldens_pin_the_source_revision() -> None:
     assert GOLDEN["baseline"] == "59b1fc411ede8623b2997855b8018f0b3b6cf49f"
     assert GOLDEN["opencv"] == "5.0.0"

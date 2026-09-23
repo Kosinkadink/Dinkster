@@ -26,6 +26,7 @@ from dinkster_inference import (
     DualSamplingGuidance,
     FluxFlowSigmas,
     GuidanceRole,
+    LTXGeneratedKeyframes,
     LTXVideoVAEConfig,
     ModelFamily,
     MultiStreamFamilyRuntime,
@@ -57,6 +58,7 @@ from .ltx_media import (
     LTXMediaError,
     LTXVGuideConditioning,
     ltxv_guides_equal,
+    materialize_ltxv_generated_keyframes,
     materialize_ltxv_guides,
 )
 from .ltx_model import LTXVModel
@@ -123,6 +125,7 @@ class LTXVPreparedConditioning:
     attention_tokens: int
     frame_rate: float = 25.0
     guides: tuple[LTXVGuideConditioning, ...] = ()
+    generated_keyframes: LTXGeneratedKeyframes | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -144,6 +147,11 @@ class LTXVPreparedConditioning:
             type(guide) is not LTXVGuideConditioning for guide in self.guides
         ):
             raise TypeError("LTX-Video guides must be exact LTXVGuideConditioning values")
+        if (
+            self.generated_keyframes is not None
+            and type(self.generated_keyframes) is not LTXGeneratedKeyframes
+        ):
+            raise TypeError("LTX-Video generated keyframes must be exact LTXGeneratedKeyframes")
 
 
 def _conditioning_text(value: object, *, text_dim: int) -> torch.Tensor:
@@ -394,6 +402,7 @@ class _LTXVModelConditioning:
     mask: torch.Tensor
     frame_rate: float
     guides: tuple[LTXVGuideConditioning, ...]
+    generated_keyframes: LTXGeneratedKeyframes | None
 
 
 def _batch_guides(
@@ -517,6 +526,8 @@ class _LTXVLatentAdapter:
                 raise LTXVRuntimeError("LTX-Video guidance lanes must share one frame rate")
             if lane is not None and not ltxv_guides_equal(lane.guides, conditioning.guides):
                 raise LTXVRuntimeError("LTX-Video guidance lanes must share the same guides")
+            if lane is not None and lane.generated_keyframes != conditioning.generated_keyframes:
+                raise LTXVRuntimeError("LTX-Video guidance lanes must share generated keyframes")
         if context.context_windows is not None and context.context_windows.cond_retain_indices:
             raise LTXVRuntimeError("LTX-Video context windows do not accept cond_retain_indices")
         if context.context_windows is not None and conditioning.guides:
@@ -607,7 +618,9 @@ class _LTXVSamplingDenoiser:
             )
             for guide in value.guides
         )
-        return _LTXVModelConditioning(text, mask, value.frame_rate, guides)
+        return _LTXVModelConditioning(
+            text, mask, value.frame_rate, guides, value.generated_keyframes
+        )
 
     def evaluate_conditioning(
         self, x: torch.Tensor, sigma: float, condition: _LTXVModelConditioning
@@ -622,6 +635,7 @@ class _LTXVSamplingDenoiser:
             value.text.shape[1:] == first.text.shape[1:]
             and value.frame_rate == first.frame_rate
             and ltxv_guides_equal(value.guides, first.guides)
+            and value.generated_keyframes == first.generated_keyframes
             for value in values[1:]
         )
 
@@ -653,6 +667,8 @@ class _LTXVSamplingDenoiser:
             )
         if first.guides:
             arguments["guides"] = _batch_guides(first.guides, batch, len(values))
+        if first.generated_keyframes is not None:
+            arguments["generated_keyframes"] = first.generated_keyframes
         velocity = self.owner.assembled.diffusion(
             model_input,
             timesteps,
@@ -808,6 +824,7 @@ class LTXVDiffusionRuntime(MultiStreamSamplingRuntime):
     ) -> LTXVPreparedConditioning:
         try:
             carrier, guides = materialize_ltxv_guides(carrier)
+            carrier, generated_keyframes = materialize_ltxv_generated_keyframes(carrier)
         except LTXMediaError as error:
             raise LTXVRuntimeError(str(error)) from None
         text, tokens = _materialize_conditioning(
@@ -820,6 +837,7 @@ class LTXVDiffusionRuntime(MultiStreamSamplingRuntime):
             tokens,
             _validate_frame_rate(frame_rate),
             guides,
+            cast("LTXGeneratedKeyframes | None", generated_keyframes),
         )
 
     def _sampling_sigma_space(self, sampling_shift: float | None) -> FluxFlowSigmas:

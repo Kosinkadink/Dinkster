@@ -12,13 +12,17 @@
 - Invocation-scoped media staging for Comfy source-filename inputs on POSIX;
   custom nodes requiring source filenames are not supported on Windows
 - Pinned core video nodes `LoadVideo`, `Video Slice`, `CreateVideo`,
-  `GetVideoComponents`, `SaveVideo`, and `SaveWEBM`, including guarded saved
-  output import as execution artifacts
+  `ConcatenateVideo`, `GetVideoComponents`, `SaveVideo`, and `SaveWEBM`,
+  including guarded saved output import as execution artifacts
 - Native aliases for those video nodes plus `VideoTrim` and `VideoCrop`,
   including flat and nested saver selections, numeric depth choices, and
   lossless VIDEO_EDIT widget values. The pinned template corpus replays all
   311 SaveVideo, 167 CreateVideo, 105 GetVideoComponents, and 12 Video Slice
   nodes across 24 distinct widget shapes.
+- The `SaveImageAdvanced` AVIF still and animated branches migrate to native
+  AVIF saving. PNG and EXR branches remain unsupported by this alias.
+- `Get3DComponents` parses GLB, GLTF, OBJ, and STL assets into native editable
+  meshes, including scene transforms, primitive merging, and material data.
 - Worker-created sources declared by `meta.asset_refs`, including nested
   list values, survive producer shutdown. Local workers publish in writable
   scratch; remote workers transfer encoded source blobs through persistent

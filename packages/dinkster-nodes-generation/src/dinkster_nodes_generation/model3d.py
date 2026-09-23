@@ -513,6 +513,38 @@ class MeshToModel3D(_SchemaOnlyNode):
         )
 
 
+class File3DToMesh(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.file3d_to_mesh",
+            display_name="Get 3D Components",
+            category="3d",
+            description=(
+                "Parse a GLB, GLTF, OBJ, or STL file into an editable mesh. "
+                "Scene primitives are merged with their transforms applied."
+            ),
+            inputs=(
+                InputSpec(
+                    "model_3d",
+                    ASSET,
+                    widget=AssetWidget(
+                        accept=(
+                            "model/gltf-binary",
+                            "model/gltf+json",
+                            "model/obj",
+                            "model/stl",
+                            "application/octet-stream",
+                        ),
+                        kind="media/model3d",
+                    ),
+                ),
+            ),
+            outputs=(OutputSpec("mesh", MESH),),
+            search_terms=("file 3d to mesh", "extract mesh", "parse glb", "import mesh"),
+        )
+
+
 MODEL3D_GENERATION_NODES: tuple[type[Node], ...] = (
     LoadGeometryModel,
     EstimateGeometry,
@@ -534,6 +566,7 @@ MODEL3D_GENERATION_NODES: tuple[type[Node], ...] = (
     RenderUVAtlas,
     ApplyTextureToMesh,
     MeshToModel3D,
+    File3DToMesh,
 )
 
 MODEL3D_GENERATION_NODE_IDS = tuple(node.schema().node_type for node in MODEL3D_GENERATION_NODES)

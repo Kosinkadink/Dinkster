@@ -726,7 +726,17 @@ def _matches_geometry(
     expected = _SHAPES.get(suffix)
     if expected is None:
         expected = next(shapes[suffix] for shapes in _TIME_EMBEDDING_SHAPES if suffix in shapes)
-    if len(geometry.shape) != len(expected) or geometry.shape[0] != expected[0]:
+    pdd_output = suffix in {
+        "final_layer.video_out.weight",
+        "final_layer.audio_out.weight",
+    }
+    if (
+        len(geometry.shape) != len(expected)
+        or geometry.shape[0] < expected[0]
+        or geometry.shape[0] % expected[0] != 0
+        or not pdd_output
+        and geometry.shape[0] != expected[0]
+    ):
         return False
     if suffix not in _FULL_SHAPE_KEYS:
         return True
@@ -784,6 +794,14 @@ def detect_minimax_h3(
                 break
             matched.append(key)
         else:
+            video_heads = (
+                source.entry(prefix + "final_layer.video_out.weight").geometry.shape[0] // 96
+            )
+            audio_heads = (
+                source.entry(prefix + "final_layer.audio_out.weight").geometry.shape[0] // 32
+            )
+            if video_heads != audio_heads:
+                continue
             for time_shapes in _TIME_EMBEDDING_SHAPES:
                 time_matched: list[str] = []
                 for suffix in time_shapes:
@@ -814,6 +832,7 @@ def detect_minimax_h3(
                     "ffn_width": config.ffn_width,
                     "hidden_width": config.hidden_width,
                     "key_prefix": prefix,
+                    "output_heads": video_heads,
                     "patch": "1x2x2",
                     "text_width": config.text_width,
                     "video_latent_channels": config.video_latent_channels,

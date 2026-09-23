@@ -751,6 +751,8 @@ def test_image_comfy_alias_confidence_has_pinned_evidence() -> None:
         expected_revision = (
             "f00bfd610cb001381603669e2cc01160ae37aaf3"
             if source["nodeClass"] in {"ImageCompositor", "AddLayer", "LayersFromBoundingBoxes"}
+            else "95539f56"
+            if source["nodeClass"] == "ImageColorSpace"
             else revisions[source["pack"]]
         )
         assert source["revision"] == expected_revision

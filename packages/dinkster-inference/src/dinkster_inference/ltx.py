@@ -375,6 +375,8 @@ class LTXGeneratedKeyframes:
     tokens_per_frame: int
     first_latent_frame: int
     num_keyframes: int
+    frame_indices: tuple[int, ...] = ()
+    num_pixel_frames: int | None = None
 
     def __post_init__(self) -> None:
         if any(
@@ -386,6 +388,17 @@ class LTXGeneratedKeyframes:
             raise ValueError("LTX generated-keyframe tokens_per_frame must be positive")
         if self.first_latent_frame < 0 or self.num_keyframes < 0:
             raise ValueError("LTX generated-keyframe frame values must be nonnegative")
+        if self.num_pixel_frames is not None and (
+            type(self.num_pixel_frames) is not int or self.num_pixel_frames <= 1
+        ):
+            raise ValueError("LTX generated-keyframe canvas length must be an integer above one")
+        if (
+            type(self.frame_indices) is not tuple
+            or any(type(value) is not int or value <= 0 for value in self.frame_indices)
+            or (self.frame_indices and len(self.frame_indices) != self.num_keyframes)
+            or len(set(self.frame_indices)) != len(self.frame_indices)
+        ):
+            raise ValueError("LTX generated-keyframe indices must be unique positive integers")
 
 
 @dataclass(frozen=True, slots=True)

@@ -54,6 +54,7 @@ void main() {
     } else {
         fragColor = clamp((x - 0.5) * factor + 0.5, 0.0, 1.0);
     }
+    fragColor.a = x.a;
 }
 """
 
@@ -157,6 +158,8 @@ class ImageAdjust(Node):
             output = np.clip((array - 0.5) * factor + 0.5, 0.0, 1.0)
         else:
             raise ValueError(f"unknown image adjustment: {operation}")
+        if array.shape[3] == 4:
+            output[..., 3] = array[..., 3]
         return cls.outputs(image=np.ascontiguousarray(output, dtype=np.float32))
 
 

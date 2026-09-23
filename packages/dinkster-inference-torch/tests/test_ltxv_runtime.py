@@ -29,6 +29,7 @@ from dinkster_inference import (
     CustomSamplingRuntime,
     DualSamplingGuidance,
     FluxFlowSigmas,
+    LTXGeneratedKeyframes,
     LTXVConfig,
     MultiStreamConditioningRuntime,
     MultiStreamLatent,
@@ -101,6 +102,7 @@ class _Diffusion(torch.nn.Module):
         self.calls: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float]] = []
         self.denoise_masks: list[torch.Tensor | None] = []
         self.guides: list[object] = []
+        self.generated_keyframes: list[LTXGeneratedKeyframes | None] = []
 
     def forward(
         self,
@@ -112,9 +114,11 @@ class _Diffusion(torch.nn.Module):
         frame_rate: float,
         denoise_mask: torch.Tensor | None = None,
         guides: object = (),
+        generated_keyframes: LTXGeneratedKeyframes | None = None,
     ) -> torch.Tensor:
         self.denoise_masks.append(None if denoise_mask is None else denoise_mask.detach().clone())
         self.guides.append(guides)
+        self.generated_keyframes.append(generated_keyframes)
         self.calls.append(
             (
                 latent.detach().clone(),
@@ -277,6 +281,22 @@ def test_sampling_masks_the_padded_tail_and_forwards_the_frame_rate() -> None:
     assert context.dtype == torch.float32
     assert context.shape == (1, 4, 8)
     assert latent.shape == (1, 4, 1, 2, 2)
+
+
+def test_sampling_forwards_generated_keyframe_placement() -> None:
+    runtime, diffusion = _runtime()
+    generated = LTXGeneratedKeyframes(4, 1, 1, (7,), 9)
+    prepared = LTXVPreparedConditioning(
+        torch.ones((1, 4, 8)),
+        3,
+        25.0,
+        (),
+        generated,
+    )
+
+    _sample(runtime, _video((1, 4, 2, 2, 2)), prepared)
+
+    assert diffusion.generated_keyframes == [generated]
 
 
 def test_cfg_lanes_batch_into_one_model_call_with_per_lane_masks() -> None:
@@ -708,9 +728,11 @@ class _ArithmeticDiffusion(_Diffusion):
         frame_rate: float,
         denoise_mask: torch.Tensor | None = None,
         guides: object = (),
+        generated_keyframes: LTXGeneratedKeyframes | None = None,
     ) -> torch.Tensor:
         self.denoise_masks.append(None if denoise_mask is None else denoise_mask.detach().clone())
         self.guides.append(guides)
+        self.generated_keyframes.append(generated_keyframes)
         self.calls.append(
             (
                 latent.detach().clone(),

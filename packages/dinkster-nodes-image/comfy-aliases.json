@@ -4940,6 +4940,83 @@
     },
     {
       "schemaVersion": 1,
+      "nodeType": "comfy.ImageColorSpace",
+      "version": 1,
+      "displayName": "ImageColorSpace",
+      "category": "comfy/image/color",
+      "description": "",
+      "idempotent": true,
+      "interface": [
+        {
+          "role": "input",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          },
+          "required": true
+        },
+        {
+          "role": "input",
+          "id": "source",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "sRGB",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "sRGB",
+              "HDR",
+              "HDR PQ",
+              "linear"
+            ]
+          }
+        },
+        {
+          "role": "input",
+          "id": "destination",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.combo"
+            ]
+          },
+          "required": false,
+          "default": "sRGB",
+          "widget": {
+            "type": "COMBO",
+            "options": [
+              "sRGB",
+              "HDR",
+              "HDR PQ",
+              "linear"
+            ]
+          }
+        },
+        {
+          "role": "output",
+          "id": "image",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "comfy.IMAGE"
+            ]
+          }
+        }
+      ],
+      "aliases": [
+        "ImageColorSpace"
+      ]
+    },
+    {
+      "schemaVersion": 1,
       "nodeType": "comfy.ImageCompositeMasked",
       "version": 1,
       "displayName": "Image Composite Masked",
@@ -17284,6 +17361,56 @@
       }
     },
     {
+      "id": "comfy_alias:comfy-core/ImageColorSpace",
+      "mappingKind": "op",
+      "carrier": "dinkster.image.color_space",
+      "source": {
+        "pack": "comfy-core",
+        "nodeClass": "ImageColorSpace",
+        "nodeType": "comfy.ImageColorSpace",
+        "revision": "95539f56"
+      },
+      "replacement": {
+        "from": "comfy.ImageColorSpace",
+        "cases": [
+          {
+            "to": "dinkster.image.color_space",
+            "inputs": {
+              "image": {
+                "kind": "copy",
+                "input": "image"
+              },
+              "source": {
+                "kind": "copy",
+                "input": "source"
+              },
+              "destination": {
+                "kind": "copy",
+                "input": "destination"
+              }
+            },
+            "outputs": {
+              "image": "image"
+            }
+          }
+        ]
+      },
+      "confidence": {
+        "tier": "equivalent",
+        "evidence": [
+          "tests/test_image_adjust_filter_channels.py::test_image_color_space_srgb_linear_breakpoints_and_alpha",
+          "tests/test_image_adjust_filter_channels.py::test_image_color_space_hdr_round_trip_preserves_extended_linear_values"
+        ],
+        "tolerances": [
+          {
+            "metric": "max_abs",
+            "operator": "<=",
+            "value": 3e-06
+          }
+        ]
+      }
+    },
+    {
       "id": "comfy_alias:comfy-core/ImageCompositeMasked",
       "mappingKind": "op",
       "carrier": "dinkster.image.composite",
@@ -17344,6 +17471,10 @@
                 "kind": "constant",
                 "value": false
               },
+              "preserve_destination_alpha": {
+                "kind": "constant",
+                "value": false
+              },
               "batch_policy": {
                 "kind": "constant",
                 "value": "destination_repeat"
@@ -17397,6 +17528,10 @@
                 "value": "coverage"
               },
               "clamp_output": {
+                "kind": "constant",
+                "value": false
+              },
+              "preserve_destination_alpha": {
                 "kind": "constant",
                 "value": false
               },
@@ -17484,6 +17619,10 @@
                 "value": "bicubic"
               },
               "clamp_output": {
+                "kind": "constant",
+                "value": true
+              },
+              "preserve_destination_alpha": {
                 "kind": "constant",
                 "value": true
               },

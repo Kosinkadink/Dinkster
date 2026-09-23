@@ -279,6 +279,11 @@ DINKSTER_DEIS = _descriptor(
         OptionSpec("deis_mode", OptionKind.CHOICE, "tab", choices=("tab",)),
     ),
 )
+DINKSTER_CFGPP_UD10_AB = _descriptor(
+    "cfgpp_ud10_ab",
+    "CFG++ UD10 AB",
+    needs_uncond=True,
+)
 _GE_OPTION = (OptionSpec("ge_gamma", OptionKind.FLOAT, 2.0),)
 DINKSTER_GRADIENT_ESTIMATION = _descriptor(
     "gradient_estimation", "Gradient estimation", options=_GE_OPTION
@@ -492,6 +497,7 @@ _BUILTINS = (
     DINKSTER_IPNDM,
     DINKSTER_IPNDM_V,
     DINKSTER_DEIS,
+    DINKSTER_CFGPP_UD10_AB,
     DINKSTER_RES_MULTISTEP,
     DINKSTER_RES_MULTISTEP_CFG_PP,
     DINKSTER_RES_MULTISTEP_ANCESTRAL,
@@ -565,6 +571,7 @@ __all__ = [
     "DINKSTER_DDIM",
     "DINKSTER_DDPM",
     "DINKSTER_DEIS",
+    "DINKSTER_CFGPP_UD10_AB",
     "DINKSTER_DPM_2",
     "DINKSTER_DPM_2_ANCESTRAL",
     "DINKSTER_DPMPP_2M",

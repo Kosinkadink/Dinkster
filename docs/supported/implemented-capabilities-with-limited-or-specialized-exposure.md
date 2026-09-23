@@ -259,11 +259,13 @@ Training capabilities are delivered by separately versioned packages.
   KSampler and custom sampling alike; other families, distributed sampling,
   and runs whose lanes cannot share one fused forward refuse it.
 - Structurally compatible MiniMax H3 FL2VA and REF2VA DiTs, including
-  finetunes, can be loaded independently as MODEL handles through Load
-  Diffusion Components with an explicit role. Compatible conditioner and
-  video/audio VAE finetunes can likewise be loaded through Load CLIP and Load
-  VAE. Generic H3 composition nodes execute these independently loaded
-  components. Setting `DINKSTER_ATTENTION_POLICY=dinkster_kitchen_int8`
+  finetunes and PDD output-head banks, can be loaded independently as MODEL
+  handles through Load Diffusion Components with an explicit role. Compatible
+  conditioner and video/audio VAE finetunes can likewise be loaded through Load
+  CLIP and Load VAE. Generic H3 composition nodes execute these independently
+  loaded components. MiniMax H3 Fun ControlNet v1 and Union 2.0 patches support
+  control video and masked source-video conditioning through KSampler and custom
+  sampling. Setting `DINKSTER_ATTENTION_POLICY=dinkster_kitchen_int8`
   on the server makes dinkster-kitchen INT8 the default for each job on capable
   workers. Job submissions can override that default globally or for individual
   model roles. Built-in SDPA serves causal and grouped-query invocations the INT8
@@ -349,8 +351,12 @@ Training capabilities are delivered by separately versioned packages.
   Image to Video (In-place), LTX-Video Add Guide, and LTX-Video Crop Guides
   expose initial-frame replacement, ordered initial/final guides, per-guide
   strength and spatial attention masks, guide cropping, and sampler masks that
-  drive per-token model timesteps through the same custom-sampling engine. The
-  matching ComfyUI LTXV node IDs are accepted as aliases.
+  drive per-token model timesteps through the same custom-sampling engine.
+  Latent Guide pins a pre-encoded full- or sparse-resolution guide, and Freeze
+  Latent freezes video or audio streams. Generated Keyframes adds learned-marker
+  keyframe slots to LTX-2 conditioning, separates sampled slots for later stages,
+  and converts them to remapped LTX-Video guides. The matching ComfyUI LTXV node
+  IDs are accepted as aliases.
   The components load through Load Diffusion Model, Load CLIP type `ltxv`, and
   Load VAE. Load Checkpoint also loads the detected diffusion, T5, and VAE
   components from a combined checkpoint, without requiring unused companions.

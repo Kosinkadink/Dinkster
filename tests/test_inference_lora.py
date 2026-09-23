@@ -38,6 +38,7 @@ from dinkster_inference import (
     decode_lora,
     flux_linear1_qkv_key_map,
     load_safetensors_header,
+    minimax_h3_lora_key_map,
     native_unet_key_map,
     normalize_lora_keys,
     qwen_image_dit_layout,
@@ -425,6 +426,22 @@ class TestQwenImageLoraKeyMap:
         assert len(decoded.patches) == 720
         assert decoded.unmatched == ()
         assert decoded.loaded_keys == frozenset(geometries)
+
+
+def test_minimax_h3_diffsynth_lora_stem_maps_to_native_weight() -> None:
+    target = "diffusion_model.blocks.7.attn.to_q.weight"
+    key_map = minimax_h3_lora_key_map((target,))
+    assert key_map == {"blocks.7.attn.to_q": target}
+
+    decoded = decode_lora(
+        {
+            "blocks.7.attn.to_q.lora_A.weight": geom(8, 64),
+            "blocks.7.attn.to_q.lora_B.weight": geom(64, 8),
+        },
+        key_map,
+    )
+    assert decoded.unmatched == ()
+    assert set(decoded.patches) == {PatchTarget(target)}
 
 
 def geom(*shape: int) -> TensorGeometry:

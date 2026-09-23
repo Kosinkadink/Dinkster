@@ -60,6 +60,7 @@ from .native_arm_runtime import (
     _native_handle,
     _native_lora_overlay,
     _native_model,
+    _native_model_h3_control,
     _native_model_sampling_cache,
     _native_model_sampling_space,
     _native_model_sampling_timeline,
@@ -725,6 +726,34 @@ class NativeLoadZImageControlPatch(LoadZImageControlPatch):
                 ),
                 (f"resource={assembled.resource_digest}",),
             )
+        elif (
+            is_h3_control := getattr(inference_torch, "is_minimax_h3_fun_state_dict", None)
+        ) is not None and is_h3_control(dict.fromkeys(source.keys())):
+            checkpoint = importlib.import_module("dinkster_inference_torch.checkpoint")
+            state_dict, metadata = checkpoint.load_checkpoint_with_metadata(
+                model_patch.local_path()
+            )
+            if not isinstance(state_dict, Mapping):
+                raise TypeError("MiniMax H3 Fun control checkpoint must contain a state dict")
+            attention = importlib.import_module("dinkster_inference_torch.attention")
+            selection = attention.resolve_role_attention(
+                "flux", context.attention_policy, context.attention_route_token
+            )
+            h3_dit = importlib.import_module("dinkster_inference_torch.minimax_h3_dit")
+            kernel, evidence = h3_dit.minimax_h3_attention_provider(selection)
+            module = inference_torch.load_minimax_h3_fun_control(
+                state_dict,
+                metadata,
+                attention_kernel=kernel,
+                evidence=evidence,
+                time_embedding_kind=(
+                    "curve"
+                    if metadata is not None
+                    and metadata.get("minimax_h3_fun_controlnet") == "adaln_basis"
+                    else "mlp"
+                ),
+            )
+            resource_identity = model_patch.digest
         else:
             plan = inference.plan_z_image_control(source, asset_digest=model_patch.digest)
             assembled = inference_torch.assemble_z_image_control(plan, **attention_kwargs)
@@ -807,6 +836,7 @@ class NativeApplyZImageControlPatch(ApplyZImageControlPatch):
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                minimax_h3_control=_native_model_h3_control(model),
             )
         )
 
@@ -989,6 +1019,7 @@ def _apply_native_lora_stack(
                     sampling_cache=_native_model_sampling_cache(model),
                     sampling_timeline=_native_model_sampling_timeline(model),
                     sampling_space=_native_model_sampling_space(model),
+                    minimax_h3_control=_native_model_h3_control(model),
                 )
             return patched_model, clone
         return model, clip
@@ -1041,6 +1072,7 @@ def _apply_native_lora_stack(
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                minimax_h3_control=_native_model_h3_control(model),
             )
         return patched_model, clone
     return (
@@ -1056,6 +1088,7 @@ def _apply_native_lora_stack(
             sampling_cache=_native_model_sampling_cache(model),
             sampling_timeline=_native_model_sampling_timeline(model),
             sampling_space=_native_model_sampling_space(model),
+            minimax_h3_control=_native_model_h3_control(model),
         ),
         clip_handle,
     )
@@ -1105,6 +1138,7 @@ def _apply_split_flux2_lora_stack(
                     sampling_cache=_native_model_sampling_cache(model),
                     sampling_timeline=_native_model_sampling_timeline(model),
                     sampling_space=_native_model_sampling_space(model),
+                    minimax_h3_control=_native_model_h3_control(model),
                 )
             return patched_model, text_handle
         return model, text_handle
@@ -1158,6 +1192,7 @@ def _apply_split_flux2_lora_stack(
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                minimax_h3_control=_native_model_h3_control(model),
             ),
             text_handle,
         )
@@ -1201,6 +1236,7 @@ def _apply_split_flux2_lora_stack(
             sampling_cache=_native_model_sampling_cache(model),
             sampling_timeline=_native_model_sampling_timeline(model),
             sampling_space=_native_model_sampling_space(model),
+            minimax_h3_control=_native_model_h3_control(model),
         )
     return patched_model, patched_text
 
@@ -1255,6 +1291,7 @@ def _apply_native_model_lora_stack(
                     sampling_cache=_native_model_sampling_cache(model),
                     sampling_timeline=_native_model_sampling_timeline(model),
                     sampling_space=_native_model_sampling_space(model),
+                    minimax_h3_control=_native_model_h3_control(model),
                 )
             return clone
         return model
@@ -1297,6 +1334,7 @@ def _apply_native_model_lora_stack(
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                minimax_h3_control=_native_model_h3_control(model),
             )
         return clone
     return _NativeModelOverlay(
@@ -1311,6 +1349,7 @@ def _apply_native_model_lora_stack(
         sampling_cache=_native_model_sampling_cache(model),
         sampling_timeline=_native_model_sampling_timeline(model),
         sampling_space=_native_model_sampling_space(model),
+        minimax_h3_control=_native_model_h3_control(model),
     )
 
 

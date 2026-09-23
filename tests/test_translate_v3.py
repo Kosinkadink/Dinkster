@@ -889,8 +889,7 @@ def test_direct_accept_all_inputs_lazy_and_rawlink_stay_classified() -> None:
     )
     assert translate(switch_schema).selector is not None
     on.optional = True
-    with pytest.raises(CompatError, match="unsupported lazy semantics"):
-        translate(switch_schema)
+    assert translate(switch_schema).selector is not None
 
     raw = FakeInput("value", "INT")
     raw.rawLink = True

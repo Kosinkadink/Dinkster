@@ -239,6 +239,37 @@ def test_minimax_h3_dit_layout_is_complete_exact_and_immutable() -> None:
         minimax_h3_dit_layout(object())  # type: ignore[arg-type]
 
 
+def test_minimax_h3_pdd_layout_expands_both_output_head_banks() -> None:
+    layout = minimax_h3_dit_layout(output_heads=3)
+    assert layout.output_heads == 3
+    assert layout.keys["final_layer.video_out.weight"] == (288, 5376)
+    assert layout.keys["final_layer.video_out.bias"] == (288,)
+    assert layout.keys["final_layer.audio_out.weight"] == (96, 5376)
+    assert layout.keys["final_layer.audio_out.bias"] == (96,)
+
+    source = HeaderSource(
+        {
+            key: TensorGeometry(
+                shape,
+                FLOAT32 if key in layout.fp32_storage_keys else BFLOAT16,
+            )
+            for key, shape in layout.keys.items()
+        },
+        [],
+    )
+    plan = plan_minimax_h3_dit_assembly(source)
+    assert plan.layout == layout
+    assert set(plan.claims) == set(layout.keys)
+
+
+def test_minimax_h3_plan_rejects_mismatched_pdd_output_head_banks() -> None:
+    geometries = h3_geometries()
+    geometries["final_layer.video_out.weight"] = TensorGeometry((192, 5376), FLOAT32)
+    geometries["final_layer.video_out.bias"] = TensorGeometry((192,), FLOAT32)
+    with pytest.raises(MiniMaxH3DiTAssemblyError, match="same positive multiplier"):
+        plan_minimax_h3_dit_assembly(HeaderSource(geometries, []))
+
+
 def test_minimax_h3_mlp_time_embedding_layout_matches_official_split_artifact() -> None:
     layout = minimax_h3_dit_layout(time_embedding_kind="mlp")
     assert layout.time_embedding_kind == "mlp"

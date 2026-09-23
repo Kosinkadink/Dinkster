@@ -47,7 +47,13 @@ from dinkster_api.v1 import (
     media_semantics,
 )
 
-from .image_metadata import metadata_document, parse_image_metadata_json, png_metadata
+from .avif import encode_avif
+from .image_metadata import (
+    image_metadata_fields,
+    metadata_document,
+    parse_image_metadata_json,
+    png_metadata,
+)
 
 IMAGE_TYPE = "dinkster.image"
 MASK_TYPE = "dinkster.mask"
@@ -64,7 +70,14 @@ INT = TypeExpr.concrete(CORE_INT)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
 COMBO = TypeExpr.concrete(CORE_COMBO)
 
-IMAGE_ACCEPT = ("image/png", "image/jpeg", "image/webp", "image/gif", "image/tiff")
+IMAGE_ACCEPT = (
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/tiff",
+    "image/avif",
+)
 MAX_IMAGE_FILE_BYTES = 512 * 1024 * 1024
 MAX_IMAGE_ARRAY_BYTES = 512 * 1024 * 1024
 MAX_ENCODED_IMAGE_BYTES = 1024 * 1024 * 1024
@@ -181,7 +194,7 @@ def _decode_still(asset: AssetRef, *, allow_batch: bool = False) -> _DecodedImag
     try:
         handle, source, actual_size = _open_still(asset, allow_batch=allow_batch)
         with handle, source:
-            info = dict(source.info)
+            info = image_metadata_fields(source)
             images: list[np.ndarray] = []
             alphas: list[np.ndarray] = []
             has_alpha = source.format == "GIF"
@@ -814,6 +827,124 @@ class ReadImageMetadata(Node):
         return cls.outputs(metadata=parse_image_metadata_json(image))
 
 
+class SaveAVIF(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.save_avif",
+            display_name="Save AVIF",
+            category="image/io",
+            inputs=(
+                InputSpec("images", IMAGE),
+                InputSpec(
+                    "target",
+                    SAVE_TARGET,
+                    required=False,
+                    default=None,
+                    widget=SaveTargetWidget(),
+                ),
+                InputSpec(
+                    "bit_depth",
+                    COMBO,
+                    required=False,
+                    default="auto",
+                    advanced=True,
+                    widget=ComboWidget(options=("auto", "8-bit YUV420", "10-bit YUV420")),
+                ),
+                InputSpec(
+                    "input_color_space",
+                    COMBO,
+                    required=False,
+                    default="sRGB",
+                    advanced=True,
+                    widget=ComboWidget(options=("sRGB", "HDR", "HDR PQ")),
+                ),
+                InputSpec(
+                    "crf",
+                    INT,
+                    required=False,
+                    default=18,
+                    advanced=True,
+                    widget=NumberWidget(min=1, max=63, step=1),
+                ),
+                InputSpec(
+                    "animated", TypeExpr.concrete("core.boolean"), required=False, default=False
+                ),
+                InputSpec(
+                    "fps",
+                    FLOAT,
+                    required=False,
+                    default=6.0,
+                    widget=NumberWidget(min=0.01, max=1000.0, step=0.01),
+                ),
+                InputSpec(
+                    "loop",
+                    INT,
+                    required=False,
+                    default=0,
+                    advanced=True,
+                    widget=NumberWidget(min=0, max=1000, step=1),
+                ),
+                InputSpec(
+                    "metadata_json",
+                    STRING,
+                    required=False,
+                    default="",
+                    advanced=True,
+                    widget=StringWidget(multiline=True),
+                ),
+            ),
+            outputs=(OutputSpec("images", IMAGE), OutputSpec("assets", IMAGE_ASSETS, preview=True)),
+            idempotent=False,
+            output_node=True,
+            search_terms=("AV1 image", "animated AVIF", "HDR image"),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        images: object,
+        target: object = None,
+        bit_depth: str = "auto",
+        input_color_space: str = "sRGB",
+        crf: int = 18,
+        animated: bool = False,
+        fps: float = 6.0,
+        loop: int = 0,
+        metadata_json: str = "",
+    ) -> Mapping[str, object]:
+        batch = _image_batch(images)
+        if type(animated) is not bool:
+            raise ValueError("animated must be a boolean")
+        metadata = None
+        if metadata_json:
+            png_metadata(metadata_json)
+            metadata = json.loads(metadata_json)
+            assert isinstance(metadata, dict)
+        groups = [batch] if animated else [batch[index : index + 1] for index in range(len(batch))]
+        encoded = [
+            encode_avif(
+                group,
+                bit_depth=bit_depth,
+                color_space=input_color_space,
+                crf=crf,
+                fps=fps if animated else 1.0,
+                loop=loop if animated else None,
+                metadata=metadata,
+                limit=MAX_ENCODED_IMAGE_BYTES,
+            )
+            for group in groups
+        ]
+        writer = _mount_writer()
+        destination = target if target is not None else writer.output_target("ComfyUI")
+        assets = [
+            writer.save_bytes(destination, data, suffix=".avif", media_type="image/avif")
+            for data in encoded
+        ]
+        return cls.outputs(images=batch, assets=assets)
+
+
 class SaveImage(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -1166,6 +1297,7 @@ IMAGE_IO_NODES: tuple[type[Node], ...] = (
     LoadImageOutput,
     LoadMask,
     ReadImageMetadata,
+    SaveAVIF,
     SaveImage,
     SaveMask,
     PreviewImage,
@@ -1187,6 +1319,7 @@ __all__ = [
     "PaintMask",
     "PreviewImage",
     "ReadImageMetadata",
+    "SaveAVIF",
     "SaveAnimatedImage",
     "SaveImage",
     "SaveMask",

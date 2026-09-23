@@ -366,6 +366,7 @@ def test_composite_batch_drawing_and_filter_dynamic_schema_shape() -> None:
         "blend_mode",
         "factor",
         "clamp_output",
+        "preserve_destination_alpha",
         "batch_policy",
     )
     assert _options(composite.combos[0]) == {

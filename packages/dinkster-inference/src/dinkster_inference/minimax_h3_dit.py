@@ -200,7 +200,9 @@ MiniMaxH3TimeEmbeddingKind = Literal["curve", "mlp"]
 
 
 def _minimax_h3_dit_keys(
-    config: MiniMaxH3Config, time_embedding_kind: MiniMaxH3TimeEmbeddingKind
+    config: MiniMaxH3Config,
+    time_embedding_kind: MiniMaxH3TimeEmbeddingKind,
+    output_heads: int = 1,
 ) -> dict[str, tuple[int, ...]]:
     keys: dict[str, tuple[int, ...]] = {}
     video_patch_width = (
@@ -274,14 +276,14 @@ def _minimax_h3_dit_keys(
     _linear(
         keys,
         "final_layer.video_out",
-        video_patch_width,
+        video_patch_width * output_heads,
         config.hidden_width,
         bias=True,
     )
     _linear(
         keys,
         "final_layer.audio_out",
-        config.audio_latent_channels,
+        config.audio_latent_channels * output_heads,
         config.hidden_width,
         bias=True,
     )
@@ -330,6 +332,7 @@ class MiniMaxH3DiTLayout:
     keys: Mapping[str, tuple[int, ...]] = field(repr=False)
     fp32_storage_keys: frozenset[str] = field(repr=False)
     time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve"
+    output_heads: int = 1
     depth: int = field(default=50, init=False)
     hidden_width: int = field(default=5376, init=False)
     attention_heads: int = field(default=56, init=False)
@@ -358,7 +361,11 @@ class MiniMaxH3DiTLayout:
         frozen = dict(cast("Mapping[str, tuple[int, ...]]", keys_obj))
         if self.time_embedding_kind not in ("curve", "mlp"):
             raise ValueError("time_embedding_kind must be curve or mlp")
-        expected = _minimax_h3_dit_keys(MINIMAX_H3_CONFIG, self.time_embedding_kind)
+        if type(self.output_heads) is not int or self.output_heads < 1:
+            raise ValueError("output_heads must be a positive integer")
+        expected = _minimax_h3_dit_keys(
+            MINIMAX_H3_CONFIG, self.time_embedding_kind, self.output_heads
+        )
         if frozen != expected:
             raise ValueError("keys must equal the exact H3 DiT layout")
         fp32_keys_obj = cast("object", self.fp32_storage_keys)
@@ -378,6 +385,7 @@ def minimax_h3_dit_layout(
     config: MiniMaxH3Config = MINIMAX_H3_CONFIG,
     *,
     time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve",
+    output_heads: int = 1,
 ) -> MiniMaxH3DiTLayout:
     """Return one exact H3 DiT state layout."""
     if not isinstance(cast("object", config), MiniMaxH3Config):
@@ -386,11 +394,14 @@ def minimax_h3_dit_layout(
         raise ValueError("config must be the exact H3 profile")
     if time_embedding_kind not in ("curve", "mlp"):
         raise ValueError("time_embedding_kind must be curve or mlp")
+    if type(output_heads) is not int or output_heads < 1:
+        raise ValueError("output_heads must be a positive integer")
     return MiniMaxH3DiTLayout(
         config,
-        _minimax_h3_dit_keys(config, time_embedding_kind),
+        _minimax_h3_dit_keys(config, time_embedding_kind, output_heads),
         _minimax_h3_fp32_storage_keys(config, time_embedding_kind),
         time_embedding_kind,
+        output_heads,
     )
 
 
@@ -411,7 +422,8 @@ class MiniMaxH3DiTAssemblyPlan:
 
     def __post_init__(self) -> None:
         if self.layout != minimax_h3_dit_layout(
-            time_embedding_kind=self.layout.time_embedding_kind
+            time_embedding_kind=self.layout.time_embedding_kind,
+            output_heads=self.layout.output_heads,
         ):
             raise ValueError("assembly plan must use an exact H3 DiT layout")
         if self.source_prefix not in _PREFIXES:
@@ -482,9 +494,28 @@ def plan_minimax_h3_dit_assembly(
     source_keys = tuple(source.keys())
     if len(source_keys) != len(set(source_keys)):
         raise MiniMaxH3DiTAssemblyError("duplicate H3 DiT source keys")
-    layouts = tuple(minimax_h3_dit_layout(time_embedding_kind=kind) for kind in ("curve", "mlp"))
+    actual = set(source_keys)
+    output_heads = 1
+    for candidate_prefix in _PREFIXES:
+        video_key = candidate_prefix + "final_layer.video_out.weight"
+        audio_key = candidate_prefix + "final_layer.audio_out.weight"
+        if video_key not in actual or audio_key not in actual:
+            continue
+        video_rows = _entry_geometry(source, video_key).shape[0]
+        audio_rows = _entry_geometry(source, audio_key).shape[0]
+        if video_rows % 96 or audio_rows % 32 or video_rows // 96 != audio_rows // 32:
+            raise MiniMaxH3DiTAssemblyError(
+                "MiniMax H3 video and audio output heads must use the same positive multiplier"
+            )
+        output_heads = video_rows // 96
+        if output_heads < 1:
+            raise MiniMaxH3DiTAssemblyError("MiniMax H3 output head count must be positive")
+        break
+    layouts = tuple(
+        minimax_h3_dit_layout(time_embedding_kind=kind, output_heads=output_heads)
+        for kind in ("curve", "mlp")
+    )
     for layout in layouts:
-        actual = set(source_keys)
         if actual in (
             set(layout.keys),
             {"model.diffusion_model." + key for key in layout.keys},

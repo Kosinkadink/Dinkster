@@ -34,6 +34,7 @@ COMFY_CORE_REVISIONS = frozenset(
         "8a33128f",
         "c67885b1",
         "15eb748b",
+        "95539f56",
         "f00bfd610cb001381603669e2cc01160ae37aaf3",
     )
 )

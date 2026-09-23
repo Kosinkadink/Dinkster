@@ -50,6 +50,7 @@ from dinkster_inference.spaces import FlowSigmas
 from dinkster_inference_torch._portable_solvers import (
     builtin_sampler_registry,
     builtin_samplers,
+    cfgpp_ud10_ab,
     ddim,
     deis,
     dpm_2_ancestral,
@@ -79,6 +80,9 @@ GOLDENS = json.loads((Path(__file__).parent / "goldens" / "sampling_goldens.json
 SOLVERS: dict[str, Any] = GOLDENS["solvers"]
 SOLVERS["cases"]["sa_solver_current_configured"] = json.loads(
     (Path(__file__).parent / "goldens" / "configured_sa_solver_1d48d9cf.json").read_text()
+)
+CFGPP_UD10_AB = json.loads(
+    (Path(__file__).parent / "goldens" / "cfgpp_ud10_ab_95539f56.json").read_text()
 )
 DIMS = len(SOLVERS["x0"])
 
@@ -730,6 +734,7 @@ class TestCfgPP:
         "dinkster.euler_ancestral_cfg_pp",
         "dinkster.dpmpp_2s_ancestral_cfg_pp",
         "dinkster.dpmpp_2m_cfg_pp",
+        "dinkster.cfgpp_ud10_ab",
         "dinkster.res_multistep_cfg_pp",
         "dinkster.res_multistep_ancestral_cfg_pp",
         "dinkster.gradient_estimation_cfg_pp",
@@ -746,6 +751,7 @@ class TestCfgPP:
             (euler_ancestral_cfg_pp, "euler_ancestral_cfg_pp"),
             (dpmpp_2s_ancestral_cfg_pp, "dpmpp_2s_ancestral_cfg_pp"),
             (dpmpp_2m_cfg_pp, "dpmpp_2m_cfg_pp"),
+            (cfgpp_ud10_ab, "cfgpp_ud10_ab"),
             (res_multistep_cfg_pp, "res_multistep_cfg_pp"),
             (
                 res_multistep_ancestral_cfg_pp,
@@ -791,6 +797,16 @@ class TestCfgPP:
             not math.isclose(ours, ref, rel_tol=REL, abs_tol=ABS)
             for ours, ref in zip(final.values, case["final"], strict=True)
         )
+
+    @pytest.mark.parametrize("space", ["eps", "flow"])
+    def test_cfgpp_ud10_ab_matches_current_comfy_golden(self, space: str) -> None:
+        final = cfgpp_ud10_ab()(
+            CfgMockDenoiser(),
+            Vec(tuple(CFGPP_UD10_AB["x0"])),
+            tuple(CFGPP_UD10_AB["sigmas"][space]),
+            SPACE_INFO[space],
+        )
+        assert final.values == pytest.approx(CFGPP_UD10_AB["cases"][space], rel=REL, abs=ABS)
 
 
 class TestCatalogs:
@@ -906,7 +922,7 @@ class TestCatalogs:
 
     def test_sampler_catalog_shape(self) -> None:
         descriptors = builtin_samplers()
-        assert len(descriptors) == 63
+        assert len(descriptors) == 64
         ids = [d.id for d in descriptors]
         assert len(set(ids)) == len(ids)
         assert all(d.id.startswith(("dinkster.", "res4lyf.")) for d in descriptors)
@@ -1013,7 +1029,8 @@ class TestCatalogs:
             i for i, descriptor in enumerate(descriptors) if descriptor.id == "dinkster.deis"
         )
         assert descriptors[index - 1].id == "dinkster.ipndm_v"
-        assert descriptors[index + 1].id == "dinkster.res_multistep"
+        assert descriptors[index + 1].id == "dinkster.cfgpp_ud10_ab"
+        assert descriptors[index + 2].id == "dinkster.res_multistep"
         descriptor = descriptors[index]
         assert descriptor.aliases == ("deis",)
         assert descriptor.noise is NoiseKind.NONE
@@ -1289,6 +1306,7 @@ class TestCatalogs:
         # The deterministic CFG++ pair never draws.
         assert by_id["dinkster.euler_cfg_pp"] is NoiseKind.NONE
         assert by_id["dinkster.dpmpp_2m_cfg_pp"] is NoiseKind.NONE
+        assert by_id["dinkster.cfgpp_ud10_ab"] is NoiseKind.NONE
         assert by_id["dinkster.res_multistep"] is NoiseKind.NONE
         assert by_id["dinkster.res_multistep_cfg_pp"] is NoiseKind.NONE
 
@@ -1514,7 +1532,7 @@ class TestCanonicalCatalogSnapshots:
                 builtin_samplers()
         finally:
             make.__code__ = canonical_code
-        assert len(builtin_samplers()) == 63
+        assert len(builtin_samplers()) == 64
 
     def test_mutated_scheduler_function_refuses_loudly(self) -> None:
         from dinkster_inference.schedules import DINKSTER_KARRAS

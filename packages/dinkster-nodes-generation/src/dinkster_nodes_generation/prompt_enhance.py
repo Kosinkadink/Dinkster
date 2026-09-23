@@ -1,4 +1,4 @@
-"""Provider-neutral LTX-2 prompt enhancement formatting."""
+"""Qwen formatting for Dinkster's native LTX-2 prompt enhancer."""
 
 from __future__ import annotations
 
@@ -82,11 +82,18 @@ _LTX2_TEXT_TO_VIDEO_PROMPT = "\n".join(
 )
 
 
-def prepare_ltx2_prompt(prompt: str) -> str:
+def prepare_ltx2_prompt(
+    prompt: str,
+    *,
+    system_prompt: str = "",
+    thinking: bool = False,
+) -> str:
+    system = system_prompt.strip() or _LTX2_TEXT_TO_VIDEO_PROMPT
+    assistant = "" if thinking else "<think>\n\n</think>\n\n"
     return (
-        f"<|im_start|>system\n{_LTX2_TEXT_TO_VIDEO_PROMPT}<|im_end|>\n"
+        f"<|im_start|>system\n{system}<|im_end|>\n"
         f"<|im_start|>user\nUser Raw Input Prompt: {prompt}.<|im_end|>\n"
-        "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+        f"<|im_start|>assistant\n{assistant}"
     )
 
 

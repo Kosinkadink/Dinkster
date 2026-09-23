@@ -26,6 +26,7 @@ from .latent_streams import normalize_latent_mask
 from .payloads import TensorPayloadError, payload_binding_to_tensor, tensor_to_payload_binding
 
 _GUIDES_KEY = "dinkster-model-ltx/guides"
+_GENERATED_KEYFRAMES_KEY = "dinkster-model-ltx/generated-keyframes"
 _REFERENCE_AUDIO_KEY = "dinkster-model-ltx/reference-audio"
 _GUIDE_COORDINATES_SPACE = "ltxv-guide-coordinates"
 _GUIDE_ATTENTION_MASK_SPACE = "ltxv-guide-attention-mask"
@@ -44,6 +45,7 @@ class LTXVGuideConditioning:
     latent_shape: tuple[int, int, int]
     strength: float
     attention_mask: torch.Tensor | None = None
+    stored_pre_filter_count: int | None = None
 
     def __post_init__(self) -> None:
         keyframes = self.keyframe_indices
@@ -63,7 +65,10 @@ class LTXVGuideConditioning:
             or any(type(size) is not int or size <= 0 for size in self.latent_shape)
         ):
             raise TypeError("LTX-Video guide latent shape must contain three positive ints")
-        if keyframes.shape[2] != math.prod(self.latent_shape):
+        token_count = self.stored_pre_filter_count
+        if token_count is None:
+            token_count = math.prod(self.latent_shape)
+        if type(token_count) is not int or token_count <= 0 or keyframes.shape[2] != token_count:
             raise LTXMediaError("LTX-Video guide coordinates must cover the full guide latent")
         if (
             type(self.strength) is not float
@@ -89,7 +94,11 @@ class LTXVGuideConditioning:
 
     @property
     def pre_filter_count(self) -> int:
-        return math.prod(self.latent_shape)
+        return (
+            math.prod(self.latent_shape)
+            if self.stored_pre_filter_count is None
+            else self.stored_pre_filter_count
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,8 +278,8 @@ def _decode_ltxv_guides(
             raise LTXMediaError("LTX-Video guide latent shape is malformed")
         latent_shape = cast("tuple[int, int, int]", shape_values)
         pre_filter_count = entry["pre_filter_count"]
-        if type(pre_filter_count) is not int or pre_filter_count != math.prod(latent_shape):
-            raise LTXMediaError("LTX-Video guide token count does not match its latent shape")
+        if type(pre_filter_count) is not int or pre_filter_count <= 0:
+            raise LTXMediaError("LTX-Video guide token count is malformed")
         strength = entry["strength"]
         if type(strength) is not float:
             raise LTXMediaError("LTX-Video guide strength is malformed")
@@ -288,7 +297,15 @@ def _decode_ltxv_guides(
                 raise LTXMediaError(
                     f"LTX-Video guide attention mask could not be decoded: {error}"
                 ) from None
-        guides.append(LTXVGuideConditioning(keyframes, latent_shape, strength, attention_mask))
+        guides.append(
+            LTXVGuideConditioning(
+                keyframes,
+                latent_shape,
+                strength,
+                attention_mask,
+                pre_filter_count,
+            )
+        )
     return tuple(guides)
 
 
@@ -298,6 +315,7 @@ def _guide_coordinates(
     scale_factors: tuple[int, int, int],
     *,
     causal_fix: bool,
+    latent_downscale_factor: int = 1,
 ) -> torch.Tensor:
     batch, _, frames, height, width = guide.shape
     grid = torch.meshgrid(
@@ -314,6 +332,10 @@ def _guide_coordinates(
     coordinates = coordinates * scale
     if causal_fix:
         coordinates[:, 0] = (coordinates[:, 0] + 1 - scale_factors[0]).clamp(min=0)
+    if latent_downscale_factor > 1:
+        coordinates[:, 1:, :, 1] += torch.tensor(scale_factors[1:], device=guide.device).view(
+            1, 2, 1
+        ) * (latent_downscale_factor - 1)
     coordinates[:, 0] += frame_index
     return coordinates
 
@@ -393,6 +415,11 @@ def ltxv_add_guide(
     attention_mask: torch.Tensor | None = None,
     scale_factors: tuple[int, int, int] = LTXV_VAE_SCALE_FACTORS,
     causal_fix: bool | None = None,
+    latent_downscale_factor: int = 1,
+    original_latent_shape: tuple[int, int, int] | None = None,
+    guide_mask: torch.Tensor | None = None,
+    negative_from_end: bool = True,
+    align_frame_index: bool = True,
 ) -> LTXVMediaConditioning:
     """Append one ordered guide and map its real-frame target coordinates."""
     positive_carrier, positive_record = _record(positive, "dinkster.ltxv")
@@ -421,6 +448,10 @@ def ltxv_add_guide(
         raise TypeError("LTX-Video scale factors must contain three positive ints")
     if causal_fix is not None and type(causal_fix) is not bool:
         raise TypeError("LTX-Video causal fix must be a bool when provided")
+    if type(latent_downscale_factor) is not int or latent_downscale_factor <= 0:
+        raise TypeError("LTX-Video latent downscale factor must be a positive int")
+    if type(negative_from_end) is not bool or type(align_frame_index) is not bool:
+        raise TypeError("LTX-Video frame-index policies must be bools")
     positive_entries, positive_guides, existing_guides = _validated_guides(positive_carrier, video)
     negative_entries, negative_guides, _ = _validated_guides(negative_carrier, video)
     if positive_entries != negative_entries or not ltxv_guides_equal(
@@ -433,9 +464,13 @@ def ltxv_add_guide(
 
     time_scale = scale_factors[0]
     resolved_index = frame_index
-    if resolved_index < 0:
+    if resolved_index < 0 and negative_from_end:
         resolved_index = max((generated_frames - 1) * time_scale + 1 + resolved_index, 0)
-    if (guide_latent.shape[2] > 1 or causal_fix is False) and resolved_index != 0:
+    if (
+        align_frame_index
+        and (guide_latent.shape[2] > 1 or causal_fix is False)
+        and resolved_index != 0
+    ):
         resolved_index = (resolved_index - 1) // time_scale * time_scale + 1
     latent_index = (resolved_index + time_scale - 1) // time_scale
     if latent_index + guide_latent.shape[2] > generated_frames:
@@ -443,8 +478,13 @@ def ltxv_add_guide(
     if causal_fix is None:
         causal_fix = resolved_index == 0 or guide_latent.shape[2] == 1
     coordinates = _guide_coordinates(
-        guide_latent, resolved_index, scale_factors, causal_fix=causal_fix
+        guide_latent,
+        resolved_index,
+        scale_factors,
+        causal_fix=causal_fix,
+        latent_downscale_factor=latent_downscale_factor,
     )
+    latent_shape = original_latent_shape or tuple(int(size) for size in guide_latent.shape[2:])
 
     stored_mask: torch.Tensor | None = None
     if attention_mask is not None:
@@ -471,9 +511,9 @@ def ltxv_add_guide(
     entry: dict[str, object] = {
         "coordinates": PayloadReference(coordinate_binding.reference_id),
         "pre_filter_count": int(coordinates.shape[2]),
-        "frames": int(guide_latent.shape[2]),
-        "height": int(guide_latent.shape[3]),
-        "width": int(guide_latent.shape[4]),
+        "frames": latent_shape[0],
+        "height": latent_shape[1],
+        "width": latent_shape[2],
         "strength": strength,
         "attention_mask": None,
     }
@@ -495,12 +535,15 @@ def ltxv_add_guide(
     )
 
     mask = _normalized_video_mask(denoise_mask, streams)
-    guide_mask = torch.full(
-        (video.shape[0], 1, guide_latent.shape[2], video.shape[3], video.shape[4]),
-        max(0.0, 1.0 - strength),
-        device=mask.device,
-        dtype=mask.dtype,
-    )
+    if guide_mask is None:
+        guide_mask = torch.full(
+            (video.shape[0], 1, guide_latent.shape[2], video.shape[3], video.shape[4]),
+            max(0.0, 1.0 - strength),
+            device=mask.device,
+            dtype=mask.dtype,
+        )
+    else:
+        guide_mask = guide_mask.to(device=mask.device, dtype=mask.dtype) - strength
     result = torch.cat((video, guide_latent.to(device=video.device, dtype=video.dtype)), dim=2)
     result_mask = torch.cat((mask, guide_mask), dim=2)
     return LTXVMediaConditioning(
@@ -619,7 +662,11 @@ def materialize_ltxv_guides(
     if len(typed.conditioning.records) != 1:
         return typed, ()
     record = typed.conditioning.records[0]
-    unknown = tuple(key for key, _ in record.extension_metadata if key != _GUIDES_KEY)
+    unknown = tuple(
+        key
+        for key, _ in record.extension_metadata
+        if key not in (_GUIDES_KEY, _GENERATED_KEYFRAMES_KEY)
+    )
     if unknown:
         raise LTXMediaError("LTX-Video conditioning has unsupported extension metadata")
     value = _metadata(record, _GUIDES_KEY)
@@ -635,6 +682,74 @@ def materialize_ltxv_guides(
         return typed, ()
     guides = _decode_ltxv_guides(typed, raw_entries)
     return _without_metadata(typed, record, _GUIDES_KEY), guides
+
+
+def ltxv_generated_keyframes_metadata(
+    carrier: ConditioningCarrier, generated: object
+) -> ConditioningCarrier:
+    """Set generated-keyframe placement on canonical LTX conditioning."""
+    typed, record = _record(carrier, ("dinkster.ltxv", "dinkster.ltxav"))
+    if generated is None:
+        return _without_metadata(typed, record, _GENERATED_KEYFRAMES_KEY)
+    from dinkster_inference import LTXGeneratedKeyframes
+
+    if type(generated) is not LTXGeneratedKeyframes:
+        raise TypeError("generated must be exact LTXGeneratedKeyframes or None")
+    value = {
+        "tokens_per_frame": generated.tokens_per_frame,
+        "first_latent_frame": generated.first_latent_frame,
+        "num_keyframes": generated.num_keyframes,
+        "frame_indices": generated.frame_indices,
+        "num_pixel_frames": generated.num_pixel_frames,
+    }
+    return _with_metadata(typed, record, _GENERATED_KEYFRAMES_KEY, value)
+
+
+def materialize_ltxv_generated_keyframes(
+    carrier: ConditioningCarrier,
+) -> tuple[ConditioningCarrier, object]:
+    """Strip and decode generated-keyframe placement from a carrier."""
+    from dinkster_inference import LTXGeneratedKeyframes
+
+    if type(carrier) is not ConditioningCarrier:
+        raise TypeError("LTX conditioning must be an exact ConditioningCarrier")
+    typed = carrier
+    if len(typed.conditioning.records) != 1:
+        return typed, None
+    record = typed.conditioning.records[0]
+    value = _metadata(record, _GENERATED_KEYFRAMES_KEY)
+    if value is None:
+        return typed, None
+    layout = record.token_layout
+    if layout is None or layout.family_id not in ("dinkster.ltxv", "dinkster.ltxav"):
+        raise LTXMediaError("LTX generated-keyframe metadata requires an LTX family")
+    if not isinstance(value, Mapping):
+        raise LTXMediaError("LTX generated-keyframe metadata is malformed")
+    tokens = value.get("tokens_per_frame")
+    first = value.get("first_latent_frame")
+    count = value.get("num_keyframes")
+    indices = value.get("frame_indices")
+    pixel_frames = value.get("num_pixel_frames")
+    if (
+        type(tokens) is not int
+        or type(first) is not int
+        or type(count) is not int
+        or not isinstance(indices, tuple)
+        or any(type(index) is not int for index in indices)
+        or (pixel_frames is not None and type(pixel_frames) is not int)
+    ):
+        raise LTXMediaError("LTX generated-keyframe metadata is malformed")
+    try:
+        generated = LTXGeneratedKeyframes(
+            tokens,
+            first,
+            count,
+            cast("tuple[int, ...]", indices),
+            pixel_frames,
+        )
+    except (TypeError, ValueError):
+        raise LTXMediaError("LTX generated-keyframe metadata is malformed") from None
+    return _without_metadata(typed, record, _GENERATED_KEYFRAMES_KEY), generated
 
 
 def materialize_ltxav_reference_audio(
@@ -685,6 +800,8 @@ __all__ = [
     "ltxv_add_guide",
     "ltxv_condition_initial_frames",
     "ltxv_crop_guides",
+    "ltxv_generated_keyframes_metadata",
     "materialize_ltxav_reference_audio",
     "materialize_ltxv_guides",
+    "materialize_ltxv_generated_keyframes",
 ]

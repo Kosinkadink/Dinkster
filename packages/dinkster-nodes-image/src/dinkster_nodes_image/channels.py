@@ -27,7 +27,150 @@ from .support import normalize_mask_polarity
 from .support import resize_array as _resize_array
 
 COLOR_SPACES = ("rgb", "ycbcr")
+IMAGE_COLOR_SPACES = ("sRGB", "HDR", "HDR PQ", "linear")
 ALPHA_MASK_POLARITIES = ("coverage", "transparency")
+
+_REC709_TO_REC2020 = np.asarray(
+    (
+        (0.6274038959346991, 0.3292830383778837, 0.0433130656874172),
+        (0.0690972893582320, 0.9195403950754587, 0.0113623155663092),
+        (0.0163914388751503, 0.0880133078772259, 0.8955952532476238),
+    ),
+    dtype=np.float32,
+)
+_REC2020_TO_REC709 = np.asarray(
+    (
+        (1.6604910021084338, -0.5876411387885494, -0.0728498633198846),
+        (-0.1245504745215905, 1.1328998971259600, -0.0083494226043695),
+        (-0.0181507633549053, -0.1005788980080076, 1.1187296613629125),
+    ),
+    dtype=np.float32,
+)
+_REC709_LUMA = np.asarray(
+    (0.2126390058715103, 0.7151686787677559, 0.0721923153607337), dtype=np.float32
+)
+_REC2020_LUMA = np.asarray((0.2627, 0.6780, 0.0593), dtype=np.float32)
+_PQ_M1, _PQ_M2 = 2610.0 / 16384.0, 2523.0 / 32.0
+_PQ_C1, _PQ_C2, _PQ_C3 = 3424.0 / 4096.0, 2413.0 / 128.0, 2392.0 / 128.0
+_SDR_WHITE_NITS = 203.0
+_HLG_PEAK_NITS = 1000.0
+_HLG_GAMMA = 1.2
+_HLG_A = 0.17883277
+_HLG_B = 0.28466892
+_HLG_C = 0.55991072928
+
+
+def _convert_primaries(rgb: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    return np.matmul(rgb, matrix.T, dtype=np.float32)
+
+
+def _luminance(rgb: np.ndarray, weights: np.ndarray) -> np.ndarray:
+    return np.sum(rgb * weights, axis=-1, keepdims=True, dtype=np.float32)
+
+
+def _tone_map_luminance(rgb: np.ndarray, weights: np.ndarray) -> np.ndarray:
+    luminance = np.maximum(_luminance(rgb, weights), 0.0)
+    peak = max(float(np.max(luminance)), 1.0)
+    if peak <= 1.0001:
+        return rgb
+    return rgb * ((1.0 + luminance / (peak * peak)) / (1.0 + luminance))
+
+
+def _compress_gamut(rgb: np.ndarray, weights: np.ndarray) -> np.ndarray:
+    luminance = np.clip(_luminance(rgb, weights), 0.0, 1.0)
+    chroma = rgb - luminance
+    minimum = np.min(rgb, axis=-1, keepdims=True)
+    maximum = np.max(rgb, axis=-1, keepdims=True)
+    tiny = np.finfo(np.float32).tiny
+    upper = (1.0 - luminance) / np.maximum(maximum - luminance, tiny)
+    lower = luminance / np.maximum(luminance - minimum, tiny)
+    saturation = np.clip(np.minimum(upper, lower), 0.0, 1.0)
+    compressed = luminance + chroma * saturation
+    return np.where((minimum >= -1e-5) & (maximum <= 1.00001), rgb, compressed).clip(0.0, 1.0)
+
+
+def _srgb_to_linear(rgb: np.ndarray) -> np.ndarray:
+    low = rgb / 12.92
+    high = np.power((np.maximum(rgb, 0.0) + 0.055) / 1.055, 2.4)
+    return np.where(rgb <= 0.04045, low, high)
+
+
+class ImageColorSpace(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.image.color_space",
+            display_name="Convert Image Color Space",
+            category="image/color",
+            inputs=(
+                InputSpec("image", IMAGE),
+                _combo("source", IMAGE_COLOR_SPACES, "sRGB"),
+                _combo("destination", IMAGE_COLOR_SPACES, "sRGB"),
+            ),
+            outputs=(OutputSpec("image", IMAGE, preview=True),),
+            search_terms=("ImageColorSpace", "sRGB", "HDR", "PQ", "HLG", "linear"),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, image: object, source: str = "sRGB", destination: str = "sRGB"
+    ) -> Mapping[str, object]:
+        if source not in IMAGE_COLOR_SPACES:
+            raise ValueError(f"unsupported source color space: {source}")
+        if destination not in IMAGE_COLOR_SPACES:
+            raise ValueError(f"unsupported destination color space: {destination}")
+        array = _image_array(image)
+        if source == destination:
+            return cls.outputs(image=copy_media_semantics(image, np.ascontiguousarray(array)))
+
+        rgb = np.asarray(array[..., :3], dtype=np.float32)
+        if source == "sRGB":
+            rgb = _convert_primaries(_srgb_to_linear(rgb), _REC709_TO_REC2020) * _SDR_WHITE_NITS
+        elif source == "linear":
+            rgb = _convert_primaries(rgb, _REC709_TO_REC2020) * _SDR_WHITE_NITS
+        elif source == "HDR":
+            low = np.square(rgb) / 3.0
+            high = (np.exp((np.maximum(rgb, 0.5) - _HLG_C) / _HLG_A) + _HLG_B) / 12.0
+            rgb = np.where(rgb <= 0.5, low, high)
+            luminance = np.maximum(_luminance(rgb, _REC2020_LUMA), 0.0)
+            rgb *= np.power(luminance, _HLG_GAMMA - 1.0) * _HLG_PEAK_NITS
+        else:
+            p = np.expm1(np.log(np.maximum(rgb, 0.0)) / _PQ_M2)
+            numerator = np.maximum(p + (1.0 - _PQ_C1), 0.0)
+            denominator = (_PQ_C2 - _PQ_C3) - _PQ_C3 * p
+            rgb = np.power(numerator / denominator, 1.0 / _PQ_M1) * 10000.0
+
+        if destination == "linear":
+            rgb = _convert_primaries(rgb / _SDR_WHITE_NITS, _REC2020_TO_REC709)
+        elif destination == "sRGB":
+            rgb = _convert_primaries(rgb / _SDR_WHITE_NITS, _REC2020_TO_REC709)
+            rgb = _compress_gamut(_tone_map_luminance(rgb, _REC709_LUMA), _REC709_LUMA)
+            rgb = np.where(
+                rgb <= 0.0031308,
+                rgb * 12.92,
+                1.055 * np.power(rgb, 1.0 / 2.4) - 0.055,
+            )
+        elif destination == "HDR":
+            rgb /= _HLG_PEAK_NITS
+            if source == "HDR PQ":
+                rgb = _tone_map_luminance(rgb, _REC2020_LUMA)
+            luminance = np.maximum(_luminance(rgb, _REC2020_LUMA), np.finfo(np.float32).tiny)
+            rgb *= np.power(luminance, 1.0 / _HLG_GAMMA - 1.0)
+            if source == "HDR PQ":
+                rgb = _compress_gamut(rgb, _REC2020_LUMA)
+            low = np.sqrt(3.0 * np.maximum(rgb, 0.0))
+            high = _HLG_A * np.log(12.0 * np.maximum(rgb, 1.0 / 12.0) - _HLG_B) + _HLG_C
+            rgb = np.where(rgb <= 1.0 / 12.0, low, high)
+        else:
+            p = np.power(np.maximum(rgb, 0.0) / 10000.0, _PQ_M1)
+            p = ((_PQ_C1 - 1.0) + (_PQ_C2 - _PQ_C3) * p) / (1.0 + _PQ_C3 * p)
+            rgb = np.exp(np.log1p(p) * _PQ_M2)
+
+        if array.shape[3] == 4:
+            rgb = np.concatenate((rgb, array[..., 3:4]), axis=3)
+        return cls.outputs(
+            image=copy_media_semantics(image, np.ascontiguousarray(rgb, dtype=np.float32))
+        )
 
 
 def _rgb(array: np.ndarray) -> np.ndarray:
@@ -381,6 +524,7 @@ class ImageAlphaUnpremultiply(Node):
 
 
 CHANNEL_NODES: tuple[type[Node], ...] = (
+    ImageColorSpace,
     ImageChannelSplit,
     ImageChannelMerge,
     ImageAlphaJoin,
@@ -393,9 +537,11 @@ __all__ = [
     "ALPHA_MASK_POLARITIES",
     "CHANNEL_NODES",
     "COLOR_SPACES",
+    "IMAGE_COLOR_SPACES",
     "ImageAlphaJoin",
     "ImageAlphaPremultiply",
     "ImageAlphaUnpremultiply",
     "ImageChannelMerge",
     "ImageChannelSplit",
+    "ImageColorSpace",
 ]

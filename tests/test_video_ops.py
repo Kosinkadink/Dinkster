@@ -9,13 +9,14 @@ import numpy as np
 import pytest
 from dinkster_nodes_media_io import (
     AssembleVideo,
+    ConcatenateVideo,
     DisassembleVideo,
     TrimVideo,
     VideoFrameRate,
     VideoFrameWindow,
 )
 from dinkster_nodes_media_io.video import decode_video_frames
-from dinkster_values import video_from_source
+from dinkster_values import AudioWindowReader, decode_video, encode_video, video_from_source
 from dinkster_video import save_video_stream
 
 
@@ -294,18 +295,85 @@ def test_disassemble_rejects_malformed_video_values(video: object) -> None:
         DisassembleVideo.execute(video=video)
 
 
+def test_concatenate_video_preserves_family_order_and_lazy_values() -> None:
+    first = AssembleVideo.execute(images=_frames(2), fps=4)["video"]
+    second = AssembleVideo.execute(images=_frames(3), fps=4)["video"]
+
+    result = ConcatenateVideo.execute(videos={"video7": [first], "video2": [second]})["video"]
+    decoded = DisassembleVideo.execute(video=result)
+
+    assert cast("np.ndarray", decoded["images"]).shape[0] == 5
+    assert decoded["duration"] == pytest.approx(1.25)
+    assert list(cast("dict[str, object]", result).keys()) == ["components", "edits", "probe"]
+
+    encoded = io.BytesIO()
+    save_video_stream(result, encoded)
+    reloaded = DisassembleVideo.execute(video=video_from_source(encoded.getvalue()))
+    assert cast("np.ndarray", reloaded["images"]).shape[0] == 5
+
+
+def test_concatenate_video_rejects_empty_or_dimension_mismatched_inputs() -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        ConcatenateVideo.execute(videos={})
+    first = AssembleVideo.execute(images=np.zeros((1, 8, 8, 3), np.float32))["video"]
+    second = AssembleVideo.execute(images=np.zeros((1, 8, 10, 3), np.float32))["video"]
+    with pytest.raises(ValueError, match="matching effective dimensions"):
+        ConcatenateVideo.execute(videos={"video0": first, "video1": second})
+
+
+def test_concatenate_video_complete_audio_overrides_segments_and_round_trips() -> None:
+    first = AssembleVideo.execute(images=_frames(2), fps=4, audio=_audio(8_000))["video"]
+    second = AssembleVideo.execute(images=_frames(3), fps=4, audio=_audio(12_000))["video"]
+    soundtrack = {
+        "waveform": np.full((1, 1, 24_000), 0.25, np.float32),
+        "sample_rate": 16_000,
+    }
+
+    result = ConcatenateVideo.execute(
+        videos={"video0": first, "video1": second}, codec="av1", complete_audio=soundtrack
+    )["video"]
+    restored = decode_video(encode_video(result))
+    audio = DisassembleVideo.execute(video=restored)["audio"]
+    with AudioWindowReader(audio) as reader:
+        selected = reader.read(0, 24_000)["waveform"]
+    assert selected.shape == (1, 1, 20_000)
+    np.testing.assert_array_equal(selected, np.full((1, 1, 20_000), 0.25, np.float32))
+
+    encoded = io.BytesIO()
+    save_video_stream(restored, encoded)
+    encoded.seek(0)
+    import av
+
+    with cast("Any", av.open(encoded)) as container:
+        assert container.streams.video[0].codec_context.codec.canonical_name == "av1"
+        samples = np.concatenate(
+            [frame.to_ndarray() for frame in container.decode(audio=0)], axis=1
+        )
+    assert 19_000 <= samples.shape[1] <= 21_000
+    assert float(samples.mean()) == pytest.approx(0.25, abs=0.03)
+
+
 def test_video_ops_schemas_preserve_value_and_preview_contracts() -> None:
     window = VideoFrameWindow.schema()
     rate = VideoFrameRate.schema()
     assemble = AssembleVideo.schema()
     disassemble = DisassembleVideo.schema()
     trim = TrimVideo.schema()
+    concatenate = ConcatenateVideo.schema()
     assert window.node_type == "dinkster.video.window"
     assert rate.node_type == "dinkster.video.rate"
     assert assemble.node_type == "dinkster.video.assemble"
     assert disassemble.node_type == "dinkster.video.disassemble"
     assert trim.node_type == "dinkster.video.trim"
-    for schema in (window, rate, assemble, disassemble, trim):
+    assert concatenate.node_type == "dinkster.video.concatenate"
+    assert concatenate.input_families[0].member_prefix == "video"
+    assert concatenate.input_families[0].min_members == 1
+    assert concatenate.input_families[0].max_members == 100
+    assert [item.id for item in concatenate.inputs] == ["codec", "complete_audio"]
+    assert concatenate.inputs[0].default == "auto"
+    assert cast("Any", concatenate.inputs[0].widget).options == ("auto", "h264", "av1")
+    assert all(item.advanced for item in concatenate.inputs)
+    for schema in (window, rate, assemble, disassemble, trim, concatenate):
         assert schema.category == "video"
         assert schema.aliases == ()
         assert schema.output_node is False

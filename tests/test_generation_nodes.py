@@ -224,6 +224,7 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
             "dinkster.render_uv_atlas",
             "dinkster.apply_texture_to_mesh",
             "dinkster.mesh_to_model3d",
+            "dinkster.file3d_to_mesh",
             "dinkster.load_model_profile",
             "dinkster.load_checkpoint",
             "dinkster.load_controlnet",
@@ -281,6 +282,11 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
             "dinkster.ltxv_image_to_video",
             "dinkster.ltxv_image_to_video_inplace",
             "dinkster.ltxv_add_guide",
+            "dinkster.ltxv_add_latent_guide",
+            "dinkster.ltxv_freeze_latent",
+            "dinkster.ltxv_add_generated_keyframes",
+            "dinkster.ltxv_separate_generated_keyframes",
+            "dinkster.ltxv_generated_keyframes_to_guides",
             "dinkster.ltxv_crop_guides",
             "dinkster.ltxv_latent_upsampler",
             "dinkster.conditioning_merge",
@@ -414,6 +420,7 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
         "dinkster.render_uv_atlas": "Render UV Atlas",
         "dinkster.apply_texture_to_mesh": "Apply Texture to Mesh",
         "dinkster.mesh_to_model3d": "Mesh to 3D Model",
+        "dinkster.file3d_to_mesh": "Get 3D Components",
         "dinkster.load_model_profile": "Load Model",
         "dinkster.load_checkpoint": "Load Checkpoint",
         "dinkster.load_controlnet": "Load ControlNet Model",
@@ -435,7 +442,7 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
         "dinkster.clip_text_encode_lumina2": "CLIP Text Encode (Lumina 2)",
         "dinkster.model_sampling_aura_flow": "ModelSamplingAuraFlow",
         "dinkster.text_generate": "Generate Text",
-        "dinkster.prompt_enhance": "Enhance Prompt",
+        "dinkster.prompt_enhance": "Enhance Prompt with Qwen",
         "dinkster.clip_set_last_layer": "CLIP Set Last Layer",
         "dinkster.t5_tokenizer_options": "T5 Tokenizer Options",
         "dinkster.clip_text_encode_controlnet": "CLIP Text Encode (Controlnet)",
@@ -471,6 +478,11 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
         "dinkster.ltxv_image_to_video": "LTX-Video Image to Video",
         "dinkster.ltxv_image_to_video_inplace": "LTX-Video Image to Video (In-place)",
         "dinkster.ltxv_add_guide": "LTX-Video Add Guide",
+        "dinkster.ltxv_add_latent_guide": "LTXV Add Latent Guide",
+        "dinkster.ltxv_freeze_latent": "LTXV Freeze Latent",
+        "dinkster.ltxv_add_generated_keyframes": "LTXV Add Generated Keyframes",
+        "dinkster.ltxv_separate_generated_keyframes": "LTXV Separate Generated Keyframes",
+        "dinkster.ltxv_generated_keyframes_to_guides": "LTXV Generated Keyframes to Guides",
         "dinkster.ltxv_crop_guides": "LTX-Video Crop Guides",
         "dinkster.ltxv_latent_upsampler": "LTXV Latent Upsampler",
         "dinkster.conditioning_merge": "Conditioning Merge",
@@ -601,6 +613,11 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
         "dinkster.ltxv_image_to_video": "LTXVImgToVideo",
         "dinkster.ltxv_image_to_video_inplace": "LTXVImgToVideoInplace",
         "dinkster.ltxv_add_guide": "LTXVAddGuide",
+        "dinkster.ltxv_add_latent_guide": "LTXVAddLatentGuide",
+        "dinkster.ltxv_freeze_latent": "LTXVFreezeLatent",
+        "dinkster.ltxv_add_generated_keyframes": "LTXVAddGeneratedKeyframes",
+        "dinkster.ltxv_separate_generated_keyframes": "LTXVSeparateGeneratedKeyframes",
+        "dinkster.ltxv_generated_keyframes_to_guides": "LTXVGeneratedKeyframesToGuides",
         "dinkster.ltxv_crop_guides": "LTXVCropGuides",
         "dinkster.ltxv_latent_upsampler": "LTXVLatentUpsampler",
         "dinkster.ksampler_select": "KSamplerSelect",
@@ -899,6 +916,10 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
             {"mesh": ("comfy.MESH",)},
             {"model": ("dinkster.model3d",)},
         ),
+        "dinkster.file3d_to_mesh": (
+            {"model_3d": ("dinkster.asset",)},
+            {"mesh": ("comfy.MESH",)},
+        ),
         "dinkster.load_model_profile": (
             {"checkpoint": ("dinkster.asset",), "entries": ("core.string",)},
             {},
@@ -1055,8 +1076,10 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
                 "max_length": ("core.int",),
                 "thinking": ("core.boolean",),
                 "use_default_template": ("core.boolean",),
+                "mtp": ("core.combo",),
+                "system_prompt": ("core.string",),
             },
-            {"generated_text": ("core.string",)},
+            {"generated_text": ("core.string",), "thinking": ("core.string",)},
         ),
         "dinkster.prompt_enhance": (
             {
@@ -1069,8 +1092,10 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
                 "max_length": ("core.int",),
                 "thinking": ("core.boolean",),
                 "use_default_template": ("core.boolean",),
+                "mtp": ("core.combo",),
+                "system_prompt": ("core.string",),
             },
-            {"generated_text": ("core.string",)},
+            {"generated_text": ("core.string",), "thinking": ("core.string",)},
         ),
         "dinkster.clip_set_last_layer": (
             {"clip": ("dinkster.clip",), "stop_at_clip_layer": ("core.int",)},
@@ -1389,6 +1414,73 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
                 "frame_idx": ("core.int",),
                 "strength": ("core.float",),
                 "attention_mask": ("dinkster.mask",),
+            },
+            {
+                "positive": ("dinkster.conditioning",),
+                "negative": ("dinkster.conditioning",),
+                "latent": ("dinkster.latent",),
+            },
+        ),
+        "dinkster.ltxv_add_latent_guide": (
+            {
+                "positive": ("dinkster.conditioning",),
+                "negative": ("dinkster.conditioning",),
+                "vae": ("dinkster.vae",),
+                "latent": ("dinkster.latent",),
+                "guiding_latent": ("dinkster.latent",),
+                "latent_idx": ("core.int",),
+                "strength": ("core.float",),
+                "attention_mask": ("dinkster.mask",),
+            },
+            {
+                "positive": ("dinkster.conditioning",),
+                "negative": ("dinkster.conditioning",),
+                "latent": ("dinkster.latent",),
+            },
+        ),
+        "dinkster.ltxv_freeze_latent": (
+            {"latent": ("dinkster.latent",)},
+            {"latent": ("dinkster.latent",)},
+        ),
+        "dinkster.ltxv_add_generated_keyframes": (
+            {
+                "positive": ("dinkster.conditioning",),
+                "negative": ("dinkster.conditioning",),
+                "vae": ("dinkster.vae",),
+                "latent": ("dinkster.latent",),
+                "interval_frames": ("core.int",),
+                "keyframes": ("dinkster.latent",),
+                "frame_indices": ("core.string",),
+            },
+            {
+                "positive": ("dinkster.conditioning",),
+                "negative": ("dinkster.conditioning",),
+                "latent": ("dinkster.latent",),
+            },
+        ),
+        "dinkster.ltxv_separate_generated_keyframes": (
+            {
+                "positive": ("dinkster.conditioning",),
+                "negative": ("dinkster.conditioning",),
+                "latent": ("dinkster.latent",),
+                "keyframes_to_batch": ("core.boolean",),
+            },
+            {
+                "positive": ("dinkster.conditioning",),
+                "negative": ("dinkster.conditioning",),
+                "latent": ("dinkster.latent",),
+                "keyframes": ("dinkster.latent",),
+            },
+        ),
+        "dinkster.ltxv_generated_keyframes_to_guides": (
+            {
+                "positive": ("dinkster.conditioning",),
+                "negative": ("dinkster.conditioning",),
+                "vae": ("dinkster.vae",),
+                "latent": ("dinkster.latent",),
+                "keyframes": ("dinkster.latent",),
+                "strength": ("core.float",),
+                "override_frame_indices": ("core.string",),
             },
             {
                 "positive": ("dinkster.conditioning",),
@@ -2699,7 +2791,7 @@ def test_text_generation_schemas_match_comfy_workflow_shape() -> None:
 
     for node_type, alias in (
         ("dinkster.text_generate", "TextGenerate"),
-        ("dinkster.prompt_enhance", "TextGenerateLTX2Prompt"),
+        ("dinkster.prompt_enhance", "DinksterQwenPromptEnhance"),
     ):
         schema = schemas[node_type]
         assert schema.aliases == (alias,)
@@ -2713,6 +2805,8 @@ def test_text_generation_schemas_match_comfy_workflow_shape() -> None:
             "max_length",
             "thinking",
             "use_default_template",
+            "mtp",
+            "system_prompt",
         )
         clip = schema.input("clip")
         assert clip is not None
@@ -2725,11 +2819,36 @@ def test_text_generation_schemas_match_comfy_workflow_shape() -> None:
         assert provider.widget == ComboWidget(
             remote_route="/api/choices/dinkster.generation.providers"
         )
-        assert schema.outputs[0].id == "generated_text"
+        assert tuple(output.id for output in schema.outputs) == ("generated_text", "thinking")
+        use_default_template = schema.input("use_default_template")
+        assert use_default_template is not None
+        assert use_default_template.default is True
+        mtp = schema.input("mtp")
+        assert mtp is not None
+        assert mtp.default == "auto"
+        assert mtp.widget == ComboWidget(options=("auto", "off", "2", "3", "4", "5"))
+        system_prompt = schema.input("system_prompt")
+        assert system_prompt is not None
+        assert not system_prompt.required
+        assert system_prompt.force_input
         sampling = schema.combos[0]
         assert sampling.id == "sampling_mode"
         assert sampling.default == "on"
         assert tuple(option.key for option in sampling.options) == ("on", "off")
+        enabled = sampling.options[0]
+        repetition_penalty = next(
+            item for item in enabled.inputs if item.id == "repetition_penalty"
+        )
+        seed = next(item for item in enabled.inputs if item.id == "seed")
+        assert isinstance(repetition_penalty, InputSpec)
+        assert isinstance(seed, InputSpec)
+        assert repetition_penalty.widget == NumberWidget(min=0.0, max=5.0, step=0.01)
+        assert seed.widget == NumberWidget(
+            min=0,
+            max=0xFFFFFFFFFFFFFFFF,
+            step=1,
+            control_after_generate="randomize",
+        )
         assert tuple(item.id for item in sampling.options[0].inputs) == (
             "temperature",
             "top_k",
@@ -2969,6 +3088,7 @@ def test_compat_provider_executes_every_generation_schema_exactly() -> None:
         "dinkster.add_noise",
         "dinkster.empty_trellis2_latent_structure",
         "dinkster.estimate_geometry",
+        "dinkster.file3d_to_mesh",
         "dinkster.geometry_to_fov",
         "dinkster.get_mesh_info",
         "dinkster.image_crop_to_mask",
@@ -2993,6 +3113,11 @@ def test_compat_provider_executes_every_generation_schema_exactly() -> None:
         "dinkster.ltxv_image_to_video",
         "dinkster.ltxv_image_to_video_inplace",
         "dinkster.ltxv_add_guide",
+        "dinkster.ltxv_add_latent_guide",
+        "dinkster.ltxv_freeze_latent",
+        "dinkster.ltxv_add_generated_keyframes",
+        "dinkster.ltxv_separate_generated_keyframes",
+        "dinkster.ltxv_generated_keyframes_to_guides",
         "dinkster.ltxv_crop_guides",
         "dinkster.ltxv_latent_upsampler",
         "dinkster.mesh_to_model3d",
@@ -3076,7 +3201,6 @@ def test_compat_provider_executes_every_generation_schema_exactly() -> None:
         "CLIPTextEncodeLumina2",
         "ModelSamplingAuraFlow",
         "TextGenerate",
-        "TextGenerateLTX2Prompt",
         "CLIPSetLastLayer",
         "T5TokenizerOptions",
         "CLIPTextEncodeControlnet",

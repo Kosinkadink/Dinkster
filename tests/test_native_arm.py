@@ -17,7 +17,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
@@ -1239,6 +1239,7 @@ assert [node.schema().node_type for node in GENERATION_PROVIDER_NODES] == [
     "dinkster.bake_texture_from_voxel", "dinkster.bake_normal_map_from_mesh",
     "dinkster.bake_ambient_occlusion", "dinkster.render_uv_atlas",
     "dinkster.apply_texture_to_mesh", "dinkster.mesh_to_model3d",
+    "dinkster.file3d_to_mesh",
     "dinkster.load_model_profile",
     "dinkster.load_checkpoint", "dinkster.load_controlnet", "dinkster.apply_controlnet",
     "dinkster.apply_controlnet_advanced", "dinkster.set_controlnet_union_type",
@@ -1272,7 +1273,11 @@ assert [node.schema().node_type for node in GENERATION_PROVIDER_NODES] == [
     "dinkster.ltxv_dual_cfg_guider",
     "dinkster.ltxv_conditioning",
     "dinkster.ltxv_image_to_video", "dinkster.ltxv_image_to_video_inplace",
-    "dinkster.ltxv_add_guide", "dinkster.ltxv_crop_guides", "dinkster.ltxv_latent_upsampler",
+    "dinkster.ltxv_add_guide", "dinkster.ltxv_add_latent_guide",
+    "dinkster.ltxv_freeze_latent", "dinkster.ltxv_add_generated_keyframes",
+        "dinkster.ltxv_separate_generated_keyframes",
+        "dinkster.ltxv_generated_keyframes_to_guides", "dinkster.ltxv_crop_guides",
+    "dinkster.ltxv_latent_upsampler",
     "dinkster.conditioning_merge", "dinkster.conditioning_scale",
     "dinkster.conditioning_set_area", "dinkster.conditioning_set_mask",
     "dinkster.conditioning_set_timestep_range", "dinkster.conditioning_zero_out",
@@ -4701,6 +4706,24 @@ def test_native_lora_key_map_adds_z_image_diffusers_aliases() -> None:
     )
 
 
+def test_native_lora_key_map_adds_minimax_h3_diffsynth_aliases() -> None:
+    arm = _native_arm()
+    inference = importlib.import_module("dinkster_inference")
+
+    class MiniMaxH3Module:
+        def state_dict(self) -> dict[str, object]:
+            return {"blocks.7.attn.to_q.weight": object()}
+
+    handle = SimpleNamespace(
+        recipe=SimpleNamespace(family_id=inference.MINIMAX_H3_CONFIG.family_id),
+        runtime=SimpleNamespace(assembled=SimpleNamespace(diffusion=MiniMaxH3Module())),
+    )
+
+    key_map = arm._logical_lora_key_map(inference, handle)
+
+    assert key_map["blocks.7.attn.to_q"] == "diffusion_model.blocks.7.attn.to_q.weight"
+
+
 def test_native_lora_execution_mode_schema_is_explicit_and_backwards_compatible() -> None:
     arm = _native_arm()
     for node in (arm.NativeLoadLora, arm.NativeLoadLoraModelOnly):
@@ -6503,6 +6526,7 @@ def test_manifest_declares_exact_native_arm_with_matching_schemas() -> None:
         "dinkster.render_uv_atlas",
         "dinkster.apply_texture_to_mesh",
         "dinkster.mesh_to_model3d",
+        "dinkster.file3d_to_mesh",
         "dinkster.empty_minimax_h3_av",
         "dinkster.empty_minimax_music3_latent_audio",
         "dinkster.minimax_music3_text_encode",
@@ -6511,6 +6535,7 @@ def test_manifest_declares_exact_native_arm_with_matching_schemas() -> None:
         "dinkster.set_latent_mask_from_frames",
         "dinkster.set_latent_mask_from_time_ranges",
         "dinkster.inspect_latent_mask",
+        "dinkster.apply_minimax_h3_fun_control_patch",
         "dinkster.minimax_h3_t2va_conditioning",
         "dinkster.minimax_h3_fl2va_conditioning",
         "dinkster.minimax_h3_ref2va_conditioning",
@@ -6588,6 +6613,11 @@ def test_manifest_declares_exact_native_arm_with_matching_schemas() -> None:
         "dinkster.ltxv_image_to_video",
         "dinkster.ltxv_image_to_video_inplace",
         "dinkster.ltxv_add_guide",
+        "dinkster.ltxv_add_latent_guide",
+        "dinkster.ltxv_freeze_latent",
+        "dinkster.ltxv_add_generated_keyframes",
+        "dinkster.ltxv_separate_generated_keyframes",
+        "dinkster.ltxv_generated_keyframes_to_guides",
         "dinkster.ltxv_crop_guides",
         "dinkster.ltxv_latent_upsampler",
         "dinkster.seedvr2_conditioning",
@@ -6846,6 +6876,119 @@ def test_native_model_patch_loader_dispatches_multitalk_with_bound_identity(
         ("resource=patch-resource",),
     ) in events
     assert any(event[:2] == ("enroll", patch) for event in events)
+
+
+def test_native_model_patch_loader_dispatches_h3_fun_with_asset_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arm = _native_arm()
+    asset = _asset(_safetensors(tmp_path / "h3-fun-control.safetensors"))
+
+    class Source:
+        @staticmethod
+        def keys() -> tuple[str, ...]:
+            return (
+                "control_proj_in.weight",
+                "control_blocks.0.after_proj.weight",
+            )
+
+    source = Source()
+    module = object()
+    state_dict = {"control_proj_in.weight": object()}
+    metadata = {"minimax_h3_fun_controlnet": "adaln_basis"}
+    kernel = object()
+    evidence = object()
+    mechanism = object()
+    events: list[tuple[object, ...]] = []
+
+    class Coordinator:
+        @staticmethod
+        def enroll_component(loaded: object, *, enroller: Any, **kwargs: object) -> object:
+            return enroller(loaded, **kwargs)
+
+    coordinator = Coordinator()
+    inference = SimpleNamespace(
+        load_safetensors_header=lambda path: events.append(("header", path)) or source,
+    )
+    inference_torch = SimpleNamespace(
+        is_minimax_h3_fun_state_dict=lambda keys: events.append(("detect", tuple(keys))) or True,
+        load_minimax_h3_fun_control=lambda *args, **kwargs: (
+            events.append(("load", args, kwargs)) or module
+        ),
+        enroll_component=lambda loaded, **kwargs: (
+            events.append(("enroll", loaded, kwargs)) or mechanism
+        ),
+    )
+    checkpoint = SimpleNamespace(
+        load_checkpoint_with_metadata=lambda path: (
+            events.append(("checkpoint", path)) or (state_dict, metadata)
+        )
+    )
+    attention = SimpleNamespace(
+        resolve_role_attention=lambda role, policy, token: (
+            events.append(("attention", role, policy, token)) or ("selection",)
+        )
+    )
+    h3_dit = SimpleNamespace(
+        minimax_h3_attention_provider=lambda selection: (
+            events.append(("provider", selection)) or (kernel, evidence)
+        )
+    )
+    real_import = arm.importlib.import_module
+
+    def fake_import(name: str) -> object:
+        modules = {
+            "dinkster_inference": inference,
+            "dinkster_inference_torch": inference_torch,
+            "dinkster_inference_torch.checkpoint": checkpoint,
+            "dinkster_inference_torch.attention": attention,
+            "dinkster_inference_torch.minimax_h3_dit": h3_dit,
+        }
+        if name in modules:
+            return modules[name]
+        return real_import(name)
+
+    monkeypatch.setattr(arm.importlib, "import_module", fake_import)
+    torch = FakeTorch(cuda=True)
+    monkeypatch.setattr(arm, "_torch", lambda: torch)
+    monkeypatch.setattr(arm, "default_native_residency", lambda: coordinator)
+
+    class ComponentHandle:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+        def attach_pool(self, pool: object) -> None:
+            self.pool = pool
+
+    monkeypatch.setattr(arm, "NativeComponentHandle", ComponentHandle)
+    pool = FakePool()
+    monkeypatch.setattr(arm, "default_pool", lambda: pool)
+    with use_execution_context(ExecutionContext("native", "expected")):
+        result = arm.NativeLoadZImageControlPatch.execute(model_patch=asset)
+
+    component_handle = result["model_patch"]
+    assert isinstance(component_handle, ComponentHandle)
+    assert component_handle.args[:2] == (module, mechanism)
+    assert component_handle.kwargs == {
+        "resource_identity": asset.digest,
+        "coordinator": coordinator,
+    }
+    assert component_handle.pool is pool
+    assert pool.labels == [(component_handle, asset.name)]
+    assert events[0] == ("header", asset.local_path())
+    assert events[1] == ("detect", source.keys())
+    assert events[2] == ("checkpoint", asset.local_path())
+    assert events[3] == ("attention", "flux", "auto", None)
+    assert events[4] == ("provider", ("selection",))
+    load_event = events[5]
+    assert load_event[0] == "load"
+    assert load_event[1] == (state_dict, metadata)
+    assert load_event[2] == {
+        "attention_kernel": kernel,
+        "evidence": evidence,
+        "time_embedding_kind": "curve",
+    }
 
 
 def test_native_z_image_control_patch_binding_validates_and_survives_lora_clone(
@@ -11376,6 +11519,23 @@ def test_generation_load_checkpoint_schema_takes_only_checkpoint() -> None:
     specs = {spec.id: spec for spec in schema.inputs}
     assert set(specs) == {"checkpoint"}
     assert specs["checkpoint"].required is True
+
+
+@pytest.mark.parametrize("node_type", ("dinkster.text_generate", "dinkster.prompt_enhance"))
+def test_generation_text_fallback_schema_matches_upstream_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    node_type: str,
+) -> None:
+    arm = _native_arm()
+    monkeypatch.setitem(arm._GENERATION_SCHEMAS, node_type, None)
+
+    schema = arm._generation_provider_schema(node_type)
+
+    inputs = {item.id: item for item in schema.inputs}
+    assert inputs["use_default_template"].default is True
+    assert inputs["system_prompt"].required is False
+    assert inputs["system_prompt"].force_input is True
+    assert tuple(output.id for output in schema.outputs) == ("generated_text", "thinking")
 
 
 def test_generation_load_checkpoint_preserves_runtime_codec_capabilities(
@@ -17735,7 +17895,12 @@ def test_generation_text_node_maps_ordered_sampling_and_cancellation(
             reason = (
                 GenerationFinishReason.CANCELLED if was_cancelled else GenerationFinishReason.LENGTH
             )
-            text = "partial" if was_cancelled else "generated text"
+            if was_cancelled:
+                text = "partial"
+            elif "open <think>" in cast("Any", request).prompt:
+                text = "unfinished reasoning"
+            else:
+                text = "generated text"
             stream = Stream(
                 (
                     GenerationTokenEvent(0, text, 42),
@@ -17771,7 +17936,7 @@ def test_generation_text_node_maps_ordered_sampling_and_cancellation(
     with use_execution_context(ExecutionContext("native", None, cancelled=not_cancelled)):
         result = arm.GenerationTextGenerate.execute(**_text_generation_inputs(clip))
 
-    assert result == {"generated_text": "generated text"}
+    assert result == {"generated_text": "generated text", "thinking": ""}
     request = cast("Any", requests[0])
     assert request.prompt == "A lighthouse in rain"
     assert request.stop.max_new_tokens == 23
@@ -17805,15 +17970,72 @@ def test_generation_text_node_maps_ordered_sampling_and_cancellation(
     )
     assert greedy_request.seed is None
 
+    open_reasoning_inputs = _text_generation_inputs(
+        clip,
+        prompt="open <think>",
+        thinking=True,
+        use_default_template=True,
+    )
+    with use_execution_context(ExecutionContext("native", None, cancelled=not_cancelled)):
+        open_reasoning = arm.GenerationTextGenerate.execute(**open_reasoning_inputs)
+    assert open_reasoning == {"generated_text": "", "thinking": "unfinished reasoning"}
+    assert cast("Any", requests[2]).prompt.endswith("<|im_start|>assistant\n")
+
     def cancelled() -> bool:
         return True
 
     with use_execution_context(ExecutionContext("native", None, cancelled=cancelled)):
         with pytest.raises(SamplingCancelled, match="text generation cancelled"):
             arm.GenerationTextGenerate.execute(**_text_generation_inputs(clip))
-    assert cancelled_callbacks[2] is cancelled
+    assert cancelled_callbacks[3] is cancelled
     assert all(stream.closed for stream in streams)
-    assert staged == ["enter", "exit", "enter", "exit", "enter", "exit"]
+    assert staged == ["enter", "exit"] * 4
+
+
+@pytest.mark.parametrize(
+    ("generated", "prompt", "expected"),
+    (
+        (
+            "<think>private reasoning</think> final answer ",
+            "question",
+            ("final answer", "private reasoning"),
+        ),
+        (" unfinished reasoning ", "question <think>", ("", "unfinished reasoning")),
+        ("literal </think> marker", "question", ("literal </think> marker", "")),
+    ),
+)
+def test_generation_text_node_separates_only_real_thinking_blocks(
+    generated: str,
+    prompt: str,
+    expected: tuple[str, str],
+) -> None:
+    arm = _native_arm()
+
+    assert arm._split_generated_text(generated, prompt) == expected
+
+
+def test_generation_text_node_applies_qwen_template_and_system_prompt() -> None:
+    arm = _native_arm()
+
+    assert arm._prepare_qwen_generation_prompt(
+        "question", use_default_template=True, thinking=False, system_prompt="Be concise."
+    ) == (
+        "<|im_start|>system\nBe concise.<|im_end|>\n"
+        "<|im_start|>user\nquestion<|im_end|>\n"
+        "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+    )
+    assert (
+        arm._prepare_qwen_generation_prompt(
+            "question", use_default_template=True, thinking=True, system_prompt=""
+        )
+        == "<|im_start|>user\nquestion<|im_end|>\n<|im_start|>assistant\n"
+    )
+    assert (
+        arm._prepare_qwen_generation_prompt(
+            "raw question", use_default_template=False, thinking=True, system_prompt="ignored"
+        )
+        == "raw question"
+    )
 
 
 @pytest.mark.parametrize(
@@ -17822,8 +18044,6 @@ def test_generation_text_node_maps_ordered_sampling_and_cancellation(
         ({"image": object()}, "does not support image input"),
         ({"video": object()}, "does not support video input"),
         ({"audio": object()}, "does not support audio input"),
-        ({"thinking": True}, "does not support thinking mode"),
-        ({"use_default_template": True}, "does not support model templates"),
     ),
 )
 def test_generation_text_node_refuses_unsupported_capabilities(
@@ -17841,15 +18061,15 @@ def test_generation_prompt_enhance_formats_and_cleans_output(
     arm = _native_arm()
     captured: list[str] = []
 
-    def generate(_inputs: Mapping[str, object], prompt: str) -> str:
+    def generate(_inputs: Mapping[str, object], prompt: str) -> tuple[str, str]:
         captured.append(prompt)
-        return "<think>private</think><|channel>final\n **Assistant:** Enhanced\n\nprompt. "
+        return "<|channel>final\n **Assistant:** Enhanced\n\nprompt. ", "private"
 
     monkeypatch.setattr(arm, "_run_qwen_text_generation", generate)
 
     result = arm.GenerationPromptEnhance.execute(**_text_generation_inputs(object()))
 
-    assert result == {"generated_text": "Enhanced prompt."}
+    assert result == {"generated_text": "Enhanced prompt.", "thinking": "private"}
     assert captured[0].startswith("<|im_start|>system\nYou are a Creative Assistant.")
     assert '#### Example\nInput: "A woman at a coffee shop talking on the phone"' in captured[0]
     assert "<|im_start|>user\nUser Raw Input Prompt: A lighthouse in rain.<|im_end|>" in captured[0]
@@ -17862,11 +18082,11 @@ def test_generation_prompt_enhance_preserves_prompt_when_cleanup_is_empty(
     generated: str,
 ) -> None:
     arm = _native_arm()
-    monkeypatch.setattr(arm, "_run_qwen_text_generation", lambda *_args: generated)
+    monkeypatch.setattr(arm, "_run_qwen_text_generation", lambda *_args: (generated, ""))
 
     result = arm.GenerationPromptEnhance.execute(**_text_generation_inputs(object()))
 
-    assert result == {"generated_text": "A lighthouse in rain"}
+    assert result == {"generated_text": "A lighthouse in rain", "thinking": ""}
 
 
 def test_generation_clip_text_encode_binds_qwen_component_identity(
@@ -20550,6 +20770,264 @@ def test_generation_ltxv_media_nodes_encode_condition_and_crop_guides() -> None:
     assert cropped_rate == 25.0
     _, cropped_guides = materialize_ltxv_guides(cropped_carrier)
     assert cropped_guides == ()
+
+
+def test_generation_ltxv_latent_guide_dilates_grid_and_freeze_masks_stream() -> None:
+    torch = pytest.importorskip("torch")
+    from dinkster_inference import LTXAV_VIDEO_CODEC, MultiStreamLatent
+    from dinkster_inference_torch.ltx_media import materialize_ltxv_guides
+
+    arm = _native_arm()
+
+    class Codec:
+        descriptor = LTXAV_VIDEO_CODEC
+        resource_identity = "test:ltxv-latent-guide-codec"
+        load_device = torch.device("cpu")
+
+        def require_active(self) -> None:
+            return None
+
+        @contextmanager
+        def stage(self):  # noqa: ANN201
+            yield
+
+        def decode_latent(self, latent: Any) -> Any:
+            return latent
+
+        def encode_content(self, content: Any) -> Any:
+            return content
+
+    target = torch.zeros((1, 128, 4, 4, 4))
+    guide = torch.arange(1 * 128 * 1 * 2 * 2, dtype=torch.float32).reshape(1, 128, 1, 2, 2)
+    result = arm.GenerationLTXVAddLatentGuide.execute(
+        positive=_ltxv_media_carrier(),
+        negative=_ltxv_media_carrier(),
+        vae=Codec(),
+        latent={"samples": target},
+        guiding_latent={"samples": guide},
+        latent_idx=2,
+        strength=1.0,
+    )
+
+    latent = cast("Mapping[str, object]", result["latent"])
+    streams = cast("Any", latent["samples"])
+    assert type(streams) is MultiStreamLatent
+    appended = streams.by_role("video")[:, :, 4]
+    assert torch.equal(appended[:, :, ::2, ::2], guide[:, :, 0])
+    assert torch.count_nonzero(appended[:, :, 1::2]) == 0
+    mask = cast("Any", latent["noise_mask"]).by_role("video")[:, :, 4]
+    assert torch.all(mask[:, :, ::2, ::2] == 0.0)
+    assert torch.all(mask[:, :, 1::2] == -2.0)
+
+    carrier, _ = arm._split_ltx_frame_rate(
+        result["positive"], importlib.import_module("dinkster_inference")
+    )
+    _, guides = materialize_ltxv_guides(carrier)
+    assert guides[0].latent_shape == (1, 2, 2)
+    assert guides[0].pre_filter_count == 16
+    starts = guides[0].keyframe_indices[0, 1, :, 0]
+    ends = guides[0].keyframe_indices[0, 1, :, 1]
+    assert torch.equal(ends, starts + 64)
+
+    video = arm.GenerationLTXVFreezeLatent.execute(
+        latent={"samples": torch.ones((2, 4, 8, 3, 5)), "custom": 7}
+    )["latent"]
+    assert cast("Any", video)["custom"] == 7
+    assert cast("Any", video)["noise_mask"].shape == (2, 1, 8, 1, 1)
+    audio = arm.GenerationLTXVFreezeLatent.execute(latent={"samples": torch.ones((1, 8, 16, 4))})[
+        "latent"
+    ]
+    assert cast("Any", audio)["noise_mask"].shape == (1, 1, 16, 1)
+
+
+def test_generation_ltxv_generated_keyframes_preserve_placement_and_become_guides() -> None:
+    torch = pytest.importorskip("torch")
+    from dinkster_inference import LTXAV_VIDEO_CODEC, PreparedMultiStreamConditioning
+    from dinkster_inference_torch import LTXAVPreparedConditioning
+    from dinkster_inference_torch.ltx_media import materialize_ltxv_guides
+
+    arm = _native_arm()
+
+    class Codec:
+        descriptor = LTXAV_VIDEO_CODEC
+        resource_identity = "test:ltxv-generated-keyframe-codec"
+        load_device = torch.device("cpu")
+
+        def require_active(self) -> None:
+            return None
+
+        @contextmanager
+        def stage(self):  # noqa: ANN201
+            yield
+
+        def decode_latent(self, latent: Any) -> Any:
+            return latent
+
+        def encode_content(self, content: Any) -> Any:
+            return content
+
+    def prepared(value: float) -> list[list[object]]:
+        payload = LTXAVPreparedConditioning(torch.full((1, 1, 4), value))
+        return [[PreparedMultiStreamConditioning("test:ltxav", payload), {}]]
+
+    samples = torch.zeros((1, 128, 16, 2, 1))
+    noise_mask = torch.ones((1, 1, 16, 2, 1))
+    noise_mask[:, :, -1] = 0.0
+    source = torch.arange(16, dtype=torch.float32).reshape(1, 1, 16, 1, 1).expand(1, 128, 16, 2, 1)
+    added = arm.GenerationLTXVAddGeneratedKeyframes.execute(
+        positive=prepared(1.0),
+        negative=prepared(-1.0),
+        vae=Codec(),
+        latent={"samples": samples, "noise_mask": noise_mask},
+        keyframes={"samples": source},
+    )
+
+    added_samples = cast("Any", added["latent"])["samples"].by_role("video")
+    assert added_samples.shape == (1, 128, 20, 2, 1)
+    assert added_samples[0, 0, 16:, 0, 0].tolist() == [3.0, 6.0, 9.0, 12.0]
+    generated = cast("Any", added["positive"])[0][0].payload.generated_keyframes
+    assert generated.frame_indices == (24, 48, 72, 96)
+    assert generated.num_pixel_frames == 121
+
+    separated = arm.GenerationLTXVSeparateGeneratedKeyframes.execute(
+        positive=added["positive"],
+        negative=added["negative"],
+        latent=added["latent"],
+        keyframes_to_batch=True,
+    )
+    assert cast("Any", separated["latent"])["samples"].by_role("video").shape[2] == 16
+    keyframes = cast("Any", separated["keyframes"])
+    assert keyframes["samples"].shape == (4, 128, 1, 2, 1)
+    assert keyframes["generated_keyframe_num_frames"] == 121
+
+    converted = arm.GenerationLTXVGeneratedKeyframesToGuides.execute(
+        positive=_ltxv_media_carrier(),
+        negative=_ltxv_media_carrier(),
+        vae=Codec(),
+        latent={"samples": torch.zeros((1, 128, 31, 2, 1))},
+        keyframes=keyframes,
+        strength=0.75,
+    )
+    converted_samples = cast("Any", converted["latent"])["samples"].by_role("video")
+    assert converted_samples.shape[2] == 35
+    assert torch.all(
+        cast("Any", converted["latent"])["noise_mask"].by_role("video")[:, :, 31:] == 0.25
+    )
+    carrier, _ = arm._split_ltx_frame_rate(
+        converted["positive"], importlib.import_module("dinkster_inference")
+    )
+    _, guides = materialize_ltxv_guides(carrier)
+    assert [int(guide.keyframe_indices[0, 0, 0, 0]) for guide in guides] == [48, 96, 144, 192]
+    assert all(guide.strength == 0.75 for guide in guides)
+
+
+def test_generation_ltxv_generated_keyframes_compose_with_existing_guides() -> None:
+    torch = pytest.importorskip("torch")
+    from dinkster_inference import LTXAV_VIDEO_CODEC, MultiStreamLatent
+    from dinkster_inference_torch import ltxv_add_guide
+    from dinkster_inference_torch.ltx_media import materialize_ltxv_guides
+
+    arm = _native_arm()
+
+    class Codec:
+        descriptor = LTXAV_VIDEO_CODEC
+        resource_identity = "test:ltxv-generated-keyframe-guide-codec"
+        load_device = torch.device("cpu")
+
+        def require_active(self) -> None:
+            return None
+
+        @contextmanager
+        def stage(self):  # noqa: ANN201
+            yield
+
+        def decode_latent(self, latent: Any) -> Any:
+            return latent
+
+        def encode_content(self, content: Any) -> Any:
+            return content
+
+    positive, _ = arm._split_ltx_frame_rate(
+        _ltxv_media_carrier(), importlib.import_module("dinkster_inference")
+    )
+    negative, _ = arm._split_ltx_frame_rate(
+        _ltxv_media_carrier(), importlib.import_module("dinkster_inference")
+    )
+    canvas = MultiStreamLatent.from_pairs((("video", torch.zeros((1, 128, 13, 2, 1))),))
+    guided = ltxv_add_guide(
+        positive,
+        negative,
+        canvas,
+        torch.ones((1, 128, 1, 2, 1)),
+        frame_index=48,
+        strength=1.0,
+        scale_factors=(8, 32, 32),
+        align_frame_index=False,
+    )
+    guided_latent = {
+        "samples": guided.latent,
+        "noise_mask": guided.denoise_mask,
+    }
+
+    added = arm.GenerationLTXVAddGeneratedKeyframes.execute(
+        positive=guided.positive,
+        negative=guided.negative,
+        vae=Codec(),
+        latent=guided_latent,
+        interval_frames=24,
+    )
+    generated = importlib.import_module(
+        "dinkster_inference_torch.ltx_media"
+    ).materialize_ltxv_generated_keyframes(added["positive"])[1]
+    assert generated.frame_indices == (24, 72, 96)
+    assert generated.num_pixel_frames == 97
+    assert cast("Any", added["latent"])["samples"].by_role("video").shape[2] == 17
+
+    with pytest.raises(ValueError, match="reuses"):
+        arm.GenerationLTXVAddGeneratedKeyframes.execute(
+            positive=guided.positive,
+            negative=guided.negative,
+            vae=Codec(),
+            latent=guided_latent,
+            frame_indices="48",
+        )
+    accepted = arm.GenerationLTXVAddGeneratedKeyframes.execute(
+        positive=guided.positive,
+        negative=guided.negative,
+        vae=Codec(),
+        latent=guided_latent,
+        frame_indices="49",
+    )
+    accepted_generated = importlib.import_module(
+        "dinkster_inference_torch.ltx_media"
+    ).materialize_ltxv_generated_keyframes(accepted["positive"])[1]
+    assert accepted_generated.frame_indices == (49,)
+
+    separated = arm.GenerationLTXVSeparateGeneratedKeyframes.execute(
+        positive=added["positive"],
+        negative=added["negative"],
+        latent=added["latent"],
+    )
+    _, separated_guides = materialize_ltxv_guides(separated["positive"])
+    assert len(separated_guides) == 1
+    assert separated_guides[0].keyframe_indices[0, 0, 0, 0].item() == 48
+    assert cast("Any", separated["latent"])["samples"].by_role("video").shape[2] == 14
+
+    converted = arm.GenerationLTXVGeneratedKeyframesToGuides.execute(
+        positive=separated["positive"],
+        negative=separated["negative"],
+        vae=Codec(),
+        latent=separated["latent"],
+        keyframes=separated["keyframes"],
+        strength=0.5,
+    )
+    _, converted_guides = materialize_ltxv_guides(converted["positive"])
+    assert [guide.keyframe_indices[0, 0, 0, 0].item() for guide in converted_guides] == [
+        48,
+        24,
+        72,
+        96,
+    ]
 
 
 def test_generation_ltxv_media_nodes_refuse_wrong_boundaries() -> None:
@@ -23843,7 +24321,7 @@ def test_generation_custom_sampling_routes_qwen_components_and_materializes_appl
         assert runtime_arg is runtime
         assert component == "live-control"
         application_events.append("materialized")
-        return {"control": "prepared-control"}
+        return {"control_hint": "prepared-control"}
 
     application = ComponentApplication(
         family_id=QWEN_IMAGE_CONFIG.family_id,
@@ -23926,9 +24404,190 @@ def test_generation_custom_sampling_routes_qwen_components_and_materializes_appl
     assert isinstance(cfg_value, SamplingGuidance)
     assert cfg_value.uncond is prepared_negative
     assert cfg_value.scale == 5.0
-    assert sample_call["control"] == "prepared-control"
+    assert sample_call["control_hint"] == "prepared-control"
     assert application_events == [handle, "diffusion", "staged", "materialized", "released"]
     assert application_leased == [False]
+
+
+def test_generation_custom_sampling_applies_h3_fun_control_on_the_decomposed_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_inference import (
+        MINIMAX_H3,
+        CustomSamplingRequest,
+        CustomSamplingResult,
+        MultiStreamLatent,
+        PreparedMultiStreamConditioning,
+        SamplingGuidance,
+    )
+
+    arm = _native_arm()
+    torch = FakeTorch()
+    sampled = MultiStreamLatent.from_pairs(
+        (
+            ("video", FakeTensor((1, 24, 1, 8, 8), "sampled-video")),
+            ("audio", FakeTensor((1, 32, 1, 8), "sampled-audio")),
+        )
+    )
+    generated_noise = MultiStreamLatent.from_pairs(
+        (
+            ("video", FakeTensor((1, 24, 1, 8, 8), "noise-video")),
+            ("audio", FakeTensor((1, 32, 1, 8), "noise-audio")),
+        )
+    )
+    calls: list[dict[str, object]] = []
+    control_conditioning = object()
+    materialized: list[tuple[object, object]] = []
+    recipe = _recipe()
+    prepared_positive = PreparedMultiStreamConditioning(
+        recipe.runtime_identity,
+        SimpleNamespace(embeddings=FakeTensor((1, 4, 12), "prepared-positive")),
+    )
+    prepared_negative = PreparedMultiStreamConditioning(
+        recipe.runtime_identity,
+        SimpleNamespace(embeddings=FakeTensor((1, 4, 12), "prepared-negative")),
+    )
+
+    class Runtime:
+        family = MINIMAX_H3
+        runtime_identity = recipe.runtime_identity
+
+        @staticmethod
+        def custom_sampling_sigmas(
+            scheduler_id: str, steps: int, denoise: float
+        ) -> tuple[float, ...]:
+            raise AssertionError("unused")
+
+        @staticmethod
+        def custom_sampling_beta_sigmas(steps: int, alpha: float, beta: float) -> tuple[float, ...]:
+            raise AssertionError("unused")
+
+        @staticmethod
+        def custom_sampling_sd_turbo_sigmas(steps: int, denoise: float) -> tuple[float, ...]:
+            raise AssertionError("unused")
+
+        @staticmethod
+        def custom_sampling_percent_to_sigma(percent: float, *, return_actual_sigma: bool) -> float:
+            raise AssertionError("unused")
+
+        @staticmethod
+        def prepare_custom_sampling_noise(latent: object, seed: int, noise_inds: object) -> object:
+            calls.append({"call": "noise", "latent": latent, "seed": seed})
+            return generated_noise
+
+        @staticmethod
+        def check_custom_sampling(
+            request: object,
+            *,
+            has_denoise_mask: bool,
+            has_inpaint: bool,
+            has_context_windows: bool,
+            guidance: float | None = None,
+        ) -> None:
+            assert isinstance(request, CustomSamplingRequest)
+            calls.append({"call": "check"})
+
+        @staticmethod
+        def sample_custom(latent: object, **kwargs: object) -> Any:
+            calls.append({"call": "sample", "latent": latent, **kwargs})
+            return CustomSamplingResult(cast("Any", sampled), cast("Any", sampled))
+
+    runtime = Runtime()
+    handle = _handle(arm, runtime, torch)
+    control_handle_stage_calls: list[object] = []
+
+    registered_dependents: list[object] = []
+    vae_stage_calls: list[object] = []
+
+    class ControlHandle:
+        def stage(self, **kwargs: object) -> object:
+            control_handle_stage_calls.append(kwargs)
+            return nullcontext()
+
+        def register_dependent(self, dependent: object) -> None:
+            registered_dependents.append(dependent)
+
+    class VaeHandle:
+        def stage(self, **kwargs: object) -> object:
+            vae_stage_calls.append(kwargs)
+            return nullcontext()
+
+        def register_dependent(self, dependent: object) -> None:
+            registered_dependents.append(dependent)
+
+    binding = SimpleNamespace(
+        control_handle=ControlHandle(),
+        vae_handle=VaeHandle(),
+        vae_runtime=SimpleNamespace(encode_video=lambda frames: frames),
+        control_video=None,
+        mask=None,
+        source_video=None,
+        strength=1.0,
+        start_percent=0.0,
+        end_percent=1.0,
+    )
+    model = arm._NativeModelOverlay(handle, (), {}, minimax_h3_control=binding)
+    assert [id(entry) for entry in registered_dependents] == [id(model), id(model)]
+    rows = [[prepared_positive, {}]]
+    negative_rows = [[prepared_negative, {}]]
+
+    def fake_execution(
+        handle_arg: object,
+        positive_arg: object,
+        negative_arg: object,
+        _inference: object,
+        **_options: object,
+    ) -> object:
+        return arm._ResolvedComponentExecution(runtime, rows, negative_rows, True)
+
+    monkeypatch.setattr(arm, "_resolve_component_execution", fake_execution)
+    monkeypatch.setattr(
+        arm,
+        "_materialize_minimax_h3_control",
+        lambda bound, samples, *_rest: (
+            materialized.append((bound, samples)) or control_conditioning
+        ),
+    )
+    monkeypatch.setattr(arm, "_torch", lambda: torch)
+    monkeypatch.setattr(arm, "sampling_preview_emitter", lambda _handle: None)
+    monkeypatch.setattr(arm, "multistream_sampling_preview_emitter", lambda _handle: None)
+    sampler = arm.GenerationKSamplerSelect.execute(sampler_name="euler")["sampler"]
+    sigmas = arm._CustomSigmasValue((1.0, 0.5, 0.0))
+    latent = {
+        "samples": MultiStreamLatent.from_pairs(
+            (
+                ("video", FakeTensor((1, 24, 1, 8, 8), "latent-video")),
+                ("audio", FakeTensor((1, 32, 1, 8), "latent-audio")),
+            )
+        ),
+        "custom": "preserved",
+    }
+
+    output = arm.GenerationSamplerCustom.execute(
+        model=model,
+        add_noise=True,
+        noise_seed=17,
+        cfg=5.0,
+        positive=rows,
+        negative=negative_rows,
+        sampler=sampler,
+        sigmas=sigmas,
+        latent_image=latent,
+    )
+    output_mapping = cast("Mapping[str, object]", output["output"])
+    output_samples = cast("MultiStreamLatent[FakeTensor]", output_mapping["samples"])
+    assert output_mapping["custom"] == "preserved"
+    assert output_samples.roles == ("video", "audio")
+    assert output_samples.by_role("video").shape == sampled.by_role("video").shape
+    assert output_samples.by_role("audio").shape == sampled.by_role("audio").shape
+    assert [call["call"] for call in calls] == ["check", "check", "noise", "sample"]
+    assert len(materialized) == 1
+    assert materialized[0][0] is binding
+    sample_call = calls[-1]
+    assert sample_call["control"] is control_conditioning
+    cfg_value = sample_call["cfg"]
+    assert isinstance(cfg_value, SamplingGuidance)
+    assert control_handle_stage_calls == [{"observer_stage": "sample"}]
 
 
 def test_generation_custom_sampling_forwards_sd15_attention_applications(
@@ -24195,7 +24854,7 @@ def test_generation_custom_sampling_applies_components_without_a_family_allowlis
         role="diffusion",
         handle=cast("InferenceComponentHandle", ApplicationHandle()),
         application_identity=application_identity,
-        materialize_application_kwargs=lambda *_args: {"control": "live-control"},
+        materialize_application_kwargs=lambda *_args: {"control_hint": "live-control"},
     )
     model = ApplicationChain(handle, (application,))
     prepared_positive = Conditioning(FakeTensor((1, 4, 12), "prepared-positive"))
@@ -24244,7 +24903,7 @@ def test_generation_custom_sampling_applies_components_without_a_family_allowlis
         latent_image={"samples": FakeTensor((1, 16, 1, 8, 8), "latent")},
     )
     assert len(calls) == 1
-    assert calls[0]["control"] == "live-control"
+    assert calls[0]["control_hint"] == "live-control"
 
 
 def test_generation_custom_sampling_routes_triposplat_components_and_wraps_conditioning(
