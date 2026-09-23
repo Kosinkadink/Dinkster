@@ -17,5 +17,6 @@
   { "kind": "editor", "implemented": true },
   { "kind": "editorBinding", "implemented": true },
   { "kind": "panel", "implemented": true },
-  { "kind": "virtualNode", "implemented": true }
+  { "kind": "virtualNode", "implemented": true },
+  { "kind": "documentType", "implemented": true }
 ]

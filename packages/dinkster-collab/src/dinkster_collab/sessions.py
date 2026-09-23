@@ -42,11 +42,12 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
+from .snapshots import normalize_document_kind
+
 if TYPE_CHECKING:
     from .store import SessionStore
 
 PROTOCOL_VERSION = 1
-DOCUMENT_KINDS = ("workflow", "image")
 
 SESSION_ROLES = ("banned", "viewer", "editor", "owner")
 DEFAULT_SESSION_ROLE = "editor"
@@ -201,6 +202,9 @@ class DocumentSession:
     default_role: str = DEFAULT_SESSION_ROLE
     document_kind: str = "workflow"
 
+    def __post_init__(self) -> None:
+        self.document_kind = normalize_document_kind(self.document_kind)
+
     @property
     def revision(self) -> int:
         return self.ops[-1].revision if self.ops else self.snapshot_revision
@@ -243,8 +247,7 @@ class SessionService:
         document_kind: str = "workflow",
         principal_id: str = "local",
     ) -> DocumentSession:
-        if document_kind not in DOCUMENT_KINDS:
-            raise ValueError(f"document_kind must be one of {list(DOCUMENT_KINDS)}")
+        document_kind = normalize_document_kind(document_kind)
         session = DocumentSession(
             session_id=new_session_id(),
             scope=scope,
