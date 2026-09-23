@@ -466,7 +466,7 @@ def _tar_entry_info(path: Path, staging_root: Path) -> tarfile.TarInfo:
         stat_result = path.lstat()
         mode = 0o755 if stat_result.st_mode & stat.S_IXUSR else 0o644
     info = tarfile.TarInfo(relative)
-    info.size = 0 if link_target is not None else stat_result.st_size
+    info.size = stat_result.st_size if link_target is None and not path.is_dir() else 0
     info.mode = mode
     info.mtime = _TAR_EPOCH
     info.uid = 0

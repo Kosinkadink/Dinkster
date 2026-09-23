@@ -617,6 +617,8 @@ def test_archive_preserves_internal_links_and_rejects_external(tmp_path: Path) -
     with tarfile.open(archive) as tar:
         members = {member.name: member for member in tar.getmembers()}
     assert members["lib/link.so"].issym() and members["lib/link.so"].linkname == "real.so"
+    assert members["lib/link.so"].size == 0
+    assert all(member.size == 0 for member in members.values() if member.isdir())
 
 
 @pytest.mark.parametrize(
