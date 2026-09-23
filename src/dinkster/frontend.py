@@ -150,7 +150,11 @@ def install_frontend(
         if request.method not in {"GET", "HEAD"}:
             raise web.HTTPNotFound()
         asset = _safe_asset(root, request.match_info["path"])
-        content_type, _encoding = mimetypes.guess_type(asset.name)
+        content_type = (
+            "text/javascript"
+            if asset.suffix.lower() in {".js", ".mjs"}
+            else mimetypes.guess_type(asset.name)[0]
+        )
         return web.FileResponse(
             asset, headers={"Content-Type": content_type or "application/octet-stream"}
         )
