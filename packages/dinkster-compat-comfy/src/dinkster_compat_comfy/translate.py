@@ -2307,17 +2307,19 @@ def _output_list_flags(v1_name: str, v1_class: type, output_count: int) -> tuple
     return tuple(flags)
 
 
-_CORE_EXPANSION_SOURCE_REVISION = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
-"""ComfyUI SHA the core v1 expander enumeration was produced from."""
+_CORE_EXPANSION_SOURCE_REVISION = "b5cc8830279eae909a59de030af1e50761c36751"
+"""ComfyUI SHA the core v1 expander enumeration was produced from (the
+task reference revision, ComfyUI master at task start)."""
 
 _CORE_EXPANDER_V1_NAMES: frozenset[str] = frozenset()
 """v1 core node names whose function returns a runtime graph expansion
 payload at _CORE_EXPANSION_SOURCE_REVISION, produced by grepping nodes.py
-and comfy_extras for expansion returns. Empty at b78cec87: the only core
-"expand" returns live in ComfyUI's test-only execution testing pack, which
-normal installs never register. Regenerate the enumeration when the compat
-reference moves; it is deliberately not extended to custom packs, where the
-runtime refusal is the only sound boundary."""
+and comfy_extras for expansion returns. Empty at b5cc8830 as a measured
+result: no maintained v1 core module returns an expansion payload - the one
+shipped expander there is the V3 StartLoop node (comfy_extras/nodes_loop.py,
+enable_expand=True), classified exactly by the V3 rule. Regenerate the
+enumeration when the compat reference moves; it is deliberately not extended
+to custom packs, where the runtime refusal is the only sound boundary."""
 
 
 def _returns_expand_dict(function: object) -> bool:

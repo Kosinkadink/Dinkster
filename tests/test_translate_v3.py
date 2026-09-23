@@ -1084,17 +1084,19 @@ def test_output_node_and_idempotence_flags() -> None:
 def test_translated_v3_schema_declares_may_expand_graph() -> None:
     """V3 classification is exact: only a schema declaring enable_expand is
     flagged (ComfyUI itself refuses NodeOutput.expand without it), and the
-    flag stays capability metadata outside the schema signature."""
-    result = translate(FakeSchema("MaybeExpand", enable_expand=True))
-    assert result.may_expand_graph is True
-    wire = schema_to_wire(result)
+    flag stays capability metadata outside the schema signature. At the
+    reference revision the shipped StartLoop node is the one enable_expand
+    expander; EndLoop never declares it."""
+    start_loop = translate(FakeSchema("StartLoop", enable_expand=True))
+    assert start_loop.may_expand_graph is True
+    wire = schema_to_wire(start_loop)
     assert wire["mayExpandGraph"] is True
-    assert schema_signature(result) == schema_signature(
-        dataclasses.replace(result, may_expand_graph=False)
+    assert schema_signature(start_loop) == schema_signature(
+        dataclasses.replace(start_loop, may_expand_graph=False)
     )
-    ordinary = translate(FakeSchema("Ordinary"))
-    assert ordinary.may_expand_graph is False
-    assert "mayExpandGraph" not in schema_to_wire(ordinary)
+    end_loop = translate(FakeSchema("EndLoop"))
+    assert end_loop.may_expand_graph is False
+    assert "mayExpandGraph" not in schema_to_wire(end_loop)
 
 
 def test_api_node_maps_to_io_bound_and_suppresses_gpu() -> None:

@@ -128,9 +128,11 @@ not. Compat translation flags:
 - a v1 core node in the enumerated expander list recorded at
   `_CORE_EXPANSION_SOURCE_REVISION` in the compat translation source
   (regenerate the enumeration by grepping `nodes.py` and `comfy_extras` for
-  expansion returns whenever the reference revision moves; the list is empty
-  at `b78cec87` because the only core expansion returns live in ComfyUI's
-  test-only execution pack).
+  expansion returns whenever the reference revision moves). At the reference
+  revision `b5cc8830` (ComfyUI master at task start) the list is empty as a
+  measured result: the one shipped expander there is the V3 `StartLoop` node
+  (`comfy_extras/nodes_loop.py`, `enable_expand=True`), which the exact V3
+  rule already flags; `EndLoop` and every other shipped node stay unflagged.
 
 Every other translated node - delegated or dynamically built returns, and
 custom-pack nodes the source inspection cannot classify - stays unflagged,
