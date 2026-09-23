@@ -109,6 +109,7 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "packaging",
         "safetensors==0.8.0",
         "sentencepiece==0.2.1",
+        "transformers==5.16.1",
         "dinkster-kitchen==0.2.35.post1",
         "dinkster-aimdo==0.5.5.post2",
         "triton-windows==3.7.1.post27",

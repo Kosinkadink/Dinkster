@@ -38,6 +38,7 @@ from dinkster_inference_torch.attention_extensions import AttentionExecution, At
 from dinkster_inference_torch.flux import Flux
 from dinkster_inference_torch.guidance import GuidanceExecutor, GuidanceRegistry
 from dinkster_inference_torch.unet import UNetModel
+from transformers.modeling_outputs import BaseModelOutputWithPooling
 from unet_fill import fill_state_dict, hashed_input
 
 
@@ -85,6 +86,17 @@ def test_proof_runner_converts_chw_tensor_to_rgb_image():
 
     assert converted.size == (2, 1)
     assert list(converted.getdata()) == [(0, 128, 255), (255, 64, 0)]
+
+
+def test_proof_runner_extracts_tensor_from_pinned_clip_output():
+    runner = Path(__file__).parents[3] / "tools" / "run_attention_pack_proofs.py"
+    feature_tensor = runpy.run_path(str(runner))["clip_feature_tensor"]
+    expected = torch.FloatTensor([[1.0, 2.0]])
+
+    assert feature_tensor(expected, "legacy") is expected
+    assert feature_tensor(BaseModelOutputWithPooling(pooler_output=expected), "pinned") is expected
+    with pytest.raises(RuntimeError, match="CLIP invalid features"):
+        feature_tensor(BaseModelOutputWithPooling(), "invalid")
 
 
 @pytest.mark.parametrize(
@@ -289,12 +301,10 @@ def test_flux_pag_uses_declared_block_and_scales_real_model_effect_monotonically
     ("family", "kind", "text_tokens"),
     (("unet", "cross", 0), ("flux", "joint", 1)),
 )
-@pytest.mark.parametrize("lane_ids", (("left", "right"), ("positive", "negative")))
 def test_attention_couple_proof_pack_blends_asymmetric_regions(
     family,
     kind,
     text_tokens,
-    lane_ids,
 ):
     contribution = proof_pack("attention-couple-pack")(
         split=0.5,
@@ -314,78 +324,43 @@ def test_attention_couple_proof_pack_blends_asymmetric_regions(
         {"proof_couple": {}},
     )
     lanes = (
-        GuidanceCondition(lane_ids[0], GuidanceRole.CONDITIONAL, Conditioning(torch.ones(1))),
-        GuidanceCondition(lane_ids[1], GuidanceRole.CONDITIONAL, Conditioning(torch.ones(1))),
+        GuidanceCondition("negative", GuidanceRole.UNCONDITIONAL, Conditioning(torch.zeros(1))),
+        GuidanceCondition("middle", GuidanceRole.AUXILIARY, Conditioning(torch.ones(1))),
+        GuidanceCondition("positive", GuidanceRole.CONDITIONAL, Conditioning(torch.ones(1))),
     )
     active = AttentionExecution(registry, sampling, lanes, 1)
     tokens = 4 + text_tokens
-    left = [10.0] * text_tokens + [1.0] * 4
-    right = [20.0] * text_tokens + [3.0] * 4
-    q = torch.tensor([[left], [right]]).unsqueeze(-1)
+    top = [10.0] * text_tokens + [1.0] * 4
+    negative = [30.0] * text_tokens + [5.0] * 4
+    bottom = [20.0] * text_tokens + [3.0] * 4
+    q = torch.tensor([[negative], [bottom], [top]]).unsqueeze(-1)
     call = active.context(
         family=family,
         block="middle_block.1.transformer_blocks.0" if family == "unet" else "double_blocks.0",
         kind=kind,
         heads=1,
-        spatial_shape=(1, 4),
+        spatial_shape=(2, 2),
         query_tokens=tokens,
         key_tokens=tokens,
         text_tokens=text_tokens,
     )
     output = active.attention(q, q, q, lambda query, _key, _value: query, call)
-    expected_left = [10.0] * text_tokens + [1.0, 1.0, 3.0, 3.0]
-    expected_right = [20.0] * text_tokens + [1.0, 1.0, 3.0, 3.0]
-    assert torch.equal(output, torch.tensor([[expected_left], [expected_right]]).unsqueeze(-1))
+    expected_top = [10.0] * text_tokens + [1.0, 1.0, 3.0, 3.0]
+    expected_negative = [30.0] * text_tokens + [5.0] * 4
+    expected_bottom = [20.0] * text_tokens + [1.0, 1.0, 3.0, 3.0]
+    assert torch.equal(
+        output,
+        torch.tensor([[expected_negative], [expected_bottom], [expected_top]]).unsqueeze(-1),
+    )
 
 
-def test_attention_couple_proof_pack_reduces_prompt_lanes_by_region():
+def test_attention_couple_proof_pack_uses_host_guidance_lanes():
     contribution = proof_pack("attention-couple-pack")(
         split=0.5,
         torch_version="2.13.0+cpu",
         aimdo_version="0.5.5.post2",
     )
-    registry = GuidanceRegistry((("proof_couple", contribution.guidance),))
-    executor = GuidanceExecutor(registry)
-    token = CancellationToken(lambda: False)
-    sampling = SamplingExecutionContext(
-        (1.0, 0.0),
-        0,
-        0,
-        1.0,
-        23,
-        token,
-        ProgressScope(token),
-        {"proof_couple": {}},
-    )
-    lanes = (
-        GuidanceCondition("positive", GuidanceRole.CONDITIONAL, Conditioning(torch.ones(1))),
-        GuidanceCondition("negative", GuidanceRole.UNCONDITIONAL, Conditioning(torch.zeros(1))),
-    )
-    context = GuidancePlanContext(
-        torch.zeros(1, 1, 2, 4),
-        torch.tensor(1.0),
-        1.0,
-        lanes,
-        False,
-        sampling,
-    )
-
-    def evaluate(request):
-        values = {"positive": 1.0, "negative": 3.0}
-        return GuidancePredictions(
-            tuple(
-                GuidancePrediction(
-                    lane.id,
-                    torch.full_like(request.input, values[lane.id]),
-                    GuidancePredictionSource.MODEL,
-                )
-                for lane in request.plan.lanes
-            )
-        )
-
-    result = executor.execute(context, evaluate).denoised
-    expected = torch.tensor([[[[1.0, 1.0, 3.0, 3.0], [1.0, 1.0, 3.0, 3.0]]]])
-    assert torch.equal(result, expected)
+    assert contribution.guidance is None
 
 
 @pytest.mark.parametrize(
@@ -419,7 +394,9 @@ def test_reference_attention_proof_pack_captures_then_injects_invocation_state(
     tokens = 4 + text_tokens
     call = active.context(
         family=family,
-        block="middle_block.1.transformer_blocks.0" if family == "unet" else "double_blocks.0",
+        block=(
+            "output_blocks.11.1.transformer_blocks.0" if family == "unet" else "double_blocks.18"
+        ),
         kind=kind,
         heads=1,
         spatial_shape=(1, 4),
@@ -432,7 +409,7 @@ def test_reference_attention_proof_pack_captures_then_injects_invocation_state(
     active.attention(q, reference, reference, lambda _q, _k, value: value, call)
     output = active.attention(q, q, q, lambda _q, _k, value: value, call)
     expected = torch.zeros_like(output)
-    expected[:, :, text_tokens:] = 2.0
+    expected[:, :, text_tokens:] = 8.0 / (tokens + 4)
     assert torch.equal(output, expected)
 
     reference_state = sampling.extension_state["proof_reference"]["reference"]
@@ -457,7 +434,9 @@ def test_reference_attention_proof_pack_captures_then_injects_invocation_state(
     )
     configured_call = configured_active.context(
         family=family,
-        block="middle_block.1.transformer_blocks.0" if family == "unet" else "double_blocks.0",
+        block=(
+            "output_blocks.11.1.transformer_blocks.0" if family == "unet" else "double_blocks.18"
+        ),
         kind=kind,
         heads=1,
         spatial_shape=(1, 4),

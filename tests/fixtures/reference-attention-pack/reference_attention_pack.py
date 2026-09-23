@@ -3,8 +3,8 @@
 
 from dinkster_api.v1 import (
     AttentionContribution,
-    AttentionQKVDescriptor,
     AttentionSelector,
+    AttentionWrapperDescriptor,
     InferenceContribution,
 )
 
@@ -51,16 +51,20 @@ def make(
                 digest.update(value.cpu().contiguous().view(torch.uint8).numpy().tobytes())
         reference_digest = digest.hexdigest()
 
-    def reference(q, k, v, context):
+    def reference(q, k, v, context, next):
+        import torch
+        import torch.nn.functional as F
+
+        baseline = next(q, k, v)
         if strength == 0:
-            return q, k, v
+            return baseline
         key = (context.family, context.block, context.kind)
         bank = frozen_reference
         if bank is None:
             bank = context.state.setdefault("reference", {})
         if key not in bank and frozen_reference is None:
             bank[key] = (k.detach().clone(), v.detach().clone())
-            return q, k, v
+            return baseline
         if key not in bank:
             raise ValueError(f"reference state has no capture for {key!r}")
         ref_k, ref_v = bank[key]
@@ -68,14 +72,24 @@ def make(
         ref_v = ref_v.to(device=v.device, dtype=v.dtype)
         if ref_k.shape != k.shape or ref_v.shape != v.shape:
             raise ValueError("reference and generation attention geometry must match")
-        next_k, next_v = k.clone(), v.clone()
-        for span in context.spans:
-            if span.axis != "key" or span.stream != "image":
-                continue
-            rows, tokens = slice(span.batch_start, span.batch_end), slice(span.start, span.end)
-            next_k[rows, :, tokens] = k[rows, :, tokens].lerp(ref_k[rows, :, tokens], strength)
-            next_v[rows, :, tokens] = v[rows, :, tokens].lerp(ref_v[rows, :, tokens], strength)
-        return q, next_k, next_v
+        image_ranges = {
+            (span.start, span.end)
+            for span in context.spans
+            if span.axis == "key" and span.stream == "image"
+        }
+        if len(image_ranges) != 1:
+            raise ValueError("reference attention requires one shared image-token range")
+        start, end = image_ranges.pop()
+        augmented = F.scaled_dot_product_attention(
+            q,
+            torch.cat((k, ref_k[:, :, start:end]), dim=2),
+            torch.cat((v, ref_v[:, :, start:end]), dim=2),
+        )
+        result = baseline.clone()
+        result[:, :, start:end] = baseline[:, :, start:end].lerp(
+            augmented[:, :, start:end], strength
+        )
+        return result
 
     metadata = (
         ("config.reference-digest", reference_digest),
@@ -85,16 +99,16 @@ def make(
         attention=AttentionContribution(
             torch_version=torch_version,
             aimdo_version=aimdo_version,
-            qkv=(
-                AttentionQKVDescriptor(
+            wrappers=(
+                AttentionWrapperDescriptor(
                     "proof_reference.unet",
-                    AttentionSelector("unet", kind="self"),
+                    AttentionSelector("unet", "output_blocks.11.1.transformer_blocks.0", "self"),
                     reference,
                     behavior_metadata=metadata,
                 ),
-                AttentionQKVDescriptor(
+                AttentionWrapperDescriptor(
                     "proof_reference.flux",
-                    AttentionSelector("flux", kind="joint"),
+                    AttentionSelector("flux", "double_blocks.18", "joint"),
                     reference,
                     behavior_metadata=metadata,
                 ),

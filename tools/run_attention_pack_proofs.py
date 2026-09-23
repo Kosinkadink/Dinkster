@@ -18,6 +18,7 @@ from typing import Any, cast
 
 import torch
 from dinkster_inference import (
+    DualSamplingGuidance,
     GuidanceCondition,
     GuidanceRole,
     SamplingGuidance,
@@ -39,6 +40,7 @@ from dinkster_inference_torch import (
 from dinkster_inference_torch.attention_extensions import AttentionExecution
 from PIL import Image
 from transformers import CLIPImageProcessor, CLIPModel, CLIPTokenizer
+from transformers.modeling_outputs import BaseModelOutputWithPooling
 
 REPO = Path(__file__).resolve().parent.parent
 CONFIG_PATH = Path(__file__).with_name("attention_pack_proof_config.json")
@@ -93,17 +95,24 @@ def sample(
     scale: float,
     config: dict[str, Any],
     owner: str | None = None,
+    seed: int | None = None,
+    middle: Any | None = None,
 ) -> torch.Tensor:
     environment = () if owner is None else (owner,)
+    guidance = (
+        SamplingGuidance(negative, scale)
+        if middle is None
+        else DualSamplingGuidance(middle, negative, 1.0, scale)
+    )
     with use_sampling_environment(environment, lambda: False), torch.inference_mode():
         return runtime.sample(
             latent,
             cond=positive,
-            cfg=SamplingGuidance(negative, scale),
+            cfg=guidance,
             sampler_id=config["workload"]["sampler"],
             scheduler_id="dinkster.normal",
             steps=config["workload"]["steps"],
-            seed=config["workload"]["seed"],
+            seed=config["workload"]["seed"] if seed is None else seed,
             device="cuda:0",
         )
 
@@ -176,6 +185,14 @@ def as_pil(image: torch.Tensor) -> Image.Image:
     return Image.fromarray((value.clamp(0, 1) * 255).round().to(torch.uint8).numpy())
 
 
+def clip_feature_tensor(value: object, label: str) -> torch.Tensor:
+    if isinstance(value, BaseModelOutputWithPooling):
+        value = value.pooler_output
+    if type(value) is not torch.Tensor:
+        raise RuntimeError(f"CLIP {label} features did not contain a tensor")
+    return value
+
+
 def clip_metrics(
     images: dict[str, torch.Tensor],
     config: dict[str, Any],
@@ -187,21 +204,21 @@ def clip_metrics(
     coupled = as_pil(images["coupled"])
     width, height = coupled.size
     inputs = [
-        coupled.crop((0, 0, width // 2, height)),
-        coupled.crop((width // 2, 0, width, height)),
+        coupled.crop((0, 0, width, height // 2)),
+        coupled.crop((0, height // 2, width, height)),
         as_pil(images["reference"]),
         as_pil(images["baseline"]),
         as_pil(images["injected"]),
     ]
     pixels = processor(images=inputs, return_tensors="pt")["pixel_values"].to("cuda:0")
     prompts = [
-        config["attention_couple"]["left_prompt"],
-        config["attention_couple"]["right_prompt"],
+        config["attention_couple"]["top_prompt"],
+        config["attention_couple"]["bottom_prompt"],
     ]
     tokens = tokenizer(prompts, padding=True, return_tensors="pt").to("cuda:0")
     with torch.inference_mode():
-        image_features = model.get_image_features(pixel_values=pixels)
-        text_features = model.get_text_features(**tokens)
+        image_features = clip_feature_tensor(model.get_image_features(pixel_values=pixels), "image")
+        text_features = clip_feature_tensor(model.get_text_features(**tokens), "text")
     image_features = torch.nn.functional.normalize(image_features, dim=-1)
     text_features = torch.nn.functional.normalize(text_features, dim=-1)
     scores = image_features[:2] @ text_features.T
@@ -209,19 +226,19 @@ def clip_metrics(
     baseline_similarity = float(reference @ image_features[3])
     injected_similarity = float(reference @ image_features[4])
     result = {
-        "left_own": float(scores[0, 0]),
-        "left_other": float(scores[0, 1]),
-        "left_margin": float(scores[0, 0] - scores[0, 1]),
-        "right_own": float(scores[1, 1]),
-        "right_other": float(scores[1, 0]),
-        "right_margin": float(scores[1, 1] - scores[1, 0]),
+        "top_own": float(scores[0, 0]),
+        "top_other": float(scores[0, 1]),
+        "top_margin": float(scores[0, 0] - scores[0, 1]),
+        "bottom_own": float(scores[1, 1]),
+        "bottom_other": float(scores[1, 0]),
+        "bottom_margin": float(scores[1, 1] - scores[1, 0]),
         "reference_baseline_cosine": baseline_similarity,
         "reference_injected_cosine": injected_similarity,
         "reference_cosine_gain": injected_similarity - baseline_similarity,
     }
     margin = config["attention_couple"]["minimum_clip_cosine_margin"]
     gain = config["reference_attention"]["minimum_clip_image_cosine_gain"]
-    if result["left_margin"] < margin or result["right_margin"] < margin:
+    if result["top_margin"] < margin or result["bottom_margin"] < margin:
         raise AssertionError(f"attention-couple CLIP margins failed: {result}")
     if result["reference_cosine_gain"] < gain:
         raise AssertionError(f"reference-attention CLIP gain failed: {result}")
@@ -248,8 +265,8 @@ def run_family(
     couple = config["attention_couple"]
     reference_config = config["reference_attention"]
     with torch.inference_mode():
-        left = runtime.encode_text(couple["left_prompt"])
-        right = runtime.encode_text(couple["right_prompt"])
+        top = runtime.encode_text(couple["top_prompt"])
+        bottom = runtime.encode_text(couple["bottom_prompt"])
         target = runtime.encode_text(reference_config["prompt"])
         reference_prompt = runtime.encode_text(reference_config["reference_prompt"])
         empty = runtime.encode_text("")
@@ -262,7 +279,15 @@ def run_family(
     downscale = runtime.family.single_stream_latent().spatial_downscale
     latent = torch.zeros(1, channels, height // downscale, width // downscale)
 
-    reference_latent = sample(runtime, latent, reference_prompt, empty, scale=7.0, config=config)
+    reference_latent = sample(
+        runtime,
+        latent,
+        reference_prompt,
+        empty,
+        scale=7.0,
+        config=config,
+        seed=config["workload"]["seed"] + reference_config["reference_seed_offset"],
+    )
     baseline_latent = sample(runtime, latent, target, empty, scale=7.0, config=config)
     captured = capture_reference_state(runtime, reference_latent, target, empty, config)
     reference_contribution = proof_pack("reference-attention-pack")(
@@ -280,16 +305,20 @@ def run_family(
         config=config,
         owner="proof_reference",
     )
-    couple_contribution = proof_pack("attention-couple-pack")(split=0.5)
+    couple_contribution = proof_pack("attention-couple-pack")(
+        split=0.5,
+        attention_strength=couple["attention_strength"],
+    )
     couple_runtime = configured_runtime(runtime, "proof_couple", couple_contribution)
     coupled_latent = sample(
         couple_runtime,
         latent,
-        left,
-        right,
-        scale=1.0,
+        top,
+        empty,
+        scale=7.0,
         config=config,
         owner="proof_couple",
+        middle=bottom,
     )
     images = {
         "reference": decode(runtime, reference_latent),

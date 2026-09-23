@@ -5,71 +5,65 @@ from dinkster_api.v1 import (
     AttentionContribution,
     AttentionOutputDescriptor,
     AttentionSelector,
-    GuidanceContribution,
-    GuidanceEvaluationPlan,
-    GuidanceStrategyDescriptor,
     InferenceContribution,
 )
 
 NODES = ()
 
 
-def make(*, split=0.5, torch_version="2.13.0+cu130", aimdo_version="0.5.5.post2"):
+def make(
+    *,
+    split=0.5,
+    attention_strength=1.0,
+    torch_version="2.13.0+cu130",
+    aimdo_version="0.5.5.post2",
+):
     if not 0 < split < 1:
         raise ValueError("region split must be strictly inside the image")
+    if not 0 <= attention_strength <= 1:
+        raise ValueError("attention strength must be between zero and one")
 
-    def plan(context):
-        lanes = tuple(lane for lane in context.conditions if lane.id in ("positive", "negative"))
-        if tuple(lane.id for lane in lanes) != ("positive", "negative"):
-            raise ValueError("attention-couple requires positive and negative prompt lanes")
-        return GuidanceEvaluationPlan(lanes, "positive", None)
-
-    def reduce(context):
-        import torch
-
-        predictions = {item.lane_id: item.value for item in context.predictions.items}
-        left, right = predictions["positive"], predictions["negative"]
-        width = left.shape[-1]
-        mask_left = torch.arange(width, device=left.device) < width * split
-        mask_left = mask_left.to(left.dtype).view(1, 1, 1, width)
-        return left * mask_left + right * (1 - mask_left)
+    def top_region_weights(torch, height, *, device, dtype):
+        positions = torch.arange(height, device=device)
+        return (positions < height * split).to(dtype)
 
     def couple(output, context):
         import torch
 
         spans = [span for span in context.spans if span.axis == "query" and span.stream == "image"]
         regions = {span.condition_id: span for span in spans}
-        lane_ids = (
-            ("left", "right")
-            if "left" in regions and "right" in regions
-            else (
-                "positive",
-                "negative",
-            )
-        )
+        lane_ids = ("positive", "middle")
         if any(lane_id not in regions for lane_id in lane_ids):
-            raise ValueError(
-                "attention-couple requires fused positive and negative conditioning lanes"
-            )
-        left, right = (regions[lane_id] for lane_id in lane_ids)
+            raise ValueError("attention-couple requires fused positive and regional prompt lanes")
+        top, bottom = (regions[lane_id] for lane_id in lane_ids)
         height, width = context.spatial_shape
-        if left.end - left.start != height * width or right.end - right.start != height * width:
+        if top.end - top.start != height * width or bottom.end - bottom.start != height * width:
             raise ValueError("region masks require an image-token grid without reference tokens")
-        if left.batch_end - left.batch_start != right.batch_end - right.batch_start:
+        if top.batch_end - top.batch_start != bottom.batch_end - bottom.batch_start:
             raise ValueError("region conditioning batches differ")
-        mask_left = (torch.arange(width, device=output.device) < width * split).repeat(height)
-        mask_left = mask_left.to(output.dtype).view(1, 1, height * width, 1)
-        mask_right = 1 - mask_left
+        mask_top = top_region_weights(
+            torch, height, device=output.device, dtype=output.dtype
+        ).repeat_interleave(width)
+        mask_top = mask_top.view(1, 1, height * width, 1)
+        mask_bottom = 1 - mask_top
         result = output.clone()
         mixed = (
-            output[left.batch_start : left.batch_end, :, left.start : left.end] * mask_left
-            + output[right.batch_start : right.batch_end, :, right.start : right.end] * mask_right
+            output[top.batch_start : top.batch_end, :, top.start : top.end] * mask_top
+            + output[bottom.batch_start : bottom.batch_end, :, bottom.start : bottom.end]
+            * mask_bottom
         )
-        for span in (left, right):
-            result[span.batch_start : span.batch_end, :, span.start : span.end] = mixed
+        for span in (top, bottom):
+            current = output[span.batch_start : span.batch_end, :, span.start : span.end]
+            result[span.batch_start : span.batch_end, :, span.start : span.end] = current.lerp(
+                mixed, attention_strength
+            )
         return result
 
-    metadata = (("config.regions", "left,right"), ("config.split", str(split)))
+    metadata = (
+        ("config.attention-strength", str(attention_strength)),
+        ("config.regions", "top,bottom"),
+        ("config.split", str(split)),
+    )
     return InferenceContribution(
         attention=AttentionContribution(
             torch_version=torch_version,
@@ -88,14 +82,6 @@ def make(*, split=0.5, torch_version="2.13.0+cu130", aimdo_version="0.5.5.post2"
                     behavior_metadata=metadata,
                 ),
             ),
-        ),
-        guidance=GuidanceContribution(
-            strategy=GuidanceStrategyDescriptor(
-                "proof_couple.regional_reducer",
-                plan,
-                reduce,
-                behavior_metadata=metadata,
-            )
         ),
     )
 

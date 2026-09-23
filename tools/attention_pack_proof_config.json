@@ -22,15 +22,17 @@
     }
   },
   "attention_couple": {
-    "left_prompt": "a simple red square centered on a white background",
+    "attention_strength": 1.0,
+    "top_prompt": "a vivid red sunset sky above the horizon",
     "minimum_clip_cosine_margin": 0.01,
-    "right_prompt": "a simple blue circle centered on a white background"
+    "bottom_prompt": "deep blue ocean waves below the horizon"
   },
   "reference_attention": {
     "minimum_clip_image_cosine_gain": 0.01,
-    "prompt": "a studio photograph of a red ceramic teapot on a plain table",
-    "reference_prompt": "a studio photograph of a blue glass vase on a plain table",
-    "strength": 0.5
+    "prompt": "a studio photograph of a cobalt blue ceramic vase on a plain table",
+    "reference_prompt": "a studio photograph of a cobalt blue ceramic vase on a plain table",
+    "reference_seed_offset": 1,
+    "strength": 1.0
   },
   "workload": {
     "height": 256,
