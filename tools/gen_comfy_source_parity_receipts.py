@@ -1330,7 +1330,7 @@ def _minimax_h3_alias_receipts(
                 "height": 768,
                 "length": 124,
                 "ref_image_size": "match",
-                "ref_images": [{"value": "image-0"}],
+                "ref_images": [{"value": "image-0"}, {"value": "image-1"}],
                 "ref_videos": [{"value": "video-0"}],
                 "ref_video_audios": [{"value": "video-audio-0"}],
                 "ref_audios": [{"value": "audio-0"}],
