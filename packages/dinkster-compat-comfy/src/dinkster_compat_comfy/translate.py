@@ -2939,6 +2939,10 @@ def translate_node(
         # (the Comfy API prompt endpoint) map class_type -> node_type
         # through aliases instead of parsing namespaced type ids back apart.
         aliases=(v1_name,),
+        # Any v1 function may return a runtime graph expansion payload from
+        # runtime data; compat refuses those payloads loudly (normalize_result),
+        # so every translated schema declares the capability up front.
+        may_expand_graph=True,
         output_node=is_output_node,
         selector=(
             SelectorSpec("switch", {"false": "on_false", "true": "on_true"})

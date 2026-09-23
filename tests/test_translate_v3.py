@@ -17,6 +17,7 @@ ComfyUI/comfy_api/latest/_io.py). The contract under test:
 
 from __future__ import annotations
 
+import dataclasses
 from enum import Enum, StrEnum
 
 import pytest
@@ -1076,6 +1077,18 @@ def test_output_node_and_idempotence_flags() -> None:
     result = translate(FakeSchema("Rand", not_idempotent=True))
     assert not result.idempotent
     assert not result.output_node
+
+
+def test_translated_v3_schema_declares_may_expand_graph() -> None:
+    """Every V3-translated schema marks the capability: a NodeOutput.expand
+    can arrive from runtime data, and the loud compat refusal stays."""
+    result = translate(FakeSchema("MaybeExpand"))
+    assert result.may_expand_graph is True
+    wire = schema_to_wire(result)
+    assert wire["mayExpandGraph"] is True
+    assert schema_signature(result) == schema_signature(
+        dataclasses.replace(result, may_expand_graph=False)
+    )
 
 
 def test_api_node_maps_to_io_bound_and_suppresses_gpu() -> None:

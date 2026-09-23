@@ -115,6 +115,22 @@ runtime-generated subgraphs, or provide native plan compilation for all
 workflow-deterministic expansion. Such payloads continue to refuse loudly;
 pack authors must rewrite them using supported static graphs or regions.
 
+Importers can see the refusal coming: every schema the compat translation
+serves (v1 and V3) declares `mayExpandGraph` on its schema wire, because any
+translated node's execution may return an expansion payload derived from
+runtime data. Ordinary Dinkster-native schemas never declare the flag, so the
+catalog never claims an ordinary node expands. Workflow import uses the
+declaration to refuse unsupported structures deterministically before
+submission - Dinkster-Frontend refuses a Generic Loop containing a flagged
+node with `import.loop.runtimeExpansionUnsupported` - instead of discovering
+the refusal mid-run. The flag is static capability metadata: reading it at
+import time is a constant-time check with no runtime cost, it never joins the
+schema signature or cache keys, and refusing at execution remains the final
+safety boundary for anything that reaches the runtime. The marking is
+conservative: whether a translated node produces an expansion payload is a
+runtime property of its source code and inputs, so all compat-translated
+nodes are flagged even though few actually expand.
+
 ## Accept-all inputs require a declared family
 
 Compat does not expose arbitrary `accept_all_inputs` kwargs. The one core

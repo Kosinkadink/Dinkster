@@ -726,6 +726,10 @@ def translate_v3_schema(
         deprecation=deprecation,
         search_visibility="hidden" if bool(getattr(schema, "is_dev_only", False)) else "normal",
         aliases=(node_id,),
+        # Any V3 node may set NodeOutput.expand from runtime data; compat
+        # refuses those payloads loudly (_unwrap_node_output), so every
+        # translated schema declares the capability up front.
+        may_expand_graph=True,
         output_node=is_output_node,
         selector=(
             SelectorSpec("switch", {"false": "on_false", "true": "on_true"})

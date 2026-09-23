@@ -2141,6 +2141,17 @@ class NodeSchema:
     without declaring this flag loses both (accepted tradeoff of the
     declarative design). Capability metadata only: never validity and
     never part of the schema signature."""
+    may_expand_graph: bool = False
+    """This node's execution may return a runtime graph expansion payload
+    that Dinkster cannot execute. Set only where that is true: compat
+    translation marks every schema it serves from translated ComfyUI
+    sources, because a v1 ``{"expand": ...}`` result or a V3
+    ``NodeOutput.expand`` can be produced from runtime data, while native
+    execution has no expansion concept and ordinary schemas stay unflagged.
+    Importers use the flag to refuse unsupported structures (such as a
+    Generic Loop region containing such a node) before submission; execution
+    still refuses any payload that slips through, loud. Capability metadata
+    only: never validity and never part of the schema signature."""
     mirror: MirrorSpec | None = None
     """Optional frontend-renderable mirror of this node's transform (see
     MirrorSpec). Presentation metadata only: the engine never reads it,

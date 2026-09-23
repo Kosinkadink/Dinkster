@@ -43,3 +43,9 @@
   is not supported, and other checkpoint families are refused.
 - Not supported: V3-only (`comfy_entrypoint`) packs, pack HTTP routes/web
   assets, executor hooks - these are diagnosed, not emulated
+- Compat-translated node schemas declare `mayExpandGraph` on the schema wire,
+  so importers can refuse unsupported runtime graph expansion before import
+  (Dinkster-Frontend refuses a Generic Loop containing a flagged node with
+  `import.loop.runtimeExpansionUnsupported`). Ordinary native schemas are
+  never flagged, and execution still refuses any expansion payload loudly as
+  the final safety boundary
