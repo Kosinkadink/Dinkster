@@ -354,6 +354,9 @@ def _installed_packages(staging_python: Path) -> dict[str, str]:
 
 def _normalize_installed_environment(staging_root: Path) -> None:
     """Remove install-location metadata and regenerate deterministic RECORD files."""
+    for cache in staging_root.rglob("__pycache__"):
+        if cache.is_dir():
+            shutil.rmtree(cache, ignore_errors=True)
     site_packages_roots = [
         *staging_root.glob("lib/python*/site-packages"),
         staging_root / "Lib" / "site-packages",
@@ -361,9 +364,6 @@ def _normalize_installed_environment(staging_root: Path) -> None:
     for site_packages in site_packages_roots:
         if not site_packages.is_dir():
             continue
-        for cache in site_packages.rglob("__pycache__"):
-            if cache.is_dir():
-                shutil.rmtree(cache, ignore_errors=True)
         for dist_info in site_packages.glob("*.dist-info"):
             for name in ("direct_url.json", "uv_cache.json"):
                 (dist_info / name).unlink(missing_ok=True)

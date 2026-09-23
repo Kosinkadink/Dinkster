@@ -638,15 +638,18 @@ def test_installed_environment_normalization_removes_temporary_paths(
     dist_info = site / "example-1.0.dist-info"
     scripts = staging / scripts_relative
     cache = site / "example/__pycache__"
+    stdlib_cache = staging / "Lib/__pycache__"
     dist_info.mkdir(parents=True)
     scripts.mkdir(parents=True)
     cache.mkdir(parents=True)
+    stdlib_cache.mkdir(parents=True)
     module = site / "example/__init__.py"
     module.parent.mkdir(exist_ok=True)
     module.write_text("VALUE = 1\n", encoding="utf-8")
     wrapper = scripts / wrapper_name
     wrapper.write_text(f"#!{staging}/bin/python3\n", encoding="utf-8")
     (cache / "module.pyc").write_bytes(b"cache")
+    (stdlib_cache / "argparse.pyc").write_bytes(str(staging).encode())
     (dist_info / "direct_url.json").write_text(str(staging), encoding="utf-8")
     (dist_info / "uv_cache.json").write_text("timestamp", encoding="utf-8")
     record = dist_info / "RECORD"
@@ -665,6 +668,7 @@ def test_installed_environment_normalization_removes_temporary_paths(
 
     assert not wrapper.exists()
     assert not cache.exists()
+    assert not stdlib_cache.exists()
     assert not (dist_info / "direct_url.json").exists()
     assert not (dist_info / "uv_cache.json").exists()
     assert str(staging).encode() not in normalized
