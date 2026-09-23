@@ -38,10 +38,10 @@ def make(
                 or len(key) != 3
                 or any(type(part) is not str or not part for part in key)
                 or type(values) is not tuple
-                or len(values) != 2
+                or len(values) != 3
                 or any(type(value) is not torch.Tensor for value in values)
             ):
-                raise TypeError("reference_state entries must map point keys to K/V tensors")
+                raise TypeError("reference_state entries must map point keys to K/V/output tensors")
             frozen = tuple(value.detach().clone() for value in values)
             frozen_reference[key] = frozen
             digest.update("\0".join(key).encode())
@@ -63,14 +63,15 @@ def make(
         if bank is None:
             bank = context.state.setdefault("reference", {})
         if key not in bank and frozen_reference is None:
-            bank[key] = (k.detach().clone(), v.detach().clone())
+            bank[key] = (k.detach().clone(), v.detach().clone(), baseline.detach().clone())
             return baseline
         if key not in bank:
             raise ValueError(f"reference state has no capture for {key!r}")
-        ref_k, ref_v = bank[key]
+        ref_k, ref_v, ref_output = bank[key]
         ref_k = ref_k.to(device=k.device, dtype=k.dtype)
         ref_v = ref_v.to(device=v.device, dtype=v.dtype)
-        if ref_k.shape != k.shape or ref_v.shape != v.shape:
+        ref_output = ref_output.to(device=baseline.device, dtype=baseline.dtype)
+        if ref_k.shape != k.shape or ref_v.shape != v.shape or ref_output.shape != baseline.shape:
             raise ValueError("reference and generation attention geometry must match")
         image_ranges = {
             (span.start, span.end)
@@ -80,6 +81,17 @@ def make(
         if len(image_ranges) != 1:
             raise ValueError("reference attention requires one shared image-token range")
         start, end = image_ranges.pop()
+        if context.family == "flux":
+            late_sigma = context.execution.sigma_schedule[
+                max(0, len(context.execution.sigma_schedule) - 4)
+            ]
+            if context.execution.current_sigma > late_sigma:
+                return baseline
+            result = baseline.clone()
+            result[:, :, start:end] = baseline[:, :, start:end].lerp(
+                ref_output[:, :, start:end], strength
+            )
+            return result
         augmented = F.scaled_dot_product_attention(
             q,
             torch.cat((k, ref_k[:, :, start:end]), dim=2),

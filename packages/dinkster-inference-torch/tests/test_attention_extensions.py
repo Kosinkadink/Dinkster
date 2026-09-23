@@ -344,10 +344,20 @@ def test_attention_couple_proof_pack_blends_asymmetric_regions(
         key_tokens=tokens,
         text_tokens=text_tokens,
     )
-    output = active.attention(q, q, q, lambda query, _key, _value: query, call)
-    expected_top = [10.0] * text_tokens + [1.0, 1.0, 3.0, 3.0]
-    expected_negative = [30.0] * text_tokens + [5.0] * 4
-    expected_bottom = [20.0] * text_tokens + [1.0, 1.0, 3.0, 3.0]
+
+    def kernel(query, key, _value):
+        conditioning = key[:, :, : max(text_tokens, 1)].mean(dim=2, keepdim=True)
+        return query + conditioning
+
+    output = active.attention(q, q, q, kernel, call)
+    if family == "flux":
+        expected_top = [20.0, 11.0, 11.0, 21.0, 21.0]
+        expected_negative = [60.0] + [35.0] * 4
+        expected_bottom = [40.0] + [21.0] * 4
+    else:
+        expected_top = [2.0, 2.0, 4.0, 4.0]
+        expected_negative = [10.0] * 4
+        expected_bottom = [4.0] * 4
     assert torch.equal(
         output,
         torch.tensor([[expected_negative], [expected_bottom], [expected_top]]).unsqueeze(-1),
@@ -409,7 +419,7 @@ def test_reference_attention_proof_pack_captures_then_injects_invocation_state(
     active.attention(q, reference, reference, lambda _q, _k, value: value, call)
     output = active.attention(q, q, q, lambda _q, _k, value: value, call)
     expected = torch.zeros_like(output)
-    expected[:, :, text_tokens:] = 8.0 / (tokens + 4)
+    expected[:, :, text_tokens:] = 8.0 / (tokens + 4) if family == "unet" else 2.0
     assert torch.equal(output, expected)
 
     reference_state = sampling.extension_state["proof_reference"]["reference"]
@@ -452,6 +462,36 @@ def test_reference_attention_proof_pack_captures_then_injects_invocation_state(
         configured_call,
     )
     assert torch.equal(configured_output, expected)
+    if family == "flux":
+        early_sampling = replace(
+            configured_sampling,
+            sigma_schedule=(4.0, 3.0, 2.0, 1.0, 0.0),
+            current_sigma=4.0,
+        )
+        early_active = AttentionExecution(
+            AttentionRegistry((("proof_reference", configured),)),
+            early_sampling,
+            lanes,
+            1,
+        )
+        early_call = early_active.context(
+            family=family,
+            block="double_blocks.18",
+            kind=kind,
+            heads=1,
+            spatial_shape=(1, 4),
+            query_tokens=tokens,
+            key_tokens=tokens,
+            text_tokens=text_tokens,
+        )
+        early_output = early_active.attention(
+            q,
+            q,
+            q,
+            lambda _q, _k, value: value,
+            early_call,
+        )
+        assert torch.equal(early_output, torch.zeros_like(early_output))
 
 
 def test_ordered_qkv_wrappers_outputs_and_condition_spans():

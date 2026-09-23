@@ -102,7 +102,12 @@ def sample(
     guidance = (
         SamplingGuidance(negative, scale)
         if middle is None
-        else DualSamplingGuidance(middle, negative, 1.0, scale)
+        else DualSamplingGuidance(
+            middle,
+            negative,
+            config["attention_couple"]["regional_guidance_scale"],
+            scale,
+        )
     )
     with use_sampling_environment(environment, lambda: False), torch.inference_mode():
         return runtime.sample(
@@ -123,7 +128,7 @@ def capture_reference_state(
     positive: Any,
     negative: Any,
     config: dict[str, Any],
-) -> dict[tuple[str, str, str], tuple[torch.Tensor, torch.Tensor]]:
+) -> dict[tuple[str, str, str], tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
     contribution = proof_pack("reference-attention-pack")(
         strength=config["reference_attention"]["strength"]
     )
@@ -142,7 +147,7 @@ def capture_reference_state(
     with use_sampling_environment(("proof_reference",), lambda: False):
         execution = sampling_execution_context(schedule, config["workload"]["seed"])
     active = AttentionExecution(registry.attention_extensions, execution, lanes, 1)
-    sigma = float(schedule[0])
+    sigma = float(schedule[0] if isinstance(runtime, SDRuntime) else schedule[-1])
     if isinstance(runtime, SDRuntime):
         evaluator = SDDenoiser(
             runtime.assembled.diffusion,
@@ -164,7 +169,9 @@ def capture_reference_state(
     state = execution.extension_state["proof_reference"].get("reference")
     if type(state) is not dict or not state:
         raise RuntimeError("reference pack captured no attention state")
-    return cast("dict[tuple[str, str, str], tuple[torch.Tensor, torch.Tensor]]", state)
+    return cast(
+        "dict[tuple[str, str, str], tuple[torch.Tensor, torch.Tensor, torch.Tensor]]", state
+    )
 
 
 def decode(runtime: SDRuntime | FluxRuntime, latent: torch.Tensor) -> torch.Tensor:

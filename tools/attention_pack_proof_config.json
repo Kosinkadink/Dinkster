@@ -25,7 +25,8 @@
     "attention_strength": 1.0,
     "top_prompt": "a vivid red sunset sky above the horizon",
     "minimum_clip_cosine_margin": 0.01,
-    "bottom_prompt": "deep blue ocean waves below the horizon"
+    "bottom_prompt": "deep blue ocean waves below the horizon",
+    "regional_guidance_scale": 4.0
   },
   "reference_attention": {
     "minimum_clip_image_cosine_gain": 0.01,

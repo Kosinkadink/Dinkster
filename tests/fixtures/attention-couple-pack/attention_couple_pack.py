@@ -4,6 +4,7 @@
 from dinkster_api.v1 import (
     AttentionContribution,
     AttentionOutputDescriptor,
+    AttentionQKVDescriptor,
     AttentionSelector,
     InferenceContribution,
 )
@@ -26,6 +27,20 @@ def make(
     def top_region_weights(torch, height, *, device, dtype):
         positions = torch.arange(height, device=device)
         return (positions < height * split).to(dtype)
+
+    def regional_qkv(q, k, v, context):
+        next_q, next_k, next_v = q.clone(), k.clone(), v.clone()
+        spans = {(span.axis, span.stream, span.condition_id): span for span in context.spans}
+        for axis, tensors in (("query", (q, next_q)), ("key", (k, next_k)), ("key", (v, next_v))):
+            if context.kind == "cross" and axis == "key":
+                continue
+            positive = spans[(axis, "image", "positive")]
+            middle = spans[(axis, "image", "middle")]
+            source, target = tensors
+            target[middle.batch_start : middle.batch_end, :, middle.start : middle.end] = source[
+                positive.batch_start : positive.batch_end, :, positive.start : positive.end
+            ]
+        return next_q, next_k, next_v
 
     def couple(output, context):
         import torch
@@ -52,11 +67,10 @@ def make(
             + output[bottom.batch_start : bottom.batch_end, :, bottom.start : bottom.end]
             * mask_bottom
         )
-        for span in (top, bottom):
-            current = output[span.batch_start : span.batch_end, :, span.start : span.end]
-            result[span.batch_start : span.batch_end, :, span.start : span.end] = current.lerp(
-                mixed, attention_strength
-            )
+        current = output[top.batch_start : top.batch_end, :, top.start : top.end]
+        result[top.batch_start : top.batch_end, :, top.start : top.end] = current.lerp(
+            mixed, attention_strength
+        )
         return result
 
     metadata = (
@@ -68,6 +82,20 @@ def make(
         attention=AttentionContribution(
             torch_version=torch_version,
             aimdo_version=aimdo_version,
+            qkv=(
+                AttentionQKVDescriptor(
+                    "proof_couple.unet.inputs",
+                    AttentionSelector("unet", kind="cross"),
+                    regional_qkv,
+                    behavior_metadata=metadata,
+                ),
+                AttentionQKVDescriptor(
+                    "proof_couple.flux.inputs",
+                    AttentionSelector("flux", kind="joint"),
+                    regional_qkv,
+                    behavior_metadata=metadata,
+                ),
+            ),
             outputs=(
                 AttentionOutputDescriptor(
                     "proof_couple.unet",
