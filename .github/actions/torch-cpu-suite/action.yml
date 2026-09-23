@@ -127,12 +127,10 @@ runs:
         print(f"torch {torch.__version__} ATen CPU capability: {capability}")
         assert capability == "AVX2", capability
         EOF
-        # Log the oneMKL CNR state actually engaged for GEMM. oneMKL is
-        # deliberately unpinned (MKL_CBWR unset), so CNR:OFF is expected;
-        # the engaged state is recorded for divergence forensics, not
-        # asserted. The probe itself must succeed - only the grep is
-        # non-asserting, so a probe failure fails the step instead of
-        # being masked.
+        # Log the oneMKL CNR state actually engaged for GEMM. Callers choose
+        # whether to pin MKL_CBWR; the engaged state is recorded for
+        # divergence forensics. The probe itself must succeed - only the grep
+        # is non-asserting, so a probe failure fails instead of being masked.
         MKL_VERBOSE=1 .venv-torch/bin/python -c "import torch; a = torch.randn(512, 512); b = a @ a" > "$RUNNER_TEMP/mkl-verbose.log" 2>&1
         grep -m1 -o 'CNR:[A-Z0-9_,]*' "$RUNNER_TEMP/mkl-verbose.log" || echo 'no MKL verbose GEMM line'
     - name: Test inference and IPAdapter

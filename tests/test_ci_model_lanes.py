@@ -4,7 +4,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -48,6 +50,19 @@ VISION_SUITES = (
     "packages/dinkster-nodes-vision/tests/test_depth_anything_v3.py",
     "packages/dinkster-nodes-vision/tests/test_sam31.py",
 )
+
+
+def _bash_executable() -> str:
+    if sys.platform != "win32":
+        return "bash"
+    git = shutil.which("git")
+    if git is not None:
+        bash = Path(git).parent.parent / "bin" / "bash.exe"
+        if bash.is_file():
+            return str(bash)
+    raise AssertionError("Git for Windows bash is unavailable")
+
+
 MODEL_GROUPS = (
     {
         "name": "inference and IPAdapter, shard 1 of 8",
@@ -289,6 +304,23 @@ def test_fork_pull_requests_use_hosted_runners_and_record_private_jobs_not_run()
         }
 
 
+def test_windows_bash_resolves_from_the_git_installation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git = tmp_path / "Git" / "cmd" / "git.exe"
+    bash = tmp_path / "Git" / "bin" / "bash.exe"
+    git.parent.mkdir(parents=True)
+    bash.parent.mkdir(parents=True)
+    git.touch()
+    bash.touch()
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        shutil, "which", lambda executable: str(git) if executable == "git" else None
+    )
+
+    assert _bash_executable() == str(bash)
+
+
 @pytest.mark.parametrize(
     ("force_not_run", "secret_value_1", "secret_value_2", "expected_available", "summary"),
     [
@@ -322,7 +354,7 @@ def test_private_dependency_check_reports_each_missing_secret(
     step_summary = tmp_path / "summary"
     result = subprocess.run(
         [
-            "bash",
+            _bash_executable(),
             "-e",
             "-o",
             "pipefail",
@@ -705,6 +737,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
     }
     assert job["env"] == {
         "ATEN_CPU_CAPABILITY": "avx2",
+        "MKL_CBWR": "COMPATIBLE",
         "ONEDNN_MAX_CPU_ISA": "AVX2",
         "OMP_NUM_THREADS": "4",
         "MKL_NUM_THREADS": "4",
@@ -791,7 +824,7 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
 
 def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> None:
     assert "engine-tests" not in PR_JOBS
-    assert JOBS["model-tests"]["timeout-minutes"] == 20
+    assert JOBS["model-tests"]["timeout-minutes"] == 30
     assert [row["group"] for row in MODEL_GROUPS].count("inference") == 8
     assert {row["pytest-args"] for row in MODEL_GROUPS if row["group"] == "inference"} == {
         f"-p tools.pytest_file_shard --file-shard {shard}/8" for shard in range(1, 9)
@@ -891,13 +924,13 @@ def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path
     assert status.stdout == ""
 
     subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", repair_commands],
+        [_bash_executable(), "-e", "-o", "pipefail", "-c", repair_commands],
         cwd=clone,
         check=True,
     )
     assert license_file.read_bytes() == lf_bytes
     subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", repair_commands],
+        [_bash_executable(), "-e", "-o", "pipefail", "-c", repair_commands],
         cwd=clone,
         check=True,
     )
@@ -1047,14 +1080,14 @@ def test_full_validation_pytest_and_demo_jobs_are_timeout_bounded() -> None:
         20,
         20,
         20,
-        20,
-        20,
+        30,
+        30,
     ]
     assert JOBS["p2p-descriptor-macos"]["timeout-minutes"] == 15
     assert JOBS["p2p-artifact-smoke"]["timeout-minutes"] == 15
     assert JOBS["torch-cpu"]["timeout-minutes"] == 20
-    assert JOBS["model-tests"]["timeout-minutes"] == 20
-    assert JOBS["coverage"]["timeout-minutes"] == 20
+    assert JOBS["model-tests"]["timeout-minutes"] == 30
+    assert JOBS["coverage"]["timeout-minutes"] == 30
     assert JOBS["coverage-gate"]["timeout-minutes"] == 5
     assert JOBS["translation-coverage"]["timeout-minutes"] == 15
     # A hung pytest run self-identifies the stuck test through pytest's
