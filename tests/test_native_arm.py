@@ -53,6 +53,7 @@ from dinkster_inference import (
     extend_runtime_identity,
     require_inference_component_handle,
 )
+from dinkster_memory import PageMap
 from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
 from dinkster_schema import MappingSource, build_node_types, build_schemas, schema_signature
 from dinkster_values import TypeRegistry, register_core_types
@@ -187,10 +188,10 @@ def test_dtype_policy_resolves_every_native_dispatch_family(family_id: str) -> N
     ("family_id", "expected"),
     (
         ("dinkster.flux_dev", ("float16", "float32", "float32")),
-        # Text falls back to float32, never float16, even for families
-        # whose bfloat16 diffusion default degrades to float16: T5-class
-        # RMS variance overflows at float16.
-        ("dinkster.minimax_h3", ("float16", "float32", "float16")),
+        # Generic T5-class bfloat16 defaults fall back to float32 because
+        # their RMS variance overflows at float16. H3 explicitly follows
+        # the reference's float16 conditioner policy instead.
+        ("dinkster.minimax_h3", ("float16", "float16", "float16")),
         ("dinkster.minimax_music3", ("float16", "float32", "float32")),
         ("dinkster.qwen_image", ("float16", "float32", "float16")),
         ("dinkster.sdxl", ("float16", "float32", "float32")),
@@ -213,7 +214,7 @@ def test_dtype_policy_auto_falls_back_when_hardware_lacks_native_bfloat16(
     (
         ("dinkster.flux_dev", ("bfloat16", "bfloat16", "bfloat16")),
         ("dinkster.sd15", ("float16", "float32", "bfloat16")),
-        ("dinkster.minimax_h3", ("bfloat16", "bfloat16", "float16")),
+        ("dinkster.minimax_h3", ("bfloat16", "float16", "float16")),
         ("dinkster.minimax_music3", ("bfloat16", "bfloat16", "float32")),
         ("dinkster.qwen_image", ("bfloat16", "bfloat16", "bfloat16")),
         ("dinkster.triposplat", ("bfloat16", "bfloat16", "float16")),
@@ -568,6 +569,7 @@ class FakeMechanism:
         self.working_set_events: list[str] = []
         self.release_working_buffers_calls = 0
         self.working_buffers_released = False
+        self.page_map_value: PageMap | None = None
 
     @property
     def demand_paged(self) -> bool:
@@ -583,6 +585,9 @@ class FakeMechanism:
 
     def offloaded_bytes(self) -> int:
         return self.total_bytes() - self.loaded_bytes()
+
+    def page_map(self) -> PageMap | None:
+        return self.page_map_value
 
     def working_set_reservation_bytes(self) -> int:
         return self.total_bytes()
@@ -8356,6 +8361,72 @@ def test_one_native_identity_has_one_cost_and_terminal_release_is_atomic() -> No
     for reference in (model, clip, vae):
         with pytest.raises(RuntimeError, match="terminally released"):
             reference.require_active()
+
+
+def test_native_details_aggregate_aimdo_page_maps() -> None:
+    from dinkster_compat_comfy import ResidentPool, comfy_resident_meta
+
+    arm = _native_arm()
+    handle = _handle(arm, _runtime())
+    mechanisms = cast(tuple[FakeMechanism, ...], handle.mechanisms)
+    mechanisms[0].page_map_value = PageMap(page_bytes=32 << 20, flags=(1, 0))
+    mechanisms[1].page_map_value = PageMap(page_bytes=32 << 20, flags=(3,))
+    pool = ResidentPool(cost_of=comfy_resident_meta)
+    pool.label(handle, "native.safetensors")
+    handle.attach_pool(pool)
+
+    (item,) = pool.details()
+
+    assert item.pages == PageMap(page_bytes=32 << 20, flags=(1, 0, 3))
+
+
+def test_native_details_query_page_maps_after_releasing_pool_lock() -> None:
+    from dinkster_compat_comfy import ResidentPool, comfy_resident_meta
+
+    arm = _native_arm()
+    handle = _handle(arm, _runtime())
+    mechanisms = cast(tuple[FakeMechanism, ...], handle.mechanisms)
+    pool = ResidentPool(cost_of=comfy_resident_meta)
+    pool.label(handle, "native.safetensors")
+    handle.attach_pool(pool)
+
+    def page_map() -> PageMap:
+        finished = threading.Event()
+
+        def read_pool() -> None:
+            pool.footprint("ram")
+            finished.set()
+
+        reader = threading.Thread(target=read_pool)
+        reader.start()
+        acquired = finished.wait(timeout=1)
+        if acquired:
+            reader.join()
+        assert acquired, "page-map query held the pool coordination lock"
+        return PageMap(page_bytes=32 << 20, flags=(1,))
+
+    mechanisms[0].page_map = page_map  # type: ignore[method-assign]
+
+    (item,) = pool.details()
+
+    assert item.pages == PageMap(page_bytes=32 << 20, flags=(1,))
+
+
+def test_native_details_omit_incompatible_page_geometry() -> None:
+    from dinkster_compat_comfy import ResidentPool, comfy_resident_meta
+
+    arm = _native_arm()
+    handle = _handle(arm, _runtime())
+    mechanisms = cast(tuple[FakeMechanism, ...], handle.mechanisms)
+    mechanisms[0].page_map_value = PageMap(page_bytes=32 << 20, flags=(1,))
+    mechanisms[1].page_map_value = PageMap(page_bytes=64 << 20, flags=(1,))
+    pool = ResidentPool(cost_of=comfy_resident_meta)
+    pool.label(handle, "native.safetensors")
+    handle.attach_pool(pool)
+
+    (item,) = pool.details()
+
+    assert item.pages is None
 
 
 def test_native_load_requires_context_and_identity(

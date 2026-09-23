@@ -70,6 +70,7 @@ _SUPPORT_PACKAGES = (
     "tqdm",
     "pillow",
     "packaging",
+    "tokenizers==0.23.1",
     _KITCHEN_REQUIREMENT,
 )
 
@@ -1034,6 +1035,7 @@ def validate_benchmark_report(
     *,
     accelerator: str,
     canonical_evidence: bool = False,
+    expected_comfyui_commit: str | None = None,
 ) -> tuple[str, ...]:
     """Problems that make an inference benchmark report unusable as evidence.
 
@@ -1125,10 +1127,12 @@ def validate_benchmark_report(
             comfyui = _as_mapping(fields.get("comfyui"))
             if comfyui is None:
                 problems.append(f"comfyui section missing for a ComfyUI {family_label} report")
-            elif comfyui.get("commit") != BENCHMARK_COMFYUI_COMMIT:
+            expected_commit = expected_comfyui_commit or BENCHMARK_COMFYUI_COMMIT
+            if comfyui is not None and comfyui.get("commit") != expected_commit:
+                requirement = "required" if expected_comfyui_commit is not None else "pinned"
                 problems.append(
-                    f"comfyui.commit is not the pinned {family_label} commit "
-                    f"{BENCHMARK_COMFYUI_COMMIT}"
+                    f"comfyui.commit is not the {requirement} {family_label} commit "
+                    f"{expected_commit}"
                 )
         if family == "anima":
             comfyui = _as_mapping(fields.get("comfyui"))

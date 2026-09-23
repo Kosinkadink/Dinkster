@@ -208,14 +208,14 @@ def _h3_component_plan(role: str) -> ComponentPlan[object]:
             "qwen3vl-32b-conditioner",
             "text_encoder",
             {"type": _value("minimax")},
-            BFLOAT16,
+            FLOAT16,
         ),
         (
             "dinkster.load_clip",
             "qwen3vl-32b-conditioner",
             "text_encoder",
             {"type": _value("wan")},
-            BFLOAT16,
+            FLOAT16,
         ),
         ("dinkster.load_vae", "video-vae", "vae", {}, FLOAT16),
         ("dinkster.load_vae", "audio-vae", "vae", {}, FLOAT32),
@@ -261,7 +261,7 @@ def test_generic_loader_selects_native_h3_component_with_plan_identity(
         dtype,
     )
     assert selection.diffusion_dtype == "unloaded"
-    assert selection.text_dtype == ("bfloat16" if node_type == "dinkster.load_clip" else "unloaded")
+    assert selection.text_dtype == ("float16" if node_type == "dinkster.load_clip" else "unloaded")
     assert selection.vae_dtype == (dtype.name if node_type == "dinkster.load_vae" else "unloaded")
 
 

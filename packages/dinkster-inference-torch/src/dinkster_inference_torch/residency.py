@@ -806,12 +806,16 @@ class _EagerWeightLease:
         if value is None:
             return None
         collector = self._collector
-        if collector is None:
-            self._transfer_hooks.consumer_wait_for_producer()
-        else:
-            with timed_phase(collector, EXPOSED_STALL, self._load_device):
+        capturing = self._load_device.type == "cuda" and torch.cuda.is_current_stream_capturing()
+        # Prefetch publishes its producer dependency on the consumer stream
+        # before capture starts. Recreating that edge during capture would
+        # make the graph depend on uncaptured work and invalidate it.
+        if not capturing:
+            if collector is None:
                 self._transfer_hooks.consumer_wait_for_producer()
-        self._used_transfer = True
+            else:
+                with timed_phase(collector, EXPOSED_STALL, self._load_device):
+                    self._transfer_hooks.consumer_wait_for_producer()
         self._materialized[cache_key] = value
         return value
 
@@ -1376,6 +1380,9 @@ class ResidentWeights:
                             else self._finish_cast(key, moved, dtype=dtype)
                         )
                     collector.count_prefetch(stored_nbytes(moved))
+            # CUDA graph side streams inherit this dependency through the
+            # required capture-stream wait on the current stream.
+            self._transfer_hooks.consumer_wait_for_producer()
             handle = _EagerPrefetch(self, tuple(staged))
             self._prefetched.update(staged)
             return handle

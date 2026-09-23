@@ -255,6 +255,7 @@ def default_component_registry() -> ComponentRegistry:
             conditioning_format="carrier",
             execution_resolver="dinkster_native.native_arm:resolve_minimax_h3_component_execution",
             native_load="dinkster_native.families.minimax_h3:load_component",
+            default_text_dtype=FLOAT16,
         ),
         _descriptor(
             catalog.ANIMA,

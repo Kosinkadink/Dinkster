@@ -75,6 +75,7 @@ from .minimax_h3_dit import (
 from .minimax_h3_video_vae import MiniMaxH3VideoVAE, MiniMaxH3VideoVAEConfig
 from .module_residency import declare_residency_materialization_ceilings
 from .operations import CastOperations, Operations, ResidencyRouted
+from .quant_linear import Fp8Linear, Int8Linear, Nvfp4Linear
 
 C = TypeVar("C")
 M = TypeVar("M", bound=torch.nn.Module)
@@ -539,6 +540,49 @@ def _load_verified_diffusion(
     return component
 
 
+_COMFYUI_MODEL_DTYPE_PROJECTION_KEYS = frozenset(
+    {
+        "video_patch_proj.weight",
+        "video_patch_proj.bias",
+        "audio_patch_proj.weight",
+        "audio_patch_proj.bias",
+        "time_embedder.proj_in.weight",
+        "time_embedder.proj_in.bias",
+        "time_embedder.proj_out.weight",
+        "time_embedder.proj_out.bias",
+        "final_layer.video_out.weight",
+        "final_layer.video_out.bias",
+        "final_layer.audio_out.weight",
+        "final_layer.audio_out.bias",
+    }
+)
+
+
+def _uses_comfyui_model_dtype(key: str, *, time_embedding_kind: str) -> bool:
+    return key in _COMFYUI_MODEL_DTYPE_PROJECTION_KEYS or (
+        time_embedding_kind == "mlp"
+        and key.endswith((".adaln_proj.linear.weight", ".adaln_proj.linear.bias"))
+        and (key.startswith("blocks.") or key.startswith("final_layer."))
+    )
+
+
+def _round_h3_projection_storage(
+    module: MiniMaxH3DiT,
+    state: dict[str, torch.Tensor],
+    *,
+    diffusion_dtype: torch.dtype,
+) -> dict[str, torch.Tensor]:
+    if diffusion_dtype is torch.float32:
+        return state
+    return {
+        key: tensor.to(diffusion_dtype)
+        if tensor.is_floating_point()
+        and _uses_comfyui_model_dtype(key, time_embedding_kind=module.time_embedding_kind)
+        else tensor
+        for key, tensor in state.items()
+    }
+
+
 def _build_diffusion(
     layout: MiniMaxH3DiTLayout,
     *,
@@ -547,15 +591,14 @@ def _build_diffusion(
 ) -> MiniMaxH3DiT:
     if layout.config != MINIMAX_H3_CONFIG:
         raise MiniMaxH3SplitAssemblyError("diffusion builder requires exact H3 layout")
-    # The patch projections and final layer compute at float32 over any
-    # storage (the DiT patchifies at float32), so their layers always
-    # own a float32 compute dtype. The component loader preserves
-    # explicitly float32-owned members instead of rounding them to the
-    # component compute dtype the way initless members round.
+    # The reference computes patch projections and the final layer at
+    # float32, while text projection and refinement use the selected
+    # diffusion dtype.
     fp32_operations = CastOperations(torch.float32)
     return assemble_minimax_h3_dit(
         operations=operations,
         fp32_operations=fp32_operations,
+        text_operations=operations,
         time_embedding_kind=layout.time_embedding_kind,
         attention_selection=attention_selection,
     )
@@ -651,8 +694,14 @@ def load_minimax_h3_component(
                 plan,
                 _build_conditioner,
                 verified,
-                compute_dtype=compute_dtype,
+                # ComfyUI loads the text encoder with float16 storage by
+                # default but hardcodes float32 embeddings and execution.
+                compute_dtype=torch.float32,
             )
+            for layer in module.modules():
+                if isinstance(layer, Fp8Linear | Int8Linear | Nvfp4Linear):
+                    layer.compute_dtype = torch.float32
+                    layer.full_precision_matmul = True
         elif expected_role == "video-vae":
             module = _load_verified_component(
                 plan,
@@ -732,6 +781,9 @@ def load_minimax_h3_model(
             artifact,
             compute_dtype=diffusion_dtype,
             attention_selection=attention_selection,
+            transform=lambda module, state: _round_h3_projection_storage(
+                module, state, diffusion_dtype=diffusion_dtype
+            ),
         )
     assembled = AssembledMiniMaxH3Model(
         diffusion,
