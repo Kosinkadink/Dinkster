@@ -1267,8 +1267,10 @@ def test_named_route_selects_stable_member_ids_per_iteration() -> None:
             "m[0]/route",
             "m[1]/right",
             "m[1]/route",
+            "m[2]/left",
+            "m[2]/route",
         ]
-        assert {"m[2]/left", "m[2]/route"} <= set(result.cached)
+        assert result.cached == ()
 
     asyncio.run(scenario())
 
@@ -2000,17 +2002,17 @@ def test_per_item_caching_reexecutes_only_changed_iterations() -> None:
     asyncio.run(scenario())
 
 
-def test_duplicate_items_coalesce_through_single_flight() -> None:
+def test_duplicate_items_execute_as_separate_iteration_occurrences() -> None:
     async def scenario() -> None:
         AddOne.ran.clear()
         engine = make_engine()
         result = await engine.run(Graph(nodes={"m": map_region(inputs={"item": [5, 5, 5]})}), ["m"])
-        assert AddOne.ran == [5]  # one real execution
+        assert AddOne.ran == [5, 5, 5]
         children = list_children(result.outputs["m"]["results"])
         assert children is not None
         assert [c.resolve() for c in children] == [6, 6, 6]
-        assert len(result.executed) == 1
-        assert len(result.cached) == 2  # coalesced or cache-hit iterations
+        assert len(result.executed) == 3
+        assert result.cached == ()
 
     asyncio.run(scenario())
 
@@ -2091,7 +2093,7 @@ def test_last_output_returns_final_value_or_typed_absence(items: list[int]) -> N
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize(("cache_policy", "calls_per_run"), [("reuse", 1), ("rerun", 3)])
+@pytest.mark.parametrize(("cache_policy", "calls_per_run"), [("reuse", 3), ("rerun", 3)])
 def test_region_cache_policy_applies_to_each_occurrence_across_runs(
     cache_policy: Literal["reuse", "rerun"], calls_per_run: int
 ) -> None:
@@ -2162,7 +2164,7 @@ def test_inner_reuse_overrides_outer_rerun() -> None:
     asyncio.run(scenario())
 
 
-def test_native_nested_reuse_scopes_identical_inputs_by_parent_occurrence() -> None:
+def test_native_nested_reuse_scopes_identical_inputs_by_iteration_occurrence() -> None:
     async def scenario() -> None:
         AddOne.ran.clear()
         engine = make_engine()
@@ -2183,9 +2185,9 @@ def test_native_nested_reuse_scopes_identical_inputs_by_parent_occurrence() -> N
 
         assert first.outputs["outer"]["rows"].resolve() == [[8, 8], [8, 8]]
         assert second.outputs["outer"]["rows"].resolve() == [[8, 8], [8, 8]]
-        assert AddOne.ran == [7, 7]
-        assert len(first.executed) == 2
-        assert len(first.cached) == 2
+        assert AddOne.ran == [7, 7, 7, 7]
+        assert len(first.executed) == 4
+        assert first.cached == ()
         assert second.executed == ()
         assert len(second.cached) == 4
 

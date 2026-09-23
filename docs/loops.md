@@ -20,8 +20,8 @@ skips the body and propagates absence to every output.
 Region body occurrences reuse ordinary cached results by default. A region may
 instead require rerun behavior, which bypasses cache reads, writes, and
 single-flight coalescing for every body occurrence. Nested regions apply their
-own policy; cached inner occurrences remain distinct per outer iteration and
-reuse that same occurrence across later workflow runs.
+own policy. Cached body occurrences remain distinct per loop iteration at every
+nesting level and reuse that same occurrence across later workflow runs.
 
 Ports are generic. The same region carries images, latents, conditioning,
 masks, audio, video, assets, strings, integers, floats, and pack-defined value

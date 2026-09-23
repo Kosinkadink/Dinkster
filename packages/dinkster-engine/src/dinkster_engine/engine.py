@@ -1296,10 +1296,9 @@ class Engine:
 
         ``prefix`` namespaces the node id in events, bookkeeping lists, and
         errors when this node runs inside a region iteration
-        (``region[3]/node``). Nodes in a nested region also carry their stable
-        parent occurrence as cache scope, matching explicit nested-loop
-        ancestry while still coalescing identical work within that occurrence
-        and across runs.
+        (``region[3]/node``). Every body node carries its stable iteration
+        occurrence as cache scope, matching loop ancestry while still reusing
+        that same occurrence across runs.
         """
         node = graph.nodes[node_id]
         assert isinstance(node, GraphNode), f"region {node_id!r} dispatched to _run_node"
@@ -2040,10 +2039,10 @@ class Engine:
         Every iteration's body nodes run through _run_node on the shared
         engine state, so caching, single-flight, admission, pins, and
         diagnostics behave exactly as at top level; iteration node ids are
-        namespaced ``region[3]/node``. A nested region scopes its body cache to
-        the parent occurrence; bindings still flow through ordinary input
+        namespaced ``region[3]/node``. Each iteration scopes its body cache to
+        that stable occurrence; bindings still flow through ordinary input
         fingerprints, so changing one list element re-executes only that
-        occurrence's dependents.
+        iteration's dependents.
         """
         label = prefix + node_id
         region_type = f"region:{region.kind}"
@@ -2226,7 +2225,7 @@ class Engine:
                     prefix=f"{label}[{index}]/",
                     targets=body_targets,
                     cache_enabled=region.cache_policy == "reuse",
-                    cache_scope=label if prefix else None,
+                    cache_scope=f"{label}[{index}]",
                 )
             except BaseException:
                 body_produced.clear()
