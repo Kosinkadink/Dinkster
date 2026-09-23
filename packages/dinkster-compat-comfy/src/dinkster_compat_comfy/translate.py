@@ -2348,7 +2348,7 @@ def _is_node_output(value: object) -> bool:
     shim (nodes.py registers them directly; classproperties fake
     INPUT_TYPES/RETURN_TYPES and FUNCTION names EXECUTE_NORMALIZED,
     which ALWAYS returns a NodeOutput - comfy_api/latest/_io.py
-    @ b78cec87), so the v1 wrapper must recognize the shape. Detection
+    @ b5cc8830), so the v1 wrapper must recognize the shape. Detection
     is by base-class name, mirroring execution.py's
     ``isinstance(r, _NodeOutputInternal)`` without importing ComfyUI -
     this module stays pure."""
@@ -2362,7 +2362,7 @@ def _is_execution_blocker(value: object) -> bool:
 
 def _unwrap_node_output(v1_name: str, output: object) -> tuple[object, ...]:
     """A V3 NodeOutput's positional results, as the v1 result tuple
-    (execution.py's V3 branch @ b78cec87: ``r.result`` or nothing).
+    (execution.py's V3 branch @ b5cc8830: ``r.result`` or nothing).
     ``ui`` is dropped exactly like the v1 ``{"ui": ..., "result": ...}``
     convention's ui half; expansion and execution-blocking have no
     compat equivalent and refuse loudly instead of misexecuting."""
