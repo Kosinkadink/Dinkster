@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, cast
 
@@ -486,6 +486,7 @@ class _ZImageDiffusionAssembly:
     family: ModelFamily
     diffusion: ZImage
     diffusion_dtype: torch.dtype
+    _storage_dtype_follows_compute: bool = field(default=False, repr=False, compare=False)
 
     def compute_dtype(self, component: str) -> torch.dtype | None:
         return self.diffusion_dtype if component == "diffusion" else None

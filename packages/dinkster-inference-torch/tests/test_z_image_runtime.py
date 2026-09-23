@@ -65,6 +65,7 @@ def test_diffusion_runtime_uses_latent_z_image_sampling_contract() -> None:
     assert runtime.family is Z_IMAGE
     assert runtime.assembled.diffusion is model
     assert runtime.assembled.compute_dtype("diffusion") is torch.bfloat16
+    assert not runtime.assembled._storage_dtype_follows_compute  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(ZImageRuntimeError, match="no text encoder"):
         runtime.encode_text("prompt")
     with pytest.raises(ZImageRuntimeError, match="no codec"):
