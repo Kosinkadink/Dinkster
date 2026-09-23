@@ -1,9 +1,9 @@
 """The engine loop: plan, resolve, cache-check, invoke, store.
 
 Location-agnostic by construction: the only way node code runs is
-Worker.invoke (hazard H3), and cache keys derive only from schema signature
-plus input fingerprints (hazard H4), so entries are shareable across
-processes and machines.
+Worker.invoke (hazard H3), and cache keys derive from schema signature, input
+fingerprints, and any structural region occurrence scope (hazard H4), so
+entries are shareable across processes and machines.
 
 Parallel by construction (hazard H12): the plan is a DAG and the scheduler
 is ready-set - every node whose dependencies are satisfied dispatches
@@ -888,8 +888,11 @@ class Engine:
         inputs: Mapping[str, Value],
         selection: ExecutionSelection | None = None,
         connected_undemanded_inputs: tuple[str, ...] | None = None,
+        cache_scope: str | None = None,
     ) -> str:
         parts: list[bytes] = [signature.encode("utf-8")]
+        if cache_scope is not None:
+            parts.extend((b"region-occurrence", cache_scope.encode("utf-8")))
         behavior_hash = self._runtime().extension_behavior_hash
         if behavior_hash is not None:
             parts.append(b"extensions")
@@ -1279,6 +1282,7 @@ class Engine:
         prefix: str = "",
         ensure_node: Callable[[str], Awaitable[None]] | None = None,
         cache_enabled: bool = True,
+        cache_scope: str | None = None,
     ) -> None:
         """Produce one node's outputs: coalesce, hit cache, or invoke.
 
@@ -1292,9 +1296,10 @@ class Engine:
 
         ``prefix`` namespaces the node id in events, bookkeeping lists, and
         errors when this node runs inside a region iteration
-        (``region[3]/node``). It never touches cache keys: cache identity is
-        schema signature + input fingerprints, so identical work coalesces
-        across iterations, regions, and runs alike.
+        (``region[3]/node``). Nodes in a nested region also carry their stable
+        parent occurrence as cache scope, matching explicit nested-loop
+        ancestry while still coalescing identical work within that occurrence
+        and across runs.
         """
         node = graph.nodes[node_id]
         assert isinstance(node, GraphNode), f"region {node_id!r} dispatched to _run_node"
@@ -1492,6 +1497,7 @@ class Engine:
             inputs,
             selection,
             connected_undemanded_inputs,
+            cache_scope,
         )
         previous_components = (
             self._remember_key_components(
@@ -1809,6 +1815,7 @@ class Engine:
         prefix: str = "",
         targets: Sequence[str] | None = None,
         cache_enabled: bool = True,
+        cache_scope: str | None = None,
     ) -> None:
         """Ready-set scheduler over one DAG level (hazard H12): dispatch
         every node whose dependencies are satisfied; completions release
@@ -1858,6 +1865,7 @@ class Engine:
                     prefix,
                     _ProducedReferences(deps, initial_targets, produced),
                     cache_enabled,
+                    cache_scope,
                 )
             except BaseException:
                 produced.clear()
@@ -1920,6 +1928,7 @@ class Engine:
                     prefix,
                     ensure_node,
                     cache_enabled,
+                    cache_scope,
                 )
             references.finished(node_id)
 
@@ -1957,6 +1966,7 @@ class Engine:
         prefix: str,
         references: _ProducedReferences,
         cache_enabled: bool,
+        cache_scope: str | None,
     ) -> None:
         """Original ready-set scheduler for graphs without deferred edges."""
         dependents: dict[str, list[str]] = {node_id: [] for node_id in deps}
@@ -1995,6 +2005,7 @@ class Engine:
                     export_snapshot,
                     prefix,
                     cache_enabled=cache_enabled,
+                    cache_scope=cache_scope,
                 )
             references.finished(node_id)
             for dependent in dependents[node_id]:
@@ -2029,10 +2040,10 @@ class Engine:
         Every iteration's body nodes run through _run_node on the shared
         engine state, so caching, single-flight, admission, pins, and
         diagnostics behave exactly as at top level; iteration node ids are
-        namespaced ``region[3]/node``. Cache identity needs no
-        region-specific bookkeeping: each iteration's bindings flow into
-        body-node input fingerprints, so changing one list element re-executes
-        only that iteration's dependents.
+        namespaced ``region[3]/node``. A nested region scopes its body cache to
+        the parent occurrence; bindings still flow through ordinary input
+        fingerprints, so changing one list element re-executes only that
+        occurrence's dependents.
         """
         label = prefix + node_id
         region_type = f"region:{region.kind}"
@@ -2215,6 +2226,7 @@ class Engine:
                     prefix=f"{label}[{index}]/",
                     targets=body_targets,
                     cache_enabled=region.cache_policy == "reuse",
+                    cache_scope=label if prefix else None,
                 )
             except BaseException:
                 body_produced.clear()

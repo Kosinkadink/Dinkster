@@ -2135,7 +2135,7 @@ def test_inner_reuse_overrides_outer_rerun() -> None:
                 }
             ),
             ports={"row": TypeExpr.list_of(INT)},
-            inputs={"row": [[7, 7], [7, 7]]},
+            inputs={"row": [[0, 1], [0, 1]]},
             element_ports=("row",),
             outputs={
                 "rows": RegionOutput(Link("inner", "results")),
@@ -2148,15 +2148,15 @@ def test_inner_reuse_overrides_outer_rerun() -> None:
         first = await engine.run(graph, ["outer"])
         second = await engine.run(graph, ["outer"])
 
-        assert first.outputs["outer"]["rows"].resolve() == [[8, 8], [8, 8]]
-        assert second.outputs["outer"]["rows"].resolve() == [[8, 8], [8, 8]]
+        assert first.outputs["outer"]["rows"].resolve() == [[1, 2], [1, 2]]
+        assert second.outputs["outer"]["rows"].resolve() == [[1, 2], [1, 2]]
         assert first.outputs["outer"]["outer_probes"].resolve() == [100, 101]
         assert second.outputs["outer"]["outer_probes"].resolve() == [100, 101]
-        assert AddOne.ran == [7]
+        assert sorted(AddOne.ran) == [0, 0, 1, 1]
         assert sorted(AddPair.calls) == [(0, 100), (0, 100), (1, 100), (1, 100)]
-        assert len(first.executed) == 3
+        assert len(first.executed) == 6
         assert len(second.executed) == 2
-        assert len(first.cached) == 3
+        assert first.cached == ()
         assert len(second.cached) == 4
 
     asyncio.run(scenario())
