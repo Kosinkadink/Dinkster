@@ -1278,6 +1278,7 @@ class Engine:
         export_snapshot: ExportSnapshot | None,
         prefix: str = "",
         ensure_node: Callable[[str], Awaitable[None]] | None = None,
+        cache_enabled: bool = True,
     ) -> None:
         """Produce one node's outputs: coalesce, hit cache, or invoke.
 
@@ -1504,7 +1505,7 @@ class Engine:
             if self._explain_misses
             else None
         )
-        use_cache = not lazy_consumer or schema.idempotent
+        use_cache = cache_enabled and (not lazy_consumer or schema.idempotent)
 
         while use_cache and (inflight := self._inflight.get(key)) is not None:
             try:
@@ -1807,6 +1808,7 @@ class Engine:
         export_snapshot: ExportSnapshot | None,
         prefix: str = "",
         targets: Sequence[str] | None = None,
+        cache_enabled: bool = True,
     ) -> None:
         """Ready-set scheduler over one DAG level (hazard H12): dispatch
         every node whose dependencies are satisfied; completions release
@@ -1855,6 +1857,7 @@ class Engine:
                     export_snapshot,
                     prefix,
                     _ProducedReferences(deps, initial_targets, produced),
+                    cache_enabled,
                 )
             except BaseException:
                 produced.clear()
@@ -1900,6 +1903,7 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
+                    cache_enabled=cache_enabled,
                 )
             else:
                 await self._run_node(
@@ -1916,6 +1920,7 @@ class Engine:
                     export_snapshot,
                     prefix,
                     ensure_node,
+                    cache_enabled,
                 )
             references.finished(node_id)
 
@@ -1952,6 +1957,7 @@ class Engine:
         export_snapshot: ExportSnapshot | None,
         prefix: str,
         references: _ProducedReferences,
+        cache_enabled: bool,
     ) -> None:
         """Original ready-set scheduler for graphs without deferred edges."""
         dependents: dict[str, list[str]] = {node_id: [] for node_id in deps}
@@ -1974,6 +1980,7 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
+                    cache_enabled=cache_enabled,
                 )
             else:
                 await self._run_node(
@@ -1989,6 +1996,7 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
+                    cache_enabled=cache_enabled,
                 )
             references.finished(node_id)
             for dependent in dependents[node_id]:
@@ -2016,6 +2024,7 @@ class Engine:
         pinned: list[str],
         export_snapshot: ExportSnapshot | None,
         prefix: str = "",
+        cache_enabled: bool = True,
     ) -> None:
         """Expand one region (DESIGN 3.13): the single repetition primitive
         under the map/fold/while profiles.
@@ -2178,6 +2187,7 @@ class Engine:
             for out_id, out in region.outputs.items()
             if out.mode in ("gather", "compact", "flatten")
         }
+        last_values: dict[str, Value] = {}
 
         async def run_iteration(
             index: int,
@@ -2207,6 +2217,7 @@ class Engine:
                     export_snapshot,
                     prefix=f"{label}[{index}]/",
                     targets=body_targets,
+                    cache_enabled=cache_enabled and region.cache_policy == "reuse",
                 )
             except BaseException:
                 body_produced.clear()
@@ -2224,6 +2235,8 @@ class Engine:
             for out_id, out in region.outputs.items():
                 if out.mode in ("gather", "compact", "flatten"):
                     gathered[out_id].append(source_value(body_produced, out.source))
+                elif out.mode == "last":
+                    last_values[out_id] = source_value(body_produced, out.source)
 
         def advance_state(body_produced: Mapping[str, Mapping[str, Value]]) -> None:
             for out_id, out in region.outputs.items():
@@ -2304,6 +2317,17 @@ class Engine:
         for out_id, out in region.outputs.items():
             if out.mode == "state":
                 outputs[out_id] = state[out_id]
+                continue
+            if out.mode == "last":
+                if out_id in last_values:
+                    outputs[out_id] = last_values[out_id]
+                else:
+                    output_type = interface[out_id]
+                    outputs[out_id] = make_absent_value(
+                        origin=f"{label}/{out_id}",
+                        reason="region completed zero iterations",
+                        stands_for=(None if output_type is None else output_type.runtime_type_id()),
+                    )
                 continue
             if out.mode not in ("gather", "compact", "flatten"):  # pragma: no cover
                 raise region_error(f"output '{out_id}' has unknown mode {out.mode!r}")

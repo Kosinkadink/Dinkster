@@ -180,7 +180,7 @@ def _interface_pass(
                 inner = _body_output_type(node, data, out.source)
                 if inner is None:
                     interface[out_id] = None
-                elif out.mode == "flatten":
+                elif out.mode in ("flatten", "last"):
                     interface[out_id] = inner
                 else:
                     interface[out_id] = TypeExpr.list_of(inner)
@@ -261,7 +261,7 @@ def region_interface(
     region: RegionNode, schemas: Mapping[str, NodeSchema]
 ) -> dict[str, TypeExpr | None]:
     """A region's declared output types as seen from the outer graph:
-    ``list<T>`` for gather and compact outputs, the body ``list<T>`` for
+    ``list<T>`` for gather and compact outputs, the body type for last and
     flatten outputs, and the port type for state outputs. None for outputs
     whose body-side type cannot be resolved (a validation error the document
     already carries). The engine uses this for empty collections and absent
@@ -805,14 +805,23 @@ def _validate_region(
                 where,
             )
         )
+    if region.cache_policy not in ("reuse", "rerun"):
+        diags.append(
+            Diagnostic(
+                "error",
+                "unknown-cache-policy",
+                f"unknown cache policy {region.cache_policy!r}; expected reuse or rerun",
+                where,
+            )
+        )
     for out_id, out in region.outputs.items():
-        if out.mode not in ("gather", "compact", "state", "flatten"):
+        if out.mode not in ("gather", "compact", "state", "flatten", "last"):
             diags.append(
                 Diagnostic(
                     "error",
                     "unknown-output-mode",
                     f"region output '{out_id}' has unknown mode {out.mode!r}; "
-                    "expected gather, compact, state, or flatten",
+                    "expected gather, compact, state, flatten, or last",
                     where,
                     out_id,
                 )
@@ -864,8 +873,6 @@ def _validate_region(
     elif region.kind == "fold":
         if not region.element_ports:
             shape_error("fold region requires at least one element port")
-        if not region.state_ports:
-            shape_error("fold region requires at least one state port")
         if region.continue_source is not None:
             shape_error("fold region declares a continue source; use a while region")
     elif region.kind == "while":
@@ -926,12 +933,17 @@ def _validate_region(
         src_type = _body_output_type(region, data, out.source)
         if src_type is None:
             continue  # body-side problem, reported there
-        if out.mode in ("gather", "compact"):
-            # Gather builds list values (including empty ones for zero
-            # iterations), so the element type must be runtime-resolvable -
-            # the same rule as literals and worker outputs.
+        if out.mode in ("gather", "compact", "last"):
+            # Gather constructs a typed list and last constructs typed absence
+            # for zero iterations, so the body type must be runtime-resolvable.
             if src_type.runtime_type_id() is None:
-                mode_name = "compact gather" if out.mode == "compact" else "gather"
+                mode_name = (
+                    "compact gather"
+                    if out.mode == "compact"
+                    else "last"
+                    if out.mode == "last"
+                    else "gather"
+                )
                 diags.append(
                     Diagnostic(
                         "error",

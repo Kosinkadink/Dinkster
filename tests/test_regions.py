@@ -51,6 +51,7 @@ from dinkster_schema import (
 )
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
+    ABSENT_STANDS_FOR_META_KEY,
     TypeRegistry,
     is_absent,
     list_children,
@@ -485,11 +486,31 @@ def test_compact_output_wire_roundtrip() -> None:
     assert graph_from_wire(wire) == graph
 
 
+def test_last_output_and_rerun_cache_policy_wire_roundtrip() -> None:
+    region = map_region(
+        outputs={"result": RegionOutput(Link("add", "out"), mode="last")},
+        cache_policy="rerun",
+    )
+    graph = Graph(nodes={"m": region})
+    wire = graph_to_wire(graph)
+    region_wire = wire["nodes"]["m"]["region"]
+    assert region_wire["outputs"]["result"]["mode"] == "last"
+    assert region_wire["cachePolicy"] == "rerun"
+    assert graph_from_wire(wire) == graph
+
+
+def test_reuse_cache_policy_is_omitted_on_wire() -> None:
+    wire = graph_to_wire(Graph(nodes={"m": map_region()}))
+    assert "cachePolicy" not in wire["nodes"]["m"]["region"]
+    assert graph_from_wire(wire).nodes["m"].cache_policy == "reuse"  # type: ignore[union-attr]
+
+
 @pytest.mark.parametrize(
     ("mutate", "match"),
     [
         ({"kind": "loop"}, "unknown kind"),
         ({"binding": "diagonal"}, "unknown binding"),
+        ({"cachePolicy": "sometimes"}, "cache policy"),
         ({"maxIterations": True}, "maxIterations"),
         ({"maxIterations": "5"}, "maxIterations"),
         ({"elementPorts": "item"}, "elementPorts"),
@@ -565,11 +586,13 @@ def test_invalid_direct_region_modes_have_named_diagnostics() -> None:
             )
         },
         binding=cast(BindingMode, "pairwise"),
+        cache_policy=cast(Literal["reuse", "rerun"], "sometimes"),
     )
     found = codes(Graph(nodes={"bad": region}), ["bad"])
     assert {
         "unknown-region-kind",
         "unknown-binding-mode",
+        "unknown-cache-policy",
         "unknown-output-mode",
     } <= found.keys()
 
@@ -656,6 +679,17 @@ def test_kind_profiles_are_enforced() -> None:
     for binding in ("cross", "broadcast"):
         bound_while = while_region(binding=cast("BindingMode", binding))
         assert "region-shape" in codes(Graph(nodes={"w": bound_while}), ["w"])
+
+
+def test_stateless_fold_is_valid() -> None:
+    region = fold_region(
+        body=Graph(nodes={"add": GraphNode("test.add_one", {"value": port("item")})}),
+        ports={"item": INT},
+        inputs={"item": [1, 2, 3]},
+        state_ports=(),
+        outputs={"results": RegionOutput(Link("add", "out"))},
+    )
+    assert not has_errors(validate(Graph(nodes={"f": region}), schemas(), ["f"]))
 
 
 def test_state_chain_must_close() -> None:
@@ -2008,6 +2042,77 @@ def test_region_index_participates_in_cache_identity_when_consumed() -> None:
         assert AddPair.calls == []
         assert second.executed == ()
         assert sorted(second.cached) == ["m[0]/add", "m[1]/add", "m[2]/add"]
+
+    asyncio.run(scenario())
+
+
+def test_stateless_fold_executes_in_iteration_order() -> None:
+    async def scenario() -> None:
+        AddPair.calls.clear()
+        region = RegionNode(
+            kind="fold",
+            body=Graph(
+                nodes={
+                    "add": GraphNode(
+                        "test.add_pair",
+                        {"a": port("item"), "b": port(REGION_INDEX_PORT_ID)},
+                    )
+                }
+            ),
+            ports={"item": INT},
+            inputs={"item": [30, 10, 20]},
+            element_ports=("item",),
+            outputs={"results": RegionOutput(Link("add", "out"))},
+        )
+        result = await make_engine().run(Graph(nodes={"f": region}), ["f"])
+        assert AddPair.calls == [(30, 0), (10, 1), (20, 2)]
+        assert result.outputs["f"]["results"].resolve() == [30, 11, 22]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("items", [[4, 8, 15], []])
+def test_last_output_returns_final_value_or_typed_absence(items: list[int]) -> None:
+    async def scenario() -> None:
+        region = map_region(
+            inputs={"item": items},
+            outputs={"result": RegionOutput(Link("add", "out"), mode="last")},
+        )
+        result = await make_engine().run(Graph(nodes={"m": region}), ["m"])
+        output = result.outputs["m"]["result"]
+        if items:
+            assert output.resolve() == 16
+            assert output.type_id == "core.int"
+        else:
+            assert is_absent(output)
+            assert output.meta.get(ABSENT_ORIGIN_META_KEY) == "m/result"
+            assert output.meta.get(ABSENT_STANDS_FOR_META_KEY) == "core.int"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("cache_policy", "calls_per_run"), [("reuse", 1), ("rerun", 3)])
+def test_region_cache_policy_applies_to_each_occurrence_across_runs(
+    cache_policy: Literal["reuse", "rerun"], calls_per_run: int
+) -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        engine = make_engine()
+        region = map_region(inputs={"item": [7, 7, 7]}, cache_policy=cache_policy)
+        graph = Graph(nodes={"m": region})
+
+        first = await engine.run(graph, ["m"])
+        assert first.outputs["m"]["results"].resolve() == [8, 8, 8]
+        assert len(AddOne.ran) == calls_per_run
+
+        second = await engine.run(graph, ["m"])
+        assert second.outputs["m"]["results"].resolve() == [8, 8, 8]
+        assert len(AddOne.ran) == calls_per_run * (1 if cache_policy == "reuse" else 2)
+        if cache_policy == "reuse":
+            assert len(second.cached) == 3
+        else:
+            assert second.cached == ()
+            assert len(second.executed) == 3
 
     asyncio.run(scenario())
 
