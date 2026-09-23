@@ -101,3 +101,9 @@
   nodes and nested regions neither prepare nor execute.
   Each body exposes its immediate zero-based `$region.index`; an explicitly
   declared `index` port keeps its declared meaning for graph compatibility.
+  Images, latents, conditioning, masks, audio, video, assets, strings,
+  integers, floats, and pack-defined values use the same generic region path.
+  Expansion and per-iteration start/completion events expose real occurrence
+  progress. The foundation template catalog includes executable map, gather,
+  fold/scan, while/until, and per-item image-spawn workflows. See
+  [Loop regions](../loops.md).
