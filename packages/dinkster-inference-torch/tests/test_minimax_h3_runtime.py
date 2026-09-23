@@ -165,10 +165,11 @@ class FakeDiT:
         *,
         conditioning: MiniMaxH3DiTConditioning,
         sigmas: MiniMaxH3Sigmas,
+        sampler_sigmas: tuple[float, ...] | None = None,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
         attention_kernel_factory: MiniMaxH3AttentionKernelFactory | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
-        del context, conditioning
+        del context, conditioning, sampler_sigmas
         self.calls.append((sigma, sigmas))
         self.denoise_masks.append(denoise_mask)
         if attention_kernel_factory is not None:
@@ -1064,9 +1065,10 @@ class ContextMeanDiT:
         *,
         conditioning: MiniMaxH3DiTConditioning,
         sigmas: MiniMaxH3Sigmas,
+        sampler_sigmas: tuple[float, ...] | None = None,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
-        del sigma, conditioning, sigmas, denoise_mask
+        del sigma, conditioning, sigmas, sampler_sigmas, denoise_mask
         velocity = float(context.mean())
         self.calls.append(velocity)
         self.input_dtypes.append(value.by_role("video").dtype)

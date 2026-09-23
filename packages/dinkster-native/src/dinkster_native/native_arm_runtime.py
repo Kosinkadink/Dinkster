@@ -1227,6 +1227,14 @@ def _logical_lora_key_map(
         if not isinstance(hidden_width, int) or hidden_width <= 0:
             raise RuntimeError("native Z-Image runtime has no valid hidden width")
         key_map.update(inference.z_image_diffusers_key_map(diffusion_keys, hidden_width))
+    if handle.recipe.family_id == inference.MINIMAX_H3_CONFIG.family_id:
+        key_map.update(
+            {
+                key.removeprefix("diffusion_model.").removesuffix(".weight"): key
+                for key in diffusion_keys
+                if key.endswith(".weight")
+            }
+        )
     clip_keys: list[str] = []
     for component, logical_component in (
         ("clip_l", "clip_l"),

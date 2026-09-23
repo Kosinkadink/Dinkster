@@ -4706,6 +4706,33 @@ def test_native_lora_key_map_adds_z_image_diffusers_aliases() -> None:
     )
 
 
+def test_native_lora_key_map_adds_minimax_h3_direct_stems() -> None:
+    arm = _native_arm()
+    inference = importlib.import_module("dinkster_inference")
+
+    class MiniMaxH3Module:
+        config = inference.MINIMAX_H3_CONFIG
+
+        def state_dict(self) -> dict[str, object]:
+            return {
+                "blocks.0.attn.qkv_proj.weight": object(),
+                "final_layer.video_out.weight": object(),
+            }
+
+    handle = SimpleNamespace(
+        recipe=SimpleNamespace(family_id=inference.MINIMAX_H3_CONFIG.family_id),
+        runtime=SimpleNamespace(assembled=SimpleNamespace(diffusion=MiniMaxH3Module())),
+    )
+
+    key_map = arm._logical_lora_key_map(inference, handle)
+
+    assert key_map["blocks.0.attn.qkv_proj"] == "diffusion_model.blocks.0.attn.qkv_proj.weight"
+    assert (
+        key_map["final_layer.video_out"]
+        == "diffusion_model.final_layer.video_out.weight"
+    )
+
+
 def test_native_lora_execution_mode_schema_is_explicit_and_backwards_compatible() -> None:
     arm = _native_arm()
     for node in (arm.NativeLoadLora, arm.NativeLoadLoraModelOnly):
