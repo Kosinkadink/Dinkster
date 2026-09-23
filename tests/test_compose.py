@@ -1440,19 +1440,19 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:136426543185952dec319b9af35009b28eb1fb1d0b4386c001056c46478eb77a",
+            "blake3:f8e87d7d507590769afe1c76f128d7410e9e0b625dedee2b272bc83b770905d9",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:734304540eef1cd98f76b6111ae8f0d7c0b81c7323c36174cb710b7d9ca4e4f4",
+            "blake3:4911a73305964d86c96def41d10b0f8b9e0078aa8f38b37983f8653ac39ab3a0",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:134ddbf3f2d650ead1a1aa3c50d0a564bfff50a02e3c0cabf08ae01b96189e04",
+            "blake3:72dc0f8618226593ff28f99a1fad3bfc136d56e8c1cfaec9242878c01e3b062f",
         ),
         (
             "dinkster-nodes-remote",
-            "blake3:4685f09942fd5d6a3d85bb559f42fd99d69484dd8f6253f5dda0f2a1c3e7be39",
+            "blake3:ca746c5c353999f50d8fe650160837c189f56b4ea72f3e52c0074bb421249086",
         ),
     ],
 )
@@ -1633,7 +1633,7 @@ def test_default_pack_uses_embedded_wheel_artifact(
     shutil.copy2(source / "dinkster-pack.toml", bundled)
     shutil.copy2(source / "comfy-aliases.json", bundled.parent / "comfy-aliases.json")
     shutil.copytree(
-        source / "src/dinkster_nodes_media_io", bundled.parent / "dinkster_nodes_media_io"
+        source / "src/dinkster_nodes_media_io", bundled.parent / "src/dinkster_nodes_media_io"
     )
     for filename in compose._PACK_ARTIFACT_SIDECARS:
         sidecar = source / filename
@@ -1763,13 +1763,29 @@ def test_installed_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
     bundled = tmp_path / "dinkster_nodes_image_pack"
     bundled.mkdir()
     shutil.copy2(source / "dinkster-pack.toml", bundled / "dinkster-pack.toml")
-    shutil.copytree(source / "src/dinkster_nodes_image", bundled / "dinkster_nodes_image")
+    shutil.copytree(source / "src/dinkster_nodes_image", bundled / "src/dinkster_nodes_image")
     for filename in compose._PACK_ARTIFACT_SIDECARS:
         shutil.copy2(source / filename, bundled / filename)
 
     source_digest = compose._installed_pack_digest(
         source / "dinkster-pack.toml", source / "src/dinkster_nodes_image"
     )
+    bundled_digest = compose._installed_pack_digest(bundled / "dinkster-pack.toml", None)
+
+    assert source_digest == bundled_digest
+
+
+def test_installed_vision_pack_digest_matches_bundled_artifact(tmp_path: Path) -> None:
+    from dinkster import compose
+
+    source = Path(__file__).parent.parent / "packages/dinkster-nodes-vision"
+    manifest = source / "dinkster_vision_hed_pack/dinkster-pack.toml"
+    module = source / "src/dinkster_nodes_vision/hed"
+    bundled = tmp_path / "dinkster_vision_hed_pack"
+    shutil.copytree(manifest.parent, bundled)
+    shutil.copytree(module, bundled / "src/dinkster_nodes_vision/hed")
+
+    source_digest = compose._installed_pack_digest(manifest, module)
     bundled_digest = compose._installed_pack_digest(bundled / "dinkster-pack.toml", None)
 
     assert source_digest == bundled_digest
@@ -1783,7 +1799,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:da3d4f989afa330e68c479afac8bdc13a5a6df878f56cbf38d0444f1fabd2019")
+    assert expected == ("blake3:43bd98a9d7fc6b4e7ce56437bdd733460bbed5e819ed329a20d18601d299be0a")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))

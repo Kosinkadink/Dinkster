@@ -1247,11 +1247,16 @@ def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
             root = temporary / "artifact"
             root.mkdir()
             shutil.copy2(manifest, root / "dinkster-pack.toml")
+            source_root = root / "src"
             if module_root.parent.name == "dinkster_nodes_vision":
-                namespace = root / module_root.parent.name
-                namespace.mkdir()
+                namespace = source_root / module_root.parent.name
+                namespace.mkdir(parents=True)
                 bundled_namespace = manifest.parent / module_root.parent.name
-                shutil.copy2(bundled_namespace / "__init__.py", namespace / "__init__.py")
+                installed_namespace = root / module_root.parent.name
+                installed_namespace.mkdir()
+                shutil.copy2(
+                    bundled_namespace / "__init__.py", installed_namespace / "__init__.py"
+                )
                 shutil.copytree(module_root, namespace / module_root.name)
                 for sidecar in manifest.parent.iterdir():
                     if sidecar.is_file() and sidecar != manifest:
@@ -1260,7 +1265,7 @@ def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
                         if sidecar.name.endswith("_LICENSE"):
                             target.write_bytes(target.read_bytes().replace(b"\r\n", b"\n"))
             else:
-                shutil.copytree(module_root, root / module_root.name)
+                shutil.copytree(module_root, source_root / module_root.name)
             for filename in _PACK_ARTIFACT_SIDECARS:
                 sidecar = manifest.parent / filename
                 if sidecar.is_file():
