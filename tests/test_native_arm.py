@@ -6036,6 +6036,7 @@ def test_enrolled_mechanisms_require_every_runtime_role() -> None:
 def test_native_runtime_handle_accepts_an_independent_diffusion_model() -> None:
     arm = _native_arm()
     recipe = _recipe()
+    manager = FakeManager()
     runtime = SimpleNamespace(
         assembled=SimpleNamespace(diffusion=FakeModule(40)),
         runtime_identity=recipe.runtime_identity,
@@ -6045,13 +6046,61 @@ def test_native_runtime_handle_accepts_an_independent_diffusion_model() -> None:
         runtime,
         FakeDevice("cuda:0"),
         recipe=recipe,
-        coordinator=_coordinator(arm),
+        coordinator=_coordinator(arm, manager),
         _torch_module=FakeTorch(cuda=True),
         _enroll_assembled=_fake_enroll_assembled,
     )
 
-    with handle.stage("diffusion"):
+    assert tuple(source.role for source in recipe.sources) == ("checkpoint",)
+    assert not handle.has_residency_stage("text")
+    unload_before = arm._diffusion_unload_roles(handle)
+    with handle.stage("diffusion", unload_before=unload_before):
         assert len(handle.mechanisms) == 1
+    assert unload_before == ()
+    assert manager.loads == [((handle.mechanisms[0],), 0, False)]
+
+
+def test_checkpoint_runtime_unloads_enrolled_text_before_diffusion() -> None:
+    arm = _native_arm()
+    runtime = _runtime()
+    manager = FakeManager()
+    enrolled = _fake_enroll_assembled(
+        runtime.assembled,
+        load_device=FakeDevice("cuda:0"),
+        offload_device=FakeDevice("cpu"),
+    )
+    handle = arm.NativeRuntimeHandle(
+        runtime,
+        FakeDevice("cuda:0"),
+        recipe=_recipe(),
+        coordinator=_coordinator(arm, manager),
+        _torch_module=FakeTorch(cuda=True),
+        _enroll_assembled=lambda *_args, **_kwargs: enrolled,
+    )
+
+    with handle.stage("text"):
+        pass
+    assert handle.has_residency_stage("text")
+    unload_before = arm._diffusion_unload_roles(handle)
+    with handle.stage("diffusion", unload_before=unload_before):
+        pass
+
+    assert unload_before == ("text",)
+    assert enrolled["clip_l"].unload_calls == 1
+    assert manager.empty_cache_calls == [FakeDevice("cuda:0")]
+    assert manager.loads[-1][0] == (enrolled["diffusion"],)
+
+
+def test_native_runtime_unknown_unload_stage_stays_fail_loud() -> None:
+    arm = _native_arm()
+    runtime = _runtime()
+    manager = FakeManager()
+    handle = _handle(arm, runtime, coordinator=_coordinator(arm, manager))
+
+    with pytest.raises(ValueError, match="unknown native runtime stage 'unrelated'"):
+        with handle.stage("diffusion", unload_before=("unrelated",)):
+            pytest.fail("unknown unload stage must not enter diffusion")
+    assert manager.loads == []
 
 
 def test_runtime_without_residency_policy_uses_unchanged_classic_roles() -> None:
