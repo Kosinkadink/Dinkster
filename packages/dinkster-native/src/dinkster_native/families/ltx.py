@@ -749,6 +749,24 @@ def _ltxv_media_output(
     return result
 
 
+def _split_ltxv_component_binding(
+    positive: object, negative: object, inference: Any
+) -> tuple[object, object, object | None]:
+    positive_carrier, positive_binding = inference.split_component_conditioning(positive)
+    negative_carrier, negative_binding = inference.split_component_conditioning(negative)
+    if positive_binding != negative_binding:
+        raise ValueError("LTX-Video conditioning lanes must share one component binding")
+    return positive_carrier, negative_carrier, positive_binding
+
+
+def _restore_ltxv_component_binding(
+    value: object, binding: object | None, inference: Any
+) -> object:
+    if binding is None:
+        return value
+    return inference.bind_component_conditioning(value, binding)
+
+
 class GenerationLTXVImageToVideo(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -877,6 +895,9 @@ class GenerationLTXVAddGuide(Node):
         inference = importlib.import_module("dinkster_inference")
         inference_torch = importlib.import_module("dinkster_inference_torch")
         ltx_media = importlib.import_module("dinkster_inference_torch.ltx_media")
+        positive, negative, component_binding = _split_ltxv_component_binding(
+            positive, negative, inference
+        )
         without_rate, _ = _split_ltx_frame_rate(positive, inference)
         _, guides = ltx_media.materialize_ltxv_guides(without_rate)
         generated_frames = video.shape[2] - sum(guide.latent_shape[0] for guide in guides)
@@ -920,8 +941,8 @@ class GenerationLTXVAddGuide(Node):
             causal_fix=causal,
         )
         return cls.outputs(
-            positive=result.positive,
-            negative=result.negative,
+            positive=_restore_ltxv_component_binding(result.positive, component_binding, inference),
+            negative=_restore_ltxv_component_binding(result.negative, component_binding, inference),
             latent=_ltxv_media_output(metadata, result.latent, result.denoise_mask),
         )
 
@@ -1514,6 +1535,10 @@ class GenerationLTXVCropGuides(Node):
     @classmethod
     def execute(cls, *, positive: object, negative: object, latent: object) -> Mapping[str, object]:
         metadata, streams, _ = _ltxv_media_latent(latent, "latent")
+        inference = importlib.import_module("dinkster_inference")
+        positive, negative, component_binding = _split_ltxv_component_binding(
+            positive, negative, inference
+        )
         result = importlib.import_module("dinkster_inference_torch").ltxv_crop_guides(
             positive,
             negative,
@@ -1521,8 +1546,8 @@ class GenerationLTXVCropGuides(Node):
             metadata.get("noise_mask"),
         )
         return cls.outputs(
-            positive=result.positive,
-            negative=result.negative,
+            positive=_restore_ltxv_component_binding(result.positive, component_binding, inference),
+            negative=_restore_ltxv_component_binding(result.negative, component_binding, inference),
             latent=_ltxv_media_output(metadata, result.latent, result.denoise_mask),
         )
 

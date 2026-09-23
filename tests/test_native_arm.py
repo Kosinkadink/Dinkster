@@ -20599,9 +20599,17 @@ def _ltxv_media_carrier(family_id: str = "dinkster.ltxv") -> Any:
     )
 
 
-def test_generation_ltxv_media_nodes_encode_condition_and_crop_guides() -> None:
+def _assert_generation_ltxv_media_nodes_encode_condition_and_crop_guides(
+    binding_order: str | None,
+) -> None:
     torch = pytest.importorskip("torch")
-    from dinkster_inference import LTXAV_VIDEO_CODEC, MultiStreamLatent
+    from dinkster_inference import (
+        LTXAV_VIDEO_CODEC,
+        ComponentBinding,
+        MultiStreamLatent,
+        bind_component_conditioning,
+        split_component_conditioning,
+    )
     from dinkster_inference_torch.ltx_media import materialize_ltxv_guides
 
     arm = _native_arm()
@@ -20633,6 +20641,41 @@ def test_generation_ltxv_media_nodes_encode_condition_and_crop_guides() -> None:
     codec = Codec()
     positive = _ltxv_media_carrier()
     negative = _ltxv_media_carrier()
+    component_binding = ComponentBinding(
+        "t5xxl",
+        "dinkster.ltxv",
+        "native:dinkster.ltxv:" + "a" * 64,
+    )
+    if binding_order is not None:
+        positive = bind_component_conditioning(positive, component_binding)
+        negative = bind_component_conditioning(negative, component_binding)
+    if binding_order == "before-frame-rate":
+        for name, carrier in (("positive", positive), ("negative", negative)):
+            record = carrier.conditioning.records[0]
+            metadata = dict(record.extension_metadata)
+            reordered = replace(
+                record,
+                extension_metadata=(
+                    (
+                        "dinkster-inference/component-binding",
+                        metadata["dinkster-inference/component-binding"],
+                    ),
+                    (
+                        "dinkster-compat-comfy/ltx-frame-rate",
+                        metadata["dinkster-compat-comfy/ltx-frame-rate"],
+                    ),
+                ),
+            )
+            reordered_carrier = importlib.import_module(
+                "dinkster_inference"
+            ).make_conditioning_carrier(
+                importlib.import_module("dinkster_inference").ConditioningSet((reordered,)),
+                carrier.bindings,
+            )
+            if name == "positive":
+                positive = reordered_carrier
+            else:
+                negative = reordered_carrier
     image = torch.linspace(0.0, 1.0, 9 * 48 * 64 * 3).reshape(9, 48, 64, 3)
     resized_frames = torch.nn.functional.interpolate(
         image.movedim(-1, 1).narrow(-1, 8, 48),
@@ -20740,8 +20783,21 @@ def test_generation_ltxv_media_nodes_encode_condition_and_crop_guides() -> None:
     )
     assert codec.encoded[-1].shape == (1, 3, 9, 32, 32)
     assert torch.equal(codec.encoded[-1], expected_guide)
+    assert tuple(
+        key for key, _ in cast("Any", guided["positive"]).conditioning.records[0].extension_metadata
+    ) == tuple(
+        sorted(
+            (
+                "dinkster-compat-comfy/ltx-frame-rate",
+                "dinkster-model-ltx/guides",
+                *(("dinkster-inference/component-binding",) if binding_order is not None else ()),
+            )
+        )
+    )
+    guide_carrier, recovered_binding = split_component_conditioning(cast("Any", guided["positive"]))
+    assert recovered_binding == (component_binding if binding_order is not None else None)
     guide_carrier, guide_rate = arm._split_ltx_frame_rate(
-        guided["positive"], importlib.import_module("dinkster_inference")
+        guide_carrier, importlib.import_module("dinkster_inference")
     )
     assert guide_rate == 25.0
     _, guides = materialize_ltxv_guides(guide_carrier)
@@ -20764,8 +20820,12 @@ def test_generation_ltxv_media_nodes_encode_condition_and_crop_guides() -> None:
         1,
         1,
     )
+    cropped_carrier, recovered_binding = split_component_conditioning(
+        cast("Any", cropped["positive"])
+    )
+    assert recovered_binding == (component_binding if binding_order is not None else None)
     cropped_carrier, cropped_rate = arm._split_ltx_frame_rate(
-        cropped["positive"], importlib.import_module("dinkster_inference")
+        cropped_carrier, importlib.import_module("dinkster_inference")
     )
     assert cropped_rate == 25.0
     _, cropped_guides = materialize_ltxv_guides(cropped_carrier)
@@ -21028,6 +21088,15 @@ def test_generation_ltxv_generated_keyframes_compose_with_existing_guides() -> N
         72,
         96,
     ]
+def test_generation_ltxv_media_nodes_encode_condition_and_crop_guides() -> None:
+    _assert_generation_ltxv_media_nodes_encode_condition_and_crop_guides(None)
+
+
+@pytest.mark.parametrize("binding_order", ("before-frame-rate", "after-frame-rate"))
+def test_generation_ltxv_media_nodes_preserve_component_binding(
+    binding_order: str,
+) -> None:
+    _assert_generation_ltxv_media_nodes_encode_condition_and_crop_guides(binding_order)
 
 
 def test_generation_ltxv_media_nodes_refuse_wrong_boundaries() -> None:
@@ -21102,6 +21171,41 @@ def test_generation_ltxv_media_nodes_refuse_wrong_boundaries() -> None:
             frame_idx=0,
             strength=1.0,
         )
+
+
+def test_ltxv_media_component_binding_boundary_refuses_invalid_lane_pairs() -> None:
+    from dinkster_inference import (
+        ComponentBinding,
+        ConditioningSet,
+        bind_component_conditioning,
+        make_conditioning_carrier,
+    )
+
+    inference = importlib.import_module("dinkster_inference")
+    ltx = importlib.import_module("dinkster_native.families.ltx")
+    unbound = _ltxv_media_carrier()
+    first = ComponentBinding("t5xxl", "dinkster.ltxv", "native:dinkster.ltxv:" + "a" * 64)
+    second = ComponentBinding("t5xxl", "dinkster.ltxv", "native:dinkster.ltxv:" + "b" * 64)
+    bound = bind_component_conditioning(unbound, first)
+
+    with pytest.raises(ValueError, match="lanes must share one component binding"):
+        ltx._split_ltxv_component_binding(bound, unbound, inference)
+    with pytest.raises(ValueError, match="lanes must share one component binding"):
+        ltx._split_ltxv_component_binding(
+            bound,
+            bind_component_conditioning(unbound, second),
+            inference,
+        )
+
+    record = bound.conditioning.records[0]
+    metadata = dict(record.extension_metadata)
+    metadata["dinkster-inference/component-binding"] = {"role": "t5xxl"}
+    malformed = make_conditioning_carrier(
+        ConditioningSet((replace(record, extension_metadata=tuple(metadata.items())),)),
+        bound.bindings,
+    )
+    with pytest.raises(ValueError, match="must carry exactly role, family_id, and identity"):
+        ltx._split_ltxv_component_binding(malformed, malformed, inference)
 
 
 def test_generation_ltxv_crop_guides_passes_through_ltxav_without_guides() -> None:
@@ -26936,6 +27040,46 @@ def test_generation_sampler_prepares_rich_multistream_conditioning(
     assert guidance.scale == 5.0
 
 
+def test_generation_sampler_validates_provider_multistream_component_bindings() -> None:
+    from dinkster_inference import ComponentBinding, bind_component_conditioning
+
+    arm = _native_arm()
+    inference = importlib.import_module("dinkster_inference")
+
+    class Runtime:
+        conditioning_identity = "dinkster.ltxv.conditioning:test"
+
+        def prepare_conditioning(self, value: object) -> object:
+            return value
+
+    handle = _handle(arm, Runtime())
+    unbound = _ltxv_media_carrier()
+    first = ComponentBinding("t5xxl", "dinkster.ltxv", "native:dinkster.ltxv:" + "a" * 64)
+    second = ComponentBinding("t5xxl", "dinkster.ltxv", "native:dinkster.ltxv:" + "b" * 64)
+    positive = bind_component_conditioning(unbound, first)
+    negative = bind_component_conditioning(unbound, first)
+
+    runtime, stripped_positive, stripped_negative, component_execution, prepared = (
+        arm._resolve_sampling_model(handle, positive, negative, inference)
+    )
+
+    assert runtime is handle.runtime
+    assert stripped_positive == unbound
+    assert stripped_negative == unbound
+    assert component_execution is False
+    assert prepared is False
+    assert arm._resolve_sampling_model(handle, positive, [], inference)[2] == []
+    with pytest.raises(ValueError, match="lanes must share one component binding"):
+        arm._resolve_sampling_model(handle, positive, unbound, inference)
+    with pytest.raises(ValueError, match="lanes must share one component binding"):
+        arm._resolve_sampling_model(
+            handle,
+            positive,
+            bind_component_conditioning(unbound, second),
+            inference,
+        )
+
+
 def test_generation_sampler_refuses_noncallable_multistream_preparer() -> None:
     arm = _native_arm()
 
@@ -26949,6 +27093,130 @@ def test_generation_sampler_refuses_noncallable_multistream_preparer() -> None:
             "positive",
             Runtime(),
             SimpleNamespace(PreparedMultiStreamConditioning=PreparedMultiStreamConditioning),
+        )
+
+
+@pytest.mark.parametrize(
+    ("family_id", "role", "binding_order"),
+    (
+        ("dinkster.ltxv", "t5xxl", "before-frame-rate"),
+        ("dinkster.ltxv", "t5xxl", "after-frame-rate"),
+        ("dinkster.ltxav", "gemma3_12b", "before-frame-rate"),
+        ("dinkster.ltxav", "gemma3_12b", "after-frame-rate"),
+    ),
+)
+def test_provider_multistream_preparation_consumes_component_binding(
+    family_id: str,
+    role: str,
+    binding_order: str,
+) -> None:
+    from dinkster_inference import (
+        COMPONENT_CONDITIONING_METADATA_KEY,
+        ComponentBinding,
+        ConditioningSet,
+        PreparedMultiStreamConditioning,
+        bind_component_conditioning,
+        make_conditioning_carrier,
+    )
+
+    arm = _native_arm()
+    inference = importlib.import_module("dinkster_inference")
+    carrier = _ltxv_media_carrier(family_id)
+    binding = ComponentBinding(role, family_id, f"native:{family_id}:" + "a" * 64)
+    carrier = bind_component_conditioning(carrier, binding)
+    record = carrier.conditioning.records[0]
+    metadata = dict(record.extension_metadata)
+    metadata["dinkster.test/unrelated"] = "preserved"
+    ordered_keys = (
+        COMPONENT_CONDITIONING_METADATA_KEY,
+        "dinkster-compat-comfy/ltx-frame-rate",
+        "dinkster.test/unrelated",
+    )
+    if binding_order == "after-frame-rate":
+        ordered_keys = (ordered_keys[1], ordered_keys[2], ordered_keys[0])
+    carrier = make_conditioning_carrier(
+        ConditioningSet(
+            (
+                replace(
+                    record,
+                    extension_metadata=tuple((key, metadata[key]) for key in ordered_keys),
+                ),
+            )
+        ),
+        carrier.bindings,
+    )
+    prepared: list[object] = []
+
+    class Runtime:
+        conditioning_identity = family_id + ".conditioning:test"
+
+        def prepare_conditioning(self, value: object, *, frame_rate: float) -> object:
+            prepared.append(value)
+            assert frame_rate == 25.0
+            return "prepared"
+
+    result = arm._prepare_provider_multistream_conditioning(
+        carrier,
+        "positive",
+        Runtime(),
+        inference,
+    )
+
+    assert result == [
+        [PreparedMultiStreamConditioning(Runtime.conditioning_identity, "prepared"), {}]
+    ]
+    assert len(prepared) == 1
+    remaining = dict(cast("Any", prepared[0]).conditioning.records[0].extension_metadata)
+    assert remaining == {"dinkster.test/unrelated": "preserved"}
+
+
+def test_provider_multistream_preparation_accepts_missing_and_refuses_malformed_binding() -> None:
+    from dinkster_inference import (
+        COMPONENT_CONDITIONING_METADATA_KEY,
+        ConditioningSet,
+        make_conditioning_carrier,
+    )
+
+    arm = _native_arm()
+    inference = importlib.import_module("dinkster_inference")
+    prepared: list[object] = []
+
+    class Runtime:
+        conditioning_identity = "dinkster.ltxv.conditioning:test"
+
+        def prepare_conditioning(self, value: object, *, frame_rate: float) -> object:
+            prepared.append(value)
+            assert frame_rate == 25.0
+            return "prepared"
+
+    unbound = _ltxv_media_carrier()
+    arm._prepare_provider_multistream_conditioning(unbound, "positive", Runtime(), inference)
+    assert len(prepared) == 1
+    prepared_record = cast("Any", prepared[0]).conditioning.records[0]
+    assert prepared_record.channels == unbound.conditioning.records[0].channels
+    assert prepared_record.extension_metadata == ()
+
+    record = unbound.conditioning.records[0]
+    malformed = make_conditioning_carrier(
+        ConditioningSet(
+            (
+                replace(
+                    record,
+                    extension_metadata=(
+                        *record.extension_metadata,
+                        (COMPONENT_CONDITIONING_METADATA_KEY, {"role": "t5xxl"}),
+                    ),
+                ),
+            )
+        ),
+        unbound.bindings,
+    )
+    with pytest.raises(ValueError, match="must carry exactly role, family_id, and identity"):
+        arm._prepare_provider_multistream_conditioning(
+            malformed,
+            "positive",
+            Runtime(),
+            inference,
         )
 
 

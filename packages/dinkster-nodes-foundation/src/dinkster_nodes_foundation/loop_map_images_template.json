@@ -10,7 +10,7 @@
       "nodes": {
         "source": { "id": "source", "type": "dinkster.image.generate", "dynamic": { "color_source": { "selected": "hex" }, "operation": { "selected": "linear_gradient" } }, "values": { "width": 96, "height": 64, "batch_size": 3, "channels": "rgb", "color_source.color_a": "#172554", "operation.color_b": "#38bdf8", "operation.angle": 25 } },
         "split": { "id": "split", "type": "dinkster.image.batch.to_list", "values": {} },
-        "map": { "id": "map", "type": "#mapBody", "values": {}, "region": { "kind": "map", "elementPorts": ["image"] } },
+        "map": { "id": "map", "type": "#mapBody", "values": { "x": [8, 36, 64] }, "region": { "kind": "map", "elementPorts": ["image", "x"] } },
         "batch": { "id": "batch", "type": "dinkster.image.list.to_batch", "dynamic": { "shape_policy": { "selected": "strict" } }, "values": {} },
         "output": { "id": "output", "type": "dinkster.image.compare", "values": {} }
       },
@@ -34,7 +34,10 @@
       },
       "nets": {}, "reroutes": {},
       "boundary": {
-        "inputs": [{ "id": "image", "binds": { "kind": "port", "node": "composite", "port": "destination" } }],
+        "inputs": [
+          { "id": "image", "binds": { "kind": "port", "node": "composite", "port": "destination" } },
+          { "id": "x", "binds": { "kind": "port", "node": "composite", "port": "x" } }
+        ],
         "outputs": [{ "id": "mappedImage", "binds": { "kind": "port", "node": "composite", "port": "image" } }]
       },
       "nextOrdinal": 2

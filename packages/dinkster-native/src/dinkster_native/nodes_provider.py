@@ -54,6 +54,7 @@ from .native_arm_core import (
     OutputSpec,
     StringWidget,
     _active_inference_registries,
+    _component_bound_carrier,
     _inference_registries,
     _split_ltx_frame_rate,
     cast,
@@ -2605,7 +2606,8 @@ def _prepare_provider_multistream_conditioning(
     prepare = getattr(runtime, "prepare_conditioning", None)
     if not callable(prepare):
         raise TypeError(f"{input_id} runtime prepare_conditioning must be callable")
-    carrier, frame_rate = _split_ltx_frame_rate(value, inference)
+    carrier, _ = _component_bound_carrier(value, inference)
+    carrier, frame_rate = _split_ltx_frame_rate(carrier, inference)
     payload = prepare(carrier) if frame_rate is None else prepare(carrier, frame_rate=frame_rate)
     return [
         [

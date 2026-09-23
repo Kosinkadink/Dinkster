@@ -4,8 +4,8 @@
     "root": {
       "id": "root", "name": "Gather images into a batch",
       "nodes": {
-        "map": { "id": "map", "type": "#imageBody", "values": { "size": [64, 64, 64] }, "region": { "kind": "map", "elementPorts": ["size"] } },
-        "batch": { "id": "batch", "type": "dinkster.image.list.to_batch", "dynamic": { "shape_policy": { "selected": "strict" } }, "values": {} },
+        "map": { "id": "map", "type": "#imageBody", "values": { "width": [64, 48, 32] }, "region": { "kind": "map", "elementPorts": ["width"] } },
+        "batch": { "id": "batch", "type": "dinkster.image.list.to_batch", "dynamic": { "shape_policy": { "selected": "resize_to_first" } }, "values": {} },
         "output": { "id": "output", "type": "dinkster.image.compare", "values": {} }
       },
       "links": {
@@ -16,10 +16,10 @@
     },
     "imageBody": {
       "id": "imageBody", "name": "Create one image",
-      "nodes": { "image": { "id": "image", "type": "dinkster.image.generate", "dynamic": { "color_source": { "selected": "hex" }, "operation": { "selected": "solid" } }, "values": { "height": 64, "batch_size": 1, "channels": "rgb", "color_source.color_a": "#3b82f6" } } },
+      "nodes": { "image": { "id": "image", "type": "dinkster.image.generate", "dynamic": { "color_source": { "selected": "hex" }, "operation": { "selected": "checkerboard" } }, "values": { "width": 64, "height": 64, "batch_size": 1, "channels": "rgb", "color_source.color_a": "#3b82f6", "operation.color_b": "#f97316", "operation.tile_size": 8 } } },
       "links": {}, "nets": {}, "reroutes": {},
       "boundary": {
-        "inputs": [{ "id": "size", "binds": { "kind": "port", "node": "image", "port": "width" } }],
+        "inputs": [{ "id": "width", "binds": { "kind": "port", "node": "image", "port": "width" } }],
         "outputs": [{ "id": "generatedImage", "binds": { "kind": "port", "node": "image", "port": "image" } }]
       },
       "nextOrdinal": 1

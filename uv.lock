@@ -756,7 +756,7 @@ requires-dist = [
     { name = "dinkster-nodes-image", editable = "packages/dinkster-nodes-image" },
     { name = "dinkster-nodes-remote", editable = "packages/dinkster-nodes-remote" },
     { name = "dinkster-nodes-std", editable = "packages/dinkster-nodes-std" },
-    { name = "dinkster-p2p", git = "https://github.com/Kosinkadink/dinkster-p2p.git?rev=16bf38c30a47fdde4f6b63e00d63fb2d8cb5ff5e" },
+    { name = "dinkster-p2p", git = "https://github.com/Kosinkadink/dinkster-p2p.git?rev=b1e4a30781e20f0073910dd6f35978464f6ee3e3" },
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
     { name = "dinkster-registry", editable = "packages/dinkster-registry" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
@@ -1331,7 +1331,7 @@ requires-dist = [
 [[package]]
 name = "dinkster-p2p"
 version = "0.0.1"
-source = { git = "https://github.com/Kosinkadink/dinkster-p2p.git?rev=16bf38c30a47fdde4f6b63e00d63fb2d8cb5ff5e#16bf38c30a47fdde4f6b63e00d63fb2d8cb5ff5e" }
+source = { git = "https://github.com/Kosinkadink/dinkster-p2p.git?rev=b1e4a30781e20f0073910dd6f35978464f6ee3e3#b1e4a30781e20f0073910dd6f35978464f6ee3e3" }
 dependencies = [
     { name = "dinkster-assets" },
     { name = "dinkster-workers" },
