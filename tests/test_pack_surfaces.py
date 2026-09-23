@@ -60,6 +60,7 @@ def test_frontend_contribution_vocabulary_is_the_supported_set() -> None:
         "editorBinding",
         "panel",
         "virtualNode",
+        "documentType",
     )
 
 

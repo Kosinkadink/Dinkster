@@ -330,7 +330,9 @@ Training capabilities are delivered by separately versioned packages.
 - Regional/grouped conditioning channels beyond text/pooled - not reachable
   from nodes
 - Collaboration service (sessions, operations, snapshots, session
-  WebSockets) - mountable but not mounted by `create_app`
+  WebSockets) - mountable but not mounted by `create_app`; `dinkster-serve`
+  registers workflow, image, and video snapshots while namespaced extension
+  kinds remain opaque finite JSON
 - Ovis/Qwen3-2B text encoder path for Flux Schnell - server source roles
   do not expose it
 <!-- capability:dinkster.ltxv -->

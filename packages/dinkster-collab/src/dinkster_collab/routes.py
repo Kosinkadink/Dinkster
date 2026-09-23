@@ -99,7 +99,6 @@ from typing import Any, Protocol, cast
 from aiohttp import WSMsgType, web
 
 from .sessions import (
-    DOCUMENT_KINDS,
     PROTOCOL_VERSION,
     ActorLimitError,
     ActorPrincipalMismatchError,
@@ -115,6 +114,7 @@ from .sessions import (
     UnknownSessionError,
     validate_patch,
 )
+from .snapshots import document_kind_wire, normalize_document_kind
 from .store import SessionStore
 
 SESSIONS_KEY = web.AppKey("dinkster_collab_sessions", SessionService)
@@ -270,7 +270,7 @@ def _session_wire(session: DocumentSession) -> dict[str, object]:
         "sessionId": session.session_id,
         "scope": session.scope,
         "documentId": session.document_id,
-        "documentKind": session.document_kind,
+        "documentKind": document_kind_wire(session.document_kind),
         "revision": session.revision,
         "snapshotRevision": session.snapshot_revision,
         "createdAt": session.created_at,
@@ -394,9 +394,10 @@ async def handle_create_session(request: web.Request) -> web.Response:
     document_id = body.get("documentId")
     if not isinstance(document_id, str) or not document_id:
         raise _bad_request("'documentId' must be a non-empty string")
-    document_kind = body.get("documentKind", "workflow")
-    if not isinstance(document_kind, str) or document_kind not in DOCUMENT_KINDS:
-        raise _bad_request(f"'documentKind' must be one of {list(DOCUMENT_KINDS)}")
+    try:
+        document_kind = normalize_document_kind(body.get("documentKind", "workflow"))
+    except ValueError as exc:
+        raise _bad_request(str(exc)) from exc
     if "snapshot" not in body:
         raise _bad_request("'snapshot' is required (the document at revision 0)")
     try:
@@ -595,7 +596,13 @@ async def handle_ops_after(request: web.Request) -> web.Response:
 
 async def handle_get_snapshot(request: web.Request) -> web.Response:
     session = _get_session(request.app[SESSIONS_KEY], request, "sessions:read", "viewer")
-    return web.json_response({"revision": session.snapshot_revision, "document": session.snapshot})
+    return web.json_response(
+        {
+            "revision": session.snapshot_revision,
+            "document": session.snapshot,
+            "documentKind": document_kind_wire(session.document_kind),
+        }
+    )
 
 
 async def handle_put_snapshot(request: web.Request) -> web.Response:
