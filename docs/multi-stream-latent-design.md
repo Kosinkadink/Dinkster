@@ -324,14 +324,11 @@ scheduled equivalent. The compatibility arm converts the canonical structure
 to `NestedTensor` and invokes stock ComfyUI KSampler. Both arms convert their
 result back to the same LATENT representation.
 
-H3 conditioning becomes ordinary `comfy.CONDITIONING` carrying a typed H3
-payload and runtime identity in metadata. Each H3 conditioning node's final
-schema outputs ordinary positive and neutral negative CONDITIONING values for
-KSampler. The selected role-specific DiT accepts only its compatible positive
-payload, matching target layout and runtime identity. H3 remains positive-only
-at first: `cfg` must be 1, and negative conditioning must be neutral. CFG++ and
-a model-evaluated unconditional lane fail before sampling. Future proven H3
-guidance can widen that runtime capability without another node.
+H3 conditioning uses the resident `dinkster.conditioning` carrier with a typed
+H3 payload and runtime identity in metadata. Each H3 conditioning node takes
+one prompt and outputs one conditioning value. Positive and negative sampler
+lanes come from separate node instances. The selected role-specific DiT accepts
+only compatible payloads with matching target layouts and runtime identities.
 
 Dispatch selection remains based on resident model provenance and policy, not
 on latent shape or family guesses. A native H3 DiT handle selects the native
@@ -453,9 +450,9 @@ impossible and push every shared feature into duplicate family wiring.
 The replacement is one fail-before-noise runtime check against the selected
 components. For H3 it proves the exact `(video, audio)` role order, stream ranks,
 channels, batch relation, pack layout, conditioning task and target layout,
-positive payload type, matching resident runtime identity, neutral negative
-conditioning, CFG 1, and support for the requested masks, controls, patches,
-guidance, scheduler, and sampler. This is the same boundary at which channel
+payload types, matching resident runtime identities, and support for the
+requested masks, controls, patches, guidance, scheduler, and sampler. This is
+the same boundary at which channel
 count, rank, inpaint capability, and conditioning compatibility already become
 knowable for ordinary LATENT values.
 
@@ -488,8 +485,8 @@ in advance. This design-only change does not alter runtime identities.
 Unreleased Dinkster workflows containing `dinkster.minimax_h3_sample` or the closed
 H3 AV type are intentionally unsupported. No schema alias, hidden executor,
 graph rewrite, or prompt migration is implemented. New H3 workflows use the
-loader's ordinary MODEL output, generic LATENT/CONDITIONING links,
-`dinkster.ksampler` with CFG 1, and the neutral negative conditioning output.
+native loader outputs and separate H3 conditioning nodes for the sampler's
+positive and negative inputs.
 
 ComfyUI workflow compatibility remains a product contract. The LTXV aliases
 and compatibility-arm behavior specified above are retained.

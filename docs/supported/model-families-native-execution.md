@@ -109,9 +109,9 @@
   overlap, ordinary Empty Latent Image adaptation to H3 video/audio streams,
   generic frame-range and fractional video/audio denoise masks, role-preserving
   latent mask composition, mask previews and diagnostics,
-  ordinary KSampler sampling with classifier-free guidance through optional
-  negative prompts on each H3 conditioning node, CFG++ sampling with real or
-  synthetic unconditional prediction, custom sampling (SamplerCustom,
+  ordinary KSampler sampling with classifier-free guidance through separate
+  one-prompt conditioning nodes for positive and negative lanes, CFG++ sampling
+  with real or synthetic unconditional prediction, custom sampling (SamplerCustom,
   SamplerCustomAdvanced, and the model-dependent sigma nodes) over the same
   video/audio streams, AV encode/decode
 <!-- capability:dinkster.minimax_music3 -->

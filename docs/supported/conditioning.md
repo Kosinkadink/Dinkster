@@ -57,9 +57,10 @@
 - Wan 2.1 VACE control video, mask, and optional reference-image conditioning
 - Wan 2.2 TI2V and 14B I2V masked first-frame or first/last-frame conditioning
 - MiniMax H3 conditioning: T2VA, first/last-frame, and reference requests,
-  each with an optional negative prompt that prepares an unconditional lane;
-  image, clip, and audio guides can be chained at arbitrary target frames, and
-  sampled AV clips can continue with a selectable aligned overlap
+  with one prompt and one conditioning output per node; separate node instances
+  provide positive and negative sampler lanes. Image, clip, and audio guides can
+  be chained at arbitrary target frames, and sampled AV clips can continue with
+  a selectable aligned overlap
 - SeedVR2 positive and negative conditioning from the encoded restoration
   source, bound to the exact independently loaded diffusion component
 - Typed absence: `core.absent` values, optional outputs, per-input absence

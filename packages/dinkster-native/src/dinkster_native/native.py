@@ -3289,18 +3289,11 @@ def _minimax_h3_conditioning_schema(
         category="minimax h3/conditioning",
         inputs=(
             *component_inputs,
-            InputSpec("target", LATENT),
+            InputSpec("target", DINKSTER_LATENT),
             InputSpec("prompt", STRING, widget=StringWidget(multiline=True)),
-            InputSpec(
-                "negative_prompt",
-                STRING,
-                required=False,
-                default=None,
-                widget=StringWidget(multiline=True),
-            ),
             *extra_inputs,
         ),
-        outputs=(OutputSpec("positive", CONDITIONING), OutputSpec("negative", CONDITIONING)),
+        outputs=(OutputSpec("conditioning", DINKSTER_CONDITIONING),),
     )
 
 
@@ -3310,7 +3303,7 @@ class MiniMaxH3T2VAConditioning(Node):
         return _minimax_h3_conditioning_schema(
             "dinkster.minimax_h3_t2va_conditioning",
             "MiniMax H3 T2VA Conditioning",
-            (InputSpec("clip", CLIP),),
+            (InputSpec("clip", DINKSTER_CLIP),),
             (),
         )
 
@@ -3321,7 +3314,6 @@ class MiniMaxH3T2VAConditioning(Node):
         clip: object,
         target: object,
         prompt: str,
-        negative_prompt: str | None = None,
     ) -> Mapping[str, object]:
         raise RuntimeError("MiniMax H3 conditioning requires the native execution arm")
 
@@ -3332,7 +3324,7 @@ class MiniMaxH3FL2VAConditioning(Node):
         return _minimax_h3_conditioning_schema(
             "dinkster.minimax_h3_fl2va_conditioning",
             "MiniMax H3 FL2VA Conditioning",
-            (InputSpec("clip", CLIP), InputSpec("video_vae", VAE)),
+            (InputSpec("clip", DINKSTER_CLIP), InputSpec("video_vae", DINKSTER_VAE)),
             (
                 InputSpec("first_image", IMAGE, required=False, default=None),
                 InputSpec("last_image", IMAGE, required=False, default=None),
@@ -3347,7 +3339,6 @@ class MiniMaxH3FL2VAConditioning(Node):
         video_vae: object,
         target: object,
         prompt: str,
-        negative_prompt: str | None = None,
         first_image: object = None,
         last_image: object = None,
     ) -> Mapping[str, object]:
@@ -3361,9 +3352,9 @@ class MiniMaxH3REF2VAConditioning(Node):
             "dinkster.minimax_h3_ref2va_conditioning",
             "MiniMax H3 REF2VA Conditioning",
             (
-                InputSpec("clip", CLIP),
-                InputSpec("video_vae", VAE),
-                InputSpec("audio_vae", VAE),
+                InputSpec("clip", DINKSTER_CLIP),
+                InputSpec("video_vae", DINKSTER_VAE),
+                InputSpec("audio_vae", DINKSTER_VAE),
             ),
             (
                 InputSpec("references", TypeExpr.list_of(MINIMAX_H3_REFERENCE)),
@@ -3387,7 +3378,6 @@ class MiniMaxH3REF2VAConditioning(Node):
         prompt: str,
         references: object,
         ref_image_size: str,
-        negative_prompt: str | None = None,
     ) -> Mapping[str, object]:
         raise RuntimeError("MiniMax H3 conditioning requires the native execution arm")
 
@@ -3400,10 +3390,10 @@ class MiniMaxH3AddGuide(Node):
             display_name="Add Guide for MiniMax H3",
             category="minimax h3/conditioning",
             inputs=(
-                InputSpec("positive", CONDITIONING),
-                InputSpec("vae", VAE, required=False, default=None),
-                InputSpec("audio_vae", VAE, required=False, default=None),
-                InputSpec("latent", LATENT),
+                InputSpec("positive", DINKSTER_CONDITIONING),
+                InputSpec("vae", DINKSTER_VAE, required=False, default=None),
+                InputSpec("audio_vae", DINKSTER_VAE, required=False, default=None),
+                InputSpec("latent", DINKSTER_LATENT),
                 InputSpec("image", IMAGE, required=False, default=None),
                 InputSpec("audio", AUDIO, required=False, default=None),
                 InputSpec(
@@ -3413,7 +3403,7 @@ class MiniMaxH3AddGuide(Node):
                     widget=NumberWidget(min=-9999, max=9999, step=1),
                 ),
             ),
-            outputs=(OutputSpec("positive", CONDITIONING),),
+            outputs=(OutputSpec("positive", DINKSTER_CONDITIONING),),
             aliases=("MiniMaxH3AddGuide",),
         )
 
@@ -3440,9 +3430,9 @@ class MiniMaxH3MotionContext(Node):
             display_name="Add Motion Context to MiniMax H3",
             category="minimax h3/conditioning",
             inputs=(
-                InputSpec("positive", CONDITIONING),
-                InputSpec("latent", LATENT),
-                InputSpec("previous_latent", LATENT),
+                InputSpec("positive", DINKSTER_CONDITIONING),
+                InputSpec("latent", DINKSTER_LATENT),
+                InputSpec("previous_latent", DINKSTER_LATENT),
                 InputSpec(
                     "context_length",
                     INT,
@@ -3451,7 +3441,7 @@ class MiniMaxH3MotionContext(Node):
                 ),
             ),
             outputs=(
-                OutputSpec("positive", CONDITIONING),
+                OutputSpec("positive", DINKSTER_CONDITIONING),
                 OutputSpec("trim_time", FLOAT),
             ),
             aliases=("MiniMaxH3MotionContext",),
