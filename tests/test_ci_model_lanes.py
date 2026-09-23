@@ -477,7 +477,8 @@ def test_source_receipts_and_torch_typechecks_remain_hosted() -> None:
     for step in ACTION["runs"]["steps"]:
         if (
             step.get("if", "").startswith(f"{MODEL_CONDITION} &&")
-            or step.get("name") == "Reclaim runner disk"
+            or step.get("name")
+            in {"Reclaim runner disk", "Diagnose hosted numerical reference drift"}
         ):
             continue
         if "if" in step:
@@ -518,6 +519,23 @@ def test_source_receipts_and_torch_typechecks_remain_hosted() -> None:
         "Test source-parity receipt generation",
         "Assert pinned AVX2 dispatch",
     }
+
+
+def test_numerical_failure_runs_same_host_pinned_references_without_overwriting_goldens() -> None:
+    (diagnostic,) = [
+        step
+        for step in ACTION["runs"]["steps"]
+        if step.get("name") == "Diagnose hosted numerical reference drift"
+    ]
+    assert diagnostic["if"] == f"failure() && {MODEL_GROUP_ENV} == 'inference'"
+    assert diagnostic["env"] == {"COMFYUI_ROOT": "${{ runner.temp }}/comfyui-source"}
+    command = diagnostic["run"]
+    assert "b78cec879b9460d5cb25228a83a942fb78d2cd24" in command
+    assert "comfy-aimdo==0.4.13 comfy-kitchen==0.2.31 einops==0.8.2" in command
+    assert '--output "${{ runner.temp }}/wan21-hosted-reference.json"' in command
+    assert "--compare-case infinite_talk_reduced" in command
+    assert '--output "${{ runner.temp }}/er-sde-hosted-reference.json"' in command
+    assert "tools/gen_er_sde_trajectory_goldens.py" in command
 
 
 def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:

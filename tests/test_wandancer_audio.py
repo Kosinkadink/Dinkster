@@ -1,11 +1,14 @@
 import hashlib
+import io
 import json
 import os
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import numpy as np
 import pytest
+import scipy
 from dinkster_model_wan.wandancer_audio import (
     WanDancerAudioFeatures,
     encode_wandancer_audio_features,
@@ -14,7 +17,7 @@ from dinkster_model_wan.wandancer_audio import (
     quick_tempo_estimate,
 )
 
-from tools.golden_platform import GoldenUnavailableError, fetch_platform_golden
+from tools.golden_platform import GoldenUnavailableError, cpu_identity, fetch_platform_golden
 
 _DIRECT_OPERATION_GOLDEN = json.loads(
     (Path(__file__).parent / "goldens" / "comfy_direct_operations_b78cec87.json").read_text()
@@ -35,6 +38,26 @@ def _canonical_audio_feature_digest(feature: np.ndarray) -> str:
     )
     chroma_events = np.ascontiguousarray(feature[..., 21:], dtype="<f4")
     return hashlib.sha256(onset_mfcc.tobytes() + chroma_events.tobytes()).hexdigest()
+
+
+def _audio_feature_diagnostics(feature: np.ndarray) -> str:
+    onset_mfcc = np.ascontiguousarray(
+        np.rint(feature[..., :21] / _AUDIO_FEATURE_COMPARISON_QUANTUM), dtype="<i4"
+    )
+    chroma = np.ascontiguousarray(feature[..., 21:33], dtype="<f4")
+    events = np.ascontiguousarray(feature[..., 33:], dtype="<f4")
+    runtime = io.StringIO()
+    with redirect_stdout(runtime):
+        np.show_runtime()
+    component_digests = {
+        "onset_mfcc": hashlib.sha256(onset_mfcc.tobytes()).hexdigest(),
+        "chroma": hashlib.sha256(chroma.tobytes()).hexdigest(),
+        "events": hashlib.sha256(events.tobytes()).hexdigest(),
+    }
+    return (
+        f"cpu={cpu_identity()}; numpy={np.__version__}; scipy={scipy.__version__}; "
+        f"components={component_digests}; numpy_runtime={runtime.getvalue().strip()}"
+    )
 
 
 def _audio_feature_digest_key() -> str:
@@ -70,10 +93,17 @@ def _wandancer_audio_feature() -> np.ndarray:
 
 def test_audio_features_match_pinned_comfyui_reference() -> None:
     feature = _wandancer_audio_feature()
+    repeated = _wandancer_audio_feature()
+    expected_digest = _expected_audio_feature_digest()
+    actual_digest = _canonical_audio_feature_digest(feature)
 
     assert feature.shape == (1, 31, 35)
     assert feature.dtype == np.float32
-    assert _canonical_audio_feature_digest(feature) == _expected_audio_feature_digest()
+    np.testing.assert_array_equal(feature, repeated)
+    assert actual_digest == expected_digest, (
+        f"WanDancer audio digest {actual_digest} != {expected_digest}; "
+        f"{_audio_feature_diagnostics(feature)}"
+    )
     assert np.flatnonzero(feature[0, :, 33]).tolist() == [5, 9, 13, 17, 21, 25, 29]
     assert np.flatnonzero(feature[0, :, 34]).tolist() == [5, 17, 29]
 
