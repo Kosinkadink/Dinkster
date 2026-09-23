@@ -110,7 +110,7 @@ def wan_runtime(
 
 def trellis_runtime(loaded: Any, identity: str, dtype: torch.dtype) -> Trellis2DiffusionRuntime:
     return Trellis2DiffusionRuntime(
-        AssembledTrellis2(loaded.module, loaded.plan),
+        AssembledTrellis2(loaded.module, loaded.plan, dtype),
         runtime_identity=identity,
         compute_dtype=dtype,
     )

@@ -279,6 +279,33 @@ def test_one_way_dependencies() -> None:
     assert not violations, "one-way dependency rule violated:\n" + "\n".join(violations)
 
 
+def test_server_uses_the_published_token_verifier_wheel() -> None:
+    wheel_url = (
+        "https://github.com/Kosinkadink/dinkster-token-verifier/releases/download/"
+        "v0.1.1/dinkster_token_verifier-0.1.1-py3-none-any.whl"
+    )
+    wheel_hash = "sha256:b10f09c26c113016b1633701c73958d6dbe41f7dca318d5677e449ec04a643ae"
+    pinned_url = f"{wheel_url}#sha256={wheel_hash.removeprefix('sha256:')}"
+    server_project = tomllib.loads(
+        (REPO_ROOT / "packages/dinkster-server/pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert f"dinkster-token-verifier @ {pinned_url}" in server_project["project"]["dependencies"]
+    assert "dinkster-token-verifier" not in server_project["tool"]["uv"]["sources"]
+    assert "dinkster-identity" not in server_project["tool"]["uv"]["sources"]
+
+    locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    packages = {package["name"]: package for package in locked["package"]}
+    verifier = packages["dinkster-token-verifier"]
+    assert verifier["source"] == {"url": wheel_url}
+    assert verifier["wheels"] == [{"url": wheel_url, "hash": wheel_hash}]
+    assert "dinkster-identity" not in packages
+    server = packages["dinkster-server"]
+    assert {dependency["name"] for dependency in server["dependencies"]} >= {
+        "dinkster-token-verifier"
+    }
+    assert all(dependency["name"] != "dinkster-identity" for dependency in server["dependencies"])
+
+
 def test_core_paths_do_not_import_optional_packages_at_module_scope() -> None:
     sources = [REPO_ROOT / "src/dinkster"]
     sources.extend(

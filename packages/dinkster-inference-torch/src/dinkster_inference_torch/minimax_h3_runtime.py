@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import cast
 
@@ -1372,15 +1372,6 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             source_temporal_downscale=source_temporal_downscale,
         )
 
-    def _ksampler_kwargs(
-        self, scheduler_id: str, noise_inds: Sequence[int] | None, kwargs: dict[str, object]
-    ) -> dict[str, object]:
-        return {
-            **super()._ksampler_kwargs(scheduler_id, noise_inds, kwargs),
-            "noise_inds": noise_inds,
-            "scheduler_label": scheduler_id,
-        }
-
     def _sampling_denoiser(
         self,
         compute_dtype: torch.dtype,
@@ -1409,7 +1400,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             "MiniMaxH3AttentionKernelFactory | None",
             context.options.get("attention_kernel_factory"),
         )
-        scheduler_label = cast("str", context.options.get("scheduler_label", "custom"))
+        scheduler_label = request.source_scheduler_id or "custom"
         model_role = self._model_role
         model = self._model
         requested_distributed = distributed_sampling_config()
@@ -1763,7 +1754,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 prepare_noise(
                     inputs.latent,
                     seed + 1,
-                    cast("Sequence[int] | None", context.options.get("noise_inds")),
+                    context.noise_inds,
                 )
                 if latent_context.raw_mask is not None and context.sampler.random_inpaint_noise
                 else inputs.noise

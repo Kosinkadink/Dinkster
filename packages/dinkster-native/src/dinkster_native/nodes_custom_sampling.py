@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from .families.minimax_h3 import (
     _adapt_multistream_latent,
     _move_multistream_latent,
@@ -24,6 +26,7 @@ from .native_arm_core import (
     _CustomNoiseValue,
     _CustomSamplerValue,
     _CustomSigmasValue,
+    _diffusion_unload_roles,
     _DualCFGGuiderValue,
     _DualModelGuiderValue,
     _effective_flux_guidance,
@@ -135,10 +138,24 @@ def _execute_generation_custom_sampling(
     neg_scale: float = 1.0,
     guider_transforms: tuple[tuple[str, object], ...] = (),
     conditioning_batching: object | None = None,
+    denoise_mask: object | None = None,
+    inpaint: object | None = None,
+    negative_inpaint: object | None = None,
+    noise_inds: Sequence[int] | None = None,
+    context_windows: object | None = None,
 ) -> tuple[dict[object, object], dict[object, object]]:
     if type(noise) is not _CustomNoiseValue:
         raise TypeError("noise must come from RandomNoise or DisableNoise")
     inference = importlib.import_module("dinkster_inference")
+    if inpaint is not None and type(inpaint) is not inference.InpaintConditioning:
+        raise TypeError("inpaint must be an exact InpaintConditioning")
+    if negative_inpaint is not None:
+        if type(negative_inpaint) is not inference.InpaintConditioning:
+            raise TypeError("negative_inpaint must be an exact InpaintConditioning")
+        if negative is None:
+            raise ValueError("negative_inpaint requires negative conditioning")
+    if context_windows is not None and type(context_windows) is not inference.ContextWindowsSpec:
+        raise TypeError("context_windows must be an exact ContextWindowsSpec")
     if conditioning_batching is None:
         conditioning_batching = inference.ConditioningBatching()
     elif type(conditioning_batching) is not inference.ConditioningBatching:
@@ -209,9 +226,15 @@ def _execute_generation_custom_sampling(
         z_image_control,
         sampling_shift,
         model_guidance_transforms,
-        context_windows,
+        overlay_context_windows,
         chroma_radiance_options,
     ) = _native_model(model, "model")
+    if context_windows is not None and overlay_context_windows is not None:
+        raise ValueError(
+            "model context windows and explicit context_windows cannot both be provided"
+        )
+    if context_windows is None:
+        context_windows = overlay_context_windows
     model_guidance_transforms, disable_cfg1_optimization = _cfg1_optimization_setting(
         model_guidance_transforms
     )
@@ -263,7 +286,7 @@ def _execute_generation_custom_sampling(
         empty, empty_guidance = _split_flux_guidance(empty)
         if empty_guidance is not None:
             raise ValueError("perp-neg empty conditioning does not accept FluxGuidance")
-    runtime, positive, negative, component_execution, prepared_rows = _resolve_sampling_model(
+    runtime, positive, negative, _component_execution, prepared_rows = _resolve_sampling_model(
         handle,
         positive,
         negative,
@@ -332,6 +355,7 @@ def _execute_generation_custom_sampling(
         sigmas.values,
         cache=cast("Any", _native_model_sampling_cache(model)),
         timeline=cast("Any", _native_model_sampling_timeline(model)),
+        source_scheduler_id=sigmas.source_scheduler_id,
     )
     if not isinstance(latent_image, Mapping):
         raise TypeError("latent_image must be a mapping containing 'samples'")
@@ -348,8 +372,16 @@ def _execute_generation_custom_sampling(
         else None
     )
     noise_mask = latent.get("noise_mask")
+    if denoise_mask is not None:
+        if noise_mask is not None:
+            raise ValueError(
+                "latent_image noise_mask and explicit denoise_mask cannot both be provided"
+            )
+        noise_mask = denoise_mask
     has_inpaint = (
-        _custom_sampling_has_inpaint(positive, "positive", inference)
+        inpaint is not None
+        or negative_inpaint is not None
+        or _custom_sampling_has_inpaint(positive, "positive", inference)
         or (negative is not None and _custom_sampling_has_inpaint(negative, "negative", inference))
         or (
             empty is not None
@@ -408,14 +440,28 @@ def _execute_generation_custom_sampling(
                 layout=samples.layout,
                 device=samples.device,
             )
-    noise_inds = _batch_index_noise_inds(latent)
+    derived_noise_inds = _batch_index_noise_inds(latent)
+    if noise_inds is not None:
+        if isinstance(noise_inds, (str, bytes)):
+            raise TypeError("noise_inds must be a sequence of integers")
+        if any(type(index) is not int or index < 0 for index in noise_inds):
+            raise ValueError("noise_inds values must be nonnegative integers")
+        if derived_noise_inds is not None:
+            raise ValueError(
+                "latent_image batch_index and explicit noise_inds cannot both be provided"
+            )
+        noise_inds = tuple(noise_inds) or None
+    else:
+        noise_inds = derived_noise_inds
     if noise_mask is not None and type(noise_mask) is not torch.Tensor:
         if not (multistream_family and type(noise_mask) is inference.MultiStreamLatent):
             raise TypeError("latent_image['noise_mask'] must be an exact torch.Tensor")
-    empty_cond = None
-    empty_inpaint = None
-    middle_cond = None
-    middle_inpaint = None
+    cond_inpaint: Any = None
+    uncond_inpaint: Any = None
+    empty_cond: Any = None
+    empty_inpaint: Any = None
+    middle_cond: Any = None
+    middle_inpaint: Any = None
     if multistream_family:
         if positive_is_carrier:
             cond = _prepare_provider_multistream_conditioning(
@@ -488,6 +534,18 @@ def _execute_generation_custom_sampling(
                 middle_cond, middle_inpaint = _custom_sampling_conditioning(
                     middle, "cond2", handle, inference, torch
                 )
+    if inpaint is not None:
+        if cond_inpaint is not None:
+            raise ValueError(
+                "conditioning concat inpaint and explicit inpaint cannot both be provided"
+            )
+        cond_inpaint = inpaint
+    if negative_inpaint is not None:
+        if uncond_inpaint is not None:
+            raise ValueError(
+                "conditioning concat inpaint and explicit negative_inpaint cannot both be provided"
+            )
+        uncond_inpaint = negative_inpaint
     if negative is not None and (cond_inpaint is None) != (uncond_inpaint is None):
         raise ValueError("positive and negative inpaint conditioning must both be present")
     if (
@@ -641,7 +699,7 @@ def _execute_generation_custom_sampling(
             "diffusion",
             memory_required=sampling_memory[0],
             minimum_memory=sampling_memory[1],
-            unload_before=(() if component_execution else ("text",)),
+            unload_before=_diffusion_unload_roles(handle),
         ),
         (
             negative_handle.stage("diffusion")
@@ -672,6 +730,7 @@ def _execute_generation_custom_sampling(
                 "guidance",
                 "denoise_mask",
                 "inpaint",
+                "noise_inds",
                 "on_step",
                 "on_state",
                 "capture_denoised",
@@ -732,6 +791,7 @@ def _execute_generation_custom_sampling(
             denoise_mask=cast("Any", noise_mask),
             inpaint=cond_inpaint,
             context_windows=context_windows,
+            noise_inds=noise_inds,
             on_step=report_step,
             on_state=(preview.on_state if preview is not None else None),
             **latent_kwargs,
@@ -781,6 +841,8 @@ def _execute_generation_custom_sampling(
     if dense_output_role is None:
         output.pop("downscale_ratio_spacial", None)
         output.pop("downscale_ratio_temporal", None)
+    if denoise_mask is not None:
+        output["noise_mask"] = denoise_mask
     output["samples"] = result.output
     if result.denoised_output is None:
         denoised_output = dict(output)
@@ -810,6 +872,11 @@ class GenerationSamplerCustom(Node):
         latent_image: object,
         conditioning_batching: str = "auto",
         max_fused_lanes: int = 2,
+        denoise_mask: object = None,
+        inpaint: object = None,
+        negative_inpaint: object = None,
+        noise_inds: Sequence[int] | None = None,
+        context_windows: object = None,
     ) -> Mapping[str, object]:
         if type(add_noise) is not bool:
             raise TypeError("add_noise must be a Boolean")
@@ -829,6 +896,11 @@ class GenerationSamplerCustom(Node):
             conditioning_batching=_conditioning_batching_value(
                 conditioning_batching, max_fused_lanes
             ),
+            denoise_mask=denoise_mask,
+            inpaint=inpaint,
+            negative_inpaint=negative_inpaint,
+            noise_inds=noise_inds,
+            context_windows=context_windows,
         )
         return cls.outputs(output=output, denoised_output=denoised_output)
 
@@ -847,6 +919,11 @@ class GenerationSamplerCustomAdvanced(Node):
         sampler: object,
         sigmas: object,
         latent_image: object,
+        denoise_mask: object = None,
+        inpaint: object = None,
+        negative_inpaint: object = None,
+        noise_inds: Sequence[int] | None = None,
+        context_windows: object = None,
     ) -> Mapping[str, object]:
         if type(guider) is _DualCFGGuiderValue:
             output, denoised_output = _execute_generation_custom_sampling(
@@ -862,6 +939,11 @@ class GenerationSamplerCustomAdvanced(Node):
                 nested_guidance=guider.nested,
                 latent_image=latent_image,
                 conditioning_batching=guider.batching,
+                denoise_mask=denoise_mask,
+                inpaint=inpaint,
+                negative_inpaint=negative_inpaint,
+                noise_inds=noise_inds,
+                context_windows=context_windows,
             )
             return cls.outputs(output=output, denoised_output=denoised_output)
         if type(guider) is _DualModelGuiderValue:
@@ -877,6 +959,11 @@ class GenerationSamplerCustomAdvanced(Node):
                 cfg=guider.cfg,
                 latent_image=latent_image,
                 conditioning_batching=guider.batching,
+                denoise_mask=denoise_mask,
+                inpaint=inpaint,
+                negative_inpaint=negative_inpaint,
+                noise_inds=noise_inds,
+                context_windows=context_windows,
             )
             return cls.outputs(output=output, denoised_output=denoised_output)
         if type(guider) is _LTXAVDualGuiderValue:
@@ -891,6 +978,11 @@ class GenerationSamplerCustomAdvanced(Node):
                 audio_cfg=guider.audio_cfg,
                 latent_image=latent_image,
                 conditioning_batching=guider.batching,
+                denoise_mask=denoise_mask,
+                inpaint=inpaint,
+                negative_inpaint=negative_inpaint,
+                noise_inds=noise_inds,
+                context_windows=context_windows,
             )
             return cls.outputs(output=output, denoised_output=denoised_output)
         if type(guider) is _PerpNegGuiderValue:
@@ -906,6 +998,11 @@ class GenerationSamplerCustomAdvanced(Node):
                 empty=guider.empty,
                 neg_scale=guider.neg_scale,
                 conditioning_batching=guider.batching,
+                denoise_mask=denoise_mask,
+                inpaint=inpaint,
+                negative_inpaint=negative_inpaint,
+                noise_inds=noise_inds,
+                context_windows=context_windows,
             )
             return cls.outputs(output=output, denoised_output=denoised_output)
         if type(guider) is not _CustomGuiderValue:
@@ -922,6 +1019,11 @@ class GenerationSamplerCustomAdvanced(Node):
             latent_image=latent_image,
             guider_transforms=typed_guider.transforms,
             conditioning_batching=typed_guider.batching,
+            denoise_mask=denoise_mask,
+            inpaint=inpaint,
+            negative_inpaint=negative_inpaint,
+            noise_inds=noise_inds,
+            context_windows=context_windows,
         )
         return cls.outputs(output=output, denoised_output=denoised_output)
 

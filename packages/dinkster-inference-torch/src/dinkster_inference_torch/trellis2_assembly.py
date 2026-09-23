@@ -100,7 +100,11 @@ class Trellis2FlowBundle(torch.nn.Module):
 class AssembledTrellis2:
     diffusion: Trellis2FlowBundle
     plan: Trellis2ModelPlan | Trellis2SplitModelPlan
+    _compute_dtype: torch.dtype = field(repr=False)
     _storage_dtype_follows_compute: bool = field(default=False, repr=False, compare=False)
+
+    def compute_dtype(self, role: str) -> torch.dtype | None:
+        return self._compute_dtype if role == "diffusion" else None
 
 
 @dataclass(frozen=True)
@@ -332,7 +336,7 @@ def assemble_trellis2(
         _load_flow(plan.shape_512, compute_dtype=compute_dtype, fp8_matmul=fp8_matmul),
         _load_flow(plan.texture, compute_dtype=compute_dtype, fp8_matmul=fp8_matmul),
     )
-    return AssembledTrellis2(model, plan)
+    return AssembledTrellis2(model, plan, compute_dtype)
 
 
 def assemble_trellis2_decoder(

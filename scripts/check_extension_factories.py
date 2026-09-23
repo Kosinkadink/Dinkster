@@ -6,6 +6,7 @@ import argparse
 import ast
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import TypedDict
@@ -89,9 +90,13 @@ def scan(root: Path) -> list[ScannedSite]:
     )
 
 
-def load_allowlist(path: Path) -> tuple[dict[str, int], list[Site]]:
-    raw = json.loads(path.read_text(encoding="utf-8"))
+def parse_allowlist(
+    raw: object, *, require_slack: bool = True
+) -> tuple[dict[str, int], dict[str, int], list[Site]]:
+    if not isinstance(raw, dict):
+        raise ValueError("allowlist must be an object")
     ceilings = raw.get("ceilings")
+    slack = raw.get("slack")
     sites = raw.get("sites")
     if (
         not isinstance(ceilings, dict)
@@ -99,10 +104,61 @@ def load_allowlist(path: Path) -> tuple[dict[str, int], list[Site]]:
             isinstance(kind, str) and isinstance(ceiling, int) and ceiling >= 0
             for kind, ceiling in ceilings.items()
         )
+        or (require_slack and not isinstance(slack, dict))
+        or (
+            isinstance(slack, dict)
+            and not all(
+                isinstance(kind, str) and isinstance(value, int) and value >= 0
+                for kind, value in slack.items()
+            )
+        )
         or not isinstance(sites, list)
+        or not all(isinstance(site, dict) for site in sites)
     ):
-        raise ValueError("allowlist requires nonnegative ceilings and a sites array")
-    return ceilings, sites
+        raise ValueError("allowlist requires nonnegative ceilings, slack, and a sites array")
+    return ceilings, slack if isinstance(slack, dict) else {}, sites
+
+
+def load_allowlist(path: Path) -> tuple[dict[str, int], dict[str, int], list[Site]]:
+    return parse_allowlist(json.loads(path.read_text(encoding="utf-8")))
+
+
+def load_baseline(
+    *, root: Path, baseline_ref: str | None, baseline_allowlist: Path | None
+) -> dict[str, int] | None:
+    if baseline_ref is not None and baseline_allowlist is not None:
+        raise ValueError("choose either --baseline-ref or --baseline-allowlist")
+    if baseline_allowlist is not None:
+        ceilings, _, _ = load_allowlist(baseline_allowlist)
+        return ceilings
+    if baseline_ref is None:
+        return None
+    merge_base = subprocess.run(
+        ["git", "merge-base", "HEAD", baseline_ref],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if merge_base.returncode != 0 or not merge_base.stdout.strip():
+        raise ValueError(
+            f"cannot resolve merge base for {baseline_ref}: {merge_base.stderr.strip()}"
+        )
+    result = subprocess.run(
+        [
+            "git",
+            "show",
+            f"{merge_base.stdout.strip()}:scripts/extension-factory-allowlist.json",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise ValueError(f"cannot read baseline {baseline_ref}: {result.stderr.strip()}")
+    ceilings, _, _ = parse_allowlist(json.loads(result.stdout), require_slack=False)
+    return ceilings
 
 
 def attach_owning_issues(
@@ -157,6 +213,8 @@ def main() -> int:
             "new sites require a manually added positive issue"
         ),
     )
+    parser.add_argument("--baseline-ref")
+    parser.add_argument("--baseline-allowlist", type=Path)
     args = parser.parse_args()
     root = args.root.resolve()
     allowlist = args.allowlist
@@ -164,10 +222,35 @@ def main() -> int:
         allowlist = root / allowlist
     scanned = scan(root)
     try:
-        existing_ceilings, allowed = load_allowlist(allowlist)
+        existing_ceilings, slack, allowed = load_allowlist(allowlist)
+        baseline_allowlist = args.baseline_allowlist
+        if baseline_allowlist is not None and not baseline_allowlist.is_absolute():
+            baseline_allowlist = root / baseline_allowlist
+        baseline_ceilings = load_baseline(
+            root=root,
+            baseline_ref=args.baseline_ref,
+            baseline_allowlist=baseline_allowlist,
+        )
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"Cannot read extension factory allowlist: {error}", file=sys.stderr)
         return 1
+    kinds = set(SITE_KINDS)
+    if set(existing_ceilings) != kinds or set(slack) != kinds:
+        print("Extension factory ceiling and slack kinds differ", file=sys.stderr)
+        return 1
+    if baseline_ceilings is not None:
+        raised_from_baseline = [
+            kind for kind in SITE_KINDS if existing_ceilings[kind] > baseline_ceilings.get(kind, -1)
+        ]
+        if raised_from_baseline:
+            print("Extension factory ceilings must not rise from the merge base:", file=sys.stderr)
+            for kind in raised_from_baseline:
+                print(
+                    f"  {kind}: baseline={baseline_ceilings.get(kind)!r}, "
+                    f"proposed={existing_ceilings[kind]}",
+                    file=sys.stderr,
+                )
+            return 1
     sites, unowned = attach_owning_issues(scanned, allowed)
     if unowned:
         print(
@@ -184,13 +267,6 @@ def main() -> int:
         return 1
     if args.write:
         counts = {kind: sum(site["kind"] == kind for site in sites) for kind in SITE_KINDS}
-        kinds = set(SITE_KINDS)
-        if set(existing_ceilings) != kinds:
-            print(
-                "Cannot refresh extension factory allowlist: ceiling kinds differ",
-                file=sys.stderr,
-            )
-            return 1
         raised = [kind for kind in SITE_KINDS if counts[kind] > existing_ceilings[kind]]
         if raised:
             print(
@@ -206,17 +282,16 @@ def main() -> int:
         ceilings = {kind: min(existing_ceilings[kind], counts[kind]) for kind in SITE_KINDS}
         allowlist.parent.mkdir(parents=True, exist_ok=True)
         allowlist.write_text(
-            json.dumps({"ceilings": ceilings, "sites": sites}, indent=2) + "\n",
+            json.dumps({"ceilings": ceilings, "slack": slack, "sites": sites}, indent=2) + "\n",
             encoding="utf-8",
         )
         return 0
 
     ceilings = existing_ceilings
-    kinds = set(SITE_KINDS)
     counts = {kind: sum(site["kind"] == kind for site in sites) for kind in kinds}
     allowed_counts = {kind: sum(site.get("kind") == kind for site in allowed) for kind in kinds}
-    ceiling_drift = set(ceilings) != kinds or any(
-        ceilings.get(kind) != allowed_counts[kind] or counts[kind] > ceilings.get(kind, -1)
+    ceiling_drift = any(
+        counts[kind] > ceilings[kind] or ceilings[kind] - counts[kind] > slack[kind]
         for kind in kinds
     )
     if ceiling_drift or sites != allowed:

@@ -45,6 +45,7 @@ from dinkster_protocol import GRAPH_COMPILERS_SURFACE, KeyedContribution, extens
 from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
+from dinkster_values.storage import image_input
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
 
@@ -139,7 +140,7 @@ def test_lazy_media_pack_resolves_assets_after_compat_host_registration(
                 ["load"],
             )
             loaded = cast("np.ndarray", result.outputs["load"]["image"].resolve())
-            np.testing.assert_array_equal(loaded[0] * 255, pixels)
+            np.testing.assert_array_equal(cast("np.ndarray", image_input(loaded))[0] * 255, pixels)
         finally:
             await composer.close()
 
@@ -534,11 +535,14 @@ def write_sampling_host_manifest(directory: Path) -> Path:
     return manifest
 
 
-def write_inference_extension_manifest(directory: Path, name: str) -> Path:
+def write_inference_extension_manifest(
+    directory: Path, name: str, registry_providers: str = ""
+) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     manifest = directory / "dinkster-pack.toml"
     manifest.write_text(
         f'[pack]\nname = "{name}"\nnamespaces = ["{name}"]\n\n'
+        f"{registry_providers}"
         '[pack.entry]\nnodes = "s1_sampler_empty:NODES"\n\n'
         '[pack.extension]\ninference = "unused_parent_fake:register"\n'
         'privileges = ["inference"]\n',
@@ -635,7 +639,7 @@ def test_pack_contract_resolver_orders_dependencies_and_capability_providers(
         "[pack.requirements.capabilities]\n"
         '"provider.video-generation" = ">=2,<3"\n',
     )
-    digest = "sha256:" + "a" * 64
+    digest = "blake3:" + "a" * 64
     provider_spec = PackSpec(
         provider,
         packs={
@@ -771,7 +775,7 @@ def test_compose_serving_orders_provider_before_consumer(tmp_path: Path) -> None
         "[pack.requirements.capabilities]\n"
         '"provider.video-generation" = ">=2,<3"\n',
     )
-    digest = "sha256:" + "d" * 64
+    digest = "blake3:" + "d" * 64
     specs = (
         PackSpec(
             consumer,
@@ -810,7 +814,7 @@ def test_compose_serving_orders_provider_before_consumer(tmp_path: Path) -> None
 def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_registry_ids(
     tmp_path: Path,
 ) -> None:
-    digest = "sha256:" + "b" * 64
+    digest = "blake3:" + "b" * 64
 
     def spec(path: Path, name: str) -> PackSpec:
         return PackSpec(
@@ -879,7 +883,7 @@ def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_registry_i
 
 
 def test_pack_registry_providers_order_consumers_and_report_conflicts(tmp_path: Path) -> None:
-    digest = "sha256:" + "9" * 64
+    digest = "blake3:" + "9" * 64
 
     def spec(path: Path, name: str) -> PackSpec:
         return PackSpec(
@@ -953,7 +957,7 @@ def test_composed_generation_records_contract_and_registry_resolution(tmp_path: 
         "consumer",
         '[pack.requirements.registry]\n"dinkster.samplers" = ["dinkster.euler"]\n',
     )
-    digest = "sha256:" + "c" * 64
+    digest = "blake3:" + "c" * 64
 
     async def scenario() -> None:
         composition = await compose_serving(
@@ -1260,6 +1264,49 @@ def test_graph_compiler_generation_orders_identity_and_binds_transport(
     asyncio.run(scenario())
 
 
+def test_registered_inference_provider_requires_manifest_declaration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_inference import INFERENCE_SAMPLERS_SURFACE
+
+    from dinkster.compose import PackSpec, ServingComposer
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        try:
+            await composer.add_pack(
+                PackSpec(
+                    write_sampling_host_manifest(tmp_path / "host"),
+                    trust_reserved=True,
+                )
+            )
+            worker = composer._sampling_worker(composer._topology)
+            assert worker is not None
+            sampler = KeyedContribution(
+                surface_id=INFERENCE_SAMPLERS_SURFACE,
+                id="sampler_only.proof",
+            )
+
+            async def materialize(_key: str):
+                return (("sampler_only", (sampler,)),)
+
+            monkeypatch.setattr(worker, "materialize_inference_generation", materialize)
+            manifest = write_inference_extension_manifest(tmp_path / "sampler_only", "sampler_only")
+            with pytest.raises(CompositionError) as raised:
+                await composer.add_pack(manifest)
+            assert str(raised.value) == (
+                "pack 'sampler_only' registers inference provider ids missing from "
+                "[pack.provides.registry]: dinkster.samplers:sampler_only.proof\n"
+                "Add this exact declaration:\n"
+                "[pack.provides.registry]\n"
+                '"dinkster.samplers" = ["sampler_only.proof"]'
+            )
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
 def test_noncompiler_inference_generation_has_no_compile_transport(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1293,9 +1340,12 @@ def test_noncompiler_inference_generation_has_no_compile_transport(
 
             monkeypatch.setattr(worker, "materialize_inference_generation", materialize)
             monkeypatch.setattr(worker, "compile_graph", compile_graph)
-            await composer.add_pack(
-                write_inference_extension_manifest(tmp_path / "sampler_only", "sampler_only")
+            manifest = write_inference_extension_manifest(
+                tmp_path / "sampler_only",
+                "sampler_only",
+                '[pack.provides.registry]\n"dinkster.samplers" = ["sampler_only.proof"]\n\n',
             )
+            await composer.add_pack(manifest)
             runtime = composer._runtime_seat.pin()
             assert runtime.graph_compiler_registry.contributions == ()
             assert runtime.graph_compile_transport is None
@@ -1390,19 +1440,19 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "sha256:a77107ea1863d2f414819c88116fc6c82bcf147d038afb2a047cee7fd3632d65",
+            "blake3:4b2babc83d81f1275238b69031fd1c8a5e5aed07065ed75b56fc432c23a8f064",
         ),
         (
             "dinkster-nodes-media-io",
-            "sha256:ede7937f78e83d0365316dcab7fc20a585abaf04fb1e351599adf560f59feefd",
+            "blake3:734304540eef1cd98f76b6111ae8f0d7c0b81c7323c36174cb710b7d9ca4e4f4",
         ),
         (
             "dinkster-nodes-image",
-            "sha256:cbf2b73dd6e454bbea3c3266a51486817a9cbbf55e9d3ed61fbedd29573ce688",
+            "blake3:134ddbf3f2d650ead1a1aa3c50d0a564bfff50a02e3c0cabf08ae01b96189e04",
         ),
         (
             "dinkster-nodes-remote",
-            "sha256:0c90459042759de51d09a1977593195535facf3b4c4e1ad5632ae6e721469d4b",
+            "blake3:4685f09942fd5d6a3d85bb559f42fd99d69484dd8f6253f5dda0f2a1c3e7be39",
         ),
     ],
 )
@@ -1733,7 +1783,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("sha256:6badee4196df5ec5e7e73ea7729229921d08353b9c98c1ed3ca0c5c79d73d9af")
+    assert expected == ("blake3:da3d4f989afa330e68c479afac8bdc13a5a6df878f56cbf38d0444f1fabd2019")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
@@ -1821,14 +1871,14 @@ def test_default_suite_refuses_malformed_managed_lock(
         ('{"format":"dinkster.lock/1","packs":[]}', "selects no packs"),
         (
             '{"format":"dinkster.lock/1","packs":[{'
-            '"artifactDigest":"sha256:1111111111111111111111111111111111111111111111111111111111111111",'
+            '"artifactDigest":"blake3:1111111111111111111111111111111111111111111111111111111111111111",'
             '"claims":["other"],"pack":"other","publisher":"dinkster",'
             '"source":"registry","version":"1.0.0"}]}',
             "selects unsupported packs",
         ),
         (
             '{"format":"dinkster.lock/1","packs":[{'
-            '"artifactDigest":"sha256:1111111111111111111111111111111111111111111111111111111111111111",'
+            '"artifactDigest":"blake3:1111111111111111111111111111111111111111111111111111111111111111",'
             '"claims":["dinkster"],"pack":"dinkster-nodes-generation","publisher":"other",'
             '"source":"registry","version":"1.0.0"}]}',
             "contains non-Dinkster publishers",

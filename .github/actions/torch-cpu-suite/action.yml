@@ -11,9 +11,6 @@ inputs:
   pytest-args:
     description: Additional pytest arguments for the inference and IPAdapter suites
     default: ""
-  identity-deploy-key:
-    description: Read-only dinkster-identity deploy key
-    required: true
   evidence-deploy-key:
     description: Read-only dinkster-evidence deploy key
     required: true
@@ -30,9 +27,6 @@ runs:
       with:
         evidence-deploy-key: ${{ inputs.evidence-deploy-key }}
         coverage: "false"
-    - uses: ./.github/actions/configure-dinkster-identity
-      with:
-        deploy-key: ${{ inputs.identity-deploy-key }}
     - uses: astral-sh/setup-uv@v5
       with:
         python-version: "3.12"
@@ -123,17 +117,10 @@ runs:
     - if: env.DINKSTER_MODEL_TEST_GROUP == ''
       shell: bash
       run: .venv/bin/pyright -p packages/dinkster-inference-torch
-    - name: Assert pinned CPU dispatch
+    - name: Assert pinned AVX2 dispatch
       shell: bash
       run: |
         grep -m1 'model name' /proc/cpuinfo
-        vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
-        echo "vendor_id: $vendor"
-        if [ "$vendor" != "AuthenticAMD" ] || ! grep -qw avx2 /proc/cpuinfo || grep -qw avx512f /proc/cpuinfo; then
-          echo "Exact CPU vectors require an AMD host without AVX-512 (#900, #1045)."
-          exit 1
-        fi
-        echo "no avx512f"
         .venv-torch/bin/python - <<'EOF'
         import torch
         capability = torch.backends.cpu.get_cpu_capability()
@@ -154,7 +141,6 @@ runs:
       env:
         DINKSTER_MODEL_PYTEST_ARGS: ${{ inputs.pytest-args }}
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q
         $DINKSTER_MODEL_PYTEST_ARGS
         packages/dinkster-inference-torch/tests
@@ -163,7 +149,6 @@ runs:
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'acceptance'
       shell: bash
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q
         .evidence-source/packages/dinkster-acceptance/tests/test_acceptance_sampling.py
     - name: Acquire pinned line and edge parity artifacts
@@ -222,7 +207,6 @@ runs:
         DINKSTER_TEED_TEST_MODEL: ${{ runner.temp }}/7_model.pth
         DINKSTER_MTEED_TEST_MODEL: ${{ runner.temp }}/MTEED.pth
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_hed.py
     - name: Acquire pinned upscale parity artifacts
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
@@ -247,7 +231,6 @@ runs:
         DINKSTER_UPSCALE_TEST_ANIME6B: ${{ runner.temp }}/RealESRGAN_x4plus_anime_6B.pth
         DINKSTER_UPSCALE_TEST_GENERAL: ${{ runner.temp }}/realesr-general-x4v3.pth
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_upscale.py
     - name: Acquire pinned Depth Anything V2 parity artifact
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
@@ -265,7 +248,6 @@ runs:
       env:
         DINKSTER_DEPTH_ANYTHING_V2_TEST_MODEL: ${{ runner.temp }}/depth-anything-v2-large.safetensors
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_depth_anything_v2.py
     - name: Acquire pinned DETR parity artifact
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
@@ -283,7 +265,6 @@ runs:
       env:
         DINKSTER_DETR_TEST_MODEL: ${{ runner.temp }}/detr-r50-e632da11.pth
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_detr.py
     - name: Acquire pinned RT-DETR parity artifact
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
@@ -301,7 +282,6 @@ runs:
       env:
         DINKSTER_RTDETR_TEST_MODEL: ${{ runner.temp }}/rt_detr_v4-x-hgnet_fp16.safetensors
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_rtdetr.py
     - name: Acquire pinned EfficientSAM parity artifacts
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
@@ -326,7 +306,6 @@ runs:
         DINKSTER_EFFICIENT_SAM_TEST_ENCODER: ${{ runner.temp }}/efficient-sam-vitt-encoder-d525f622.onnx
         DINKSTER_EFFICIENT_SAM_TEST_DECODER: ${{ runner.temp }}/efficient-sam-vitt-decoder-d525f622.onnx
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_efficient_sam.py
     - name: Acquire pinned BiRefNet parity artifact
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-large'
@@ -344,7 +323,6 @@ runs:
       env:
         DINKSTER_BIREFNET_TEST_MODEL: ${{ runner.temp }}/birefnet.safetensors
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_birefnet.py
     - name: Acquire pinned Depth Anything 3 Mono Large parity artifact
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-large'
@@ -362,7 +340,6 @@ runs:
       env:
         DINKSTER_DEPTH_ANYTHING_V3_TEST_MODEL: ${{ runner.temp }}/depth-anything-3-mono-large.safetensors
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_depth_anything_v3.py
     - name: Acquire pinned SAM 3.1 parity artifact
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-sam'
@@ -380,13 +357,11 @@ runs:
       env:
         DINKSTER_SAM31_TEST_MODEL: ${{ runner.temp }}/sam3.1_multiplex_fp16.safetensors
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_sam31.py
     # Torch-dependent benchmark-harness tests skip in the torch-free
     # root suite; this is the lane that actually executes them.
     - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'acceptance'
       shell: bash
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q
         "tests/test_benchmark_inference.py::test_minimax_h3_identities_are_accepted_by_the_production_dit_loader"

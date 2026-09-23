@@ -183,6 +183,12 @@ _RUNTIME_SOURCE_ROLE_SETS = (
     ("clip_l", "diffusion", "t5xxl", "vae"),
     *_EMBEDDING_FREE_RUNTIME_SOURCE_ROLE_SETS,
 )
+_TEXT_RUNTIME_SOURCE_ROLES = frozenset(("checkpoint", "clip_l", "gemma3_12b", "qwen3_4b", "t5xxl"))
+
+
+def _diffusion_unload_roles(handle: NativeRuntimeHandle) -> tuple[str, ...]:
+    source_roles = frozenset(source.role for source in handle.recipe.sources)
+    return ("text",) if source_roles & _TEXT_RUNTIME_SOURCE_ROLES else ()
 
 
 def _not_cancelled() -> bool:
@@ -207,8 +213,11 @@ _DINKSTER_VAE = TypeExpr.concrete("dinkster.vae")
 _DINKSTER_CONDITIONING = TypeExpr.concrete("dinkster.conditioning")
 _DINKSTER_LATENT = TypeExpr.concrete("dinkster.latent")
 _DINKSTER_LATENT_LIST = TypeExpr.list_of(_DINKSTER_LATENT)
+_INT_LIST = TypeExpr.list_of(_INT)
 _DINKSTER_IMAGE = TypeExpr.concrete("dinkster.image")
 _DINKSTER_MASK = TypeExpr.concrete("dinkster.mask")
+_DINKSTER_INPAINT_CONDITIONING = TypeExpr.concrete("dinkster.inpaint-conditioning")
+_DINKSTER_CONTEXT_WINDOWS = TypeExpr.concrete("dinkster.context-windows")
 _DINKSTER_SAMPLER = TypeExpr.concrete("dinkster.sampler")
 _DINKSTER_SIGMAS = TypeExpr.concrete("dinkster.sigmas")
 _DINKSTER_GUIDER = TypeExpr.concrete("dinkster.guider")
@@ -1265,12 +1274,14 @@ __all__ = [
     "_DINKSTER_CONDITIONING",
     "_DINKSTER_GUIDER",
     "_DINKSTER_IMAGE",
+    "_DINKSTER_INPAINT_CONDITIONING",
     "_DINKSTER_LATENT",
     "_DINKSTER_LATENT_LIST",
     "_DINKSTER_LATENT_OPERATION",
     "_DINKSTER_MASK",
     "_DINKSTER_MODEL",
     "_DINKSTER_NOISE",
+    "_DINKSTER_CONTEXT_WINDOWS",
     "_DINKSTER_SAMPLER",
     "_DINKSTER_SIGMAS",
     "_DINKSTER_VAE",
@@ -1286,6 +1297,7 @@ __all__ = [
     "_HOOKS",
     "_HOOK_KEYFRAMES",
     "_INT",
+    "_INT_LIST",
     "_LTXAVDualGuiderValue",
     "_LTX_FRAME_RATE_METADATA_KEY",
     "_LatentOperationValue",

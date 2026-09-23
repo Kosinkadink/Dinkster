@@ -2373,14 +2373,14 @@ def test_pack_provenance_pins_on_the_wire() -> None:
     pinned = PackInfo(
         display_name="Pinned",
         version="1.2.3",
-        artifact_digest="sha256:" + "ab" * 32,
+        artifact_digest="blake3:" + "ab" * 32,
         source="registry",
         publisher="alice",
     )
     assert pinned.to_wire() == {
         "displayName": "Pinned",
         "version": "1.2.3",
-        "artifactDigest": "sha256:" + "ab" * 32,
+        "artifactDigest": "blake3:" + "ab" * 32,
         "source": "registry",
         "publisher": "alice",
     }
@@ -2402,7 +2402,7 @@ def test_pack_provenance_pins_on_the_wire() -> None:
         try:
             data = await (await client.get("/api/nodes")).json()
             assert data["packs"]["pinned"]["version"] == "1.2.3"
-            assert data["packs"]["pinned"]["artifactDigest"] == "sha256:" + "ab" * 32
+            assert data["packs"]["pinned"]["artifactDigest"] == "blake3:" + "ab" * 32
             assert data["packs"]["pinned"]["publisher"] == "alice"
             assert "version" not in data["packs"]["dev"]
             assert "artifactDigest" not in data["packs"]["dev"]

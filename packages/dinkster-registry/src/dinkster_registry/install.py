@@ -47,13 +47,13 @@ and yank/security-revocation propagation.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, cast
 
+from blake3 import blake3
 from dinkster_schema import canonical_name, claims_conflict, validate_name
 
 from .model import (
@@ -238,7 +238,7 @@ class Lockfile:
 
     def record_digest(self) -> str:
         """The installation's content address: same digest, same install."""
-        return ARTIFACT_DIGEST_PREFIX + hashlib.sha256(self.record_json().encode()).hexdigest()
+        return ARTIFACT_DIGEST_PREFIX + blake3(self.record_json().encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------

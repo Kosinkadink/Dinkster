@@ -1740,7 +1740,6 @@ class TestSample:
             "window_plan": window_plan,
             "compute_dtype": torch.float32,
             "device": "cpu",
-            "capture_denoised": False,
         }
 
     def test_shape_and_determinism(self, runtime: FluxRuntime) -> None:

@@ -415,6 +415,7 @@ class ZImageRuntime(SingleStreamSamplingRuntime):
         device=_z_image_device,
         compute_dtype=_z_image_compute_dtype,
         flow=True,
+        context_windows_option="window_plan",
     )
 
     def __init__(
@@ -471,12 +472,6 @@ class ZImageRuntime(SingleStreamSamplingRuntime):
         return self._sigma_space()
 
     sample_custom = sampling_execution
-
-    def _ksampler_kwargs(self, kwargs: dict[str, object]) -> dict[str, object]:
-        extra = super()._ksampler_kwargs(kwargs)
-        if "window_plan" in extra:
-            extra["context_windows"] = extra.pop("window_plan")
-        return extra
 
     def decode_latent(self, latent: torch.Tensor) -> torch.Tensor:
         return self.codec.decode(latent)

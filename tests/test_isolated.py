@@ -3550,6 +3550,43 @@ def test_ensure_pack_venv_selects_accelerator_requirements(
     assert "torch==2.5.1" not in install and "numpy" not in install
 
 
+def test_pack_venv_ignores_workspace_only_source_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_workers import provision
+
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "pyproject.toml").write_text(
+        '[project]\nname = "workspace-pack"\nversion = "1"\n'
+        'dependencies = ["dinkster-api"]\n'
+        "[tool.uv.sources]\ndinkster-api = { workspace = true }\n"
+    )
+    manifest_path = pack / "dinkster-pack.toml"
+    manifest_path.write_text('[pack]\nname = "workspace-pack"\n[pack.entry]\nnodes = "m:N"\n')
+    api = tmp_path / "dinkster-api"
+    api.mkdir()
+    (api / "pyproject.toml").write_text(
+        '[project]\nname = "dinkster-api"\nversion = "1"\ndependencies = []\n'
+    )
+    commands: list[list[str]] = []
+    monkeypatch.setattr(provision, "preflight_interpreter", lambda _python: (3, 12))
+    monkeypatch.setattr(provision, "_run", lambda command: commands.append(list(command)))
+
+    ensure_pack_venv(
+        load_manifest(manifest_path),
+        venv_root=tmp_path / "venvs",
+        workspace_packages=(pack, api),
+    )
+
+    install = commands[-1]
+    assert install[:3] == ["uv", "pip", "install"]
+    assert "--no-sources" in install
+    assert install.index("--no-sources") < install.index("-e")
+    assert install.count(str(pack)) == 1
+    assert "dinkster-workers" in install
+
+
 def test_pack_venv_reuse_requires_matching_provisioning_inputs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

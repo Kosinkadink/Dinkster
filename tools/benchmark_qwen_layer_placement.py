@@ -169,9 +169,13 @@ def _validate_artifact(report: Mapping[str, object]) -> None:
     if (
         type(path) is not str
         or not path
-        or not (PurePosixPath(path).is_absolute() or PureWindowsPath(path).is_absolute())
+        or not (
+            PurePosixPath(path).is_absolute()
+            or PureWindowsPath(path).is_absolute()
+            or path.startswith("<LOCAL_HOME>/")
+        )
     ):
-        raise ValueError("benchmark report artifact path must be absolute")
+        raise ValueError("benchmark report artifact path must be absolute or use <LOCAL_HOME>")
     if artifact.get("bytes") != MODEL_SIZE:
         raise ValueError("benchmark report artifact size does not match the pinned model")
     if artifact.get("sha256") != MODEL_SHA256:

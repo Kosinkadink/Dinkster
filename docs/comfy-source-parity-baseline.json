@@ -12,12 +12,12 @@
     }
   ],
   "format": "dinkster-comfy-source-parity-baseline/1",
-  "grandfatheredUnreceiptedDigest": "sha256:16602666ec72d69a8b02f92f5a8e79357a1257536984a74ac7fc5a78bf63baae",
+  "grandfatheredUnreceiptedDigest": "sha256:65e64338332eb08d8209f78e1943ab2cc7e97e2b5c2737eab5148fb64d7e0fdf",
   "measured": {
-    "passingReceiptCases": 17,
-    "receiptBackedMappings": 17,
-    "translationDeclarations": 230,
-    "unreceiptedMappings": 213
+    "passingReceiptCases": 103,
+    "receiptBackedMappings": 99,
+    "translationDeclarations": 314,
+    "unreceiptedMappings": 215
   },
   "parityUnit": "unique-mapping-with-verified-passing-receipt",
   "scope": "maintained-comfy-mapping-records"
