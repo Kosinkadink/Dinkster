@@ -792,7 +792,9 @@ if _TYPE_CHECKING:
         SeedVR2Denoiser,
         SeedVR2DiffusionRuntime,
         SeedVR2RuntimeError,
+        materialize_seedvr2_conditioning,
         seedvr2_conditioning,
+        seedvr2_conditioning_to_carrier,
     )
     from .seedvr2_vae import VideoAutoencoderKLWrapper
     from .sequence_exchange import (
@@ -1751,7 +1753,15 @@ _EXPORTS: dict[str, tuple[str, str | None]] = {
     "SeedVR2Denoiser": ("seedvr2_runtime", "SeedVR2Denoiser"),
     "SeedVR2DiffusionRuntime": ("seedvr2_runtime", "SeedVR2DiffusionRuntime"),
     "SeedVR2RuntimeError": ("seedvr2_runtime", "SeedVR2RuntimeError"),
+    "materialize_seedvr2_conditioning": (
+        "seedvr2_runtime",
+        "materialize_seedvr2_conditioning",
+    ),
     "seedvr2_conditioning": ("seedvr2_runtime", "seedvr2_conditioning"),
+    "seedvr2_conditioning_to_carrier": (
+        "seedvr2_runtime",
+        "seedvr2_conditioning_to_carrier",
+    ),
     "VideoAutoencoderKLWrapper": ("seedvr2_vae", "VideoAutoencoderKLWrapper"),
     "RING_ACCUMULATION_DTYPE": ("sequence_exchange", "RING_ACCUMULATION_DTYPE"),
     "RING_ACCUMULATION_ORDER": ("sequence_exchange", "RING_ACCUMULATION_ORDER"),
@@ -2376,7 +2386,9 @@ __all__ = [
     "adain_color_transfer",
     "lab_color_transfer",
     "load_seedvr2_component",
+    "materialize_seedvr2_conditioning",
     "seedvr2_conditioning",
+    "seedvr2_conditioning_to_carrier",
     "wavelet_color_transfer",
     "GEMMA_SENTENCEPIECE_VOCAB_SIZE",
     "GemmaAttention",

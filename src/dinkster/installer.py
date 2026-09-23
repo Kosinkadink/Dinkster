@@ -41,7 +41,6 @@ import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
-import zipfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -75,6 +74,7 @@ from dinkster_workers.provision import (
     ensure_pack_venv,
     freeze_venv,
     hash_pins,
+    workspace_packages_for,
 )
 from packaging.requirements import Requirement
 
@@ -513,10 +513,8 @@ class Installer:
     ) -> None:
         self.root = root
         self._workspace_packages = tuple(workspace_packages)
-        self._provision = provision if provision is not None else self._default_provision
-        self._group_provision = (
-            group_provision if group_provision is not None else self._default_group_provision
-        )
+        self._provision = provision
+        self._group_provision = group_provision
         self._freeze = freeze if freeze is not None else freeze_venv
         self._hasher = hasher if hasher is not None else hash_pins
         self._runtime_probe = runtime_probe if runtime_probe is not None else detect_runtime
@@ -574,30 +572,52 @@ class Installer:
             self._accelerator = detect_accelerator()
         return self._accelerator
 
-    def _default_provision(
-        self, manifest: PackManifest, venv_root: Path, spec: VenvSpec | None
+    def _workspace_packages_for_entries(self, entries: Sequence[LockedPack]) -> tuple[Path, ...]:
+        if self._workspace_packages:
+            return self._workspace_packages
+        packages: list[Path] = []
+        for entry in entries:
+            if not entry.source.startswith("local:"):
+                continue
+            source = Path(entry.source[len("local:") :])
+            for package in workspace_packages_for(source):
+                if package not in packages:
+                    packages.append(package)
+        return tuple(packages)
+
+    def _provision_entry(
+        self,
+        entry: LockedPack,
+        manifest: PackManifest,
+        venv_root: Path,
+        spec: VenvSpec | None,
     ) -> Path:
+        if self._provision is not None:
+            return self._provision(manifest, venv_root, spec)
         return ensure_pack_venv(
             manifest,
             venv_root=venv_root,
-            workspace_packages=self._workspace_packages,
+            workspace_packages=self._workspace_packages_for_entries((entry,)),
             pinned=spec.exact if spec is not None else None,
             constraints=spec.constraints if spec is not None else (),
             accelerator=self.accelerator,
         )
 
-    def _default_group_provision(
+    def _provision_entries(
         self,
+        entries: Sequence[LockedPack],
         manifests: Sequence[PackManifest],
         group_name: str,
         venv_root: Path,
         spec: VenvSpec | None,
     ) -> Path:
+        if self._group_provision is not None:
+            return self._group_provision(manifests, group_name, venv_root, spec)
         return ensure_group_venv(
             manifests,
             group_name,
             venv_root=venv_root,
-            workspace_packages=self._workspace_packages,
+            workspace_packages=self._workspace_packages_for_entries(entries),
             pinned=spec.exact if spec is not None else None,
             constraints=spec.constraints if spec is not None else (),
             accelerator=self.accelerator,
@@ -976,8 +996,7 @@ class Installer:
         if not archive.is_file():
             return None
         with tempfile.TemporaryDirectory(prefix="dinkster-manifest-") as scratch:
-            with zipfile.ZipFile(archive) as bundle:
-                bundle.extract(MANIFEST_FILENAME, scratch)
+            unpack_artifact(archive, Path(scratch), entry.artifact_digest)
             return load_manifest(Path(scratch) / MANIFEST_FILENAME)
 
     def venv_python(self, entry: LockedPack) -> Path | None:
@@ -1141,7 +1160,7 @@ class Installer:
             )
             if entry.pack not in in_process and venvs:
                 spec = venv_specs.get(entry.pack) if venv_specs is not None else None
-                interpreter = self._provision(manifest, self._venv_root(entry), spec)
+                interpreter = self._provision_entry(entry, manifest, self._venv_root(entry), spec)
             if entry.pack in in_process:
                 self._validate_in_process_runtime(entry.pack, manifest, runtime_pins or {})
             report = diagnose(manifest.path, interpreter=interpreter)
@@ -1199,7 +1218,8 @@ class Installer:
                         f"pins or constraints in the plan"
                     )
                 try:
-                    interpreter = self._group_provision(
+                    interpreter = self._provision_entries(
+                        group_entries,
                         tuple(manifests[member] for member in members),
                         name,
                         self._group_venv_root(group_entries),
@@ -1213,8 +1233,8 @@ class Installer:
             for entry in target.packs:
                 if entry.pack not in member_to_group and entry.pack not in in_process:
                     spec = venv_specs.get(entry.pack) if venv_specs is not None else None
-                    interpreters[entry.pack] = self._provision(
-                        manifests[entry.pack], self._venv_root(entry), spec
+                    interpreters[entry.pack] = self._provision_entry(
+                        entry, manifests[entry.pack], self._venv_root(entry), spec
                     )
         for entry in target.packs:
             if entry.pack in in_process:

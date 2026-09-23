@@ -16,6 +16,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_graph import Graph, GraphNode
 from dinkster_server import PackInfo, create_app
+from dinkster_values import EncodedPayload, Value, ValueMeta
 
 from dinkster.compose import PackSpec, ServingComposer
 
@@ -203,6 +204,24 @@ def test_graph_selecting_a_degraded_sampler_fails_with_the_recorded_reason() -> 
                 Graph(nodes={"probe": GraphNode(PROBE_TYPE, {"solver": "other"})}), ["probe"]
             )
             assert planned.outputs["probe"]["solver"].resolve() == "other"
+        finally:
+            await composer.close()
+
+    asyncio.run(scenario())
+
+
+def test_degraded_inference_check_ignores_foreign_opaque_values() -> None:
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=_worker_env())
+        try:
+            await composer.add_pack(_degraded_spec())
+            foreign = Value(
+                type_id="foreign.value",
+                fingerprint="foreign-value",
+                meta=ValueMeta({}),
+                payload=EncodedPayload("foreign.value", b"opaque", None),
+            )
+            composer._require_available_inference({"sample": foreign})
         finally:
             await composer.close()
 

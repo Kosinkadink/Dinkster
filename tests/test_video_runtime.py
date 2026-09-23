@@ -26,6 +26,7 @@ from dinkster_values import (
     video_from_source,
     video_meta,
 )
+from dinkster_values.storage import image_input
 from dinkster_video import assemble_video, disassemble_video, save_video_stream
 
 
@@ -133,7 +134,7 @@ def test_non_packet_aligned_trim_transcodes_without_snapping() -> None:
     save_video_stream(value, output)
     decoded = disassemble_video(video_from_source(output.getvalue()))
     assert decoded["frame_count"] == 4
-    images = cast(np.ndarray, decoded["images"])
+    images = cast(np.ndarray, image_input(decoded["images"]))
     assert np.max(np.abs(images[:, 0, 0, 0] - np.arange(2, 6) * 10 / 255)) < 0.02
 
 
@@ -490,7 +491,7 @@ def test_source_decode_and_spatial_encode_use_source_matrix_and_range(
         for packet in (*stream.encode(frame), *stream.encode()):
             mux.mux(packet)
     source = video_from_source(output.getvalue())
-    pixels = cast(np.ndarray, disassemble_video(source)["images"])
+    pixels = cast(np.ndarray, image_input(disassemble_video(source)["images"]))
     np.testing.assert_allclose(pixels.mean(axis=(0, 1, 2)), [1, 0, 0], atol=0.01)
     cropped = edit_video(source, {"crop": {"width": 32, "height": 16}})
     encoded = io.BytesIO()
@@ -725,7 +726,7 @@ def test_alpha_source_codec_and_samples_survive_crop() -> None:
     result = video_from_source(saved.getvalue())
     probe = cast(dict[str, Any], result["probe"])
     assert (probe["video_codec"], probe["alpha"]) == ("ffv1", True)
-    actual = cast(np.ndarray, disassemble_video(result)["images"])
+    actual = cast(np.ndarray, image_input(disassemble_video(result)["images"]))
     np.testing.assert_array_equal(np.rint(actual[0] * 255).astype(np.uint8), pixels[2:18, 4:36])
 
 
@@ -821,10 +822,15 @@ def test_remote_load_then_trim_preserves_qualified_cost_and_reuses_source(
             ),
         }
     )
+    loaded = {**video_from_source(data), "source": wire}
     expected = edit_video(
-        {**video_from_source(data), "source": wire},
+        loaded,
         {"trim": {"start_time": 0.5, "duration": 0.5}},
     )
+    encoded_sizes = {
+        "load": len(encode_video(loaded)),
+        "trim": len(encode_video(expected)),
+    }
 
     class VideoHost(AssetHost):
         async def _handle(self, request: web.Request) -> web.StreamResponse:
@@ -870,7 +876,7 @@ def test_remote_load_then_trim_preserves_qualified_cost_and_reuses_source(
                         assert result.skipped == ()
                         for node in ("load", "trim"):
                             assert result.outputs[node]["video"].meta.get("cost") == {
-                                "ram@remote-video": 0
+                                "ram@remote-video": encoded_sizes[node]
                             }
                         payload = result.outputs["trim"]["video"].payload
                         assert isinstance(payload, EncodedPayload)
