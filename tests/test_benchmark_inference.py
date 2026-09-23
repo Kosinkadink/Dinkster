@@ -2076,7 +2076,7 @@ def test_minimax_h3_drives_the_native_production_nodes(
         "execute",
         staticmethod(
             lambda **kwargs: (
-                events.append(("condition", kwargs)) or {"positive": "positive", "negative": []}
+                events.append(("condition", kwargs)) or {"conditioning": kwargs["prompt"]}
             )
         ),
     )
@@ -2184,6 +2184,14 @@ def test_minimax_h3_drives_the_native_production_nodes(
         },
     )
     assert events[6] == (
+        "condition",
+        {
+            "clip": handles["text_encoder"],
+            "target": "empty-av",
+            "prompt": "",
+        },
+    )
+    assert events[7] == (
         "sample",
         {
             "model": handles["diffusion"],
@@ -2192,13 +2200,13 @@ def test_minimax_h3_drives_the_native_production_nodes(
             "cfg": 1.0,
             "sampler_name": "dinkster.res_multistep",
             "scheduler": "dinkster.simple",
-            "positive": "positive",
-            "negative": [],
+            "positive": "A red square centered on a black background.",
+            "negative": "",
             "latent_image": "empty-av",
             "denoise": 1.0,
         },
     )
-    assert events[7] == (
+    assert events[8] == (
         "decode",
         {
             "video_vae": handles["video_vae"],
