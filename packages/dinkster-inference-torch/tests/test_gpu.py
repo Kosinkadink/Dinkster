@@ -43,7 +43,7 @@ from typing import Any, Literal, cast
 import pytest
 import torch
 from attention_spy import CallableModuleKernel, assert_kernel_is_not_model_state
-from dinkster_inference import Z_IMAGE_CONFIG
+from dinkster_inference import QWEN_IMAGE, Z_IMAGE_CONFIG
 from dinkster_inference.patches import DiffPatch, PatchEntry, PatchSet
 from dinkster_inference_torch import (
     FP8_DTYPES,
@@ -101,6 +101,7 @@ from dinkster_inference_torch import (
     tiled_apply,
 )
 from dinkster_inference_torch import quant_linear as quant_linear_mod
+from dinkster_inference_torch import qwen_image_runtime as qwen_image_runtime_module
 from dinkster_inference_torch import rounding as rounding_mod
 from dinkster_inference_torch._nvfp4_diagnostics import Nvfp4DiagnosticsRecorder
 from dinkster_inference_torch.attention import attention_kernel_context
@@ -110,6 +111,7 @@ from dinkster_inference_torch.gguf_linear import (
 )
 from dinkster_inference_torch.model_prefetch import make_prefetch_queue, prefetch_queue_pop
 from dinkster_inference_torch.quant_linear import Nvfp4ExecutionError, Nvfp4Linear
+from dinkster_inference_torch.qwen_image_runtime import QwenImageConditioning
 from dinkster_inference_torch.wan21_vae import WanVAE, WanVAEConfig
 from dinkster_memory import PressureSignal
 from golden_files import load_platform_golden
@@ -421,6 +423,68 @@ def test_cast_embedding_cuda_gathers_fp8_rows_before_compute_cast(
     assert seen[0].dtype == torch.float8_e4m3fn
     assert output.dtype == torch.float32
     assert torch.equal(output, original(token_ids, weight).to(torch.float32))
+
+
+def test_qwen_float8_storage_uses_bound_dtype_for_cuda_position_ids() -> None:
+    class PackingModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.img_in = CastOperations(torch.bfloat16).linear(64, 8, bias=False).to("cuda:0")
+            self.img_in.weight = torch.nn.Parameter(
+                torch.arange(512, device="cuda:0", dtype=torch.float32)
+                .reshape(8, 64)
+                .to(torch.float8_e4m3fn)
+            )
+            self.seen_latent: torch.Tensor | None = None
+            self.seen_ids: torch.Tensor | None = None
+            self.seen_shape: tuple[int, ...] | None = None
+
+        def forward(
+            self,
+            latent: torch.Tensor,
+            _timestep: torch.Tensor,
+            _context: torch.Tensor,
+            _attention_mask: torch.Tensor | None,
+        ) -> torch.Tensor:
+            self.seen_latent = latent
+            _, self.seen_ids, self.seen_shape = QwenImage.pack_image(cast(QwenImage, self), latent)
+            return torch.zeros_like(latent)
+
+    model = PackingModel()
+    assembled = qwen_image_runtime_module._QwenImageDiffusionAssembly(  # pyright: ignore[reportPrivateUsage]
+        cast(QwenImage, model), QWEN_IMAGE
+    )
+    compute_dtype = cast(torch.dtype, assembled.compute_dtype("diffusion"))
+    assert model.img_in.weight.dtype is torch.float8_e4m3fn
+    denoiser = qwen_image_runtime_module._QwenImageDenoiser(  # pyright: ignore[reportPrivateUsage]
+        cast(QwenImage, model), lambda: False, compute_dtype
+    )
+
+    latent = torch.zeros((1, 16, 2, 3, 5), device="cuda:0", dtype=torch.float32)
+    conditioning = QwenImageConditioning(
+        torch.zeros((1, 2, 4), device="cuda:0", dtype=torch.float32)
+    )
+    denoiser.evaluate_conditioning(latent, 0.5, conditioning)
+
+    assert compute_dtype is torch.bfloat16
+    assert model.seen_latent is not None
+    assert model.seen_latent.device == torch.device("cuda:0")
+    assert model.seen_latent.dtype is torch.bfloat16
+    assert model.seen_shape == (1, 16, 2, 4, 6)
+    assert model.seen_ids is not None
+    expected = torch.tensor(
+        [
+            [temporal, height, width]
+            for temporal in (0.0, 1.0)
+            for height in (-1.0, 0.0)
+            for width in (-1.0, 0.0, 1.0)
+        ],
+        device="cuda:0",
+        dtype=torch.float32,
+    ).unsqueeze(0)
+    assert model.seen_ids.device == torch.device("cuda:0")
+    assert model.seen_ids.dtype is torch.float32
+    assert torch.equal(model.seen_ids, expected)
 
 
 def test_shared_attention_prioritizes_cudnn_when_flash_is_unavailable() -> None:

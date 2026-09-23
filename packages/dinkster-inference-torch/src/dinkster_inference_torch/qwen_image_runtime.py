@@ -41,7 +41,7 @@ from .guidance import (
 from .guidance import (
     evaluate_conditioning_batch as _engine_evaluate_conditioning_batch,
 )
-from .operations import bound_compute_device, module_compute_device
+from .operations import bound_compute_device, bound_compute_dtype, module_compute_device
 from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
 from .qwen_image import QwenImage
 from .qwen_image_assembly import AssembledQwenImage
@@ -909,7 +909,18 @@ class _QwenImageDiffusionAssembly:
     )
 
     def compute_dtype(self, role: str) -> torch.dtype | None:
-        return next(self.diffusion.parameters()).dtype if role == "diffusion" else None
+        if role != "diffusion":
+            return None
+        linear = self.diffusion.img_in
+        dtype = bound_compute_dtype(linear)
+        if dtype is None:
+            dtype = getattr(linear, "compute_dtype", None)
+        if dtype is None:
+            weight = getattr(linear, "weight", None)
+            dtype = weight.dtype if isinstance(weight, torch.Tensor) else None
+        if not isinstance(dtype, torch.dtype):
+            raise RuntimeError("Qwen Image diffusion has no bound compute dtype")
+        return dtype
 
 
 class QwenImageDiffusionRuntime(FlowSamplingRuntime):
