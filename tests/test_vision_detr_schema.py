@@ -66,7 +66,7 @@ def test_detr_wheel_contains_pack_runtime_and_manifest() -> None:
     assert included["dinkster_vision_detr_pack"] == "dinkster_vision_detr_pack"
     assert (
         included["src/dinkster_nodes_vision/detr"]
-        == "dinkster_vision_detr_pack/dinkster_nodes_vision/detr"
+        == "dinkster_vision_detr_pack/src/dinkster_nodes_vision/detr"
     )
 
 

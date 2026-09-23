@@ -62,7 +62,7 @@ def test_upscale_wheel_contains_pack_runtime_and_manifest() -> None:
     assert included["dinkster_vision_upscale_pack"] == "dinkster_vision_upscale_pack"
     assert (
         included["src/dinkster_nodes_vision/upscale"]
-        == "dinkster_vision_upscale_pack/dinkster_nodes_vision/upscale"
+        == "dinkster_vision_upscale_pack/src/dinkster_nodes_vision/upscale"
     )
 
 

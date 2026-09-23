@@ -20,7 +20,7 @@ packages = ["src/dinkster_model_triposplat"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "dinkster-pack.toml" = "dinkster_model_triposplat_pack/dinkster-pack.toml"
-"src/dinkster_model_triposplat" = "dinkster_model_triposplat_pack/dinkster_model_triposplat"
+"src/dinkster_model_triposplat" = "dinkster_model_triposplat_pack/src/dinkster_model_triposplat"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }

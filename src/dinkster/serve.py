@@ -246,11 +246,12 @@ def _pack_runtime_sources(manifest: PackManifest) -> tuple[tuple[Path, ...], str
         or not (packages.parent / "pyproject.toml").is_file()
     ):
         module = manifest.nodes_entry.partition(":")[0].partition(".")[0]
-        if not (manifest_root / module).is_dir():
-            raise CompositionError(
-                f"installed pack {manifest.name!r} does not bundle its runtime module"
-            )
-        return (), str(manifest_root)
+        for installed_root in (manifest_root / "src", manifest_root):
+            if (installed_root / module).is_dir():
+                return (), str(installed_root)
+        raise CompositionError(
+            f"installed pack {manifest.name!r} does not bundle its runtime module"
+        )
     workspace = tuple(packages / name for name in _PACK_HOST_WORKSPACE_PACKAGES)
     missing = tuple(path.name for path in workspace if not (path / "pyproject.toml").is_file())
     if missing:
@@ -266,6 +267,7 @@ def _prepare_default_pack(
     *,
     venv_root: Path,
     accelerator: str,
+    execution_python: str | None = None,
 ) -> PackSpec:
     """Attach a complete interpreter to an isolated installed default pack."""
     if spec.in_process or spec.python is not None:
@@ -276,7 +278,7 @@ def _prepare_default_pack(
     if pythonpath:
         inherited = environment.get("PYTHONPATH", "")
         environment["PYTHONPATH"] = pythonpath + (os.pathsep + inherited if inherited else "")
-    if configured := os.environ.get(_SERVING_PYTHON_ENV):
+    if configured := execution_python or os.environ.get(_SERVING_PYTHON_ENV):
         return replace(spec, python=configured, env=environment)
     if spec.packs is None or len(spec.packs) != 1:
         raise CompositionError("an installed default pack must carry exactly one provenance entry")
@@ -333,6 +335,7 @@ def _prepare_stale_catalogs(
     *,
     venv_root: Path,
     accelerator: str,
+    execution_python: str | None = None,
 ) -> None:
     stale_by_spec: list[tuple[PackSpec, tuple[Path, ...]]] = []
     for entry in specs:
@@ -358,7 +361,12 @@ def _prepare_stale_catalogs(
     completed = 0
     for entry, manifest_paths in stale_by_spec:
         prepared = (
-            _prepare_default_pack(entry, venv_root=venv_root, accelerator=accelerator)
+            _prepare_default_pack(
+                entry,
+                venv_root=venv_root,
+                accelerator=accelerator,
+                execution_python=execution_python,
+            )
             if not entry.in_process and _is_standard_vision_pack(entry)
             else entry
         )
@@ -1985,6 +1993,7 @@ def main(argv: list[str] | None = None) -> None:
                 specs,
                 venv_root=default_pack_venv_root,
                 accelerator=default_pack_accelerator,
+                execution_python=args.execution_python or None,
             )
         composer.validate_catalogs(specs)
         composition = composer.composition
@@ -2358,6 +2367,7 @@ def main(argv: list[str] | None = None) -> None:
                                     entry,
                                     venv_root=default_pack_venv_root,
                                     accelerator=default_pack_accelerator,
+                                    execution_python=args.execution_python or None,
                                 )
                             async with composer.publication_transaction():
                                 delta = await composer.add_pack(entry)

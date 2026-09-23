@@ -4,9 +4,8 @@ DESIGN 5 (doctor exposure plan): `dinkster doctor` is the main-CLI spelling
 of the publish gate. Every subcommand here fronts a standalone
 `dinkster-*` console script, and every standalone script stays installed
 as an alias - same modules, same flags, same exit codes, two doors.
-The dispatcher adds NO behavior of its own: it resolves a name to the
-script's existing main() and gets out of the way, so nothing can drift
-between the `dinkster foo` and `dinkster-foo` spellings.
+Named projects and installed system generations select their own supervisor;
+source-development commands retain their standalone entry points.
 
 Subcommand modules import lazily: `dinkster doctor` must not pay for (or
 fail on) the server stack, and vice versa. Two delegation shapes exist
@@ -34,8 +33,22 @@ class _Command:
     summary: str
     """One usage line, mirroring the script's own argparse description."""
 
+    include_command: bool = False
+    """Pass the command name to a module that owns several subcommands."""
+
 
 _COMMANDS: dict[str, _Command] = {
+    **{
+        name: _Command("dinkster.engine_cli", True, summary, include_command=True)
+        for name, summary in {
+            "install": "install an engine from a verified mirror feed",
+            "activate": "activate a staged engine generation",
+            "generations": "list installed system generations",
+            "rollback": "restore the previously active system generation",
+            "gc": "preview or remove unreferenced engine content",
+            "project": "create and list independent project install roots",
+        }.items()
+    },
     "doctor": _Command(
         "dinkster_workers.doctor",
         passes_argv=True,
@@ -101,6 +114,14 @@ def _usage() -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "--project":
+        if len(args) < 3:
+            print("usage: dinkster --project NAME <command> [args...]", file=sys.stderr)
+            return 2
+        _, project, head, *tail = args
+        return int(
+            importlib.import_module("dinkster.engine_cli").main([head, "--project", project, *tail])
+        )
     if not args or args[0].startswith("-"):
         return int(importlib.import_module("dinkster.launch").main(args))
     head, *tail = args
@@ -111,9 +132,25 @@ def main(argv: list[str] | None = None) -> int:
     if command is None:
         print(f"dinkster: unknown command {head!r}\n\n{_usage()}", file=sys.stderr)
         return 2
+    if head == "serve":
+        from .setup import default_roots
+
+        if any(
+            arg in {"--root", "--project"} or arg.startswith(("--root=", "--project="))
+            for arg in tail
+        ):
+            return int(importlib.import_module("dinkster.engine_cli").main(args))
+        _, root = default_roots()
+        if (root / "current").is_file():
+            from .installer import Installer
+
+            installer = Installer(root)
+            number = installer.current_number()
+            if number is not None and installer.environment_of(number) is not None:
+                return int(importlib.import_module("dinkster.engine_cli").main(args))
     entry = importlib.import_module(command.module).main
     if command.passes_argv:
-        return int(entry(tail))
+        return int(entry(args if command.include_command else tail))
     saved = sys.argv
     sys.argv = [f"dinkster {head}", *tail]
     try:

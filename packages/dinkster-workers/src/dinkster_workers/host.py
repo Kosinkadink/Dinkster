@@ -428,7 +428,6 @@ def load_pack(
     # through dinkster_api.v1.declared_asset. The active context keeps tables
     # isolated when several manifests share this process.
     if import_from_pack_root:
-        root = str(manifest.root.resolve())
         entries = tuple(
             entry
             for entry in (
@@ -440,6 +439,18 @@ def load_pack(
             )
             if entry is not None
         )
+        source_root = manifest.root / "src"
+        entry_modules = {entry.partition(":")[0].partition(".")[0] for entry in entries}
+        import_root = (
+            source_root
+            if entry_modules
+            and all(
+                (source_root / module).is_dir() or (source_root / f"{module}.py").is_file()
+                for module in entry_modules
+            )
+            else manifest.root
+        )
+        root = str(import_root.resolve())
         for entry in entries:
             module_name = entry.partition(":")[0]
             loaded = sys.modules.get(module_name)

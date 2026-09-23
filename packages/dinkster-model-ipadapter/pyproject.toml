@@ -19,7 +19,7 @@ packages = ["src/dinkster_model_ipadapter"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "dinkster-pack.toml" = "dinkster_model_ipadapter_pack/dinkster-pack.toml"
-"src/dinkster_model_ipadapter" = "dinkster_model_ipadapter_pack/dinkster_model_ipadapter"
+"src/dinkster_model_ipadapter" = "dinkster_model_ipadapter_pack/src/dinkster_model_ipadapter"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }

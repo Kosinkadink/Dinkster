@@ -90,7 +90,7 @@ def test_hed_wheel_contains_pack_runtime_and_manifest() -> None:
     assert included["dinkster_vision_hed_pack"] == "dinkster_vision_hed_pack"
     assert (
         included["src/dinkster_nodes_vision/hed"]
-        == "dinkster_vision_hed_pack/dinkster_nodes_vision/hed"
+        == "dinkster_vision_hed_pack/src/dinkster_nodes_vision/hed"
     )
 
 

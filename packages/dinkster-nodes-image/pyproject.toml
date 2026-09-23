@@ -24,7 +24,7 @@ packages = ["src/dinkster_nodes_image"]
 "dinkster-pack.toml" = "dinkster_nodes_image_pack/dinkster-pack.toml"
 "comfy-aliases.json" = "dinkster_nodes_image_pack/comfy-aliases.json"
 "comfy-groups.json" = "dinkster_nodes_image_pack/comfy-groups.json"
-"src/dinkster_nodes_image" = "dinkster_nodes_image_pack/dinkster_nodes_image"
+"src/dinkster_nodes_image" = "dinkster_nodes_image_pack/src/dinkster_nodes_image"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }

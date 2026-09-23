@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -44,7 +45,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from dinkster_registry import (
     InstallError,
@@ -78,9 +79,10 @@ from dinkster_workers.provision import (
 from packaging.requirements import Requirement
 
 from . import __version__ as dinkster_version
-from .compose import PackSpec
-from .packs import pack_info_from_manifest
 from .storelock import StoreLockTimeout, hold_lock
+
+if TYPE_CHECKING:
+    from .compose import PackSpec
 
 LOCAL_PUBLISHER = "local"
 """Publisher id for unpublished packs installed from local directories.
@@ -107,6 +109,60 @@ scope. Injectable so tests never shell out to vendor tools."""
 
 TorchCapabilityProbe = Callable[[Path | str], bool]
 RuntimeVersionProbe = Callable[[Path | str], Mapping[str, str]]
+
+
+@dataclass(frozen=True)
+class EngineEnvironment:
+    """Immutable engine content selected alongside a generation's pack lockfile."""
+
+    base_id: str
+    manifest_sha256: str
+    commit: str
+    cell: str
+    objects: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.objects, tuple):
+            raise InstallError("engine objects must be a tuple of content identifiers")
+        for digest in (self.base_id, self.manifest_sha256, *self.objects):
+            if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+                raise InstallError("engine content identifiers must be lowercase SHA-256 digests")
+        if not isinstance(self.commit, str) or re.fullmatch(r"[0-9a-f]{40}", self.commit) is None:
+            raise InstallError("engine commit must be a lowercase Git commit identifier")
+        if (
+            not isinstance(self.cell, str)
+            or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)+", self.cell) is None
+        ):
+            raise InstallError("engine cell must be a platform-accelerator identifier")
+        if len(set(self.objects)) != len(self.objects):
+            raise InstallError("engine objects must be unique content identifiers")
+
+    def record(self) -> dict[str, object]:
+        return {
+            "baseId": self.base_id,
+            "manifestSha256": self.manifest_sha256,
+            "commit": self.commit,
+            "cell": self.cell,
+            "objects": list(self.objects),
+        }
+
+    @classmethod
+    def from_record(cls, record: object) -> EngineEnvironment:
+        if not isinstance(record, dict):
+            raise InstallError("generation engine environment must be an object")
+        fields = ("baseId", "manifestSha256", "commit", "cell")
+        if any(not isinstance(record.get(key), str) for key in fields):
+            raise InstallError("generation engine environment has missing or invalid fields")
+        objects = record.get("objects")
+        if not isinstance(objects, list) or any(not isinstance(item, str) for item in objects):
+            raise InstallError("generation engine objects must be a list of content identifiers")
+        return cls(
+            record["baseId"],
+            record["manifestSha256"],
+            record["commit"],
+            record["cell"],
+            tuple(objects),
+        )
 
 
 def _probe_torch_capability(interpreter: Path | str) -> bool:
@@ -218,6 +274,15 @@ class _HostingTopology:
     groups: tuple[tuple[str, tuple[str, ...]], ...] = ()
     in_process: tuple[str, ...] = ()
     runtime_pins: tuple[tuple[str, str], ...] = ()
+
+
+def _hosting_record(topology: _HostingTopology) -> dict[str, object]:
+    return {
+        "format": "dinkster.hosting/1",
+        "inProcess": list(topology.in_process),
+        "runtimePins": dict(topology.runtime_pins),
+        "venvGroups": {name: list(members) for name, members in topology.groups},
+    }
 
 
 def _load_hosting_topology(root: Path, lockfile: Lockfile) -> _HostingTopology:
@@ -640,17 +705,7 @@ class Installer:
             return
         staged = path.with_suffix(".json.tmp")
         staged.write_text(
-            json.dumps(
-                {
-                    "format": "dinkster.hosting/1",
-                    "inProcess": list(topology.in_process),
-                    "runtimePins": dict(topology.runtime_pins),
-                    "venvGroups": {name: list(members) for name, members in topology.groups},
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n"
+            json.dumps(_hosting_record(topology), sort_keys=True, separators=(",", ":")) + "\n"
         )
         os.replace(staged, path)
 
@@ -727,6 +782,36 @@ class Installer:
     def current_lockfile(self) -> Lockfile | None:
         number = self.current_number()
         return self.lockfile_of(number) if number is not None else None
+
+    def environment_of(self, number: int) -> EngineEnvironment | None:
+        """Read the engine selected by a generation; old pack-only records have none."""
+        self.lockfile_of(number)
+        record = json.loads(self._generation_path(number).read_text())
+        return EngineEnvironment.from_record(record["engine"]) if "engine" in record else None
+
+    def _activate_pointer(self, number: int) -> None:
+        pointer_staged = self.root / "current.tmp"
+        pointer_staged.write_text(f"{number}\n")
+        os.replace(pointer_staged, self.root / "current")
+
+    def activate(self, number: int, *, validate: Callable[[], None] | None = None) -> None:
+        """Activate a staged generation only if its predecessor is still current.
+
+        Validation runs under the writer lock so GC cannot remove the staged
+        environment between checking it and publishing the pointer.
+        """
+        with self._locked():
+            self.lockfile_of(number)
+            self.environment_of(number)
+            current = self.current_number()
+            if current == number:
+                return
+            record = json.loads(self._generation_path(number).read_text())
+            if "previousGeneration" not in record or record["previousGeneration"] != current:
+                raise InstallError("staged generation is stale: the active generation changed")
+            if validate is not None:
+                validate()
+            self._activate_pointer(number)
 
     # -- staging + activation -------------------------------------------
 
@@ -1210,6 +1295,10 @@ class Installer:
         hosting_groups: Sequence[tuple[str, tuple[str, ...]]] | None = None,
         hosting_in_process: Sequence[str] | None = None,
         hosting_runtime_pins: Mapping[str, str] | None = None,
+        environment: EngineEnvironment | Literal["current"] | None = "current",
+        stage_environment: Callable[[], EngineEnvironment | None] | None = None,
+        activate: bool = True,
+        expected_current: int | Literal["any"] | None = "any",
     ) -> tuple[int, InstallPlan]:
         """Make ``target`` the installation. Returns (generation, plan).
 
@@ -1222,6 +1311,11 @@ class Installer:
         drift against pins is reported by the restore CLI, never
         silently repaired).
 
+        Engine selection is inherited for pack updates. Explicit ``None``
+        restores a pack-only generation. ``stage_environment`` materializes
+        engine content under the same writer lock as pack staging and GC;
+        ``activate=False`` records it without changing the running selection.
+
         The whole operation holds the store's writer lock: unpack writes
         a store directory file by file, so another process's apply or gc
         must never observe (or delete) a half-staged directory - and the
@@ -1233,6 +1327,14 @@ class Installer:
         with self._locked():
             current = self.current_lockfile()
             current_number = self.current_number()
+            if expected_current != "any" and current_number != expected_current:
+                raise InstallError("the active generation changed while preparing the operation")
+            current_environment = (
+                self.environment_of(current_number) if current_number is not None else None
+            )
+            selected_environment = current_environment if environment == "current" else environment
+            if stage_environment is not None:
+                selected_environment = stage_environment()
             explicit_topology = (
                 hosting_groups is not None
                 or hosting_in_process is not None
@@ -1277,7 +1379,11 @@ class Installer:
             if not venvs:
                 groups = ()
                 topology = replace(topology, groups=())
-            if current is not None and current.record_digest() == target.record_digest():
+            if (
+                current is not None
+                and current.record_digest() == target.record_digest()
+                and selected_environment == current_environment
+            ):
                 assert current_number is not None
                 current_topology = self._hosting_of(current_number)
                 if (
@@ -1316,7 +1422,12 @@ class Installer:
             number = (numbers[-1] if numbers else 0) + 1
             generation_path = self._generation_path(number)
             staged = generation_path.with_suffix(".json.tmp")
-            staged.write_text(target.record_json())
+            record = json.loads(target.record_json())
+            if selected_environment is not None:
+                record["engine"] = selected_environment.record()
+            record["hosting"] = _hosting_record(topology)
+            record["previousGeneration"] = current_number
+            staged.write_text(json.dumps(record, sort_keys=True, separators=(",", ":")))
             try:
                 self._write_hosting(number, topology)
                 os.replace(staged, generation_path)
@@ -1324,14 +1435,17 @@ class Installer:
                 staged.unlink(missing_ok=True)
                 self._generation_groups_path(number).unlink(missing_ok=True)
                 raise
-            pointer = self.root / "current"
-            pointer_staged = self.root / "current.tmp"
-            pointer_staged.write_text(f"{number}\n")
-            os.replace(pointer_staged, pointer)  # THE activation
+            if activate:
+                self._activate_pointer(number)
         return number, steps
 
-    def rollback(self, *, venvs: bool = True) -> int:
-        """Re-activate the newest generation before the current one, as a
+    def rollback(
+        self,
+        *,
+        venvs: bool = True,
+        validate_environment: Callable[[EngineEnvironment], None] | None = None,
+    ) -> int:
+        """Re-activate the previous active generation, as a
         new generation. Its content is still staged unless gc removed it -
         in which case this fails loudly instead of activating a hole."""
         current = self.current_number()
@@ -1340,14 +1454,30 @@ class Installer:
         previous = [n for n in self.generation_numbers() if n < current]
         if not previous:
             raise InstallError("no earlier generation exists to roll back to")
-        previous_number = previous[-1]
+        record = json.loads(self._generation_path(current).read_text())
+        previous_number = record.get("previousGeneration", previous[-1])
+        if (
+            not isinstance(previous_number, int)
+            or isinstance(previous_number, bool)
+            or previous_number not in previous
+        ):
+            raise InstallError("no earlier activated generation exists to roll back to")
         previous_topology = self._hosting_of(previous_number)
+        previous_environment = self.environment_of(previous_number)
+
+        def restore_environment() -> EngineEnvironment | None:
+            if previous_environment is not None and validate_environment is not None:
+                validate_environment(previous_environment)
+            return previous_environment
+
         number, _ = self.apply(
             self.lockfile_of(previous_number),
             venvs=venvs,
             hosting_groups=previous_topology.groups,
             hosting_in_process=previous_topology.in_process,
             hosting_runtime_pins=dict(previous_topology.runtime_pins),
+            stage_environment=restore_environment,
+            expected_current=current,
         )
         return number
 
@@ -1466,6 +1596,9 @@ class Installer:
         installs (local/git) omit the version rather than surface the
         ``0.0.0`` sentinel: they have no release identity, the digest is
         the real pin, and wire omission MEANS unpinned."""
+        from .compose import PackSpec
+        from .packs import pack_info_from_manifest
+
         number = self.current_number()
         if number is None:
             return []

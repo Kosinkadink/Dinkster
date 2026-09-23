@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -345,6 +346,27 @@ def test_configured_serving_python_skips_standard_pack_provisioning(
     assert prepared.python == "/runtime/python"
 
 
+def test_execution_python_skips_standard_pack_provisioning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster import serve
+    from dinkster.compose import default_pack_spec
+
+    def unexpected(*_args: object, **_kwargs: object) -> Path:
+        raise AssertionError("engine execution interpreter must not provision")
+
+    monkeypatch.delenv("DINKSTER_SERVING_PYTHON")
+    monkeypatch.setattr(serve, "ensure_pack_venv", unexpected)
+    prepared = serve._prepare_default_pack(
+        default_pack_spec("dinkster-vision-hed"),
+        venv_root=tmp_path / "runtime-venvs",
+        accelerator="cpu",
+        execution_python="/engine/execution/python",
+    )
+
+    assert prepared.python == "/engine/execution/python"
+
+
 def test_only_standard_vision_defaults_are_selected_for_runtime_provisioning() -> None:
     from dinkster import serve
     from dinkster.compose import default_pack_spec
@@ -397,6 +419,45 @@ def test_bundled_standard_pack_exposes_its_artifact_module(
     assert prepared.python == str(selected_python)
     assert prepared.env["PYTHONPATH"] == str(artifact)
     assert calls[0]["workspace_packages"] == ()
+
+
+def test_bundled_standard_pack_preserves_src_relative_artifact_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_server import PackInfo
+
+    from dinkster import serve
+    from dinkster.compose import PackSpec
+
+    artifact = tmp_path / "artifact"
+    module = artifact / "src" / "bundled_pack"
+    module.mkdir(parents=True)
+    (module / "__init__.py").write_text("")
+    legacy_stub = artifact / "bundled_pack"
+    legacy_stub.mkdir()
+    (legacy_stub / "__init__.py").write_text("")
+    manifest = artifact / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "bundled-pack"\nnamespaces = ["bundled"]\n'
+        '[pack.entry]\nnodes = "bundled_pack:NODES"\n'
+    )
+    monkeypatch.setenv("DINKSTER_SERVING_PYTHON", "/runtime/python")
+
+    prepared = serve._prepare_default_pack(
+        PackSpec(
+            manifest=manifest,
+            packs={
+                "bundled-pack": PackInfo(
+                    display_name="Bundled pack",
+                    artifact_digest=f"blake3:{'1' * 64}",
+                )
+            },
+        ),
+        venv_root=tmp_path / "runtime-venvs",
+        accelerator="cpu",
+    )
+
+    assert prepared.env["PYTHONPATH"] == str(artifact / "src")
 
 
 _ADA = "0, GPU-aaaaaaaa-1111-2222-3333-444444444444, 8.9, NVIDIA GeForce RTX 4090"
@@ -2448,6 +2509,42 @@ def test_prepare_stale_catalogs_reports_each_pack_and_elapsed_time(
     output.assert_any_call("Prepared pack catalog: alpha (1/2, 1.2s)", flush=True)
     output.assert_any_call("Prepared pack catalog: beta (2/2, 2.4s)", flush=True)
     output.assert_any_call("Prepared 2 pack catalogs in 4.5s", flush=True)
+
+
+def test_prepare_stale_catalogs_uses_execution_python_for_standard_pack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster import serve
+    from dinkster.compose import default_pack_spec
+
+    spec = replace(default_pack_spec("dinkster-vision-hed"), require_catalog=True)
+    prepared = replace(spec, python="/engine/execution/python")
+    prepare_default_pack = Mock(return_value=prepared)
+    prepare_catalog = Mock(
+        return_value=type("Report", (), {"ok": True, "pack_name": "dinkster-vision-hed"})()
+    )
+    monkeypatch.setattr(serve, "read_catalog", lambda _manifest: None)
+    monkeypatch.setattr(serve, "_prepare_default_pack", prepare_default_pack)
+    monkeypatch.setattr(serve, "prepare_catalog", prepare_catalog)
+
+    serve._prepare_stale_catalogs(
+        (spec,),
+        venv_root=tmp_path / "venvs",
+        accelerator="cpu",
+        execution_python="/engine/execution/python",
+    )
+
+    prepare_default_pack.assert_called_once_with(
+        spec,
+        venv_root=tmp_path / "venvs",
+        accelerator="cpu",
+        execution_python="/engine/execution/python",
+    )
+    prepare_catalog.assert_called_once_with(
+        serve.resolve_manifest_path(prepared.manifest),
+        interpreter="/engine/execution/python",
+        environment=prepared.env,
+    )
 
 
 def test_prepare_stale_catalogs_is_silent_when_catalogs_are_current(

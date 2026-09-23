@@ -9,3 +9,15 @@
   then serves the browser application and engine API from one loopback origin.
 - Health reports composed and failed counts and is not ready when composition
   is empty or any pack failed.
+- System generations retain an engine base and code manifest with their pack
+  state. Staging does not activate an update; rollback selects a previously
+  activated generation.
+- Named projects have independent install roots and supervisor processes while
+  sharing downloaded engine objects. Installation and engine garbage collection
+  do not change project data roots.
+- Project serving accepts a launcher identity that the supervisor reports from
+  its status endpoint for exact-instance readiness checks.
+- Native packaging can bundle a Dinkster-built control runtime containing only
+  the interpreter and engine installation/generation management dependencies.
+  Its canonical descriptor pins the source commit, artifact path, byte size,
+  SHA-256 digest, interpreter path, and isolated `dinkster.cli` invocation.

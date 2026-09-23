@@ -75,7 +75,7 @@ def test_birefnet_wheel_contains_pack_runtime_and_manifest() -> None:
     assert included["dinkster_vision_birefnet_pack"] == "dinkster_vision_birefnet_pack"
     assert (
         included["src/dinkster_nodes_vision/birefnet"]
-        == "dinkster_vision_birefnet_pack/dinkster_nodes_vision/birefnet"
+        == "dinkster_vision_birefnet_pack/src/dinkster_nodes_vision/birefnet"
     )
 
 

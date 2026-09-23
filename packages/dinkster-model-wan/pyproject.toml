@@ -20,7 +20,7 @@ packages = ["src/dinkster_model_wan"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "dinkster-pack.toml" = "dinkster_model_wan_pack/dinkster-pack.toml"
-"src/dinkster_model_wan" = "dinkster_model_wan_pack/dinkster_model_wan"
+"src/dinkster_model_wan" = "dinkster_model_wan_pack/src/dinkster_model_wan"
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
