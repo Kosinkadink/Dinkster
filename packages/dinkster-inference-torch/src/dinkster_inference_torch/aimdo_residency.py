@@ -42,6 +42,7 @@ from dinkster_inference.patches import (
     calculate_shape,
     patch_payloads,
 )
+from dinkster_memory import PageMap
 
 from . import pinned_host
 from .adapters import BOFTAdapter, GLoRAAdapter, LoHaAdapter, LoKrAdapter, LoRAAdapter, OFTAdapter
@@ -596,12 +597,19 @@ def _reap_device_unpins(
         _device_unpins.pop(key, None)
 
 
-def _classify_vbar_pages(statuses: Sequence[object]) -> tuple[int, int]:
-    evictable_pages = 0
-    pinned_pages = 0
+def _vbar_page_flags(statuses: Sequence[object]) -> tuple[int, ...]:
+    flags: list[int] = []
     for value in statuses:
         if type(value) is not int or value < 0 or value & ~3 or value == 2:
             raise RuntimeError(f"dinkster-aimdo returned invalid VBAR page status {value!r}")
+        flags.append(value)
+    return tuple(flags)
+
+
+def _classify_vbar_pages(statuses: Sequence[object]) -> tuple[int, int]:
+    evictable_pages = 0
+    pinned_pages = 0
+    for value in _vbar_page_flags(statuses):
         if value == 1:
             evictable_pages += 1
         elif value == 3:
@@ -1604,6 +1612,23 @@ class AimdoWeights:
                 else min(self._backend.loaded_size(self._vbar), demand_total)
             )
             return eager + vbar
+
+    def page_map(self) -> PageMap | None:
+        """Report the VBAR's existing page-residency flags with their geometry."""
+        with self._lock, self._cuda_context():
+            if self._vbar is None:
+                return None
+            try:
+                query = cast(Any, self._vbar).get_residency
+            except (AttributeError, ImportError):
+                return None
+            if not callable(query):
+                return None
+            try:
+                raw = cast("Sequence[object]", query())
+            except (AttributeError, ImportError):
+                return None
+            return PageMap(page_bytes=_VBAR_PAGE_SIZE, flags=_vbar_page_flags(raw))
 
     def automatically_reclaimable_bytes(self) -> int:
         """Resident VBAR pages reusable by another prioritized VBAR."""
