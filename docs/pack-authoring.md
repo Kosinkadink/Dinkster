@@ -583,8 +583,8 @@ pack. Declare exactly one target:
 
 ````markdown
 ```dinkster-example
-template = "map-and-gather"
-caption = "Map values and gather the results"
+template = "loop-map-images"
+caption = "Map image batch items and gather the results"
 ```
 ````
 
