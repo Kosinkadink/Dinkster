@@ -2120,15 +2120,27 @@ def test_region_cache_policy_applies_to_each_occurrence_across_runs(
 def test_inner_reuse_overrides_outer_rerun() -> None:
     async def scenario() -> None:
         AddOne.ran.clear()
+        AddPair.calls.clear()
         engine = make_engine()
         inner = map_region(inputs={"item": port("row")}, cache_policy="reuse")
         outer = RegionNode(
             kind="map",
-            body=Graph(nodes={"inner": inner}),
+            body=Graph(
+                nodes={
+                    "inner": inner,
+                    "outer_probe": GraphNode(
+                        "test.add_pair",
+                        {"a": port(REGION_INDEX_PORT_ID), "b": 100},
+                    ),
+                }
+            ),
             ports={"row": TypeExpr.list_of(INT)},
             inputs={"row": [[7, 7], [7, 7]]},
             element_ports=("row",),
-            outputs={"rows": RegionOutput(Link("inner", "results"))},
+            outputs={
+                "rows": RegionOutput(Link("inner", "results")),
+                "outer_probes": RegionOutput(Link("outer_probe", "out")),
+            },
             cache_policy="rerun",
         )
         graph = Graph(nodes={"outer": outer})
@@ -2138,7 +2150,12 @@ def test_inner_reuse_overrides_outer_rerun() -> None:
 
         assert first.outputs["outer"]["rows"].resolve() == [[8, 8], [8, 8]]
         assert second.outputs["outer"]["rows"].resolve() == [[8, 8], [8, 8]]
+        assert first.outputs["outer"]["outer_probes"].resolve() == [100, 101]
+        assert second.outputs["outer"]["outer_probes"].resolve() == [100, 101]
         assert AddOne.ran == [7]
+        assert sorted(AddPair.calls) == [(0, 100), (0, 100), (1, 100), (1, 100)]
+        assert len(first.executed) == 3
+        assert len(second.executed) == 2
         assert len(first.cached) == 3
         assert len(second.cached) == 4
 
