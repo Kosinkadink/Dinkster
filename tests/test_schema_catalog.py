@@ -293,6 +293,63 @@ def test_default_pack_preparation_does_not_require_training_distribution(
     assert tuple(manager._prepared_pack_specs(args)) == ()
 
 
+def test_default_catalog_preparation_provisions_remote_workspace_closure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from argparse import Namespace
+
+    from dinkster import comfy_compose, compose, manager, serve
+
+    remote = compose.default_pack_spec("dinkster-nodes-remote")
+    provisioned: list[tuple[Path, ...]] = []
+
+    def provision(_manifest: object, **kwargs: object) -> Path:
+        workspace = kwargs["workspace_packages"]
+        assert isinstance(workspace, tuple)
+        provisioned.append(workspace)
+        return Path(sys.executable)
+
+    monkeypatch.setattr(compose, "default_pack_specs", lambda: (remote,))
+    monkeypatch.setattr(comfy_compose, "comfy_compat_specs", lambda: ())
+    monkeypatch.setattr(serve, "ensure_pack_venv", provision)
+    monkeypatch.setattr(
+        manager,
+        "prepare_catalog",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            ok=True,
+            pack_name="dinkster-nodes-remote",
+            node_types=("remote.test",),
+        ),
+    )
+    monkeypatch.delenv("DINKSTER_SERVING_PYTHON", raising=False)
+
+    manager._cmd_prepare_catalogs(
+        Namespace(
+            defaults=True,
+            library_root=str(tmp_path),
+            accelerator="cpu",
+            remote_catalog_base="",
+            remote_gateway_base="",
+        )
+    )
+
+    assert len(provisioned) == 1
+    assert {path.name for path in provisioned[0]} == {
+        "dinkster-api",
+        "dinkster-assets",
+        "dinkster-caches",
+        "dinkster-image-document",
+        "dinkster-inference",
+        "dinkster-memory",
+        "dinkster-nodes-media-io",
+        "dinkster-protocol",
+        "dinkster-schema",
+        "dinkster-values",
+        "dinkster-video",
+        "dinkster-workers",
+    }
+
+
 def write_custom_type_pack(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     manifest = root / "dinkster-pack.toml"
