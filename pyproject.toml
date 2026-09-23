@@ -74,6 +74,7 @@ dev = [
     "scipy-stubs>=1.18.1.0",
     "libtorrent==2.1.1",
     "opentimelineio==0.18.1",
+    "threadpoolctl>=3.7",
 ]
 
 [tool.uv.workspace]
