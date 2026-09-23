@@ -319,7 +319,8 @@ def write_custom_type_pack(root: Path) -> Path:
     return manifest
 
 
-def test_in_process_custom_type_is_available_for_first_typed_literal(tmp_path: Path) -> None:
+@pytest.mark.parametrize("in_process", [False, True])
+def test_custom_type_is_available_for_first_typed_literal(tmp_path: Path, in_process: bool) -> None:
     manifest = write_custom_type_pack(tmp_path)
     assert diagnose(manifest).ok
     catalog = read_catalog(load_manifest(manifest))
@@ -328,9 +329,23 @@ def test_in_process_custom_type_is_available_for_first_typed_literal(tmp_path: P
     async def scenario() -> None:
         composer = ServingComposer()
         try:
-            await composer.add_pack(PackSpec(manifest, in_process=True, require_catalog=True))
+            await composer.add_pack(
+                PackSpec(
+                    manifest,
+                    in_process=in_process,
+                    env={"PYTHONPATH": str(manifest.parent)},
+                    require_catalog=True,
+                )
+            )
             worker = composer._records["customcatalog"].worker
             assert worker.cold
+            if not in_process:
+                assert "customcatalog.tag" not in composer.composition._registry
+                known_types = composer._runtime_seat.pin().known_types
+                assert known_types is not None
+                assert "customcatalog.tag" in known_types
+                assert worker.cold
+                return
             engine = composer.composition.make_engine(lambda event: None)
             graph = Graph(
                 nodes={

@@ -206,6 +206,7 @@ from dinkster_values import (
     Rendition,
     ResourcePins,
     TypeRegistry,
+    UnresolvablePayload,
     Value,
     ValueMeta,
     list_children,
@@ -3592,6 +3593,7 @@ class ServingComposer:
         planned_arms: list[ArmRecord] = []
         attention_routes: dict[str, AttentionRouteToken | None] = {}
         attention_diagnostics: dict[str, str] = {}
+        cold_arms: set[str] = set()
         for arm in arms:
             fallback_reason: str | None = None
             execution_worker = arm.execution_worker
@@ -3602,6 +3604,7 @@ class ServingComposer:
                     attention_route_token=execution_worker.attention_route_token,
                 )
             if getattr(execution_worker, "cold", False):
+                cold_arms.add(arm.name)
                 token = None
             elif arm.attention_capabilities is not None:
                 try:
@@ -3796,7 +3799,7 @@ class ServingComposer:
             raise RuntimeError(
                 f"execution policy selected unknown arm {target!r} for {node_type!r}"
             )
-        if getattr(arm.execution_worker, "cold", False):
+        if arm.name in cold_arms:
             await arm.execution_worker.ensure_started()
             # Re-select with live capability evidence so policy cache identities
             # and fallback decisions never use a catalog as runtime authority.
@@ -3875,6 +3878,12 @@ class ServingComposer:
             and record.manifest.types_entry is not None
             and isinstance(record.worker, LazyWorker)
         )
+        type_catalogs = tuple(
+            catalog.types
+            for record in self._records.values()
+            if record.manifest.types_entry is not None
+            and (catalog := getattr(record.worker, "catalog", None)) is not None
+        )
 
         async def prepare_host_types(atoms: set[str]) -> None:
             for host_worker in host_type_workers:
@@ -3950,7 +3959,7 @@ class ServingComposer:
                 prepare_host_types=prepare_host_types if host_type_workers else None,
                 known_types=CatalogTypeRegistry(
                     self.composition._registry,
-                    tuple(worker.catalog.types for worker in host_type_workers),
+                    type_catalogs,
                 ),
             )
         )
@@ -5026,7 +5035,10 @@ class ServingComposer:
         for pack_id, detail in sorted(self._inference_unavailable.items()):
             declared = {provider.id for provider in detail.providers}
             for input_name, value in inputs.items():
-                selected = value.resolve() if isinstance(value, Value) else value
+                try:
+                    selected = value.resolve() if isinstance(value, Value) else value
+                except UnresolvablePayload:
+                    continue
                 if isinstance(selected, str) and selected in declared:
                     raise RuntimeError(
                         f"input {input_name!r} selects {selected!r} from pack "

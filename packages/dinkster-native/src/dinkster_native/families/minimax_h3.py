@@ -52,7 +52,6 @@ from ..native_arm_core import (
     replace,
 )
 from ..native_arm_runtime import (
-    _conditioning,
     _native_handle,
     _NativeModelOverlay,
     _torch_dtype,
@@ -2070,27 +2069,28 @@ def resolve_seedvr2_component_execution(
     sampling_runtime = getattr(runtime, "component_sampling_runtime", runtime)
     if getattr(sampling_runtime, "runtime_identity", None) != recipe.runtime_identity:
         raise TypeError("component sampling runtime identity does not match its model handle")
-    torch = _torch()
-    cond, inpaint = _conditioning(positive, "positive", torch, inference)
-    if getattr(cond, "branch", None) != "positive" or not isinstance(
-        getattr(cond, "component_identity", None), str
-    ):
-        raise TypeError("positive must come from Apply SeedVR2 Conditioning")
-    if cond.component_identity != recipe.runtime_identity:
-        raise ValueError("positive SeedVR2 conditioning belongs to a different model")
-    if inpaint is not None:
-        raise ValueError("SeedVR2 conditioning cannot contain inpaint metadata")
-    if negative not in ([], None):
-        uncond, uncond_inpaint = _conditioning(negative, "negative", torch, inference)
-        if getattr(uncond, "branch", None) != "negative" or not isinstance(
-            getattr(uncond, "component_identity", None), str
-        ):
-            raise TypeError("negative must come from Apply SeedVR2 Conditioning")
-        if uncond.component_identity != recipe.runtime_identity:
-            raise ValueError("negative SeedVR2 conditioning belongs to a different model")
-        if uncond_inpaint is not None:
-            raise ValueError("SeedVR2 conditioning cannot contain inpaint metadata")
-    return sampling_runtime, positive, negative
+    inference_torch = importlib.import_module("dinkster_inference_torch")
+
+    def prepare(value: object, name: str, branch: str) -> object:
+        conditioning = inference_torch.materialize_seedvr2_conditioning(
+            value, device=handle.load_device
+        )
+        if conditioning.branch != branch:
+            raise TypeError(f"{name} must come from Apply SeedVR2 Conditioning")
+        if conditioning.component_identity != recipe.runtime_identity:
+            raise ValueError(f"{name} SeedVR2 conditioning belongs to a different model")
+        return [
+            [
+                conditioning.embeddings,
+                {_NATIVE_PREPARED_CONDITIONING_KEY: conditioning},
+            ]
+        ]
+
+    positive_rows = prepare(positive, "positive", "positive")
+    negative_rows: object = (
+        [] if negative in ([], None) else prepare(negative, "negative", "negative")
+    )
+    return sampling_runtime, positive_rows, negative_rows
 
 
 def _sampling_memory_requirements(runtime: Any, samples: Any) -> tuple[int, int | None]:
