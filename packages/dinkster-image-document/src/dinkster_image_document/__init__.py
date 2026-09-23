@@ -6,6 +6,7 @@ from .format import (
     InvalidDocument,
     ParsedDocument,
     decode_document,
+    validate_collaboration_snapshot,
     validate_document,
 )
 from .render import (
@@ -35,5 +36,6 @@ __all__ = [
     "flatten",
     "parse_selector",
     "render_document",
+    "validate_collaboration_snapshot",
     "validate_document",
 ]

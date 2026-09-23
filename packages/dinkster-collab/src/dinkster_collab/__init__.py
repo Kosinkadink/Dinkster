@@ -8,7 +8,6 @@ sessions.py for the model and routes.py for the HTTP/WS contract.
 
 from .routes import SESSIONS_KEY, add_session_routes, install_session_extension
 from .sessions import (
-    DOCUMENT_KINDS,
     PROTOCOL_VERSION,
     SESSION_ROLES,
     ActorPrincipalMismatchError,
@@ -23,6 +22,12 @@ from .sessions import (
     StaleBaseError,
     UnknownSessionError,
     validate_patch,
+)
+from .snapshots import (
+    DOCUMENT_KINDS,
+    SnapshotValidatorRegistry,
+    document_kind_wire,
+    normalize_document_kind,
 )
 from .store import SessionStore
 
@@ -40,10 +45,13 @@ __all__ = [
     "SessionRoleError",
     "SessionService",
     "SessionStore",
+    "SnapshotValidatorRegistry",
     "SnapshotRequiredError",
     "StaleBaseError",
     "UnknownSessionError",
     "add_session_routes",
+    "document_kind_wire",
     "install_session_extension",
+    "normalize_document_kind",
     "validate_patch",
 ]
