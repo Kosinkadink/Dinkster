@@ -1,9 +1,9 @@
 """The engine loop: plan, resolve, cache-check, invoke, store.
 
 Location-agnostic by construction: the only way node code runs is
-Worker.invoke (hazard H3), and cache keys derive only from schema signature
-plus input fingerprints (hazard H4), so entries are shareable across
-processes and machines.
+Worker.invoke (hazard H3), and cache keys derive from schema signature, input
+fingerprints, and any structural region occurrence scope (hazard H4), so
+entries are shareable across processes and machines.
 
 Parallel by construction (hazard H12): the plan is a DAG and the scheduler
 is ready-set - every node whose dependencies are satisfied dispatches
@@ -888,8 +888,11 @@ class Engine:
         inputs: Mapping[str, Value],
         selection: ExecutionSelection | None = None,
         connected_undemanded_inputs: tuple[str, ...] | None = None,
+        cache_scope: str | None = None,
     ) -> str:
         parts: list[bytes] = [signature.encode("utf-8")]
+        if cache_scope is not None:
+            parts.extend((b"region-occurrence", cache_scope.encode("utf-8")))
         behavior_hash = self._runtime().extension_behavior_hash
         if behavior_hash is not None:
             parts.append(b"extensions")
@@ -1278,6 +1281,8 @@ class Engine:
         export_snapshot: ExportSnapshot | None,
         prefix: str = "",
         ensure_node: Callable[[str], Awaitable[None]] | None = None,
+        cache_enabled: bool = True,
+        cache_scope: str | None = None,
     ) -> None:
         """Produce one node's outputs: coalesce, hit cache, or invoke.
 
@@ -1291,9 +1296,9 @@ class Engine:
 
         ``prefix`` namespaces the node id in events, bookkeeping lists, and
         errors when this node runs inside a region iteration
-        (``region[3]/node``). It never touches cache keys: cache identity is
-        schema signature + input fingerprints, so identical work coalesces
-        across iterations, regions, and runs alike.
+        (``region[3]/node``). Every body node carries its stable iteration
+        occurrence as cache scope, matching loop ancestry while still reusing
+        that same occurrence across runs.
         """
         node = graph.nodes[node_id]
         assert isinstance(node, GraphNode), f"region {node_id!r} dispatched to _run_node"
@@ -1491,6 +1496,7 @@ class Engine:
             inputs,
             selection,
             connected_undemanded_inputs,
+            cache_scope,
         )
         previous_components = (
             self._remember_key_components(
@@ -1504,7 +1510,7 @@ class Engine:
             if self._explain_misses
             else None
         )
-        use_cache = not lazy_consumer or schema.idempotent
+        use_cache = cache_enabled and (not lazy_consumer or schema.idempotent)
 
         while use_cache and (inflight := self._inflight.get(key)) is not None:
             try:
@@ -1807,6 +1813,8 @@ class Engine:
         export_snapshot: ExportSnapshot | None,
         prefix: str = "",
         targets: Sequence[str] | None = None,
+        cache_enabled: bool = True,
+        cache_scope: str | None = None,
     ) -> None:
         """Ready-set scheduler over one DAG level (hazard H12): dispatch
         every node whose dependencies are satisfied; completions release
@@ -1855,6 +1863,8 @@ class Engine:
                     export_snapshot,
                     prefix,
                     _ProducedReferences(deps, initial_targets, produced),
+                    cache_enabled,
+                    cache_scope,
                 )
             except BaseException:
                 produced.clear()
@@ -1916,6 +1926,8 @@ class Engine:
                     export_snapshot,
                     prefix,
                     ensure_node,
+                    cache_enabled,
+                    cache_scope,
                 )
             references.finished(node_id)
 
@@ -1952,6 +1964,8 @@ class Engine:
         export_snapshot: ExportSnapshot | None,
         prefix: str,
         references: _ProducedReferences,
+        cache_enabled: bool,
+        cache_scope: str | None,
     ) -> None:
         """Original ready-set scheduler for graphs without deferred edges."""
         dependents: dict[str, list[str]] = {node_id: [] for node_id in deps}
@@ -1989,6 +2003,8 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
+                    cache_enabled=cache_enabled,
+                    cache_scope=cache_scope,
                 )
             references.finished(node_id)
             for dependent in dependents[node_id]:
@@ -2023,10 +2039,10 @@ class Engine:
         Every iteration's body nodes run through _run_node on the shared
         engine state, so caching, single-flight, admission, pins, and
         diagnostics behave exactly as at top level; iteration node ids are
-        namespaced ``region[3]/node``. Cache identity needs no
-        region-specific bookkeeping: each iteration's bindings flow into
-        body-node input fingerprints, so changing one list element re-executes
-        only that iteration's dependents.
+        namespaced ``region[3]/node``. Each iteration scopes its body cache to
+        that stable occurrence; bindings still flow through ordinary input
+        fingerprints, so changing one list element re-executes only that
+        iteration's dependents.
         """
         label = prefix + node_id
         region_type = f"region:{region.kind}"
@@ -2178,6 +2194,7 @@ class Engine:
             for out_id, out in region.outputs.items()
             if out.mode in ("gather", "compact", "flatten")
         }
+        last_values: dict[str, Value] = {}
 
         async def run_iteration(
             index: int,
@@ -2207,6 +2224,8 @@ class Engine:
                     export_snapshot,
                     prefix=f"{label}[{index}]/",
                     targets=body_targets,
+                    cache_enabled=region.cache_policy == "reuse",
+                    cache_scope=f"{label}[{index}]",
                 )
             except BaseException:
                 body_produced.clear()
@@ -2224,6 +2243,8 @@ class Engine:
             for out_id, out in region.outputs.items():
                 if out.mode in ("gather", "compact", "flatten"):
                     gathered[out_id].append(source_value(body_produced, out.source))
+                elif out.mode == "last":
+                    last_values[out_id] = source_value(body_produced, out.source)
 
         def advance_state(body_produced: Mapping[str, Mapping[str, Value]]) -> None:
             for out_id, out in region.outputs.items():
@@ -2304,6 +2325,17 @@ class Engine:
         for out_id, out in region.outputs.items():
             if out.mode == "state":
                 outputs[out_id] = state[out_id]
+                continue
+            if out.mode == "last":
+                if out_id in last_values:
+                    outputs[out_id] = last_values[out_id]
+                else:
+                    output_type = interface[out_id]
+                    outputs[out_id] = make_absent_value(
+                        origin=f"{label}/{out_id}",
+                        reason="region completed zero iterations",
+                        stands_for=(None if output_type is None else output_type.runtime_type_id()),
+                    )
                 continue
             if out.mode not in ("gather", "compact", "flatten"):  # pragma: no cover
                 raise region_error(f"output '{out_id}' has unknown mode {out.mode!r}")

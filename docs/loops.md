@@ -4,17 +4,24 @@ Dinkster uses one typed region primitive with three execution profiles:
 
 - **Map** runs one independent body occurrence per element binding. Occurrences
   may execute concurrently, while gathered outputs retain binding order.
-- **Fold** runs sequentially and passes each state output into its matching
-  state input. Gathering the same body output exposes the intermediate states
-  as a scan.
+- **Fold** runs sequentially. It may pass each state output into its matching
+  state input; gathering the same body output exposes the intermediate states
+  as a scan. A fold without state ports is an ordered loop.
 - **While** runs sequentially until its boolean continuation is false. Express
   "until condition" by continuing while the condition is false. Every while
   region has a positive maximum iteration count and fails loudly at the cap.
 
 Element bindings are zip, cross product, or broadcast. Region outputs are
-gather, compact, flatten, or state. Gather retains absent values, compact omits
-them, and flatten concatenates one list level. Whole-region input absence skips
-the body and propagates absence to every output.
+gather, compact, flatten, last, or state. Gather retains absent values, compact
+omits them, flatten concatenates one list level, and last returns the final
+body value or typed absence when no iterations run. Whole-region input absence
+skips the body and propagates absence to every output.
+
+Region body occurrences reuse ordinary cached results by default. A region may
+instead require rerun behavior, which bypasses cache reads, writes, and
+single-flight coalescing for every body occurrence. Nested regions apply their
+own policy. Cached body occurrences remain distinct per loop iteration at every
+nesting level and reuse that same occurrence across later workflow runs.
 
 Ports are generic. The same region carries images, latents, conditioning,
 masks, audio, video, assets, strings, integers, floats, and pack-defined value

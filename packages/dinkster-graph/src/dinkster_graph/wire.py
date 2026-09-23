@@ -64,7 +64,8 @@ _CANONICAL_DECIMAL_INT = re.compile(r"^-?(?:0|[1-9][0-9]*)$")
 
 REGION_KINDS: frozenset[str] = frozenset({"map", "fold", "while"})
 BINDING_MODES: frozenset[str] = frozenset({"zip", "cross", "broadcast"})
-OUTPUT_MODES: frozenset[str] = frozenset({"gather", "compact", "state", "flatten"})
+OUTPUT_MODES: frozenset[str] = frozenset({"gather", "compact", "state", "flatten", "last"})
+CACHE_POLICIES: frozenset[str] = frozenset({"reuse", "rerun"})
 
 JsonObject = dict[str, Any]
 _TYPE_EXPR_WIRE_VERSION = SCHEMA_WIRE_VERSION
@@ -198,6 +199,8 @@ def _region_to_wire(node: RegionNode) -> JsonObject:
         region["statePorts"] = list(node.state_ports)
     if node.binding != "zip":
         region["binding"] = node.binding
+    if node.cache_policy != "reuse":
+        region["cachePolicy"] = node.cache_policy
     if node.max_iterations is not None:
         region["maxIterations"] = node.max_iterations
     if node.continue_source is not None:
@@ -248,6 +251,9 @@ def _region_from_wire(node_id: str, wire: JsonObject) -> RegionNode:
     binding = wire.get("binding", "zip")
     if binding not in BINDING_MODES:
         raise GraphWireError(f"{where}: unknown binding {binding!r}")
+    cache_policy = wire.get("cachePolicy", "reuse")
+    if cache_policy not in CACHE_POLICIES:
+        raise GraphWireError(f"{where}: unknown cache policy {cache_policy!r}")
     ports_wire = _as_object(wire.get("ports", {}), f"{where}: 'ports'")
     try:
         ports = {
@@ -269,7 +275,7 @@ def _region_from_wire(node_id: str, wire: JsonObject) -> RegionNode:
             raise GraphWireError(f"{where}: output {out_id}: unknown mode {mode!r}")
         outputs[str(out_id)] = RegionOutput(
             source=_link_from_wire(out_obj.get("source"), f"{where}: output {out_id} source"),
-            mode=cast('Literal["gather", "compact", "state", "flatten"]', mode),
+            mode=cast('Literal["gather", "compact", "state", "flatten", "last"]', mode),
         )
     max_iterations = wire.get("maxIterations")
     if max_iterations is not None and (
@@ -286,6 +292,7 @@ def _region_from_wire(node_id: str, wire: JsonObject) -> RegionNode:
         state_ports=_str_list(wire.get("statePorts", []), f"{where}: 'statePorts'"),
         outputs=outputs,
         binding=cast(BindingMode, binding),
+        cache_policy=cast('Literal["reuse", "rerun"]', cache_policy),
         max_iterations=max_iterations,
         continue_source=(
             None

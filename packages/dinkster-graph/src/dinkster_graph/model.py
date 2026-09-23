@@ -90,14 +90,15 @@ class RegionOutput:
     (empty list for zero iterations). ``compact``: gather only present body
     outputs, omitting typed-absent iterations. ``flatten``: collect a list-typed
     body output by concatenating its lists in iteration order into one
-    ``list<T>`` (empty list for zero iterations). ``state``: the final value of
+    ``list<T>`` (empty list for zero iterations). ``last``: the final iteration's
+    body output, or typed absence for zero iterations. ``state``: the final value of
     a state chain - the key of a state-mode output MUST be a declared state
     port, and its source is also what feeds the port on the next iteration.
     """
 
     source: Link
     """A body node's output (``Link(body_node_id, output_id)``)."""
-    mode: Literal["gather", "compact", "state", "flatten"] = "gather"
+    mode: Literal["gather", "compact", "state", "flatten", "last"] = "gather"
 
 
 @dataclass(frozen=True)
@@ -110,8 +111,8 @@ class RegionNode:
 
     - ``map``: >=1 element ports, no state ports. Iterations are independent
       and may run in parallel.
-    - ``fold``: >=1 element ports, >=1 state ports. Iterations chain
-      sequentially through the state ports.
+    - ``fold``: >=1 element ports. Iterations run sequentially and may chain
+      through state ports.
     - ``while``: no element ports, >=1 state ports, a ``continue_source``
       (boolean body output checked after each iteration) and a mandatory
       ``max_iterations`` cap.
@@ -136,6 +137,9 @@ class RegionNode:
     state_ports: tuple[str, ...] = ()
     outputs: Mapping[str, RegionOutput] = field(default_factory=dict[str, RegionOutput])
     binding: BindingMode = "zip"
+    cache_policy: Literal["reuse", "rerun"] = "reuse"
+    """Body occurrence cache behavior. ``reuse`` preserves ordinary cache and
+    single-flight behavior; ``rerun`` invokes every occurrence independently."""
     max_iterations: int | None = None
     """Iteration cap. Mandatory for ``while`` (engine-enforced - no infinite
     graphs; reaching the cap with ``continue`` still true is a loud error,
@@ -198,6 +202,7 @@ def snapshot_graph(graph: Graph) -> Graph:
                 state_ports=tuple(node.state_ports),
                 outputs=MappingProxyType(dict(node.outputs)),
                 binding=node.binding,
+                cache_policy=node.cache_policy,
                 max_iterations=node.max_iterations,
                 continue_source=node.continue_source,
             )
