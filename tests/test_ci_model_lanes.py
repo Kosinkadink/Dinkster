@@ -705,6 +705,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
     }
     assert job["env"] == {
         "ATEN_CPU_CAPABILITY": "avx2",
+        "MKL_CBWR": "COMPATIBLE",
         "ONEDNN_MAX_CPU_ISA": "AVX2",
         "OMP_NUM_THREADS": "4",
         "MKL_NUM_THREADS": "4",
@@ -791,7 +792,7 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
 
 def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> None:
     assert "engine-tests" not in PR_JOBS
-    assert JOBS["model-tests"]["timeout-minutes"] == 20
+    assert JOBS["model-tests"]["timeout-minutes"] == 30
     assert [row["group"] for row in MODEL_GROUPS].count("inference") == 8
     assert {row["pytest-args"] for row in MODEL_GROUPS if row["group"] == "inference"} == {
         f"-p tools.pytest_file_shard --file-shard {shard}/8" for shard in range(1, 9)
@@ -1047,14 +1048,14 @@ def test_full_validation_pytest_and_demo_jobs_are_timeout_bounded() -> None:
         20,
         20,
         20,
-        20,
-        20,
+        30,
+        30,
     ]
     assert JOBS["p2p-descriptor-macos"]["timeout-minutes"] == 15
     assert JOBS["p2p-artifact-smoke"]["timeout-minutes"] == 15
     assert JOBS["torch-cpu"]["timeout-minutes"] == 20
-    assert JOBS["model-tests"]["timeout-minutes"] == 20
-    assert JOBS["coverage"]["timeout-minutes"] == 20
+    assert JOBS["model-tests"]["timeout-minutes"] == 30
+    assert JOBS["coverage"]["timeout-minutes"] == 30
     assert JOBS["coverage-gate"]["timeout-minutes"] == 5
     assert JOBS["translation-coverage"]["timeout-minutes"] == 15
     # A hung pytest run self-identifies the stuck test through pytest's
