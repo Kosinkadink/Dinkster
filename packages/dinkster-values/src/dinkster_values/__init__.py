@@ -22,6 +22,7 @@ from .audio_codec import (
     audio_from_source,
     audio_meta,
     audio_window,
+    coerce_audio,
     decode_audio,
     effective_audio_facts,
     encode_audio,
@@ -168,6 +169,7 @@ from .splat_codec import (
     splat_meta,
     validate_splat_encoded,
 )
+from .storage import array_storage_meta, audio_input, byte_storage_meta, image_input, storage_dtype
 from .streams import MediaChunk, MediaStream
 from .video_codec import (
     bind_video_sources,
@@ -258,6 +260,10 @@ __all__ = [
     "audio_from_source",
     "audio_meta",
     "audio_window",
+    "array_storage_meta",
+    "audio_input",
+    "byte_storage_meta",
+    "coerce_audio",
     "effective_audio_facts",
     "iter_audio_chunks",
     "coerce_detection",
@@ -292,6 +298,7 @@ __all__ = [
     "encode_video",
     "image_array_fingerprint",
     "image_array_meta",
+    "image_input",
     "annotate_image",
     "annotate_mask",
     "copy_media_semantics",
@@ -330,6 +337,7 @@ __all__ = [
     "runtime_type_atom",
     "splat_fingerprint",
     "splat_meta",
+    "storage_dtype",
     "stable_hash",
     "stamp_resource_producer_arm",
     "value_resource_ids",

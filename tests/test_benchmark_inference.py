@@ -410,6 +410,8 @@ def test_entrypoint_records_executed_placement_and_anima_variant(
             self.executed_placement: str | None = None
             self.cold: dict[str, object] = {}
             self.residual_allocated = 0
+            self.phase_memory_snapshots: list[dict[str, object]] = []
+            self.partial_residency_timings: list[dict[str, object]] = []
 
         def record(self, name: str, action: Callable[[], str], *, always: bool = False) -> None:
             del always
@@ -1961,9 +1963,33 @@ def test_minimax_h3_drives_the_native_production_nodes(
         "_minimax_h3_execution_identities",
         execution_identities,
     )
+
+    @dataclass
+    class TimingReport:
+        transfer_ms: float = 0.0
+        exposed_stall_ms: float = 0.0
+        dequant_ms: float = 0.0
+        compute_ms: float = 0.0
+        transfer_bytes: int = 0
+        leased_transfers: int = 0
+        leased_forwards: int = 0
+        prefetched_transfers: int = 0
+        prefetch_bytes: int = 0
+
+    @contextmanager
+    def collect_partial_residency_timing() -> Any:
+        yield SimpleNamespace(report=TimingReport)
+
     inference_torch = ModuleType("dinkster_inference_torch")
     inference_torch.discover_attention_route_token = (  # type: ignore[attr-defined]
         lambda *_args, **_kwargs: route_token
+    )
+    inference_torch.aimdo_memory_status = lambda device: SimpleNamespace(  # type: ignore[attr-defined]
+        evictable_bytes=0,
+        pinned_bytes=0,
+    )
+    inference_torch.collect_partial_residency_timing = (  # type: ignore[attr-defined]
+        collect_partial_residency_timing
     )
     monkeypatch.setitem(sys.modules, "dinkster_inference_torch", inference_torch)
     events: list[object] = []
@@ -2073,11 +2099,22 @@ def test_minimax_h3_drives_the_native_production_nodes(
         ),
     )
     access = SimpleNamespace(
-        device=SimpleNamespace(type="cpu"),
+        device=SimpleNamespace(type="cuda"),
         synchronize=lambda: None,
         empty_cache=lambda: None,
         allocated=lambda: 0,
     )
+    monkeypatch.setattr(
+        benchmark_inference.torch,
+        "cuda",
+        SimpleNamespace(
+            mem_get_info=lambda device: (1, 2),
+            memory_allocated=lambda device: 0,
+            memory_reserved=lambda device: 0,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(benchmark_inference.torch, "_C", SimpleNamespace(), raising=False)
     run = benchmark_inference.BenchmarkRun(arguments, access)
     monkeypatch.setenv("DINKSTER_AIMDO_ARM", "auto")
     monkeypatch.setattr(benchmark_inference, "_AIMDO_BOOTSTRAP_SUCCEEDED", True)
@@ -2694,8 +2731,8 @@ def test_image_input_uses_the_production_asset_decoder(tmp_path: Path) -> None:
     decoded = np.asarray(benchmark_inference._decode_image_file(path))
 
     assert decoded.shape == (1, 1, 2, 3)
-    assert decoded.dtype == np.float32
-    assert decoded[0, 0, 0].tolist() == pytest.approx([1.0, 0.0, 128 / 255])
+    assert decoded.dtype == np.uint8
+    assert decoded[0, 0, 0].tolist() == [255, 0, 128]
 
 
 def test_zero_conditioning_preserves_descriptors_and_zeros_payloads() -> None:
@@ -3632,6 +3669,8 @@ def test_entrypoint_constrained_regime_ballast_and_sample_order(
             self.executed_placement = "production_residency"
             self.cold: dict[str, object] = {}
             self.residual_allocated = 0
+            self.phase_memory_snapshots: list[dict[str, object]] = []
+            self.partial_residency_timings: list[dict[str, object]] = []
 
         def record(self, name: str, action: Callable[[], str], *, always: bool = False) -> None:
             del always

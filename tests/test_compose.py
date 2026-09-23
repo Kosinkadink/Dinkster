@@ -45,6 +45,7 @@ from dinkster_protocol import GRAPH_COMPILERS_SURFACE, KeyedContribution, extens
 from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
+from dinkster_values.storage import image_input
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
 
@@ -139,7 +140,7 @@ def test_lazy_media_pack_resolves_assets_after_compat_host_registration(
                 ["load"],
             )
             loaded = cast("np.ndarray", result.outputs["load"]["image"].resolve())
-            np.testing.assert_array_equal(loaded[0] * 255, pixels)
+            np.testing.assert_array_equal(cast("np.ndarray", image_input(loaded))[0] * 255, pixels)
         finally:
             await composer.close()
 
@@ -1439,15 +1440,15 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:4b2babc83d81f1275238b69031fd1c8a5e5aed07065ed75b56fc432c23a8f064",
+            "blake3:136426543185952dec319b9af35009b28eb1fb1d0b4386c001056c46478eb77a",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:89fc8de3ac0477fad3622c57fbc884facb6546125757115eb6bdb9223530892f",
+            "blake3:734304540eef1cd98f76b6111ae8f0d7c0b81c7323c36174cb710b7d9ca4e4f4",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:2f872d26be5cf8dc3a592384e22fe3d227f516e93f1313d49dc8a3354bbad3cb",
+            "blake3:134ddbf3f2d650ead1a1aa3c50d0a564bfff50a02e3c0cabf08ae01b96189e04",
         ),
         (
             "dinkster-nodes-remote",
@@ -1476,7 +1477,7 @@ def test_foundation_default_pack_ships_docs() -> None:
     assert docs is not None
     assert [(page.kind, page.id, page.locale) for page in docs.pages] == [
         ("node", "std.math.add_ints", "en"),
-        ("guide", "map-and-gather", "en"),
+        ("guide", "loops", "en"),
     ]
     page = next(page for page in docs.pages if page.kind == "node")
     assert page.title == "Add Integers"
@@ -1782,7 +1783,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:0421374ac24c9b910a97fc5a5b2982c681b9785ddbeb415f27a08b934bfc1a48")
+    assert expected == ("blake3:da3d4f989afa330e68c479afac8bdc13a5a6df878f56cbf38d0444f1fabd2019")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
