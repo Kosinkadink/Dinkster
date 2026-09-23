@@ -2192,6 +2192,36 @@ def test_native_nested_reuse_scopes_identical_inputs_by_parent_occurrence() -> N
     asyncio.run(scenario())
 
 
+def test_nested_reuse_matches_comfyui_iteration_inputs() -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        engine = make_engine()
+        inner = map_region(inputs={"item": port("row")}, cache_policy="reuse")
+        outer = RegionNode(
+            kind="map",
+            body=Graph(nodes={"inner": inner}),
+            ports={"row": TypeExpr.list_of(INT)},
+            inputs={"row": [[0, 1], [0, 1]]},
+            element_ports=("row",),
+            outputs={"rows": RegionOutput(Link("inner", "results"))},
+            cache_policy="reuse",
+        )
+        graph = Graph(nodes={"outer": outer})
+
+        first = await engine.run(graph, ["outer"])
+        second = await engine.run(graph, ["outer"])
+
+        assert first.outputs["outer"]["rows"].resolve() == [[1, 2], [1, 2]]
+        assert second.outputs["outer"]["rows"].resolve() == [[1, 2], [1, 2]]
+        assert sorted(AddOne.ran) == [0, 0, 1, 1]
+        assert len(first.executed) == 4
+        assert first.cached == ()
+        assert second.executed == ()
+        assert len(second.cached) == 4
+
+    asyncio.run(scenario())
+
+
 # -- engine: absence ---------------------------------------------------------
 
 
