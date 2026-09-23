@@ -1444,7 +1444,7 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:734304540eef1cd98f76b6111ae8f0d7c0b81c7323c36174cb710b7d9ca4e4f4",
+            "blake3:d315a20fe153c56a35271b49ba72fe172a617120eaafd6ca2802df60744b01d1",
         ),
         (
             "dinkster-nodes-image",

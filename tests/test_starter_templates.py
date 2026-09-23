@@ -83,6 +83,45 @@ def test_generation_pack_has_one_complete_starter_per_supported_family() -> None
     assert len(node_type_sets) >= 8
 
 
+def test_minimax_h3_starter_uses_one_conditioning_node_per_prompt() -> None:
+    templates = load_pack_templates(
+        MANIFESTS["dinkster-nodes-generation"], pack="dinkster-nodes-generation"
+    )
+    template = next(item for item in templates if item.id == "minimax-h3")
+    document = cast("dict[str, object]", json.loads(template.data))
+    graph = cast("dict[str, object]", cast("dict[str, object]", document["graphs"])["g0"])
+    nodes = cast("dict[str, dict[str, object]]", graph["nodes"])
+    links = cast("dict[str, dict[str, object]]", graph["links"])
+
+    assert nodes["positive"] == {
+        "id": "positive",
+        "type": "dinkster.minimax_h3_t2va_conditioning",
+        "values": {"prompt": "a cinematic landscape, detailed lighting"},
+    }
+    assert nodes["negative"] == {
+        "id": "negative",
+        "type": "dinkster.minimax_h3_t2va_conditioning",
+        "values": {"prompt": "blurry, low quality"},
+    }
+    endpoints = {
+        (
+            cast("dict[str, str]", link["from"])["node"],
+            cast("dict[str, str]", link["from"])["port"],
+            cast("dict[str, str]", link["to"])["node"],
+            cast("dict[str, str]", link["to"])["port"],
+        )
+        for link in links.values()
+    }
+    assert {
+        ("clip", "clip", "positive", "clip"),
+        ("clip", "clip", "negative", "clip"),
+        ("latent", "latent", "positive", "target"),
+        ("latent", "latent", "negative", "target"),
+        ("positive", "conditioning", "sampler", "positive"),
+        ("negative", "conditioning", "sampler", "negative"),
+    } <= endpoints
+
+
 def test_every_starter_resolves_against_current_schemas() -> None:
     async def scenario() -> None:
         composition = await compose_serving()

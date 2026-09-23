@@ -264,8 +264,6 @@ def _load_mask_values(asset: AssetRef, channel: str, mask_polarity: str) -> np.n
                 index = {"red": 0, "green": 1, "blue": 2}[channel]
                 rgb = np.asarray(_srgb(oriented, info.get("icc_profile")), dtype=np.uint8)
                 mask = rgb[..., index]
-            if mask_polarity == "transparency":
-                mask = np.iinfo(mask.dtype).max - mask
             return annotate_mask(
                 np.ascontiguousarray(mask)[None, :, :],
                 polarity=mask_polarity,
@@ -453,12 +451,10 @@ class LoadImage(Node):
             raise ValueError(f"unknown mask polarity: {mask_polarity}")
         decoded = _decode_still(image, allow_batch=True)
         mask = (
-            np.zeros((decoded.image.shape[0], 64, 64), dtype=np.uint8)
+            np.full((decoded.image.shape[0], 64, 64), 255, dtype=np.uint8)
             if decoded.alpha is None
-            else np.ascontiguousarray(255 - decoded.alpha)
+            else np.ascontiguousarray(decoded.alpha)
         )
-        if mask_polarity == "coverage":
-            mask = np.full_like(mask, 255) if decoded.alpha is None else decoded.alpha
         return cls.outputs(
             image=decoded.image,
             mask=annotate_mask(mask, polarity=mask_polarity, semantic="alpha"),

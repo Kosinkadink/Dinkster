@@ -503,7 +503,7 @@ def test_media_image_loader_decodes_asset_png(tmp_path: Path) -> None:
     assert tuple(pixels.shape) == (1, 1, 2, 3)
     assert pixels[0, 0, 0].tolist() == [128, 64, 32]
     assert tuple(mask.shape) == (1, 1, 2)
-    assert mask[0, 0, 0].item() == 127
+    assert mask[0, 0, 0].item() == 128
 
 
 def test_native_empty_latent_schema_is_ints_in_latent_out() -> None:

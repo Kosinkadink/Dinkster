@@ -512,14 +512,19 @@ def test_load_image_applies_orientation_alpha_polarity_and_opaque_fallback(tmp_p
     assert mask.dtype == np.uint8 and mask.flags.c_contiguous
     assert image.shape == (1, 3, 2, 3)
     expected_alpha = np.rot90(rgba[..., 3], k=3)
-    np.testing.assert_array_equal(mask[0], 255 - expected_alpha)
+    np.testing.assert_array_equal(mask[0], expected_alpha)
+    np.testing.assert_array_equal(
+        cast(np.ndarray, image_input(mask))[0],
+        np.float32(1.0) - expected_alpha.astype(np.float32) / 255,
+    )
 
     opaque_path = tmp_path / "opaque.png"
     Image.new("RGB", (7, 5), (1, 2, 3)).save(opaque_path)
     opaque = LoadImage.execute(image=_asset(opaque_path))
     opaque_mask = cast(np.ndarray, opaque["mask"])
     assert opaque_mask.shape == (1, 64, 64)
-    assert np.count_nonzero(opaque_mask) == 0
+    assert np.all(opaque_mask == 255)
+    assert np.count_nonzero(cast(np.ndarray, image_input(opaque_mask))) == 0
 
 
 @pytest.mark.parametrize("mask_polarity", ["coverage", "transparency"])
@@ -539,10 +544,14 @@ def test_load_image_matches_comfy_goldens(tmp_path: Path, mask_polarity: str, la
         expected = np.asarray(case[output]["values"], dtype=np.float32).reshape(
             case[output]["shape"]
         )
-        actual = np.asarray(result[output])
         if output == "mask" and mask_polarity == "coverage":
-            actual = 255 - actual
-        np.testing.assert_array_equal(actual, np.rint(expected * 255).astype(np.uint8))
+            actual_storage = np.asarray(result[output])
+            np.testing.assert_array_equal(
+                actual_storage, np.rint((1.0 - expected) * 255).astype(np.uint8)
+            )
+            continue
+        actual = np.asarray(image_input(result[output]))
+        np.testing.assert_array_equal(actual, expected)
 
 
 @pytest.mark.parametrize("format_name", ["WEBP", "PNG", "TIFF", "GIF"])
@@ -571,10 +580,10 @@ def test_load_image_batches_animation_and_multipage_frames(
     np.testing.assert_array_equal(image_input(result["image"]), expected[..., :3])
     mask = np.asarray(result["mask"])
     if mask.shape[1:] == (64, 64):
-        np.testing.assert_array_equal(mask, np.zeros((2, 64, 64)))
+        np.testing.assert_array_equal(mask, np.full((2, 64, 64), 255))
     else:
         expected_alpha = np.stack([np.asarray(frame) for frame in decoded])[..., 3]
-        np.testing.assert_array_equal(mask, 255 - expected_alpha)
+        np.testing.assert_array_equal(mask, expected_alpha)
     assert mask.shape[0] == 2
 
 
@@ -602,7 +611,8 @@ def test_image_batches_replay_pinned_decode_contracts(tmp_path: Path) -> None:
         for output in ("image", "mask"):
             expected = np.array(case[output]["values"], np.float32).reshape(case[output]["shape"])
             actual = np.asarray(result[output])
-            expected_storage = np.rint(expected * 255).astype(np.uint8)
+            stored_values = 1.0 - expected if output == "mask" else expected
+            expected_storage = np.rint(stored_values * 255).astype(np.uint8)
             if name.endswith("_tiff"):
                 # The pinned PyAV loader decodes only the first TIFF page.
                 assert expected.shape[0] == 1
@@ -613,6 +623,8 @@ def test_image_batches_replay_pinned_decode_contracts(tmp_path: Path) -> None:
                 if output == "image":
                     exact[0, ..., 0] = 255
                     exact[1, ..., 2] = 255
+                else:
+                    exact.fill(255)
                 np.testing.assert_array_equal(actual, exact)
                 assert expected.shape == exact.shape
                 assert not np.array_equal(expected, exact)
@@ -670,7 +682,7 @@ def test_load_mask_channels_and_polarity_match_core_contract(tmp_path: Path) -> 
     red = cast(
         np.ndarray, LoadMask.execute(mask=ref, channel="red", mask_polarity="coverage")["mask"]
     )
-    np.testing.assert_array_equal(alpha, 255 - rgba[None, ..., 3])
+    np.testing.assert_array_equal(alpha, rgba[None, ..., 3])
     np.testing.assert_array_equal(red, rgba[None, ..., 0])
     assert media_semantics(alpha) == {"polarity": "transparency", "semantic": "alpha"}
     assert media_semantics(red) == {}
@@ -684,7 +696,8 @@ def test_load_mask_channels_and_polarity_match_core_contract(tmp_path: Path) -> 
         ],
     )
     assert fallback.shape == (1, 64, 64)
-    assert np.count_nonzero(fallback) == 0
+    assert np.all(fallback == 255)
+    assert np.count_nonzero(cast(np.ndarray, image_input(fallback))) == 0
     assert media_semantics(fallback) == {"polarity": "transparency", "semantic": "alpha"}
 
 
@@ -816,11 +829,9 @@ def test_mask_save_load_round_trip_quantization(
     with Image.open(root / "masks" / asset.name) as saved:
         np.testing.assert_array_equal(np.asarray(saved), pixels[0])
     assert loaded.dtype == (np.uint8 if bit_depth == "8" else np.uint16)
-    expected_storage = pixels if mask_polarity == "coverage" else maximum - pixels
-    np.testing.assert_array_equal(loaded, expected_storage)
+    np.testing.assert_array_equal(loaded, pixels)
     converted = np.asarray(image_input(loaded))
-    if mask_polarity == "coverage":
-        np.testing.assert_allclose(converted, mask, atol=atol)
+    np.testing.assert_allclose(converted, mask, atol=max(atol, 0.51 / maximum))
 
 
 @pytest.mark.parametrize("format_name", ["png", "webp"])
