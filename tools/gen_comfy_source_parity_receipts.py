@@ -1377,7 +1377,7 @@ def _minimax_h3_alias_receipts(
     )
     parameters = {
         "comfyuiRevision": "b5cc8830279eae909a59de030af1e50761c36751",
-        "sourceSchemaSha256": "a71e1939126877a9a4c85860f42f6480e448aff71b5ba989e9459cc6ca3d02a4",
+        "sourceSchemaSha256": "e985a4262205a218f78c9653170d208e85cab9f960a4c53ca2353ca613432a61",
         "workflowTemplatesRevision": "fc427f00097817d3f7d8099c5259837fa51e1267",
     }
     outputs: list[Path] = []

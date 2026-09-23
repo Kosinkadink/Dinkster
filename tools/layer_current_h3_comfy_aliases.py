@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "packages/dinkster-compat-comfy/src/dinkster_compat_comfy/core_schemas.json"
 OUTPUT = ROOT / "packages/dinkster-compat-comfy/comfy-aliases.json"
 COMFYUI_REVISION = "b5cc8830279eae909a59de030af1e50761c36751"
-SOURCE_SHA256 = "a71e1939126877a9a4c85860f42f6480e448aff71b5ba989e9459cc6ca3d02a4"
+SOURCE_SHA256 = "e985a4262205a218f78c9653170d208e85cab9f960a4c53ca2353ca613432a61"
 SOURCE_NODE_TYPES = (
     "comfy.CLIPLoader",
     "comfy.MiniMaxH3ImageToVideo",
