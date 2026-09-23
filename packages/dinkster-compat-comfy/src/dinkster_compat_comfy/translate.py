@@ -2307,6 +2307,38 @@ def _output_list_flags(v1_name: str, v1_class: type, output_count: int) -> tuple
     return tuple(flags)
 
 
+_CORE_EXPANSION_SOURCE_REVISION = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
+"""ComfyUI SHA the core v1 expander enumeration was produced from."""
+
+_CORE_EXPANDER_V1_NAMES: frozenset[str] = frozenset()
+"""v1 core node names whose function returns a runtime graph expansion
+payload at _CORE_EXPANSION_SOURCE_REVISION, produced by grepping nodes.py
+and comfy_extras for expansion returns. Empty at b78cec87: the only core
+"expand" returns live in ComfyUI's test-only execution testing pack, which
+normal installs never register. Regenerate the enumeration when the compat
+reference moves; it is deliberately not extended to custom packs, where the
+runtime refusal is the only sound boundary."""
+
+
+def _returns_expand_dict(function: object) -> bool:
+    """Whether a v1 function's source statically returns a dict literal with
+    an "expand" key (execution.py's v1 expansion convention). Delegated or
+    dynamically built returns are unclassifiable at translation time and stay
+    unflagged; the loud runtime refusal covers that tail."""
+    try:
+        source = inspect.getsource(cast("Any", function))
+        tree = ast.parse(textwrap.dedent(source))
+    except (OSError, SyntaxError, TypeError, IndentationError):
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
+            if any(
+                isinstance(key, ast.Constant) and key.value == "expand" for key in node.value.keys
+            ):
+                return True
+    return False
+
+
 def _is_node_output(value: object) -> bool:
     """Whether a v1 function result is a ComfyUI V3 ``io.NodeOutput``.
 
@@ -2891,10 +2923,14 @@ def translate_node(
             type_expr = TypeExpr.list_of(type_expr)
         outputs.append(OutputSpec(id=output_id, type=type_expr))
 
+    is_output_node = bool(getattr(v1_class, "OUTPUT_NODE", False))
+    has_is_changed = getattr(v1_class, "IS_CHANGED", None) is not None
+
     function_name = getattr(v1_class, "FUNCTION", None)
     if not isinstance(function_name, str) or not hasattr(v1_class, function_name):
         raise CompatError(f"{v1_name}: FUNCTION does not name a method")
-    function_is_async = inspect.iscoroutinefunction(getattr(v1_class, function_name))
+    function_object = getattr(v1_class, function_name)
+    function_is_async = inspect.iscoroutinefunction(function_object)
 
     hidden_types: Mapping[str, object] = {}
     hidden_table = cast("Mapping[str, object]", raw_inputs).get("hidden")
@@ -2917,9 +2953,6 @@ def translate_node(
         if hidden_type == "EXTRA_PNGINFO" or hidden_type == ("EXTRA_PNGINFO",)
     )
 
-    is_output_node = bool(getattr(v1_class, "OUTPUT_NODE", False))
-    has_is_changed = getattr(v1_class, "IS_CHANGED", None) is not None
-
     schema = NodeSchema(
         node_type=comfy_type_id(f"{namespace}.{v1_name}" if namespace else v1_name),
         display_name=display_name or v1_name,
@@ -2939,10 +2972,14 @@ def translate_node(
         # (the Comfy API prompt endpoint) map class_type -> node_type
         # through aliases instead of parsing namespaced type ids back apart.
         aliases=(v1_name,),
-        # Any v1 function may return a runtime graph expansion payload from
-        # runtime data; compat refuses those payloads loudly (normalize_result),
-        # so every translated schema declares the capability up front.
-        may_expand_graph=True,
+        # Flagged only where expansion is provable at translation time: a
+        # core expander at the pinned reference revision, or a function that
+        # literally returns an "expand" dict. V3 schemas carry the exact
+        # enable_expand declaration; everything else stays unflagged and the
+        # loud runtime refusal (normalize_result) is the safety boundary.
+        may_expand_graph=(
+            v1_name in _CORE_EXPANDER_V1_NAMES or _returns_expand_dict(function_object)
+        ),
         output_node=is_output_node,
         selector=(
             SelectorSpec("switch", {"false": "on_false", "true": "on_true"})

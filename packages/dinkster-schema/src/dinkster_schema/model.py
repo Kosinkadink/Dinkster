@@ -2143,15 +2143,15 @@ class NodeSchema:
     never part of the schema signature."""
     may_expand_graph: bool = False
     """This node's execution may return a runtime graph expansion payload
-    that Dinkster cannot execute. Set only where that is true: compat
-    translation marks every schema it serves from translated ComfyUI
-    sources, because a v1 ``{"expand": ...}`` result or a V3
-    ``NodeOutput.expand`` can be produced from runtime data, while native
-    execution has no expansion concept and ordinary schemas stay unflagged.
+    that Dinkster cannot execute. Populated only where expansion is provable
+    at translation time: compat marks V3 schemas whose source declares
+    ``enable_expand``, and v1 functions that statically return an "expand"
+    dict plus the enumerated core expanders at the pinned reference revision.
+    Dynamically built or delegated returns are unclassifiable and stay
+    unflagged; the loud runtime refusal is the safety boundary for that tail.
     Importers use the flag to refuse unsupported structures (such as a
-    Generic Loop region containing such a node) before submission; execution
-    still refuses any payload that slips through, loud. Capability metadata
-    only: never validity and never part of the schema signature."""
+    Generic Loop region containing such a node) before submission. Capability
+    metadata only: never validity and never part of the schema signature."""
     mirror: MirrorSpec | None = None
     """Optional frontend-renderable mirror of this node's transform (see
     MirrorSpec). Presentation metadata only: the engine never reads it,

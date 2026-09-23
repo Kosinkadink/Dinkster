@@ -2307,9 +2307,10 @@ def test_v1_mapping_result_with_none_expand_refuses_by_key_presence() -> None:
 
 
 def test_translated_schema_declares_may_expand_graph_and_still_refuses() -> None:
-    """The catalog flag marks every translated v1 schema, the wire round-trips
-    it as capability metadata outside the schema signature, and the flagged
-    node still refuses an expansion payload loudly at runtime."""
+    """A v1 function that statically returns an "expand" dict is flagged, the
+    wire round-trips the flag as capability metadata outside the schema
+    signature, and the flagged node still refuses an expansion payload loudly
+    at runtime."""
 
     class V1MaybeExpand:
         RETURN_TYPES = ("INT",)
@@ -2333,6 +2334,67 @@ def test_translated_schema_declares_may_expand_graph_and_still_refuses() -> None
     )
     with pytest.raises(CompatError, match="requested graph expansion"):
         node.execute(n=1)
+
+
+def test_ordinary_v1_node_does_not_claim_expansion() -> None:
+    class V1Ordinary:
+        RETURN_TYPES = ("INT",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"n": ("INT", {"default": 1})}}
+
+        def run(self, n):  # noqa: ANN001, ANN201
+            return {"result": (n,)}
+
+    schema = translate_node("Ordinary", V1Ordinary, CompatTranslation()).schema()
+    assert schema.may_expand_graph is False
+    assert "mayExpandGraph" not in schema_to_wire(schema)
+
+
+def test_delegated_expand_return_stays_unflagged_and_refuses_at_runtime() -> None:
+    """A dynamically built return is unclassifiable at translation time: the
+    schema stays unflagged and the loud runtime refusal is the boundary."""
+
+    class V1DelegatedExpand:
+        RETURN_TYPES = ("INT",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"n": ("INT", {"default": 1})}}
+
+        def run(self, n):  # noqa: ANN001, ANN201
+            payload = {"expand": {"nodes": {}}, "result": (n,)}
+            return payload
+
+    node = translate_node("DelegatedExpand", V1DelegatedExpand, CompatTranslation())
+    assert node.schema().may_expand_graph is False
+    with pytest.raises(CompatError, match="requested graph expansion"):
+        node.execute(n=1)
+
+
+def test_core_expander_enumeration_flags_the_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_compat_comfy import translate as translate_module
+
+    class V1CoreExpander:
+        RETURN_TYPES = ("INT",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"n": ("INT", {"default": 1})}}
+
+        def run(self, n):  # noqa: ANN001, ANN201
+            return (n,)
+
+    monkeypatch.setattr(translate_module, "_CORE_EXPANDER_V1_NAMES", frozenset({"CoreExpander"}))
+    schema = translate_node("CoreExpander", V1CoreExpander, CompatTranslation()).schema()
+    assert schema.may_expand_graph is True
+    assert "mayExpandGraph" in schema_to_wire(schema)
 
 
 def test_native_compat_schemas_do_not_claim_expansion() -> None:

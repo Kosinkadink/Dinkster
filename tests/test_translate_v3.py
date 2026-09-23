@@ -225,6 +225,7 @@ class FakeSchema:
         is_deprecated: bool = False,
         is_dev_only: bool = False,
         accept_all_inputs: bool = False,
+        enable_expand: bool = False,
     ) -> None:
         self.node_id = node_id
         self.display_name = display_name
@@ -239,6 +240,7 @@ class FakeSchema:
         self.is_deprecated = is_deprecated
         self.is_dev_only = is_dev_only
         self.accept_all_inputs = accept_all_inputs
+        self.enable_expand = enable_expand
 
 
 def translate(schema: FakeSchema, translation: CompatTranslation | None = None):
@@ -1080,15 +1082,19 @@ def test_output_node_and_idempotence_flags() -> None:
 
 
 def test_translated_v3_schema_declares_may_expand_graph() -> None:
-    """Every V3-translated schema marks the capability: a NodeOutput.expand
-    can arrive from runtime data, and the loud compat refusal stays."""
-    result = translate(FakeSchema("MaybeExpand"))
+    """V3 classification is exact: only a schema declaring enable_expand is
+    flagged (ComfyUI itself refuses NodeOutput.expand without it), and the
+    flag stays capability metadata outside the schema signature."""
+    result = translate(FakeSchema("MaybeExpand", enable_expand=True))
     assert result.may_expand_graph is True
     wire = schema_to_wire(result)
     assert wire["mayExpandGraph"] is True
     assert schema_signature(result) == schema_signature(
         dataclasses.replace(result, may_expand_graph=False)
     )
+    ordinary = translate(FakeSchema("Ordinary"))
+    assert ordinary.may_expand_graph is False
+    assert "mayExpandGraph" not in schema_to_wire(ordinary)
 
 
 def test_api_node_maps_to_io_bound_and_suppresses_gpu() -> None:
