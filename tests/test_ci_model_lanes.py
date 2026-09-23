@@ -4,7 +4,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -48,6 +50,19 @@ VISION_SUITES = (
     "packages/dinkster-nodes-vision/tests/test_depth_anything_v3.py",
     "packages/dinkster-nodes-vision/tests/test_sam31.py",
 )
+
+
+def _bash_executable() -> str:
+    if sys.platform != "win32":
+        return "bash"
+    git = shutil.which("git")
+    if git is not None:
+        bash = Path(git).parent.parent / "bin" / "bash.exe"
+        if bash.is_file():
+            return str(bash)
+    raise AssertionError("Git for Windows bash is unavailable")
+
+
 MODEL_GROUPS = (
     {
         "name": "inference and IPAdapter, shard 1 of 8",
@@ -289,6 +304,23 @@ def test_fork_pull_requests_use_hosted_runners_and_record_private_jobs_not_run()
         }
 
 
+def test_windows_bash_resolves_from_the_git_installation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git = tmp_path / "Git" / "cmd" / "git.exe"
+    bash = tmp_path / "Git" / "bin" / "bash.exe"
+    git.parent.mkdir(parents=True)
+    bash.parent.mkdir(parents=True)
+    git.touch()
+    bash.touch()
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        shutil, "which", lambda executable: str(git) if executable == "git" else None
+    )
+
+    assert _bash_executable() == str(bash)
+
+
 @pytest.mark.parametrize(
     ("force_not_run", "secret_value_1", "secret_value_2", "expected_available", "summary"),
     [
@@ -322,7 +354,7 @@ def test_private_dependency_check_reports_each_missing_secret(
     step_summary = tmp_path / "summary"
     result = subprocess.run(
         [
-            "bash",
+            _bash_executable(),
             "-e",
             "-o",
             "pipefail",
@@ -892,13 +924,13 @@ def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path
     assert status.stdout == ""
 
     subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", repair_commands],
+        [_bash_executable(), "-e", "-o", "pipefail", "-c", repair_commands],
         cwd=clone,
         check=True,
     )
     assert license_file.read_bytes() == lf_bytes
     subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", repair_commands],
+        [_bash_executable(), "-e", "-o", "pipefail", "-c", repair_commands],
         cwd=clone,
         check=True,
     )

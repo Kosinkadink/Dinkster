@@ -10,7 +10,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import MountDef, dump_mounts, load_mounts, load_output_mount
 
-from dinkster import launch, serve, setup
+from dinkster import frontend, launch, serve, setup
 from dinkster.cli import main as cli_main
 from dinkster.frontend import install_frontend
 
@@ -156,7 +156,16 @@ def test_no_browser_and_vite_proxy_are_the_only_alternate_launch_controls(
     assert "--frontend-root" not in args
 
 
-def test_static_frontend_preserves_api_routes_and_spa_fallback(tmp_path: Path) -> None:
+def test_static_frontend_preserves_api_routes_and_spa_fallback(tmp_path: Path, monkeypatch) -> None:
+    system_guess_type = frontend.mimetypes.guess_type
+
+    def windows_guess_type(name: str) -> tuple[str | None, str | None]:
+        if name.endswith(".js"):
+            return "application/javascript", None
+        return system_guess_type(name)
+
+    monkeypatch.setattr(frontend.mimetypes, "guess_type", windows_guess_type)
+
     async def scenario() -> None:
         bundle = tmp_path / "dist"
         (bundle / "assets").mkdir(parents=True)
