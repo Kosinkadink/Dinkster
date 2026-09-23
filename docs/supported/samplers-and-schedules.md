@@ -78,7 +78,9 @@ TRELLIS.2, Qwen Image, and Ideogram 4 participate; sparse TRELLIS.2 and MiniMax
 H3 remain separate because their authenticated packed layouts cannot be
 lane-expanded without changing identity.
 TripoSplat structural latents can be sampled through both KSampler and custom sampling.
-KSampler and custom sampling accept context windows when the runtime supports them.
+KSampler and custom sampling install temporal or spatial context windows through
+the shared sampling pipeline. Families may still refuse requests whose structural
+conditioning cannot be sliced without changing its meaning.
 The sampling runtime APIs accept denoise masks for dense image, video, audio,
 and multi-stream latents. Sparse sampling accepts masks on the same sparse
 support. Wan CausalAR and scheduled prompt/patch sampling do not accept

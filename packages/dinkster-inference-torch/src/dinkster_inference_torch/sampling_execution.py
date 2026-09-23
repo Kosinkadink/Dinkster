@@ -66,6 +66,7 @@ from dinkster_inference import (
 )
 
 from .brownian import BrownianTreeNoise
+from .context_windows import windowed_conditioning_evaluation
 from .denoise import (
     PackedInpaintConfiguration,
     latent_process_out,
@@ -534,6 +535,7 @@ class SamplingAdapterContext:
     cancelled: Callable[[], bool] = lambda: False
     observer: object | None = None
     parent_span_id: int | None = None
+    attention_binding: object | None = None
 
 
 class SamplingLatentAdapter(Protocol):
@@ -689,10 +691,27 @@ class CustomSamplingCapabilities:
     supports_inpaint: Callable[[object], bool] = lambda runtime: bool(
         getattr(runtime, "supports_inpaint", False)
     )
-    supports_context_windows: Callable[[object], bool] = lambda runtime: bool(
-        getattr(runtime, "supports_context_windows", False)
-    )
+    supports_context_windows: Callable[[object], bool] = lambda _runtime: True
     restrictions: tuple[CustomSamplingRestriction, ...] = ()
+
+
+@dataclass(frozen=True)
+class SamplingPipelineHooks:
+    """Family data and shape adapters consumed by the shared pipeline."""
+
+    prepare_mask: (
+        Callable[
+            [
+                object,
+                SamplingExecutionInputs,
+                CustomSamplingLatentValue | None,
+                SamplingAdapterContext,
+            ],
+            SamplingExecutionInputs,
+        ]
+        | None
+    ) = None
+    bind_attention: Callable[[object, SamplingAdapterContext], object | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -713,6 +732,7 @@ class SamplingExecutionRegistration:
     ) = None
     context_windows_option: str | None = None
     capabilities: CustomSamplingCapabilities = CustomSamplingCapabilities()
+    pipeline: SamplingPipelineHooks = SamplingPipelineHooks()
     forbidden_options: frozenset[str] = frozenset()
     forbidden_options_message: str = "sampling option is not supported"
 
@@ -936,6 +956,13 @@ def sampling_execution(
             context=adapter_context,
             error=owner.sampling_error,
         )
+        if registration.pipeline.prepare_mask is not None:
+            inputs = registration.pipeline.prepare_mask(
+                owner,
+                inputs,
+                denoise_mask,
+                adapter_context,
+            )
     owner.check_custom_sampling(
         request,
         has_denoise_mask=inputs.denoise_mask is not None,
@@ -1007,6 +1034,11 @@ def sampling_execution(
         compute_dtype=compute_dtype,
         cancelled=cancelled,
     )
+    if registration.pipeline.bind_attention is not None:
+        adapter_context = replace(
+            adapter_context,
+            attention_binding=registration.pipeline.bind_attention(owner, adapter_context),
+        )
     denoiser_execution = registration.denoiser(owner, compute_dtype, adapter_context)
     if denoiser_execution.conditioning_payloads:
         known_lanes = {condition.id for condition in plan.conditions}
@@ -1050,6 +1082,14 @@ def sampling_execution(
             adapter.evaluate_conditioning_batch,
             evaluator_identity=resolved_evaluator_identity,
             standard_activation_memory_factor=owner.family.memory_factor,
+        )
+    if context_windows is not None:
+        if evaluation is None:
+            raise owner.sampling_error("context windows require conditioning evaluation")
+        evaluation = windowed_conditioning_evaluation(
+            evaluation,
+            context_windows,
+            schedule.sigmas,
         )
     captured: list[object] = []
 
@@ -1319,6 +1359,7 @@ __all__ = [
     "SamplingExecutionRegistration",
     "SamplingGuidancePlan",
     "SamplingLatentAdapter",
+    "SamplingPipelineHooks",
     "SamplingSchedule",
     "SingleStreamLatentAdapter",
     "SingleStreamCustomSamplingCfg",

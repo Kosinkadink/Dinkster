@@ -112,6 +112,7 @@ from .sampling_execution import (
     SamplingExecutionInputs,
     SamplingExecutionRegistration,
     SamplingLatentAdapter,
+    SamplingPipelineHooks,
     sampling_execution,
 )
 from .sampling_runtime import MultiStreamSamplingRuntime
@@ -1136,6 +1137,49 @@ class _H3SamplingContext:
     model_mask: MultiStreamLatent[torch.Tensor] | None
 
 
+def _prepare_h3_mask(
+    runtime: object,
+    inputs: SamplingExecutionInputs,
+    denoise_mask: CustomSamplingLatentValue | None,
+    _context: SamplingAdapterContext,
+) -> SamplingExecutionInputs:
+    if denoise_mask is None:
+        return inputs
+    owner = cast("MiniMaxH3DiTRuntime", runtime)
+    latent_context = cast("_H3SamplingContext", inputs.latent_context)
+    sampler_latent = unpack_latent_streams(inputs.latent, latent_context.layout)
+    raw_masks = normalize_latent_mask(
+        cast("torch.Tensor | MultiStreamLatent[torch.Tensor]", denoise_mask),
+        sampler_latent,
+    )
+    _validate_h3_mask(raw_masks)
+    token_masks = _h3_token_grid_masks(raw_masks, owner.config.patch)
+    packed_raw_mask, raw_layout = pack_latent_streams(raw_masks)
+    packed_token_mask, token_layout = pack_latent_streams(token_masks)
+    if raw_layout != latent_context.layout or token_layout != latent_context.layout:
+        raise MiniMaxH3RuntimeError("H3 denoise mask topology differs from the latent")
+    model_mask = (
+        token_masks
+        if any(float(stream.payload.amin()) < 1.0 - 1e-3 for stream in token_masks.streams)
+        else None
+    )
+    return replace(
+        inputs,
+        denoise_mask=packed_raw_mask,
+        latent_context=replace(
+            latent_context,
+            raw_mask=packed_raw_mask,
+            token_mask=packed_token_mask,
+            model_mask=model_mask,
+        ),
+    )
+
+
+def _bind_h3_attention(runtime: object, context: SamplingAdapterContext) -> object | None:
+    del runtime
+    return context.options.get("attention_kernel_factory")
+
+
 @dataclass(frozen=True, slots=True)
 class _H3LatentAdapter:
     def prepare(
@@ -1224,37 +1268,21 @@ class _H3LatentAdapter:
         packed_noise, noise_layout = pack_latent_streams(noise)
         if noise_layout != layout:
             raise MiniMaxH3RuntimeError("H3 initial noise topology differs from the latent")
-        packed_raw_mask: torch.Tensor | None = None
-        packed_token_mask: torch.Tensor | None = None
-        model_denoise_mask: MultiStreamLatent[torch.Tensor] | None = None
-        if denoise_mask is not None:
-            raw_masks = normalize_latent_mask(
-                cast("torch.Tensor | MultiStreamLatent[torch.Tensor]", denoise_mask),
-                sampler_latent,
-            )
-            _validate_h3_mask(raw_masks)
-            token_masks = _h3_token_grid_masks(raw_masks, owner.config.patch)
-            packed_raw_mask, raw_layout = pack_latent_streams(raw_masks)
-            packed_token_mask, token_layout = pack_latent_streams(token_masks)
-            if raw_layout != layout or token_layout != layout:
-                raise MiniMaxH3RuntimeError("H3 denoise mask topology differs from the latent")
-            if any(float(stream.payload.amin()) < 1.0 - 1e-3 for stream in token_masks.streams):
-                model_denoise_mask = token_masks
         if layout != conditioning.target_layout:
             raise MiniMaxH3RuntimeError("conditioning belongs to a different H3 target")
         latent_context = _H3SamplingContext(
             latent,
             layout,
-            packed_raw_mask,
-            packed_token_mask,
-            model_denoise_mask,
+            None,
+            None,
+            None,
         )
         return SamplingExecutionInputs(
             packed,
             packed_noise,
             conditioning,
             guidance_cfg,
-            packed_raw_mask,
+            None,
             latent_context,
         )
 
@@ -1299,6 +1327,10 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         ),
         compute_dtype=lambda runtime: cast("MiniMaxH3DiTRuntime", runtime)._compute_dtype,
         flow=True,
+        pipeline=SamplingPipelineHooks(
+            prepare_mask=_prepare_h3_mask,
+            bind_attention=_bind_h3_attention,
+        ),
     )
 
     def __init__(
@@ -1398,7 +1430,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         device = torch.device(context.device)
         attention_kernel_factory = cast(
             "MiniMaxH3AttentionKernelFactory | None",
-            context.options.get("attention_kernel_factory"),
+            context.attention_binding,
         )
         scheduler_label = request.source_scheduler_id or "custom"
         model_role = self._model_role

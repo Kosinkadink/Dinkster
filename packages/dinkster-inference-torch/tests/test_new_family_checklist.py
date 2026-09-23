@@ -15,6 +15,9 @@ from dinkster_inference import (
     FLOAT32,
     ComponentWiring,
     Conditioning,
+    ContextFuseMethod,
+    ContextWindowSchedule,
+    ContextWindowsSpec,
     CustomSamplingRequest,
     DetectionEvidence,
     FamilyRegistry,
@@ -174,6 +177,53 @@ def test_toy_family_runs_identically_through_both_sampler_surfaces_on_cpu() -> N
     assert torch.equal(custom, ksampler)
     assert torch.count_nonzero(ksampler)
     assert ksampler.device.type == "cpu"
+
+
+@pytest.mark.parametrize("dim", (2, 3), ids=("temporal-axis", "spatial-axis"))
+def test_shared_pipeline_windows_new_family_without_family_wiring(dim: int) -> None:
+    runtime = ToyRuntime()
+    latent = torch.zeros((1, 4, 3, 4), dtype=torch.float32)
+    conditioning = Conditioning(torch.arange(12, dtype=torch.float32).reshape(1, 3, 4))
+    sampler, scheduler = resolve_sampling(
+        runtime._samplers,
+        runtime._schedulers,
+        "dinkster.euler",
+        "dinkster.simple",
+        error=ValueError,
+    )
+    schedule = build_sampling_schedule(
+        scheduler,
+        SIGMA_SPACE,
+        sampler,
+        3,
+        denoise=1.0,
+        flow=True,
+    )
+    request = CustomSamplingRequest(sampler, (), schedule.pre_offset)
+    noise = prepare_noise(latent, 123)
+    baseline = runtime.sample_custom(
+        latent,
+        noise=noise,
+        cond=conditioning,
+        request=request,
+        seed=123,
+    ).output
+    windowed = runtime.sample_custom(
+        latent,
+        noise=noise,
+        cond=conditioning,
+        request=request,
+        seed=123,
+        context_windows=ContextWindowsSpec(
+            ContextWindowSchedule.STATIC_STANDARD,
+            ContextFuseMethod.PYRAMID,
+            length=2,
+            overlap=1,
+            dim=dim,
+        ),
+    ).output
+
+    torch.testing.assert_close(windowed, baseline)
 
 
 def _run_both_sampler_surfaces(

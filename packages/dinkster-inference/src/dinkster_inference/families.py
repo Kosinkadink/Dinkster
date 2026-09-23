@@ -84,6 +84,33 @@ class PreviewDecoderProperties:
 
 
 @dataclass(frozen=True)
+class FamilyFeatureHook:
+    """An open family contribution to one shared engine feature.
+
+    The engine owns feature installation. The referenced callable may
+    supply only family-specific data or shape conversion at that point.
+    """
+
+    feature: str
+    target: str
+    component_roles: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.feature or any(char.isspace() for char in self.feature):
+            raise ValueError("family feature names must be non-empty and contain no whitespace")
+        if (
+            self.target.count(":") != 1
+            or not all(self.target.split(":"))
+            or any(char.isspace() for char in self.target)
+        ):
+            raise ValueError("family feature targets must name module:attribute")
+        if any(not role or role.isspace() for role in self.component_roles):
+            raise ValueError("family feature component roles must not be empty")
+        if len(self.component_roles) != len(set(self.component_roles)):
+            raise ValueError("family feature component roles must be unique")
+
+
+@dataclass(frozen=True)
 class EngineProperties:
     """Cross-cutting engine behavior supplied by family registration."""
 
@@ -105,6 +132,7 @@ class EngineProperties:
         tuple[str, Literal["unet", "flux", "vae", "clip", "t5", "qwen"]], ...
     ] = ()
     attention_requires_route: bool = False
+    feature_hooks: tuple[FamilyFeatureHook, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.vae_dtypes:
@@ -118,9 +146,15 @@ class EngineProperties:
             raise ValueError("attention backend component roles must not be empty")
         if self.attention_requires_route and not self.attention_backends:
             raise ValueError("required attention routes need at least one attention backend")
+        features = tuple(hook.feature for hook in self.feature_hooks)
+        if len(features) != len(set(features)):
+            raise ValueError("family feature hooks must have unique feature names")
 
     def attention_backend(self, component_role: str) -> str | None:
         return dict(self.attention_backends).get(component_role)
+
+    def feature_hook(self, feature: str) -> FamilyFeatureHook | None:
+        return next((hook for hook in self.feature_hooks if hook.feature == feature), None)
 
 
 @dataclass(frozen=True)

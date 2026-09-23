@@ -43,6 +43,7 @@ from .families import (
     ComponentWiring,
     DetectionEvidence,
     EngineProperties,
+    FamilyFeatureHook,
     FamilyRegistry,
     ModelFamily,
     PreviewDecoderProperties,
@@ -934,7 +935,16 @@ MINIMAX_H3 = ModelFamily(
     wiring=ComponentWiring(text_encoders=()),
     supported_dtypes=frozenset({BFLOAT16}),
     aliases=MINIMAX_H3_FAMILY.aliases,
-    engine=EngineProperties(attention_backends=(("diffusion", "flux"),)),
+    engine=EngineProperties(
+        attention_backends=(("diffusion", "flux"),),
+        feature_hooks=(
+            FamilyFeatureHook(
+                "lora-key-map",
+                "dinkster_inference:minimax_h3_lora_key_map",
+                ("diffusion",),
+            ),
+        ),
+    ),
 )
 
 

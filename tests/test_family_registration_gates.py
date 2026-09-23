@@ -4,7 +4,12 @@ import ast
 from pathlib import Path
 
 import pytest
-from dinkster_inference import EngineProperties, PreviewDecoderProperties, builtin_families
+from dinkster_inference import (
+    EngineProperties,
+    FamilyFeatureHook,
+    PreviewDecoderProperties,
+    builtin_families,
+)
 from dinkster_inference.component_catalog import default_component_registry
 from family_gate_scanner import (
     EXTERNAL_PROOF_FAMILY_IDS,
@@ -277,6 +282,13 @@ def test_registered_engine_properties_cover_shared_family_behavior() -> None:
 
     components = {descriptor.id: descriptor for descriptor in default_component_registry()}
     assert components["dinkster.minimax_h3"].family.engine.attention_backend("diffusion") == "flux"
+    assert components["dinkster.minimax_h3"].family.engine.feature_hook(
+        "lora-key-map"
+    ) == FamilyFeatureHook(
+        "lora-key-map",
+        "dinkster_inference:minimax_h3_lora_key_map",
+        ("diffusion",),
+    )
     assert components["dinkster.minimax_music3"].family.engine.attention_backends == (
         ("diffusion", "flux"),
         ("text", "qwen"),
@@ -296,3 +308,16 @@ def test_engine_properties_reject_invalid_attention_registration() -> None:
         EngineProperties(attention_backends=(("diffusion", "flux"), ("diffusion", "qwen")))
     with pytest.raises(ValueError, match="need at least one attention backend"):
         EngineProperties(attention_requires_route=True)
+
+
+def test_engine_properties_accept_open_family_feature_hooks() -> None:
+    hook = FamilyFeatureHook(
+        "future-feature",
+        "extension_pack:build_future_feature",
+        ("custom-role",),
+    )
+
+    properties = EngineProperties(feature_hooks=(hook,))
+
+    assert properties.feature_hook("future-feature") is hook
+    assert properties.feature_hook("not-registered") is None
