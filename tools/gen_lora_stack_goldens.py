@@ -101,7 +101,7 @@ def main() -> None:
             "generator": "tools/gen_lora_stack_goldens.py",
             "reference_commit": commit,
             "torch": torch.__version__,
-            **tuple_provenance(torch.__version__),
+            **tuple_provenance(torch.__version__, pin_cpu=True),
         },
         "apply_cases": APPLY_CASES,
     }

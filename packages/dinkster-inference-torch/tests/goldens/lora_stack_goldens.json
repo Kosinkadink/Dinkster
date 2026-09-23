@@ -1,8 +1,9 @@
 {
  "_meta": {
+  "cpu": "AMD Ryzen Threadripper PRO 5955WX 16-Cores",
   "generator": "tools/gen_lora_stack_goldens.py",
   "reference_commit": "b78cec879b9460d5cb25228a83a942fb78d2cd24",
-  "torch": "2.13.0+cu130"
+  "torch": "2.13.0+cpu"
  },
  "apply_cases": [
   {
