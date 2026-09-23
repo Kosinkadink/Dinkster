@@ -15,10 +15,15 @@ import torch
 import torch.nn.functional as F
 from dinkster_inference import ComponentPlan, Trellis2DecoderConfig, Trellis2FlowConfig
 from dinkster_inference_torch import trellis2_assembly, trellis2_flow
+from dinkster_inference_torch.component_runtime import trellis_runtime
 from dinkster_inference_torch.module_residency import enroll_component
 from dinkster_inference_torch.operations import INITLESS, bound_compute_dtype
 from dinkster_inference_torch.sparse import make_sparse_support
-from dinkster_inference_torch.trellis2_assembly import _decoder_builder, _microsoft_split_state
+from dinkster_inference_torch.trellis2_assembly import (
+    AssembledTrellis2,
+    _decoder_builder,
+    _microsoft_split_state,
+)
 from dinkster_inference_torch.trellis2_flow import (
     Trellis2FlowModel,
     Trellis2HeadRmsNorm,
@@ -219,6 +224,25 @@ def test_flow_model_enrolls_every_direct_state_owner_for_residency() -> None:
     mechanism = enroll_component(model, load_device="cpu", offload_device="cpu")
 
     assert mechanism.total_bytes() == sum(value.nbytes for value in model.state_dict().values())
+
+
+def test_assembled_trellis2_requires_and_exposes_selected_compute_dtype() -> None:
+    build = cast("Any", AssembledTrellis2)
+    with pytest.raises(TypeError, match="_compute_dtype"):
+        build(object(), object())
+
+    assembled = build(object(), object(), torch.float32)
+
+    assert assembled.compute_dtype("diffusion") is torch.float32
+    assert assembled.compute_dtype("vae") is None
+
+
+def test_trellis_component_runtime_propagates_selected_compute_dtype() -> None:
+    loaded = SimpleNamespace(module=object(), plan=object())
+
+    runtime = trellis_runtime(loaded, "native:dinkster.trellis2:test", torch.float16)
+
+    assert runtime.assembled.compute_dtype("diffusion") is torch.float16
 
 
 def test_decoder_builder_distinguishes_fused_comfy_vaes_from_split_decoders(

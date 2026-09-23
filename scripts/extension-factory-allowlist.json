@@ -4,6 +4,11 @@
     "descriptorCatalog": 17,
     "registryFactory": 8
   },
+  "slack": {
+    "assemblyBuilder": 0,
+    "descriptorCatalog": 0,
+    "registryFactory": 0
+  },
   "sites": [
     {
       "kind": "assemblyBuilder",
@@ -145,7 +150,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 4633,
+      "line": 4635,
       "column": 28,
       "issue": 120
     },
