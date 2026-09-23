@@ -1398,10 +1398,24 @@ class TestBenchmarkReportValidation:
     def test_minimax_h3_comfyui_requires_the_exact_commit(self) -> None:
         report = complete_benchmark_report("cuda", family="minimax_h3", system="comfyui")
         report["comfyui"]["commit"] = HUMO_COMFYUI_COMMIT[:12]
-        problems = validate_benchmark_report(report, accelerator="cuda")
-        assert any(
-            "comfyui.commit is not the pinned MiniMax H3 commit" in problem for problem in problems
+        problems = validate_benchmark_report(
+            report, accelerator="cuda", expected_comfyui_commit=HUMO_COMFYUI_COMMIT
         )
+        assert any(
+            "comfyui.commit is not the required MiniMax H3 commit" in problem
+            for problem in problems
+        )
+
+    def test_minimax_h3_comfyui_accepts_the_run_specific_commit(self) -> None:
+        report = complete_benchmark_report("cuda", family="minimax_h3", system="comfyui")
+        expected = "f" * 40
+        report["comfyui"]["commit"] = expected
+
+        problems = validate_benchmark_report(
+            report, accelerator="cuda", expected_comfyui_commit=expected
+        )
+
+        assert not any("comfyui.commit" in problem for problem in problems)
 
     @pytest.mark.parametrize("system", ["dinkster", "comfyui"])
     def test_minimax_h3_requires_the_system_execution_path(self, system: str) -> None:

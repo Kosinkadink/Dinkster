@@ -308,8 +308,21 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     assert calls[0]["accelerator"] == "cuda"
     workspace = calls[0]["workspace_packages"]
     assert isinstance(workspace, tuple)
-    assert {path.name for path in workspace} == set(serve._PACK_HOST_WORKSPACE_PACKAGES)
-    workspace_names = set(serve._PACK_HOST_WORKSPACE_PACKAGES)
+    workspace_names = {path.name for path in workspace}
+    assert workspace_names == {
+        "dinkster-api",
+        "dinkster-assets",
+        "dinkster-caches",
+        "dinkster-image-document",
+        "dinkster-inference",
+        "dinkster-inference-torch",
+        "dinkster-memory",
+        "dinkster-protocol",
+        "dinkster-schema",
+        "dinkster-values",
+        "dinkster-video",
+        "dinkster-workers",
+    }
     package_names = {
         tomllib.loads(path.read_text(encoding="utf-8"))["project"]["name"]
         for path in (TESTS_DIR.parent / "packages").glob("*/pyproject.toml")

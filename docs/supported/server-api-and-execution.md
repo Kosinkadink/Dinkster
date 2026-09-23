@@ -73,7 +73,8 @@
   `auto` selects guidance or eligible Flux window scattering, never sequence
   parallelism.
 - Memory governance: budgets, headroom, reservations with renewal,
-  governed shedding, admission waiting
+  governed shedding, admission waiting, and item details with Aimdo model-weight
+  page residency when the active Aimdo build exposes it
 - Paused, idle queues support `POST /memory/free` to release volatile
   execution caches and live workers' declared memory consumers without
   starting dormant workers. Results report each worker and consumer;

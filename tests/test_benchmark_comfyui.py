@@ -563,6 +563,10 @@ class TestBuildGraph:
             (AUDIO_DECODE, "vae", AUDIO_VAE_LOADER, 0),
             (SINK, "images", DECODE, 0),
             (SINK, "audio", AUDIO_DECODE, 0),
+            (SINK, "conditioning", CONDITIONING, 0),
+            (SINK, "latent", CONDITIONING, 1),
+            (SINK, "final_latent", SAMPLER, 0),
+            (SINK, "sigmas", SCHEDULER, 0),
         }
 
     def test_flux_graph_routes_the_positive_through_flux_guidance(self) -> None:
@@ -1485,8 +1489,8 @@ class TestArguments:
             )
         assert "only with MiniMax H3" in capsys.readouterr().err
 
-    @pytest.mark.parametrize("override", ["", "b78cec87", "f" * 40])
-    def test_minimax_h3_cli_rejects_a_commit_override(
+    @pytest.mark.parametrize("override", ["", "b78cec87"])
+    def test_minimax_h3_cli_rejects_a_non_exact_commit(
         self,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
@@ -1497,6 +1501,14 @@ class TestArguments:
                 [*self.minimax_h3_arguments(tmp_path), "--require-commit", override]
             )
         assert "--require-commit must be" in capsys.readouterr().err
+
+    def test_minimax_h3_cli_accepts_an_exact_commit(self, tmp_path: Path) -> None:
+        exact = "f" * 40
+        arguments = benchmark_comfyui._parse_arguments(
+            [*self.minimax_h3_arguments(tmp_path), "--require-commit", exact]
+        )
+
+        assert arguments.require_commit == exact
 
     def test_minimax_h3_cli_requires_the_audio_vae(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -2298,6 +2310,7 @@ def _load_shim_with_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     comfy_ldm.modules = comfy_ldm_modules
     comfy_ldm_modules.attention = attention_module
     _module("execution", PromptQueue=_PromptQueue, PromptExecutor=_PromptExecutor)
+    _module("latent_preview", prepare_callback=lambda *args, **kwargs: None)
     _module(
         "torch",
         __version__="test-torch",
