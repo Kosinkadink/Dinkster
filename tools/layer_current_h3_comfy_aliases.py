@@ -18,6 +18,7 @@ SOURCE = ROOT / "packages/dinkster-compat-comfy/src/dinkster_compat_comfy/core_s
 OUTPUT = ROOT / "packages/dinkster-compat-comfy/comfy-aliases.json"
 COMFYUI_REVISION = "b5cc8830279eae909a59de030af1e50761c36751"
 SOURCE_NODE_TYPES = (
+    "comfy.CLIPLoader",
     "comfy.MiniMaxH3ImageToVideo",
     "comfy.MiniMaxH3ReferenceToVideo",
     "comfy.MiniMaxH3AddGuide",
@@ -55,6 +56,24 @@ def add_current_h3_aliases(registry: dict[str, object]) -> dict[str, object]:
     missing = sorted(set(SOURCE_NODE_TYPES) - set(schemas))
     if missing:
         raise RuntimeError(f"missing pinned source schemas: {', '.join(missing)}")
+    clip_schema = schemas["comfy.CLIPLoader"]
+    schemas["comfy.CLIPLoader"] = {
+        **clip_schema,
+        "interface": [
+            {
+                **entry,
+                "type": {"kind": "concrete", "types": ["dinkster.asset"]},
+                "widget": {
+                    "accept": ["application/octet-stream"],
+                    "kind": "model/text-encoder",
+                    "type": "ASSET",
+                },
+            }
+            if entry["role"] == "input" and entry["id"] == "clip_name"
+            else entry
+            for entry in clip_schema["interface"]
+        ],
+    }
 
     image_inputs = {
         name: MappingSource.copy(name)
@@ -90,6 +109,24 @@ def add_current_h3_aliases(registry: dict[str, object]) -> dict[str, object]:
         for name in ("ref_images", "ref_videos", "ref_video_audios", "ref_audios")
     }
     records = [
+        _record(
+            "CLIPLoader",
+            "dinkster.load_clip",
+            ReplacementRule(
+                from_type="comfy.CLIPLoader",
+                cases=(
+                    ReplacementCase.build(
+                        "dinkster.load_clip",
+                        inputs={
+                            "text_encoder": MappingSource.copy("clip_name"),
+                            "type": MappingSource.copy("type"),
+                            "device": MappingSource.copy("device"),
+                        },
+                        outputs={"clip": "clip"},
+                    ),
+                ),
+            ),
+        ),
         _record(
             "MiniMaxH3ImageToVideo",
             "dinkster.minimax_h3_image_to_video",

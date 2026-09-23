@@ -253,6 +253,7 @@ def test_native_manifest_catalogs_match_provider_claims(tmp_path: Path, native_o
         for record in aliases.records
         if record.source.revision == "b5cc8830279eae909a59de030af1e50761c36751"
     } == {
+        "CLIPLoader",
         "MiniMaxH3ImageToVideo",
         "MiniMaxH3ReferenceToVideo",
         "MiniMaxH3AddGuide",

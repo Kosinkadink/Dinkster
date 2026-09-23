@@ -37,6 +37,7 @@ def test_native_h3_aliases_are_canonical_and_pinned() -> None:
         record for record in registry["records"] if record["source"]["revision"] == COMFYUI_REVISION
     ]
     assert {record["source"]["nodeClass"] for record in h3_records} == {
+        "CLIPLoader",
         "MiniMaxH3ImageToVideo",
         "MiniMaxH3ReferenceToVideo",
         "MiniMaxH3AddGuide",
@@ -46,6 +47,14 @@ def test_native_h3_aliases_are_canonical_and_pinned() -> None:
 
 def test_native_h3_aliases_preserve_source_inputs_and_outputs() -> None:
     records = {record["source"]["nodeClass"]: record for record in _registry()["records"]}
+    clip = records["CLIPLoader"]["replacement"]["cases"][0]
+    assert clip["inputs"] == {
+        "text_encoder": {"kind": "copy", "input": "clip_name"},
+        "type": {"kind": "copy", "input": "type"},
+        "device": {"kind": "copy", "input": "device"},
+    }
+    assert clip["outputs"] == {"clip": "clip"}
+
     image = records["MiniMaxH3ImageToVideo"]["replacement"]["cases"][0]
     assert set(image["inputs"]) == {
         "clip",

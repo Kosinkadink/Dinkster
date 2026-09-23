@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from dinkster_compat_comfy import LoadVae, LoadVision
 from dinkster_native.native import (
+    LoadClip,
     MiniMaxH3AddGuide,
     MiniMaxH3ImageToVideo,
     MiniMaxH3ReferenceToVideo,
@@ -41,6 +42,7 @@ def test_compat_comfy_aliases_are_canonical() -> None:
                 (
                     LoadVae,
                     LoadVision,
+                    LoadClip,
                     MiniMaxH3ImageToVideo,
                     MiniMaxH3ReferenceToVideo,
                     MiniMaxH3AddGuide,
