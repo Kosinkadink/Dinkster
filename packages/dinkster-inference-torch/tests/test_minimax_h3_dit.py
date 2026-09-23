@@ -2036,7 +2036,15 @@ def test_mlp_final_layer_keeps_bf16_adaln_and_fp32_output_heads() -> None:
             parameter.fill_(0.01)
     hidden = torch.ones(4, config.hidden_width, dtype=torch.bfloat16)
     time = torch.ones(2, 2688, dtype=torch.bfloat16)
-    video, audio = layer(hidden, time, (0, 2, 0), (2, 4, 1))
+    video, audio = layer(
+        hidden,
+        time,
+        (0, 2, 0),
+        (2, 4, 1),
+        1.0,
+        None,
+        (12.0, 3.0),
+    )
     assert video.dtype is torch.float32
     assert audio.dtype is torch.float32
     assert video.shape == (2, 96)
@@ -2109,6 +2117,17 @@ def test_pdd_final_layer_selects_and_weights_schedule_head_span() -> None:
             100.0 + float(audio_weight @ torch.tensor((2.0, 8.0), dtype=torch.float64)),
         ),
     )
+    first_video, first_audio = final(
+        hidden,
+        time,
+        (0, 2, 0),
+        (2, 3, 0),
+        1.0,
+        (1.0, 36.0 / 37.0, 0.0),
+        (12.0, 3.0),
+    )
+    torch.testing.assert_close(first_video, torch.full_like(first_video, 10.0))
+    torch.testing.assert_close(first_audio, torch.full_like(first_audio, 100.0))
 
 
 def test_packed_layout_orders_text_conditions_references_audio_then_video() -> None:

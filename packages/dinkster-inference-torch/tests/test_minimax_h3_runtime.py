@@ -148,6 +148,7 @@ class FakeDiT:
     def __init__(self, value: float) -> None:
         self.value = value
         self.calls: list[tuple[float, object]] = []
+        self.sampler_schedules: list[tuple[float, ...] | None] = []
         self.denoise_masks: list[MultiStreamLatent[torch.Tensor] | None] = []
         self.preprocessed_contexts: list[torch.Tensor] = []
         self.attention_kernel = builtin_sdpa_kernel()
@@ -169,8 +170,9 @@ class FakeDiT:
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
         attention_kernel_factory: MiniMaxH3AttentionKernelFactory | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
-        del context, conditioning, sampler_sigmas
+        del context, conditioning
         self.calls.append((sigma, sigmas))
+        self.sampler_schedules.append(sampler_sigmas)
         self.denoise_masks.append(denoise_mask)
         if attention_kernel_factory is not None:
             attention_kernel_factory(MiniMaxH3PackedSequenceFacts(1, ((0, 1, "video"),)))
@@ -633,6 +635,7 @@ def test_t2va_condition_and_sample_use_fl2va_and_paired_pack(
     assert result_layout == layout
     torch.testing.assert_close(result_packed, expected)
     assert runtime_fixture.fl2va.calls == [(1.0, MINIMAX_H3_SIGMAS)]
+    assert runtime_fixture.fl2va.sampler_schedules == [(1.0, 0.0)]
     assert len(runtime_fixture.fl2va.preprocessed_contexts) == 1
     assert runtime_fixture.ref2va.calls == []
     assert len(state_events) == 1
