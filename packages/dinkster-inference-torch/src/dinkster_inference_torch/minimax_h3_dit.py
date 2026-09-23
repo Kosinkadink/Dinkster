@@ -881,9 +881,9 @@ class _MiniMaxH3FinalLayer(torch.nn.Module):
         time: torch.Tensor,
         video_segment: _ModulationSegment,
         audio_segment: _ModulationSegment,
-        video_sigma: float = 1.0,
-        sampler_sigmas: tuple[float, ...] | None = None,
-        schedule_shifts: tuple[float, float] = (12.0, 3.0),
+        video_sigma: float,
+        sampler_sigmas: tuple[float, ...] | None,
+        schedule_shifts: tuple[float, float],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         shift, scale = self.adaln_proj(time)
         video_start, video_stop, video_row = video_segment
