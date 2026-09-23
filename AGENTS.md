@@ -33,13 +33,14 @@ by a repository contract remain authoritative and must be preserved.
 
 ## Review discipline
 
-Every slice gets a real code review after implementation and tests pass,
-before the commit - a pass over the new code, not a re-read of the diff
-summary: API cohesion (exported-but-unconsumed surface is a cut candidate),
-invariants (frozen/immutability claims hold, validators fire), layering (no
-reaching into later-stage mechanisms, no hidden global state), and doc drift.
-Fix findings before committing or file an issue for deliberate deferrals.
-Record the outcome in the commit body ("Reviewed: ..." or "no findings").
+Every change gets a real code review after implementation and tests pass,
+before its head is frozen for verification - a pass over the new code, not a
+re-read of the diff summary: API cohesion (exported-but-unconsumed surface is
+a cut candidate), invariants (frozen/immutability claims hold, validators
+fire), layering (no reaching into later-stage mechanisms, no hidden global
+state), and doc drift. Fix findings before freezing or file an issue for
+deliberate deferrals. Record the outcome in the pull request body
+("Reviewed: ..." or "no findings").
 
 ## One sampling engine (user directives, 2026-08)
 
@@ -102,7 +103,14 @@ green suite whose tolerances quietly absorbed a real defect.
   until the divergence point is found. Do not commit anything whose mismatch
   you cannot explain.
 
-## Validation gate (before any commit)
+## Validation gate (before freezing a head for verification)
+
+Commit and push in-progress work to the feature branch freely; a branch
+commit needs no passing checks. The gates below apply to a head offered for
+verification or landing, and to a pull request head before the landing
+squash. The hosted fast lane (`ci.yml`) plus the verifier PASS is the landing
+gate; the full root suite runs on main after landing and is run locally only
+when the issue names a numerical, performance or GPU criterion.
 
 ```
 .venv/bin/ruff check .
@@ -110,7 +118,10 @@ green suite whose tolerances quietly absorbed a real defect.
 .venv/bin/python -m pytest -q
 ```
 
-All three must be clean. When `packages/dinkster-inference-torch` (or anything
+Ruff and pyright must be clean at every frozen head; the root pytest run
+must be clean at a frozen head whenever the issue requires it or the diff
+touches a package outside the fast lane's unit subset. When
+`packages/dinkster-inference-torch` (or anything
 it consumes) changes, two extra gates apply - the root venv is deliberately
 torch-free, so that package has its own environment (`.venv-torch`, see its
 README for setup) and pyright project:

@@ -633,11 +633,10 @@ test venv:
 .\scripts\setup_envs.ps1
 ```
 
-The scripts require `uv`; they do not require any sibling repository. If a
-`dinkster-evidence` checkout exists beside Dinkster, or
-`DINKSTER_EVIDENCE_ROOT` points to one, its optional `dinkster-acceptance`
-package is installed. Otherwise setup prints a skip notice and completes the
-root and execution environments normally.
+The scripts require `uv`; they do not require any sibling repository. If
+`DINKSTER_EVIDENCE_ROOT` selects a maintainer evidence checkout, its optional
+`dinkster-acceptance` package is installed. Otherwise setup prints a skip
+notice and completes the root and execution environments normally.
 
 On macOS (Apple Silicon) the same script builds `.venv-torch` from the
 native arm64 PyPI wheels: torch's mac build ships MPS support in the
@@ -743,9 +742,10 @@ uv pip install --python .venv-gpu/bin/python \
     --index-url https://download.pytorch.org/whl/cu130 torch==2.13.0+cu130
 # scipy, torchsde, tqdm, and Pillow satisfy the pinned ComfyUI
 # k_diffusion import chain used by the native GPU reference proofs;
-# sentencepiece backs the Gemma tokenizer.
+# sentencepiece backs the Gemma tokenizer; tokenizers backs native model families.
 uv pip install --python .venv-gpu/bin/python \
     pytest numpy scipy torchsde tqdm pillow packaging safetensors sentencepiece \
+    "tokenizers==0.23.1" \
     dinkster-kitchen==0.2.35.post1 dinkster-aimdo==0.5.5.post2 \
     -e packages/dinkster-api \
     -e packages/dinkster-schema \

@@ -821,6 +821,7 @@ class _ResolvedQuant:
     format: str
     fp8_dtype: torch.dtype | None
     full_precision_matmul: bool
+    per_channel: bool = False
     convrot: bool = False
     convrot_groupsize: int = 256
 
@@ -929,7 +930,14 @@ def _resolve_quant(
                 f"{component}: layer {quant.layer!r} int8_tensorwise convrot_groupsize"
                 " must be a power of 4 >= 4"
             )
-        return _ResolvedQuant(format_name, None, full_precision, convrot, group)
+        return _ResolvedQuant(
+            format=format_name,
+            fp8_dtype=None,
+            full_precision_matmul=full_precision,
+            per_channel=convrot or tensors[quant.weight_scale].ndim > 0,
+            convrot=convrot,
+            convrot_groupsize=group,
+        )
     if format_name == "nvfp4":
         return _ResolvedQuant(format_name, None, full_precision)
     fp8_dtype = FP8_QUANT_DTYPES.get(format_name)
@@ -1047,6 +1055,7 @@ def _swap_in_int8_layer(
             existing.out_features,
             bias=existing_bias is not None,
             compute_dtype=compute_dtype,
+            per_channel=resolved.per_channel,
             convrot=resolved.convrot,
             convrot_groupsize=resolved.convrot_groupsize,
             full_precision_matmul=resolved.full_precision_matmul,
@@ -1061,6 +1070,7 @@ def _swap_in_int8_layer(
             existing.num_embeddings,
             existing.embedding_dim,
             compute_dtype=compute_dtype,
+            per_channel=resolved.per_channel,
             convrot=resolved.convrot,
             convrot_groupsize=resolved.convrot_groupsize,
         )
@@ -1230,7 +1240,7 @@ def _component_state(
                     " must be divisible by convrot_groupsize"
                     f" {selected.convrot_groupsize}"
                 )
-            expected_scale = (weight.shape[0], 1) if selected.convrot else ()
+            expected_scale = (weight.shape[0], 1) if selected.per_channel else ()
             scale = tensors[quant.weight_scale]
             if scale.dtype != torch.float32 or tuple(scale.shape) != expected_scale:
                 raise AssembleError(

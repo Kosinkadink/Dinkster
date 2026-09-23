@@ -72,6 +72,30 @@ def test_int8_convrot_embedding_matches_kitchen() -> None:
     assert set(layer.state_dict()) == {"weight", "weight_scale"}
 
 
+@pytest.mark.parametrize("layer_type", (Int8Linear, Int8Embedding))
+def test_int8_convrot_rejects_scalar_scale_layout(layer_type: type[torch.nn.Module]) -> None:
+    with pytest.raises(ValueError, match="requires per-channel scales"):
+        if layer_type is Int8Linear:
+            Int8Linear(
+                256,
+                7,
+                bias=False,
+                compute_dtype=torch.float32,
+                per_channel=False,
+                convrot=True,
+                convrot_groupsize=256,
+            )
+        else:
+            Int8Embedding(
+                7,
+                256,
+                compute_dtype=torch.float32,
+                per_channel=False,
+                convrot=True,
+                convrot_groupsize=256,
+            )
+
+
 @pytest.mark.parametrize("rank", [2, 3])
 def test_int8_convrot_linear_matches_kitchen(rank: int) -> None:
     import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]

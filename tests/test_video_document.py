@@ -24,6 +24,7 @@ from dinkster_values import (
     encode_video,
     video_from_source,
 )
+from dinkster_values.storage import image_input
 from dinkster_values.timeline_video import TIMELINE_MAGIC, TimelineVideo
 from dinkster_values.video_codec import validate_video_encoded, video_fingerprint, video_meta
 from dinkster_values.video_document import (
@@ -293,7 +294,9 @@ def test_widget_projection_source_origin_crop_and_split(bound_video):
     doc = mutate(doc, "add_track", {})
     doc["settings"].update(width=32, height=16)
     frames = [frame for _, frame in iter_timeline_frames(doc, SourceMedia(factory), CPUKernels())]
-    np.testing.assert_array_equal(np.stack(frames), disassemble_video(selected)["images"])
+    np.testing.assert_array_equal(
+        np.stack(frames), image_input(disassemble_video(selected)["images"])
+    )
     split = mutate(doc, "split", {"position": 0.5})
     children = split["timeline"]["tracks"]["children"][0]["children"]
     assert [extension(c)["video_edit"]["trim"]["duration"] for c in children] == [0.5, 1.0]
@@ -462,7 +465,7 @@ def test_time_effects_sample_without_changing_duration(bound_video, scalar, star
     obj, _, duration = compile_timeline(doc)
     assert duration == Fraction(str(length))
     frames = [frame for _, frame in iter_timeline_frames(obj, SourceMedia(factory), CPUKernels())]
-    original = cast(np.ndarray, disassemble_video(value)["images"])
+    original = cast(np.ndarray, image_input(disassemble_video(value)["images"]))
     np.testing.assert_array_equal(np.stack(frames), original[indices])
 
 

@@ -13,17 +13,20 @@ from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 from dinkster_values import (
     AudioWindowReader,
+    annotate_image,
     append_audio_edit,
     audio_from_source,
     coerce_video,
     copy_media_semantics,
     effective_audio_facts,
     effective_video_facts,
+    image_array_meta,
     media_semantics,
     open_video_source,
     video_source,
 )
 from dinkster_values.audio_codec import coerce_audio
+from dinkster_values.storage import image_input
 from dinkster_values.video_edits import (
     crop_rectangle,
     mapping,
@@ -31,6 +34,7 @@ from dinkster_values.video_edits import (
     seconds,
     trim_window,
 )
+from dinkster_values.video_probe import color_space_label
 
 from .formats import encoded_diagnostics
 
@@ -39,6 +43,7 @@ if TYPE_CHECKING:
 
 _COLORS = {"sRGB": (1, 13, 1, 1), "HDR": (9, 18, 9, 1), "HDR PQ": (9, 16, 9, 1)}
 _COLOR_KEYS = ("primaries", "transfer", "matrix", "range")
+_MATRIX_FOR_PRIMARIES = {values[0]: values[2] for values in _COLORS.values()}
 _ENCODERS = {
     "h264": "libx264",
     "hevc": "libx265",
@@ -66,11 +71,31 @@ def assemble_video(
     rate = seconds(fps, "fps")
     if rate <= 0:
         raise ValueError("fps must be positive")
-    color_space = color_space or "sRGB"
-    if color_space not in _COLORS or bit_depth not in ("auto", "8", "10"):
+    if (color_space is not None and color_space not in _COLORS) or bit_depth not in (
+        "auto",
+        "8",
+        "10",
+    ):
         raise ValueError("invalid bit_depth or color_space")
-    depth = (10 if color_space != "sRGB" else 8) if bit_depth == "auto" else int(bit_depth)
-    color = dict(zip(_COLOR_KEYS, _COLORS[color_space], strict=True))
+    carried = mapping(image_array_meta(images)["color"], "image color")
+    if color_space is None:
+        matrix = carried.get("matrix", 2)
+        if matrix in (0, 2):
+            matrix = _MATRIX_FOR_PRIMARIES.get(cast(int, carried["primaries"]), 2)
+        color = {
+            "primaries": carried["primaries"],
+            "transfer": carried["transfer"],
+            "matrix": matrix,
+            "range": 1,
+        }
+        color_space = color_space_label(cast(int, color["transfer"]))
+    else:
+        color = dict(zip(_COLOR_KEYS, _COLORS[color_space], strict=True))
+    depth = (
+        int(cast(int, carried.get("bit_depth", 10 if color_space in ("HDR", "HDR PQ") else 8)))
+        if bit_depth == "auto"
+        else int(bit_depth)
+    )
     return coerce_video(
         {
             "components": {
@@ -194,25 +219,37 @@ def _alpha_pixels(frame: Any) -> np.ndarray:
 def _pixels(frame: Any, depth: int, alpha: bool) -> np.ndarray:
     import numpy as np
 
+    packed = "rgba64le" if alpha else "rgb48le"
+    if depth > 8 and frame.format.name == packed:
+        return cast(np.ndarray, frame.to_ndarray())
     byte_output = depth <= 8 and (frame.format.is_rgb or frame.color_range == 2)
     fmt = (
         ("rgba" if alpha else "rgb24") if byte_output else ("gbrapf32le" if alpha else "gbrpf32le")
     )
-    converted = frame.reformat(
-        format=fmt,
-        src_colorspace=frame.colorspace if frame.colorspace not in (0, 2) else 5,
-        # RGB's identity matrix also forces PyAV 16 to configure equal-range conversions.
-        dst_colorspace=0,
-        src_color_range=2 if frame.format.is_rgb else frame.color_range or 1,
-        dst_color_range=2,
+    converted = (
+        frame
+        if frame.format.name == fmt
+        else frame.reformat(
+            format=fmt,
+            src_colorspace=frame.colorspace if frame.colorspace not in (0, 2) else 5,
+            # RGB's identity matrix also forces PyAV 16 to configure equal-range conversions.
+            dst_colorspace=0,
+            src_color_range=2 if frame.format.is_rgb else frame.color_range or 1,
+            dst_color_range=2,
+        )
     )
     # PyAV planar float conversion omits row alignment padding in to_ndarray.
-    pixels = np.asarray(converted.to_ndarray(), dtype=np.float32)
-    if byte_output:
-        pixels /= 255
+    pixels = converted.to_ndarray()
     if alpha:
-        pixels[..., 3] = _alpha_pixels(frame)
-    return pixels
+        alpha_pixels = _alpha_pixels(frame)
+        if byte_output:
+            pixels[..., 3] = np.rint(alpha_pixels * 255).astype(np.uint8)
+        else:
+            pixels[..., 3] = alpha_pixels
+    if byte_output:
+        return pixels
+    maximum = 255 if depth <= 8 else 65535
+    return np.rint(np.clip(pixels, 0, 1) * maximum).astype(np.uint8 if depth <= 8 else np.uint16)
 
 
 def _frame(array: np.ndarray, depth: int) -> Any:
@@ -220,6 +257,15 @@ def _frame(array: np.ndarray, depth: int) -> Any:
     import numpy as np
 
     alpha = array.shape[-1] == 4
+    if depth <= 8 and array.dtype == np.uint8:
+        return av.VideoFrame.from_ndarray(
+            np.ascontiguousarray(array), format="rgba" if alpha else "rgb24"
+        )
+    if depth > 8 and not alpha and array.dtype == np.uint16:
+        return av.VideoFrame.from_ndarray(
+            np.ascontiguousarray(array, dtype="<u2"), format="rgb48le"
+        )
+    array = cast(np.ndarray, image_input(array))
     if depth <= 8:
         pixels = np.rint(np.clip(array, 0, 1) * 255).astype(np.uint8)
         return av.VideoFrame.from_ndarray(pixels, format="rgba" if alpha else "rgb24")
@@ -232,7 +278,7 @@ def _encoder_frame(array: np.ndarray, depth: int) -> Any:
     import numpy as np
 
     if media_semantics(array).get("alpha") == "premultiplied":
-        array = array.copy()
+        array = cast(np.ndarray, image_input(array)).copy()
         alpha = array[..., -1:]
         array[..., :-1] = np.divide(
             array[..., :-1], alpha, out=np.zeros_like(array[..., :-1]), where=alpha != 0
@@ -273,8 +319,13 @@ def _transform(array: np.ndarray, segment: _Segment, depth: int) -> np.ndarray:
                     color.append(1)
                 if premultiplied and array.shape[-1] == 4:
                     color[:3] = [sample * color[3] for sample in color[:3]]
-                padded = np.empty((out_h, out_w, array.shape[-1]), dtype=np.float32)
-                padded[:] = color[: array.shape[-1]]
+                padded = np.empty((out_h, out_w, array.shape[-1]), dtype=array.dtype)
+                if np.issubdtype(array.dtype, np.integer):
+                    padded[:] = np.rint(
+                        np.asarray(color[: array.shape[-1]]) * np.iinfo(array.dtype).max
+                    )
+                else:
+                    padded[:] = color[: array.shape[-1]]
                 padded[y : y + h, x : x + w] = array
                 array = padded
     return np.ascontiguousarray(array)
@@ -511,11 +562,15 @@ def iter_video_pixels(obj: object) -> Generator[tuple[Fraction, Any]]:
     probe = mapping(value["probe"], "probe")
     with closing(_video_frames(_plan(value))) as frames:
         for time, frame in frames:
-            yield (
-                time,
+            pixels = cast(
+                np.ndarray,
                 frame
                 if isinstance(frame, np.ndarray)
                 else _pixels(frame, int(cast(int, probe["bit_depth"]) or 8), bool(probe["alpha"])),
+            )
+            yield (
+                time,
+                cast(np.ndarray, image_input(cast(object, pixels))),
             )
 
 
@@ -561,8 +616,16 @@ def disassemble_video(obj: object) -> dict[str, object]:
         if duration <= 0:
             raise ValueError("decoded VIDEO has no usable timing information")
         rate = Fraction(len(arrays)) / duration
+    images = np.stack(arrays)
+    if "components" in value:
+        images = copy_media_semantics(mapping(value["components"], "components")["images"], images)
+    color = {"primaries": probe["primaries"], "transfer": probe["transfer"], "range": 2}
+    if probe["matrix"] not in (0, 2):
+        color["matrix"] = probe["matrix"]
+    if probe["bit_depth"] is not None:
+        color["bit_depth"] = probe["bit_depth"]
     return {
-        "images": np.stack(arrays),
+        "images": annotate_image(images, color=color),
         "audio": _extract_audio(plan, measured_end),
         "frame_count": len(arrays),
         "fps": float(rate),
@@ -1070,6 +1133,13 @@ def save_video_stream(
     rate = cast("Fraction | None", facts["fps"])
     if rate is None:
         raise ValueError("encoding requires a known frame rate")
+    color = {key: probe[key] for key in _COLOR_KEYS}
+    if pixel.is_rgb:
+        color.update(matrix=0, range=2)
+    elif color["matrix"] == 0:
+        color["matrix"] = _MATRIX_FOR_PRIMARIES.get(cast(int, color["primaries"]), 2)
+    destination_matrix = 0 if pixel.is_rgb else color["matrix"] if color["matrix"] != 2 else 5
+    destination_range = color["range"] or 1
     with (
         av.open(
             destination, "w", format=_CONTAINERS.get(kind, kind), options=mux_options
@@ -1087,7 +1157,7 @@ def save_video_stream(
         for key, attr in zip(
             _COLOR_KEYS, ("color_primaries", "color_trc", "colorspace", "color_range"), strict=True
         ):
-            setattr(video.codec_context, attr, probe[key])
+            setattr(video.codec_context, attr, color[key])
         if pixel.is_rgb:
             video.codec_context.colorspace, video.codec_context.color_range = 0, 2
         video.options = {"crf": str(crf if crf is not None else 23)} if name in _ENCODERS else {}
@@ -1241,9 +1311,9 @@ def save_video_stream(
                 frame = frame.reformat(
                     format=pixel_format,
                     src_colorspace=frame.colorspace if frame.colorspace not in (0, 2) else 5,
-                    dst_colorspace=probe["matrix"] if probe["matrix"] not in (0, 2) else 5,
+                    dst_colorspace=destination_matrix,
                     src_color_range=2 if frame.format.is_rgb else frame.color_range or 1,
-                    dst_color_range=2 if pixel.is_rgb else probe["range"] or 1,
+                    dst_color_range=destination_range,
                 )
                 if coverage is not None:
                     component = next(c for c in pixel.components if c.is_alpha)

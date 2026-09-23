@@ -21,6 +21,7 @@ from dinkster_api.v1 import (
     encode_image_array,
     image_array_fingerprint,
     image_array_meta,
+    image_input,
     prepare_image_array_encoding,
     register_asset_type,
     resolver_from_env,
@@ -114,6 +115,7 @@ def register_types(registry: TypeRegistry) -> None:
             prepare_buffer_encoding=prepare_image_array_encoding,
             fingerprint=image_array_fingerprint(IMAGE_TYPE),
             meta=image_array_meta,
+            input_convert=image_input,
         )
     if ASSET_TYPE not in registry:
         register_asset_type(registry, resolver_from_env())
