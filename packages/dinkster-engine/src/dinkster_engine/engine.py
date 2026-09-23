@@ -1903,7 +1903,6 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
-                    cache_enabled=cache_enabled,
                 )
             else:
                 await self._run_node(
@@ -1980,7 +1979,6 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
-                    cache_enabled=cache_enabled,
                 )
             else:
                 await self._run_node(
@@ -2024,7 +2022,6 @@ class Engine:
         pinned: list[str],
         export_snapshot: ExportSnapshot | None,
         prefix: str = "",
-        cache_enabled: bool = True,
     ) -> None:
         """Expand one region (DESIGN 3.13): the single repetition primitive
         under the map/fold/while profiles.
@@ -2217,7 +2214,7 @@ class Engine:
                     export_snapshot,
                     prefix=f"{label}[{index}]/",
                     targets=body_targets,
-                    cache_enabled=cache_enabled and region.cache_policy == "reuse",
+                    cache_enabled=region.cache_policy == "reuse",
                 )
             except BaseException:
                 body_produced.clear()

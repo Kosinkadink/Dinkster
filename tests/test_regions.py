@@ -2117,6 +2117,34 @@ def test_region_cache_policy_applies_to_each_occurrence_across_runs(
     asyncio.run(scenario())
 
 
+def test_inner_reuse_overrides_outer_rerun() -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        engine = make_engine()
+        inner = map_region(inputs={"item": port("row")}, cache_policy="reuse")
+        outer = RegionNode(
+            kind="map",
+            body=Graph(nodes={"inner": inner}),
+            ports={"row": TypeExpr.list_of(INT)},
+            inputs={"row": [[7, 7], [7, 7]]},
+            element_ports=("row",),
+            outputs={"rows": RegionOutput(Link("inner", "results"))},
+            cache_policy="rerun",
+        )
+        graph = Graph(nodes={"outer": outer})
+
+        first = await engine.run(graph, ["outer"])
+        second = await engine.run(graph, ["outer"])
+
+        assert first.outputs["outer"]["rows"].resolve() == [[8, 8], [8, 8]]
+        assert second.outputs["outer"]["rows"].resolve() == [[8, 8], [8, 8]]
+        assert AddOne.ran == [7]
+        assert len(first.cached) == 3
+        assert len(second.cached) == 4
+
+    asyncio.run(scenario())
+
+
 # -- engine: absence ---------------------------------------------------------
 
 
