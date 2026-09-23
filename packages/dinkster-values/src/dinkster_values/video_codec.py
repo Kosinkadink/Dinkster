@@ -24,9 +24,10 @@ from .image_codec import (
     image_encoded_meta,
 )
 from .model import stable_hash
-from .resources import unqualified_cost
+from .resources import COST_META_KEY
+from .storage import BFLOAT16_FIELD, array_storage_meta, storage_dtype
 from .video_edits import effective_video_facts, integer, mapping, seconds
-from .video_probe import VideoSource, open_video_source, probe_video
+from .video_probe import VideoSource, color_space_label, open_video_source, probe_video
 
 VIDEO_CONTAINERS = frozenset({"mp4", "mkv", "mov", "webm", "avi", "gif"})
 VIDEO_INLINE_LIMIT = 256 * 1024
@@ -228,15 +229,14 @@ def _component_properties(obj: object) -> dict[str, object]:
     if rate <= 0:
         raise ValueError("components fps must be positive")
     components["fps"] = rate
-    if components["bit_depth"] not in (8, 10):
-        raise ValueError("components bit_depth must be 8 or 10")
-    if components["color_space"] not in ("sRGB", "HDR", "HDR PQ"):
-        raise ValueError("invalid components color_space")
+    integer(components["bit_depth"], "components bit_depth", 1)
     color = mapping(components["color"], "components color")
     if set(color) != {"primaries", "transfer", "matrix", "range"}:
         raise ValueError("invalid components color fields")
     for key, value in color.items():
         integer(value, key, 0)
+    if components["color_space"] != color_space_label(cast(int, color["transfer"])):
+        raise ValueError("components color_space does not match transfer")
     components["color"] = dict(color)
     return components
 
@@ -277,12 +277,17 @@ def _components(obj: object) -> dict[str, object]:
         images.ndim != 4
         or min(images.shape) < 1
         or images.shape[-1] not in (3, 4)
-        or images.dtype not in (np.dtype("float16"), np.dtype("float32"), np.dtype("float64"))
+        or (images.dtype.kind not in "fiu" and storage_dtype(images) != "bf16")
     ):
-        raise ValueError("VIDEO images require floating [B,H,W,3|4] layout")
+        raise ValueError("VIDEO images require numeric [B,H,W,3|4] layout")
     if images.nbytes > 512 * 1024 * 1024:
         raise ValueError("VIDEO images exceed 512 MiB")
-    if not bool(np.isfinite(images).all()):
+    finite = (
+        (images[BFLOAT16_FIELD] & 0x7F80) != 0x7F80
+        if storage_dtype(images) == "bf16"
+        else np.isfinite(images)
+    )
+    if not bool(finite.all()):
         raise ValueError("VIDEO images contain non-finite pixels")
     if components["audio"] is not None:
         audio = coerce_audio(components["audio"])
@@ -442,7 +447,11 @@ def _pack_video(
             data = encoder(component)
             if len(data) > (512 if key == "images" else 256) * 1024 * 1024:
                 raise ValueError(f"VIDEO {key} component exceeds its encoded size limit")
-            descriptor: dict[str, object] = {"meta": meta(component), "codec": key}
+            metadata = dict(meta(component))
+            metadata.pop(COST_META_KEY, None)
+            if identity:
+                metadata.pop("storage_dtype", None)
+            descriptor: dict[str, object] = {"meta": metadata, "codec": key}
             if identity:
                 descriptor["digest"] = _digest(data)
             else:
@@ -492,12 +501,15 @@ def _reject_constant(value: str) -> object:
 
 def _validate_array_chunk(data: memoryview, metadata: object, *, audio: bool) -> tuple[int, ...]:
     if not audio:
+        import numpy as np
+
         expected_image = image_encoded_meta(data)
         shape = cast("tuple[int, ...]", expected_image["shape"])
+        kind = expected_image["storage_dtype"]
         if len(shape) != 4 or min(shape) < 1 or shape[-1] not in (3, 4):
-            raise ValueError("VIDEO images require nonempty BHWC with three or four channels")
-        if expected_image["dtype"] not in ("float16", "float32", "float64"):
-            raise ValueError("VIDEO component requires floating samples")
+            raise ValueError("VIDEO images require numeric [B,H,W,3|4] layout")
+        if kind != "bf16" and np.dtype(cast(str, expected_image["dtype"])).kind not in "fiu":
+            raise ValueError("VIDEO component requires numeric samples")
         declared = mapping(metadata, "VIDEO image metadata")
         if not {"shape", "dtype"} <= set(declared) <= set(expected_image):
             raise ValueError("invalid VIDEO image metadata fields")
@@ -509,7 +521,10 @@ def _validate_array_chunk(data: memoryview, metadata: object, *, audio: bool) ->
     shape = cast("tuple[int, ...]", expected["shape"])
     if shape[0] != 1:
         raise ValueError("VIDEO audio requires a single batch")
-    if _json(expected) != _json(metadata):
+    declared = mapping(metadata, "VIDEO audio metadata")
+    if not {"shape", "sample_rate"} <= set(declared) <= set(expected):
+        raise ValueError("invalid VIDEO audio metadata fields")
+    if any(_json(value) != _json(expected[key]) for key, value in declared.items()):
         raise ValueError("VIDEO component metadata does not match payload")
     return shape
 
@@ -701,7 +716,7 @@ def video_meta(obj: object) -> Mapping[str, object]:
 
         return timeline_meta(value)
     refs: dict[str, dict[str, object]] = {}
-    resident = 0
+    resident: dict[str, int] = {"ram": 0}
     byte_size = 0
 
     def visit(video: Mapping[str, object]) -> None:
@@ -709,7 +724,7 @@ def video_meta(obj: object) -> Mapping[str, object]:
         if "source" in video:
             source = video["source"]
             if isinstance(source, bytes):
-                resident += len(source)
+                resident["ram"] += len(source)
                 byte_size += len(source)
             else:
                 ref = _asset_wire(source)
@@ -717,10 +732,15 @@ def video_meta(obj: object) -> Mapping[str, object]:
                 byte_size += cast("int", ref["size"])
         else:
             components = mapping(video["components"], "components")
-            resident += int(cast(Any, components["images"]).nbytes)
+            image_cost = cast(
+                "Mapping[str, int]", array_storage_meta(components["images"])[COST_META_KEY]
+            )
+            for residency, size in image_cost.items():
+                resident[residency] = resident.get(residency, 0) + size
             if components["audio"] is not None:
                 audio = audio_meta(components["audio"])
-                resident += cast(int, mapping(audio["cost"], "audio cost")["ram"])
+                for residency, size in mapping(audio["cost"], "audio cost").items():
+                    resident[residency] = resident.get(residency, 0) + cast(int, size)
                 for raw in cast("list[object]", audio["asset_refs"]):
                     ref = dict(mapping(raw, "audio asset reference"))
                     refs[str(ref["digest"])] = ref
@@ -733,12 +753,17 @@ def video_meta(obj: object) -> Mapping[str, object]:
     visit(value)
     return {
         "codec_version": 2,
+        "storage_dtype": (
+            "encoded"
+            if "source" in value
+            else storage_dtype(mapping(value["components"], "components")["images"])
+        ),
         "container": mapping(value["probe"], "probe").get("container"),
         "byte_size": byte_size,
         "probe": json.loads(_json(value["probe"])),
         "effective": json.loads(_json(effective_video_facts(value))),
         "asset_refs": [refs[key] for key in sorted(refs)],
-        "cost": {"ram": resident},
+        COST_META_KEY: resident,
     }
 
 
@@ -774,11 +799,28 @@ def validate_video_encoded(data: bytes | memoryview, metadata: Mapping[str, obje
         return
     expected = video_meta(decode_video(raw))
     for key, value in expected.items():
-        actual = metadata.get(key)
-        if key == "cost":
-            try:
-                actual = unqualified_cost(actual)
-            except ValueError as exc:
-                raise ValueError(f"VIDEO metadata cost: {exc}") from exc
-        if _json(actual) != _json(value):
+        if key == COST_META_KEY:
+            cost = metadata.get(key)
+            if not isinstance(cost, Mapping):
+                raise ValueError("VIDEO metadata cost must contain one RAM residency")
+            typed_cost = cast("Mapping[object, object]", cost)
+            if len(typed_cost) != 1:
+                raise ValueError("VIDEO metadata cost must contain one RAM residency")
+            residency, amount = next(iter(typed_cost.items()))
+            expected_cost = cast("Mapping[str, int]", value)
+            if (
+                not isinstance(residency, str)
+                or (residency != "ram" and not residency.startswith("ram@"))
+                or residency == "ram@"
+                or isinstance(amount, bool)
+                or not isinstance(amount, int)
+                or amount < 0
+            ):
+                raise ValueError("VIDEO metadata cost must contain one RAM residency")
+            if amount not in (next(iter(expected_cost.values())), len(raw)):
+                raise ValueError("VIDEO metadata cost does not match encoded payload")
+            continue
+        if key == "storage_dtype" and key not in metadata:
+            continue
+        if _json(metadata.get(key)) != _json(value):
             raise ValueError(f"VIDEO metadata {key} does not match encoded payload")

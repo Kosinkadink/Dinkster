@@ -29,7 +29,11 @@ def run_guard(root: Path, allowlist: Path, *arguments: str) -> subprocess.Comple
 def write_allowlist(path: Path, sites: list[dict[str, object]]) -> None:
     ceilings = {kind: sum(site["kind"] == kind for site in sites) for kind in SITE_KINDS}
     path.write_text(
-        json.dumps({"ceilings": ceilings, "sites": sites}, indent=2) + "\n",
+        json.dumps(
+            {"ceilings": ceilings, "slack": dict.fromkeys(SITE_KINDS, 0), "sites": sites},
+            indent=2,
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -202,3 +206,47 @@ def test_extension_factory_guard_rejects_site_and_ceiling_drift(tmp_path: Path) 
     raised = run_guard(tmp_path, allowlist)
     assert raised.returncode == 1
     assert "registryFactory: current=0, allowlisted=1, ceiling=2" in raised.stderr
+
+
+def test_extension_factory_guard_ratchets_against_baseline(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    module = source / "runtime.py"
+    allowlist = tmp_path / "allowlist.json"
+    baseline = tmp_path / "baseline.json"
+    first = {
+        "kind": "registryFactory",
+        "call": "builtin_family_registry",
+        "path": "src/runtime.py",
+        "line": 1,
+        "column": 12,
+        "issue": 120,
+    }
+    module.write_text("registry = builtin_family_registry()\n", encoding="utf-8")
+    write_allowlist(allowlist, [first])
+    baseline.write_bytes(allowlist.read_bytes())
+
+    second = {
+        "kind": "registryFactory",
+        "call": "builtin_preview_registry",
+        "path": "src/runtime.py",
+        "line": 2,
+        "column": 9,
+        "issue": 305,
+    }
+    module.write_text(
+        "registry = builtin_family_registry()\nother = builtin_preview_registry()\n",
+        encoding="utf-8",
+    )
+    write_allowlist(allowlist, [first, second])
+    raised = run_guard(tmp_path, allowlist, "--baseline-allowlist", str(baseline))
+    assert raised.returncode == 1
+    assert "baseline=1, proposed=2" in raised.stderr
+
+    module.write_text("", encoding="utf-8")
+    stale = json.loads(baseline.read_text(encoding="utf-8"))
+    stale["sites"] = []
+    allowlist.write_text(json.dumps(stale), encoding="utf-8")
+    not_lowered = run_guard(tmp_path, allowlist)
+    assert not_lowered.returncode == 1
+    assert "registryFactory: current=0, allowlisted=0, ceiling=1" in not_lowered.stderr

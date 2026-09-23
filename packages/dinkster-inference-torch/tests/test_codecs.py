@@ -188,6 +188,84 @@ def test_codec_inputs_use_compute_dtype(compute_dtype: torch.dtype, tiled: bool)
     assert decoder.seen and set(decoder.seen) == {compute_dtype}
 
 
+def test_bfloat16_decode_output_keeps_storage_until_float_consumer() -> None:
+    import numpy as np
+    from dinkster_values.image_codec import (
+        decode_image_array,
+        encode_image_array,
+        image_array_fingerprint,
+        image_array_meta,
+    )
+    from dinkster_values.storage import image_input
+
+    plugin = toy_plugin()
+    latent = torch.ones(1, 4, 2, 2, dtype=torch.bfloat16)
+    output = plugin.decode(latent).permute(0, 2, 3, 1).contiguous()
+    assert output.dtype == torch.bfloat16
+    decoded = np.asarray(decode_image_array(encode_image_array(output)))
+    assert decoded.nbytes == output.numel() * 2
+    assert image_array_meta(output) == image_array_meta(decoded)
+    fingerprint = image_array_fingerprint("comfy.IMAGE")
+    assert fingerprint(output) == fingerprint(decoded)
+    normalized = np.asarray(image_input(decoded))
+    assert normalized.dtype == np.float32
+    np.testing.assert_array_equal(normalized, output.float().numpy())
+
+
+@pytest.mark.parametrize(
+    "dtype", [torch.uint8, torch.uint16, torch.float16, torch.bfloat16, torch.float32]
+)
+def test_image_storage_metadata_reads_retained_device_allocation_without_host_copy(
+    dtype: torch.dtype, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_values import COST_META_KEY
+    from dinkster_values.image_codec import image_array_meta
+
+    def reject_host_copy(self: torch.Tensor) -> torch.Tensor:
+        pytest.fail("metadata copied to host")
+
+    images = torch.zeros(2, 4, 4, 3, dtype=dtype)
+    with monkeypatch.context() as patch:
+        patch.setattr(torch.Tensor, "cpu", reject_host_copy)
+        metadata = image_array_meta(images[:1])
+    assert metadata[COST_META_KEY] == {"ram": images.untyped_storage().nbytes()}
+    assert metadata["shape"] == (1, 4, 4, 3)
+
+
+def test_numpy_view_cost_covers_its_retained_torch_allocation() -> None:
+    from dinkster_values import COST_META_KEY, array_storage_meta
+
+    backing = torch.zeros(1024, dtype=torch.float32)
+    view = backing[:1].numpy()
+    assert view.nbytes == 4
+    assert array_storage_meta(view)[COST_META_KEY] == {"ram": backing.untyped_storage().nbytes()}
+
+
+@pytest.mark.parametrize(
+    "dtype", [torch.int16, torch.float16, torch.bfloat16, torch.float32, torch.float64]
+)
+def test_audio_envelope_canonicalizes_legacy_tensor_storage(dtype: torch.dtype) -> None:
+    from dinkster_compat_comfy.audio import register_audio_type
+    from dinkster_values import COST_META_KEY, TypeRegistry
+
+    registry = TypeRegistry()
+    register_audio_type(registry, "comfy.AUDIO")
+    original = torch.arange(24, dtype=dtype).reshape(1, 2, 12)
+    value = registry.wrap("comfy.AUDIO", {"waveform": original, "sample_rate": 48000})
+    stored: Any = value.resolve()
+    waveform = stored["waveform"]
+    expected_dtype = torch.int16 if dtype == torch.int16 else torch.float32
+    assert waveform.dtype == expected_dtype
+    assert (waveform is original) == (dtype in (torch.int16, torch.float32))
+    assert original.dtype == dtype
+    assert value.meta.get("storage_dtype") == ("int16" if dtype == torch.int16 else "fp32")
+    assert value.meta.get(COST_META_KEY) == {"ram": waveform.untyped_storage().nbytes()}
+    spec = registry.spec("comfy.AUDIO")
+    decoded: Any = spec.decode(spec.encode(stored))
+    assert decoded["waveform"].dtype == expected_dtype
+    torch.testing.assert_close(decoded["waveform"], waveform, rtol=0, atol=0)
+
+
 # ------------------------------------------------------- tiled paths
 
 
