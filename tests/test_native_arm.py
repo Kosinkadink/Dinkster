@@ -11317,7 +11317,10 @@ def test_ltxav_audio_vae_decode_uses_standalone_codec_and_refuses_other_streams(
     assert stages == ["enter", "exit"]
     assert decoded == [latent]
     assert latent.moves == [FakeDevice("cuda:0")]
-    assert cast("Any", result["audio"])["waveform"].shape == (2, 2, 48000)
+    waveform = cast("Any", result["audio"])["waveform"]
+    assert waveform.shape == (2, 2, 48000)
+    assert waveform.device == FakeDevice("cpu")
+    assert waveform.moves == [FakeDevice("cpu")]
     assert cast("Any", result["audio"])["sample_rate"] == 48000
 
     with pytest.raises(TypeError, match="exactly one audio stream"):
