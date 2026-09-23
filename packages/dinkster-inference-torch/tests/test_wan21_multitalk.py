@@ -34,7 +34,7 @@ from dinkster_inference_torch.wan21_multitalk import (
     wan21_multitalk_resource_digest,
     wan21_multitalk_tensor_digest,
 )
-from golden_files import load_platform_golden
+from golden_files import cpu_identity, load_platform_golden
 from unet_fill import fill_state_dict, hashed_input
 
 GOLDENS = load_platform_golden(Path(__file__).parent / "goldens" / "wan21_model_goldens.json")
@@ -48,6 +48,16 @@ MULTITALK_GOLDEN_ATOL = 2.5e-6
 # and 1.847744e-6 on Linux.
 # This separate limit leaves at least 1.35x headroom over batch reduction order.
 MULTITALK_BATCH_ATOL = 2.5e-6
+
+
+def _tensor_diagnostic(value: torch.Tensor) -> dict[str, object]:
+    flat = value.detach().to(dtype=torch.float32, device="cpu").flatten()
+    return {
+        "digest": wan21_multitalk_tensor_digest(value),
+        "max": float(flat.max()),
+        "min": float(flat.min()),
+        "shape": tuple(value.shape),
+    }
 
 
 def _fill_parameters(module: torch.nn.Module) -> None:
@@ -321,10 +331,25 @@ def test_reduced_model_and_patch_forward_match_executed_reference(
         hashed_input("infinite_talk_reduced:vision", spec["vision_shape"]),
         multitalk=execution,
     )
+    repeated = model(
+        hashed_input("infinite_talk_reduced:x", spec["input_shape"]),
+        torch.tensor(spec["timesteps"], dtype=torch.float32),
+        hashed_input("infinite_talk_reduced:context", spec["context_shape"]),
+        hashed_input("infinite_talk_reduced:vision", spec["vision_shape"]),
+        multitalk=execution,
+    )
     expected = torch.tensor(
         spec["output"]["data"], dtype=getattr(torch, spec["output"]["dtype"])
     ).reshape(spec["output"]["shape"])
-    torch.testing.assert_close(actual, expected, rtol=0.0, atol=MULTITALK_GOLDEN_ATOL)
+    torch.testing.assert_close(actual, repeated, rtol=0.0, atol=0.0)
+    golden_drift = float((actual - expected).detach().abs().max())
+    assert golden_drift <= MULTITALK_GOLDEN_ATOL, (
+        f"MultiTalk max drift {golden_drift} exceeds {MULTITALK_GOLDEN_ATOL}; "
+        f"cpu={cpu_identity()}; torch={torch.__version__}; "
+        f"audio_context={_tensor_diagnostic(audio_context)}; "
+        f"target_masks={_tensor_diagnostic(target_masks)}; "
+        f"actual={_tensor_diagnostic(actual)}; expected={_tensor_diagnostic(expected)}"
+    )
 
     first_x = hashed_input("infinite_talk_reduced:x", spec["input_shape"])
     first_context = hashed_input("infinite_talk_reduced:context", spec["context_shape"])

@@ -12,6 +12,7 @@ as in station delegate clones).
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import os
@@ -23,7 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from golden_platform import platform_golden_path, tuple_provenance
+from golden_platform import cpu_identity, platform_golden_path, tuple_provenance
 
 REPO = Path(__file__).resolve().parent.parent
 REFERENCE_COMMIT = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
@@ -73,7 +74,28 @@ def _enc(value: Any) -> dict[str, Any]:
     }
 
 
+def _arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--compare-case")
+    arguments = parser.parse_args()
+    if arguments.compare_case is not None and arguments.output is None:
+        parser.error("--compare-case requires --output to preserve the tracked golden")
+    sys.argv[:] = sys.argv[:1]
+    return arguments
+
+
+def _max_abs_drift(left: dict[str, Any], right: dict[str, Any]) -> float:
+    if left["shape"] != right["shape"] or left["dtype"] != right["dtype"]:
+        raise ValueError("tensor shape or dtype differs")
+    return max(
+        abs(float(a) - float(b))
+        for a, b in zip(left["data"], right["data"], strict=True)
+    )
+
+
 def main() -> None:
+    arguments = _arguments()
     resolved = _git("rev-parse", REFERENCE_COMMIT).decode().strip()
     if resolved != REFERENCE_COMMIT:
         raise SystemExit(f"ComfyUI does not contain {REFERENCE_COMMIT}")
@@ -729,10 +751,34 @@ def main() -> None:
             "layouts": layouts,
             "cases": cases,
         }
-        platform_golden_path(OUT, torch.__version__).write_text(
+        output = arguments.output or platform_golden_path(OUT, torch.__version__)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
             json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
             newline="\n",
         )
+        if arguments.compare_case is not None:
+            baseline = json.loads(platform_golden_path(OUT, torch.__version__).read_text())
+            case = arguments.compare_case
+            try:
+                drift = _max_abs_drift(
+                    payload["cases"][case]["output"],
+                    baseline["cases"][case]["output"],
+                )
+            except KeyError as error:
+                raise SystemExit(f"unknown comparison case: {case}") from error
+            print(
+                json.dumps(
+                    {
+                        "case": case,
+                        "cpu": cpu_identity(),
+                        "max_abs_drift_from_stored_reference": drift,
+                        "output": str(output),
+                        "torch": torch.__version__,
+                    },
+                    sort_keys=True,
+                )
+            )
 
 
 if __name__ == "__main__":

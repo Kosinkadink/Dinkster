@@ -9,13 +9,30 @@ import pytest
 import torch
 from dinkster_inference import Parameterization, SamplerInfo, SolverStateEvent, StepEvent
 from dinkster_inference_torch.solvers import torch_sampler_registry
-from golden_files import load_platform_golden
+from golden_files import cpu_identity, load_platform_golden
 
 GOLDEN = load_platform_golden(Path(__file__).parent / "goldens/er_sde_trajectory_goldens.json")
 
 
 def _tensor(values: list[float]) -> torch.Tensor:
     return torch.tensor(values, dtype=torch.float32).reshape(1, 1, 2, 2)
+
+
+def _flow_scalar_diagnostics(sigmas: list[float]) -> list[dict[str, float]]:
+    schedule = torch.tensor(sigmas, dtype=torch.float32)
+    er_lambdas = schedule.logit().neg().neg().exp()
+    result = []
+    for sigma, er_lambda in zip(schedule[:-1], er_lambdas[:-1], strict=True):
+        scale = er_lambda * ((er_lambda**0.3).exp() + 10.0)
+        result.append(
+            {
+                "alpha": float(sigma / er_lambda),
+                "lambda": float(er_lambda),
+                "scale": float(scale),
+                "sigma": float(sigma),
+            }
+        )
+    return result
 
 
 class _Model:
@@ -71,12 +88,24 @@ def test_torch_er_sde_matches_every_executed_reference_seam(
 
     assert model.sigmas == case["model_sigmas"]
     assert len(model.calls) == len(case["model_calls"])
-    for actual, expected in zip(model.calls, case["model_calls"], strict=True):
-        assert torch.equal(actual, _tensor(expected))
+    flow_scalars = _flow_scalar_diagnostics(case["sigmas"]) if case_name == "flow" else []
+    for index, (actual, expected) in enumerate(
+        zip(model.calls, case["model_calls"], strict=True)
+    ):
+        expected_tensor = _tensor(expected)
+        assert torch.equal(actual, expected_tensor), (
+            f"model_calls[{index}] differs; cpu={cpu_identity()}; torch={torch.__version__}; "
+            f"actual={actual.flatten().tolist()}; expected={expected_tensor.flatten().tolist()}; "
+            f"flow_scalars={flow_scalars}"
+        )
     assert noise.bounds == [tuple(bounds) for bounds in case["noise_bounds"]]
-    for actual, expected in zip(states, case["steps"], strict=True):
+    for index, (actual, expected) in enumerate(zip(states, case["steps"], strict=True)):
         assert type(actual.current) is torch.Tensor
-        assert torch.equal(actual.current, _tensor(expected))
+        expected_tensor = _tensor(expected)
+        assert torch.equal(actual.current, expected_tensor), (
+            f"steps[{index}] differs; actual={actual.current.flatten().tolist()}; "
+            f"expected={expected_tensor.flatten().tolist()}"
+        )
     assert torch.equal(result, _tensor(case["final"]))
     assert [(event.step, event.total, event.sigma) for event in events] == [
         (index, len(case["sigmas"]) - 1, sigma) for index, sigma in enumerate(case["sigmas"][:-1])

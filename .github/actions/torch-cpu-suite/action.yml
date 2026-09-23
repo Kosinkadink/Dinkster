@@ -145,6 +145,25 @@ runs:
         $DINKSTER_MODEL_PYTEST_ARGS
         packages/dinkster-inference-torch/tests
         packages/dinkster-model-ipadapter/tests
+    - name: Diagnose hosted numerical reference drift
+      if: failure() && env.DINKSTER_MODEL_TEST_GROUP == 'inference'
+      shell: bash
+      env:
+        COMFYUI_ROOT: ${{ runner.temp }}/comfyui-source
+      run: |
+        git init --quiet "$COMFYUI_ROOT"
+        git -C "$COMFYUI_ROOT" remote add origin https://github.com/Comfy-Org/ComfyUI.git
+        git -C "$COMFYUI_ROOT" fetch --quiet --depth=1 --filter=blob:none origin b78cec879b9460d5cb25228a83a942fb78d2cd24
+        git -C "$COMFYUI_ROOT" checkout --quiet --detach FETCH_HEAD
+        uv pip install --python .venv-torch/bin/python \
+          comfy-aimdo==0.4.13 comfy-kitchen==0.2.31 einops==0.8.2
+        .venv-torch/bin/python tools/gen_wan21_model_goldens.py \
+          --output "${{ runner.temp }}/wan21-hosted-reference.json" \
+          --compare-case infinite_talk_reduced
+        COMFYUI_REFERENCE="$COMFYUI_ROOT" \
+          .venv-torch/bin/python tools/gen_er_sde_trajectory_goldens.py \
+          --output "${{ runner.temp }}/er-sde-hosted-reference.json" \
+          --compare
     - name: Test acceptance sampling
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'acceptance'
       shell: bash

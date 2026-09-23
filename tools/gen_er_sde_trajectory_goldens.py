@@ -9,6 +9,7 @@ Usage from the Dinkster repository root:
 
 from __future__ import annotations
 
+import argparse
 import inspect
 import json
 import os
@@ -17,6 +18,15 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--output", type=Path)
+parser.add_argument("--compare", action="store_true")
+ARGS = parser.parse_args()
+if ARGS.compare and ARGS.output is None:
+    parser.error("--compare requires --output to preserve the tracked golden")
+sys.argv[:] = sys.argv[:1]
+sys.argv.append("--cpu")
 
 REPO = Path(__file__).resolve().parent.parent
 COMFY_ROOT = Path(os.environ.get("COMFYUI_REFERENCE", REPO.parent / "ComfyUI")).resolve()
@@ -29,7 +39,7 @@ comfy.options.enable_args_parsing()
 
 import comfy.k_diffusion.sampling as sampling  # noqa: E402
 import comfy.model_sampling as model_sampling  # noqa: E402
-from golden_platform import platform_golden_path, tuple_provenance  # noqa: E402
+from golden_platform import cpu_identity, platform_golden_path, tuple_provenance  # noqa: E402
 
 REFERENCE_COMMIT = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
 OUT = platform_golden_path(
@@ -69,6 +79,28 @@ def _git(*args: str) -> str:
 
 def _values(value: torch.Tensor) -> list[float]:
     return [float(item) for item in value.detach().cpu().reshape(-1).tolist()]
+
+
+def _first_difference(left: object, right: object, path: str = "") -> dict[str, object] | None:
+    if isinstance(left, dict) and isinstance(right, dict):
+        if left.keys() != right.keys():
+            return {"actual": sorted(left), "expected": sorted(right), "path": path}
+        for key in left:
+            difference = _first_difference(left[key], right[key], f"{path}.{key}".lstrip("."))
+            if difference is not None:
+                return difference
+        return None
+    if isinstance(left, list) and isinstance(right, list):
+        if len(left) != len(right):
+            return {"actual": len(left), "expected": len(right), "path": f"{path}.length"}
+        for index, (left_item, right_item) in enumerate(zip(left, right, strict=True)):
+            difference = _first_difference(left_item, right_item, f"{path}[{index}]")
+            if difference is not None:
+                return difference
+        return None
+    if left != right:
+        return {"actual": left, "expected": right, "path": path}
+    return None
 
 
 class _Model:
@@ -158,8 +190,21 @@ def main() -> None:
             "flow": _case(model_sampling.CONST(), SIGMAS["flow"]),
         },
     }
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n")
+    output = ARGS.output or OUT
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n")
+    if ARGS.compare:
+        baseline = json.loads(OUT.read_text(encoding="utf-8"))
+        report = {
+            "cpu": cpu_identity(),
+            "first_differences": {
+                case: _first_difference(data["cases"][case], baseline["cases"][case])
+                for case in data["cases"]
+            },
+            "output": str(output),
+            "torch": torch.__version__,
+        }
+        print(json.dumps(report, sort_keys=True))
 
 
 if __name__ == "__main__":
