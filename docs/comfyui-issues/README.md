@@ -49,3 +49,4 @@ behavior, then keep the file for provenance.
 | [flux-normal-collapsed-brownian-interval.md](flux-normal-collapsed-brownian-interval.md) | comfy/k_diffusion/sampling.py + torchsde | executed reference failure on a narrow positive sigma interval |
 | [video-matroska-frame-count.md](video-matroska-frame-count.md) | comfy_api/latest/_input_impl/video_types.py | found at 15eb748b3ec5; Dinkster uses marked container estimates |
 | [ace15-generation-maximum-uses-minimum.md](ace15-generation-maximum-uses-minimum.md) | comfy/text_encoders/ace15.py | verified at 25dfc16f; Dinkster preserves the composer behavior |
+| [minimax-h3-i2v-dark-tail.md](minimax-h3-i2v-dark-tail.md) | MiniMax H3 official I2V template | found at current master b5cc8830; cause unresolved |
