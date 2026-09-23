@@ -41,18 +41,24 @@ class ArithmeticDiffusion(torch.nn.Module):
         return latent * 0.17 + timestep.reshape(-1, 1, 1, 1).square() * 0.07
 
 
+@pytest.mark.parametrize("text_residency", [False, True], ids=["text-absent", "text-enrolled"])
 @pytest.mark.parametrize("case", GOLDEN["cases"])
 def test_complete_checkpoint_sampling_shift_reference(
-    monkeypatch: pytest.MonkeyPatch, case: dict[str, Any]
+    monkeypatch: pytest.MonkeyPatch, case: dict[str, Any], text_residency: bool
 ) -> None:
     flux = case["family"] == "flux2"
     runtime: Any = object.__new__(Flux2Runtime if flux else Lumina2Runtime)
+    stage_calls: list[dict[str, object]] = []
 
     def compute_dtype(role: str) -> torch.dtype:
         return torch.float32
 
     def stage(*args: object, **kwargs: object) -> nullcontext[None]:
+        stage_calls.append(dict(kwargs))
         return nullcontext()
+
+    def has_residency_stage(role: str) -> bool:
+        return role == "text" and text_residency
 
     def preview(*args: object, **kwargs: object) -> None:
         return None
@@ -73,6 +79,7 @@ def test_complete_checkpoint_sampling_shift_reference(
         ),
         load_device=torch.device("cpu"),
         stage=stage,
+        has_residency_stage=has_residency_stage,
     )
 
     def native_model(*args: object) -> Any:
@@ -105,4 +112,6 @@ def test_complete_checkpoint_sampling_shift_reference(
         denoise=1.0,
     )["latent"]["samples"]
     assert len(calls) == 1
+    assert len(stage_calls) == 1
+    assert stage_calls[0]["unload_before"] == (("text",) if text_residency else ())
     assert hashlib.sha256(output.numpy().tobytes()).hexdigest() == case["output_hash"]
