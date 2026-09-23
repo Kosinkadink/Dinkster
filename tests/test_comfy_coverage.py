@@ -1241,9 +1241,8 @@ def test_generated_report_describes_the_pinned_corpus_and_loaded_registries(
         "TEEDPreprocessor",
     }
     source = load_evidence_source(REPO / "tools" / "data" / "comfy_capability_evidence.json", REPO)
-    assert {item.family_id for item in source.model_families} == {
-        family.id for family in coverage.builtin_families()
-    }
+    evidence_family_ids = {item.family_id for item in source.model_families}
+    assert evidence_family_ids == coverage._registered_model_family_ids(REPO)
     assert ledger["format"] == coverage.EVIDENCE_FORMAT
     expected_tiers = {
         tier: sum(item.tier == tier for item in source.model_families)

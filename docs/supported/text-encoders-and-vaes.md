@@ -4,7 +4,8 @@
   T5-XXL (Flux, PixArt/Chroma, and LTX-Video), UMT5-XXL (Wan 2.1/2.2),
   Llama3 with raw CLIP-L pooled output (original Hunyuan Video), CLIP ViT-H
   vision (Wan 2.1), Qwen3-4B (Z-Image), Gemma 2 2B (Lumina2), MiniMax Music
-  3's Qwen autoregressive music encoder, Mistral3-Small 24B full or pruned
+  3's Qwen autoregressive music encoder, YuE2's Qwen score and semantic-token
+  generator, Mistral3-Small 24B full or pruned
   (Flux2 dev), Qwen3 4B/8B (Flux2 Klein), and Qwen3-VL-8B (Ideogram 4)
   stacked-layer encoders, including the official mixed FP8/NVFP4 and
   FP8/NVFP4 and FP4/NVFP4 files; and Hunyuan Image's Qwen2.5-VL-7B
@@ -23,6 +24,7 @@
   Chroma Radiance, and an identity pixel codec for Zeta-Chroma;
   TAESD/TAESDXL preview decoders for the SD family; MiniMax H3 FP16 or INT8
   ConvRot video VAE and FP32 audio VAE; MiniMax Music 3's FP32 decode-only
-  stereo DAV; causal Wan 2.1 RGB and FlowRVS mask VAEs; the 16x-spatial Wan 2.2
+  stereo DAV; YuE2's 48 kHz stereo AudioOobleck codec; causal Wan 2.1 RGB and
+  FlowRVS mask VAEs; the 16x-spatial Wan 2.2
   video VAE; the classic LTX-Video causal VAE; and the SeedVR2 8x-spatial,
   4x-temporal causal VAE

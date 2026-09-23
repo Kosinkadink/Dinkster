@@ -66,6 +66,29 @@
       "evidence": [
         {
           "kind": "focused-test",
+          "selector": "packages/dinkster-model-yue2/tests/test_yue2_pack.py::test_inference_contribution_is_complete_and_pack_owned"
+        },
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-model-yue2/tests/test_yue2_pack.py::test_distribution_enforces_each_phase_vocabulary_and_terminal_budget"
+        },
+        {
+          "kind": "focused-test",
+          "selector": "packages/dinkster-model-yue2/tests/test_yue2_pack.py::test_yue2_codec_matches_official_1920x_state_layout"
+        }
+      ],
+      "exposure": "supported",
+      "id": "dinkster.yue2",
+      "sourceIdentifiers": [
+        "YuE2"
+      ],
+      "state": "proven",
+      "tier": "T2"
+    },
+    {
+      "evidence": [
+        {
+          "kind": "focused-test",
           "selector": "packages/dinkster-inference-torch/tests/test_sd_pipeline.py::test_sampling_case_matches_the_executed_reference"
         }
       ],

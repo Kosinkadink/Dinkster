@@ -120,6 +120,11 @@
   autoregressive text encoder supports full BF16, pruned BF16, and pruned INT8
   ConvRot artifacts. KSampler and decomposed custom sampling share the Euler
   flow path, and the FP32 DAV supports direct or tiled stereo audio decode.
+<!-- capability:dinkster.yue2 -->
+- YuE2 3B text-to-music generation through the official combined INT8 ConvRot
+  checkpoint. The first-party pack supports generated or edited ABC notation,
+  autoregressive semantic music tokens with optional guidance, acoustic flow
+  sampling through the shared engine, and 48 kHz stereo AudioOobleck decode.
 <!-- capability:dinkster.qwen_image -->
 - Qwen Image Base, Edit 2509/2511, Edit Plus, and Layered with independently
   loaded diffusion, Qwen2.5-VL, and Wan VAE components. The first-party pack

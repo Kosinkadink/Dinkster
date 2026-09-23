@@ -40,7 +40,7 @@ EVIDENCE_SOURCE_FORMAT = "dinkster-capability-evidence-source/1"
 SNAPSHOT_FORMAT = "comfy-registry-download-snapshot/1"
 SOURCE_PARITY_BASELINE_FORMAT = "dinkster-comfy-source-parity-baseline/1"
 TEMPLATE_REVISION = "d3b4a9e89573162b005961865164c18c8ae2206b"
-COMFYUI_REVISION = "15eb748b3ec5f8a0a2d470b7fb280e2d7579f916"
+COMFYUI_REVISION = "95539f56344958339e39b7582a476267d489b0ee"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 MAX_TEMPLATE_BYTES = 4 * 1024 * 1024
 MAX_SOURCE_BYTES = 8 * 1024 * 1024
@@ -181,6 +181,21 @@ class EvidenceSource:
     lora_node_types: frozenset[str]
     adapter_node_types: frozenset[str]
     low_step_lora_paths: tuple[LowStepLoraPath, ...]
+
+
+def _registered_model_family_ids(repo_root: Path) -> set[str]:
+    family_ids = {family.id for family in builtin_families()}
+    packages = repo_root / "packages"
+    if not packages.is_dir():
+        return family_ids
+    for manifest_path in sorted(packages.glob("*/dinkster-pack.toml")):
+        manifest = load_manifest(manifest_path)
+        family_ids.update(
+            provider.id
+            for provider in manifest.provides.registry
+            if provider.registry == "dinkster.model-families"
+        )
+    return family_ids
 
 
 @dataclass(frozen=True)
@@ -552,17 +567,18 @@ def load_evidence_source(path: Path, repo_root: Path) -> EvidenceSource:
             )
         )
 
-    native_ids = {family.id for family in builtin_families()}
-    if model_ids != native_ids:
-        missing = sorted(native_ids - model_ids)
-        unknown = sorted(model_ids - native_ids)
+    registered_ids = _registered_model_family_ids(repo_root)
+    if model_ids != registered_ids:
+        missing = sorted(registered_ids - model_ids)
+        unknown = sorted(model_ids - registered_ids)
         details = []
         if missing:
             details.append(f"missing {', '.join(missing)}")
         if unknown:
             details.append(f"unknown {', '.join(unknown)}")
         raise CoverageError(
-            f"model evidence does not match builtin_families(): {'; '.join(details)}"
+            "model evidence does not match builtin_families() and pack registrations: "
+            + "; ".join(details)
         )
 
     features = _fields(
@@ -1690,7 +1706,7 @@ def _model_capabilities(source: EvidenceSource) -> list[dict[str, object]]:
             "highestProvenTier": item.tier,
             "kind": "model-family",
             "native": {
-                "displayName": display_names[item.family_id],
+                "displayName": display_names.get(item.family_id, item.source_identifiers[0]),
                 "familyId": item.family_id,
             },
             "source": {

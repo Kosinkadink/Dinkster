@@ -28,6 +28,7 @@ members = [
     "dinkster-model-qwen-image",
     "dinkster-model-triposplat",
     "dinkster-model-wan",
+    "dinkster-model-yue2",
     "dinkster-native",
     "dinkster-nodes-dev",
     "dinkster-nodes-foundation",
@@ -703,6 +704,7 @@ dependencies = [
     { name = "dinkster-model-qwen-image" },
     { name = "dinkster-model-triposplat" },
     { name = "dinkster-model-wan" },
+    { name = "dinkster-model-yue2" },
     { name = "dinkster-native" },
     { name = "dinkster-nodes-dev" },
     { name = "dinkster-nodes-generation" },
@@ -769,6 +771,7 @@ requires-dist = [
     { name = "dinkster-model-qwen-image", editable = "packages/dinkster-model-qwen-image" },
     { name = "dinkster-model-triposplat", editable = "packages/dinkster-model-triposplat" },
     { name = "dinkster-model-wan", editable = "packages/dinkster-model-wan" },
+    { name = "dinkster-model-yue2", editable = "packages/dinkster-model-yue2" },
     { name = "dinkster-native", editable = "packages/dinkster-native" },
     { name = "dinkster-nodes-dev", editable = "packages/dinkster-nodes-dev" },
     { name = "dinkster-nodes-generation", editable = "packages/dinkster-nodes-generation" },
@@ -1158,6 +1161,23 @@ requires-dist = [
     { name = "dinkster-inference-torch", editable = "packages/dinkster-inference-torch" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "scipy", specifier = ">=1.11" },
+]
+
+[[package]]
+name = "dinkster-model-yue2"
+version = "0.0.1"
+source = { editable = "packages/dinkster-model-yue2" }
+dependencies = [
+    { name = "dinkster-api" },
+    { name = "dinkster-inference" },
+    { name = "dinkster-inference-torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dinkster-api", editable = "packages/dinkster-api" },
+    { name = "dinkster-inference", editable = "packages/dinkster-inference" },
+    { name = "dinkster-inference-torch", editable = "packages/dinkster-inference-torch" },
 ]
 
 [[package]]

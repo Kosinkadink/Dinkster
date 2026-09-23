@@ -29,6 +29,7 @@ dependencies = [
     "dinkster-model-qwen-image",
     "dinkster-model-ipadapter",
     "dinkster-model-triposplat",
+    "dinkster-model-yue2",
     "dinkster-nodes-dev",
     "dinkster-server",
     "dinkster-collab",
@@ -103,6 +104,7 @@ dinkster-model-wan = { workspace = true }
 dinkster-model-qwen-image = { workspace = true }
 dinkster-model-ipadapter = { workspace = true }
 dinkster-model-triposplat = { workspace = true }
+dinkster-model-yue2 = { workspace = true }
 dinkster-nodes-dev = { workspace = true }
 dinkster-server = { workspace = true }
 dinkster-collab = { workspace = true }
@@ -162,6 +164,8 @@ exclude = [
     "packages/dinkster-model-ipadapter/tests",
     "packages/dinkster-model-triposplat/src/dinkster_model_triposplat/provider.py",
     "packages/dinkster-model-triposplat/tests",
+    "packages/dinkster-model-yue2/src",
+    "packages/dinkster-model-yue2/tests",
 ]
 # The packages are the load-bearing code: strict there. Tests and the demo
 # CLI stay on standard - useful checking without annotation ceremony.

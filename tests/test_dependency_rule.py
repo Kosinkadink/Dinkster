@@ -167,6 +167,7 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_model_qwen_image": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     "dinkster_model_triposplat": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     "dinkster_model_ipadapter": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
+    "dinkster_model_yue2": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     # Model-backed vision providers execute stable owner schemas through the
     # pack-author door and stay independent of the host scheduler.
     "dinkster_nodes_vision": {"dinkster_api", "dinkster_inference_torch"},

@@ -60,6 +60,9 @@
   each with an optional negative prompt that prepares an unconditional lane;
   image, clip, and audio guides can be chained at arbitrary target frames, and
   sampled AV clips can continue with a selectable aligned overlap
+- YuE2 style and lyrics conditioning with generated or edited full-score or
+  melody-only ABC notation, optional autoregressive guidance, and duration-
+  matched acoustic prefix conditioning
 - SeedVR2 positive and negative conditioning from the encoded restoration
   source, bound to the exact independently loaded diffusion component
 - Typed absence: `core.absent` values, optional outputs, per-input absence

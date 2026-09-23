@@ -1,0 +1,32 @@
+[pack]
+name = "dinkster-model-yue2"
+namespaces = ["dinkster"]
+
+[pack.sandbox]
+gpu = true
+
+[pack.contracts]
+host = "dinkster-pack-host/1"
+api = "dinkster-api/v1"
+inference = "dinkster-inference/1"
+
+[pack.dependencies]
+dinkster-nodes-media-io = ">=0.0.1,<1"
+
+[pack.requirements.registry]
+"dinkster.samplers" = ["dinkster.dpm_2"]
+"dinkster.schedulers" = ["dinkster.sgm_uniform"]
+
+[pack.requirements.capabilities]
+"dinkster.generation.schemas" = ">=1.0.0,<2"
+
+[pack.provides.registry]
+"dinkster.model-families" = ["dinkster.yue2"]
+
+[pack.entry]
+nodes = "dinkster_model_yue2:YUE2_MODEL_NODES"
+
+[pack.extension]
+inference = "dinkster_model_yue2:register_inference"
+privileges = ["inference"]
+capabilities = ["model-family-registration"]

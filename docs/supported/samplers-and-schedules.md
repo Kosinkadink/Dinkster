@@ -47,7 +47,8 @@ ComfyUI-shaped KSamplerSelect, BasicScheduler, Basic Guider, CFG Guider,
 Dual CFG Guider, Scheduled CFG Guider, Perp-Neg Guider, Disable CFG 1 Optimization,
 RandomNoise, DisableNoise, AddNoise, Sampler SA-Solver, SamplerCustom, and
 SamplerCustomAdvanced nodes provide SD1.5, SDXL, Flux,
-Lumina2, Chroma, Chroma Radiance, Wan 2.1/2.2, Z-Image, MiniMax H3, and MiniMax Music 3 sampling
+Lumina2, Chroma, Chroma Radiance, Wan 2.1/2.2, Z-Image, MiniMax H3, MiniMax Music 3,
+and YuE2 sampling
 over exact sigma sequences. Scheduled CFG Guider also accepts Inspire Pack's
 ScheduledCFGGuider workflow node and applies its linear, logarithmic,
 exponential, or cosine CFG schedule to the supplied sigmas. SeedVR2 restoration
