@@ -1357,7 +1357,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         return self._receipt_identity
 
     def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
-        return MINIMAX_H3_SIGMAS
+        return MINIMAX_H3_SIGMAS.video
 
     def adapt_multistream_latent(
         self,
@@ -1476,7 +1476,9 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 ),
                 seed=seed,
             )
-            context = model.preprocess_text_embeddings(prepared.context.to(device))
+            context = model.preprocess_text_embeddings(
+                prepared.context.to(device=device, dtype=self._compute_dtype)
+            )
             return lane_identity, context, dit
 
         def prepare_conditioning(
@@ -1524,7 +1526,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                     inner_kernel = None
                     sequence_group_ranks: tuple[int, ...] = ()
                     try:
-                        av = unpack_latent_streams(x, layout)
+                        av = unpack_latent_streams(x.to(dtype=compute_dtype), layout)
                         facts = _packed_sequence_facts(
                             av,
                             context,
@@ -1678,7 +1680,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                         sequence_sharding=sharding,
                     )
                 else:
-                    av = unpack_latent_streams(x, layout)
+                    av = unpack_latent_streams(x.to(dtype=compute_dtype), layout)
                     if attention_kernel_factory is None:
                         velocity = model(
                             av,
@@ -1699,7 +1701,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             attention_kernel_factory=attention_kernel_factory,
                         )
                 packed_velocity, _ = pack_latent_streams(velocity)
-                result = x - packed_velocity * sigma
+                result = x - packed_velocity.float() * sigma
             _check_cancelled(cancelled)
             return result
 

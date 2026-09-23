@@ -57,6 +57,7 @@ from dinkster_inference_torch.minimax_h3_audio import MiniMaxH3AudioVAE
 from dinkster_inference_torch.minimax_h3_video_vae import MiniMaxH3VideoVAE
 from dinkster_inference_torch.module_residency import ModuleStateStore
 from dinkster_inference_torch.operations import INITLESS, CastOperations
+from dinkster_inference_torch.quant_linear import Int8Linear
 
 _TEST_IDENTITIES = {
     role: ((index, "blake3:" + f"{index:x}" * 64),)
@@ -632,25 +633,23 @@ def test_artifact_verification_does_not_read_payload(
         )
 
 
-def test_diffusion_builder_always_binds_fp32_operations(
+def test_diffusion_builder_binds_reference_split_precision_operations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The float32-computed layers (patch projections, final layer) own
-    CastOperations(float32) no matter which operations the loader picked
-    for the rest of the DiT: a pure-bf16 checkpoint picks initless
-    operations, and initless fp32 layers would round their float32
-    storage down to bf16 and reject the DiT's float32 patchify rows."""
-    selected: tuple[object, object] | None = None
+    """Reference-owned float32 islands do not inherit the loader's
+    bfloat16 diffusion operations."""
+    selected: tuple[object, object, object] | None = None
 
     def capture(
         *,
         operations: object,
         fp32_operations: object,
+        text_operations: object,
         time_embedding_kind: str,
         attention_selection: object,
     ) -> object:
         nonlocal selected
-        selected = operations, fp32_operations
+        selected = operations, fp32_operations, text_operations
         assert time_embedding_kind == "curve"
         assert attention_selection is selected_attention
         return torch.nn.Identity()
@@ -669,6 +668,7 @@ def test_diffusion_builder_always_binds_fp32_operations(
         assert selected[0] is operations
         assert isinstance(selected[1], CastOperations)
         assert selected[1].dtype is torch.float32
+        assert selected[2] is operations
 
 
 def test_verified_diffusion_declares_route_materialization_ceilings(
@@ -698,6 +698,62 @@ def test_verified_diffusion_declares_route_materialization_ceilings(
 
     assert store.max_materialized_itemsize("weight") == 2
     assert store.max_materialized_itemsize("bias") == 2
+
+
+@pytest.mark.parametrize("diffusion_dtype", [torch.bfloat16, torch.float32])
+def test_h3_projection_storage_matches_comfyui_model_dtype(
+    diffusion_dtype: torch.dtype,
+) -> None:
+    keys = assembly._COMFYUI_MODEL_DTYPE_PROJECTION_KEYS | {  # pyright: ignore[reportPrivateUsage]
+        "blocks.0.adaln_proj.linear.weight",
+        "blocks.49.adaln_proj.linear.bias",
+        "final_layer.adaln_proj.linear.weight",
+        "final_layer.adaln_proj.linear.bias",
+    }
+    source = {key: torch.tensor([1.001], dtype=torch.float32) for key in keys}
+    source["blocks.0.attn.q_proj.weight_scale"] = torch.tensor(0.125)
+
+    rounded = assembly._round_h3_projection_storage(  # pyright: ignore[reportPrivateUsage]
+        cast("Any", SimpleNamespace(time_embedding_kind="mlp")),
+        source,
+        diffusion_dtype=diffusion_dtype,
+    )
+
+    expected = torch.tensor([1.001], dtype=torch.float32).to(diffusion_dtype)
+    assert keys == {
+        "video_patch_proj.weight",
+        "video_patch_proj.bias",
+        "audio_patch_proj.weight",
+        "audio_patch_proj.bias",
+        "time_embedder.proj_in.weight",
+        "time_embedder.proj_in.bias",
+        "time_embedder.proj_out.weight",
+        "time_embedder.proj_out.bias",
+        "final_layer.video_out.weight",
+        "final_layer.video_out.bias",
+        "final_layer.audio_out.weight",
+        "final_layer.audio_out.bias",
+        "blocks.0.adaln_proj.linear.weight",
+        "blocks.49.adaln_proj.linear.bias",
+        "final_layer.adaln_proj.linear.weight",
+        "final_layer.adaln_proj.linear.bias",
+    }
+    for key in keys:
+        assert rounded[key].dtype is diffusion_dtype
+        assert torch.equal(rounded[key], expected)
+    assert rounded["blocks.0.attn.q_proj.weight_scale"].dtype is torch.float32
+    quantized = assembly._round_h3_projection_storage(  # pyright: ignore[reportPrivateUsage]
+        cast("Any", SimpleNamespace(time_embedding_kind="mlp")),
+        {"blocks.0.adaln_proj.linear.weight": torch.ones(2, 2, dtype=torch.int8)},
+        diffusion_dtype=diffusion_dtype,
+    )
+    assert quantized["blocks.0.adaln_proj.linear.weight"].dtype is torch.int8
+    curve = assembly._round_h3_projection_storage(  # pyright: ignore[reportPrivateUsage]
+        cast("Any", SimpleNamespace(time_embedding_kind="curve")),
+        {"blocks.0.adaln_proj.linear.bias": torch.ones(2, dtype=torch.float32)},
+        diffusion_dtype=torch.bfloat16,
+    )
+    assert curve["blocks.0.adaln_proj.linear.bias"].dtype is torch.float32
 
 
 def test_artifact_paths_refuse_incomplete_duplicate_and_mutable_authority(
@@ -846,7 +902,16 @@ def test_standalone_component_load_preserves_plan_identity(
     asset = _asset(path, digest_file(path), path.stat().st_size)
     plan = getattr(_plan(_paths(tmp_path)), plan_name)
     expected_identity = identity(plan)
-    module = torch.nn.Linear(1, 1)
+    module = torch.nn.Sequential(
+        Int8Linear(
+            16,
+            16,
+            bias=False,
+            compute_dtype=dtype,
+            convrot=False,
+            convrot_groupsize=256,
+        )
+    )
 
     def read_header(_handle: BinaryIO, *, path: Path) -> HeaderSource:
         return HeaderSource(path, {})
@@ -854,7 +919,11 @@ def test_standalone_component_load_preserves_plan_identity(
     def retain_plan(*_args: object, **_kwargs: object) -> object:
         return plan
 
-    def load_component(*_args: object, **_kwargs: object) -> torch.nn.Module:
+    loaded_compute_dtype: torch.dtype | None = None
+
+    def load_component(*_args: object, **kwargs: object) -> torch.nn.Module:
+        nonlocal loaded_compute_dtype
+        loaded_compute_dtype = cast(torch.dtype, kwargs["compute_dtype"])
         return module
 
     monkeypatch.setattr(
@@ -881,6 +950,13 @@ def test_standalone_component_load_preserves_plan_identity(
     assert loaded.module is module
     assert loaded.plan is plan
     assert loaded.runtime_identity == expected_identity
+    assert loaded_compute_dtype is (torch.float32 if role == "qwen3vl-32b-conditioner" else dtype)
+    quantized = cast(torch.nn.Sequential, loaded.module)[0]
+    assert isinstance(quantized, Int8Linear)
+    assert quantized.compute_dtype is (
+        torch.float32 if role == "qwen3vl-32b-conditioner" else dtype
+    )
+    assert quantized.full_precision_matmul is (role == "qwen3vl-32b-conditioner")
 
 
 def test_standalone_component_load_refuses_wrong_structure(

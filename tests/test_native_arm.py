@@ -188,10 +188,10 @@ def test_dtype_policy_resolves_every_native_dispatch_family(family_id: str) -> N
     ("family_id", "expected"),
     (
         ("dinkster.flux_dev", ("float16", "float32", "float32")),
-        # Text falls back to float32, never float16, even for families
-        # whose bfloat16 diffusion default degrades to float16: T5-class
-        # RMS variance overflows at float16.
-        ("dinkster.minimax_h3", ("float16", "float32", "float16")),
+        # Generic T5-class bfloat16 defaults fall back to float32 because
+        # their RMS variance overflows at float16. H3 explicitly follows
+        # the reference's float16 conditioner policy instead.
+        ("dinkster.minimax_h3", ("float16", "float16", "float16")),
         ("dinkster.minimax_music3", ("float16", "float32", "float32")),
         ("dinkster.qwen_image", ("float16", "float32", "float16")),
         ("dinkster.sdxl", ("float16", "float32", "float32")),
@@ -214,7 +214,7 @@ def test_dtype_policy_auto_falls_back_when_hardware_lacks_native_bfloat16(
     (
         ("dinkster.flux_dev", ("bfloat16", "bfloat16", "bfloat16")),
         ("dinkster.sd15", ("float16", "float32", "bfloat16")),
-        ("dinkster.minimax_h3", ("bfloat16", "bfloat16", "float16")),
+        ("dinkster.minimax_h3", ("bfloat16", "float16", "float16")),
         ("dinkster.minimax_music3", ("bfloat16", "bfloat16", "float32")),
         ("dinkster.qwen_image", ("bfloat16", "bfloat16", "bfloat16")),
         ("dinkster.triposplat", ("bfloat16", "bfloat16", "float16")),

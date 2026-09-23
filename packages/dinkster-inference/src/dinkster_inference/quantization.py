@@ -355,6 +355,22 @@ def _require_geometry(
         )
 
 
+def _require_int8_scale_geometry(
+    key: str,
+    geometry: TensorGeometry,
+    *,
+    rows: int,
+    convrot: bool,
+) -> None:
+    allowed_shapes = ((rows, 1),) if convrot else ((), (rows, 1))
+    if geometry.dtype.name != "float32" or geometry.shape not in allowed_shapes:
+        shapes = " or ".join(str(shape) for shape in allowed_shapes)
+        raise QuantizationError(
+            f"{key}: int8_tensorwise weight scale must be float32 with shape {shapes},"
+            f" found {geometry.dtype.name} with shape {geometry.shape}"
+        )
+
+
 def _power_of_four(value: int) -> bool:
     if value < 4:
         return False
@@ -432,13 +448,11 @@ def _typed_unsupported_layer(
                 f"{weight}: ConvRot width {columns} must be divisible by convrot_groupsize {group}"
             )
         scale_key, scale = _require_payload(geometries, layer, "weight_scale")
-        expected = (rows, 1) if convrot else ()
-        _require_geometry(
+        _require_int8_scale_geometry(
             scale_key,
             scale,
-            dtype="float32",
-            shape=expected,
-            contract="int8_tensorwise weight scale",
+            rows=rows,
+            convrot=convrot,
         )
         payloads["weight_scale"] = scale_key
         logical = stored.shape
