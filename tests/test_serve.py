@@ -308,8 +308,21 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     assert calls[0]["accelerator"] == "cuda"
     workspace = calls[0]["workspace_packages"]
     assert isinstance(workspace, tuple)
-    assert {path.name for path in workspace} == set(serve._PACK_HOST_WORKSPACE_PACKAGES)
-    workspace_names = set(serve._PACK_HOST_WORKSPACE_PACKAGES)
+    workspace_names = {path.name for path in workspace}
+    assert workspace_names == {
+        "dinkster-api",
+        "dinkster-assets",
+        "dinkster-caches",
+        "dinkster-image-document",
+        "dinkster-inference",
+        "dinkster-inference-torch",
+        "dinkster-memory",
+        "dinkster-protocol",
+        "dinkster-schema",
+        "dinkster-values",
+        "dinkster-video",
+        "dinkster-workers",
+    }
     package_names = {
         tomllib.loads(path.read_text(encoding="utf-8"))["project"]["name"]
         for path in (TESTS_DIR.parent / "packages").glob("*/pyproject.toml")
@@ -641,7 +654,7 @@ def test_settings_gate_argparse_matrix(
 
 @pytest.mark.parametrize("persisted_enabled", [None, False, True])
 @pytest.mark.parametrize("disabled", [False, True])
-def test_serve_p2p_defaults_on_preserves_saved_choice_and_allows_cli_disable(
+def test_serve_p2p_defaults_off_preserves_saved_choice_and_allows_cli_disable(
     persisted_enabled: bool | None,
     disabled: bool,
     tmp_path: Path,
@@ -687,7 +700,7 @@ def test_serve_p2p_defaults_on_preserves_saved_choice_and_allows_cli_disable(
     serve.main()
     value = captured[0][0]["p2p"]
     assert isinstance(value, dict)
-    enabled = not disabled and persisted_enabled is not False
+    enabled = not disabled and persisted_enabled is True
     assert value["downloadsEnabled"] is enabled
     assert value["seedingEnabled"] is enabled
     assert value["stagingBudgetBytes"] == 64 * 1024**3
@@ -2941,13 +2954,20 @@ def test_library_startup_composes_without_pack_workers(
             server = bound_server(process.pid, output.splitlines())
             if launcher:
                 assert server.pid != process.pid
+            async with session.get(f"http://127.0.0.1:{port}/api/settings") as resp:
+                assert resp.status == 200
+                settings = await resp.json()
+            panel_value = settings["settings"]["p2p"]["value"]
+            assert panel_value["downloadsEnabled"] is False
+            assert panel_value["seedingEnabled"] is False
             async with session.get(f"http://127.0.0.1:{port}/api/p2p/status") as resp:
                 assert resp.status == 200
                 p2p = await resp.json()
-            assert p2p["state"] == ("disabled" if disable_p2p else "running"), p2p
-            if disable_p2p:
-                assert p2p["sidecar"] is None, p2p
-            assert len(server.children(recursive=True)) == (0 if disable_p2p else 1)
+            assert p2p["state"] == "disabled", p2p
+            assert p2p["settings"]["downloadsEnabled"] is False, p2p
+            assert p2p["settings"]["seedingEnabled"] is False, p2p
+            assert p2p["sidecar"] is None, p2p
+            assert server.children(recursive=True) == []
 
     try:
         asyncio.run(scenario())

@@ -79,6 +79,7 @@ from dinkster_inference_torch.model_prefetch import (
 from dinkster_inference_torch.quant import Int8PackedWeight
 from dinkster_inference_torch.quant_linear import Int8Linear, Nvfp4Linear
 from dinkster_inference_torch.sources import load_tensors, tensor_file_slice
+from dinkster_memory import PageMap
 
 CPU = torch.device("cpu")
 CUDA0 = torch.device("cuda:0")
@@ -815,6 +816,18 @@ def test_classify_vbar_pages_splits_evictable_and_pinned() -> None:
 
     with pytest.raises(RuntimeError, match="invalid VBAR page status"):
         aimdo_mod._classify_vbar_pages([4])  # pyright: ignore[reportPrivateUsage]
+
+
+def test_aimdo_weights_reports_existing_vbar_page_map() -> None:
+    mechanism, backend = _aimdo({"weight": torch.ones(5000)})
+    assert mechanism.page_map() is None
+
+    backend.vbars[0].get_residency = lambda: [0, 1, 3]  # type: ignore[attr-defined]
+    assert mechanism.page_map() == PageMap(page_bytes=32 << 20, flags=(0, 1, 3))
+
+    backend.vbars[0].get_residency = lambda: [2]  # type: ignore[attr-defined]
+    with pytest.raises(RuntimeError, match="invalid VBAR page status 2"):
+        mechanism.page_map()
 
 
 def test_production_vbar_registry_is_weak_and_capability_gated(

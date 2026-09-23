@@ -125,6 +125,7 @@ from dinkster_workers import (
 )
 from dinkster_workers.catalog import read_catalog
 from dinkster_workers.doctor import prepare_catalog
+from dinkster_workers.provision import workspace_packages_for
 
 from .activation import add_activation_routes
 from .benchmark import (
@@ -171,20 +172,6 @@ from .watch import PackWatcher
 _PERMISSIVE_COMPUTE_DTYPES = frozenset({"float16", "bfloat16", "float32"})
 _SERVING_PYTHON_ENV = "DINKSTER_SERVING_PYTHON"
 _PACK_VENV_LOCK_TIMEOUT = 600.0
-_PACK_HOST_WORKSPACE_PACKAGES = (
-    "dinkster-api",
-    "dinkster-assets",
-    "dinkster-caches",
-    "dinkster-image-document",
-    "dinkster-inference",
-    "dinkster-inference-torch",
-    "dinkster-memory",
-    "dinkster-protocol",
-    "dinkster-schema",
-    "dinkster-values",
-    "dinkster-video",
-    "dinkster-workers",
-)
 
 
 def _validate_collaboration_snapshot(
@@ -251,12 +238,7 @@ def _pack_runtime_sources(manifest: PackManifest) -> tuple[tuple[Path, ...], str
                 f"installed pack {manifest.name!r} does not bundle its runtime module"
             )
         return (), str(manifest_root)
-    workspace = tuple(packages / name for name in _PACK_HOST_WORKSPACE_PACKAGES)
-    missing = tuple(path.name for path in workspace if not (path / "pyproject.toml").is_file())
-    if missing:
-        raise CompositionError(
-            f"source workspace is missing pack-host packages: {', '.join(missing)}"
-        )
+    workspace = workspace_packages_for(source_root)
     pythonpath = os.pathsep.join(str(path / "src") for path in (*workspace, source_root))
     return workspace, pythonpath
 
@@ -1263,6 +1245,12 @@ def main(argv: list[str] | None = None) -> None:
         help="identity-service JWKS endpoint (default: $DINKSTER_IDENTITY_JWKS_URL)",
     )
     parser.add_argument(
+        "--user-session-freshness-seconds",
+        type=parse_positive_float,
+        default=600,
+        help="how long a verified human JWT keeps delegations usable (default: 600 seconds)",
+    )
+    parser.add_argument(
         "--identity-issuer",
         default=os.environ.get(_IDENTITY_ISSUER_ENV, ""),
         metavar="URL",
@@ -2133,6 +2121,7 @@ def main(argv: list[str] | None = None) -> None:
                 allow_origins=args.allow_origin,
                 authenticator=authenticator,
                 principal_permissions=principal_permissions,
+                user_session_freshness_seconds=args.user_session_freshness_seconds,
                 library=library,
                 history=history,
                 training_sessions=training_sessions,
