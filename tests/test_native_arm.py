@@ -17211,6 +17211,7 @@ def test_native_sampler_executes_composed_qwen_components_and_application(
         coordinator=coordinator,
         recipe=recipe,
     )
+    assert arm._diffusion_unload_roles(handle) == ()
     application_events: list[object] = []
 
     class ApplicationHandle:
@@ -18789,7 +18790,7 @@ def test_generation_ksampler_prepares_descriptor_fallback_once(
     assert events == ["resolve", "prepare", "prepare", "sample"]
     assert prepared == [positive, negative]
     assert len(stages) == 1
-    assert stages[0]["unload_before"] == ()
+    assert stages[0]["unload_before"] == (("text",) if combined else ())
 
 
 @pytest.mark.parametrize("generation", [False, True])
@@ -21124,7 +21125,7 @@ def test_generation_custom_sampling_routes_wan_causalar_selection_and_metadata(
         def sample_custom(
             latent: MultiStreamLatent[FakeTensor], **kwargs: object
         ) -> CustomSamplingResult[Any]:
-            assert text_module.weight.device == torch.device("cuda:0" if registered else "cpu")
+            assert text_module.weight.device == torch.device("cpu")
             assert diffusion_module.weight.device == torch.device("cuda:0")
             if kwargs.get("sampling_shift") is not None:
                 raise ValueError("Wan CausalAR sampling shift is fixed at 5.0")
@@ -21208,7 +21209,7 @@ def test_generation_custom_sampling_routes_wan_causalar_selection_and_metadata(
     assert events == ["resolve", "prepare", *(["prepare"] if with_negative else []), "sample"]
     assert prepared == [carrier, *([negative] if with_negative else [])]
     assert len(stages) == 1
-    assert stages[0]["unload_before"] == (() if registered else ("text",))
+    assert stages[0]["unload_before"] == ("text",)
     assert len(checks) == 2
     assert checks[0].sampler.id == "dinkster.ar_video"
     assert checks[0].options == (("num_frame_per_block", 2),)
@@ -22292,9 +22293,15 @@ def test_native_ksampler_composes_diffusion_without_text_and_codec_methods(
     assert not isinstance(runtime, FamilyRuntime)
     monkeypatch.setattr(arm, "_torch", lambda: torch)
     inputs = _ksampler_inputs(arm, runtime, torch)
+    handle = cast("Any", inputs["model"])
+    with handle.stage("text"):
+        pass
     result = arm.NativeKSampler.execute(**inputs)
     assert len(calls) == 1
     assert result["latent"]["custom"] == "preserved"
+    text = cast("FakeMechanism", handle.mechanisms[1])
+    assert text.loaded_bytes() == 0
+    assert text.unload_calls == 1
 
 
 @pytest.mark.parametrize("advanced", [False, True])
@@ -23409,6 +23416,8 @@ def test_generation_custom_sampling_routes_anima_components_and_normalizes_video
 
     runtime = Runtime()
     handle = _handle(arm, runtime, torch, recipe=recipe)
+    with handle.stage("text"):
+        pass
     rows = [
         [
             prepared_positive.embeddings,
@@ -23491,6 +23500,9 @@ def test_generation_custom_sampling_routes_anima_components_and_normalizes_video
     assert isinstance(request, CustomSamplingRequest)
     assert request.sampler.id == "dinkster.euler"
     assert request.sigmas == (1.0, 0.5, 0.0)
+    text = cast("FakeMechanism", handle.mechanisms[1])
+    assert text.loaded_bytes() == 0
+    assert text.unload_calls == 1
 
     calls.clear()
     with pytest.raises(ValueError, match="rank-5 latent"):

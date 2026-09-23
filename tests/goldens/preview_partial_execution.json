@@ -952,11 +952,15 @@
                     "range": 2,
                     "transfer": 13
                   },
+                  "cost": {
+                    "ram": 16
+                  },
                   "dtype": "float32",
                   "shape": [
                     2,
                     2
-                  ]
+                  ],
+                  "storage_dtype": "fp32"
                 },
                 "typeId": "dev.image"
               }
@@ -976,11 +980,15 @@
                     "range": 2,
                     "transfer": 13
                   },
+                  "cost": {
+                    "ram": 16
+                  },
                   "dtype": "float32",
                   "shape": [
                     2,
                     2
-                  ]
+                  ],
+                  "storage_dtype": "fp32"
                 },
                 "typeId": "dev.image"
               },

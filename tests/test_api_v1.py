@@ -221,6 +221,10 @@ GOLDEN_V1_SURFACE = (
     "audio_from_source",
     "audio_meta",
     "audio_window",
+    "array_storage_meta",
+    "audio_input",
+    "byte_storage_meta",
+    "coerce_audio",
     "effective_audio_facts",
     "decode_audio",
     "encode_audio",
@@ -228,6 +232,7 @@ GOLDEN_V1_SURFACE = (
     "register_resource_handle_type",
     "render_audio_wav",
     "stable_hash",
+    "storage_dtype",
     # -- shared image-array codec (dinkster-values.image_codec): npy bytes
     # across interpreter boundaries, PNG renditions out. Added alongside
     # the comfy.IMAGE preview contract so packs register image types the
@@ -238,6 +243,7 @@ GOLDEN_V1_SURFACE = (
     "encode_image_array",
     "image_array_fingerprint",
     "image_array_meta",
+    "image_input",
     "merge_image_batches",
     "prepare_image_array_encoding",
     "render_image_png",

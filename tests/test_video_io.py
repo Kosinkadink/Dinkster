@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from av.codec import Codec as AvCodec
 from av.error import InvalidDataError
+from dinkster_api.v1 import image_input
 from dinkster_assets import AssetRef, AssetVault, MountSnapshotResolver, digest_bytes
 from dinkster_nodes_media_io.video import LoadVideo, LoadVideoValue, SaveVideo, SaveVideoValue
 from dinkster_schema import (
@@ -367,7 +368,7 @@ def test_vp9_alpha_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     with av.open(path) as container:
         assert container.streams.video[0].metadata["alpha_mode"] == "1"
     loaded = LoadVideo.execute(video=_bound(ref, snapshot))
-    images = cast(np.ndarray, loaded["images"])
+    images = cast(np.ndarray, image_input(loaded["images"]))
     assert images.shape == (3, 64, 64, 4)
     assert images[..., 3].min() == pytest.approx(1 / 3, abs=2 / 255)
     assert images[..., 3].max() == pytest.approx(1.0, abs=2 / 255)

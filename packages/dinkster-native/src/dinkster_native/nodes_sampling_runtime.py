@@ -26,6 +26,7 @@ from .native_arm_core import (
     VAEEncode,
     _active_inference_registries,
     _condition_entries,
+    _diffusion_unload_roles,
     _effective_flux_guidance,
     _inference_registries,
     _not_cancelled,
@@ -421,12 +422,7 @@ class NativeKSampler(KSampler):
         torch = _torch()
         active_runtime = component_runtime if component_runtime is not None else handle.runtime
         runtime_family = getattr(getattr(active_runtime, "family", None), "id", None)
-        unload_text_before_diffusion = (
-            ()
-            if component_execution
-            or tuple(source.role for source in handle.recipe.sources) == ("diffusion",)
-            else ("text",)
-        )
+        unload_text_before_diffusion = _diffusion_unload_roles(handle)
         classic_control_binding = _select_classic_control_binding(positive, negative)
         if classic_control_binding is not None:
             if z_image_control is not None:
@@ -714,6 +710,7 @@ class NativeKSampler(KSampler):
                         "diffusion",
                         memory_required=sampling_memory[0],
                         minimum_memory=sampling_memory[1],
+                        unload_before=unload_text_before_diffusion,
                     )
                 )
                 if z_image_control is not None:
