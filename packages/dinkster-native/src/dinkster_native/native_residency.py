@@ -1463,6 +1463,11 @@ class NativeRuntimeHandle:
     def recipe(self) -> ReconstructionRecipe:
         return self._recipe
 
+    def has_residency_stage(self, role: str) -> bool:
+        """Return whether the live runtime enrolled the named stage."""
+        self.require_active()
+        return bool(self._by_role.get(role))
+
     @property
     def residency_route(self) -> ResidencyRouteFacts | None:
         """Diagnostic record of this handle's enrollment; never identity."""
