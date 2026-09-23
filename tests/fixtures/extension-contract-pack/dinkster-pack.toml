@@ -41,4 +41,5 @@ contributions = [
   { id = "dinkster-extension-contract-fixture.status", kind = "hostUi" },
   { id = "dinkster-extension-contract-fixture.canvas", kind = "canvasLayer" },
   { id = "dinkster-extension-contract-fixture.node-decoration", kind = "nodeDecoration" },
+  { id = "dinkster-extension-contract-fixture.workflow-observer", kind = "workflowObserver" },
 ]

@@ -35,6 +35,7 @@ IMPLEMENTED_FRONTEND_CONTRIBUTION_KINDS = (
     "nodeDecoration",
     "hostUi",
     "searchProvider",
+    "workflowObserver",
     "eventConsumer",
     "editor",
     "editorBinding",

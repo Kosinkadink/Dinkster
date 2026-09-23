@@ -271,7 +271,7 @@ contributions = [
   { id = "healthy-pack.binding", kind = "editorBinding" },
   { id = "healthy-pack.panel", kind = "panel" },
   { id = "healthy-pack.note", kind = "virtualNode" },
-  { id = "healthy-pack.observer", kind = "workflowObserver" },
+  { id = "healthy-pack.importer", kind = "workflowImporter" },
 ]
 """
     )
@@ -285,7 +285,7 @@ contributions = [
     contribution = by_code["extension.contribution-unconsumed"]
     assert contribution.severity == "warning"
     assert "pack 'healthy-pack'" in contribution.message
-    assert "'workflowObserver'" in contribution.message
+    assert "'workflowImporter'" in contribution.message
     assert (
         sum(finding.code == "extension.contribution-unconsumed" for finding in report.findings) == 1
     )

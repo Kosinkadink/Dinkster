@@ -129,6 +129,10 @@ def test_ordinary_pack_exercises_the_extension_contract(tmp_path: Path) -> None:
                     "id": f"{PACK_ID}.node-decoration",
                     "kind": "nodeDecoration",
                 },
+                {
+                    "id": f"{PACK_ID}.workflow-observer",
+                    "kind": "workflowObserver",
+                },
             ]
             async with session.get(base + module["moduleUrl"]) as response:
                 assert response.status == 200

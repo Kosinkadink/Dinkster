@@ -53,6 +53,18 @@ export const frontendExtension = {
         };
       },
     });
+    const recordWorkflowEvent = (event) => {
+      globalThis.__dinksterExtensionContractWorkflowEvents = [
+        ...(globalThis.__dinksterExtensionContractWorkflowEvents ?? []),
+        event,
+      ];
+    };
+    context.workflowObserver('dinkster-extension-contract-fixture.workflow-observer', {
+      id: 'dinkster-extension-contract-fixture.workflow-observer',
+      beforeLoad() { recordWorkflowEvent('beforeLoad'); },
+      afterLoad() { recordWorkflowEvent('afterLoad'); },
+      changed() { recordWorkflowEvent('changed'); },
+    });
     context.onDispose(() => { latest = undefined; });
     void context.queryRoute('extension-contract').then((value) => {
       routeMessage = value.message;

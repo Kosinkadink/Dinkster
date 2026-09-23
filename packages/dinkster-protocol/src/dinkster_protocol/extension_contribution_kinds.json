@@ -11,7 +11,7 @@
   { "kind": "nodeDecoration", "implemented": true },
   { "kind": "hostUi", "implemented": true },
   { "kind": "searchProvider", "implemented": true },
-  { "kind": "workflowObserver", "implemented": false },
+  { "kind": "workflowObserver", "implemented": true },
   { "kind": "eventConsumer", "implemented": true },
   { "kind": "workflowImporter", "implemented": false },
   { "kind": "editor", "implemented": true },
