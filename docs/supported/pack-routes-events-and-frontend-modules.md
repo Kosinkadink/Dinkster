@@ -40,7 +40,10 @@ implemented and the cited frontend test exercises its registration or use.
 frontend activation door consumes it.
 
 Frontend proof paths were checked at Dinkster-Frontend commit
-`50321360d62f855469a9e8401dc1a34a9cd6e7c8`.
+`50321360d62f855469a9e8401dc1a34a9cd6e7c8`; the `documentType` proof was
+checked at Dinkster-Frontend commit
+`9e35fa5d3401c541b8c0705c502e18ade4ebd660` on the `document-pipeline-107`
+branch, the frontend counterpart of the shared document pipeline.
 
 | Contribution kind | Status | Proof |
 |---|---|---|
@@ -63,6 +66,7 @@ Frontend proof paths were checked at Dinkster-Frontend commit
 | `editorBinding` | Works | `Dinkster-Frontend/packages/app/test/editors.test.ts` |
 | `panel` | Works | `Dinkster-Frontend/packages/app/test/editors.test.ts` |
 | `virtualNode` | Works | `Dinkster-Frontend/packages/core/test/extensions.test.ts` |
+| `documentType` | Works | `Dinkster-Frontend/packages/core/test/extensions.test.ts` (registration and `app-workflow` authorization) |
 
 ### Extension capability status
 

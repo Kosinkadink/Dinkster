@@ -11,6 +11,7 @@ from contextlib import closing
 from io import BytesIO
 from pathlib import Path
 
+import dinkster_collab as collab
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -26,7 +27,7 @@ from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY, Principal
 from dinkster_server.library import ServerLibrary, add_library_routes
 from PIL import Image
 
-from dinkster.serve import _validate_collaboration_snapshot
+from dinkster.serve import _collaboration_snapshot_validators
 
 MEDIA_TYPE = "application/vnd.dinkster.image-document+json"
 
@@ -122,14 +123,14 @@ def _blank_document() -> dict[str, object]:
 
 
 def test_collaboration_snapshot_validation_is_image_specific() -> None:
+    validators = _collaboration_snapshot_validators(collab)
     document = _blank_document()
-    assert _validate_collaboration_snapshot("image", "blank", document) is None
+    assert validators("image", "blank", document) is None
     assert (
-        _validate_collaboration_snapshot("image", "different", document)
-        == "ImageDocument lineage must match documentId"
+        validators("image", "different", document) == "ImageDocument lineage must match documentId"
     )
-    assert _validate_collaboration_snapshot("image", "blank", {}) is not None
-    assert _validate_collaboration_snapshot("workflow", "workflow", {}) is None
+    assert validators("image", "blank", {}) is not None
+    assert validators("workflow", "workflow", {}) is None
 
 
 def _canonical(value: object) -> bytes:

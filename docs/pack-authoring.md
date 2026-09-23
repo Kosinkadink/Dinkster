@@ -470,9 +470,12 @@ this closed vocabulary: `widgetKind`, `widgetView`, `previewRenderer`,
 `textEditorExtension`, `menu`, `command`, `keybinding`, `setting`,
 `canvasLayer`, `nodeDecoration`, `hostUi`, `searchProvider`,
 `workflowObserver`, `eventConsumer`, `workflowImporter`, `editor`,
-`editorBinding`, `panel`, and `virtualNode`. A `virtualNode` contribution needs
-the `graph-editor-canvas` privilege and lets a compatible frontend register a
-frontend-owned document node that never enters backend execution requests.
+`editorBinding`, `panel`, `virtualNode`, and `documentType`. A `virtualNode`
+contribution needs the `graph-editor-canvas` privilege and lets a compatible
+frontend register a frontend-owned document node that never enters backend
+execution requests. A `documentType` contribution registers an adapter for a
+namespaced document kind (the collaboration `documentKind`, for example
+`extension.type`); frontends gate it behind the `app-workflow` privilege.
 Unknown kinds are rejected when the manifest is loaded.
 
 ## Blueprints
