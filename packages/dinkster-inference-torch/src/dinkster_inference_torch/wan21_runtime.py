@@ -2443,7 +2443,6 @@ class _WanVariantDenoiserAdapter:
             ("wandancer", "dinkster.wan22.dancer-conditioning.v1"),
             ("humo", "dinkster.wan21.humo-conditioning.v1"),
             ("s2v", "dinkster.wan22.s2v-conditioning.v1"),
-            ("bernini", "dinkster.wan21.bernini-conditioning.v1"),
             ("scail", "dinkster.wan21.scail-conditioning.v1"),
             ("scail2", "dinkster.wan21.scail-conditioning.v1"),
             ("animate2", "dinkster.wan21.animate2-conditioning.v1"),
@@ -2638,7 +2637,9 @@ class _Wan21CausalSamplingSession:
         self._noisy = self._x[:, :, self._start_frame : self._end_frame]
         self._cache_rows = block_frames * self._rows_per_frame
 
-    def evaluate(self, sigma: float) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def evaluate(
+        self, sigma: float, *, capture_state: bool
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor]:
         noisy = self._require_noisy()
         batch = noisy.shape[0]
         model_input = calculate_input(Parameterization.FLOW, sigma, noisy).to(
@@ -2657,6 +2658,8 @@ class _Wan21CausalSamplingSession:
             caches=self._caches,
         )
         denoised = calculate_denoised(Parameterization.FLOW, sigma, raw, noisy).float()
+        if not capture_state:
+            return None, None, denoised
         state = self._output.clone()
         state[:, :, self._start_frame : self._end_frame] = noisy
         denoised_state = self._output.clone()

@@ -815,10 +815,16 @@ class TestCatalogs:
             def begin_block(self, block_index: int) -> None:
                 calls.append(("begin", block_index))
 
-            def evaluate(self, sigma: float) -> tuple[Vec, Vec, Vec]:
+            def evaluate(
+                self, sigma: float, *, capture_state: bool
+            ) -> tuple[Vec | None, Vec | None, Vec]:
                 denoised = self.current + 1.0
-                calls.append(("evaluate", sigma))
-                return self.current, denoised, denoised
+                calls.append(("evaluate", sigma, capture_state))
+                return (
+                    self.current if capture_state else None,
+                    denoised if capture_state else None,
+                    denoised,
+                )
 
             def advance(self, denoised: Vec, sigma_next: float, seed: int) -> None:
                 calls.append(("advance", sigma_next, seed))
@@ -861,15 +867,15 @@ class TestCatalogs:
         assert calls == [
             ("prepare", x, sigmas, 3),
             ("begin", 0),
-            ("evaluate", 1.0),
+            ("evaluate", 1.0, False),
             ("advance", 0.5, 17),
-            ("evaluate", 0.5),
+            ("evaluate", 0.5, False),
             ("advance", 0.0, 18),
             ("commit",),
             ("begin", 1),
-            ("evaluate", 1.0),
+            ("evaluate", 1.0, False),
             ("advance", 0.5, 1017),
-            ("evaluate", 0.5),
+            ("evaluate", 0.5, False),
             ("advance", 0.0, 1018),
             ("commit",),
             ("finish",),

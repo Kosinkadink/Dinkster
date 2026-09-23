@@ -2909,13 +2909,17 @@ def _make_ar_video(opts: Mapping[str, OptionValue]) -> SolverFn[Any]:
             session.begin_block(block_index)
             for sigma_index in range(session.sigma_step_count):
                 sigma = float(sigmas[sigma_index])
-                state, denoised_state, denoised = session.evaluate(sigma)
+                state, denoised_state, denoised = session.evaluate(
+                    sigma, capture_state=info.on_state is not None
+                )
                 progress_step = (
                     evaluation * session.sigma_step_count // total_evaluations
                     if total_evaluations
                     else 0
                 )
                 if info.on_state is not None:
+                    if state is None or denoised_state is None:
+                        raise RuntimeError("autoregressive session omitted requested state")
                     info.on_state(
                         SolverStateEvent(
                             progress_step,

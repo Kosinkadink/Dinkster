@@ -146,6 +146,22 @@ def test_wan_variants_resolve_registered_denoiser_adapters(
     assert callable(adapter.evaluate_conditioning_batch)
 
 
+def test_bernini_conditioning_identity_depends_on_context_latents() -> None:
+    model = wan21_runtime_module.Wan21Model.__new__(wan21_runtime_module.Wan21Model)
+    torch.nn.Module.__init__(model)
+    model.config = WAN22_BERNINI_14B
+    adapter = wan21_runtime_module._wan_variant_adapter(  # pyright: ignore[reportPrivateUsage]
+        model, WAN22
+    )
+
+    assert adapter.conditioning_identity("dinkster.wan22.conditioning.v1") == (
+        "dinkster.wan22.conditioning.v1"
+    )
+    assert adapter.conditioning_identity("dinkster.wan21.bernini-conditioning.v1") == (
+        "dinkster.wan21.bernini-conditioning.v1"
+    )
+
+
 def test_wan_shared_dispatch_contains_no_variant_switch_or_private_sampling_loop() -> None:
     module_source = inspect.getsource(wan21_runtime_module)
 
