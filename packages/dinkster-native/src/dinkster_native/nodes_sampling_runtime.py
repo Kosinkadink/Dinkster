@@ -25,6 +25,7 @@ from .native_arm_core import (
     VAEDecode,
     VAEEncode,
     _active_inference_registries,
+    _component_bound_carrier,
     _condition_entries,
     _diffusion_unload_roles,
     _effective_flux_guidance,
@@ -275,7 +276,14 @@ def _resolve_sampling_model(
     if resolved is None:
         if negative_handle is not None or image_only_negative:
             raise TypeError("runtime does not support separate-model or image-only guidance")
-        return handle.runtime, positive, negative, False, False
+        runtime = handle.runtime
+        if isinstance(runtime, inference.MultiStreamConditioningRuntime):
+            positive, positive_binding = _component_bound_carrier(positive, inference)
+            if negative not in ([], None):
+                negative, negative_binding = _component_bound_carrier(negative, inference)
+                if positive_binding != negative_binding:
+                    raise ValueError("conditioning lanes must share one component binding")
+        return runtime, positive, negative, False, False
     runtime, positive, negative = resolved.values()
     descriptor = _active_inference_registries().components.get(handle.recipe.family_id)
     if (

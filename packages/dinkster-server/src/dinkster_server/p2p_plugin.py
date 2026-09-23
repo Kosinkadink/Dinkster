@@ -23,6 +23,8 @@ P2P_SETTINGS_FIELDS = frozenset(
         "internetSeedRatio",
         "internetSeedTimeSeconds",
         "stagingBudgetBytes",
+        "maxActiveSeeds",
+        "listenPort",
     }
 )
 P2P_SCOPES = frozenset({"lan-only", "lan-and-internet"})
@@ -50,6 +52,8 @@ def _unavailable_defaults() -> dict[str, object]:
         "internetSeedRatio": 1.0,
         "internetSeedTimeSeconds": 86_400,
         "stagingBudgetBytes": 64 * 1024**3,
+        "maxActiveSeeds": 64,
+        "listenPort": 0,
     }
 
 
@@ -57,7 +61,8 @@ def _normalize_unavailable(value: object) -> dict[str, object]:
     if not isinstance(value, Mapping):
         raise P2PSettingsError("p2p must be an object")
     body = {str(key): item for key, item in cast("Mapping[object, object]", value).items()}
-    body.setdefault("stagingBudgetBytes", _unavailable_defaults()["stagingBudgetBytes"])
+    for field in ("stagingBudgetBytes", "maxActiveSeeds", "listenPort"):
+        body.setdefault(field, _unavailable_defaults()[field])
     if set(body) != set(P2P_SETTINGS_FIELDS):
         raise P2PSettingsError(
             f"p2p must contain exactly {sorted(P2P_SETTINGS_FIELDS)}, got {sorted(body)}"
@@ -92,6 +97,9 @@ def _normalize_unavailable(value: object) -> dict[str, object]:
         0 <= body["stagingBudgetBytes"] <= 2**53 - 1
     ):
         raise P2PSettingsError("p2p.stagingBudgetBytes must be a non-negative safe integer")
+    for field, minimum, maximum in (("maxActiveSeeds", 1, 4096), ("listenPort", 0, 65535)):
+        if type(body[field]) is not int or not minimum <= cast(int, body[field]) <= maximum:
+            raise P2PSettingsError(f"p2p.{field} must be an integer from {minimum} to {maximum}")
     ratio = body["internetSeedRatio"]
     if isinstance(ratio, bool) or not isinstance(ratio, (int, float)):
         raise P2PSettingsError("p2p.internetSeedRatio must be a finite non-negative number")
