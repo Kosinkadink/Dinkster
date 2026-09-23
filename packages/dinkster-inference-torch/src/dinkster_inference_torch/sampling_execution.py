@@ -43,6 +43,7 @@ from dinkster_inference import (
     NoiseKind,
     PerpNegSamplingGuidance,
     PreparedMultiStreamConditioning,
+    RealizedSamplingTimeline,
     Registry,
     SamplerDescriptor,
     SamplingDescriptor,
@@ -58,6 +59,7 @@ from dinkster_inference import (
     cfg_needs_uncond,
     execution_span,
     offset_first_sigma_for_snr,
+    realize_sampling_timeline,
     sampling_environment_cancellation,
     sampling_environment_extension_ids,
     sampling_execution_context,
@@ -536,6 +538,15 @@ class SamplingAdapterContext:
     observer: object | None = None
     parent_span_id: int | None = None
     attention_binding: object | None = None
+    conditioning_realization: SamplingConditioningRealization | None = None
+
+
+@dataclass(frozen=True)
+class SamplingConditioningRealization:
+    conditional: tuple[object, ...]
+    unconditional: tuple[object, ...]
+    patch_sets: Mapping[str, object]
+    timeline: RealizedSamplingTimeline | None
 
 
 class SamplingLatentAdapter(Protocol):
@@ -1022,6 +1033,47 @@ def sampling_execution(
         if admitted_plan is None
         else admitted_plan
     )
+    conditioning_realization = None
+    if any(
+        type(cast("object", condition.conditioning)) is ConditioningCarrier
+        for condition in plan.conditions
+    ):
+        from .scheduled_sampling import (
+            ScheduledSamplingOptions,
+            prepare_scheduled_carriers,
+            validate_unconditional_carrier,
+        )
+
+        scheduled = options.get("scheduled")
+        if scheduled is None:
+            scheduled = ScheduledSamplingOptions()
+        elif type(scheduled) is not ScheduledSamplingOptions:
+            raise TypeError("scheduled must be an exact ScheduledSamplingOptions or None")
+        validate_unconditional_carrier(plan)
+        realized_timeline = (
+            None
+            if request.timeline is None
+            else realize_sampling_timeline(
+                request.timeline,
+                tuple(float(sigma) for sigma in schedule.sigmas),
+            )
+        )
+        conditional, unconditional, patch_sets, plan = prepare_scheduled_carriers(
+            owner,
+            inputs.latent,
+            plan,
+            resolver=scheduled.resolver,
+            device=inputs.latent.device if device is None else torch.device(device),
+            cancel=cancelled,
+            timeline=realized_timeline,
+            space=space,
+        )
+        conditioning_realization = SamplingConditioningRealization(
+            cast("tuple[object, ...]", conditional),
+            cast("tuple[object, ...]", unconditional),
+            cast("Mapping[str, object]", patch_sets),
+            realized_timeline,
+        )
     adapter_context = replace(
         adapter_context,
         inputs=inputs,
@@ -1033,6 +1085,7 @@ def sampling_execution(
         device=device,
         compute_dtype=compute_dtype,
         cancelled=cancelled,
+        conditioning_realization=conditioning_realization,
     )
     if registration.pipeline.bind_attention is not None:
         adapter_context = replace(
@@ -1354,6 +1407,7 @@ __all__ = [
     "CustomSamplingCondValue",
     "CustomSamplingLatentValue",
     "SamplingAdapterContext",
+    "SamplingConditioningRealization",
     "SamplingDenoiserAdapter",
     "SamplingExecutionInputs",
     "SamplingExecutionRegistration",

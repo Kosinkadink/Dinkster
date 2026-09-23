@@ -83,10 +83,13 @@ the shared sampling pipeline. Families may still refuse requests whose structura
 conditioning cannot be sliced without changing its meaning.
 The sampling runtime APIs accept denoise masks for dense image, video, audio,
 and multi-stream latents. Sparse sampling accepts masks on the same sparse
-support. Wan CausalAR and scheduled prompt/patch sampling do not accept
-denoise masks. Distributed execution does not require a numerical receipt or
-registered hardware. Sequence and window-distributed execution require
-compatible geometry; missing measurement evidence produces a diagnostic.
+support. Wan CausalAR does not accept denoise masks. Distributed execution does
+not require a numerical receipt or registered hardware. Sequence and
+window-distributed execution require compatible geometry; missing measurement
+evidence produces a diagnostic.
+Scheduled SD and Flux sampling support prompt ranges, conditioning regions,
+and patch schedules. Scheduled SD sampling can combine denoise masks with
+temporal or spatial context windows.
 Wan CausalAR, sampling timelines, LazyCache, and EasyCache run their complete
 sampling stage on rank 0 in distributed jobs and broadcast the final result to
 peers. Callbacks and cancellation are owned by rank 0 for those stages.

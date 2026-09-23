@@ -13,8 +13,8 @@ generation, snapshot, and immutable PatchSet before model or staging work.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Protocol, cast
 
@@ -328,21 +328,45 @@ class ScheduledConditioningDenoiser:
         self._compute_dtype = compute_dtype
         self._device = device
         self._cancel = cancel
-        self._prepared: PreparedGroupedPatches | None = None
+        self._prepared: dict[tuple[object, ...], PreparedGroupedPatches] = {}
+        self._window_conditions: dict[
+            tuple[int, int, tuple[int, ...], tuple[int, ...]], _ScheduledConditioning
+        ] = {}
         self._closed = False
         self.prepare_count = 0
         self.model_calls = 0
         self.staged_bytes = 0
 
-    def _owner(self, x: torch.Tensor) -> PreparedGroupedPatches:
+    def _owner(
+        self,
+        x: torch.Tensor,
+        conditional: tuple[MaterializedRegion, ...],
+        unconditional: tuple[MaterializedRegion, ...],
+    ) -> PreparedGroupedPatches:
         _check_cancel(self._cancel)
         if self._closed:
             raise _refuse("denoiser-closed")
-        if self._prepared is None:
+        regions = (*conditional, *unconditional)
+        key = (
+            id(conditional),
+            id(unconditional),
+            tuple(x.shape),
+            tuple(
+                (
+                    region.area,
+                    region.latent_shape,
+                    id(region.mask),
+                    region.patch_digest,
+                )
+                for region in regions
+            ),
+        )
+        prepared = self._prepared.get(key)
+        if prepared is None:
             try:
-                self._prepared = prepare_grouped_patches(
-                    self._conditional,
-                    self._unconditional,
+                prepared = prepare_grouped_patches(
+                    conditional,
+                    unconditional,
                     x,
                     self._family_id,
                     self._space,
@@ -354,9 +378,10 @@ class ScheduledConditioningDenoiser:
                 )
             except RegionalConditioningError as error:
                 raise _refuse("preparation", error.code) from None
+            self._prepared[key] = prepared
             self.prepare_count += 1
-            self.staged_bytes = self._prepared.staged_bytes
-        return self._prepared
+            self.staged_bytes += prepared.staged_bytes
+        return prepared
 
     @staticmethod
     def prepare_conditioning(value: object, role: GuidanceRole) -> _ScheduledConditioning:
@@ -372,6 +397,67 @@ class ScheduledConditioningDenoiser:
             conditions
         )
 
+    def window_conditioning(
+        self,
+        condition: _ScheduledConditioning,
+        dim: int,
+        indices: tuple[int, ...],
+        input_shape: Sequence[int],
+    ) -> _ScheduledConditioning:
+        if len(input_shape) != 4 or dim not in (2, 3):
+            raise _refuse("window-layout")
+        shape = tuple(input_shape)
+        key = (id(condition), dim, indices, shape)
+        cached = self._window_conditions.get(key)
+        if cached is not None:
+            return cached
+        latent_shape = (input_shape[2], input_shape[3])
+        window_shape = list(latent_shape)
+        window_shape[dim - 2] = len(indices)
+        mapped: list[MaterializedRegion] = []
+        for region in condition.regions:
+            if region.latent_shape != latent_shape:
+                raise _refuse("window-region-shape")
+            mask = region.mask
+            if mask is not None:
+                index = torch.tensor(indices, dtype=torch.long, device=mask.device)
+                mask = mask.index_select(dim - 1, index)
+            area = region.area
+            if area is None:
+                mapped.append(replace(region, mask=mask, latent_shape=tuple(window_shape)))
+                continue
+            extent = area[dim - 2]
+            offset = area[dim]
+            positions = tuple(
+                position
+                for position, source_index in enumerate(indices)
+                if offset <= source_index < offset + extent
+            )
+            if not positions:
+                continue
+            starts = [positions[0]]
+            stops: list[int] = []
+            for previous, current in zip(positions, positions[1:], strict=False):
+                if current != previous + 1:
+                    stops.append(previous + 1)
+                    starts.append(current)
+            stops.append(positions[-1] + 1)
+            for start, stop in zip(starts, stops, strict=True):
+                local_area = list(area)
+                local_area[dim - 2] = stop - start
+                local_area[dim] = start
+                mapped.append(
+                    replace(
+                        region,
+                        area=cast("tuple[int, int, int, int]", tuple(local_area)),
+                        mask=mask,
+                        latent_shape=tuple(window_shape),
+                    )
+                )
+        result = _ScheduledConditioning(tuple(mapped), condition.role)
+        self._window_conditions[key] = result
+        return result
+
     def _evaluate_lanes(
         self,
         x: torch.Tensor,
@@ -379,7 +465,7 @@ class ScheduledConditioningDenoiser:
         conditional: tuple[MaterializedRegion, ...],
         unconditional: tuple[MaterializedRegion, ...],
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        owner = self._owner(x)
+        owner = self._owner(x, conditional, unconditional)
         try:
             result = evaluate_grouped_regions(
                 conditional,
@@ -474,9 +560,10 @@ class ScheduledConditioningDenoiser:
         if self._closed:
             return
         self._closed = True
-        if self._prepared is not None:
-            self._prepared.close()
-            self._prepared = None
+        for prepared in self._prepared.values():
+            prepared.close()
+        self._prepared.clear()
+        self._window_conditions.clear()
 
 
 def prepare_scheduled_carriers(

@@ -38,7 +38,7 @@ from .guidance import ConditioningEvaluation
 
 PreparedCondition = TypeVar("PreparedCondition")
 
-_WindowRun = Callable[[torch.Tensor], tuple[torch.Tensor, ...]]
+_WindowRun = Callable[[torch.Tensor, tuple[int, ...]], tuple[torch.Tensor, ...]]
 
 __all__ = [
     "apply_freenoise",
@@ -140,7 +140,8 @@ def _accumulate_fused(
     for window in plan.joint_windows:
         indices = window.axis_indices[0][1]
         window_input, anchored = _window_input(x, spec, indices)
-        outputs = run(window_input)
+        input_indices = (indices[0] - 1, *indices) if anchored else indices
+        outputs = run(window_input, input_indices)
         if anchored:
             outputs = _strip_anchor(outputs, dim)
         index_tensor = torch.tensor(indices, dtype=torch.long, device=x.device)
@@ -185,7 +186,8 @@ def _relative_fused(
     bias_totals = [0.0] * num_frames
     for indices in windows:
         window_input, anchored = _window_input(x, spec, indices)
-        outputs = run(window_input)
+        input_indices = (indices[0] - 1, *indices) if anchored else indices
+        outputs = run(window_input, input_indices)
         if anchored:
             outputs = _strip_anchor(outputs, dim)
         if accumulators is None:
@@ -235,7 +237,17 @@ def windowed_conditioning_evaluation(
         return _accumulate_fused(x, spec, step, run)
 
     def evaluate(x: torch.Tensor, sigma: float, condition: PreparedCondition) -> torch.Tensor:
-        (value,) = fused(x, sigma, lambda window: (inner.evaluate(window, sigma, condition),))
+        shape = tuple(x.shape)
+
+        def run(window: torch.Tensor, indices: tuple[int, ...]) -> tuple[torch.Tensor, ...]:
+            prepared = (
+                condition
+                if inner.window_conditioning is None
+                else inner.window_conditioning(condition, spec.dim, indices, shape)
+            )
+            return (inner.evaluate(window, sigma, prepared),)
+
+        (value,) = fused(x, sigma, run)
         return value
 
     inner_batch = inner.evaluate_batch
@@ -250,7 +262,20 @@ def windowed_conditioning_evaluation(
             sigma: float,
             conditions: tuple[PreparedCondition, ...],
         ) -> tuple[torch.Tensor, ...]:
-            return fused(x, sigma, lambda window: inner_batch(window, sigma, conditions))
+            shape = tuple(x.shape)
+
+            def run(window: torch.Tensor, indices: tuple[int, ...]) -> tuple[torch.Tensor, ...]:
+                prepared = (
+                    conditions
+                    if inner.window_conditioning is None
+                    else tuple(
+                        inner.window_conditioning(condition, spec.dim, indices, shape)
+                        for condition in conditions
+                    )
+                )
+                return inner_batch(window, sigma, prepared)
+
+            return fused(x, sigma, run)
 
         evaluate_batch = windowed_batch
 
