@@ -133,7 +133,8 @@ try {
         "pytest", "packaging", "numpy>=1.26", "scipy>=1.11",
         "simpleeval==1.0.3", "onnxruntime==1.29.0",
         "opencv-python-headless==5.0.0.93", "pillow==12.0.0",
-        "safetensors==0.8.0", "sentencepiece==0.2.1", "transformers==5.16.1",
+        "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
+        "transformers==5.16.1",
         $KitchenCpuWheel,
         "dinkster-aimdo==0.5.5.post2"
     ) + (Get-EditableArguments $CpuEditablePackages)
@@ -177,7 +178,7 @@ try {
         )
         $GpuDependencies = @(
             "pytest", "numpy", "scipy", "torchsde", "tqdm", "pillow", "packaging",
-            "safetensors==0.8.0", "sentencepiece==0.2.1",
+            "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
             "dinkster-kitchen==0.2.35.post1", "dinkster-aimdo==0.5.5.post2",
             "triton-windows==3.7.1.post27"
         ) + (Get-EditableArguments $GpuEditablePackages)

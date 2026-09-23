@@ -340,10 +340,11 @@ current per-kind status is listed in
 ## 5. Packaging, identity, compatibility
 
 Extension factory allowlists pin every site by path, line, column, and owning
-issue. Their ceilings are non-increasing; raising one is an explicit reviewed
-decision, never an effect of regeneration. When a scanned file is renamed or
-split, retarget or re-add its allowlist entries with their owning issues before
-running `--write`; ownership deliberately does not carry across path changes.
+issue. Their ceilings are merge-base ratchets with zero slack: each recorded
+ceiling equals the measured count, and a pull request cannot raise it even when
+the allowlist is edited to match. When a scanned file is renamed or split,
+retarget or re-add its allowlist entries with their owning issues before running
+`--write`; ownership deliberately does not carry across path changes.
 After merging main, run
 `uv run --locked python scripts/check_extension_factories.py --write`, review
 that only expected line or column coordinates changed and no ceiling changed,

@@ -2184,6 +2184,7 @@ class Engine:
             binding: Mapping[str, Value],
             iteration_state: Mapping[str, Value],
         ) -> dict[str, Mapping[str, Value]]:
+            self._emit(EngineEvent("region_iteration_started", run_id, label, {"iteration": index}))
             body_ports = {**broadcast, **binding, **iteration_state}
             if REGION_INDEX_PORT_ID not in region.ports:
                 index_type_id = REGION_INDEX_PORT_TYPE.runtime_type_id()
@@ -2211,6 +2212,9 @@ class Engine:
                 body_produced.clear()
                 body_ports.clear()
                 raise
+            self._emit(
+                EngineEvent("region_iteration_finished", run_id, label, {"iteration": index})
+            )
             return body_produced
 
         def source_value(body_produced: Mapping[str, Mapping[str, Value]], source: Link) -> Value:

@@ -212,7 +212,11 @@ ALLOWED: dict[str, set[str]] = {
 EXTERNAL_PACKAGES = frozenset({"dinkster_p2p"})
 OPTIONAL_CORE_PACKAGES = frozenset({"dinkster_collab", "dinkster_p2p", "dinkster_supervisor"})
 OPTIONAL_PLUGIN_MODULES = frozenset(
-    {REPO_ROOT / "src/dinkster/lan_p2p.py", REPO_ROOT / "src/dinkster/p2p_api.py"}
+    {
+        REPO_ROOT / "src/dinkster/lan_p2p.py",
+        REPO_ROOT / "src/dinkster/p2p_api.py",
+        REPO_ROOT / "src/dinkster/seed.py",
+    }
 )
 
 
