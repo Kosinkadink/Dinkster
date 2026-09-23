@@ -290,7 +290,8 @@ def _real_audio_webm() -> bytes:
 def _media_recorder_audio_webm(codec: str) -> bytes:
     output = BytesIO()
     with av.open(output, "w", format="webm", options={"live": "1"}) as container:
-        stream = cast(av.AudioStream, container.add_stream(codec, rate=48_000))
+        options = {"strict": "experimental"} if codec == "vorbis" else None
+        stream = cast(av.AudioStream, container.add_stream(codec, rate=48_000, options=options))
         stream.layout = "stereo"
         stream.codec_context.thread_count = 1
         for index in range(5):
@@ -1768,7 +1769,7 @@ def test_audio_webm_upload_load_and_rendition_use_canonical_asset(tmp_path: Path
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("codec", ["libopus", "libvorbis"])
+@pytest.mark.parametrize("codec", ["libopus", "vorbis"])
 def test_media_recorder_audio_webm_publishes_length_and_waveform(
     tmp_path: Path, codec: str
 ) -> None:
