@@ -1730,6 +1730,11 @@
     "class": "A"
   },
   {
+    "node": "dinkster.resolution_selector",
+    "path": "multiple",
+    "class": "A"
+  },
+  {
     "node": "dinkster.save_video",
     "path": "format",
     "class": "A"

@@ -1222,6 +1222,193 @@ def _translate_group_case(
     }
 
 
+def _translate_simple_alias(
+    record: Mapping[str, Any],
+    source_inputs: Mapping[str, object],
+) -> dict[str, object]:
+    replacement = cast("Mapping[str, Any]", record["replacement"])
+    cases = cast("list[Mapping[str, Any]]", replacement["cases"])
+    if len(cases) != 1 or cases[0].get("when") is not None:
+        raise RuntimeError(f"expected one unconditional replacement case in {record['id']}")
+    selected = cases[0]
+    translated: dict[str, object] = {}
+    for name, raw in cast("Mapping[str, Mapping[str, Any]]", selected["inputs"]).items():
+        if raw.get("kind") != "copy":
+            raise RuntimeError(f"unsupported alias input mapping in {record['id']}: {name}")
+        translated[name] = source_inputs[cast("str", raw["input"])]
+
+    families: dict[str, object] = {}
+    for name, raw in cast(
+        "Mapping[str, Mapping[str, Any]]", selected.get("inputFamilies", {})
+    ).items():
+        if raw.get("kind") != "copy":
+            raise RuntimeError(f"unsupported alias family mapping in {record['id']}: {name}")
+        members = cast(
+            "list[Mapping[str, object]]", source_inputs[cast("str", raw["sourceFamily"])]
+        )
+        mappings = cast("Mapping[str, Mapping[str, Any]]", raw["inputs"])
+        families[name] = [
+            {target: member[cast("str", mapping["input"])] for target, mapping in mappings.items()}
+            for member in members
+        ]
+    return {
+        "families": families,
+        "inputs": translated,
+        "outputs": selected["outputs"],
+        "target": selected["to"],
+    }
+
+
+def _minimax_h3_alias_receipts(
+    root: Path,
+    records: Mapping[str, Mapping[str, Any]],
+) -> list[Path]:
+    specifications = (
+        (
+            "CLIPLoader",
+            "minimax-h3-clip-loader",
+            "dinkster.load_clip",
+            {"text_encoder": "clip_name", "type": "type", "device": "device"},
+            {"clip": "clip"},
+            {"clip_name": "qwen3vl.safetensors", "type": "minimax", "device": "default"},
+            (),
+        ),
+        (
+            "MiniMaxH3ImageToVideo",
+            "minimax-h3-image-to-video",
+            "dinkster.minimax_h3_image_to_video",
+            {
+                name: name
+                for name in (
+                    "clip",
+                    "vae",
+                    "prompt",
+                    "width",
+                    "height",
+                    "length",
+                    "first_frame",
+                    "last_frame",
+                )
+            },
+            {"positive": "positive", "latent": "LATENT"},
+            {
+                "clip": "clip",
+                "vae": "video-vae",
+                "prompt": "prompt",
+                "width": 1344,
+                "height": 768,
+                "length": 73,
+                "first_frame": "first",
+                "last_frame": "last",
+            },
+            (),
+        ),
+        (
+            "MiniMaxH3ReferenceToVideo",
+            "minimax-h3-reference-to-video",
+            "dinkster.minimax_h3_reference_to_video",
+            {
+                name: name
+                for name in (
+                    "clip",
+                    "vae",
+                    "audio_vae",
+                    "prompt",
+                    "width",
+                    "height",
+                    "length",
+                    "ref_image_size",
+                )
+            },
+            {"positive": "positive", "latent": "LATENT"},
+            {
+                "clip": "clip",
+                "vae": "video-vae",
+                "audio_vae": "audio-vae",
+                "prompt": "prompt",
+                "width": 1344,
+                "height": 768,
+                "length": 124,
+                "ref_image_size": "match",
+                "ref_images": [{"value": "image-0"}],
+                "ref_videos": [{"value": "video-0"}],
+                "ref_video_audios": [{"value": "video-audio-0"}],
+                "ref_audios": [{"value": "audio-0"}],
+            },
+            ("ref_images", "ref_videos", "ref_video_audios", "ref_audios"),
+        ),
+        (
+            "MiniMaxH3AddGuide",
+            "minimax-h3-add-guide",
+            "dinkster.minimax_h3_add_guide",
+            {
+                name: name
+                for name in (
+                    "positive",
+                    "latent",
+                    "frame_idx",
+                    "vae",
+                    "audio_vae",
+                    "image",
+                    "audio",
+                )
+            },
+            {"positive": "positive"},
+            {
+                "positive": "conditioning",
+                "latent": "latent",
+                "frame_idx": 72,
+                "vae": "video-vae",
+                "audio_vae": "audio-vae",
+                "image": "image",
+                "audio": "audio",
+            },
+            (),
+        ),
+        (
+            "ResolutionSelector",
+            "minimax-h3-resolution-selector",
+            "dinkster.resolution_selector",
+            {name: name for name in ("aspect_ratio", "megapixels", "multiple")},
+            {"width": "width", "height": "height"},
+            {"aspect_ratio": "16:9 (Widescreen)", "megapixels": 0.7, "multiple": 32},
+            (),
+        ),
+    )
+    parameters = {
+        "comfyuiRevision": "b5cc8830279eae909a59de030af1e50761c36751",
+        "sourceSchemaSha256": "a71e1939126877a9a4c85860f42f6480e448aff71b5ba989e9459cc6ca3d02a4",
+        "workflowTemplatesRevision": "fc427f00097817d3f7d8099c5259837fa51e1267",
+    }
+    outputs: list[Path] = []
+    for (
+        node_class,
+        slug,
+        target,
+        input_map,
+        output_map,
+        source_inputs,
+        family_names,
+    ) in specifications:
+        expected = {
+            "families": {name: source_inputs[name] for name in family_names},
+            "inputs": {name: source_inputs[source] for name, source in input_map.items()},
+            "outputs": output_map,
+            "target": target,
+        }
+        outputs.extend(
+            _write_mapping_receipt(
+                root,
+                records[node_class],
+                slug=slug,
+                parameters={**parameters, "sourceInputs": source_inputs},
+                reference=expected,
+                native=_translate_simple_alias(records[node_class], source_inputs),
+            )
+        )
+    return outputs
+
+
 def _group_receipts(
     root: Path,
     records: Mapping[str, Mapping[str, Any]],
@@ -4700,6 +4887,7 @@ def _generate(comfy_root: Path, receipt_root: Path, direct_golden: Path) -> list
     required_records = set(strings) | {
         "ComfyMathExpression",
         "ComfySwitchNode",
+        "CLIPLoader",
         "ControlNetApply",
         "ControlNetApplyAdvanced",
         "ControlNetLoader",
@@ -4710,8 +4898,12 @@ def _generate(comfy_root: Path, receipt_root: Path, direct_golden: Path) -> list
         "LoadImage",
         "LoadImageMask",
         "LoadVideo",
+        "MiniMaxH3AddGuide",
+        "MiniMaxH3ImageToVideo",
+        "MiniMaxH3ReferenceToVideo",
         "PrimitiveBoolean",
         "RebatchImages",
+        "ResolutionSelector",
         "ResizeImageMaskNode",
         "SaveImage",
         "SaveVideo",
@@ -4741,6 +4933,7 @@ def _generate(comfy_root: Path, receipt_root: Path, direct_golden: Path) -> list
         missing = sorted(required_group_records - group_records.keys())
         raise RuntimeError(f"missing maintained group mappings: {missing}")
     outputs = _string_receipts(receipt_root, records, strings)
+    outputs.extend(_minimax_h3_alias_receipts(receipt_root, records))
     outputs.extend(_switch_receipt(receipt_root, records["ComfySwitchNode"], switch))
     outputs.extend(_rebatch_receipt(receipt_root, records["RebatchImages"], rebatch))
     outputs.extend(

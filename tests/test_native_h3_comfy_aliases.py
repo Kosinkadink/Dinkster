@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,8 @@ from dinkster_native.native import (
 )
 from dinkster_schema import comfy_alias_registry_from_wire
 
+from tools.layer_current_h3_comfy_aliases import SOURCE, SOURCE_SHA256
+
 ROOT = Path(__file__).parents[1]
 ALIAS_PATH = ROOT / "packages/dinkster-compat-comfy/comfy-aliases.json"
 COMFYUI_REVISION = "b5cc8830279eae909a59de030af1e50761c36751"
@@ -28,6 +31,10 @@ COMFYUI_REVISION = "b5cc8830279eae909a59de030af1e50761c36751"
 
 def _registry() -> dict[str, Any]:
     return json.loads(ALIAS_PATH.read_text(encoding="utf-8"))
+
+
+def test_native_h3_source_schema_snapshot_is_pinned() -> None:
+    assert hashlib.sha256(SOURCE.read_bytes()).hexdigest() == SOURCE_SHA256
 
 
 def test_native_h3_aliases_are_canonical_and_pinned() -> None:
