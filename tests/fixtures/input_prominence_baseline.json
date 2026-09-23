@@ -1733,5 +1733,50 @@
     "node": "dinkster.save_video",
     "path": "format",
     "class": "A"
+  },
+  {
+    "node": "dinkster.image.composite",
+    "path": "preserve_destination_alpha",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.save_avif",
+    "path": "bit_depth",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.save_avif",
+    "path": "crf",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.save_avif",
+    "path": "input_color_space",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.save_avif",
+    "path": "loop",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.save_avif",
+    "path": "metadata_json",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.video.assemble",
+    "path": "codec",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.video.concatenate",
+    "path": "codec",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.video.concatenate",
+    "path": "complete_audio",
+    "class": "A"
   }
 ]

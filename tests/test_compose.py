@@ -1029,8 +1029,8 @@ def test_compose_defaults_only(tmp_path: Path) -> None:
             )
             assert set(composition.node_packs.values()) == STANDARD_OWNER_PACKS
             assert len(FOUNDATION_NODES) == 52
-            assert len(IMAGE_NODES) == 87
-            assert len(MEDIA_IO_NODES) == 66
+            assert len(IMAGE_NODES) == 88
+            assert len(MEDIA_IO_NODES) == 68
             assert {
                 node_type
                 for node_type, pack_id in composition.node_packs.items()

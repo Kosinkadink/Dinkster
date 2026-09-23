@@ -430,7 +430,7 @@ def test_ltxv_dynamic_shift_matches_pinned_comfyui() -> None:
 def test_generated_keyframe_metadata_is_strict_and_frozen() -> None:
     value = LTXGeneratedKeyframes(16, 2, 3)
 
-    assert dataclasses.astuple(value) == (16, 2, 3)
+    assert dataclasses.astuple(value) == (16, 2, 3, (), None)
     with pytest.raises(dataclasses.FrozenInstanceError):
         value.num_keyframes = 4  # type: ignore[misc]
     for fields in ((16.0, 2, 3), (16, True, 3), (16, 2, None)):
@@ -439,6 +439,12 @@ def test_generated_keyframe_metadata_is_strict_and_frozen() -> None:
     for fields in ((0, 2, 3), (16, -1, 3), (16, 2, -1)):
         with pytest.raises(ValueError, match="positive|nonnegative"):
             LTXGeneratedKeyframes(*fields)
+    for frame_indices in ([1, 2, 3], (0, 1, 2), (1, 1, 2), (1, 2)):
+        with pytest.raises(ValueError, match="indices"):
+            LTXGeneratedKeyframes(16, 2, 3, cast("Any", frame_indices))
+    for num_pixel_frames in (True, 1, 1.5):
+        with pytest.raises(ValueError, match="canvas length"):
+            LTXGeneratedKeyframes(16, 2, 3, (), cast("Any", num_pixel_frames))
 
 
 def test_ltxv_t5_profile_only_lowers_the_flux_padding_floor() -> None:
