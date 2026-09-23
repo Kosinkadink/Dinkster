@@ -39,16 +39,16 @@
         },
         "positive": {
           "id": "positive",
-          "type": "dinkster.clip_text_encode",
+          "type": "dinkster.minimax_h3_t2va_conditioning",
           "values": {
-            "text": "a cinematic landscape, detailed lighting"
+            "prompt": "a cinematic landscape, detailed lighting"
           }
         },
         "negative": {
           "id": "negative",
-          "type": "dinkster.clip_text_encode",
+          "type": "dinkster.minimax_h3_t2va_conditioning",
           "values": {
-            "text": "blurry, low quality"
+            "prompt": "blurry, low quality"
           }
         },
         "latent": {
@@ -260,6 +260,28 @@
           "to": {
             "node": "save",
             "port": "video"
+          }
+        },
+        "l15": {
+          "id": "l15",
+          "from": {
+            "node": "latent",
+            "port": "latent"
+          },
+          "to": {
+            "node": "positive",
+            "port": "target"
+          }
+        },
+        "l16": {
+          "id": "l16",
+          "from": {
+            "node": "latent",
+            "port": "latent"
+          },
+          "to": {
+            "node": "negative",
+            "port": "target"
           }
         }
       },
