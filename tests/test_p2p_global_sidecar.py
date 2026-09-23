@@ -907,6 +907,8 @@ def test_global_accounting_baselines_borrowed_handle_totals(tmp_path: Path) -> N
         disable_pex=4,
         override_trackers=8,
         override_web_seeds=16,
+        seed_mode=32,
+        upload_mode=64,
     )
     libtorrent = SimpleNamespace(
         add_torrent_params=SimpleNamespace,

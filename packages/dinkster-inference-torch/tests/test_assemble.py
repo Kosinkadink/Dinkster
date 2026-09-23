@@ -1267,6 +1267,61 @@ def test_int8_quantized_bias_is_loaded_at_compute_dtype(
     assert torch.equal(layer.bias, tensors["img_in.bias"].to(torch.float16))
 
 
+def test_int8_rowwise_non_convrot_embedding_assembles_and_dequantizes(tmp_path: Path) -> None:
+    class RowwiseEmbeddingModule(torch.nn.Module):
+        def __init__(self, operations: Any) -> None:
+            super().__init__()
+            self.embed_tokens = operations.embedding(5, 4)
+
+    def build(_config: object, *, operations: Any) -> RowwiseEmbeddingModule:
+        return RowwiseEmbeddingModule(operations)
+
+    state = {
+        "embed_tokens.weight": torch.tensor(
+            [
+                [1, -2, 3, -4],
+                [5, 6, -7, -8],
+                [-9, 10, 11, -12],
+                [13, -14, 15, -16],
+                [-17, 18, -19, 20],
+            ],
+            dtype=torch.int8,
+        ),
+        "embed_tokens.weight_scale": torch.tensor([[0.5], [0.25], [0.125], [0.75], [1.25]]),
+    }
+    path = write_checkpoint(tmp_path / "rowwise-int8.safetensors", state)
+    quant = LayerQuant(
+        layer="embed_tokens",
+        format="int8_tensorwise",
+        weight="embed_tokens.weight",
+        weight_scale="embed_tokens.weight_scale",
+    )
+    plan = component_plan(
+        "text",
+        path,
+        SimpleNamespace(),
+        state,
+        quant={"embed_tokens": quant},
+    )
+
+    module = assemble_mod._load_component(  # pyright: ignore[reportPrivateUsage]
+        plan,
+        build,
+        compute_dtype=torch.float32,
+        fp8_matmul=False,
+    )
+
+    assert isinstance(module.embed_tokens, Int8Embedding)
+    assert module.embed_tokens.convrot is False
+    assert module.embed_tokens.weight_scale.shape == (5, 1)
+    indices = torch.tensor([[4, 1, 3], [0, 2, 4]])
+    expected_weight = state["embed_tokens.weight"].float() * state["embed_tokens.weight_scale"]
+    expected = torch.nn.functional.embedding(indices, expected_weight)
+    with torch.no_grad():
+        actual = module.embed_tokens(indices)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
 def test_quantized_component_loads_cast_state_at_bound_compute_dtype(tmp_path: Path) -> None:
     class MixedPrecisionModule(torch.nn.Module):
         def __init__(self, operations: Any) -> None:

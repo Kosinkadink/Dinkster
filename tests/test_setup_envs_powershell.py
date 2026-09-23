@@ -1,19 +1,26 @@
 from __future__ import annotations
 
+import ast
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
+from dinkster_workers.backend_env import BACKEND_ENV_RECIPES
+from packaging.requirements import Requirement
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 POWERSHELL_SETUP = REPO_ROOT / "scripts" / "setup_envs.ps1"
 POSIX_SETUP = REPO_ROOT / "scripts" / "setup_envs.sh"
 GPU_SETUP_DOC = REPO_ROOT / "packages" / "dinkster-inference-torch" / "README.md"
 GPU_TEST = REPO_ROOT / "packages" / "dinkster-inference-torch" / "tests" / "test_gpu.py"
+INFERENCE_TORCH_PROJECT = REPO_ROOT / "packages" / "dinkster-inference-torch"
+MINIMAX_MUSIC3_COMPONENT = "minimax_music3_component"
 GPU_MODEL_PACKS = {
     "packages/dinkster-model-triposplat": "dinkster_model_triposplat",
     "packages/dinkster-model-wan": "dinkster_model_wan",
@@ -40,6 +47,76 @@ def _posix_editables(source: str, start: str, end: str) -> list[str]:
     return re.findall(r"-e ['\"]?(packages/[^\s'\"\\]+)", section)
 
 
+def _requirement_names(requirements: list[str] | tuple[str, ...]) -> set[str]:
+    return {
+        Requirement(requirement).name.lower()
+        for requirement in requirements
+        if not requirement.startswith("$")
+    }
+
+
+def _posix_requirement_names(source: str, start: str, end: str) -> set[str]:
+    section = start + source.rsplit(start, 1)[1].split(end, 1)[0]
+    command_lines: list[str] = []
+    for line in section.splitlines():
+        command_lines.append(line)
+        if not line.rstrip().endswith("\\"):
+            break
+    command = "\n".join(command_lines)
+    tokens = shlex.split(command.replace("\\\n", " "))
+    requirements = tokens[tokens.index("--python") + 2 : tokens.index("-e")]
+    return _requirement_names(requirements)
+
+
+def _module_level_statements(statements: list[ast.stmt]) -> list[ast.stmt]:
+    result: list[ast.stmt] = []
+    for statement in statements:
+        result.append(statement)
+        if isinstance(statement, ast.If | ast.Try):
+            result.extend(_module_level_statements(statement.body))
+            result.extend(_module_level_statements(statement.orelse))
+            if isinstance(statement, ast.Try):
+                result.extend(_module_level_statements(statement.finalbody))
+                for handler in statement.handlers:
+                    result.extend(_module_level_statements(handler.body))
+        elif isinstance(statement, ast.With):
+            result.extend(_module_level_statements(statement.body))
+    return result
+
+
+def _recursive_module_imports(module: str) -> set[str]:
+    source_root = INFERENCE_TORCH_PROJECT / "src" / "dinkster_inference_torch"
+    pending = [module]
+    visited: set[str] = set()
+    imports: set[str] = set()
+    while pending:
+        current = pending.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        path = source_root / f"{current.replace('.', '/')}.py"
+        if not path.is_file():
+            continue
+        statements = _module_level_statements(ast.parse(path.read_text()).body)
+        for statement in statements:
+            if isinstance(statement, ast.Import):
+                imports.update(alias.name.split(".", 1)[0] for alias in statement.names)
+            elif isinstance(statement, ast.ImportFrom):
+                if statement.level == 0:
+                    if statement.module is not None:
+                        imports.add(statement.module.split(".", 1)[0])
+                    continue
+                parent = current.split(".")[: -statement.level]
+                relative = parent + ([statement.module] if statement.module else [])
+                if statement.module is not None:
+                    pending.append(".".join(relative))
+                for alias in statement.names:
+                    candidate = ".".join((*relative, alias.name))
+                    if (source_root / f"{candidate.replace('.', '/')}.py").is_file():
+                        pending.append(candidate)
+    return {name.replace("_", "-").lower() for name in imports - sys.stdlib_module_names}
+
+
 def test_powershell_setup_matches_posix_editable_package_closure() -> None:
     powershell = POWERSHELL_SETUP.read_text()
     posix = POSIX_SETUP.read_text()
@@ -54,6 +131,56 @@ def test_powershell_setup_matches_posix_editable_package_closure() -> None:
         "uv pip install --python .venv-gpu/bin/python \\",
         "\n\nelse",
     )
+
+
+def test_supported_execution_environments_cover_minimax_music3_runtime_imports() -> None:
+    powershell = POWERSHELL_SETUP.read_text()
+    posix = POSIX_SETUP.read_text()
+    project = tomllib.loads((INFERENCE_TORCH_PROJECT / "pyproject.toml").read_text())["project"]
+    base_requirements = _requirement_names(project["dependencies"])
+    imported_distributions = _recursive_module_imports(MINIMAX_MUSIC3_COMPONENT)
+
+    contracts = {
+        "package torch extra": base_requirements
+        | _requirement_names(project["optional-dependencies"]["torch"]),
+        "PowerShell CPU": base_requirements
+        | _requirement_names(_powershell_dependency_array(powershell, "CpuDependencies"))
+        | {"torch"},
+        "PowerShell CUDA": base_requirements
+        | _requirement_names(_powershell_dependency_array(powershell, "GpuDependencies"))
+        | {"torch"},
+        "POSIX CPU": base_requirements
+        | _posix_requirement_names(
+            posix,
+            "uv pip install --python .venv-torch/bin/python pytest packaging",
+            "# The direct PyPI URL forces",
+        )
+        | {"torch"},
+        "POSIX CUDA": base_requirements
+        | _posix_requirement_names(
+            posix,
+            "uv pip install --python .venv-gpu/bin/python \\",
+            "\n\nelse",
+        )
+        | {"torch"},
+    }
+    contracts.update(
+        {
+            f"{cell} backend": base_requirements
+            | _requirement_names((*recipe.support_packages, recipe.torch_requirement))
+            for cell, recipe in BACKEND_ENV_RECIPES.items()
+        }
+    )
+
+    missing = {
+        name: sorted(imported_distributions - installed)
+        for name, installed in contracts.items()
+        if imported_distributions - installed
+    }
+    assert not missing
+
+    root_project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())["project"]
+    assert "torch" not in _requirement_names(root_project["dependencies"])
 
 
 def test_gpu_setup_installs_model_packs_imported_by_gpu_tests() -> None:
@@ -95,6 +222,7 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "pillow==12.0.0",
         "safetensors==0.8.0",
         "sentencepiece==0.2.1",
+        "tokenizers==0.23.1",
         "transformers==5.16.1",
         "dinkster-aimdo==0.5.5.post2",
         "$KitchenCpuWheel",
@@ -109,6 +237,7 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "packaging",
         "safetensors==0.8.0",
         "sentencepiece==0.2.1",
+        "tokenizers==0.23.1",
         "dinkster-kitchen==0.2.35.post1",
         "dinkster-aimdo==0.5.5.post2",
         "triton-windows==3.7.1.post27",

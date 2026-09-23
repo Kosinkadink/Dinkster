@@ -48,6 +48,7 @@ from dinkster_memory import (
     ConsumerItem,
     FullReleaseCommitResult,
     FullReleaseResult,
+    PageMap,
     PressureSignal,
     ReleaseCandidate,
 )
@@ -112,6 +113,22 @@ def _declared_cost(meta: Mapping[str, object]) -> dict[str, int]:
         for residency, nbytes in cast("Mapping[str, object]", cost).items()
         if isinstance(nbytes, int) and not isinstance(nbytes, bool) and nbytes > 0
     }
+
+
+def _native_page_map(obj: object) -> PageMap | None:
+    if not isinstance(obj, (NativeRuntimeHandle, NativeComponentHandle)):
+        return None
+    maps: list[PageMap] = []
+    for mechanism in obj.mechanisms:
+        report = getattr(mechanism, "page_map", None)
+        if callable(report) and (pages := cast("PageMap | None", report())) is not None:
+            maps.append(pages)
+    if not maps or any(pages.page_bytes != maps[0].page_bytes for pages in maps[1:]):
+        return None
+    return PageMap(
+        page_bytes=maps[0].page_bytes,
+        flags=tuple(flag for pages in maps for flag in pages.flags),
+    )
 
 
 class _PoolEntry:
@@ -605,7 +622,7 @@ class ResidentPool(ResidencyTable):
 
     def details(self) -> list[ConsumerItem]:
         with self._coordination_lock:
-            items: list[ConsumerItem] = []
+            rows: list[tuple[str, str, dict[str, int], object | None]] = []
             for rid, entry in sorted(self._entries.items(), key=lambda kv: -kv[1].last_used):
                 if entry.loaded:
                     nbytes = dict(entry.cost)
@@ -617,15 +634,26 @@ class ResidentPool(ResidencyTable):
                         for lane, cost in entry.cost.items()
                         if not lane.startswith("vram:")
                     }
-                items.append(
-                    ConsumerItem(
-                        item_id=rid,
-                        # Never a Python class name (collides); the rid cannot.
-                        display_name=entry.display_name or f"resident {rid[:12]}",
-                        bytes_by_residency=nbytes,
+                rows.append(
+                    (
+                        rid,
+                        entry.display_name or f"resident {rid[:12]}",
+                        nbytes,
+                        self._objects.get(rid),
                     )
                 )
-            return items
+        # Mechanism operations reconcile the pool while holding their own locks.
+        # Query them only after releasing the pool lock to preserve lock order.
+        return [
+            ConsumerItem(
+                item_id=rid,
+                # Never a Python class name (collides); the rid cannot.
+                display_name=display_name,
+                bytes_by_residency=nbytes,
+                pages=None if obj is None else _native_page_map(obj),
+            )
+            for rid, display_name, nbytes, obj in rows
+        ]
 
     def __len__(self) -> int:
         with self._coordination_lock:

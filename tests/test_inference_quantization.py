@@ -625,6 +625,69 @@ def test_int8_tensorwise_convrot_variant_is_explicit_and_strict() -> None:
     }
 
 
+def test_int8_tensorwise_non_convrot_accepts_only_scalar_or_rowwise_scale() -> None:
+    scalar = unsupported_header("int8_tensorwise")
+    scalar_split = split_quantization(
+        scalar,
+        metadata({"block": {"format": "int8_tensorwise"}}),
+    )
+    assert scalar_split.layers["block"].weight_scale == "block.weight_scale"
+
+    rowwise = unsupported_header("int8_tensorwise")
+    rowwise["block.weight_scale"] = geometry((128, 1), FLOAT32)
+    split = split_quantization(
+        rowwise,
+        metadata({"block": {"format": "int8_tensorwise"}}),
+    )
+    assert split.layers["block"].parameters == {
+        "convrot": False,
+        "convrot_groupsize": 256,
+    }
+
+
+@pytest.mark.parametrize(
+    "scale",
+    (
+        geometry((128,), FLOAT32),
+        geometry((127, 1), FLOAT32),
+        geometry((128, 1), FLOAT16),
+    ),
+    ids=("malformed-rank", "wrong-row-count", "wrong-dtype"),
+)
+def test_int8_tensorwise_non_convrot_rejects_invalid_rowwise_scale(
+    scale: TensorGeometry,
+) -> None:
+    header = unsupported_header("int8_tensorwise")
+    header["block.weight_scale"] = scale
+    with pytest.raises(
+        QuantizationError,
+        match=r"must be float32 with shape \(\) or \(128, 1\)",
+    ):
+        split_quantization(
+            header,
+            metadata({"block": {"format": "int8_tensorwise"}}),
+        )
+
+
+def test_int8_tensorwise_convrot_rejects_scalar_scale() -> None:
+    header = unsupported_header("int8_tensorwise")
+    with pytest.raises(
+        QuantizationError,
+        match=r"must be float32 with shape \(128, 1\)",
+    ):
+        split_quantization(
+            header,
+            metadata(
+                {
+                    "block": {
+                        "format": "int8_tensorwise",
+                        "params": {"convrot": True, "convrot_groupsize": 256},
+                    }
+                }
+            ),
+        )
+
+
 def test_convrot_w4a4_accepts_proven_top_level_and_nested_spellings() -> None:
     top = split_quantization(
         unsupported_header("convrot_w4a4"),
