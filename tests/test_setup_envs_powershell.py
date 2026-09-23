@@ -95,7 +95,7 @@ def test_torch_environments_include_server_without_host_package_leakage() -> Non
             == 2
         )
         assert setup.count("assert site.ENABLE_USER_SITE is False") == 2
-        assert setup.count("assert version('av') == '17.0.0'") == 2
+        assert setup.count("assert version('av') == '18.1.0'") == 2
         assert "--system-site-packages" not in setup
         assert "PYTHONPATH" not in setup
     assert posix.count("/python -I -c") == 2

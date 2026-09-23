@@ -118,7 +118,7 @@ uv pip install --python .venv-torch/bin/python "$kitchen_cpu_wheel"
 if [ "$os" != "Darwin" ]; then
     uv pip install --python .venv-torch/bin/python "dinkster-aimdo==0.5.5.post2"
 fi
-.venv-torch/bin/python -I -c "from importlib.metadata import version; import site; import av, dinkster.serve, dinkster_model_triposplat.provider, torch; assert site.ENABLE_USER_SITE is False; assert version('av') == '17.0.0'; assert version('dinkster-kitchen') == '0.2.35.post1'"
+.venv-torch/bin/python -I -c "from importlib.metadata import version; import site; import av, dinkster.serve, dinkster_model_triposplat.provider, torch; assert site.ENABLE_USER_SITE is False; assert version('av') == '18.1.0'; assert version('dinkster-kitchen') == '0.2.35.post1'"
 
 # ------------------------------------------------ shared Python headers
 # Torch inductor CPU and CUDA compilation both include Python.h. The CPU and
@@ -210,7 +210,7 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         uv pip install --python .venv-gpu/bin/python --no-deps --no-sources \
             -e "$acceptance_package"
     fi
-    .venv-gpu/bin/python -I -c "from importlib.metadata import version; import site; import av, dinkster.serve, dinkster_model_triposplat.provider, torch; assert site.ENABLE_USER_SITE is False; assert version('av') == '17.0.0'; assert torch.__version__ == '2.13.0+cu130'; assert version('torchvision') == '0.28.0+cu130'; assert version('tokenizers') == '0.23.1'"
+    .venv-gpu/bin/python -I -c "from importlib.metadata import version; import site; import av, dinkster.serve, dinkster_model_triposplat.provider, torch; assert site.ENABLE_USER_SITE is False; assert version('av') == '18.1.0'; assert torch.__version__ == '2.13.0+cu130'; assert version('torchvision') == '0.28.0+cu130'; assert version('tokenizers') == '0.23.1'"
 
 else
     echo "==> no NVIDIA GPU detected - skipping .venv-gpu (the GPU gate"

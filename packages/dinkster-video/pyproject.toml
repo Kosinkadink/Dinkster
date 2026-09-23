@@ -4,7 +4,7 @@ version = "0.0.1"
 description = "Bounded VIDEO materialization shared by native and compatibility nodes"
 requires-python = ">=3.12"
 dependencies = [
-    "av==17.0.0",
+    "av==18.1.0",
     "numpy>=1.26",
     "dinkster-values",
     "pillow>=10",

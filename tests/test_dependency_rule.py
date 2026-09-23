@@ -348,11 +348,11 @@ def test_media_packages_share_comfyuis_pyav_runtime() -> None:
         project = tomllib.loads(
             (REPO_ROOT / f"packages/{package}/pyproject.toml").read_text(encoding="utf-8")
         )
-        assert "av==17.0.0" in project["project"]["dependencies"]
+        assert "av==18.1.0" in project["project"]["dependencies"]
 
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
     packages = {package["name"]: package for package in locked["package"]}
-    assert packages["av"]["version"] == "17.0.0"
+    assert packages["av"]["version"] == "18.1.0"
 
 
 def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:
