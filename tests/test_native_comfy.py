@@ -245,6 +245,19 @@ def test_native_manifest_catalogs_match_provider_claims(tmp_path: Path, native_o
     generation, provider = comfy_compat_specs(None if native_only else tmp_path)
     owner_manifest = load_manifest(generation.manifest)
     provider_manifest = load_manifest(provider.manifest)
+    assert provider.packs is not None
+    aliases = provider.packs["comfy"].comfy_aliases
+    assert aliases is not None
+    assert {
+        record.source.node_class
+        for record in aliases.records
+        if record.source.revision == "b5cc8830279eae909a59de030af1e50761c36751"
+    } == {
+        "MiniMaxH3ImageToVideo",
+        "MiniMaxH3ReferenceToVideo",
+        "MiniMaxH3AddGuide",
+        "ResolutionSelector",
+    }
     excluded = COMFY_RUNTIME_NODE_IDS if native_only else frozenset()
     owner_types = {node.schema().node_type for node in GENERATION_SCHEMA_NODES}
     assert set(generation.optional_execution) == excluded

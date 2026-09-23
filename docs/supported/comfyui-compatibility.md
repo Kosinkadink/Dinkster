@@ -14,6 +14,9 @@
 - Pinned core video nodes `LoadVideo`, `Video Slice`, `CreateVideo`,
   `GetVideoComponents`, `SaveVideo`, and `SaveWEBM`, including guarded saved
   output import as execution artifacts
+- Official MiniMax H3 image-to-video and reference-to-video source nodes, plus
+  Resolution Selector, lower to native nodes from workflows pinned to ComfyUI
+  `b5cc8830279eae909a59de030af1e50761c36751`.
 - Native aliases for those video nodes plus `VideoTrim` and `VideoCrop`,
   including flat and nested saver selections, numeric depth choices, and
   lossless VIDEO_EDIT widget values. The pinned template corpus replays all

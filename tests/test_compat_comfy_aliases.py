@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any, cast
 
 from dinkster_compat_comfy import LoadVae, LoadVision
+from dinkster_native.native import (
+    MiniMaxH3AddGuide,
+    MiniMaxH3ImageToVideo,
+    MiniMaxH3ReferenceToVideo,
+    ResolutionSelector,
+)
 from dinkster_schema import (
     build_schemas,
     comfy_alias_registry_from_wire,
@@ -28,9 +34,28 @@ def test_compat_comfy_aliases_are_canonical() -> None:
     payload = _registry()
     registry = comfy_alias_registry_from_wire(payload)
     assert comfy_alias_registry_to_wire(registry) == payload
-    assert comfy_alias_registry_problems(registry, build_schemas((LoadVae, LoadVision))) == ()
+    assert (
+        comfy_alias_registry_problems(
+            registry,
+            build_schemas(
+                (
+                    LoadVae,
+                    LoadVision,
+                    MiniMaxH3ImageToVideo,
+                    MiniMaxH3ReferenceToVideo,
+                    MiniMaxH3AddGuide,
+                    ResolutionSelector,
+                )
+            ),
+        )
+        == ()
+    )
 
-    records = {record["source"]["nodeClass"]: record for record in payload["records"]}
+    records = {
+        record["source"]["nodeClass"]: record
+        for record in payload["records"]
+        if record["source"]["revision"] == "b78cec87"
+    }
     assert set(records) == {"CLIPVisionLoader", "VAELoader"}
     assert {record["source"]["revision"] for record in records.values()} == {"b78cec87"}
     assert records["CLIPVisionLoader"]["replacement"]["cases"][0]["inputs"] == {

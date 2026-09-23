@@ -22,8 +22,10 @@ from ..native_arm_core import (
     MiniMaxH3AVEncode,
     MiniMaxH3FL2VAConditioning,
     MiniMaxH3ImageReferenceValue,
+    MiniMaxH3ImageToVideo,
     MiniMaxH3MotionContext,
     MiniMaxH3REF2VAConditioning,
+    MiniMaxH3ReferenceToVideo,
     MiniMaxH3T2VAConditioning,
     MiniMaxH3VideoReferenceValue,
     NativeComponentHandle,
@@ -813,6 +815,106 @@ class NativeMiniMaxH3REF2VAConditioning(MiniMaxH3REF2VAConditioning):
             request,
             payloads,
         )
+
+
+def _empty_minimax_h3_target(width: int, height: int, length: int) -> object:
+    result = NativeEmptyMiniMaxH3AV.execute(
+        width=width,
+        height=height,
+        frame_count=length,
+    )
+    return result["latent"]
+
+
+class NativeMiniMaxH3ImageToVideo(MiniMaxH3ImageToVideo):
+    @classmethod
+    def execute(
+        cls,
+        *,
+        clip: object,
+        vae: object,
+        prompt: str,
+        width: int,
+        height: int,
+        length: int,
+        first_frame: object = None,
+        last_frame: object = None,
+    ) -> Mapping[str, object]:
+        latent = _empty_minimax_h3_target(width, height, length)
+        if first_frame is None and last_frame is None:
+            result = NativeMiniMaxH3T2VAConditioning.execute(
+                clip=clip,
+                target=latent,
+                prompt=prompt,
+            )
+        else:
+            result = NativeMiniMaxH3FL2VAConditioning.execute(
+                clip=clip,
+                video_vae=vae,
+                target=latent,
+                prompt=prompt,
+                first_image=first_frame,
+                last_image=last_frame,
+            )
+        return cls.outputs(positive=result["conditioning"], latent=latent)
+
+
+def _audio_reference(value: object, name: str) -> MiniMaxH3AudioReferenceValue:
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{name} must be the standard waveform/sample_rate mapping")
+    audio = cast("Mapping[object, object]", value)
+    return MiniMaxH3AudioReferenceValue(
+        cast("Any", audio.get("waveform")),
+        cast("Any", audio.get("sample_rate")),
+    )
+
+
+class NativeMiniMaxH3ReferenceToVideo(MiniMaxH3ReferenceToVideo):
+    @classmethod
+    def execute(
+        cls,
+        *,
+        clip: object,
+        prompt: str,
+        width: int,
+        height: int,
+        length: int,
+        ref_image_size: str,
+        vae: object = None,
+        audio_vae: object = None,
+        ref_images: Mapping[str, object],
+        ref_videos: Mapping[str, object],
+        ref_video_audios: Mapping[str, object],
+        ref_audios: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        references: list[object] = [
+            MiniMaxH3ImageReferenceValue(image) for image in ref_images.values()
+        ]
+        for name, frames in ref_videos.items():
+            suffix = name.rsplit("_", 1)[-1]
+            soundtrack = ref_video_audios.get(f"ref_video_audio_{suffix}")
+            if soundtrack is None:
+                soundtrack = ref_video_audios.get(suffix)
+            references.append(
+                MiniMaxH3VideoReferenceValue(
+                    cast("Any", frames),
+                    None
+                    if soundtrack is None
+                    else _audio_reference(soundtrack, f"ref_video_audio_{suffix}"),
+                )
+            )
+        references.extend(_audio_reference(audio, name) for name, audio in ref_audios.items())
+        latent = _empty_minimax_h3_target(width, height, length)
+        result = NativeMiniMaxH3REF2VAConditioning.execute(
+            clip=clip,
+            video_vae=vae,
+            audio_vae=audio_vae,
+            target=latent,
+            prompt=prompt,
+            references=references,
+            ref_image_size=ref_image_size,
+        )
+        return cls.outputs(positive=result["conditioning"], latent=latent)
 
 
 class NativeMiniMaxH3AddGuide(MiniMaxH3AddGuide):
