@@ -1254,9 +1254,7 @@ def _installed_pack_digest(manifest: Path, module_root: Path | None) -> str:
                 bundled_namespace = manifest.parent / module_root.parent.name
                 installed_namespace = root / module_root.parent.name
                 installed_namespace.mkdir()
-                shutil.copy2(
-                    bundled_namespace / "__init__.py", installed_namespace / "__init__.py"
-                )
+                shutil.copy2(bundled_namespace / "__init__.py", installed_namespace / "__init__.py")
                 shutil.copytree(module_root, namespace / module_root.name)
                 for sidecar in manifest.parent.iterdir():
                     if sidecar.is_file() and sidecar != manifest:
