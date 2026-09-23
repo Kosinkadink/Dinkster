@@ -49,7 +49,6 @@ from ..native_arm_core import (
     log,
     math,
     native_execution_span,
-    replace,
 )
 from ..native_arm_runtime import (
     _native_handle,
@@ -407,12 +406,8 @@ def _minimax_h3_condition(
     runtime: Any,
     av: Any,
     request: Any,
-    negative_prompt: str | None,
     payloads: Mapping[str, Any],
 ) -> Mapping[str, object]:
-    if negative_prompt is not None and type(negative_prompt) is not str:
-        raise TypeError("negative_prompt must be a string when provided")
-    negative_request = None if negative_prompt is None else replace(request, prompt=negative_prompt)
     torch = _torch()
     inference = importlib.import_module("dinkster_inference")
     frame_count = _minimax_h3_frame_count(av)
@@ -445,29 +440,12 @@ def _minimax_h3_condition(
                     payloads=payloads,
                     cancelled=cancelled,
                 )
-                negative_prepared = (
-                    None
-                    if negative_request is None
-                    else runtime.condition(
-                        negative_request,
-                        target=load_av,
-                        frame_count=frame_count,
-                        payloads=payloads,
-                        cancelled=cancelled,
-                    )
-                )
-
-    def lane(payload: object) -> list[list[object]]:
-        value = inference.PreparedMultiStreamConditioning(
-            conditioner_handle.resource_identity,
-            payload,
-        )
-        return [[value, cast("dict[str, object]", {})]]
-
-    return cls.outputs(
-        positive=lane(prepared),
-        negative=[] if negative_prepared is None else lane(negative_prepared),
+    value = inference.PreparedMultiStreamConditioning(
+        conditioner_handle.resource_identity,
+        prepared,
     )
+    conditioning: list[list[object]] = [[value, cast("dict[str, object]", {})]]
+    return cls.outputs(conditioning=conditioning)
 
 
 class NativeEmptyMiniMaxH3AV(EmptyMiniMaxH3AV):
@@ -654,7 +632,6 @@ class NativeMiniMaxH3T2VAConditioning(MiniMaxH3T2VAConditioning):
         clip: object,
         target: object,
         prompt: str,
-        negative_prompt: str | None = None,
     ) -> Mapping[str, object]:
         handle, codecs, runtime = _minimax_h3_conditioner_runtime(clip)
         torch = _torch()
@@ -667,7 +644,6 @@ class NativeMiniMaxH3T2VAConditioning(MiniMaxH3T2VAConditioning):
             runtime,
             target_av,
             inference.MiniMaxH3T2VARequest(prompt),
-            negative_prompt,
             {},
         )
 
@@ -681,7 +657,6 @@ class NativeMiniMaxH3FL2VAConditioning(MiniMaxH3FL2VAConditioning):
         video_vae: object,
         target: object,
         prompt: str,
-        negative_prompt: str | None = None,
         first_image: object = None,
         last_image: object = None,
     ) -> Mapping[str, object]:
@@ -727,7 +702,6 @@ class NativeMiniMaxH3FL2VAConditioning(MiniMaxH3FL2VAConditioning):
             runtime,
             target_av,
             request,
-            negative_prompt,
             payloads,
         )
 
@@ -744,7 +718,6 @@ class NativeMiniMaxH3REF2VAConditioning(MiniMaxH3REF2VAConditioning):
         prompt: str,
         references: object,
         ref_image_size: str,
-        negative_prompt: str | None = None,
     ) -> Mapping[str, object]:
         if isinstance(references, str | bytes) or not isinstance(references, Sequence):
             raise TypeError("references must be a sequence")
@@ -838,7 +811,6 @@ class NativeMiniMaxH3REF2VAConditioning(MiniMaxH3REF2VAConditioning):
             runtime,
             target_av,
             request,
-            negative_prompt,
             payloads,
         )
 

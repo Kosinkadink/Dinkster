@@ -15,8 +15,10 @@ from dinkster_compat_comfy import native_arm
 from dinkster_compat_comfy import translate as comfy_translate
 from dinkster_compat_comfy.native import (
     AUDIO,
-    CLIP,
-    CONDITIONING,
+    DINKSTER_CLIP,
+    DINKSTER_CONDITIONING,
+    DINKSTER_LATENT,
+    DINKSTER_VAE,
     FLOAT,
     IMAGE,
     INT,
@@ -181,22 +183,27 @@ def test_h3_schemas_use_declared_resident_graph_types() -> None:
         "clip",
         "target",
         "prompt",
-        "negative_prompt",
     )
-    assert conditioning.inputs[0].type == CLIP
-    assert conditioning.inputs[-1].default is None
-    assert tuple(item.id for item in conditioning.outputs) == ("positive", "negative")
-    assert all(item.type == CONDITIONING for item in conditioning.outputs)
+    assert tuple(item.type for item in conditioning.inputs[:2]) == (
+        DINKSTER_CLIP,
+        DINKSTER_LATENT,
+    )
+    assert tuple(item.id for item in conditioning.outputs) == ("conditioning",)
+    assert all(item.type == DINKSTER_CONDITIONING for item in conditioning.outputs)
     fl2va = nodes["dinkster.minimax_h3_fl2va_conditioning"].schema()
     assert tuple(item.id for item in fl2va.inputs[:2]) == ("clip", "video_vae")
-    assert (fl2va.inputs[0].type, fl2va.inputs[1].type) == (CLIP, VAE)
+    assert (fl2va.inputs[0].type, fl2va.inputs[1].type) == (DINKSTER_CLIP, DINKSTER_VAE)
     ref2va = nodes["dinkster.minimax_h3_ref2va_conditioning"].schema()
     assert tuple(item.id for item in ref2va.inputs[:3]) == (
         "clip",
         "video_vae",
         "audio_vae",
     )
-    assert tuple(item.type for item in ref2va.inputs[:3]) == (CLIP, VAE, VAE)
+    assert tuple(item.type for item in ref2va.inputs[:3]) == (
+        DINKSTER_CLIP,
+        DINKSTER_VAE,
+        DINKSTER_VAE,
+    )
     guide = nodes["dinkster.minimax_h3_add_guide"].schema()
     assert tuple(item.id for item in guide.inputs) == (
         "positive",
@@ -208,16 +215,16 @@ def test_h3_schemas_use_declared_resident_graph_types() -> None:
         "frame_idx",
     )
     assert tuple(item.type for item in guide.inputs) == (
-        CONDITIONING,
-        VAE,
-        VAE,
-        LATENT,
+        DINKSTER_CONDITIONING,
+        DINKSTER_VAE,
+        DINKSTER_VAE,
+        DINKSTER_LATENT,
         IMAGE,
         AUDIO,
         INT,
     )
     assert guide.aliases == ("MiniMaxH3AddGuide",)
-    assert guide.outputs[0].type == CONDITIONING
+    assert guide.outputs[0].type == DINKSTER_CONDITIONING
     motion = nodes["dinkster.minimax_h3_motion_context"].schema()
     assert tuple(item.id for item in motion.inputs) == (
         "positive",
@@ -226,14 +233,14 @@ def test_h3_schemas_use_declared_resident_graph_types() -> None:
         "context_length",
     )
     assert tuple(item.type for item in motion.inputs) == (
-        CONDITIONING,
-        LATENT,
-        LATENT,
+        DINKSTER_CONDITIONING,
+        DINKSTER_LATENT,
+        DINKSTER_LATENT,
         INT,
     )
     assert motion.inputs[-1].default == 22
     assert motion.inputs[-1].widget == NumberWidget(min=5, max=3600, step=17)
-    assert tuple(item.type for item in motion.outputs) == (CONDITIONING, FLOAT)
+    assert tuple(item.type for item in motion.outputs) == (DINKSTER_CONDITIONING, FLOAT)
     assert motion.aliases == ("MiniMaxH3MotionContext",)
     for node_type in expected:
         assert schema_signature(nodes[node_type].schema()) == schema_signature(
@@ -663,7 +670,7 @@ def test_empty_returns_exact_ordered_multistream_latent(monkeypatch: pytest.Monk
     ]
 
 
-def test_conditioning_returns_positive_and_neutral_negative(
+def test_conditioning_returns_exactly_one_prepared_conditioning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inference = __import__("dinkster_inference")
@@ -689,11 +696,10 @@ def test_conditioning_returns_positive_and_neutral_negative(
     result = native_arm.NativeMiniMaxH3T2VAConditioning.execute(
         clip=object(), target=_latent(), prompt="prompt"
     )
-    assert tuple(result) == ("positive", "negative")
-    assert result["negative"] == []
-    positive = cast("list[list[object]]", result["positive"])
-    assert len(positive) == 1 and positive[0][1] == {}
-    carrier = cast("Any", positive[0][0])
+    assert tuple(result) == ("conditioning",)
+    conditioning = cast("list[list[object]]", result["conditioning"])
+    assert len(conditioning) == 1 and conditioning[0][1] == {}
+    carrier = cast("Any", conditioning[0][0])
     assert type(carrier) is inference.PreparedMultiStreamConditioning
     assert carrier.runtime_identity == conditioner.resource_identity
     assert carrier.payload == "prepared"
@@ -745,7 +751,7 @@ def test_conditioning_adapts_an_ordinary_empty_latent(
         prompt="prompt",
     )
 
-    assert result["negative"] == []
+    assert tuple(result) == ("conditioning",)
     assert adaptations == [
         {
             "latent": ordinary,
@@ -814,7 +820,7 @@ def test_task_specific_conditioning_adapts_target_before_geometry(
             ref_image_size="match",
         )
 
-    assert result["negative"] == []
+    assert tuple(result) == ("conditioning",)
     assert adaptations == [
         {
             "latent": ordinary,
@@ -826,7 +832,7 @@ def test_task_specific_conditioning_adapts_target_before_geometry(
     assert conditions[0]["frame_count"] == 1
 
 
-def test_conditioning_negative_prompt_prepares_matching_component_lane(
+def test_two_conditioning_nodes_prepare_two_independent_prompt_lanes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inference = __import__("dinkster_inference")
@@ -853,11 +859,17 @@ def test_conditioning_negative_prompt_prepares_matching_component_lane(
     )
     monkeypatch.setattr(native_arm, "_torch", _fake_torch)
 
-    result = native_arm.NativeMiniMaxH3T2VAConditioning.execute(
-        clip=object(),
-        target=_latent(),
+    clip = object()
+    target = _latent()
+    positive_result = native_arm.NativeMiniMaxH3T2VAConditioning.execute(
+        clip=clip,
+        target=target,
         prompt="a singer",
-        negative_prompt="off-key vocals",
+    )
+    negative_result = native_arm.NativeMiniMaxH3T2VAConditioning.execute(
+        clip=clip,
+        target=target,
+        prompt="off-key vocals",
     )
 
     assert [cast("Any", call["request"]).prompt for call in calls] == [
@@ -865,10 +877,10 @@ def test_conditioning_negative_prompt_prepares_matching_component_lane(
         "off-key vocals",
     ]
     assert all(type(call["request"]) is inference.MiniMaxH3T2VARequest for call in calls)
-    assert calls[0]["target"] is calls[1]["target"]
-    positive = cast("Any", result["positive"])[0][0]
-    negative = cast("Any", result["negative"])[0][0]
+    positive = cast("Any", positive_result["conditioning"])[0][0]
+    negative = cast("Any", negative_result["conditioning"])[0][0]
     assert positive.runtime_identity == negative.runtime_identity == identity
+    assert positive.payload is not negative.payload
     assert positive.payload.prompt == "a singer"
     assert negative.payload.prompt == "off-key vocals"
 
@@ -1357,12 +1369,16 @@ def test_provider_ksampler_samples_h3_with_prepared_guidance_lanes(
         lambda clip: (conditioner, (), ConditionerRuntime()),
     )
     monkeypatch.setattr(native_arm, "_torch", _fake_torch)
-    conditioning = native_arm.NativeMiniMaxH3T2VAConditioning.execute(
+    positive = native_arm.NativeMiniMaxH3T2VAConditioning.execute(
         clip=object(),
         target=_latent(),
         prompt="a singer",
-        negative_prompt="off-key vocals",
-    )
+    )["conditioning"]
+    negative = native_arm.NativeMiniMaxH3T2VAConditioning.execute(
+        clip=object(),
+        target=_latent(),
+        prompt="off-key vocals",
+    )["conditioning"]
 
     calls: list[dict[str, object]] = []
 
@@ -1399,8 +1415,8 @@ def test_provider_ksampler_samples_h3_with_prepared_guidance_lanes(
         cfg=2.5,
         sampler_name="euler",
         scheduler="simple",
-        positive=conditioning["positive"],
-        negative=conditioning["negative"],
+        positive=positive,
+        negative=negative,
         latent_image=_latent(),
         denoise=1.0,
     )
