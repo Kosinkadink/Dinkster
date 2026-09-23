@@ -3072,7 +3072,7 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
                         "COMFY_MATCHTYPE_V3",
                         {"template": template, "lazy": True},
                     ),
-                }
+                },
             }
 
         @classmethod
