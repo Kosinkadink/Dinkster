@@ -1593,6 +1593,29 @@ def test_runtime_forwards_the_token_mask_to_both_guidance_lanes(
         torch.testing.assert_close(actual.by_role("audio"), expected.by_role("audio"))
 
 
+def test_h3_fractional_denoise_mask_blends_at_the_declared_video_cells() -> None:
+    runtime, conditioner, _dit = _context_mean_runtime()
+    target = _target()
+    prepared = _condition_t2va(conditioner, target)
+    positive = replace(prepared, context=torch.full_like(prepared.context, 2.0))
+    video = target.by_role("video")
+    mask = torch.full_like(video, 0.25)
+    mask[..., :, 1] = 0.75
+
+    result = runtime.sample_custom(
+        target,
+        noise=target.map(torch.zeros_like),
+        cond=PreparedMultiStreamConditioning(runtime.conditioning_identity, positive),
+        cfg=None,
+        request=_h3_custom_request("euler", (1.0, 0.0)),
+        denoise_mask=mask,
+        compute_dtype=torch.float32,
+    ).output.by_role("video")
+
+    torch.testing.assert_close(result[..., :, 0], torch.full_like(result[..., :, 0], -0.5))
+    torch.testing.assert_close(result[..., :, 1], torch.full_like(result[..., :, 1], -1.5))
+
+
 @pytest.mark.parametrize("bad_value", (float("nan"), -0.1, 1.1))
 def test_runtime_rejects_invalid_h3_mask_values(
     runtime_fixture: RuntimeFixture,
