@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +14,7 @@ from dinkster_model_wan.wandancer_audio import (
     plan_wandancer_keyframes,
     quick_tempo_estimate,
 )
+from threadpoolctl import threadpool_limits
 
 from tools.golden_platform import GoldenUnavailableError, fetch_platform_golden
 
@@ -23,6 +25,7 @@ _DIRECT_OPERATION_GOLDEN = json.loads(
 _AUDIO_FEATURE_DIGEST_PATH = Path(__file__).parent / "goldens" / "wandancer_audio_digest.json"
 _AUDIO_FEATURE_MAX_PROVIDER_DRIFT = 9.1553e-5
 _AUDIO_FEATURE_DRIFT_MARGIN = 8.447e-6
+_AUDIO_FEATURE_THREAD_COUNT = 4
 # The 1e-4 quantum is the measured drift plus 9.2% headroom.
 _AUDIO_FEATURE_COMPARISON_QUANTUM = np.float32(
     _AUDIO_FEATURE_MAX_PROVIDER_DRIFT + _AUDIO_FEATURE_DRIFT_MARGIN
@@ -38,6 +41,8 @@ def _canonical_audio_feature_digest(feature: np.ndarray) -> str:
 
 
 def _audio_feature_digest_key() -> str:
+    if sys.platform.startswith("linux"):
+        return f"linux-omp{_AUDIO_FEATURE_THREAD_COUNT}-mkl{_AUDIO_FEATURE_THREAD_COUNT}"
     omp_threads = os.environ.get("OMP_NUM_THREADS", "unset")
     mkl_threads = os.environ.get("MKL_NUM_THREADS", "unset")
     return f"{sys.platform}-omp{omp_threads}-mkl{mkl_threads}"
@@ -65,7 +70,13 @@ def _wandancer_audio_feature() -> np.ndarray:
         + 0.2 * np.sin(2 * np.pi * 330 * time)
         + (np.arange(samples) % 2048 < 24) * 0.5
     ).astype(np.float32)
-    return encode_wandancer_audio_features(waveform, 15_360, waveform, 31).audio_feature
+    thread_limit = (
+        threadpool_limits(limits=_AUDIO_FEATURE_THREAD_COUNT)
+        if sys.platform.startswith("linux")
+        else nullcontext()
+    )
+    with thread_limit:
+        return encode_wandancer_audio_features(waveform, 15_360, waveform, 31).audio_feature
 
 
 def test_audio_features_match_pinned_comfyui_reference() -> None:
