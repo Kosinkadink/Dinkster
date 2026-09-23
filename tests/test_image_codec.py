@@ -32,6 +32,7 @@ from dinkster_values import (
     TypeRegistry,
     Value,
     ValueMeta,
+    annotate_mask,
     decode_image_array,
     encode_canonical_png,
     encode_image_array,
@@ -362,6 +363,17 @@ def test_render_mask_accepts_batched_tensor_shaped_objects() -> None:
 
     assert png_header(rendered) == (4, 3, 0)
     assert rendered == render_mask_png(batch[0])
+
+
+def test_render_mask_normalizes_compact_alpha_bytes() -> None:
+    alpha = annotate_mask(
+        np.array([[[0, 128, 255]]], dtype=np.uint8),
+        polarity="transparency",
+        semantic="alpha",
+    )
+
+    with Image.open(io.BytesIO(render_mask_png(alpha))) as image:
+        np.testing.assert_array_equal(np.asarray(image), [[255, 127, 0]])
 
 
 def test_render_mask_rejects_unrenderable_shapes() -> None:
