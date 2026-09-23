@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import numpy as np
@@ -69,7 +70,12 @@ def _wandancer_audio_feature() -> np.ndarray:
         + 0.2 * np.sin(2 * np.pi * 330 * time)
         + (np.arange(samples) % 2048 < 24) * 0.5
     ).astype(np.float32)
-    with threadpool_limits(limits=_AUDIO_FEATURE_THREAD_COUNT):
+    thread_limit = (
+        threadpool_limits(limits=_AUDIO_FEATURE_THREAD_COUNT)
+        if sys.platform.startswith("linux")
+        else nullcontext()
+    )
+    with thread_limit:
         return encode_wandancer_audio_features(waveform, 15_360, waveform, 31).audio_feature
 
 
