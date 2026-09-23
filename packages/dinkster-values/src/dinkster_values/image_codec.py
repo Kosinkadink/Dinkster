@@ -681,7 +681,7 @@ def render_image_png(obj: object) -> bytes:
 
 def render_mask_png(obj: object) -> bytes:
     """Encode a mask array (HxW or BxHxW) as a grayscale PNG."""
-    array = _as_array(obj)
+    array = _as_array(image_input(obj))
     if array.ndim == 3:
         if array.shape[0] < 1:
             raise ValueError("cannot render an empty mask batch as PNG")

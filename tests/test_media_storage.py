@@ -15,6 +15,7 @@ from dinkster_values.audio_codec import (
     render_audio_wav,
 )
 from dinkster_values.image_codec import (
+    annotate_mask,
     decode_image_array,
     encode_image_array,
     image_array_fingerprint,
@@ -54,6 +55,21 @@ def test_image_storage_roundtrip_cost_and_consumer_conversion(dtype: str, storag
     assert normalized.dtype == np.float32
     if dtype == "float32":
         assert normalized is decoded
+
+
+def test_uint8_image_and_alpha_normalization_are_bit_exact_for_every_byte() -> None:
+    values = np.arange(256, dtype=np.uint8).reshape(1, 16, 16)
+    image = cast(np.ndarray, image_input(values))
+    expected_image = values.astype(np.float32) / np.float32(255)
+    np.testing.assert_array_equal(image.view(np.uint32), expected_image.view(np.uint32))
+
+    stored_alpha = annotate_mask(values, polarity="transparency", semantic="alpha")
+    transparency = cast(np.ndarray, image_input(stored_alpha))
+    expected_transparency = np.float32(1.0) - values.astype(np.float32) / np.float32(255)
+    np.testing.assert_array_equal(
+        transparency.view(np.uint32), expected_transparency.view(np.uint32)
+    )
+    np.testing.assert_array_equal(stored_alpha, values)
 
 
 def test_bfloat16_storage_roundtrip_keeps_bits_until_consumed() -> None:

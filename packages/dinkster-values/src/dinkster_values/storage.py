@@ -93,7 +93,7 @@ def storage_array(obj: object) -> Any:
 
 def image_input(obj: object) -> object:
     """Normalize integer pixels and upcast only at a consumer boundary."""
-    from .image_codec import copy_media_semantics
+    from .image_codec import copy_media_semantics, media_semantics
 
     kind = storage_dtype(obj)
     if hasattr(obj, "detach"):
@@ -114,6 +114,8 @@ def image_input(obj: object) -> object:
         result /= 255.0
     elif kind == "uint16":
         result /= 65535.0
+    if kind in ("uint8", "uint16") and media_semantics(obj).get("polarity") == "transparency":
+        result = 1.0 - result
     return copy_media_semantics(obj, result)
 
 

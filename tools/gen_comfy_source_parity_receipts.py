@@ -148,6 +148,7 @@ from dinkster_nodes_media_io import (  # noqa: E402
     TrimAudio,
     TrimVideo,
 )
+from dinkster_values import image_input  # noqa: E402
 from generate_math_expression_vector import build_vector, load_reference  # noqa: E402
 
 
@@ -2358,8 +2359,8 @@ def _image_receipts(
                 {
                     "id": case_id,
                     "fileSha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-                    "image": _array_descriptor(native_result["image"]),
-                    "mask": _array_descriptor(native_result["mask"]),
+                    "image": _array_descriptor(image_input(native_result["image"])),
+                    "mask": _array_descriptor(image_input(native_result["mask"])),
                 }
             )
 
@@ -2407,7 +2408,9 @@ def _image_receipts(
             reference_mask_cases.append(
                 {"channel": channel, "mask": _array_descriptor(reference_mask)}
             )
-            native_mask_cases.append({"channel": channel, "mask": _array_descriptor(native_mask)})
+            native_mask_cases.append(
+                {"channel": channel, "mask": _array_descriptor(image_input(native_mask))}
+            )
         outputs.extend(
             _write_mapping_receipt(
                 root,
