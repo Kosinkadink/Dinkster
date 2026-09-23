@@ -174,8 +174,8 @@ class FakeDiT:
         if attention_kernel_factory is not None:
             attention_kernel_factory(MiniMaxH3PackedSequenceFacts(1, ((0, 1, "video"),)))
         return _h3(
-            torch.full_like(value.by_role("video"), self.value),
-            torch.full_like(value.by_role("audio"), self.value),
+            torch.full_like(value.by_role("video"), self.value, dtype=torch.float32),
+            torch.full_like(value.by_role("audio"), self.value, dtype=torch.float32),
         )
 
 
@@ -250,6 +250,20 @@ def _target() -> MultiStreamLatent[torch.Tensor]:
 def test_h3_vae_runtimes_expose_mask_geometry(runtime_fixture: RuntimeFixture) -> None:
     assert runtime_fixture.video_runtime.latent_mask_mapping is MINIMAX_H3_VIDEO_MASK_MAPPING
     assert runtime_fixture.audio_runtime.latent_mask_mapping is MINIMAX_H3_AUDIO_MASK_MAPPING
+
+
+def test_h3_sampling_uses_reference_float32_video_sigmas(
+    runtime_fixture: RuntimeFixture,
+) -> None:
+    space = runtime_fixture.fl2va_runtime.sampling_sigma_space()
+    assert space is MINIMAX_H3_SIGMAS.video
+    scheduler = torch_scheduler_registry().get("simple")
+    assert scheduler is not None
+    sigmas = sampling_sigmas(scheduler, space, 20, denoise=1.0)
+    assert sigmas[2] == 0.9908256530761719
+    assert sigmas[3] == 0.9855073094367981
+    assert sigmas[8] == 0.9473683834075928
+    assert sigmas[19] == 0.3870967924594879
 
 
 def test_h3_token_masks_pool_odd_video_patches_audio_features_and_quantize_up() -> None:
@@ -1031,9 +1045,11 @@ class ContextMeanDiT:
     """Velocity equals the conditioning context's mean, so the cond and
     uncond branches produce distinguishable predictions."""
 
-    def __init__(self) -> None:
+    def __init__(self, output_dtype: torch.dtype = torch.float32) -> None:
         self.calls: list[float] = []
         self.preprocessed_contexts: list[torch.Tensor] = []
+        self.input_dtypes: list[torch.dtype] = []
+        self.output_dtype = output_dtype
         self.video_patch_proj = torch.nn.Linear(1, 1, bias=False)
 
     def preprocess_text_embeddings(self, context: torch.Tensor) -> torch.Tensor:
@@ -1053,9 +1069,10 @@ class ContextMeanDiT:
         del sigma, conditioning, sigmas, denoise_mask
         velocity = float(context.mean())
         self.calls.append(velocity)
+        self.input_dtypes.append(value.by_role("video").dtype)
         return _h3(
-            torch.full_like(value.by_role("video"), velocity),
-            torch.full_like(value.by_role("audio"), velocity),
+            torch.full_like(value.by_role("video"), velocity, dtype=self.output_dtype),
+            torch.full_like(value.by_role("audio"), velocity, dtype=self.output_dtype),
         )
 
 
@@ -1073,6 +1090,57 @@ def _context_mean_runtime() -> tuple[
         runtime_identity="test:h3:conditioner",
     )
     return runtime, conditioner, dit
+
+
+def test_sampling_casts_latents_to_the_diffusion_compute_dtype() -> None:
+    runtime, conditioner, dit = _context_mean_runtime()
+    target = _target()
+
+    runtime.sample_multistream(
+        target,
+        conditioning=_condition_t2va(conditioner, target),
+        cfg=SamplingGuidance(None, 1.0),
+        sampler_id="euler",
+        scheduler_id="simple",
+        steps=1,
+        denoise=1.0,
+        seed=123,
+        cancelled=lambda: False,
+    )
+
+    assert dit.input_dtypes == [torch.bfloat16]
+
+
+def test_sampling_upcasts_velocity_before_sigma_multiplication() -> None:
+    dit = ContextMeanDiT(torch.bfloat16)
+    runtime = MiniMaxH3DiTRuntime(
+        dit,  # type: ignore[arg-type]
+        model_role="fl2va_dit",
+        runtime_identity="test:h3:fl2va",
+    )
+    conditioner = MiniMaxH3ConditionerRuntime(
+        FakeConditioner(),  # type: ignore[arg-type]
+        runtime_identity="test:h3:conditioner",
+    )
+    target = _target()
+    prepared = _condition_t2va(conditioner, target)
+    cond = PreparedMultiStreamConditioning(
+        "test:h3:fl2va", replace(prepared, context=torch.full_like(prepared.context, 2.0))
+    )
+    events: list[SamplingStateEvent[object]] = []
+
+    runtime.sample_custom(
+        target,
+        noise=target.map(torch.zeros_like),
+        cond=cond,
+        cfg=None,
+        request=_h3_custom_request("euler", (0.7, 0.0)),
+        on_state=events.append,
+    )
+
+    denoised = cast("MultiStreamLatent[torch.Tensor]", events[0].denoised)
+    expected = torch.full_like(denoised.by_role("video"), -1.4)
+    torch.testing.assert_close(denoised.by_role("video"), expected, rtol=0, atol=0)
 
 
 def _condition_t2va(
@@ -1257,8 +1325,10 @@ def test_h3_prepares_each_guidance_lane_once_for_a_multistep_run(
     target = _target()
     prepared = _condition_t2va(conditioner, target)
     negative = replace(prepared, context=torch.full_like(prepared.context, 5.0))
+    preprocessed_dtypes: list[torch.dtype] = []
 
     def mark_preprocessed(context: torch.Tensor) -> torch.Tensor:
+        preprocessed_dtypes.append(context.dtype)
         return context + 7.0
 
     monkeypatch.setattr(
@@ -1289,6 +1359,7 @@ def test_h3_prepares_each_guidance_lane_once_for_a_multistep_run(
     )
     assert calls == 2
     assert set(dit.calls) == {7.0, 12.0}
+    assert preprocessed_dtypes == [torch.bfloat16, torch.bfloat16]
 
 
 def test_h3_zero_denoise_validates_guidance_lanes_before_return() -> None:
@@ -1352,12 +1423,12 @@ def test_sde_sampler_matches_the_explicit_pre_offset_brownian_reference() -> Non
     packed, layout = pack_latent_streams(sampler_latent)
     pre_offset = sampling_sigmas(
         scheduler,
-        MINIMAX_H3_SIGMAS,
+        MINIMAX_H3_SIGMAS.video,
         3,
         denoise=1.0,
         discard_penultimate=sampler.discard_penultimate,
     )
-    schedule = offset_first_sigma_for_snr(pre_offset, MINIMAX_H3_SIGMAS, flow=True)
+    schedule = offset_first_sigma_for_snr(pre_offset, MINIMAX_H3_SIGMAS.video, flow=True)
     assert schedule != pre_offset
     generator = torch.Generator("cpu")
     generator.manual_seed(123)
@@ -2342,7 +2413,7 @@ def test_ksampler_surface_is_bit_equal_sugar_over_sample_custom(
         target,
         samplers=cast("Any", runtime)._samplers,
         schedulers=cast("Any", runtime)._schedulers,
-        space=MINIMAX_H3_SIGMAS,
+        space=MINIMAX_H3_SIGMAS.video,
         flow=True,
         sampler_id=sampler_id,
         scheduler_id=scheduler_id,
@@ -2390,7 +2461,7 @@ def test_ksampler_sugar_parity_holds_for_low_precision_latents() -> None:
         target,
         samplers=cast("Any", runtime)._samplers,
         schedulers=cast("Any", runtime)._schedulers,
-        space=MINIMAX_H3_SIGMAS,
+        space=MINIMAX_H3_SIGMAS.video,
         flow=True,
         sampler_id="euler",
         scheduler_id="simple",
@@ -2434,7 +2505,7 @@ def test_ksampler_sugar_parity_holds_for_cfg_pp_without_negative() -> None:
         target,
         samplers=cast("Any", runtime)._samplers,
         schedulers=cast("Any", runtime)._schedulers,
-        space=MINIMAX_H3_SIGMAS,
+        space=MINIMAX_H3_SIGMAS.video,
         flow=True,
         sampler_id="euler_cfg_pp",
         scheduler_id="simple",
@@ -2470,20 +2541,20 @@ def test_custom_sampling_sigma_methods_match_the_schedule_helpers() -> None:
     scheduler = torch_scheduler_registry().get("simple")
     assert scheduler is not None
     assert runtime.custom_sampling_sigmas("simple", 4, 1.0) == sampling_sigmas(
-        scheduler, MINIMAX_H3_SIGMAS, 4, denoise=1.0
+        scheduler, MINIMAX_H3_SIGMAS.video, 4, denoise=1.0
     )
     with pytest.raises(MiniMaxH3RuntimeError, match="unknown scheduler"):
         runtime.custom_sampling_sigmas("test.missing", 4, 1.0)
     assert runtime.custom_sampling_beta_sigmas(4, 0.6, 0.6) == custom_beta_sigmas(
-        MINIMAX_H3_SIGMAS, 4, 0.6, 0.6
+        MINIMAX_H3_SIGMAS.video, 4, 0.6, 0.6
     )
     with pytest.raises(ValueError, match="discrete sigma space"):
         runtime.custom_sampling_sd_turbo_sigmas(2, 1.0)
     assert runtime.custom_sampling_percent_to_sigma(
         0.5, return_actual_sigma=False
     ) == custom_percent_to_sigma(
-        MINIMAX_H3_SIGMAS,
-        MINIMAX_H3_SIGMAS.percent_to_sigma,
+        MINIMAX_H3_SIGMAS.video,
+        MINIMAX_H3_SIGMAS.video.percent_to_sigma,
         0.5,
         return_actual_sigma=False,
     )
@@ -2648,7 +2719,7 @@ def test_ksampler_sugar_matches_custom_state_capture_for_uni_pc() -> None:
         target,
         samplers=cast("Any", runtime)._samplers,
         schedulers=cast("Any", runtime)._schedulers,
-        space=MINIMAX_H3_SIGMAS,
+        space=MINIMAX_H3_SIGMAS.video,
         flow=True,
         sampler_id="uni_pc",
         scheduler_id="simple",

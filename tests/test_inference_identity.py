@@ -484,6 +484,10 @@ def test_default_text_dtype(family_id: str) -> None:
     assert default_text_dtype(family_id) is BFLOAT16
 
 
+def test_minimax_h3_text_defaults_to_reference_float16() -> None:
+    assert default_text_dtype("dinkster.minimax_h3") is FLOAT16
+
+
 @pytest.mark.parametrize(
     "family_id",
     [
@@ -534,6 +538,8 @@ def test_every_wired_family_has_a_default_text_dtype() -> None:
     }
     for family_id in NATIVE_WIRED_FAMILY_IDS:
         expected = FLOAT32 if family_id in float32_families else BFLOAT16
+        if family_id == "dinkster.minimax_h3":
+            expected = FLOAT16
         assert default_text_dtype(family_id) is expected
 
 
