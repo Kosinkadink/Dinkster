@@ -112,7 +112,13 @@ from dinkster_native.memory import plan_reservations
 from dinkster_native.native_residency import NativeComponentPublisher
 from dinkster_native.pool import default_pool
 from dinkster_protocol import (
+    ATTENTION_BACKEND_SURFACE,
+    ATTENTION_OUTPUT_SURFACE,
+    ATTENTION_QKV_SURFACE,
+    ATTENTION_WRAPPER_SURFACE,
+    BLOCK_INJECTION_SURFACE,
     GRAPH_COMPILERS_SURFACE,
+    GUIDANCE_ATTENTION_SURFACE,
     GUIDANCE_SURFACES,
     WORKGROUP_DATA_PLANE_CAPABILITY,
     ActiveExtension,
@@ -2428,6 +2434,40 @@ def _pack_asset_roots(
     return roots
 
 
+def _renumber_attention_guidance_orders(
+    entries: tuple[SamplerExtensionEntry, ...],
+    by_extension: dict[str, tuple[KeyedContribution, ...]],
+) -> None:
+    """Renumber legacy attention guidance declarations to combined positions.
+
+    Catalog declarations come from per-pack probes that materialized each
+    pack alone, so the order-less attention guidance descriptor always
+    carries order 0. The combined generation numbers those descriptors by
+    canonical entry order, and the identity comparison requires the catalog
+    declarations to match, so renumber them the same way here.
+    """
+    attention_order = 0
+    for entry in entries:
+        renumbered: list[KeyedContribution] = []
+        for contribution in by_extension[entry.extension_id]:
+            if contribution.surface_id != GUIDANCE_ATTENTION_SURFACE:
+                renumbered.append(contribution)
+                continue
+            renumbered.append(
+                KeyedContribution(
+                    surface_id=contribution.surface_id,
+                    id=contribution.id,
+                    aliases=contribution.aliases,
+                    behavior_metadata=tuple(
+                        ("order", attention_order) if pair[0] == "order" else pair
+                        for pair in contribution.behavior_metadata
+                    ),
+                )
+            )
+            attention_order += 1
+        by_extension[entry.extension_id] = tuple(renumbered)
+
+
 class _RuntimeSeat:
     """One-reference publication seat shared by a composer and its engines."""
 
@@ -4516,6 +4556,7 @@ class ServingComposer:
                 )
                 for entry in entries
             }
+            _renumber_attention_guidance_orders(entries, by_extension)
         else:
             worker = self._sampling_worker(topology)
             if worker is None:
@@ -4784,6 +4825,12 @@ class ServingComposer:
                         if surface_id == GRAPH_COMPILERS_SURFACE
                         else CompositionMode.WRAPPER_CHAIN
                         if surface_id == GUIDANCE_SURFACES[0]
+                        else CompositionMode.WRAPPER_CHAIN
+                        if surface_id == ATTENTION_WRAPPER_SURFACE
+                        # Backend exclusivity is per model family, not per
+                        # surface, and is enforced against both packs during
+                        # worker materialization; the surface itself composes
+                        # as an ordered list.
                         else CompositionMode.ORDERED_LIST
                     )
                     surface_key = (ExtensionScope.INFERENCE, surface_id)
@@ -4811,6 +4858,11 @@ class ServingComposer:
                     INFERENCE_ASSEMBLIES_SURFACE,
                     GRAPH_COMPILERS_SURFACE,
                     *GUIDANCE_SURFACES,
+                    ATTENTION_QKV_SURFACE,
+                    ATTENTION_WRAPPER_SURFACE,
+                    ATTENTION_OUTPUT_SURFACE,
+                    ATTENTION_BACKEND_SURFACE,
+                    BLOCK_INJECTION_SURFACE,
                 ):
                     raise CompositionError(
                         f"extension {name!r} produced contribution {contribution.id!r} on "

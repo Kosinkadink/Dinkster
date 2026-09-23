@@ -79,6 +79,22 @@ create a runtime door by itself.
 | `model-family-registration` | Works | `InferenceContribution` merges pack families, components, and assemblies in the torch worker; `tests/test_extension_contract_pack.py` |
 | `routes` | Works | `tests/test_pack_surfaces.py` |
 
+### Inference contribution surfaces
+
+These surfaces are composed into the canonical extension snapshot and consumed
+inside the inference worker. Attention contributions require exact torch and
+dinkster-aimdo pins.
+
+| Surface | Status | Proof |
+|---|---|---|
+| `inference.attention.qkv` | Works | `tests/test_inference_attention_contract.py`; `packages/dinkster-inference-torch/tests/test_attention_extensions.py` |
+| `inference.attention.wrapper` | Works | PAG proof pack on SD 1.5 and Flux |
+| `inference.attention.output` | Works | Attention-couple proof pack on SD 1.5 and Flux |
+| `inference.attention.backend` | Works | Composition exclusivity and runtime backend tests |
+| `inference.block.injection` | Works | Runtime block injection tests on SD 1.5 and Flux |
+| `inference.guidance.plan-augmentation` | Works | Canonical guidance declaration and runtime plan tests |
+| `inference.guidance.attention` | Works | Canonical guidance declaration and runtime attention tests |
+
 The generated contribution vocabulary and doctor diagnostics keep declared
 doors visible without presenting them as implemented. The broader regression
 guards for pack extension contracts are tracked in

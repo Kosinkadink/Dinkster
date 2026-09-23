@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/check_extension_factories.py"
-SITE_KINDS = ("assemblyBuilder", "descriptorCatalog", "registryFactory")
+SITE_KINDS = ("assemblyBuilder", "attentionFactory", "descriptorCatalog", "registryFactory")
 
 
 def run_guard(root: Path, allowlist: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -65,6 +65,29 @@ def test_extension_factory_guard_tracks_each_descriptor_catalog(tmp_path: Path) 
         assert run_guard(tmp_path, allowlist, "--write").returncode == 0
         recorded = json.loads(allowlist.read_text(encoding="utf-8"))
         assert recorded["sites"] == expected
+
+
+def test_core_only_attention_contributions_cannot_bypass_composition(tmp_path: Path) -> None:
+    source = tmp_path / "packages/engine/src/engine"
+    source.mkdir(parents=True)
+    allowlist = tmp_path / "allowlist.json"
+    write_allowlist(allowlist, [])
+    for name in (
+        "AttentionRegistry",
+        "AttentionQKVDescriptor",
+        "AttentionWrapperDescriptor",
+        "AttentionOutputDescriptor",
+        "AttentionBackendDescriptor",
+        "BlockInjectionDescriptor",
+    ):
+        (source / "attention.py").write_text(
+            f'if model.family == "private.family":\n    hook = {name}()\n', encoding="utf-8"
+        )
+        result = run_guard(tmp_path, allowlist)
+        assert result.returncode == 1
+        assert name in result.stderr
+        assert '"kind": "attentionFactory"' in result.stderr
+        assert "explicit owning issues" in result.stderr
 
 
 def test_extension_factory_guard_write_refuses_to_raise_ceiling(tmp_path: Path) -> None:

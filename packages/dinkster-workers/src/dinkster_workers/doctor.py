@@ -40,6 +40,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from dinkster_protocol import ATTENTION_SURFACES
 from dinkster_protocol.extension_contribution_kinds import (
     IMPLEMENTED_FRONTEND_CONTRIBUTION_KINDS,
 )
@@ -918,6 +919,21 @@ def _excerpt(text: str, *, limit: int = _OUTPUT_EXCERPT) -> str:
     return flat[:limit] + ("..." if len(flat) > limit else "")
 
 
+def _attention_point_details(metadata: tuple[tuple[str, object], ...]) -> str:
+    """Selector/phase facts from one probe-reported attention declaration."""
+    values = dict(metadata)
+    names = (
+        "selectorFamily",
+        "selectorBlock",
+        "selectorKind",
+        "family",
+        "phase",
+        "terminal",
+        "order",
+    )
+    return ", ".join(f"{name}={values[name]}" for name in names if name in values)
+
+
 def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Finding]:
     findings: list[Finding] = []
     if report["entry_error"] is not None:
@@ -933,6 +949,7 @@ def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Find
         return findings
     catalog = report.get("catalog")
     contributions: list[tuple[str, str]] = []
+    attention_points: list[tuple[str, str, tuple[tuple[str, object], ...]]] = []
     if isinstance(catalog, dict):
         raw_contributions = cast("dict[str, object]", catalog).get("inferenceContributions", [])
         if isinstance(raw_contributions, list):
@@ -944,6 +961,37 @@ def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Find
                 descriptor_id = declaration.get("id")
                 if isinstance(surface_id, str) and isinstance(descriptor_id, str):
                     contributions.append((surface_id, descriptor_id))
+                    if surface_id in ATTENTION_SURFACES:
+                        raw_metadata = declaration.get("behavior_metadata", ())
+                        metadata: tuple[tuple[str, object], ...] = ()
+                        if isinstance(raw_metadata, list):
+                            entries: list[tuple[str, object]] = []
+                            for item in cast("list[object]", raw_metadata):
+                                if not isinstance(item, list):
+                                    continue
+                                pair = cast("list[object]", item)
+                                if len(pair) == 2:
+                                    entries.append((str(pair[0]), pair[1]))
+                            metadata = tuple(entries)
+                        attention_points.append((surface_id, descriptor_id, metadata))
+    if attention_points:
+        points = "; ".join(
+            f"{surface}:{descriptor_id} ({details})"
+            for surface, descriptor_id, details in (
+                (surface, descriptor_id, _attention_point_details(metadata))
+                for surface, descriptor_id, metadata in attention_points
+            )
+        )
+        findings.append(
+            Finding(
+                severity="info",
+                code="extension.attention-points",
+                message=f"pack {manifest.name!r} declares attention/block extension "
+                f"points: {points}",
+                fix="these declarations run inside the inference worker; verify the "
+                "pack's torch and dinkster-aimdo pins match that execution environment",
+            )
+        )
     family_surfaces = {
         "inference.families",
         "inference.components",

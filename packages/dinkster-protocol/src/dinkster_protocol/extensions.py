@@ -153,6 +153,25 @@ GUIDANCE_SURFACES = (
     "inference.guidance.pre-cfg",
     "inference.guidance.strategy",
     "inference.guidance.post-cfg",
+    "inference.guidance.plan-augmentation",
+    "inference.guidance.attention",
+)
+
+GUIDANCE_PLAN_AUGMENTATION_SURFACE = GUIDANCE_SURFACES[4]
+GUIDANCE_ATTENTION_SURFACE = GUIDANCE_SURFACES[5]
+
+ATTENTION_QKV_SURFACE = "inference.attention.qkv"
+ATTENTION_WRAPPER_SURFACE = "inference.attention.wrapper"
+ATTENTION_OUTPUT_SURFACE = "inference.attention.output"
+ATTENTION_BACKEND_SURFACE = "inference.attention.backend"
+BLOCK_INJECTION_SURFACE = "inference.block.injection"
+
+ATTENTION_SURFACES = (
+    ATTENTION_QKV_SURFACE,
+    ATTENTION_WRAPPER_SURFACE,
+    ATTENTION_OUTPUT_SURFACE,
+    ATTENTION_BACKEND_SURFACE,
+    BLOCK_INJECTION_SURFACE,
 )
 
 GRAPH_COMPILERS_SURFACE = "inference.graph-compilers"

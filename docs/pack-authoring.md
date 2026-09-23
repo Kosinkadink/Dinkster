@@ -887,6 +887,44 @@ Facts that matter:
   implementation (see `tests/fixtures/math_expression_v1.json` for the
   expression corpus shape) before shipping it.
 
+## Attention and block extensions
+
+An inference extension can return an `InferenceContribution` with an
+`AttentionContribution`. The public `dinkster_api.v1` surface provides five
+descriptor types:
+
+- `AttentionQKVDescriptor` applies ordered Q/K/V transforms.
+- `AttentionWrapperDescriptor` wraps the attention kernel. A non-terminal
+  wrapper calls `next(q, k, v)` exactly once; a terminal wrapper may call it
+  zero or one time.
+- `AttentionOutputDescriptor` applies ordered output transforms.
+- `AttentionBackendDescriptor` exclusively replaces one runtime adapter's
+  attention backend.
+- `BlockInjectionDescriptor` applies an ordered transform before or after a
+  selected block.
+
+Selectors use an exact runtime attention adapter key (`unet` or `flux`), an
+exact stable block id or `"*"`, and one of `self`, `cross`, `joint`, or `"*"`.
+They never contain module objects or Python attribute paths.
+`AttentionCallContext` reports the resolved family, block, kind, head count,
+spatial shape, conditioning and batch token spans, the sampling execution
+context, and a mutable scratch mapping private to that pack and sampling
+invocation. Do not retain tensors, `context.state`, or the wrapper's `next`
+callback after the call returns.
+
+Every `AttentionContribution` declares exact `torch_version` and
+`aimdo_version` pins. Composition refuses mismatches before model execution.
+Descriptor ids are globally unique in the composed generation, hooks run in
+`order` then id order, and two backend replacements for one adapter refuse
+with both pack and descriptor ids. Include every behavior-changing option as
+sorted `config.*` metadata so snapshots and behavior identity change with the
+behavior.
+
+The proof packs under `tests/fixtures` show PAG, regional attention coupling,
+and reference-attention capture/injection using only `dinkster_api.v1`.
+`dinkster doctor` reports each selected point as
+`extension.attention-points`.
+
 ## The import contract (what doctor enforces)
 
 `dinkster doctor` is the pack linter; run it locally and in CI:

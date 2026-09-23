@@ -8111,19 +8111,27 @@ def test_load_runtime_passes_exact_sorted_split_source_kwargs(
     assert captured["family_registry"] is family_registry
 
 
-@pytest.mark.parametrize("has_guidance", [False, True])
-def test_load_runtime_only_passes_guidance_executor_for_guidance_generation(
-    monkeypatch: pytest.MonkeyPatch, has_guidance: bool
+@pytest.mark.parametrize(
+    ("has_guidance", "has_attention"),
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+def test_load_runtime_passes_executor_for_guidance_or_attention_generation(
+    monkeypatch: pytest.MonkeyPatch,
+    has_guidance: bool,
+    has_attention: bool,
 ) -> None:
     arm = _native_arm()
     registry = object()
     family_registry = object()
     digest = "sha256:" + "b" * 64
     contribution = object()
+    attention = object()
     generation = SimpleNamespace(
-        guidance_contributions=(("proof", contribution),) if has_guidance else ()
+        guidance_contributions=(("proof", contribution),) if has_guidance else (),
+        attention_contributions=(("proof", attention),) if has_attention else (),
     )
     captured: dict[str, object] = {}
+    registry_arguments: list[tuple[object, object]] = []
     guidance_registry = SimpleNamespace(active=True)
     executor = object()
     inference = SimpleNamespace(
@@ -8131,7 +8139,9 @@ def test_load_runtime_only_passes_guidance_executor_for_guidance_generation(
         materialize_inference_generation=lambda key: generation,
     )
     inference_torch = SimpleNamespace(
-        GuidanceRegistry=lambda values: guidance_registry,
+        GuidanceRegistry=lambda values, *, attention_contributions=(): (
+            registry_arguments.append((values, attention_contributions)) or guidance_registry
+        ),
         GuidanceExecutor=lambda value: executor,
     )
 
@@ -8168,9 +8178,14 @@ def test_load_runtime_only_passes_guidance_executor_for_guidance_generation(
         "registry_token": digest,
         "extension_behavior_hash": "b" * 64,
     }
-    if has_guidance:
+    if has_guidance or has_attention:
         expected["guidance_executor"] = executor
     assert captured == expected
+    assert registry_arguments == (
+        [(generation.guidance_contributions, generation.attention_contributions)]
+        if has_guidance or has_attention
+        else []
+    )
 
 
 def test_stage_accepts_partial_placement_and_accounts_conservatively() -> None:
@@ -28953,6 +28968,7 @@ def _dependency_recipe(
     dependencies: tuple[object, ...] = (),
     embedding_binding_digest: str | None = None,
     attention_route_token: AttentionRouteToken | None = None,
+    registry_token: str | None = None,
 ) -> object:
     from dinkster_inference import WeightSourceBinding
 
@@ -28965,6 +28981,7 @@ def _dependency_recipe(
             base.knobs,
             embedding_binding_digest=embedding_binding_digest,
             attention_route_token=attention_route_token,
+            registry_token=registry_token,
         ),
         dependencies=dependencies,
     )
@@ -29145,6 +29162,61 @@ def test_dependency_materialization_orders_stage_accounts_conditionals_and_relea
     handle.terminal_release()
     assert cleanup_events == ["root", "conditional-child", "model-child"]
     assert pool.active_tokens() == ()
+
+
+def test_dependency_materialization_passes_attention_only_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arm = _native_arm()
+    asset = _asset(_safetensors(tmp_path / "attention-extension.safetensors"))
+    digest = "sha256:" + "a" * 64
+    child = _dependency_recipe(arm, asset)
+    recipe = _dependency_recipe(
+        arm,
+        asset,
+        dependencies=(_dependency_edge("child", child),),
+        registry_token=digest,
+    )
+    torch, _pool, _assembled, _resources = _dependency_materialization_fakes(arm, monkeypatch)
+    inference = importlib.import_module("dinkster_inference")
+    generation = SimpleNamespace(
+        guidance_contributions=(),
+        attention_contributions=(("proof", object()),),
+    )
+    monkeypatch.setattr(inference, "materialize_inference_generation", lambda _key: generation)
+    monkeypatch.setattr(
+        arm,
+        "_sampler_registry",
+        lambda _inference, token: (object(), ("proof",) if token is not None else (), token),
+    )
+    registry_arguments: list[tuple[object, object]] = []
+    executor = object()
+    previous_import = arm.importlib.import_module
+    inference_torch = SimpleNamespace(
+        torch_sampler_registry=_fake_torch_sampler_registry,
+        worker_planning_context=lambda: pytest.fail(
+            "generic native prevalidation must not request MiniMax H3 planning context"
+        ),
+        GuidanceRegistry=lambda values, *, attention_contributions=(): (
+            registry_arguments.append((values, attention_contributions))
+            or SimpleNamespace(active=True)
+        ),
+        GuidanceExecutor=lambda _registry: executor,
+    )
+    monkeypatch.setattr(
+        arm.importlib,
+        "import_module",
+        lambda name: (
+            inference_torch if name == "dinkster_inference_torch" else previous_import(name)
+        ),
+    )
+
+    handle = arm._materialize_recipe_handle(recipe, {asset.digest: asset.resolver}, torch)
+
+    assert registry_arguments == [
+        (generation.guidance_contributions, generation.attention_contributions)
+    ]
+    handle.terminal_release()
 
 
 def test_dependency_prevalidation_refuses_shared_reserved_and_binding_before_mutation(

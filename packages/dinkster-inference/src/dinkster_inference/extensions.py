@@ -23,12 +23,20 @@ from typing import Any, cast
 from dinkster_protocol import (
     GRAPH_COMPILE_ERROR_UNKNOWN_GENERATION,
     GRAPH_COMPILERS_SURFACE,
+    GUIDANCE_ATTENTION_SURFACE,
+    GUIDANCE_PLAN_AUGMENTATION_SURFACE,
+    GUIDANCE_SURFACES,
     GraphCompilerRegistrySnapshot,
     GuidanceRegistrySnapshot,
     KeyedContribution,
     SamplerRegistrySnapshot,
 )
 
+from .attention import (
+    AttentionContribution,
+    attention_declarations,
+    check_attention_pins,
+)
 from .component_registry import ComponentDescriptor
 from .families import ModelFamily
 from .graph_compilers import (
@@ -37,7 +45,7 @@ from .graph_compilers import (
     execute_graph_compilers,
     graph_compiler_declaration_metadata,
 )
-from .guidance import GuidanceContractError, GuidanceContribution
+from .guidance import GuidanceContribution
 from .registries import InferenceRegistries, builtin_registries
 from .registries import merge as merge_registries
 from .registry import Registry
@@ -81,6 +89,7 @@ class InferenceContribution:
     families: tuple[ModelFamily, ...] = ()
     components: tuple[ComponentDescriptor, ...] = ()
     assemblies: tuple[AssemblyRegistration, ...] = ()
+    attention: AttentionContribution[Any] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -91,6 +100,7 @@ class InferenceContribution:
             and not self.families
             and not self.components
             and not self.assemblies
+            and self.attention is None
         ):
             raise ValueError("inference contribution must be nonempty")
         samplers = cast("object", self.samplers)
@@ -121,6 +131,9 @@ class InferenceContribution:
                 isinstance(item, expected) for item in cast("tuple[object, ...]", values)
             ):
                 raise TypeError(f"{name} must contain {expected.__name__} values")
+        raw_attention = cast("object", self.attention)
+        if raw_attention is not None and not isinstance(raw_attention, AttentionContribution):
+            raise TypeError("attention must be an AttentionContribution or None")
 
 
 @dataclass(frozen=True)
@@ -133,46 +146,36 @@ class MaterializedInferenceGeneration:
     guidance_contributions: tuple[tuple[str, GuidanceContribution[Any]], ...]
     graph_compiler_snapshot: GraphCompilerRegistrySnapshot
     graph_compilers: tuple[GraphCompilerDescriptor, ...]
+    attention_contributions: tuple[tuple[str, AttentionContribution[Any]], ...] = ()
 
 
-_GUIDANCE_SURFACES = (
-    "inference.guidance.condition-evaluation",
-    "inference.guidance.pre-cfg",
-    "inference.guidance.strategy",
-    "inference.guidance.post-cfg",
-)
+_GUIDANCE_SURFACES = GUIDANCE_SURFACES
+_PLAN_AUGMENTATION_SURFACE = GUIDANCE_PLAN_AUGMENTATION_SURFACE
+_GUIDANCE_ATTENTION_SURFACE = GUIDANCE_ATTENTION_SURFACE
 
 
-def guidance_declarations(contribution: GuidanceContribution[Any]) -> tuple[KeyedContribution, ...]:
+def guidance_declarations(
+    contribution: GuidanceContribution[Any], *, attention_order: int = 0
+) -> tuple[KeyedContribution, ...]:
     """Project worker-local callbacks to canonical RPC-clean declarations.
 
-    Plan-augmentation and attention-kind contributions refuse: no declaration
-    surfaces exist for them, so projecting one would leave a contribution that can
-    execute while staying invisible to the canonical declarations,
-    registry snapshot, and behavior identity. These model-owned behaviors attach
-    per-run through MODEL guidance transforms instead."""
-    if contribution.plan_augmentations:
-        ids = ", ".join(item.id for item in contribution.plan_augmentations)
-        raise GuidanceContractError(
-            f"plan-augmentation guidance contributions ({ids}) cannot be declared"
-            " by an inference extension: no declaration surface exists, so their"
-            " behavior would be invisible to the extension's declared identity;"
-            " attach model-owned plan augmentation per-run through MODEL guidance"
-            " transforms instead"
-        )
-    if contribution.attention is not None:
-        raise GuidanceContractError(
-            f"attention-kind guidance contribution {contribution.attention.id}"
-            " cannot be declared by an inference extension: no declaration"
-            " surface exists, so its behavior would be invisible to the"
-            " extension's declared identity; attach attention guidance"
-            " per-run through MODEL guidance transforms instead"
-        )
+    Plan-augmentation and attention-kind declarations project onto their
+    canonical guidance surfaces, so their behavior stays visible to the
+    extension's declared identity, the registry snapshot, and behavior
+    identity. Both remain model-owned at runtime: a family consumes them
+    only by positively opting in during model evaluation.
+
+    The legacy attention descriptor has no ``order`` field; its projected
+    ``order`` metadata is ``attention_order``, its position in declaration
+    order across the generation, so the canonical snapshot preserves the
+    order the rewrites execute in instead of re-sorting ties by id.
+    """
     declarations: list[KeyedContribution] = []
     for surface, descriptors in (
         (_GUIDANCE_SURFACES[0], contribution.evaluation_wrappers),
         (_GUIDANCE_SURFACES[1], contribution.pre_cfg),
         (_GUIDANCE_SURFACES[3], contribution.post_cfg),
+        (_PLAN_AUGMENTATION_SURFACE, contribution.plan_augmentations),
     ):
         for descriptor in sorted(descriptors, key=lambda item: (item.order, item.id)):
             declarations.append(
@@ -202,6 +205,24 @@ def guidance_declarations(contribution: GuidanceContribution[Any]) -> tuple[Keye
                         (
                             ("contractVersion", 1),
                             ("participation", descriptor.participation.value),
+                            ("requiresUncond", descriptor.requires_uncond),
+                            *descriptor.behavior_metadata,
+                        )
+                    )
+                ),
+            )
+        )
+    if contribution.attention is not None:
+        descriptor = contribution.attention
+        declarations.append(
+            KeyedContribution(
+                _GUIDANCE_ATTENTION_SURFACE,
+                descriptor.id,
+                behavior_metadata=tuple(
+                    sorted(
+                        (
+                            ("contractVersion", 1),
+                            ("order", attention_order),
                             ("requiresUncond", descriptor.requires_uncond),
                             *descriptor.behavior_metadata,
                         )
@@ -559,7 +580,7 @@ def materialize_sampler_registry(
 
 
 def _materialize_inference_generation(
-    key: str, *, catalog_path: Path | None = None
+    key: str, *, catalog_path: Path | None = None, check_pins: bool = True
 ) -> MaterializedInferenceGeneration:
     """Import each inference entry once and project every inference surface."""
     with _cache_lock:
@@ -567,6 +588,12 @@ def _materialize_inference_generation(
         if cacheable:
             cached = _inference_cache.get(key)
             if cached is not None:
+                if check_pins:
+                    # The cached generation may have been materialized with
+                    # check_pins disabled, so enforce pins before handing the
+                    # callbacks out under the default checked contract.
+                    for extension_id, contribution in cached.attention_contributions:
+                        check_attention_pins(extension_id, contribution)
                 return cached
         if catalog_path is None:
             raw_path = os.environ.get(SAMPLER_CATALOG_ENV)
@@ -580,6 +607,10 @@ def _materialize_inference_generation(
         prefixes: list[str] = []
         materialized_guidance: list[tuple[str, GuidanceContribution[Any]]] = []
         graph_compilers: list[GraphCompilerDescriptor] = []
+        materialized_attention: list[tuple[str, AttentionContribution[Any]]] = []
+        attention_declared: dict[str, tuple[str, str]] = {}
+        backend_families: dict[str, tuple[str, str]] = {}
+        attention_guidance_count = 0
         for entry in entries:
             contribution = _resolve_contribution(entry)
             contributions.append(contribution)
@@ -589,11 +620,48 @@ def _materialize_inference_generation(
             scheduler_declarations = tuple(
                 scheduler_declaration(descriptor) for descriptor in contribution.schedulers
             )
+            attention_order = attention_guidance_count
+            if contribution.guidance is not None and contribution.guidance.attention is not None:
+                attention_guidance_count += 1
             produced_guidance = (
                 ()
                 if contribution.guidance is None
-                else guidance_declarations(contribution.guidance)
+                else guidance_declarations(
+                    contribution.guidance,
+                    attention_order=attention_order,
+                )
             )
+            produced_attention: tuple[KeyedContribution, ...] = ()
+            if contribution.attention is not None:
+                if check_pins:
+                    check_attention_pins(entry.extension_id, contribution.attention)
+                produced_attention = attention_declarations(contribution.attention)
+                for declaration in produced_attention:
+                    owner = attention_declared.get(declaration.id)
+                    if owner is not None and owner[0] != entry.extension_id:
+                        raise RuntimeError(
+                            f"attention descriptor {declaration.id!r} is declared by "
+                            f"extensions {owner[0]!r} (surface {owner[1]!r}) and "
+                            f"{entry.extension_id!r} (surface "
+                            f"{declaration.surface_id!r}): attention descriptor ids "
+                            "must be globally unique"
+                        )
+                    attention_declared[declaration.id] = (
+                        entry.extension_id,
+                        declaration.surface_id,
+                    )
+                for backend in contribution.attention.backends:
+                    conflict = backend_families.get(backend.family)
+                    if conflict is not None:
+                        raise RuntimeError(
+                            f"attention backend family {backend.family!r} is exclusively "
+                            f"claimed by extension {conflict[0]!r} descriptor {conflict[1]!r}; "
+                            f"extension {entry.extension_id!r} descriptor {backend.id!r} "
+                            "conflicts: each model family admits exactly one attention "
+                            "backend"
+                        )
+                    backend_families[backend.family] = (entry.extension_id, backend.id)
+                materialized_attention.append((entry.extension_id, contribution.attention))
             produced_compilers = tuple(
                 graph_compiler_declaration(descriptor)
                 for descriptor in sorted(
@@ -617,6 +685,7 @@ def _materialize_inference_generation(
                 + produced_families
                 + produced_components
                 + produced_assemblies
+                + produced_attention
             )
             guidance.extend(produced_guidance)
             graph_compilers.extend(contribution.graph_compilers)
@@ -702,6 +771,7 @@ def _materialize_inference_generation(
                 )
             ),
             graph_compilers=tuple(sorted(graph_compilers, key=lambda item: (item.order, item.id))),
+            attention_contributions=tuple(materialized_attention),
         )
         if cacheable:
             _inference_cache[key] = materialized
@@ -711,9 +781,17 @@ def _materialize_inference_generation(
 
 
 def materialize_inference_generation(
-    key: str, *, catalog_path: Path | None = None
+    key: str, *, catalog_path: Path | None = None, check_pins: bool = True
 ) -> MaterializedInferenceGeneration:
-    """Materialize atomically, removing every attempted import on failure."""
+    """Materialize atomically, removing every attempted import on failure.
+
+    ``check_pins`` defaults to the runtime rule: attention pins are checked
+    against this interpreter's installed distributions before execution.
+    The doctor probe passes ``check_pins=False`` because it only lists
+    declared attention points from the serve-side process and never
+    executes them - pin enforcement belongs to the inference worker that
+    materializes for execution.
+    """
     resolved_path = catalog_path
     if resolved_path is None:
         raw_path = os.environ.get(SAMPLER_CATALOG_ENV)
@@ -723,7 +801,9 @@ def materialize_inference_generation(
     entries, _, _ = _read_record(key, resolved_path)
     prefixes = tuple(entry.entry_point.split(":", 1)[0] for entry in entries)
     try:
-        return _materialize_inference_generation(key, catalog_path=resolved_path)
+        return _materialize_inference_generation(
+            key, catalog_path=resolved_path, check_pins=check_pins
+        )
     except BaseException:
         for prefix in prefixes:
             for name in tuple(sys.modules):
@@ -805,6 +885,7 @@ __all__ = [
     "materialize_inference_generation",
     "release_inference_generation",
     "guidance_declarations",
+    "attention_declarations",
     "graph_compiler_declaration",
     "compile_inference_graph",
     "registry_choice_values",

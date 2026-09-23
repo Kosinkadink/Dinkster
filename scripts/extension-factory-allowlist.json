@@ -1,6 +1,7 @@
 {
   "ceilings": {
     "assemblyBuilder": 1,
+    "attentionFactory": 1,
     "descriptorCatalog": 17,
     "registryFactory": 8
   },
@@ -17,6 +18,14 @@
       "line": 42,
       "column": 20,
       "issue": 120
+    },
+    {
+      "kind": "attentionFactory",
+      "call": "AttentionRegistry",
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/guidance.py",
+      "line": 1029,
+      "column": 37,
+      "issue": 284
     },
     {
       "kind": "descriptorCatalog",

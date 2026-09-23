@@ -1,0 +1,44 @@
+{
+  "artifacts": {
+    "clip_metric": {
+      "sha256": "a2bf730a0c7debf160f7a6b50b3aaf3703e7e88ac73de7a314903141db026dcb",
+      "source": "https://huggingface.co/openai/clip-vit-large-patch14/resolve/32bd64288804d66eefd0ccbe215aa642df71cc41/model.safetensors",
+      "support_files": {
+        "config.json": "8a09b467700c58138c29d53c605b34ebc69beaadd13274a8a2af8ad2c2f4032a",
+        "merges.txt": "9fd691f7c8039210e0fced15865466c65820d09b63988b0174bfe25de299051a",
+        "preprocessor_config.json": "910e70b3956ac9879ebc90b22fb3bc8a75b6a0677814500101a4c072bd7857bd",
+        "special_tokens_map.json": "f8c0d6c39aee3f8431078ef6646567b0aba7f2246e9c54b8b99d55c22b707cbf",
+        "tokenizer_config.json": "deef455e52fa5e8151e339add0582e4235f066009601360999d3a9cda83b1129",
+        "vocab.json": "3f0c4f7d2086b61b38487075278ea9ed04edb53a03cbb045b86c27190fa8fb69"
+      }
+    },
+    "flux": {
+      "sha256": "8e91b68084b53a7fc44ed2a3756d821e355ac1a7b6fe29be760c1db532f3d88a",
+      "source": "https://huggingface.co/Comfy-Org/flux1-dev/resolve/ca7d619b1bcd7156ca897f55efb2370eba3d9e20/flux1-dev-fp8.safetensors"
+    },
+    "sd15": {
+      "sha256": "e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916",
+      "source": "https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/resolve/4fddeb7f9096623f1b77f4708feb96126a08a0cf/v1-5-pruned-emaonly-fp16.safetensors"
+    }
+  },
+  "attention_couple": {
+    "attention_strength": 1.0,
+    "top_prompt": "a vivid red sunset sky above the horizon",
+    "minimum_clip_cosine_margin": 0.01,
+    "bottom_prompt": "deep blue ocean waves below the horizon"
+  },
+  "reference_attention": {
+    "minimum_clip_image_cosine_gain": 0.01,
+    "prompt": "a studio photograph of a cobalt blue ceramic vase on a plain table",
+    "reference_prompt": "a studio photograph of a cobalt blue ceramic vase on a plain table",
+    "reference_seed_offset": 1,
+    "strength": 1.0
+  },
+  "workload": {
+    "height": 256,
+    "sampler": "dinkster.euler",
+    "seed": 284,
+    "steps": 12,
+    "width": 256
+  }
+}

@@ -175,7 +175,7 @@ try {
         )
         $GpuDependencies = @(
             "pytest", "numpy", "scipy", "torchsde", "tqdm", "pillow", "packaging",
-            "safetensors==0.8.0", "sentencepiece==0.2.1",
+            "safetensors==0.8.0", "sentencepiece==0.2.1", "transformers==5.16.1",
             "dinkster-kitchen==0.2.35.post1", "dinkster-aimdo==0.5.5.post2",
             "triton-windows==3.7.1.post27"
         ) + (Get-EditableArguments $GpuEditablePackages)
@@ -188,7 +188,7 @@ try {
         }
         Invoke-Native $GpuPython @(
             "-c",
-            "import torch, triton; assert torch.__version__ == '2.13.0+cu130'; assert triton.__version__ == '3.7.1'"
+            "from importlib.metadata import version; import torch, triton; assert torch.__version__ == '2.13.0+cu130'; assert triton.__version__ == '3.7.1'; assert version('transformers') == '5.16.1'"
         )
     }
     else {

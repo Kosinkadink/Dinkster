@@ -178,7 +178,7 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
     # safetensors and sentencepiece support the package's model fixtures.
     uv pip install --python .venv-gpu/bin/python \
         pytest numpy scipy torchsde tqdm pillow packaging \
-        "safetensors==0.8.0" "sentencepiece==0.2.1" \
+        "safetensors==0.8.0" "sentencepiece==0.2.1" "transformers==5.16.1" \
         dinkster-kitchen==0.2.35.post1 dinkster-aimdo==0.5.5.post2 \
         -e packages/dinkster-api \
         -e packages/dinkster-schema \

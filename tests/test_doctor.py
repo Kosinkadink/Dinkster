@@ -93,6 +93,11 @@ NODES = [Doubler, Tagger]
 """
 
 EXTENSION_CONTRACT_PACK = Path(__file__).parent / "fixtures" / "extension-contract-pack"
+ATTENTION_PROOF_PACKS = {
+    "pag-pack": {"proof_pag.flux", "proof_pag.unet"},
+    "attention-couple-pack": {"proof_couple.flux", "proof_couple.unet"},
+    "reference-attention-pack": {"proof_reference.flux", "proof_reference.unet"},
+}
 
 
 def write_pack(root: Path, manifest: str, module_name: str, source: str) -> Path:
@@ -249,6 +254,19 @@ def register_inference():
     # A pack with no inference surface is told nothing about sampling workers.
     plain = write_pack(tmp_path / "plain", HEALTHY_MANIFEST, "healthy_nodes", HEALTHY_NODES)
     assert "inference.worker-required" not in codes(diagnose(plain))
+
+
+@pytest.mark.parametrize(("directory", "descriptor_ids"), ATTENTION_PROOF_PACKS.items())
+def test_attention_proof_pack_is_doctor_clean_and_lists_declared_points(
+    directory: str,
+    descriptor_ids: set[str],
+) -> None:
+    manifest = Path(__file__).parent / "fixtures" / directory / "dinkster-pack.toml"
+    report = diagnose(manifest)
+    assert report.ok, render_text(report)
+    assert not ({"imports.private-module", "imports.host-machinery"} & codes(report))
+    finding = next(item for item in report.findings if item.code == "extension.attention-points")
+    assert all(descriptor_id in finding.message for descriptor_id in descriptor_ids)
 
 
 def test_doctor_warns_for_extension_declarations_without_runtime_consumers(
