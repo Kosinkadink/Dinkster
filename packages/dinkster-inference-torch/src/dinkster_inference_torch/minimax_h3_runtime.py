@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import cast
+from types import MappingProxyType
+from typing import Any, cast
 
 import torch
 from dinkster_inference import (
@@ -16,6 +17,8 @@ from dinkster_inference import (
     MINIMAX_H3_VIDEO_MASK_MAPPING,
     MINIMAX_H3_VIDEO_TEMPORAL_MAPPING,
     AudioPreview,
+    Conditioning,
+    ConditioningCarrier,
     CustomSamplingResult,
     DualSamplingGuidance,
     ExecutionObserverAttachment,
@@ -45,6 +48,7 @@ from dinkster_inference import (
     PayloadDescriptor,
     PerpNegSamplingGuidance,
     PlacementMap,
+    PreparedConditioningCarrier,
     PreparedMultiStreamConditioning,
     Registry,
     SamplerDescriptor,
@@ -56,7 +60,9 @@ from dinkster_inference import (
     SigmaSpace,
     TimelineGuide,
     TokenGridTransform,
+    TokenLayoutDescriptor,
     TokenLayoutError,
+    TokenSegmentDescriptor,
     UspMesh,
     build_canonical_manifest,
     execution_span,
@@ -68,6 +74,7 @@ from dinkster_inference import (
 from dinkster_inference.devices import BFLOAT16, FLOAT16, FLOAT32
 from dinkster_inference.partition_compatibility import PartitionCompatibility
 
+from .conditioning_adapters import basic_conditioning_to_carrier
 from .denoise import PackedInpaintConfiguration, prepare_noise
 from .distributed import (
     SequenceDigestConsensusTransport,
@@ -102,6 +109,7 @@ from .minimax_h3_dit import (
 )
 from .minimax_h3_video_vae import MiniMaxH3VideoVAE
 from .operations import bound_compute_device
+from .regional import MaterializedRegion, full_region_multiplier, materialize_regions
 from .sampling_execution import (
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
@@ -1132,9 +1140,48 @@ class MiniMaxH3ConditionerRuntime:
 class _H3SamplingContext:
     source: MultiStreamLatent[torch.Tensor]
     layout: LatentPackLayout
+    conditioning: MiniMaxH3PreparedConditioning
     raw_mask: torch.Tensor | None
     token_mask: torch.Tensor | None
     model_mask: MultiStreamLatent[torch.Tensor] | None
+
+
+def _materialize_h3_conditioning(
+    runtime: object,
+    carrier: object,
+    payloads: tuple[object, ...],
+    inputs: SamplingExecutionInputs,
+    device: torch.device,
+    cancel: Callable[[], bool],
+) -> tuple[object, ...]:
+    owner = cast("MiniMaxH3DiTRuntime", runtime)
+    latent_context = cast("_H3SamplingContext", inputs.latent_context)
+    video_shape = latent_context.layout.by_role("video").shape
+    if cancel():
+        raise SamplingCancelled("MiniMax H3 conditioning materialization was cancelled")
+    regions = materialize_regions(
+        cast("Any", carrier),
+        owner.family.id,
+        video_shape[-2],
+        video_shape[-1],
+        device,
+    )
+    if len(payloads) != len(regions):
+        raise MiniMaxH3RuntimeError("H3 prepared payloads do not match conditioning records")
+    mapped: list[MaterializedRegion] = []
+    for region, value in zip(regions, payloads, strict=True):
+        if type(value) is not MiniMaxH3PreparedConditioning:
+            raise TypeError("H3 scheduled payloads require MiniMaxH3PreparedConditioning")
+        prepared = value
+        if prepared.target_layout != latent_context.layout:
+            raise MiniMaxH3RuntimeError("H3 scheduled conditioning belongs to a different target")
+        mapped.append(
+            replace(
+                region,
+                family_payload=replace(prepared, context=region.conditioning.embeddings),
+            )
+        )
+    return tuple(mapped)
 
 
 def _prepare_h3_mask(
@@ -1180,6 +1227,22 @@ def _bind_h3_attention(runtime: object, context: SamplingAdapterContext) -> obje
     return context.options.get("attention_kernel_factory")
 
 
+def _encode_h3_conditioning(value: object, reference_prefix: str) -> ConditioningCarrier:
+    if type(value) is not MiniMaxH3PreparedConditioning:
+        raise TypeError("H3 carrier encoding requires MiniMaxH3PreparedConditioning")
+    prepared = value
+    return basic_conditioning_to_carrier(
+        Conditioning(prepared.context),
+        token_layout=TokenLayoutDescriptor(
+            MINIMAX_H3.id,
+            1,
+            ("text",),
+            (TokenSegmentDescriptor("text", "text", 0, prepared.context.shape[1]),),
+        ),
+        reference_prefix=reference_prefix,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _H3LatentAdapter:
     def prepare(
@@ -1201,6 +1264,7 @@ class _H3LatentAdapter:
             "attention_kernel_factory",
             "noise_inds",
             "scheduler_label",
+            "scheduled",
         }
         if unknown:
             raise MiniMaxH3RuntimeError(
@@ -1229,7 +1293,18 @@ class _H3LatentAdapter:
             raise MiniMaxH3RuntimeError(
                 "H3 conditioning was prepared by a different conditioner component"
             )
-        conditioning = cond.payload
+        raw_conditioning = cond.payload
+        conditioning_payloads: dict[int, tuple[object, ...]] = {}
+        if type(raw_conditioning) is PreparedConditioningCarrier:
+            scheduled = raw_conditioning
+            if not scheduled.payloads:
+                raise MiniMaxH3RuntimeError("H3 scheduled conditioning must not be empty")
+            conditioning = scheduled.payloads[0]
+            cond_value: object = scheduled.carrier
+            conditioning_payloads[id(scheduled.carrier)] = scheduled.payloads
+        else:
+            conditioning = raw_conditioning
+            cond_value = conditioning
         if type(conditioning) is not MiniMaxH3PreparedConditioning:
             raise TypeError("conditioning must be exact MiniMaxH3PreparedConditioning")
         guidance_cfg: SamplingGuidance[object] | None = None
@@ -1248,10 +1323,26 @@ class _H3LatentAdapter:
                         "H3 conditional and unconditional lanes were prepared by "
                         "different conditioner components"
                     )
-                uncond_payload = uncond_value.payload
+                raw_uncond_payload = uncond_value.payload
+                if type(raw_uncond_payload) is PreparedConditioningCarrier:
+                    scheduled_uncond = raw_uncond_payload
+                    if not scheduled_uncond.payloads:
+                        raise MiniMaxH3RuntimeError(
+                            "H3 scheduled unconditional conditioning must not be empty"
+                        )
+                    uncond_payload = scheduled_uncond.payloads[0]
+                    guidance_uncond: object = scheduled_uncond.carrier
+                    conditioning_payloads[id(scheduled_uncond.carrier)] = (
+                        scheduled_uncond.payloads
+                    )
+                else:
+                    uncond_payload = raw_uncond_payload
+                    guidance_uncond = uncond_payload
                 if type(uncond_payload) is not MiniMaxH3PreparedConditioning:
                     raise TypeError("H3 guidance lanes require MiniMaxH3PreparedConditioning")
-                guidance_cfg = replace(cast("SamplingGuidance[object]", cfg), uncond=uncond_payload)
+                guidance_cfg = replace(
+                    cast("SamplingGuidance[object]", cfg), uncond=guidance_uncond
+                )
         required_role = _dit_component_role(conditioning.task)
         if owner._model_role != required_role:  # pyright: ignore[reportPrivateUsage]
             raise MiniMaxH3RuntimeError(
@@ -1273,6 +1364,7 @@ class _H3LatentAdapter:
         latent_context = _H3SamplingContext(
             latent,
             layout,
+            conditioning,
             None,
             None,
             None,
@@ -1280,10 +1372,11 @@ class _H3LatentAdapter:
         return SamplingExecutionInputs(
             packed,
             packed_noise,
-            conditioning,
+            cond_value,
             guidance_cfg,
             None,
             latent_context,
+            MappingProxyType(conditioning_payloads),
         )
 
     def finish(
@@ -1330,6 +1423,8 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         pipeline=SamplingPipelineHooks(
             prepare_mask=_prepare_h3_mask,
             bind_attention=_bind_h3_attention,
+            encode_conditioning=_encode_h3_conditioning,
+            materialize_conditioning=_materialize_h3_conditioning,
         ),
     )
 
@@ -1420,7 +1515,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             raise RuntimeError("MiniMax H3 sampling context is unresolved")
         inputs = context.inputs
         latent_context = cast("_H3SamplingContext", inputs.latent_context)
-        conditioning = cast("MiniMaxH3PreparedConditioning", inputs.cond)
+        conditioning = latent_context.conditioning
         guidance_plan = context.plan
         request = context.request
         seed = context.seed
@@ -1751,28 +1846,93 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             return value.token_layout.transforms
 
         sampler_latent = unpack_latent_streams(packed, layout)
-        evaluator = ConditioningEvaluation(
-            prepare_conditioning,
-            evaluate,
-            evaluator_identity=lambda _role: "dinkster.minimax-h3.conditioning.v1",
-            standard_activation_memory_factor=self.family.memory_factor,
-            layout=conditioning_layout,
-            token_transforms=conditioning_transforms,
-            validate_layout=lambda prepared, declared: _validate_h3_model_token_layout(
-                sampler_latent,
-                prepared[1],
-                prepared[2],
-                self.config.patch,
-                declared,
-            ),
-        )
+        realization = context.conditioning_realization
+        close = None
+        if realization is None:
+            denoiser_evaluator: object = model
+            evaluator = ConditioningEvaluation(
+                prepare_conditioning,
+                evaluate,
+                evaluator_identity=lambda _role: "dinkster.minimax-h3.conditioning.v1",
+                standard_activation_memory_factor=self.family.memory_factor,
+                layout=conditioning_layout,
+                token_transforms=conditioning_transforms,
+                validate_layout=lambda prepared, declared: _validate_h3_model_token_layout(
+                    sampler_latent,
+                    prepared[1],
+                    prepared[2],
+                    self.config.patch,
+                    declared,
+                ),
+            )
+        else:
+            from .scheduled_sampling import FullLatentScheduledConditioningDenoiser
+
+            def project_region(
+                region: MaterializedRegion, x: torch.Tensor
+            ) -> tuple[object, torch.Tensor]:
+                prepared = region.family_payload
+                if type(prepared) is not MiniMaxH3PreparedConditioning:
+                    raise TypeError("H3 scheduled region requires prepared conditioning")
+                streams = unpack_latent_streams(x, layout)
+                video = streams.by_role("video")
+                spatial = full_region_multiplier(
+                    region,
+                    batch=video.shape[0],
+                    channels=video.shape[1],
+                    device=video.device,
+                )
+                video_multiplier = spatial.unsqueeze(2).expand_as(video)
+                audio = streams.by_role("audio")
+                audio_multiplier = (
+                    torch.zeros_like(audio)
+                    if region.area is not None or region.mask is not None
+                    else torch.ones_like(audio)
+                )
+                multiplier, multiplier_layout = pack_latent_streams(
+                    _h3_latent(video_multiplier, audio_multiplier)
+                )
+                if multiplier_layout != layout:
+                    raise MiniMaxH3RuntimeError(
+                        "H3 regional multiplier topology differs from the latent"
+                    )
+                return prepared, multiplier
+
+            def evaluate_region(
+                x: torch.Tensor,
+                sigma: float,
+                prepared: object,
+                role: GuidanceRole,
+            ) -> torch.Tensor:
+                return evaluate(x, sigma, prepare_conditioning(prepared, role))
+
+            scheduled_evaluator = FullLatentScheduledConditioningDenoiser(
+                space=MINIMAX_H3_SIGMAS.video,
+                model=model,
+                evaluate=evaluate_region,
+                project=project_region,
+                patch_sets=cast("Mapping[str, Any]", realization.patch_sets),
+                compute_dtype=compute_dtype,
+                device=device,
+                cancel=cancelled,
+            )
+            denoiser_evaluator = scheduled_evaluator
+            evaluator = ConditioningEvaluation(
+                scheduled_evaluator.prepare_conditioning,
+                scheduled_evaluator.evaluate_conditioning,
+                scheduled_evaluator.batchable,
+                scheduled_evaluator.evaluate_conditioning_batch,
+                evaluator_identity=lambda _role: scheduled_evaluator.evaluator_identity,
+                standard_activation_memory_factor=self.family.memory_factor,
+            )
+            close = scheduled_evaluator.close
         replica_group_size = (
             distributed.sequence_ulysses * distributed.sequence_ring
             if use_sequence and distributed is not None and distributed.sequence_guidance == 2
             else None
         )
         return SamplingDenoiserExecution(
-            cast("SamplingDenoiserAdapter", model),
+            cast("SamplingDenoiserAdapter", denoiser_evaluator),
             conditioning_evaluation=evaluator,
             replica_group_size=replica_group_size,
             replica_evaluation=use_guidance or replica_group_size is not None,
@@ -1807,6 +1967,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                     MINIMAX_H3_SIGMAS.audio_scale,
                 )
             ),
+            close=close,
         )
 
     sample_custom = sampling_execution

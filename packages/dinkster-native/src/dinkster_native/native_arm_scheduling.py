@@ -174,7 +174,17 @@ def _scheduled_carrier(
 ) -> object:
     inference = state.inference
     carriers: list[Any] = []
+    prepared_payloads: list[object] = []
+    prepared_mode: bool | None = None
     for entry_index, raw_entry in enumerate(_condition_entries(value, input_id)):
+        prepared = raw_entry[0]
+        is_prepared = type(prepared) is inference.PreparedMultiStreamConditioning
+        prepared_value = cast("Any", prepared)
+        encode_prepared: Any = None
+        if prepared_mode is None:
+            prepared_mode = is_prepared
+        elif prepared_mode != is_prepared:
+            raise TypeError(f"{input_id} cannot mix prepared and tensor conditioning")
         metadata = cast("dict[object, object]", raw_entry[1])
         unsupported = set(metadata) - {
             "pooled_output",
@@ -193,19 +203,28 @@ def _scheduled_carrier(
                 f"{input_id} scheduled conditioning metadata is unsupported on the native arm: "
                 + ", ".join(sorted(repr(key) for key in unsupported))
             )
-        prompt_data = metadata.get(_NATIVE_PROMPT_KEY)
-        if not isinstance(prompt_data, tuple):
-            raise ValueError(
-                f"{input_id} scheduled conditioning must originate from native CLIP Text Encode"
-            )
-        prompt_values = cast("tuple[object, ...]", prompt_data)
-        if len(prompt_values) != 2 or any(type(item) is not str for item in prompt_values):
-            raise ValueError(
-                f"{input_id} scheduled conditioning must originate from native CLIP Text Encode"
-            )
-        text, runtime_identity = cast("tuple[str, str]", prompt_values)
-        if runtime_identity != handle.recipe.runtime_identity:
-            raise ValueError(f"{input_id} conditioning belongs to a different native runtime")
+        if is_prepared:
+            if prepared_value.runtime_identity != handle.runtime.conditioning_identity:
+                raise ValueError(f"{input_id} conditioning belongs to a different native runtime")
+            pipeline = handle.runtime.sampling_execution_registration.pipeline
+            encode_prepared = pipeline.encode_conditioning
+            if encode_prepared is None:
+                raise TypeError(f"{input_id} runtime cannot schedule prepared conditioning")
+            text = None
+        else:
+            prompt_data = metadata.get(_NATIVE_PROMPT_KEY)
+            if not isinstance(prompt_data, tuple):
+                raise ValueError(
+                    f"{input_id} scheduled conditioning must originate from native CLIP Text Encode"
+                )
+            prompt_values = cast("tuple[object, ...]", prompt_data)
+            if len(prompt_values) != 2 or any(type(item) is not str for item in prompt_values):
+                raise ValueError(
+                    f"{input_id} scheduled conditioning must originate from native CLIP Text Encode"
+                )
+            text, runtime_identity = cast("tuple[str, str]", prompt_values)
+            if runtime_identity != handle.recipe.runtime_identity:
+                raise ValueError(f"{input_id} conditioning belongs to a different native runtime")
         start = metadata.get("start_percent", 0.0)
         end = metadata.get("end_percent", 1.0)
         strength = metadata.get("strength", 1.0)
@@ -282,27 +301,67 @@ def _scheduled_carrier(
                 )
                 else ()
             )
-            request = inference.ScheduledEncodeRequest(
-                (
-                    inference.ScheduledPrompt(
-                        effective,
-                        _prompt_routes(inference, handle.runtime.family, text),
+            if is_prepared:
+                if text_stacks:
+                    raise ValueError(
+                        f"{input_id} prepared conditioning cannot apply scheduled text patches"
+                    )
+                carrier = encode_prepared(
+                    prepared_value.payload,
+                    f"{input_id}-{entry_index}-{segment_start.hex()}",
+                )
+                diffusion_overlays = tuple(
+                    overlay
+                    for overlay in overlays
+                    if float(overlay.strength_model) != 0.0
+                    and _overlay_targets(overlay, "diffusion")
+                )
+                extension_metadata = inference.scheduled_metadata(
+                    target=handle.runtime.family.id,
+                    text_overlays=(),
+                    diffusion_overlays=diffusion_overlays,
+                    transforms=(),
+                )
+                carrier = inference.make_conditioning_carrier(
+                    inference.ConditioningSet(
+                        tuple(
+                            replace(
+                                record,
+                                schedule=effective,
+                                extension_metadata=extension_metadata,
+                            )
+                            for record in carrier.conditioning.records
+                        )
                     ),
-                ),
-                text_patches=text_stacks,
-                diffusion_patches=diffusion_stacks,
-            )
-            execution = inference.ScheduledExecution(inference.ScheduledVariantOwner(state.builder))
-            state.executions.append(execution)
-            execution_context = current_execution_context()
-            carrier: Any = handle.runtime.encode_text_scheduled(
-                request,
-                execution=execution,
-                cancelled=(
-                    execution_context.cancelled if execution_context is not None else _not_cancelled
-                ),
-                type_registry=inference.InferenceTypeRegistry(),
-            )
+                    carrier.bindings,
+                )
+            else:
+                assert text is not None
+                request = inference.ScheduledEncodeRequest(
+                    (
+                        inference.ScheduledPrompt(
+                            effective,
+                            _prompt_routes(inference, handle.runtime.family, text),
+                        ),
+                    ),
+                    text_patches=text_stacks,
+                    diffusion_patches=diffusion_stacks,
+                )
+                execution = inference.ScheduledExecution(
+                    inference.ScheduledVariantOwner(state.builder)
+                )
+                state.executions.append(execution)
+                execution_context = current_execution_context()
+                carrier = handle.runtime.encode_text_scheduled(
+                    request,
+                    execution=execution,
+                    cancelled=(
+                        execution_context.cancelled
+                        if execution_context is not None
+                        else _not_cancelled
+                    ),
+                    type_registry=inference.InferenceTypeRegistry(),
+                )
             if mask_descriptor is not None:
                 assert mask_binding is not None
                 records = tuple(
@@ -328,9 +387,19 @@ def _scheduled_carrier(
                     inference.ConditioningSet(records), carrier.bindings
                 )
             carriers.append(carrier)
+            if is_prepared:
+                prepared_payloads.extend(
+                    prepared_value.payload for _record in carrier.conditioning.records
+                )
     records = tuple(record for carrier in carriers for record in carrier.conditioning.records)
     bindings = tuple(binding for carrier in carriers for binding in carrier.bindings)
-    return inference.make_conditioning_carrier(inference.ConditioningSet(records), bindings)
+    carrier = inference.make_conditioning_carrier(inference.ConditioningSet(records), bindings)
+    if prepared_mode:
+        return inference.PreparedMultiStreamConditioning(
+            handle.runtime.conditioning_identity,
+            inference.PreparedConditioningCarrier(carrier, tuple(prepared_payloads)),
+        )
+    return carrier
 
 
 def _catalog_id(registry: Any, requested: str, kind: str) -> str:

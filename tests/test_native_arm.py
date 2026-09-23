@@ -10582,6 +10582,94 @@ def test_multistream_sampler_routes_ltxav_family_with_cfg_guidance(
     assert runtime.sample_kwargs["seed"] == 7
 
 
+def test_multistream_sampler_routes_shared_scheduling_to_custom_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_inference import PreparedMultiStreamConditioning, SamplingGuidance
+
+    arm = _native_arm()
+    torch = FakeTorch()
+    sampled_video = FakeTensor((1, 128, 13, 16, 24), "sampled-video")
+    runtime = _LTXAVSamplerRuntime(sampled_video)
+    handle = _handle(arm, runtime, torch)
+    latent = _ltxav_streams()
+    overlay = object()
+    resolver = object()
+    states: list[object] = []
+    closed: list[object] = []
+
+    class ScheduleState:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            assert kwargs["ordinary_overlays"] == (overlay,)
+            assert kwargs["ordinary_resolvers"] == {"digest": resolver}
+            states.append(self)
+
+        def resolve(self, _requests: object, _cancelled: object) -> tuple[()]:
+            return ()
+
+        def close(self) -> None:
+            closed.append(self)
+
+    payloads = iter(("scheduled-positive", "scheduled-negative"))
+
+    def scheduled_carrier(
+        _value: object,
+        _name: str,
+        _handle: object,
+        _state: object,
+    ) -> PreparedMultiStreamConditioning:
+        return PreparedMultiStreamConditioning(runtime.conditioning_identity, next(payloads))
+
+    real_import = arm.importlib.import_module
+    inference_torch = real_import("dinkster_inference_torch")
+    scheduled_options: list[tuple[object, object]] = []
+
+    def options(resolve: object, cancelled: object) -> object:
+        value = (resolve, cancelled)
+        scheduled_options.append(value)
+        return value
+
+    monkeypatch.setattr(arm, "_torch", lambda: torch)
+    monkeypatch.setattr(arm, "_NativeScheduleState", ScheduleState)
+    monkeypatch.setattr(arm, "_scheduled_carrier", scheduled_carrier)
+    monkeypatch.setattr(
+        arm.importlib,
+        "import_module",
+        lambda name: (
+            SimpleNamespace(
+                ScheduledSamplingOptions=options,
+                torch_sampler_registry=inference_torch.torch_sampler_registry,
+            )
+            if name == "dinkster_inference_torch"
+            else real_import(name)
+        ),
+    )
+
+    output = arm.NativeKSampler.execute(
+        model=arm._NativeModelOverlay(handle, (overlay,), {"digest": resolver}),
+        seed=7,
+        steps=4,
+        cfg=5.0,
+        sampler_name="euler",
+        scheduler="simple",
+        positive=[[PreparedMultiStreamConditioning(runtime.conditioning_identity, object()), {}]],
+        negative=[[PreparedMultiStreamConditioning(runtime.conditioning_identity, object()), {}]],
+        latent_image={"samples": latent},
+        denoise=1.0,
+    )
+
+    result = cast("Mapping[str, object]", output["latent"])["samples"]
+    assert cast("Any", result).by_role("video") is sampled_video
+    assert runtime.sample_kwargs is not None
+    assert runtime.sample_kwargs["conditioning"] == "scheduled-positive"
+    guidance = runtime.sample_kwargs["cfg"]
+    assert type(guidance) is SamplingGuidance
+    assert cast("Any", guidance).uncond == "scheduled-negative"
+    assert runtime.sample_kwargs["scheduled"] == scheduled_options[0]
+    assert len(states) == 1
+    assert closed == states
+
+
 def test_ltxav_clip_text_encode_feeds_multistream_sampler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

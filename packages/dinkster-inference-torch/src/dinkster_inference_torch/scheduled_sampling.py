@@ -13,7 +13,8 @@ generation, snapshot, and immutable PatchSet before model or staging work.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Protocol, cast
@@ -44,11 +45,13 @@ from .regional import (
     materialize_regions,
     prepare_grouped_patches,
     realize_region_schedules,
+    region_schedule_is_active,
 )
 from .regional import (
     sd_grouped_region_evaluator as sd_grouped_region_evaluator,
 )
 from .sampling_execution import SamplingGuidancePlan
+from .scaled_patches import PreparedScaledPatches, ScaledPatchError
 
 
 class ScheduledSamplingError(ValueError):
@@ -200,17 +203,28 @@ def _materialize_carrier(
     device: torch.device,
     runtime_identity: str,
     cancel: Callable[[], bool],
+    payloads: tuple[object, ...] = (),
+    materialize: (
+        Callable[[ConditioningCarrier, tuple[object, ...]], tuple[object, ...]] | None
+    ) = None,
 ) -> tuple[tuple[MaterializedRegion, ...], tuple[ScheduledPatchResolutionRequest, ...]]:
     _check_cancel(cancel)
     try:
         canonical = encode_conditioning_carrier(carrier)
-        regions = materialize_regions(
-            carrier,
-            family_id,
-            int(latent.shape[-2]),
-            int(latent.shape[-1]),
-            device,
+        regions = (
+            materialize_regions(
+                carrier,
+                family_id,
+                int(latent.shape[-2]),
+                int(latent.shape[-1]),
+                device,
+            )
+            if materialize is None
+            else materialize(carrier, payloads)
         )
+        if any(not isinstance(region, MaterializedRegion) for region in regions):
+            raise TypeError("conditioning materializer must return MaterializedRegion values")
+        regions = cast("tuple[MaterializedRegion, ...]", regions)
     except RegionalConditioningError as error:
         raise _refuse("materialization", error.code) from None
     except (TypeError, ValueError) as error:
@@ -566,6 +580,110 @@ class ScheduledConditioningDenoiser:
         self._window_conditions.clear()
 
 
+class FullLatentScheduledConditioningDenoiser:
+    """Shared scheduled-region evaluation for structural latent layouts."""
+
+    evaluator_identity = "dinkster.scheduled-full-latent.v1"
+
+    def __init__(
+        self,
+        *,
+        space: Any,
+        model: torch.nn.Module,
+        evaluate: Callable[[torch.Tensor, float, object, GuidanceRole], torch.Tensor],
+        project: Callable[[MaterializedRegion, torch.Tensor], tuple[object, torch.Tensor]],
+        patch_sets: Mapping[str, PatchSet[torch.Tensor]],
+        compute_dtype: torch.dtype,
+        device: torch.device,
+        cancel: Callable[[], bool],
+    ) -> None:
+        self._space = space
+        self._model = model
+        self._evaluate = evaluate
+        self._project = project
+        self._compute_dtype = compute_dtype
+        self._device = device
+        self._cancel = cancel
+        self._stack = ExitStack()
+        self._patches: dict[str, PreparedScaledPatches] = {}
+        self._closed = False
+        try:
+            for digest, patch_set in sorted(patch_sets.items()):
+                if patch_set.structural_digest != digest:
+                    raise _refuse("patch-mapping")
+                self._patches[digest] = self._stack.enter_context(
+                    PreparedScaledPatches(
+                        model,
+                        patch_set,
+                        device,
+                        compute_dtype,
+                        cancel,
+                    )
+                )
+        except ScaledPatchError as error:
+            self._stack.close()
+            raise _refuse("patch-preparation", error.code) from None
+        except BaseException:
+            self._stack.close()
+            raise
+
+    @staticmethod
+    def prepare_conditioning(value: object, role: GuidanceRole) -> _ScheduledConditioning:
+        return ScheduledConditioningDenoiser.prepare_conditioning(value, role)
+
+    @staticmethod
+    def batchable(conditions: tuple[_ScheduledConditioning, ...]) -> bool:
+        del conditions
+        return False
+
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def evaluate_conditioning(
+        self,
+        x: torch.Tensor,
+        sigma: float,
+        condition: _ScheduledConditioning,
+    ) -> torch.Tensor:
+        _check_cancel(self._cancel)
+        if self._closed:
+            raise _refuse("denoiser-closed")
+        output = torch.zeros_like(x)
+        count = torch.ones_like(x) * 1e-37
+        for region in condition.regions:
+            if not region_schedule_is_active(region, sigma, self._space):
+                continue
+            prepared, multiplier = self._project(region, x)
+            if multiplier.shape != x.shape or multiplier.device != x.device:
+                raise _refuse("layout-multiplier")
+            scale = region.scale_vector
+            if scale is None:
+                scale = torch.ones(1, dtype=torch.float32, device=x.device)
+            if scale.numel() not in (1, x.shape[0]):
+                raise _refuse("scale-batch")
+            owner = None if region.patch_digest is None else self._patches.get(region.patch_digest)
+            if region.patch_digest is not None and owner is None:
+                raise _refuse("patch-mapping")
+            try:
+                activation = nullcontext() if owner is None else owner.activate(scale)
+                with activation:
+                    _check_cancel(self._cancel)
+                    value = self._evaluate(x, sigma, prepared, condition.role)
+            except ScaledPatchError as error:
+                raise _refuse("patch-activation", error.code) from None
+            if value.shape != x.shape or value.dtype != x.dtype or value.device != x.device:
+                raise _refuse("callback-contract")
+            output.add_(value * multiplier)
+            count.add_(multiplier)
+        return output / count
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._stack.close()
+        self._patches.clear()
+
+
 def prepare_scheduled_carriers(
     runtime: Any,
     latent: torch.Tensor,
@@ -576,6 +694,10 @@ def prepare_scheduled_carriers(
     cancel: Callable[[], bool],
     timeline: RealizedSamplingTimeline | None,
     space: Any,
+    payloads: Mapping[int, tuple[object, ...]] = MappingProxyType({}),
+    materialize: (
+        Callable[[ConditioningCarrier, tuple[object, ...]], tuple[object, ...]] | None
+    ) = None,
 ) -> tuple[
     tuple[MaterializedRegion, ...],
     tuple[MaterializedRegion, ...],
@@ -584,14 +706,28 @@ def prepare_scheduled_carriers(
 ]:
     cond = cast("ConditioningCarrier", plan.conditions[0].conditioning)
     conditional, cond_requests = _materialize_carrier(
-        cond, runtime.family.id, latent, device, runtime.runtime_identity, cancel
+        cond,
+        runtime.family.id,
+        latent,
+        device,
+        runtime.runtime_identity,
+        cancel,
+        payloads.get(id(cond), ()),
+        materialize,
     )
     unconditional: tuple[MaterializedRegion, ...] = ()
     uncond_requests: tuple[ScheduledPatchResolutionRequest, ...] = ()
     if plan.needs_unconditional:
         uncond = cast("ConditioningCarrier", plan.conditions[1].conditioning)
         unconditional, uncond_requests = _materialize_carrier(
-            uncond, runtime.family.id, latent, device, runtime.runtime_identity, cancel
+            uncond,
+            runtime.family.id,
+            latent,
+            device,
+            runtime.runtime_identity,
+            cancel,
+            payloads.get(id(uncond), ()),
+            materialize,
         )
     if timeline is not None:
         conditional = realize_region_schedules(conditional, timeline, space)

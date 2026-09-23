@@ -516,6 +516,9 @@ class SamplingExecutionInputs:
     cfg: SamplingGuidance[Any] | DualSamplingGuidance[Any] | PerpNegSamplingGuidance[Any] | None
     denoise_mask: torch.Tensor | None
     latent_context: object | None = None
+    conditioning_payloads: Mapping[int, tuple[object, ...]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 @dataclass(frozen=True)
@@ -723,6 +726,21 @@ class SamplingPipelineHooks:
         | None
     ) = None
     bind_attention: Callable[[object, SamplingAdapterContext], object | None] | None = None
+    encode_conditioning: Callable[[object, str], ConditioningCarrier] | None = None
+    materialize_conditioning: (
+        Callable[
+            [
+                object,
+                ConditioningCarrier,
+                tuple[object, ...],
+                SamplingExecutionInputs,
+                torch.device,
+                Callable[[], bool],
+            ],
+            tuple[object, ...],
+        ]
+        | None
+    ) = None
 
 
 @dataclass(frozen=True)
@@ -1067,6 +1085,22 @@ def sampling_execution(
             cancel=cancelled,
             timeline=realized_timeline,
             space=space,
+            payloads=inputs.conditioning_payloads,
+            materialize=(
+                None
+                if registration.pipeline.materialize_conditioning is None
+                else lambda carrier, record_payloads: cast(
+                    "Callable[..., tuple[object, ...]]",
+                    registration.pipeline.materialize_conditioning,
+                )(
+                    owner,
+                    carrier,
+                    record_payloads,
+                    inputs,
+                    inputs.latent.device if device is None else torch.device(device),
+                    cancelled,
+                )
+            ),
         )
         conditioning_realization = SamplingConditioningRealization(
             cast("tuple[object, ...]", conditional),
