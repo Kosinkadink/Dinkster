@@ -3666,6 +3666,7 @@ class SeparateAVLatent(Node):
                 OutputSpec("video_latent", DINKSTER_LATENT),
                 OutputSpec("audio_latent", DINKSTER_LATENT),
             ),
+            dispatch_affinity="native",
         )
 
     @classmethod

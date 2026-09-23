@@ -25,6 +25,7 @@ from dinkster_compat_comfy.native import (
     NATIVE_NODES,
     EmptyMiniMaxH3AV,
     EmptyMiniMaxMusic3LatentAudio,
+    SeparateAVLatent,
 )
 from dinkster_compat_comfy.native_arm import NATIVE_ARM_NODES, NATIVE_SCHEDULING_NODES
 from dinkster_engine import ExecutionSelection
@@ -99,6 +100,7 @@ NATIVE_DISPATCH_SCHEMAS = {
         *(node.schema() for node in NATIVE_SCHEDULING_NODES),
         EmptyMiniMaxH3AV.schema(),
         EmptyMiniMaxMusic3LatentAudio.schema(),
+        SeparateAVLatent.schema(),
     )
 }
 
@@ -3024,6 +3026,20 @@ def test_native_dispatch_affinity_preserves_native_body_selection(node_type: str
     assert asyncio.run(policy.select(node_type, {}, ("compat", {"compat": "compat-tag"}))) is None
 
 
+def test_separate_av_latent_routes_to_native_arm_without_resident_inputs() -> None:
+    policy = NativeDispatchPolicy(
+        lambda _digest: None,
+        _ignore_diagnostic,
+        schemas=lambda: NATIVE_DISPATCH_SCHEMAS,
+    )
+
+    selection = asyncio.run(policy.select("dinkster.separate_av_latent", {}, ARMS))
+
+    assert selection is not None
+    assert selection.target == "compat@native"
+    assert selection.cache_tag == "native-default"
+
+
 def test_schema_dispatch_affinity_routes_without_a_policy_id_list() -> None:
     marked = NodeSchema("extension.marked", dispatch_affinity="native")
     ordinary = NodeSchema("extension.ordinary")
@@ -3046,7 +3062,7 @@ def test_schema_dispatch_affinity_routes_without_a_policy_id_list() -> None:
 
 
 def test_native_dispatch_schema_inventory_and_current_wire_compatibility() -> None:
-    assert len(NATIVE_DISPATCH_SCHEMAS) == 8
+    assert len(NATIVE_DISPATCH_SCHEMAS) == 9
     assert all(schema.dispatch_affinity == "native" for schema in NATIVE_DISPATCH_SCHEMAS.values())
     catalog_schemas = {
         schema.node_type: schema
