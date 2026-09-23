@@ -514,7 +514,8 @@ def test_load_image_applies_orientation_alpha_polarity_and_opaque_fallback(tmp_p
     expected_alpha = np.rot90(rgba[..., 3], k=3)
     np.testing.assert_array_equal(mask[0], expected_alpha)
     np.testing.assert_array_equal(
-        image_input(mask)[0], np.float32(1.0) - expected_alpha.astype(np.float32) / 255
+        cast(np.ndarray, image_input(mask))[0],
+        np.float32(1.0) - expected_alpha.astype(np.float32) / 255,
     )
 
     opaque_path = tmp_path / "opaque.png"
@@ -523,7 +524,7 @@ def test_load_image_applies_orientation_alpha_polarity_and_opaque_fallback(tmp_p
     opaque_mask = cast(np.ndarray, opaque["mask"])
     assert opaque_mask.shape == (1, 64, 64)
     assert np.all(opaque_mask == 255)
-    assert np.count_nonzero(image_input(opaque_mask)) == 0
+    assert np.count_nonzero(cast(np.ndarray, image_input(opaque_mask))) == 0
 
 
 @pytest.mark.parametrize("mask_polarity", ["coverage", "transparency"])
@@ -696,7 +697,7 @@ def test_load_mask_channels_and_polarity_match_core_contract(tmp_path: Path) -> 
     )
     assert fallback.shape == (1, 64, 64)
     assert np.all(fallback == 255)
-    assert np.count_nonzero(image_input(fallback)) == 0
+    assert np.count_nonzero(cast(np.ndarray, image_input(fallback))) == 0
     assert media_semantics(fallback) == {"polarity": "transparency", "semantic": "alpha"}
 
 
