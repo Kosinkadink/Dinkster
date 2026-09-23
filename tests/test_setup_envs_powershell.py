@@ -208,6 +208,27 @@ def test_gpu_setup_installs_model_packs_imported_by_gpu_tests() -> None:
     )
 
 
+def test_torch_environments_include_server_without_host_package_leakage() -> None:
+    powershell = POWERSHELL_SETUP.read_text()
+    posix = POSIX_SETUP.read_text()
+
+    assert posix.count("-e .") == 2
+    assert powershell.count('@("-e", $RepoRoot)') == 2
+    for setup in (powershell, posix):
+        assert (
+            setup.count(
+                "import site; import av, dinkster.serve, dinkster_model_triposplat.provider, torch"
+            )
+            == 2
+        )
+        assert setup.count("assert site.ENABLE_USER_SITE is False") == 2
+        assert setup.count("assert version('av') == '18.1.0'") == 2
+        assert "--system-site-packages" not in setup
+        assert "PYTHONPATH" not in setup
+    assert posix.count("/python -I -c") == 2
+    assert powershell.count('"-I"') == 2
+
+
 def test_powershell_setup_pins_native_windows_test_environments() -> None:
     setup = POWERSHELL_SETUP.read_text()
 

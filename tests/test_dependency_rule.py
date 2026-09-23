@@ -338,6 +338,18 @@ def test_bundled_video_preview_imports_only_the_pack_api() -> None:
         assert dinkster_imports(module) <= {"dinkster_api", "dinkster_video_preview"}
 
 
+def test_media_packages_share_comfyuis_pyav_runtime() -> None:
+    for package in ("dinkster-nodes-media-io", "dinkster-video"):
+        project = tomllib.loads(
+            (REPO_ROOT / f"packages/{package}/pyproject.toml").read_text(encoding="utf-8")
+        )
+        assert "av==18.1.0" in project["project"]["dependencies"]
+
+    locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    packages = {package["name"]: package for package in locked["package"]}
+    assert packages["av"]["version"] == "18.1.0"
+
+
 def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:
     root_project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())["project"]
     inference_project = tomllib.loads(
