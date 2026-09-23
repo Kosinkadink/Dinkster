@@ -14137,6 +14137,15 @@ def test_native_sampler_uses_assembled_diffusion_dtype(dtype: str) -> None:
     assert arm._compute_dtype(runtime) == dtype
 
 
+def test_native_sampler_requires_assembled_diffusion_dtype() -> None:
+    arm = _native_arm()
+    runtime = _runtime()
+    runtime.assembled.compute_dtype = lambda _component: None
+
+    with pytest.raises(RuntimeError, match="has no assembled diffusion dtype"):
+        arm._compute_dtype(runtime)
+
+
 def test_native_sampler_is_neutral_to_context_node_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -17202,6 +17211,7 @@ def test_native_sampler_executes_composed_qwen_components_and_application(
         coordinator=coordinator,
         recipe=recipe,
     )
+    assert arm._diffusion_unload_roles(handle) == ()
     application_events: list[object] = []
 
     class ApplicationHandle:
@@ -18780,7 +18790,7 @@ def test_generation_ksampler_prepares_descriptor_fallback_once(
     assert events == ["resolve", "prepare", "prepare", "sample"]
     assert prepared == [positive, negative]
     assert len(stages) == 1
-    assert stages[0]["unload_before"] == ()
+    assert stages[0]["unload_before"] == (("text",) if combined else ())
 
 
 @pytest.mark.parametrize("generation", [False, True])
@@ -20369,9 +20379,17 @@ def _ltxv_media_carrier(family_id: str = "dinkster.ltxv") -> Any:
     )
 
 
-def test_generation_ltxv_media_nodes_encode_condition_and_crop_guides() -> None:
+def _assert_generation_ltxv_media_nodes_encode_condition_and_crop_guides(
+    binding_order: str | None,
+) -> None:
     torch = pytest.importorskip("torch")
-    from dinkster_inference import LTXAV_VIDEO_CODEC, MultiStreamLatent
+    from dinkster_inference import (
+        LTXAV_VIDEO_CODEC,
+        ComponentBinding,
+        MultiStreamLatent,
+        bind_component_conditioning,
+        split_component_conditioning,
+    )
     from dinkster_inference_torch.ltx_media import materialize_ltxv_guides
 
     arm = _native_arm()
@@ -20403,6 +20421,41 @@ def test_generation_ltxv_media_nodes_encode_condition_and_crop_guides() -> None:
     codec = Codec()
     positive = _ltxv_media_carrier()
     negative = _ltxv_media_carrier()
+    component_binding = ComponentBinding(
+        "t5xxl",
+        "dinkster.ltxv",
+        "native:dinkster.ltxv:" + "a" * 64,
+    )
+    if binding_order is not None:
+        positive = bind_component_conditioning(positive, component_binding)
+        negative = bind_component_conditioning(negative, component_binding)
+    if binding_order == "before-frame-rate":
+        for name, carrier in (("positive", positive), ("negative", negative)):
+            record = carrier.conditioning.records[0]
+            metadata = dict(record.extension_metadata)
+            reordered = replace(
+                record,
+                extension_metadata=(
+                    (
+                        "dinkster-inference/component-binding",
+                        metadata["dinkster-inference/component-binding"],
+                    ),
+                    (
+                        "dinkster-compat-comfy/ltx-frame-rate",
+                        metadata["dinkster-compat-comfy/ltx-frame-rate"],
+                    ),
+                ),
+            )
+            reordered_carrier = importlib.import_module(
+                "dinkster_inference"
+            ).make_conditioning_carrier(
+                importlib.import_module("dinkster_inference").ConditioningSet((reordered,)),
+                carrier.bindings,
+            )
+            if name == "positive":
+                positive = reordered_carrier
+            else:
+                negative = reordered_carrier
     image = torch.linspace(0.0, 1.0, 9 * 48 * 64 * 3).reshape(9, 48, 64, 3)
     resized_frames = torch.nn.functional.interpolate(
         image.movedim(-1, 1).narrow(-1, 8, 48),
@@ -20510,8 +20563,21 @@ def test_generation_ltxv_media_nodes_encode_condition_and_crop_guides() -> None:
     )
     assert codec.encoded[-1].shape == (1, 3, 9, 32, 32)
     assert torch.equal(codec.encoded[-1], expected_guide)
+    assert tuple(
+        key for key, _ in cast("Any", guided["positive"]).conditioning.records[0].extension_metadata
+    ) == tuple(
+        sorted(
+            (
+                "dinkster-compat-comfy/ltx-frame-rate",
+                "dinkster-model-ltx/guides",
+                *(("dinkster-inference/component-binding",) if binding_order is not None else ()),
+            )
+        )
+    )
+    guide_carrier, recovered_binding = split_component_conditioning(cast("Any", guided["positive"]))
+    assert recovered_binding == (component_binding if binding_order is not None else None)
     guide_carrier, guide_rate = arm._split_ltx_frame_rate(
-        guided["positive"], importlib.import_module("dinkster_inference")
+        guide_carrier, importlib.import_module("dinkster_inference")
     )
     assert guide_rate == 25.0
     _, guides = materialize_ltxv_guides(guide_carrier)
@@ -20534,12 +20600,27 @@ def test_generation_ltxv_media_nodes_encode_condition_and_crop_guides() -> None:
         1,
         1,
     )
+    cropped_carrier, recovered_binding = split_component_conditioning(
+        cast("Any", cropped["positive"])
+    )
+    assert recovered_binding == (component_binding if binding_order is not None else None)
     cropped_carrier, cropped_rate = arm._split_ltx_frame_rate(
-        cropped["positive"], importlib.import_module("dinkster_inference")
+        cropped_carrier, importlib.import_module("dinkster_inference")
     )
     assert cropped_rate == 25.0
     _, cropped_guides = materialize_ltxv_guides(cropped_carrier)
     assert cropped_guides == ()
+
+
+def test_generation_ltxv_media_nodes_encode_condition_and_crop_guides() -> None:
+    _assert_generation_ltxv_media_nodes_encode_condition_and_crop_guides(None)
+
+
+@pytest.mark.parametrize("binding_order", ("before-frame-rate", "after-frame-rate"))
+def test_generation_ltxv_media_nodes_preserve_component_binding(
+    binding_order: str,
+) -> None:
+    _assert_generation_ltxv_media_nodes_encode_condition_and_crop_guides(binding_order)
 
 
 def test_generation_ltxv_media_nodes_refuse_wrong_boundaries() -> None:
@@ -20614,6 +20695,41 @@ def test_generation_ltxv_media_nodes_refuse_wrong_boundaries() -> None:
             frame_idx=0,
             strength=1.0,
         )
+
+
+def test_ltxv_media_component_binding_boundary_refuses_invalid_lane_pairs() -> None:
+    from dinkster_inference import (
+        ComponentBinding,
+        ConditioningSet,
+        bind_component_conditioning,
+        make_conditioning_carrier,
+    )
+
+    inference = importlib.import_module("dinkster_inference")
+    ltx = importlib.import_module("dinkster_native.families.ltx")
+    unbound = _ltxv_media_carrier()
+    first = ComponentBinding("t5xxl", "dinkster.ltxv", "native:dinkster.ltxv:" + "a" * 64)
+    second = ComponentBinding("t5xxl", "dinkster.ltxv", "native:dinkster.ltxv:" + "b" * 64)
+    bound = bind_component_conditioning(unbound, first)
+
+    with pytest.raises(ValueError, match="lanes must share one component binding"):
+        ltx._split_ltxv_component_binding(bound, unbound, inference)
+    with pytest.raises(ValueError, match="lanes must share one component binding"):
+        ltx._split_ltxv_component_binding(
+            bound,
+            bind_component_conditioning(unbound, second),
+            inference,
+        )
+
+    record = bound.conditioning.records[0]
+    metadata = dict(record.extension_metadata)
+    metadata["dinkster-inference/component-binding"] = {"role": "t5xxl"}
+    malformed = make_conditioning_carrier(
+        ConditioningSet((replace(record, extension_metadata=tuple(metadata.items())),)),
+        bound.bindings,
+    )
+    with pytest.raises(ValueError, match="must carry exactly role, family_id, and identity"):
+        ltx._split_ltxv_component_binding(malformed, malformed, inference)
 
 
 def test_generation_ltxv_crop_guides_passes_through_ltxav_without_guides() -> None:
@@ -21115,7 +21231,7 @@ def test_generation_custom_sampling_routes_wan_causalar_selection_and_metadata(
         def sample_custom(
             latent: MultiStreamLatent[FakeTensor], **kwargs: object
         ) -> CustomSamplingResult[Any]:
-            assert text_module.weight.device == torch.device("cuda:0" if registered else "cpu")
+            assert text_module.weight.device == torch.device("cpu")
             assert diffusion_module.weight.device == torch.device("cuda:0")
             if kwargs.get("sampling_shift") is not None:
                 raise ValueError("Wan CausalAR sampling shift is fixed at 5.0")
@@ -21199,7 +21315,7 @@ def test_generation_custom_sampling_routes_wan_causalar_selection_and_metadata(
     assert events == ["resolve", "prepare", *(["prepare"] if with_negative else []), "sample"]
     assert prepared == [carrier, *([negative] if with_negative else [])]
     assert len(stages) == 1
-    assert stages[0]["unload_before"] == (() if registered else ("text",))
+    assert stages[0]["unload_before"] == ("text",)
     assert len(checks) == 2
     assert checks[0].sampler.id == "dinkster.ar_video"
     assert checks[0].options == (("num_frame_per_block", 2),)
@@ -22283,9 +22399,15 @@ def test_native_ksampler_composes_diffusion_without_text_and_codec_methods(
     assert not isinstance(runtime, FamilyRuntime)
     monkeypatch.setattr(arm, "_torch", lambda: torch)
     inputs = _ksampler_inputs(arm, runtime, torch)
+    handle = cast("Any", inputs["model"])
+    with handle.stage("text"):
+        pass
     result = arm.NativeKSampler.execute(**inputs)
     assert len(calls) == 1
     assert result["latent"]["custom"] == "preserved"
+    text = cast("FakeMechanism", handle.mechanisms[1])
+    assert text.loaded_bytes() == 0
+    assert text.unload_calls == 1
 
 
 @pytest.mark.parametrize("advanced", [False, True])
@@ -23400,6 +23522,8 @@ def test_generation_custom_sampling_routes_anima_components_and_normalizes_video
 
     runtime = Runtime()
     handle = _handle(arm, runtime, torch, recipe=recipe)
+    with handle.stage("text"):
+        pass
     rows = [
         [
             prepared_positive.embeddings,
@@ -23482,6 +23606,9 @@ def test_generation_custom_sampling_routes_anima_components_and_normalizes_video
     assert isinstance(request, CustomSamplingRequest)
     assert request.sampler.id == "dinkster.euler"
     assert request.sigmas == (1.0, 0.5, 0.0)
+    text = cast("FakeMechanism", handle.mechanisms[1])
+    assert text.loaded_bytes() == 0
+    assert text.unload_calls == 1
 
     calls.clear()
     with pytest.raises(ValueError, match="rank-5 latent"):
@@ -25217,12 +25344,13 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
     events: list[object] = []
 
     class Handle:
-        pass
+        recipe = SimpleNamespace(family_id="dinkster.seedvr2")
 
     class Codec:
         descriptor = SEEDVR2_CODEC
         load_device = FakeDevice("cuda:0")
         resource_identity = "native:dinkster.seedvr2:" + "1" * 64
+        sequence_content = True
         accepts_batched_video = True
         accepts_image_batch_latent = True
         manages_input_device = True
@@ -25236,7 +25364,8 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
             yield
 
         def encode_content(self, content: FakeTensor) -> FakeTensor:
-            return content
+            events.append(("encode-direct", content.shape))
+            return FakeTensor((content.shape[0], 16, content.shape[2], 4, 6), "encoded")
 
         def decode_latent(self, latent: FakeTensor) -> FakeTensor:
             return latent
@@ -25265,10 +25394,18 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
 
     codec = Codec()
     monkeypatch.setattr(arm, "NativeComponentHandle", Handle)
-    monkeypatch.setattr(arm, "_native_component_codec", lambda _value: codec)
+    monkeypatch.setattr(
+        arm,
+        "_native_component_codec",
+        lambda value: arm._RegisteredComponentCodec(value, codec),
+    )
     monkeypatch.setattr(arm, "_torch", lambda: torch)
     handle = Handle()
 
+    encoded_direct = arm.GenerationVAEEncode.execute(
+        pixels=FakeTensor((5, 32, 48, 3), "pixels"),
+        vae=handle,
+    )
     encoded = arm.GenerationVAEEncodeTiled.execute(
         pixels=FakeTensor((1, 5, 32, 48, 3), "pixels"),
         vae=handle,
@@ -25294,10 +25431,19 @@ def test_generation_seedvr2_tiled_vae_uses_comfyui_geometry(
         temporal_overlap=8,
     )
 
+    assert cast("Mapping[str, FakeTensor]", encoded_direct["latent"])["samples"].shape == (
+        1,
+        16,
+        5,
+        4,
+        6,
+    )
     assert cast("Mapping[str, FakeTensor]", encoded["latent"])["samples"].shape == (1, 16, 2, 4, 6)
     assert cast("FakeTensor", decoded["image"]).shape == (2, 32, 48, 3)
     assert cast("FakeTensor", decoded_image_batch["image"]).shape == (2, 32, 48, 3)
     assert events == [
+        "stage",
+        ("encode-direct", (1, 3, 5, 32, 48)),
         "stage",
         ("encode", (1, 3, 5, 32, 48), (64, 512, 512), (8, 128, 128)),
         "stage",
@@ -26237,6 +26383,46 @@ def test_generation_sampler_prepares_rich_multistream_conditioning(
     assert guidance.scale == 5.0
 
 
+def test_generation_sampler_validates_provider_multistream_component_bindings() -> None:
+    from dinkster_inference import ComponentBinding, bind_component_conditioning
+
+    arm = _native_arm()
+    inference = importlib.import_module("dinkster_inference")
+
+    class Runtime:
+        conditioning_identity = "dinkster.ltxv.conditioning:test"
+
+        def prepare_conditioning(self, value: object) -> object:
+            return value
+
+    handle = _handle(arm, Runtime())
+    unbound = _ltxv_media_carrier()
+    first = ComponentBinding("t5xxl", "dinkster.ltxv", "native:dinkster.ltxv:" + "a" * 64)
+    second = ComponentBinding("t5xxl", "dinkster.ltxv", "native:dinkster.ltxv:" + "b" * 64)
+    positive = bind_component_conditioning(unbound, first)
+    negative = bind_component_conditioning(unbound, first)
+
+    runtime, stripped_positive, stripped_negative, component_execution, prepared = (
+        arm._resolve_sampling_model(handle, positive, negative, inference)
+    )
+
+    assert runtime is handle.runtime
+    assert stripped_positive == unbound
+    assert stripped_negative == unbound
+    assert component_execution is False
+    assert prepared is False
+    assert arm._resolve_sampling_model(handle, positive, [], inference)[2] == []
+    with pytest.raises(ValueError, match="lanes must share one component binding"):
+        arm._resolve_sampling_model(handle, positive, unbound, inference)
+    with pytest.raises(ValueError, match="lanes must share one component binding"):
+        arm._resolve_sampling_model(
+            handle,
+            positive,
+            bind_component_conditioning(unbound, second),
+            inference,
+        )
+
+
 def test_generation_sampler_refuses_noncallable_multistream_preparer() -> None:
     arm = _native_arm()
 
@@ -26250,6 +26436,130 @@ def test_generation_sampler_refuses_noncallable_multistream_preparer() -> None:
             "positive",
             Runtime(),
             SimpleNamespace(PreparedMultiStreamConditioning=PreparedMultiStreamConditioning),
+        )
+
+
+@pytest.mark.parametrize(
+    ("family_id", "role", "binding_order"),
+    (
+        ("dinkster.ltxv", "t5xxl", "before-frame-rate"),
+        ("dinkster.ltxv", "t5xxl", "after-frame-rate"),
+        ("dinkster.ltxav", "gemma3_12b", "before-frame-rate"),
+        ("dinkster.ltxav", "gemma3_12b", "after-frame-rate"),
+    ),
+)
+def test_provider_multistream_preparation_consumes_component_binding(
+    family_id: str,
+    role: str,
+    binding_order: str,
+) -> None:
+    from dinkster_inference import (
+        COMPONENT_CONDITIONING_METADATA_KEY,
+        ComponentBinding,
+        ConditioningSet,
+        PreparedMultiStreamConditioning,
+        bind_component_conditioning,
+        make_conditioning_carrier,
+    )
+
+    arm = _native_arm()
+    inference = importlib.import_module("dinkster_inference")
+    carrier = _ltxv_media_carrier(family_id)
+    binding = ComponentBinding(role, family_id, f"native:{family_id}:" + "a" * 64)
+    carrier = bind_component_conditioning(carrier, binding)
+    record = carrier.conditioning.records[0]
+    metadata = dict(record.extension_metadata)
+    metadata["dinkster.test/unrelated"] = "preserved"
+    ordered_keys = (
+        COMPONENT_CONDITIONING_METADATA_KEY,
+        "dinkster-compat-comfy/ltx-frame-rate",
+        "dinkster.test/unrelated",
+    )
+    if binding_order == "after-frame-rate":
+        ordered_keys = (ordered_keys[1], ordered_keys[2], ordered_keys[0])
+    carrier = make_conditioning_carrier(
+        ConditioningSet(
+            (
+                replace(
+                    record,
+                    extension_metadata=tuple((key, metadata[key]) for key in ordered_keys),
+                ),
+            )
+        ),
+        carrier.bindings,
+    )
+    prepared: list[object] = []
+
+    class Runtime:
+        conditioning_identity = family_id + ".conditioning:test"
+
+        def prepare_conditioning(self, value: object, *, frame_rate: float) -> object:
+            prepared.append(value)
+            assert frame_rate == 25.0
+            return "prepared"
+
+    result = arm._prepare_provider_multistream_conditioning(
+        carrier,
+        "positive",
+        Runtime(),
+        inference,
+    )
+
+    assert result == [
+        [PreparedMultiStreamConditioning(Runtime.conditioning_identity, "prepared"), {}]
+    ]
+    assert len(prepared) == 1
+    remaining = dict(cast("Any", prepared[0]).conditioning.records[0].extension_metadata)
+    assert remaining == {"dinkster.test/unrelated": "preserved"}
+
+
+def test_provider_multistream_preparation_accepts_missing_and_refuses_malformed_binding() -> None:
+    from dinkster_inference import (
+        COMPONENT_CONDITIONING_METADATA_KEY,
+        ConditioningSet,
+        make_conditioning_carrier,
+    )
+
+    arm = _native_arm()
+    inference = importlib.import_module("dinkster_inference")
+    prepared: list[object] = []
+
+    class Runtime:
+        conditioning_identity = "dinkster.ltxv.conditioning:test"
+
+        def prepare_conditioning(self, value: object, *, frame_rate: float) -> object:
+            prepared.append(value)
+            assert frame_rate == 25.0
+            return "prepared"
+
+    unbound = _ltxv_media_carrier()
+    arm._prepare_provider_multistream_conditioning(unbound, "positive", Runtime(), inference)
+    assert len(prepared) == 1
+    prepared_record = cast("Any", prepared[0]).conditioning.records[0]
+    assert prepared_record.channels == unbound.conditioning.records[0].channels
+    assert prepared_record.extension_metadata == ()
+
+    record = unbound.conditioning.records[0]
+    malformed = make_conditioning_carrier(
+        ConditioningSet(
+            (
+                replace(
+                    record,
+                    extension_metadata=(
+                        *record.extension_metadata,
+                        (COMPONENT_CONDITIONING_METADATA_KEY, {"role": "t5xxl"}),
+                    ),
+                ),
+            )
+        ),
+        unbound.bindings,
+    )
+    with pytest.raises(ValueError, match="must carry exactly role, family_id, and identity"):
+        arm._prepare_provider_multistream_conditioning(
+            malformed,
+            "positive",
+            Runtime(),
+            inference,
         )
 
 
@@ -31194,8 +31504,8 @@ def test_trellis2_split_runtime_builds_and_retains_all_flow_sources(
     inference_torch = SimpleNamespace(
         load_trellis2_flow_artifact=load_flow,
         Trellis2FlowBundle=lambda **kwargs: SimpleNamespace(**kwargs),
-        AssembledTrellis2=lambda diffusion, selected_plan: SimpleNamespace(
-            diffusion=diffusion, plan=selected_plan
+        AssembledTrellis2=lambda diffusion, selected_plan, compute_dtype: SimpleNamespace(
+            diffusion=diffusion, plan=selected_plan, compute_dtype=compute_dtype
         ),
         Trellis2DiffusionRuntime=lambda assembled, **kwargs: SimpleNamespace(
             assembled=assembled, **kwargs
@@ -31236,6 +31546,7 @@ def test_trellis2_split_runtime_builds_and_retains_all_flow_sources(
     assert all(item[2] == FakeTorch.bfloat16 for item in loaded)
     assembled = cast("Any", handle.runtime).assembled
     assert assembled.plan == plan
+    assert assembled.compute_dtype is FakeTorch.bfloat16
     assert (
         assembled.diffusion.structure,
         assembled.diffusion.shape,

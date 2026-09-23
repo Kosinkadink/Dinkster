@@ -92,7 +92,7 @@ bytes at 512x512/20 steps and 1024x1024/30 steps. The withdrawn single-device
 proxy receipt does not admit distributed execution. The retained 1.53x-1.56x
 guidance timings predate the parity fix and are not performance evidence for
 the current receipt. See the `distributed-sd15-fp16-guidance-*` records under
-[`dinkster-evidence`](https://github.com/Kosinkadink/dinkster-evidence/tree/main/inference-parity/records) and
+the maintainer evidence corpus and
 [the parity fix](https://github.com/Kosinkadink/Dinkster/pull/278).
 
 Separate [Blackwell guidance measurements](https://github.com/Kosinkadink/Dinkster/issues/302#issuecomment-5349815893)
@@ -228,8 +228,8 @@ to the table above. Ring stays excluded because the INT8 provider does not retur
 the log-sum-exp values required by the ring merge. The receipt pins
 comfy-kitchen 0.2.31 and torch 2.13.0+cu130.
 
-A separate [comfy-kitchen 0.2.32 receipt](https://github.com/Kosinkadink/dinkster-evidence/blob/main/inference-parity/records/distributed-minimax-h3-bf16-kitchen032-int8-sequence-u2-sm120-d2/README.md)
-covers that provider under torch 2.13.0+cu130 with the same model, dtype,
+A separate comfy-kitchen 0.2.32 validation receipt covers that provider under
+torch 2.13.0+cu130 with the same model, dtype,
 device capability, and U2R1G1 geometry. Sequential full-ResidentWeights arms
 with synthetic 32-token conditioning produced 12 bit-identical packed outputs
 across warmup, three repeats and both ranks. Warm sampling medians were

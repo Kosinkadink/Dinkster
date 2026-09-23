@@ -46,7 +46,7 @@ def decode_png(data: bytes) -> tuple[int, int, int, list[bytes]]:
         pos += 12 + length
     assert data[-12:-8] == struct.pack(">I", 0)  # IEND is empty and last
     raw = zlib.decompress(idat)
-    channels = {0: 1, 2: 3, 6: 4}[color_type]
+    channels = {0: 1, 2: 3, 4: 2, 6: 4}[color_type]
     stride = 1 + width * channels
     assert len(raw) == height * stride
     rows = []
@@ -107,3 +107,13 @@ def test_unrenderable_shape_raises() -> None:
     bad = registry.wrap(DEV_IMAGE, np.zeros((2, 2, 5), dtype=np.float32))
     with pytest.raises(ValueError, match="cannot render"):
         registry.render(bad, "png")
+
+
+def test_gray_alpha_rendition() -> None:
+    registry = make_registry()
+    image = np.array([[[0.5, 1.0], [1.0, 0.0]]], dtype=np.float32)
+    result = registry.render(registry.wrap(DEV_IMAGE, image), "png")
+    assert result is not None
+    width, height, color_type, rows = decode_png(result.data)
+    assert (width, height, color_type) == (2, 1, 4)
+    assert rows == [bytes([128, 255, 255, 0])]

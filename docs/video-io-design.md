@@ -273,7 +273,11 @@ Assemble accepts `bit_depth=auto|8|10` and
 `color_space=sRGB|HDR|HDR PQ`. An omitted color selection inherits IMAGE
 color metadata; only untagged inputs default to sRGB. Explicit selection
 declares the input sample interpretation, not tone mapping. Auto depth keeps
-carried 10-bit provenance and chooses 10 for either HDR label, otherwise 8.
+carried source precision and otherwise chooses 10 for either HDR label, or 8.
+Decoded IMAGE range is full RGB; its optional matrix is coded-form provenance,
+not a claim that the RGB array contains YUV. Assemble targets limited-range
+YUV. Save derives destination conversion and written tags together; an RGB
+destination uses the identity matrix and full range.
 
 | Label | Primaries | Transfer | Matrix | Range |
 | --- | --- | --- | --- | --- |
@@ -283,9 +287,10 @@ carried 10-bit provenance and chooses 10 for either HDR label, otherwise 8.
 
 H.264/AV1 use `yuv420p` at 8 bits and `yuv420p10le` at 10 bits. The 10-bit
 RGB conversion scales normalized float samples to uint16 through `rgb48le`.
-Eight-bit full-range decode uses `rgb24`/`rgba` divided by 255; other RGB
-sources use `gbrpf32le`, or `gbrapf32le` for alpha, without intermediate uint8
-quantization. Conversion must not read uninitialized alignment padding.
+Eight-bit decode retains uint8; higher precision retains uint16, using
+`gbrpf32le`, or `gbrapf32le` for alpha, without intermediate uint8 quantization.
+Ordinary typed consumers normalize integer storage on demand. Conversion must
+not read uninitialized alignment padding.
 This normalization is not tone mapping. Transcode copies raw primaries,
 transfer, matrix, and range, including unknown values rather than inventing
 sRGB. Alpha-capable source export preserves alpha; an explicit incompatible

@@ -145,6 +145,10 @@ def _stream_seconds(stream: Any, field: str) -> Fraction | None:
     return Fraction(value) * stream.time_base if value is not None and stream.time_base else None
 
 
+def color_space_label(transfer: int) -> str:
+    return {1: "sRGB", 13: "sRGB", 18: "HDR", 16: "HDR PQ"}.get(transfer, "unknown")
+
+
 def probe_video(source: bytes | VideoSource | Path) -> dict[str, object]:
     """Probe an admitted source; edits never call this function."""
     import av
@@ -184,9 +188,7 @@ def probe_video(source: bytes | VideoSource | Path) -> dict[str, object]:
                 "pix_fmt": fmt.name if fmt else None,
                 "bit_depth": depth,
                 "alpha": alpha,
-                "color_space": {1: "sRGB", 13: "sRGB", 18: "HDR", 16: "HDR PQ"}.get(
-                    transfer, "unknown"
-                ),
+                "color_space": color_space_label(transfer),
                 "primaries": int(codec.color_primaries),
                 "transfer": transfer,
                 "matrix": int(codec.colorspace),

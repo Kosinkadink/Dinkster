@@ -328,6 +328,59 @@ def _order_default_pack_specs(
         return order_pack_entries_by_requirements(specs[:default_count])
 
 
+def _prepare_stale_catalogs(
+    specs: Sequence[PackSpec | Path | str],
+    *,
+    venv_root: Path,
+    accelerator: str,
+) -> None:
+    stale_by_spec: list[tuple[PackSpec, tuple[Path, ...]]] = []
+    for entry in specs:
+        if not isinstance(entry, PackSpec) or not entry.require_catalog:
+            continue
+        manifest_paths = tuple(
+            path
+            for path in (
+                resolve_manifest_path(entry.manifest),
+                *entry.group_manifests,
+            )
+            if read_catalog(load_manifest(path)) is None
+        )
+        if manifest_paths:
+            stale_by_spec.append((entry, manifest_paths))
+
+    total = sum(len(paths) for _entry, paths in stale_by_spec)
+    if total == 0:
+        return
+
+    started = time.perf_counter()
+    print(f"Preparing pack catalogs (first launch): 0/{total}", flush=True)
+    completed = 0
+    for entry, manifest_paths in stale_by_spec:
+        prepared = (
+            _prepare_default_pack(entry, venv_root=venv_root, accelerator=accelerator)
+            if not entry.in_process and _is_standard_vision_pack(entry)
+            else entry
+        )
+        for manifest_path in manifest_paths:
+            pack_started = time.perf_counter()
+            report = prepare_catalog(
+                manifest_path,
+                interpreter=prepared.python,
+                environment=prepared.env,
+            )
+            if not report.ok:
+                raise CompositionError(f"runtime catalog preparation failed for {report.pack_name}")
+            completed += 1
+            duration = time.perf_counter() - pack_started
+            print(
+                f"Prepared pack catalog: {report.pack_name} ({completed}/{total}, {duration:.1f}s)",
+                flush=True,
+            )
+    elapsed = time.perf_counter() - started
+    print(f"Prepared {total} pack catalogs in {elapsed:.1f}s", flush=True)
+
+
 def detect_native_compute_dtypes(executing_cuda_indices: Sequence[int] = ()) -> frozenset[str]:
     """Compute dtypes supported by every NVIDIA device that executes native jobs.
 
@@ -1210,6 +1263,12 @@ def main(argv: list[str] | None = None) -> None:
         help="identity-service JWKS endpoint (default: $DINKSTER_IDENTITY_JWKS_URL)",
     )
     parser.add_argument(
+        "--user-session-freshness-seconds",
+        type=parse_positive_float,
+        default=600,
+        help="how long a verified human JWT keeps delegations usable (default: 600 seconds)",
+    )
+    parser.add_argument(
         "--identity-issuer",
         default=os.environ.get(_IDENTITY_ISSUER_ENV, ""),
         metavar="URL",
@@ -1922,37 +1981,11 @@ def main(argv: list[str] | None = None) -> None:
         composer_ref.append(composer)
         composer.validate_specs(specs)
         if args.prepare_stale_catalogs:
-            for entry in specs:
-                if not isinstance(entry, PackSpec) or not entry.require_catalog:
-                    continue
-                prepared = (
-                    _prepare_default_pack(
-                        entry,
-                        venv_root=default_pack_venv_root,
-                        accelerator=default_pack_accelerator,
-                    )
-                    if not entry.in_process and _is_standard_vision_pack(entry)
-                    else entry
-                )
-                for manifest_path in (
-                    resolve_manifest_path(prepared.manifest),
-                    *prepared.group_manifests,
-                ):
-                    manifest = load_manifest(manifest_path)
-                    if read_catalog(manifest) is None:
-                        report = prepare_catalog(
-                            manifest_path,
-                            interpreter=prepared.python,
-                            environment=prepared.env,
-                        )
-                        if not report.ok:
-                            raise CompositionError(
-                                f"runtime catalog preparation failed for {report.pack_name}"
-                            )
-                        print(
-                            f"Prepared runtime catalog: {report.pack_name} "
-                            f"({len(report.node_types)} nodes)"
-                        )
+            _prepare_stale_catalogs(
+                specs,
+                venv_root=default_pack_venv_root,
+                accelerator=default_pack_accelerator,
+            )
         composer.validate_catalogs(specs)
         composition = composer.composition
         make_engine = composition.make_engine
@@ -2106,6 +2139,7 @@ def main(argv: list[str] | None = None) -> None:
                 allow_origins=args.allow_origin,
                 authenticator=authenticator,
                 principal_permissions=principal_permissions,
+                user_session_freshness_seconds=args.user_session_freshness_seconds,
                 library=library,
                 history=history,
                 training_sessions=training_sessions,

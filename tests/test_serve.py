@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import builtins
 import json
 import os
 import signal
@@ -640,7 +641,7 @@ def test_settings_gate_argparse_matrix(
 
 @pytest.mark.parametrize("persisted_enabled", [None, False, True])
 @pytest.mark.parametrize("disabled", [False, True])
-def test_serve_p2p_defaults_on_preserves_saved_choice_and_allows_cli_disable(
+def test_serve_p2p_defaults_off_preserves_saved_choice_and_allows_cli_disable(
     persisted_enabled: bool | None,
     disabled: bool,
     tmp_path: Path,
@@ -686,7 +687,7 @@ def test_serve_p2p_defaults_on_preserves_saved_choice_and_allows_cli_disable(
     serve.main()
     value = captured[0][0]["p2p"]
     assert isinstance(value, dict)
-    enabled = not disabled and persisted_enabled is not False
+    enabled = not disabled and persisted_enabled is True
     assert value["downloadsEnabled"] is enabled
     assert value["seedingEnabled"] is enabled
     assert value["stagingBudgetBytes"] == 64 * 1024**3
@@ -2412,6 +2413,64 @@ def test_unprepared_library_catalog_fails_before_api_binding(
     assert attempted
 
 
+def test_prepare_stale_catalogs_reports_each_pack_and_elapsed_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+    from dinkster.compose import PackSpec
+
+    manifests = (tmp_path / "alpha.toml", tmp_path / "beta.toml")
+    spec = PackSpec(manifests[0], require_catalog=True, group_manifests=(manifests[1],))
+    reports = iter(
+        (
+            type("Report", (), {"ok": True, "pack_name": "alpha"})(),
+            type("Report", (), {"ok": True, "pack_name": "beta"})(),
+        )
+    )
+    times = iter((10.0, 10.5, 11.7, 12.0, 14.4, 14.5))
+    monkeypatch.setattr(serve, "resolve_manifest_path", Path)
+    monkeypatch.setattr(serve, "load_manifest", lambda path: path)
+    monkeypatch.setattr(serve, "read_catalog", lambda _manifest: None)
+    monkeypatch.setattr(serve, "prepare_catalog", lambda *_args, **_kwargs: next(reports))
+    monkeypatch.setattr(serve.time, "perf_counter", lambda: next(times))
+    output = Mock(wraps=builtins.print)
+    monkeypatch.setattr(builtins, "print", output)
+
+    serve._prepare_stale_catalogs((spec,), venv_root=tmp_path / "venvs", accelerator="cpu")
+
+    assert capsys.readouterr().out.splitlines() == [
+        "Preparing pack catalogs (first launch): 0/2",
+        "Prepared pack catalog: alpha (1/2, 1.2s)",
+        "Prepared pack catalog: beta (2/2, 2.4s)",
+        "Prepared 2 pack catalogs in 4.5s",
+    ]
+    output.assert_any_call("Preparing pack catalogs (first launch): 0/2", flush=True)
+    output.assert_any_call("Prepared pack catalog: alpha (1/2, 1.2s)", flush=True)
+    output.assert_any_call("Prepared pack catalog: beta (2/2, 2.4s)", flush=True)
+    output.assert_any_call("Prepared 2 pack catalogs in 4.5s", flush=True)
+
+
+def test_prepare_stale_catalogs_is_silent_when_catalogs_are_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+    from dinkster.compose import PackSpec
+
+    spec = PackSpec(tmp_path / "current.toml", require_catalog=True)
+    monkeypatch.setattr(serve, "resolve_manifest_path", Path)
+    monkeypatch.setattr(serve, "load_manifest", lambda path: path)
+    monkeypatch.setattr(serve, "read_catalog", lambda _manifest: object())
+    monkeypatch.setattr(
+        serve,
+        "prepare_catalog",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not prepare")),
+    )
+
+    serve._prepare_stale_catalogs((spec,), venv_root=tmp_path / "venvs", accelerator="cpu")
+
+    assert capsys.readouterr().out == ""
+
+
 def test_video_preview_pack_route_event_and_module_end_to_end(tmp_path: Path) -> None:
     import hashlib
 
@@ -2882,13 +2941,20 @@ def test_library_startup_composes_without_pack_workers(
             server = bound_server(process.pid, output.splitlines())
             if launcher:
                 assert server.pid != process.pid
+            async with session.get(f"http://127.0.0.1:{port}/api/settings") as resp:
+                assert resp.status == 200
+                settings = await resp.json()
+            panel_value = settings["settings"]["p2p"]["value"]
+            assert panel_value["downloadsEnabled"] is False
+            assert panel_value["seedingEnabled"] is False
             async with session.get(f"http://127.0.0.1:{port}/api/p2p/status") as resp:
                 assert resp.status == 200
                 p2p = await resp.json()
-            assert p2p["state"] == ("disabled" if disable_p2p else "running"), p2p
-            if disable_p2p:
-                assert p2p["sidecar"] is None, p2p
-            assert len(server.children(recursive=True)) == (0 if disable_p2p else 1)
+            assert p2p["state"] == "disabled", p2p
+            assert p2p["settings"]["downloadsEnabled"] is False, p2p
+            assert p2p["settings"]["seedingEnabled"] is False, p2p
+            assert p2p["sidecar"] is None, p2p
+            assert server.children(recursive=True) == []
 
     try:
         asyncio.run(scenario())
