@@ -45,8 +45,6 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
-from dinkster_inference import BUILTIN_FAMILIES_BY_ID, EngineProperties
-
 _ROCM_INDEX_URL = "https://repo.amd.com/rocm/whl-multi-arch/"
 _ROCM_TORCH_REQUIREMENT = "torch[device-all]==2.12.0+rocm7.14.0"
 _XPU_INDEX_URL = "https://download.pytorch.org/whl/xpu"
@@ -877,16 +875,6 @@ def _byte_count(value: object) -> int | None:
     return None
 
 
-def _benchmark_family_engine(family: object) -> EngineProperties | None:
-    if not isinstance(family, str):
-        return None
-    family_ids = FAMILY_VALIDATION_FAMILY_IDS.get(family, ())
-    if len(family_ids) != 1:
-        return None
-    registered = BUILTIN_FAMILIES_BY_ID.get(family_ids[0])
-    return None if registered is None else registered.engine
-
-
 def _residency_problems(
     fields: Mapping[str, object],
     system: object,
@@ -895,6 +883,8 @@ def _residency_problems(
     problems: list[str],
     *,
     canonical_evidence: bool,
+    residency_route_roles: tuple[str, ...],
+    requires_accelerator_residency: bool,
 ) -> None:
     """The optional residency section is dinkster-only mechanism-comparison
     evidence: the offload mechanism the process ran under, the VRAM
@@ -903,10 +893,9 @@ def _residency_problems(
     it stays constant. Reports without the section remain readable, but
     cannot serve as canonical generic or H3 production evidence."""
     expected_routes: set[str] = set()
-    family_engine = _benchmark_family_engine(family)
     if system == "dinkster" and fields.get("placement") == BENCHMARK_DINKSTER_PRODUCTION_PLACEMENT:
-        if family_engine is not None and family_engine.residency_route_roles:
-            expected_routes = set(family_engine.residency_route_roles)
+        if residency_route_roles:
+            expected_routes = set(residency_route_roles)
         elif canonical_evidence and family in ("sd15", "sdxl", "lora", "zimage", "wan21", "flux"):
             expected_routes = {"runtime"}
     if "residency" not in fields:
@@ -932,15 +921,19 @@ def _residency_problems(
         routes: Mapping[str, object] = {}
     else:
         routes = route_fields
+    if (
+        system == "dinkster"
+        and fields.get("placement") == BENCHMARK_DINKSTER_PRODUCTION_PLACEMENT
+        and set(routes) - {"runtime"}
+        and not residency_route_roles
+    ):
+        problems.append("catalog residency requirements missing for family-specific routes")
     if expected_routes and set(routes) != expected_routes:
         problems.append(
             "residency.routes must record exactly " + ", ".join(sorted(expected_routes))
         )
     required_actual = (
         "aimdo" if requested == "on" or (requested == "auto" and accelerator == "cuda") else None
-    )
-    requires_accelerator_residency = (
-        family_engine is not None and family_engine.requires_accelerator_residency
     )
     for role, value in routes.items():
         route = _as_mapping(value)
@@ -1052,6 +1045,8 @@ def validate_benchmark_report(
     accelerator: str,
     canonical_evidence: bool = False,
     expected_comfyui_commit: str | None = None,
+    residency_route_roles: tuple[str, ...] = (),
+    requires_accelerator_residency: bool = False,
 ) -> tuple[str, ...]:
     """Problems that make an inference benchmark report unusable as evidence.
 
@@ -1069,6 +1064,8 @@ def validate_benchmark_report(
     requires route facts for generic and H3 production handles. CUDA auto
     and explicit on must record successful bootstrap, Aimdo enrollment,
     and no component fallback, not merely a production placement label.
+    Family-specific requirements are projected from the inference catalog
+    by the caller so this validator does not invert the package dependency.
     """
     if accelerator not in BENCHMARK_ACCELERATORS:
         raise ValueError(f"unknown benchmark accelerator {accelerator!r}")
@@ -1452,7 +1449,14 @@ def validate_benchmark_report(
             problems.append("memory.peak_rss_bytes is not a positive integer")
 
     _residency_problems(
-        fields, system, accelerator, family, problems, canonical_evidence=canonical_evidence
+        fields,
+        system,
+        accelerator,
+        family,
+        problems,
+        canonical_evidence=canonical_evidence,
+        residency_route_roles=residency_route_roles,
+        requires_accelerator_residency=requires_accelerator_residency,
     )
 
     checks = _as_mapping(fields.get("checks"))

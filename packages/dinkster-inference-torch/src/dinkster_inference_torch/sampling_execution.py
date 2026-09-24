@@ -705,7 +705,9 @@ class CustomSamplingCapabilities:
     supports_inpaint: Callable[[object], bool] = lambda runtime: bool(
         getattr(runtime, "supports_inpaint", False)
     )
-    supports_context_windows: Callable[[object], bool] = lambda _runtime: True
+    supports_context_windows: Callable[[object], bool] = lambda runtime: bool(
+        getattr(runtime, "supports_context_windows", False)
+    )
     restrictions: tuple[CustomSamplingRestriction, ...] = ()
 
 
@@ -995,6 +997,8 @@ def sampling_execution(
                 denoise_mask,
                 adapter_context,
             )
+    if context_windows is not None and type(context_windows) is not ContextWindowsSpec:
+        raise owner.sampling_error("context windows must be an exact ContextWindowsSpec")
     owner.check_custom_sampling(
         request,
         has_denoise_mask=inputs.denoise_mask is not None,

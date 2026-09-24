@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from dinkster_inference import MINIMAX_H3
 from dinkster_workers.backend_env import (
     BACKEND_ENV_RECIPES,
     BENCHMARK_ANIMA_FALLBACK_VARIANT,
@@ -57,6 +58,11 @@ HUMO_ARTIFACT_DIGESTS = {
     "audio_encoder": "a8e94b85976e5864ba3e9525c7e6c83b2a1eca42d4b797a0c7c24d778e40fd95",
     "input_image": "3a6662eba09c10b72d763cb947ca38e717998bafc55d7d0c14f72a1410ee1eb0",
     "input_audio": "4e920892d3d33ebb8a04d772960a027f185fa55213ce0c60cfd0ec3faf191e8f",
+}
+
+H3_RESIDENCY_REQUIREMENTS = {
+    "residency_route_roles": MINIMAX_H3.engine.residency_route_roles,
+    "requires_accelerator_residency": MINIMAX_H3.engine.requires_accelerator_residency,
 }
 ANIMA_ARTIFACT_DIGESTS = {
     "diffusion": "bd43b7cffe1ed1153d9c41e7beb2f18cb1273eafbaa3af3edd6a173dc90a006e",
@@ -1740,11 +1746,19 @@ class TestBenchmarkResidencySection:
         self, family: str
     ) -> None:
         report = complete_benchmark_report("cuda", family=family)
-        assert validate_benchmark_report(report, accelerator="cuda", canonical_evidence=True) == ()
+        requirements = H3_RESIDENCY_REQUIREMENTS if family == "minimax_h3" else {}
+        assert (
+            validate_benchmark_report(
+                report, accelerator="cuda", canonical_evidence=True, **requirements
+            )
+            == ()
+        )
         section = report.pop("residency")
         assert (
             "canonical production evidence requires residency route facts"
-            in validate_benchmark_report(report, accelerator="cuda", canonical_evidence=True)
+            in validate_benchmark_report(
+                report, accelerator="cuda", canonical_evidence=True, **requirements
+            )
         )
         report["residency"] = section
         for routes in ({}, {"unexpected": next(iter(section["routes"].values()))}):
@@ -1752,7 +1766,10 @@ class TestBenchmarkResidencySection:
             assert any(
                 "residency.routes must record exactly" in problem
                 for problem in validate_benchmark_report(
-                    report, accelerator="cuda", canonical_evidence=True
+                    report,
+                    accelerator="cuda",
+                    canonical_evidence=True,
+                    **requirements,
                 )
             )
 
@@ -1859,14 +1876,21 @@ class TestBenchmarkResidencySection:
         }
         section["routes"] = routes
         report["residency"] = section
-        assert validate_benchmark_report(report, accelerator="cuda") == ()
+        assert "catalog residency requirements missing for family-specific routes" in (
+            validate_benchmark_report(report, accelerator="cuda")
+        )
+        assert (
+            validate_benchmark_report(report, accelerator="cuda", **H3_RESIDENCY_REQUIREMENTS) == ()
+        )
 
         routes["conditioner"].update(
             mechanism="eager",
             fallback_reason="aimdo activation failed",
             dynamic_components=[],
         )
-        problems = validate_benchmark_report(report, accelerator="cuda")
+        problems = validate_benchmark_report(
+            report, accelerator="cuda", **H3_RESIDENCY_REQUIREMENTS
+        )
         assert "residency.routes.conditioner.mechanism is not required aimdo" in problems
         assert "residency.routes.conditioner fell back from required aimdo residency" in problems
 
