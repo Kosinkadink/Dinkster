@@ -7597,7 +7597,9 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     inference, _recipe, handle, dit_type = _h3_decomposed_handle(
         arm, tmp_path, monkeypatch
     )
-    handle.runtime.model_role = "ref2va-dit" if row_id.startswith(("r2v", "multiframe")) else "fl2va-dit"
+    handle.runtime.model_role = (
+        "ref2va-dit" if row_id.startswith(("r2v", "multiframe")) else "fl2va-dit"
+    )
     dit_type.sample_calls.clear()
     monkeypatch.setattr(arm, "multistream_sampling_preview_emitter", lambda _handle: None)
 
@@ -7791,7 +7793,8 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
 
     assert set(result.executed) | set(result.skipped) <= set(translated.graph.nodes)
     assert len(dit_type.sample_calls) == 1
-    assert cast("Any", result.outputs[translated.targets[0]]["asset"].resolve()).digest == output_asset.digest
+    saved = cast("Any", result.outputs[translated.targets[0]]["asset"].resolve())
+    assert saved.digest == output_asset.digest
 
 
 def test_native_h3_decomposed_sampling_refusals_and_non_h3_passthrough(
