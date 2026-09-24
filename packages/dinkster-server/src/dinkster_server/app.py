@@ -293,6 +293,8 @@ from dinkster_schema import (
     validate_replacement_references,
 )
 from dinkster_values import (
+    ENGINE_EVENT_FRAME_LIMIT_BYTES,
+    ENGINE_JOB_SUBMISSION_LIMIT_BYTES,
     MEBIBYTE,
     InvalidRenditionRequest,
     RenditionUnavailable,
@@ -3950,7 +3952,10 @@ async def handle_queue_clear(request: web.Request) -> web.Response:
 async def handle_events(request: web.Request) -> web.WebSocketResponse:
     state = request.app[STATE_KEY]
     client_id = request.query.get("clientId")  # absent -> observe all clients
-    ws = web.WebSocketResponse(heartbeat=30)
+    ws = web.WebSocketResponse(
+        heartbeat=30,
+        max_msg_size=ENGINE_EVENT_FRAME_LIMIT_BYTES,
+    )
     await ws.prepare(request)
 
     def visible(event: Mapping[str, object]) -> bool:
@@ -4492,7 +4497,7 @@ def create_app(
         execution_journal=execution_journal,
         full_free=full_free,
     )
-    app = web.Application()
+    app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state
     app[PACK_SETTINGS_KEY] = PackSettingsStore(pack_settings_root)
     permission_store = principal_permissions or PrincipalPermissionStore()

@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 from scripts.check_capacity_literals import (
+    LIMITS_MODULES,
     capacity_literals,
     governed_sources,
     is_byte_capacity_expression,
@@ -39,3 +40,13 @@ def test_repository_has_no_undeclared_capacity_literals() -> None:
         path: capacity_literals(path) for path in governed_sources() if capacity_literals(path)
     }
     assert violations == {}
+
+
+def test_capacity_literal_gate_has_exactly_two_limit_homes() -> None:
+    homes = {
+        path.relative_to(Path(__file__).parent.parent).as_posix() for path in LIMITS_MODULES
+    }
+    assert homes == {
+        "packages/dinkster-supervisor/src/dinkster_supervisor/limits.py",
+        "packages/dinkster-values/src/dinkster_values/limits.py",
+    }

@@ -9,6 +9,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIMITS_MODULE = REPO_ROOT / "packages/dinkster-values/src/dinkster_values/limits.py"
+SUPERVISOR_LIMITS_MODULE = (
+    REPO_ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/limits.py"
+)
+LIMITS_MODULES = frozenset((LIMITS_MODULE.resolve(), SUPERVISOR_LIMITS_MODULE.resolve()))
 def _literal_int(node: ast.AST, value: int) -> bool:
     return isinstance(node, ast.Constant) and type(node.value) is int and node.value == value
 
@@ -50,7 +54,7 @@ def governed_sources(root: Path = REPO_ROOT) -> list[Path]:
     return sorted(
         path
         for path in sources
-        if "tests" not in path.parts and path.resolve() != LIMITS_MODULE.resolve()
+        if "tests" not in path.parts and path.resolve() not in LIMITS_MODULES
     )
 
 

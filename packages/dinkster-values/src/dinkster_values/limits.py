@@ -13,6 +13,10 @@ GIBIBYTE = 1024 * MEBIBYTE
 # Format-integrity limits.
 CONDITIONING_HEADER_LIMIT_BYTES = 64 * MEBIBYTE
 WORKER_FRAME_HEADER_LIMIT_BYTES = 64 * MEBIBYTE
+# Protect the engine JSON parser from unbounded request materialization.
+ENGINE_JOB_SUBMISSION_LIMIT_BYTES = MEBIBYTE
+# Keep event WebSocket frame parsing bounded at the engine transport tier.
+ENGINE_EVENT_FRAME_LIMIT_BYTES = 4 * MEBIBYTE
 
 # Materialization capacity limits retained until their owners reserve measured
 # working sets through MemoryGovernor.
