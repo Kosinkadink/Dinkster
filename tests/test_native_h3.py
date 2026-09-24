@@ -1227,6 +1227,10 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
         second_carrier._dinkster_resident_fingerprint
         != first_carrier._dinkster_resident_fingerprint
     )
+    registry = TypeRegistry()
+    spec = register_conditioning_type(registry, resident_table=ResidencyTable())
+    wrapped = registry.wrap(CONDITIONING_TYPE_ID, second_carrier)
+    assert spec.decode(spec.encode(wrapped.resolve())) is second_carrier
     output = second_carrier.payload.conditioning[0][0]
     assert output.runtime_identity == identity
     assert len(output.payload.guides) == 2
@@ -1236,9 +1240,13 @@ def test_motion_context_delegates_av_tail_selection_and_preserves_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inference = __import__("dinkster_inference")
+    family = importlib.import_module("dinkster_native.families.minimax_h3")
     identity = "native:dinkster.minimax_h3:" + "1" * 64
     initial = object()
-    positive: object = [[inference.PreparedMultiStreamConditioning(identity, initial), {}]]
+    rows = [[inference.PreparedMultiStreamConditioning(identity, initial), {}]]
+    positive: object = inference.ResidentConditioningCarrier(
+        family._MiniMaxH3ResidentConditioning(rows, object(), (), "test:h3:motion")
+    )
     target = _streams()
     previous = _streams()
     calls: list[tuple[object, object, object, int]] = []
@@ -1270,7 +1278,10 @@ def test_motion_context_delegates_av_tail_selection_and_preserves_identity(
 
     assert calls == [(initial, target, previous, 22)]
     assert result["trim_time"] == 22 / 24
-    output = cast("Any", result["positive"])[0][0]
+    carrier = cast("Any", result["positive"])
+    assert type(carrier) is inference.ResidentConditioningCarrier
+    assert carrier._dinkster_resident_fingerprint != "test:h3:motion"
+    output = carrier.payload.conditioning[0][0]
     assert output.runtime_identity == identity
     assert output.payload == "continued"
 
