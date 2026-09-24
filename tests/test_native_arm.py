@@ -7479,9 +7479,7 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         def check_custom_sampling(self, request: object, **_kwargs: object) -> None: ...
 
         @staticmethod
-        def prepare_custom_sampling_noise(
-            latent: object, seed: int, noise_inds: object
-        ) -> object:
+        def prepare_custom_sampling_noise(latent: object, seed: int, noise_inds: object) -> object:
             del seed, noise_inds
             return cast("Any", latent).map(
                 lambda stream: FakeTensor(
@@ -7635,9 +7633,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     from dinkster_nodes_media_io import MEDIA_IO_NODES, register_media_types
 
     arm = _native_arm()
-    inference, _recipe, handle, dit_type = _h3_decomposed_handle(
-        arm, tmp_path, monkeypatch
-    )
+    inference, _recipe, handle, dit_type = _h3_decomposed_handle(arm, tmp_path, monkeypatch)
     handle.runtime.model_role = (
         "ref2va-dit" if row_id.startswith(("r2v", "multiframe")) else "fl2va-dit"
     )
@@ -7777,9 +7773,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
         "execute",
         staticmethod(
             lambda **kwargs: {
-                "vae": codecs[1]
-                if "audio" in cast("AssetRef", kwargs["vae"]).name
-                else codecs[0]
+                "vae": codecs[1] if "audio" in cast("AssetRef", kwargs["vae"]).name else codecs[0]
             }
         ),
     )
@@ -7815,9 +7809,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     prompt = json.loads(fixture.read_text())
 
     def resolved_asset(name: str) -> object:
-        return AssetRef(
-            f"blake3:{hashlib.blake2s(name.encode()).hexdigest()}", name, 1
-        ).to_wire()
+        return AssetRef(f"blake3:{hashlib.blake2s(name.encode()).hexdigest()}", name, 1).to_wire()
 
     prompt = {
         node_id: entry

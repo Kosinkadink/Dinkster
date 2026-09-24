@@ -122,8 +122,7 @@ def _decode_minimax_music3_audio(
     h3_shape = latent.ndim == 4 and latent.shape[1] == 32
     if latent.shape[0] < 1 or not (music3_shape or h3_shape):
         raise ValueError(
-            "samples['samples'] must be nonempty [batch,128,frames] or "
-            "[batch,32,time,frequency]"
+            "samples['samples'] must be nonempty [batch,128,frames] or [batch,32,time,frequency]"
         )
     codec = _native_component_codec(vae)
     with codec.stage():

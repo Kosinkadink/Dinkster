@@ -472,9 +472,7 @@ def _minimax_h3_condition(
         prepared,
     )
     conditioning: list[list[object]] = [[value, cast("dict[str, object]", {})]]
-    target_geometry = tuple(
-        (stream.role, tuple(stream.payload.shape)) for stream in av.streams
-    )
+    target_geometry = tuple((stream.role, tuple(stream.payload.shape)) for stream in av.streams)
     facts = (
         "dinkster.minimax-h3.conditioning.v1",
         conditioner_handle.resource_identity,
@@ -482,9 +480,9 @@ def _minimax_h3_condition(
         repr(target_geometry),
         str(frame_count),
     )
-    fingerprint = "minimax-h3-conditioning:" + hashlib.sha256(
-        "\n".join(facts).encode("utf-8")
-    ).hexdigest()
+    fingerprint = (
+        "minimax-h3-conditioning:" + hashlib.sha256("\n".join(facts).encode("utf-8")).hexdigest()
+    )
     resident = _MiniMaxH3ResidentConditioning(
         conditioning,
         conditioner_handle,
