@@ -2142,6 +2142,9 @@ def _classic_control_context(binding: _ClassicControlBinding | None, **kwargs: A
 
 
 def _uses_native_scheduling(value: object) -> bool:
+    inference = importlib.import_module("dinkster_inference")
+    if isinstance(value, inference.ResidentConditioningCarrier):
+        return False
     for entry in _condition_entries(value, "conditioning"):
         metadata = cast("Mapping[object, object]", entry[1])
         if (
