@@ -2,7 +2,7 @@
   "ceilings": {
     "assemblyBuilder": 1,
     "descriptorCatalog": 17,
-    "registryFactory": 9
+    "registryFactory": 8
   },
   "slack": {
     "assemblyBuilder": 0,
@@ -55,7 +55,7 @@
       "call": "builtin_families",
       "path": "packages/dinkster-inference/src/dinkster_inference/catalog.py",
       "line": 1328,
-      "column": 19,
+      "column": 38,
       "issue": 120
     },
     {
@@ -217,14 +217,6 @@
       "line": 732,
       "column": 16,
       "issue": 120
-    },
-    {
-      "kind": "registryFactory",
-      "call": "builtin_family_registry",
-      "path": "packages/dinkster-workers/src/dinkster_workers/backend_env.py",
-      "line": 886,
-      "column": 18,
-      "issue": 425
     }
   ]
 }

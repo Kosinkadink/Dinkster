@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
-from dinkster_inference import EngineProperties, builtin_family_registry
+from dinkster_inference import BUILTIN_FAMILIES_BY_ID, EngineProperties
 
 _ROCM_INDEX_URL = "https://repo.amd.com/rocm/whl-multi-arch/"
 _ROCM_TORCH_REQUIREMENT = "torch[device-all]==2.12.0+rocm7.14.0"
@@ -883,7 +883,7 @@ def _benchmark_family_engine(family: object) -> EngineProperties | None:
     family_ids = FAMILY_VALIDATION_FAMILY_IDS.get(family, ())
     if len(family_ids) != 1:
         return None
-    registered = builtin_family_registry().get(family_ids[0])
+    registered = BUILTIN_FAMILIES_BY_ID.get(family_ids[0])
     return None if registered is None else registered.engine
 
 

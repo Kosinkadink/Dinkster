@@ -169,6 +169,7 @@ from .autoencoder_kl import (
 )
 from .catalog import (
     ANIMA,
+    BUILTIN_FAMILIES_BY_ID,
     CHROMA,
     CHROMA_RADIANCE,
     FLUX2_DEV,
@@ -2044,6 +2045,7 @@ __all__ = [
     "AssemblyError",
     "AttachmentDeclaration",
     "BFLOAT16",
+    "BUILTIN_FAMILIES_BY_ID",
     "BOFTSpec",
     "BOOL",
     "CLIP_BOS",

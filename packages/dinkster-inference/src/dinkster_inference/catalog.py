@@ -29,7 +29,9 @@ packing halves linear axis 1.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from .anima import ANIMA_CONFIG, detect_anima
 from .chroma import (
@@ -1322,16 +1324,22 @@ def builtin_families() -> tuple[ModelFamily, ...]:
     )
 
 
+BUILTIN_FAMILIES_BY_ID: Mapping[str, ModelFamily] = MappingProxyType(
+    {family.id: family for family in builtin_families()}
+)
+
+
 def builtin_family_registry() -> FamilyRegistry:
     """A fresh registry preloaded with the grounded catalog."""
     registry = FamilyRegistry()
-    for family in builtin_families():
+    for family in BUILTIN_FAMILIES_BY_ID.values():
         registry.register(family)
     return registry
 
 
 __all__ = [
     "ANIMA",
+    "BUILTIN_FAMILIES_BY_ID",
     "CHROMA",
     "CHROMA_RADIANCE",
     "FLUX_DEV",
