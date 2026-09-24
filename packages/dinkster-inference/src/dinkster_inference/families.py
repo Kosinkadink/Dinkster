@@ -15,8 +15,9 @@ architectures register from packs; the core is not edited.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from types import MappingProxyType
 from typing import Literal, Protocol
 
@@ -83,6 +84,13 @@ class PreviewDecoderProperties:
             raise ValueError(f"{self.kind} preview registration requires a target")
 
 
+class FamilyFeature(Enum):
+    LORA_KEY_MAP = "lora-key-map"
+
+
+FamilyFeatureTarget = Callable[[Iterable[str], object], Mapping[str, object]]
+
+
 @dataclass(frozen=True)
 class FamilyFeatureHook:
     """An open family contribution to one shared engine feature.
@@ -91,19 +99,15 @@ class FamilyFeatureHook:
     supply only family-specific data or shape conversion at that point.
     """
 
-    feature: str
-    target: str
+    feature: FamilyFeature
+    target: FamilyFeatureTarget
     component_roles: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.feature or any(char.isspace() for char in self.feature):
-            raise ValueError("family feature names must be non-empty and contain no whitespace")
-        if (
-            self.target.count(":") != 1
-            or not all(self.target.split(":"))
-            or any(char.isspace() for char in self.target)
-        ):
-            raise ValueError("family feature targets must name module:attribute")
+        if type(self.feature) is not FamilyFeature:
+            raise TypeError("family feature must be a FamilyFeature enum member")
+        if not callable(self.target):
+            raise TypeError("family feature target must resolve to a callable")
         if any(not role or role.isspace() for role in self.component_roles):
             raise ValueError("family feature component roles must not be empty")
         if len(self.component_roles) != len(set(self.component_roles)):
@@ -153,7 +157,7 @@ class EngineProperties:
     def attention_backend(self, component_role: str) -> str | None:
         return dict(self.attention_backends).get(component_role)
 
-    def feature_hook(self, feature: str) -> FamilyFeatureHook | None:
+    def feature_hook(self, feature: FamilyFeature) -> FamilyFeatureHook | None:
         return next((hook for hook in self.feature_hooks if hook.feature == feature), None)
 
 

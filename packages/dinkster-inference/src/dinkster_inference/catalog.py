@@ -43,6 +43,7 @@ from .families import (
     ComponentWiring,
     DetectionEvidence,
     EngineProperties,
+    FamilyFeature,
     FamilyFeatureHook,
     FamilyRegistry,
     ModelFamily,
@@ -58,6 +59,7 @@ from .flux2 import (
 from .ideogram4 import IDEOGRAM4_CONFIG, IDEOGRAM4_SIGMAS, detect_ideogram4
 from .krea2 import KREA2_CONFIG, detect_krea2
 from .latents import LatentDescriptor, MultiStreamLatentDescriptor
+from .lora import minimax_h3_lora_key_map, z_image_family_lora_key_map
 from .ltx import LTX_SAMPLING, LTXAV_LATENT, LTXV_LATENT, LTXAVDetector, LTXVDetector
 from .lumina2 import LUMINA2_CONFIG, detect_lumina2
 from .minimax_h3 import (
@@ -842,7 +844,16 @@ Z_IMAGE = ModelFamily(
     ),
     supported_dtypes=frozenset(Z_IMAGE_CONFIG.inference_dtypes),
     memory_factor=Z_IMAGE_CONFIG.memory_factor,
-    engine=EngineProperties(text_dtype=FLOAT32),
+    engine=EngineProperties(
+        text_dtype=FLOAT32,
+        feature_hooks=(
+            FamilyFeatureHook(
+                FamilyFeature.LORA_KEY_MAP,
+                z_image_family_lora_key_map,
+                ("diffusion",),
+            ),
+        ),
+    ),
 )
 
 
@@ -939,8 +950,8 @@ MINIMAX_H3 = ModelFamily(
         attention_backends=(("diffusion", "flux"),),
         feature_hooks=(
             FamilyFeatureHook(
-                "lora-key-map",
-                "dinkster_inference:minimax_h3_lora_key_map",
+                FamilyFeature.LORA_KEY_MAP,
+                minimax_h3_lora_key_map,
                 ("diffusion",),
             ),
         ),

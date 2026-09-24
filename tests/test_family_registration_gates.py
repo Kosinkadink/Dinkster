@@ -6,9 +6,11 @@ from pathlib import Path
 import pytest
 from dinkster_inference import (
     EngineProperties,
+    FamilyFeature,
     FamilyFeatureHook,
     PreviewDecoderProperties,
     builtin_families,
+    minimax_h3_lora_key_map,
 )
 from dinkster_inference.component_catalog import default_component_registry
 from family_gate_scanner import (
@@ -283,10 +285,10 @@ def test_registered_engine_properties_cover_shared_family_behavior() -> None:
     components = {descriptor.id: descriptor for descriptor in default_component_registry()}
     assert components["dinkster.minimax_h3"].family.engine.attention_backend("diffusion") == "flux"
     assert components["dinkster.minimax_h3"].family.engine.feature_hook(
-        "lora-key-map"
+        FamilyFeature.LORA_KEY_MAP
     ) == FamilyFeatureHook(
-        "lora-key-map",
-        "dinkster_inference:minimax_h3_lora_key_map",
+        FamilyFeature.LORA_KEY_MAP,
+        minimax_h3_lora_key_map,
         ("diffusion",),
     )
     assert components["dinkster.minimax_music3"].family.engine.attention_backends == (
@@ -310,14 +312,17 @@ def test_engine_properties_reject_invalid_attention_registration() -> None:
         EngineProperties(attention_requires_route=True)
 
 
-def test_engine_properties_accept_open_family_feature_hooks() -> None:
+def test_every_family_feature_hook_is_typed_and_resolved_at_catalog_load() -> None:
     hook = FamilyFeatureHook(
-        "future-feature",
-        "extension_pack:build_future_feature",
+        FamilyFeature.LORA_KEY_MAP,
+        minimax_h3_lora_key_map,
         ("custom-role",),
     )
 
     properties = EngineProperties(feature_hooks=(hook,))
 
-    assert properties.feature_hook("future-feature") is hook
-    assert properties.feature_hook("not-registered") is None
+    assert properties.feature_hook(FamilyFeature.LORA_KEY_MAP) is hook
+    for family in builtin_families():
+        for registered in family.engine.feature_hooks:
+            assert type(registered.feature) is FamilyFeature
+            assert callable(registered.target)

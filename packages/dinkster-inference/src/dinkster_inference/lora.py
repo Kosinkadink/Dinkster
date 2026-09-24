@@ -711,7 +711,9 @@ def native_unet_key_map(model_keys: Iterable[str]) -> dict[str, str]:
     return key_map
 
 
-def minimax_h3_lora_key_map(model_keys: Iterable[str]) -> dict[str, str]:
+def minimax_h3_lora_key_map(
+    model_keys: Iterable[str], _config: object | None = None
+) -> dict[str, str]:
     """Map direct MiniMax H3 LoRA stems to loaded diffusion rows."""
 
     return {
@@ -952,6 +954,16 @@ def z_image_diffusers_key_map(
             stem = "all_x_embedder.2-1"
         add_aliases(stem, PatchTarget(key))
     return key_map
+
+
+def z_image_family_lora_key_map(
+    model_keys: Iterable[str], config: object
+) -> dict[str, PatchTarget]:
+    """Build Z-Image aliases from its registered model configuration."""
+    hidden_width = getattr(config, "hidden_width", None)
+    if not isinstance(hidden_width, int) or hidden_width <= 0:
+        raise ValueError("Z-Image LoRA mapping requires a positive hidden width")
+    return z_image_diffusers_key_map(model_keys, hidden_width)
 
 
 def clip_lora_key_map(model_keys: Iterable[str]) -> dict[str, str]:
