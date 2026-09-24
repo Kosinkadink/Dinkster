@@ -1332,9 +1332,7 @@ class _H3LatentAdapter:
                         )
                     uncond_payload = scheduled_uncond.payloads[0]
                     guidance_uncond: object = scheduled_uncond.carrier
-                    conditioning_payloads[id(scheduled_uncond.carrier)] = (
-                        scheduled_uncond.payloads
-                    )
+                    conditioning_payloads[id(scheduled_uncond.carrier)] = scheduled_uncond.payloads
                 else:
                     uncond_payload = raw_uncond_payload
                     guidance_uncond = uncond_payload

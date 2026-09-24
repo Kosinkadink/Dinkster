@@ -1227,7 +1227,7 @@ def _logical_lora_key_map(
         if not isinstance(hidden_width, int) or hidden_width <= 0:
             raise RuntimeError("native Z-Image runtime has no valid hidden width")
         key_map.update(inference.z_image_diffusers_key_map(diffusion_keys, hidden_width))
-    family = inference.builtin_family_registry().get(handle.recipe.family_id)
+    family = _active_inference_registries().families.get(handle.recipe.family_id)
     hook = None if family is None else family.engine.feature_hook("lora-key-map")
     if hook is not None:
         module_name, attribute = hook.target.split(":", 1)

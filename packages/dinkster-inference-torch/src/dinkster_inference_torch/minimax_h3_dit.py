@@ -918,14 +918,7 @@ class _MiniMaxH3FinalLayer(torch.nn.Module):
             sigma_next = sampler_sigmas[min(index + 1, len(sampler_sigmas) - 1)]
             start, stop = (
                 round(
-                    (
-                        1.0
-                        - sigma
-                        / (
-                            schedule_shifts[0]
-                            + sigma * (1.0 - schedule_shifts[0])
-                        )
-                    )
+                    (1.0 - sigma / (schedule_shifts[0] + sigma * (1.0 - schedule_shifts[0])))
                     * video_heads
                 )
                 for sigma in (video_sigma, sigma_next)

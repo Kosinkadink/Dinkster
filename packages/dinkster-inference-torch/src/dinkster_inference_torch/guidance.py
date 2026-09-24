@@ -406,8 +406,7 @@ class ConditioningEvaluation(Generic[PreparedCondition]):
     token_transforms: Callable[[object], tuple[TokenGridTransform, ...]] | None = None
     validate_layout: Callable[[PreparedCondition, ModelTokenLayout], None] | None = None
     window_conditioning: (
-        Callable[[PreparedCondition, int, tuple[int, ...], Sequence[int]], PreparedCondition]
-        | None
+        Callable[[PreparedCondition, int, tuple[int, ...], Sequence[int]], PreparedCondition] | None
     ) = None
     inner_calls: (
         Callable[
