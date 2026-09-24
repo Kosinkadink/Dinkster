@@ -4,7 +4,7 @@ version = "0.0.1"
 description = "Dinkster first-party asset-backed media I/O node pack"
 requires-python = ">=3.12"
 dependencies = [
-    "av==16.0.1",
+    "av==18.1.0",
     "dinkster-api",
     "dinkster-image-document",
     "dinkster-video",
