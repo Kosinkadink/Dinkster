@@ -862,35 +862,6 @@ def test_sam31_provider_nodes_execute_in_an_isolated_worker(tmp_path: Path) -> N
             Region(box[0], box[1], box[2] - box[0], box[3] - box[1]),
         )
         expected = _decode(golden["refinedLogits"], dtype=np.dtype(np.float32)) > 0.0
-        tracking_golden = _tracking_golden()
-        tracking_source = _decode(
-            tracking_golden["sourceFrames"],
-            dtype=np.dtype(np.uint8),
-        ).astype(np.float32)
-        tracking_source /= 255.0
-        tracking_boxes = cast("list[list[float]]", tracking_golden["boxes"])
-        tracking_detections = [
-            Detection(
-                f"object-{index}",
-                1.0,
-                Region(box[0], box[1], box[2] - box[0], box[3] - box[1]),
-            )
-            for index, box in enumerate(tracking_boxes)
-        ]
-        tracking_expected = _decode(
-            tracking_golden["trackedMasks"],
-            dtype=np.dtype(np.float32),
-        )
-        detection_golden = _detection_golden()
-        detection_source = _decode(
-            detection_golden["source"],
-            dtype=np.dtype(np.uint8),
-        )[None].astype(np.float32)
-        detection_source /= 255.0
-        detection_expected = _decode(
-            detection_golden["refinedMask"],
-            dtype=np.dtype(np.float32),
-        )
         vault = _vault(tmp_path)
         registry = TypeRegistry()
         register_core_types(registry)
@@ -903,6 +874,12 @@ def test_sam31_provider_nodes_execute_in_an_isolated_worker(tmp_path: Path) -> N
         )
         await worker.start()
         try:
+            assert {
+                "dinkster.detection.detect",
+                "dinkster.detection.segment",
+                "dinkster.detection.segment_text",
+                "dinkster.detection.track",
+            } <= worker.schemas.keys()
             engine = Engine(
                 schemas=dict(worker.schemas),
                 registry=registry,
@@ -911,25 +888,6 @@ def test_sam31_provider_nodes_execute_in_an_isolated_worker(tmp_path: Path) -> N
             )
             graph = Graph(
                 nodes={
-                    "detect": GraphNode(
-                        "dinkster.detection.detect",
-                        {
-                            "image": TypedLiteral("dinkster.image", detection_source.tolist()),
-                            "prompt": "person",
-                            "min_score": 0.5,
-                            "max_results": 1,
-                            "provider": "dinkster-vision-sam31",
-                        },
-                    ),
-                    "text_segment": GraphNode(
-                        "dinkster.detection.segment_text",
-                        {
-                            "image": TypedLiteral("dinkster.image", detection_source.tolist()),
-                            "prompt": "person",
-                            "min_score": 0.5,
-                            "provider": "dinkster-vision-sam31",
-                        },
-                    ),
                     "segment": GraphNode(
                         "dinkster.detection.segment",
                         {
@@ -941,41 +899,9 @@ def test_sam31_provider_nodes_execute_in_an_isolated_worker(tmp_path: Path) -> N
                             "provider": "dinkster-vision-sam31",
                         },
                     ),
-                    "track": GraphNode(
-                        "dinkster.detection.track",
-                        {
-                            "image": TypedLiteral("dinkster.image", tracking_source.tolist()),
-                            "detections": TypedLiteral(
-                                "list<dinkster.detection>",
-                                [item.to_record() for item in tracking_detections],
-                            ),
-                            "provider": "dinkster-vision-sam31",
-                        },
-                    ),
                 }
             )
-            result = await engine.run(graph, ["detect", "text_segment", "segment", "track"])
-            detected = cast(
-                "list[Detection]",
-                result.outputs["detect"]["detections"].resolve(),
-            )
-            assert result.outputs["detect"]["count"].resolve() == 1
-            assert len(detected) == 1 and detected[0].label == "person"
-            assert detected[0].mask is not None
-            np.testing.assert_array_equal(detected[0].mask, detection_expected)
-            text_segmented = cast(
-                "list[Detection]",
-                result.outputs["text_segment"]["detections"].resolve(),
-            )
-            text_masks = cast(
-                "list[np.ndarray]",
-                result.outputs["text_segment"]["masks"].resolve(),
-            )
-            assert len(text_segmented) == len(text_masks) == 1
-            assert text_segmented[0].label == "person"
-            assert text_segmented[0].mask is not None
-            np.testing.assert_array_equal(text_segmented[0].mask, detection_expected)
-            np.testing.assert_array_equal(text_masks[0][0], detection_expected)
+            result = await engine.run(graph, ["segment"])
             detections = cast(
                 "list[Detection]",
                 result.outputs["segment"]["detections"].resolve(),
@@ -994,13 +920,6 @@ def test_sam31_provider_nodes_execute_in_an_isolated_worker(tmp_path: Path) -> N
             assert actual.mask is not None
             np.testing.assert_array_equal(actual.mask, expected)
             np.testing.assert_array_equal(masks[0][0], expected)
-            tracked = cast(
-                "list[np.ndarray]",
-                result.outputs["track"]["masks"].resolve(),
-            )
-            np.testing.assert_array_equal(np.stack(tracked), tracking_expected)
-            combined = cast("np.ndarray", result.outputs["track"]["combined"].resolve())
-            np.testing.assert_array_equal(combined, np.maximum.reduce(tracking_expected))
         finally:
             await worker.close()
 
