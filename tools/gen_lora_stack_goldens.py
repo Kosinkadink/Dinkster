@@ -18,7 +18,7 @@ from pathlib import Path
 
 import torch
 from gen_patch_goldens import APPLY_CASES, apply_case, e_lora
-from golden_platform import platform_golden_path, tuple_provenance
+from golden_platform import cpu_identity, platform_golden_path, tuple_provenance
 
 REFERENCE_COMMIT = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
 REPO = Path(__file__).resolve().parent.parent
@@ -99,6 +99,7 @@ def main() -> None:
     payload = {
         "_meta": {
             "generator": "tools/gen_lora_stack_goldens.py",
+            "generationCpu": cpu_identity(),
             "reference_commit": commit,
             "torch": torch.__version__,
             **tuple_provenance(torch.__version__),

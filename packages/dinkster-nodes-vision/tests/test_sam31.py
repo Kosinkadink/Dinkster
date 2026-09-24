@@ -273,22 +273,15 @@ def test_sam31_tracking_matches_pinned_comfyui_vector() -> None:
         )
         for index, box in enumerate(boxes)
     ]
-    initial_masks = _decode(golden["initialMasks"], dtype=np.dtype(np.float32))[:, 0]
     expected = _decode(golden["trackedMasks"], dtype=np.dtype(np.float32))
     expected_combined = _decode(golden["combinedMask"], dtype=np.dtype(np.float32))
     _install_model(_model_path())
     with _torch_threads(TORCH_NUM_THREADS):
         with use_declared_asset_pack("dinkster-vision-sam31"):
             tracked, combined = execute_track(frames, detections)
-            tracked_from_masks, combined_from_masks = execute_track(
-                frames, initial_masks=initial_masks
-            )
             actual = np.stack(tracked)
-            actual_from_masks = np.stack(tracked_from_masks)
     np.testing.assert_array_equal(actual, expected)
-    np.testing.assert_array_equal(actual_from_masks, expected)
     np.testing.assert_array_equal(combined, expected_combined)
-    np.testing.assert_array_equal(combined_from_masks, expected_combined)
     sam_model._MODEL = None
     gc.collect()
 

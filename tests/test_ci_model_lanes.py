@@ -100,7 +100,12 @@ MODEL_GROUPS = (
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 6/8",
     },
-    # skipped pending #427
+    {
+        "name": "inference and IPAdapter, shard 7 of 8",
+        "group": "inference",
+        "suites": "inference-torch,model-ipadapter",
+        "pytest-args": "-p tools.pytest_file_shard --file-shard 7/8",
+    },
     {
         "name": "inference and IPAdapter, shard 8 of 8",
         "group": "inference",
@@ -113,10 +118,25 @@ MODEL_GROUPS = (
         "suites": "acceptance-sampling,benchmark-loader",
         "pytest-args": "",
     },
-    # skipped pending #427
-    # skipped pending #427
-    # skipped pending #427
-    # skipped pending #427
+    {
+        "name": "HED, upscale and EfficientSAM",
+        "group": "vision-fast",
+        "suites": "hed,upscale,efficient-sam",
+        "pytest-args": "",
+    },
+    {
+        "name": "Depth Anything V2, DETR and RT-DETR",
+        "group": "vision-detection",
+        "suites": "depth-anything-v2,detr,rtdetr",
+        "pytest-args": "",
+    },
+    {
+        "name": "BiRefNet and Depth Anything V3",
+        "group": "vision-large",
+        "suites": "birefnet,depth-anything-v3",
+        "pytest-args": "",
+    },
+    {"name": "SAM 3.1", "group": "vision-sam", "suites": "sam31", "pytest-args": ""},
 )
 PR_MODEL_GROUPS = (
     {
@@ -177,6 +197,15 @@ EXPECTED_MODEL_SUITES = {
     "model-ipadapter",
     "acceptance-sampling",
     "benchmark-loader",
+    "hed",
+    "upscale",
+    "efficient-sam",
+    "depth-anything-v2",
+    "detr",
+    "rtdetr",
+    "birefnet",
+    "depth-anything-v3",
+    "sam31",
 }
 
 
@@ -690,7 +719,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
     ]
     assert set(suites) == EXPECTED_MODEL_SUITES
     assert all(
-        suites.count(suite) == (7 if suite in {"inference-torch", "model-ipadapter"} else 1)
+        suites.count(suite) == (8 if suite in {"inference-torch", "model-ipadapter"} else 1)
         for suite in EXPECTED_MODEL_SUITES
     )
     assert job["permissions"] == {"contents": "read"}
@@ -796,9 +825,9 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
 def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> None:
     assert "engine-tests" not in PR_JOBS
     assert JOBS["model-tests"]["timeout-minutes"] == 30
-    assert [row["group"] for row in MODEL_GROUPS].count("inference") == 7
+    assert [row["group"] for row in MODEL_GROUPS].count("inference") == 8
     assert {row["pytest-args"] for row in MODEL_GROUPS if row["group"] == "inference"} == {
-        f"-p tools.pytest_file_shard --file-shard {shard}/8" for shard in (1, 2, 3, 4, 5, 6, 8)
+        f"-p tools.pytest_file_shard --file-shard {shard}/8" for shard in range(1, 9)
     }
 
 
@@ -818,7 +847,10 @@ def test_pr_inference_step_applies_only_the_declared_pytest_arguments() -> None:
 def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path) -> None:
     job = JOBS["test"]
     windows_rows = [row for row in job["strategy"]["matrix"]["include"] if row["os"] == "windows"]
-    assert windows_rows == []
+    assert {row["pytest_args"] for row in windows_rows} == {
+        "-p tools.pytest_file_shard --file-shard 1/2",
+        "-p tools.pytest_file_shard --file-shard 2/2",
+    }
 
     steps = job["steps"]
     checkout_index = next(
@@ -1047,6 +1079,9 @@ def test_full_validation_pytest_and_demo_jobs_are_timeout_bounded() -> None:
         20,
         20,
         20,
+        20,
+        30,
+        30,
     ]
     assert JOBS["p2p-descriptor-macos"]["timeout-minutes"] == 15
     assert JOBS["p2p-artifact-smoke"]["timeout-minutes"] == 15

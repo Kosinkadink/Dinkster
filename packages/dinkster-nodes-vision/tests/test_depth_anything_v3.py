@@ -120,6 +120,7 @@ def test_preprocessing_matches_comfyui_byte_grid() -> None:
 def test_depth_output_matches_pinned_comfyui_vector() -> None:
     golden = _golden()
     assert golden["baseline"] == "e7051b03758a1247e3adb84a5b784ffacb9a23bd"
+    assert golden["generationCpu"] == "AMD Ryzen 9 5950X 16-Core Processor"
     assert golden["modelSha256"] == MODEL_SHA256
     assert golden["numpy"] == "2.5.1"
     assert golden["opencv"] == "5.0.0"
