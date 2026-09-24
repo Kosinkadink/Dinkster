@@ -103,12 +103,24 @@ def _dit_geometries() -> dict[str, TensorGeometry]:
 def _int8_dit_geometries() -> tuple[dict[str, TensorGeometry], dict[str, bytes]]:
     geometries = _dit_geometries()
     configurations: dict[str, bytes] = {}
+    for index in range(50):
+        key = f"blocks.{index}.adaln_proj.linear.weight"
+        geometries[key] = TensorGeometry(geometries[key].shape, FLOAT16)
+    key = "final_layer.adaln_proj.linear.weight"
+    geometries[key] = TensorGeometry(geometries[key].shape, FLOAT16)
     for key, geometry in tuple(geometries.items()):
-        if len(geometry.shape) != 2 or not key.startswith(("blocks.", "token_refiner.blocks.")):
+        if not key.startswith("blocks.") or not key.endswith(
+            (
+                ".attn.qkv_proj.weight",
+                ".attn.out_proj.weight",
+                ".mlp.fc1.weight",
+                ".mlp.fc2.weight",
+            )
+        ):
             continue
         layer = key.removesuffix(".weight")
         configuration_key = layer + ".comfy_quant"
-        configuration = b'{"format":"int8_tensorwise","convrot":true,"convrot_groupsize":64}'
+        configuration = b'{"format":"int8_tensorwise","convrot":true,"convrot_groupsize":256}'
         geometries[key] = TensorGeometry(geometry.shape, INT8)
         geometries[layer + ".weight_scale"] = TensorGeometry((geometry.shape[0], 1), FLOAT32)
         geometries[configuration_key] = TensorGeometry((len(configuration),), UINT8)
@@ -286,7 +298,12 @@ def test_component_registry_selects_h3_fp_and_int8_diffusion(
     assert candidate.artifact_role == artifact_role
     assert "audio_patch_proj.weight" in candidate.source.keys()
     if quantized:
-        assert "blocks.0.adaln_proj.linear.weight_scale" in candidate.source.keys()
+        assert geometries["adaln_t_table"].shape == (1025, 8)
+        assert geometries["blocks.0.adaln_proj.linear.weight"].shape == (96768, 8)
+        assert geometries["blocks.0.adaln_proj.linear.weight"].dtype == FLOAT16
+        assert len(geometries) == 932
+        assert sum(key.endswith(".weight_scale") for key in geometries) == 200
+        assert "blocks.0.attn.qkv_proj.weight_scale" in candidate.source.keys()
     identity = descriptor.component_identity(
         role,
         candidate,

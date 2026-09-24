@@ -2653,6 +2653,10 @@ def test_register_native_types_fills_gaps_without_clobbering() -> None:
         assert registry.spec(type_id).declared_codec is True
     for type_id in ("comfy.LATENT", "comfy.CONDITIONING", "comfy.TRACKS"):
         assert type_id in registry  # data types: default codec
+    assert registry.equivalent_type("dinkster.image") == "comfy.IMAGE"
+    assert registry.equivalent_type("comfy.IMAGE") == "dinkster.image"
+    assert registry.equivalent_type("dinkster.mask") == "comfy.MASK"
+    assert registry.equivalent_type("comfy.MASK") == "dinkster.mask"
 
     # After a translation that already registered the model types
     # (resident), a second pass must not raise on duplicates.

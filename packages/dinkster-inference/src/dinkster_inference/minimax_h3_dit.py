@@ -22,7 +22,9 @@ from .refusal import NativeRefusalCategory, NativeRefusalError
 from .weights import TensorGeometry, WeightSource
 
 _PREFIXES = ("", "model.diffusion_model.")
-_TIME_EMBED_DIM = 2688
+_MLP_TIME_EMBED_DIM = 2688
+_CURVE_TABLE_ROWS = 1025
+_CURVE_TIME_EMBED_DIM = 8
 _TOKEN_REFINER_DEPTH = 2
 _ROPE_AXIS_DIM = 16
 
@@ -228,13 +230,13 @@ def _minimax_h3_dit_keys(
         bias=True,
     )
     if time_embedding_kind == "curve":
-        keys["adaln_t_table"] = (1000, _TIME_EMBED_DIM)
+        keys["adaln_t_table"] = (_CURVE_TABLE_ROWS, _CURVE_TIME_EMBED_DIM)
     else:
         _linear(keys, "time_embedder.proj_in", config.hidden_width, 256, bias=True)
         _linear(
             keys,
             "time_embedder.proj_out",
-            _TIME_EMBED_DIM,
+            _MLP_TIME_EMBED_DIM,
             config.hidden_width,
             bias=True,
         )
@@ -249,6 +251,9 @@ def _minimax_h3_dit_keys(
     keys["token_refiner.final_norm.weight"] = (config.hidden_width,)
 
     adaln_width = 6 * 3 * config.hidden_width
+    adaln_input_width = (
+        _CURVE_TIME_EMBED_DIM if time_embedding_kind == "curve" else _MLP_TIME_EMBED_DIM
+    )
     for index in range(config.depth):
         root = f"blocks.{index}"
         keys[f"{root}.norm1.weight"] = (config.hidden_width,)
@@ -259,7 +264,7 @@ def _minimax_h3_dit_keys(
             keys,
             f"{root}.adaln_proj.linear",
             adaln_width,
-            _TIME_EMBED_DIM,
+            adaln_input_width,
             bias=True,
         )
 
@@ -268,7 +273,7 @@ def _minimax_h3_dit_keys(
         keys,
         "final_layer.adaln_proj.linear",
         2 * config.hidden_width,
-        _TIME_EMBED_DIM,
+        adaln_input_width,
         bias=True,
     )
     _linear(

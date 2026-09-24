@@ -616,7 +616,7 @@ def test_checkpointed_block_backward_accepts_view_hidden() -> None:
     base = torch.linspace(-0.5, 0.5, 2 * sequence * 12).reshape(1, 2 * sequence, 12)
     base.requires_grad_(True)
     hidden = base.chunk(2, dim=1)[0]
-    time = torch.linspace(-0.2, 0.2, dit_module._TIME_EMBED_DIM).reshape(  # pyright: ignore[reportPrivateUsage]
+    time = torch.linspace(-0.2, 0.2, dit_module._CURVE_TIME_EMBED_DIM).reshape(  # pyright: ignore[reportPrivateUsage]
         1, -1
     )
     segments = ((0, sequence, 0),)
@@ -2027,6 +2027,7 @@ def test_mlp_final_layer_keeps_bf16_adaln_and_fp32_output_heads() -> None:
     config = cast(MiniMaxH3Config, _ReducedConfig())
     layer = dit_module._MiniMaxH3FinalLayer(  # pyright: ignore[reportPrivateUsage]
         config,
+        time_dim=2688,
         apply_silu=True,
         operations=CastOperations(torch.bfloat16),
         fp32_operations=CastOperations(torch.float32),

@@ -94,7 +94,11 @@ from dinkster_workers import current_execution_context
 
 from .audio import register_audio_type
 from .devices import comfy_resident_meta
-from .image import register_image_asset_providers, register_image_type
+from .image import (
+    register_image_asset_providers,
+    register_image_type,
+    register_image_type_equivalences,
+)
 from .latent import register_latent_type
 from .native_residency import select_intermediate_device
 from .pool import default_pool
@@ -4365,6 +4369,7 @@ def register_native_types(registry: TypeRegistry) -> None:
         register_image_type(registry, mask_type)
     if "dinkster.mask" not in registry:
         register_image_type(registry, "dinkster.mask")
+    register_image_type_equivalences(registry)
     # Typed assets: asset<comfy.IMAGE> decode + comfy.IMAGE batch merge,
     # torch-producing worker halves of the host registrations in
     # comfy_compose.register_comfy_host_types (same provider identities).
