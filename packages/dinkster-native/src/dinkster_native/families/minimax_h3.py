@@ -208,11 +208,14 @@ def _minimax_h3_image_batch(value: object, torch: Any, name: str) -> Any:
         or tensor.shape[0] <= 0
         or tensor.shape[-1] != 3
         or min(tensor.shape[1:3]) < 2
-        or not tensor.is_floating_point()
         or tensor.layout != torch.strided
     ):
         raise ValueError(f"{name} must be a strided floating [batch,height,width,3] tensor")
-    return tensor
+    if not tensor.is_floating_point():
+        if tensor.dtype not in (torch.uint8, torch.uint16):
+            raise ValueError(f"{name} must be a strided floating [batch,height,width,3] tensor")
+        tensor = tensor.to(dtype=torch.float32) / float(torch.iinfo(tensor.dtype).max)
+    return tensor.contiguous()
 
 
 def _nearest_32(value: float | int) -> int:

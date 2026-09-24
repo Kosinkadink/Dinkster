@@ -87,6 +87,41 @@ class FakeTensor:
         return tuple(FakeTensor((1, *self.shape[1:]), self.device) for _ in range(self.shape[0]))
 
 
+class IntegerImageTensor:
+    layout = "strided"
+
+    def __init__(
+        self,
+        shape: tuple[int, ...],
+        dtype: object,
+        *,
+        divisor: float | None = None,
+        contiguous: bool = False,
+    ) -> None:
+        self.shape = shape
+        self.ndim = len(shape)
+        self.dtype = dtype
+        self.divisor = divisor
+        self.was_made_contiguous = contiguous
+
+    def is_floating_point(self) -> bool:
+        return self.dtype == "float32"
+
+    def to(self, *, dtype: object) -> IntegerImageTensor:
+        return IntegerImageTensor(self.shape, dtype)
+
+    def __truediv__(self, divisor: float) -> IntegerImageTensor:
+        return IntegerImageTensor(self.shape, self.dtype, divisor=divisor)
+
+    def contiguous(self) -> IntegerImageTensor:
+        return IntegerImageTensor(
+            self.shape,
+            self.dtype,
+            divisor=self.divisor,
+            contiguous=True,
+        )
+
+
 def _streams(*, reverse: bool = False) -> MultiStreamLatent[FakeTensor]:
     pairs = (
         ("video", FakeTensor((1, 24, 12, 32, 48))),
@@ -133,6 +168,29 @@ def _fake_torch() -> object:
         inference_mode=nullcontext,
         ones_like=lambda value: FakeTensor(value.shape),
     )
+
+
+@pytest.mark.parametrize(("dtype", "maximum"), (("uint8", 255), ("uint16", 65535)))
+def test_h3_image_batch_normalizes_integer_asset_storage(dtype: str, maximum: int) -> None:
+    torch = SimpleNamespace(
+        Tensor=IntegerImageTensor,
+        strided="strided",
+        uint8="uint8",
+        uint16="uint16",
+        float32="float32",
+        iinfo=lambda selected: SimpleNamespace(max={"uint8": 255, "uint16": 65535}[selected]),
+    )
+
+    result = native_arm._minimax_h3_image_batch(
+        IntegerImageTensor((2, 3, 5, 3), dtype),
+        torch,
+        "reference",
+    )
+
+    assert result.shape == (2, 3, 5, 3)
+    assert result.dtype == "float32"
+    assert result.divisor == maximum
+    assert result.was_made_contiguous is True
 
 
 def test_h3_schemas_use_declared_resident_graph_types() -> None:
