@@ -20,6 +20,7 @@ from dinkster_assets import AssetVault, install_declared_assets, use_declared_as
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, TypedLiteral
+from dinkster_nodes_vision.detr import model as detr_model
 from dinkster_nodes_vision.detr import register_types
 from dinkster_nodes_vision.detr.model import COCO_CLASSES, execute_detect, load_model, prepare_frame
 from dinkster_values import TypeRegistry, register_core_types
@@ -74,6 +75,7 @@ def _vault(tmp_path: Path) -> AssetVault:
 def test_detr_outputs_match_pinned_reference_vectors(tmp_path: Path) -> None:
     golden = _golden()
     assert golden["baseline"] == "29901c51d7fe8712168b8d0d64351170bc0f83e0"
+    assert golden["generationCpu"] == "AMD Ryzen 9 5950X 16-Core Processor"
     assert golden["modelBlake3"] == MODEL_DIGEST
     assert golden["modelSha256"] == MODEL_SHA256
     assert golden["numpy"] == "2.5.1"
@@ -90,6 +92,7 @@ def test_detr_outputs_match_pinned_reference_vectors(tmp_path: Path) -> None:
             with torch.no_grad():
                 logits, boxes = model(prepare_frame(source[0]))
     finally:
+        detr_model._MODEL = None
         torch.set_num_threads(previous_threads)
     assert logits.dtype == torch.float32 and boxes.dtype == torch.float32
     np.testing.assert_array_equal(logits.numpy(), _decode_float32(golden["logits"]))
@@ -183,6 +186,9 @@ def test_invalid_max_results_fails_before_loading_model(monkeypatch: pytest.Monk
 
 def test_detr_provider_executes_in_an_isolated_worker(tmp_path: Path) -> None:
     async def scenario() -> None:
+        previous_threads = torch.get_num_threads()
+        torch.set_num_threads(TORCH_NUM_THREADS)
+        detr_model._MODEL = None
         golden = _golden()
         source = _decode_uint8(golden["source"])[None].astype(np.float32) / 255.0
         vault = _vault(tmp_path)
@@ -197,10 +203,14 @@ def test_detr_provider_executes_in_an_isolated_worker(tmp_path: Path) -> None:
             MANIFEST,
             registry,
             python=sys.executable,
-            extra_env={"DINKSTER_ASSET_VAULT": str(vault.root)},
+            extra_env={
+                "DINKSTER_ASSET_VAULT": str(vault.root),
+                "MKL_NUM_THREADS": str(TORCH_NUM_THREADS),
+                "OMP_NUM_THREADS": str(TORCH_NUM_THREADS),
+            },
         )
-        await worker.start()
         try:
+            await worker.start()
             engine = Engine(
                 schemas=dict(worker.schemas),
                 registry=registry,
@@ -230,6 +240,8 @@ def test_detr_provider_executes_in_an_isolated_worker(tmp_path: Path) -> None:
             assert detections == expected
         finally:
             await worker.close()
+            detr_model._MODEL = None
+            torch.set_num_threads(previous_threads)
 
     asyncio.run(scenario())
 

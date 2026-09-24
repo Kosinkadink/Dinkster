@@ -80,6 +80,7 @@ def _vault(tmp_path: Path) -> AssetVault:
 def test_birefnet_output_matches_pinned_comfyui_vector() -> None:
     golden = _golden()
     assert golden["baseline"] == "c67885b14556cf3e4e061862925282d403d09862"
+    assert golden["generationCpu"] == "AMD Ryzen 9 5950X 16-Core Processor"
     assert golden["modelBlake3"] == MODEL_DIGEST
     assert golden["modelSha256"] == MODEL_SHA256
     assert golden["numpy"] == "2.5.1"

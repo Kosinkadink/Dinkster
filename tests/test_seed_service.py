@@ -146,6 +146,8 @@ def test_single_scan_rejects_changed_open_file_or_path(
             replacement = path.with_suffix(".replacement")
             replacement.write_bytes(path.read_bytes())
             if change == "replace":
+                if sys.platform == "win32":
+                    path.unlink()
                 replacement.replace(path)
             else:
                 path.unlink()

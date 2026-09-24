@@ -401,6 +401,7 @@ def _golden_asset(tmp_path: Path, name: str) -> AssetRef:
 def test_realesrgan_goldens_pin_the_reference_environment() -> None:
     golden = _golden()
     assert golden["baseline"] == "a1079ba16f2674734b065eb036fbfdddaa321a4d"
+    assert golden["generationCpu"] == "AMD Ryzen 9 5950X 16-Core Processor"
     assert golden["numpy"] == "2.5.1"
     assert golden["spandrel"] == "0.4.2"
     assert golden["torch"] == "2.13.0+cpu"

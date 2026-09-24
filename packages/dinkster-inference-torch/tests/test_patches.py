@@ -231,8 +231,9 @@ def test_lora_stack_matches_comfyui_golden(case: dict[str, Any]) -> None:
     if sys.platform.startswith("linux"):
         assert STACK_GOLDENS["_meta"] == {
             "generator": "tools/gen_lora_stack_goldens.py",
+            "generationCpu": "AMD Ryzen 9 5950X 16-Core Processor",
             "reference_commit": "b78cec879b9460d5cb25228a83a942fb78d2cd24",
-            "torch": "2.13.0+cu130",
+            "torch": "2.13.0+cpu",
         }
     result = apply_patches(
         dec(case["weight"]).clone(),
