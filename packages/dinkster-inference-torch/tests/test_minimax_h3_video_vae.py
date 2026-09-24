@@ -10,6 +10,7 @@ from collections.abc import Generator
 from contextlib import AbstractContextManager, contextmanager
 from typing import cast
 
+import dinkster_inference_torch.minimax_h3_video_vae as vae_module
 import pytest
 import torch
 import torch.nn.functional as F
@@ -331,6 +332,60 @@ def test_causal_conv_single_frame_matches_explicit_front_zero_padding() -> None:
         conv.bias,
     )
     torch.testing.assert_close(conv(sample), explicit)
+
+
+@pytest.mark.parametrize("fused", (False, True), ids=("fallback", "fused"))
+def test_causal_conv_norm_pad_and_residual_match_unfused_equation(
+    monkeypatch: pytest.MonkeyPatch, fused: bool
+) -> None:
+    conv = CausalConv3d(8, 8, kernel_size=3, padding=1)
+    norm = TemporalIsolatedGroupNorm(4, 8, eps=1e-6)
+    with torch.no_grad():
+        conv.weight.copy_(torch.linspace(-0.2, 0.3, conv.weight.numel()).reshape_as(conv.weight))
+        assert conv.bias is not None and norm.weight is not None and norm.bias is not None
+        conv.bias.copy_(torch.linspace(-0.1, 0.1, 8))
+        norm.weight.copy_(torch.linspace(0.6, 1.3, 8))
+        norm.bias.copy_(torch.linspace(-0.3, 0.2, 8))
+    sample = torch.linspace(-1.7, 2.1, 1 * 8 * 2 * 3 * 4).reshape(1, 8, 2, 3, 4)
+    residual = torch.linspace(0.4, -0.2, sample.numel()).reshape_as(sample)
+
+    normalized = F.silu(norm(sample))
+    padded = F.pad(normalized, (1, 1, 1, 1, 0, 0), mode="reflect")
+    padded = F.pad(padded, (0, 0, 0, 0, 2, 0))
+    expected = F.conv3d(padded, conv.weight, conv.bias).add(residual)
+
+    monkeypatch.setattr(vae_module, "_kitchen_ndhwc", lambda _input: fused)
+    calls: list[torch.Tensor | None] = []
+
+    def fused_conv(
+        input: torch.Tensor,
+        weight: torch.Tensor,
+        bias: torch.Tensor | None,
+        conv_residual: torch.Tensor | None,
+        stride: tuple[int, int, int],
+    ) -> torch.Tensor:
+        calls.append(conv_residual)
+        return F.conv3d(input, weight, bias, stride).add(conv_residual)
+
+    if fused:
+        monkeypatch.setattr(vae_module, "_fp16_accum_conv", fused_conv)
+    actual = conv(sample, pre_norm=norm, residual=residual)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-5)
+    assert calls == ([residual] if fused else [])
+
+
+def test_causal_conv_custom_spatial_pad_matches_downsample_equation() -> None:
+    conv = CausalConv3d(1, 1, kernel_size=3, stride=(1, 2, 2), padding=(1, 0, 0))
+    with torch.no_grad():
+        conv.weight.copy_(torch.linspace(-0.5, 0.4, conv.weight.numel()).reshape_as(conv.weight))
+        assert conv.bias is not None
+        conv.bias.fill_(0.125)
+    sample = torch.linspace(-1.0, 1.0, 1 * 1 * 2 * 4 * 6).reshape(1, 1, 2, 4, 6)
+    spatial = F.pad(sample, (0, 1, 0, 1, 0, 0), mode="reflect")
+    expected = F.conv3d(F.pad(spatial, (0, 0, 0, 0, 2, 0)), conv.weight, conv.bias, conv.stride)
+
+    torch.testing.assert_close(conv(sample, spatial_pad=(0, 1, 0, 1)), expected)
 
 
 def test_temporal_group_norm_isolates_each_frame_statistics() -> None:

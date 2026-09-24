@@ -11,8 +11,11 @@ not register the codec or claim family support.
 from __future__ import annotations
 
 import math
+from collections.abc import Generator
+from contextlib import contextmanager
 from typing import cast
 
+import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 import torch
 import torch.nn.functional as F
 from dinkster_inference.minimax_h3_codecs import (
@@ -45,6 +48,50 @@ def _operations_compute_dtype(operations: Operations) -> torch.dtype | None:
 
 def _cast_direct_state(stored: torch.Tensor, dtype: torch.dtype | None) -> torch.Tensor:
     return stored if dtype is None else cast_weight(stored, dtype=dtype)
+
+
+def _kitchen_ndhwc(input: torch.Tensor) -> bool:
+    return (
+        input.is_cuda
+        and torch.version.hip is None
+        and input.dtype in (torch.float16, torch.bfloat16)
+    )
+
+
+def _fused_norm_pad(
+    input: torch.Tensor,
+    norm: TemporalIsolatedGroupNorm | None,
+    spatial_pad: tuple[int, int, int, int],
+    front: int,
+) -> torch.Tensor | None:
+    if not _kitchen_ndhwc(input) or input.shape[1] % 8:
+        return None
+    if norm is None:
+        return dinkster_kitchen.group_norm_silu_pad3d(
+            input, None, None, 1, 0.0, (*spatial_pad, front), silu=False
+        )
+    with norm._materialized_affine(input) as (weight, bias):
+        return dinkster_kitchen.group_norm_silu_pad3d(
+            input,
+            weight,
+            bias,
+            norm.num_groups,
+            norm.eps,
+            (*spatial_pad, front),
+            silu=True,
+        )
+
+
+def _fp16_accum_conv(
+    input: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None,
+    residual: torch.Tensor | None,
+    stride: tuple[int, int, int],
+) -> torch.Tensor | None:
+    if not input.is_cuda or input.dtype != torch.float16:
+        return None
+    return dinkster_kitchen.fp16_conv3d(input, weight, bias, residual, stride)
 
 
 class CausalConv3d(ResidencyRouted, torch.nn.Conv3d):
@@ -91,14 +138,31 @@ class CausalConv3d(ResidencyRouted, torch.nn.Conv3d):
         input: torch.Tensor,
         weight: torch.Tensor,
         bias: torch.Tensor | None,
+        pre_norm: TemporalIsolatedGroupNorm | None,
+        spatial_pad: tuple[int, int, int, int] | None,
+        residual: torch.Tensor | None,
     ) -> torch.Tensor:
-        if sum(self.causal_padding) == 0:
-            return self._conv_forward(input, weight, bias)
         temporal, height, width = self.causal_padding
-        x = F.pad(input, (width, width, height, height, 0, 0), mode="reflect")
-        if x.shape[2] == 1:
+        if spatial_pad is None:
+            spatial_pad = (width, width, height, height)
+        front = 0 if input.shape[2] == 1 else temporal * 2
+        ndhwc = _kitchen_ndhwc(input)
+        fused = (
+            _fused_norm_pad(input, pre_norm, spatial_pad, front)
+            if pre_norm is not None or front or any(spatial_pad)
+            else None
+        )
+        if fused is not None:
+            x = fused
+        else:
+            x = input if pre_norm is None else F.silu(pre_norm(input), inplace=True)
+            if any(spatial_pad):
+                x = F.pad(x, (*spatial_pad, 0, 0), mode="reflect")
+            if front:
+                x = F.pad(x, (0, 0, 0, 0, front, 0))
+        if input.shape[2] == 1 and temporal:
             weight = weight[:, :, -1:, :, :]
-            return F.conv3d(
+            output = F.conv3d(
                 x,
                 weight,
                 bias,
@@ -107,24 +171,49 @@ class CausalConv3d(ResidencyRouted, torch.nn.Conv3d):
                 self.dilation,
                 self.groups,
             )
-        x = F.pad(x, (0, 0, 0, 0, temporal * 2, 0))
-        return self._conv_forward(x, weight, bias)
+        elif ndhwc:
+            weight = weight.contiguous(memory_format=torch.channels_last_3d)
+            fused_conv = _fp16_accum_conv(x, weight, bias, residual, self.stride)
+            if fused_conv is not None:
+                return fused_conv
+            output = F.conv3d(
+                x, weight, bias, self.stride, self.padding, self.dilation, self.groups
+            )
+        else:
+            output = self._conv_forward(x, weight, bias)
+        return output if residual is None else output.add_(residual)
 
     def _prefetch_dtype(self, stored: torch.Tensor) -> torch.dtype:
         return stored.dtype if self._compute_dtype is None else self._compute_dtype
 
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        input: torch.Tensor,
+        pre_norm: TemporalIsolatedGroupNorm | None = None,
+        spatial_pad: tuple[int, int, int, int] | None = None,
+        residual: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         binding = self._offloaded_residency()
         if binding is None:
             return self._causal_forward(
                 input,
                 _cast_direct_state(self.weight, self._compute_dtype),
                 None if self.bias is None else _cast_direct_state(self.bias, self._compute_dtype),
+                pre_norm,
+                spatial_pad,
+                residual,
             )
         with binding.lease() as lease:
             dtype = self.weight.dtype if self._compute_dtype is None else self._compute_dtype
             bias = None if self.bias is None else lease.get("bias", dtype=dtype)
-            return self._causal_forward(input, lease.get("weight", dtype=dtype), bias)
+            return self._causal_forward(
+                input,
+                lease.get("weight", dtype=dtype),
+                bias,
+                pre_norm,
+                spatial_pad,
+                residual,
+            )
 
 
 class TemporalIsolatedGroupNorm(ResidencyRouted, torch.nn.GroupNorm):
@@ -190,27 +279,35 @@ class TemporalIsolatedGroupNorm(ResidencyRouted, torch.nn.GroupNorm):
     def _prefetch_dtype(self, stored: torch.Tensor) -> torch.dtype:
         return stored.dtype if self._compute_dtype is None else self._compute_dtype
 
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
+    @contextmanager
+    def _materialized_affine(
+        self, input: torch.Tensor
+    ) -> Generator[tuple[torch.Tensor | None, torch.Tensor | None]]:
         weight = cast(torch.Tensor | None, self.weight)
         bias = cast(torch.Tensor | None, self.bias)
+        dtype = (
+            self._compute_dtype
+            if self._compute_dtype is not None
+            else input.dtype
+            if weight is None
+            else weight.dtype
+        )
         binding = self._offloaded_residency()
         if binding is None:
-            return self._isolated_forward(
-                input,
+            yield (
                 None if weight is None else _cast_direct_state(weight, self._compute_dtype),
                 None if bias is None else _cast_direct_state(bias, self._compute_dtype),
             )
+            return
         with binding.lease() as lease:
-            dtype = (
-                self._compute_dtype
-                if self._compute_dtype is not None
-                else input.dtype
-                if weight is None
-                else weight.dtype
+            yield (
+                None if weight is None else lease.get("weight", dtype=dtype),
+                None if bias is None else lease.get("bias", dtype=dtype),
             )
-            leased_weight = None if weight is None else lease.get("weight", dtype=dtype)
-            leased_bias = None if bias is None else lease.get("bias", dtype=dtype)
-            return self._isolated_forward(input, leased_weight, leased_bias)
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        with self._materialized_affine(input) as (weight, bias):
+            return self._isolated_forward(input, weight, bias)
 
 
 def _group_norm_3d(
@@ -242,7 +339,7 @@ class Downsample3D(torch.nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.space_stride == 2:
-            x = F.pad(x, (0, 1, 0, 1, 0, 0), mode="reflect")
+            return self.conv(x, spatial_pad=(0, 1, 0, 1))
         return self.conv(x)
 
 
@@ -272,11 +369,10 @@ class ResnetBlock3D(torch.nn.Module):
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = self.conv1(F.silu(self.norm1(x), inplace=True))
-        h = self.conv2(F.silu(self.norm2(h), inplace=True))
+        h = self.conv1(x, pre_norm=self.norm1)
         if self.nin_shortcut is not None:
             x = self.nin_shortcut(x)
-        return h.add_(x)
+        return self.conv2(h, pre_norm=self.norm2, residual=x)
 
 
 class _EncoderLevel(torch.nn.Module):
@@ -343,7 +439,7 @@ class EncoderFCN3D(torch.nn.Module):
                 h = block(h)
             if hasattr(level, "downsample"):
                 h = level.downsample(h)
-        return self.conv_out(F.silu(self.norm_out(h)))
+        return self.conv_out(h, pre_norm=self.norm_out)
 
 
 def create_token_ids(
