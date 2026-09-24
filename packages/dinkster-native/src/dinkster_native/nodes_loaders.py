@@ -1318,10 +1318,6 @@ class NativeLoadLora(LoadLora):
     """Apply one normalized LoRA through an explicit native execution strategy."""
 
     @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return _generation_provider_schema("dinkster.load_lora")
-
-    @classmethod
     def execute(
         cls,
         *,
@@ -1343,10 +1339,6 @@ class NativeLoadLora(LoadLora):
 
 class NativeLoadLoraModelOnly(LoadLoraModelOnly):
     """Apply one diffusion-only LoRA through an explicit native strategy."""
-
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return _generation_provider_schema("dinkster.load_lora_model_only")
 
     @classmethod
     def execute(
