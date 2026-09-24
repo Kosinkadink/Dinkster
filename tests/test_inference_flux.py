@@ -13,7 +13,8 @@ naming what it found.
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -32,10 +33,13 @@ from dinkster_inference import (
     FluxConfig,
     FluxDetectError,
     TensorGeometry,
+    WeightEntry,
     detect_flux_config,
+    flux_component_runtime_identity,
     flux_layout,
     normalize_flux_keys,
 )
+from dinkster_inference.component_catalog import default_component_registry
 
 GOLDENS = (
     Path(__file__).parent.parent
@@ -75,7 +79,42 @@ def geometries_of(
     return {key: TensorGeometry(tuple(shape), FLOAT32) for key, shape in layout}
 
 
+@dataclass(frozen=True)
+class IdentifiedSource:
+    geometries: Mapping[str, TensorGeometry]
+    path: Path = Path("/models/unet/flux1-dev.safetensors")
+    asset_digest: str = "sha256:" + "1" * 64
+    asset_size: int = 23_800_000_000
+
+    def keys(self) -> tuple[str, ...]:
+        return tuple(self.geometries)
+
+    def entry(self, key: str) -> WeightEntry:
+        geometry = self.geometries[key]
+        return WeightEntry(key, geometry, 0, geometry.nbytes)
+
+    def metadata(self) -> Mapping[str, str]:
+        return {}
+
+    def read_uint8_configuration(self, key: str) -> bytes:
+        raise KeyError(key)
+
+
 # ------------------------------------------------------------ config
+
+
+def test_component_registry_selects_full_flux_dev_diffusion_artifact() -> None:
+    source = IdentifiedSource(geometries_of(golden_layout("flux_dev")))
+
+    descriptor, role, plan = default_component_registry().select(source, source.path, "model")
+
+    assert descriptor.id == "dinkster.flux_dev"
+    assert role == "diffusion"
+    assert plan.config == FLUX_DEV_CONFIG
+    assert len(plan.keys) == 780
+    assert flux_component_runtime_identity(plan, BFLOAT16) == descriptor.component_identity(
+        role, plan, BFLOAT16.name
+    )
 
 
 def test_known_configs_are_the_reference_geometries() -> None:

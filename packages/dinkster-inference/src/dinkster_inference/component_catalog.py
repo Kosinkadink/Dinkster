@@ -101,6 +101,10 @@ def _chroma_plan_family(planned: Any) -> ModelFamily:
     return catalog.CHROMA
 
 
+def _flux_plan_family(planned: Any) -> ModelFamily:
+    return catalog.FLUX_DEV if planned.config.guidance_embed else catalog.FLUX_SCHNELL
+
+
 def _chroma_execution_options(
     runtime: Any, sampling_shift: float | None, option_windows: tuple[Any, ...]
 ) -> dict[str, Any]:
@@ -235,6 +239,23 @@ def default_component_registry() -> ComponentRegistry:
                 specificity=0,
                 aliases=(),
             )
+        ),
+        _descriptor(
+            replace(
+                catalog.FLUX_DEV,
+                engine=replace(
+                    catalog.FLUX_DEV.engine,
+                    attention_backends=(("diffusion", "flux"),),
+                    attention_requires_route=True,
+                ),
+            ),
+            "plan_flux_split_component",
+            "dinkster_inference_torch.flux_component:load_flux_component",
+            "dinkster_inference_torch.flux_component:FluxDiffusionRuntime",
+            aliases=(catalog.FLUX_SCHNELL.id,),
+            plan_family=_flux_plan_family,
+            runtime_factory="dinkster_inference_torch.flux_component:flux_component_runtime",
+            aimdo_roles=("diffusion",),
         ),
         *control_component_descriptors(),
         H3ComponentDescriptor(

@@ -3237,6 +3237,7 @@ def test_load_clip_detects_gemma_component_despite_ltxv_hint(
     [
         ("ltxv", "bfloat16"),
         ("chroma", "float32"),
+        ("flux", "bfloat16"),
         ("sd3", None),
         ("mochi", None),
         ("cogvideox", None),
@@ -3286,12 +3287,13 @@ def test_load_clip_shared_t5_preserves_selected_text_profile(
     if clip_type == "ltxv":
         planned = inference.plan_ltxv_split_component(source, role="t5xxl", path=path)
         expected_identity = inference.ltxv_component_runtime_identity(planned, BFLOAT16)
-    else:
+        assert selection.cache_tag == expected_identity
+    elif clip_type == "chroma":
         planned_chroma = inference.plan_chroma_split_component(source, role="t5xxl", path=path)
         expected_identity = inference.chroma_component_runtime_identity(
             planned_chroma, "t5xxl", FLOAT32
         )
-    assert selection.cache_tag == expected_identity
+        assert selection.cache_tag == expected_identity
     assert selection.diffusion_dtype == "unloaded"
     assert selection.text_dtype == expected_dtype
     assert selection.vae_dtype == "unloaded"

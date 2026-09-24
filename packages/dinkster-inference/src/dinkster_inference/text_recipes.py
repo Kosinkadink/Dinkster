@@ -202,16 +202,24 @@ def _sdxl(sources: DetectedTextSources) -> TextRecipeBinding:
 
 
 def _flux(sources: DetectedTextSources) -> TextRecipeBinding:
+    roles = {role for matches in sources for match in matches for role, _ in match.components}
+    profiles = [("t5xxl", TextEncodingProfile(T5_XXL_FLUX_PROFILE))]
+    composer = "dinkster_inference_torch.t5_text:compose_flux_t5_conditioning"
+    composition_roles: tuple[str, ...] = ("t5xxl",)
+    if "clip_l" in roles:
+        profiles.insert(
+            0,
+            ("clip_l", TextEncodingProfile(CLIP_L_PROFILE, projected_pooled=False)),
+        )
+        composer = "dinkster_inference_torch.t5_text:compose_flux_conditioning"
+        composition_roles = ("t5xxl", "clip_l")
     return _classic_binding(
         "dinkster.text_flux",
         "dinkster.flux_dev",
         sources,
-        (
-            ("clip_l", TextEncodingProfile(CLIP_L_PROFILE, projected_pooled=False)),
-            ("t5xxl", TextEncodingProfile(T5_XXL_FLUX_PROFILE)),
-        ),
-        "dinkster_inference_torch.t5_text:compose_flux_conditioning",
-        ("t5xxl", "clip_l"),
+        tuple(profiles),
+        composer,
+        composition_roles,
     )
 
 

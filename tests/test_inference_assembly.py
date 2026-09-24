@@ -218,6 +218,7 @@ from dinkster_inference import (
     wan21_vae_layout,
     wan22_vae_layout,
 )
+from dinkster_inference.component_catalog import default_component_registry
 
 from tests.test_inference_kl import diffusers_geometries
 from tests.test_inference_kl import kl_geometries as synthetic_kl_geometries
@@ -529,6 +530,41 @@ def test_krea2_component_planner_accepts_checkpoint_prefixed_sources() -> None:
 
     float32 = plan_krea2_component(source(geometrize(krea2_layout(), FLOAT32)), "diffusion")
     assert set(float32.dtypes.values()) == {FLOAT32}
+
+
+def test_krea2_component_planner_accepts_published_scaled_fp8_text_artifact() -> None:
+    geometries: dict[str, TensorGeometry] = {}
+    payloads: dict[str, bytes] = {}
+    for key, shape in krea2_text_layout().items():
+        source_key = key
+        if key.startswith("model.language_model."):
+            source_key = "model." + key.removeprefix("model.language_model.")
+        quantized = source_key.startswith("model.layers.") and len(shape) == 2
+        geometries[source_key] = g(shape, FLOAT8_E4M3 if quantized else BFLOAT16)
+        if quantized:
+            config_key = source_key.removesuffix(".weight") + ".comfy_quant"
+            geometries[source_key.removesuffix(".weight") + ".weight_scale"] = g((), FLOAT32)
+            payloads[config_key] = b'{"format":"float8_e4m3fn"}'
+            geometries[config_key] = g((len(payloads[config_key]),), UINT8)
+
+    assert len(geometries) == 1217
+    artifact = source(geometries, payload_values=payloads)
+    plan = plan_krea2_component(artifact, "qwen3vl_4b")
+
+    assert plan.config is KREA2_TEXT_CONFIG
+    assert len(plan.quant) == 252
+    assert plan.keys["layers.0.mlp.down_proj.weight"] == "model.layers.0.mlp.down_proj.weight"
+    assert plan.quant["layers.0.mlp.down_proj"].weight_scale == (
+        "model.layers.0.mlp.down_proj.weight_scale"
+    )
+    matches = default_component_registry().detect(
+        artifact, artifact.path, bind_asset_identity=False
+    )
+    assert any(
+        match.descriptor.id == "dinkster.krea2"
+        and any(role == "qwen3vl_4b" for role, _planned in match.components)
+        for match in matches
+    )
 
 
 def test_krea2_component_text_plan_drops_the_tied_lm_head() -> None:
@@ -1847,8 +1883,6 @@ def test_ltxv_split_sources_plan_exact_components(
 
 @pytest.mark.parametrize("profile", ("2b-v0.9", "2b-v0.9.5"))
 def test_ltxv_components_split_combined_namespaces_without_changing_plans(profile: str) -> None:
-    from dinkster_inference.component_catalog import default_component_registry
-
     sources = cast("dict[str, FakeSource]", ltxv_split_sources(profile))
     prefixes = {
         "diffusion": FLUX_DIFFUSION_PREFIX,

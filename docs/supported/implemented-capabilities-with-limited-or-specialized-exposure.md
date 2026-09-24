@@ -209,9 +209,10 @@ Training capabilities are delivered by separately versioned packages.
   detection and per-component Python runtimes (Qwen3-VL-4B stacked tap-layer
   text encoding, flow sampling at shift 1.15). Exact split diffusion and
   Qwen3-VL-4B files load through Load Diffusion Model and Load CLIP (type
-  `krea2`); CLIP Text Encode and KSampler compose the diffusion and text
-  components, and VAE decode and encode ride the canonical shared Wan 2.1
-  VAE handle through Load VAE. Custom sampling (SamplerCustom,
+  `krea2`), including scaled-FP8 text artifacts whose published language-tower
+  keys omit the `language_model` namespace; CLIP Text Encode and KSampler
+  compose the diffusion and text components, and VAE decode and encode ride
+  the canonical shared Wan 2.1 VAE handle through Load VAE. Custom sampling (SamplerCustom,
   SamplerCustomAdvanced with BasicGuider or CFGGuider) also executes the
   split components over exact caller-supplied sigmas, with the
   model-dependent sigma nodes served from Krea 2's shift-1.15 flow
