@@ -35,7 +35,7 @@ from dinkster_assets import (
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
-from dinkster_nodes_media_io import LoadAudio
+from dinkster_nodes_media_io import LoadAudio, writable_media_recorder_webm_audio_encoders
 from dinkster_schema import Node, NodeSchema, build_node_types, build_schemas
 from dinkster_server import Principal, ServerLibrary, create_app
 from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
@@ -293,6 +293,8 @@ def _media_recorder_audio_webm(codec: str) -> bytes:
         stream = cast(av.AudioStream, container.add_stream(codec, rate=48_000))
         stream.layout = "stereo"
         stream.codec_context.thread_count = 1
+        if codec == "vorbis":
+            stream.codec_context.options = {"strict": "experimental"}
         for index in range(5):
             samples = np.arange(index * 1920, (index + 1) * 1920, dtype=np.int16).reshape(1, -1)
             frame = av.AudioFrame.from_ndarray(samples, format="s16", layout="stereo")
@@ -1768,42 +1770,59 @@ def test_audio_webm_upload_load_and_rendition_use_canonical_asset(tmp_path: Path
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("codec", ["libopus", "libvorbis"])
+async def _assert_media_recorder_audio_webm_upload(tmp_path: Path, codec: str) -> None:
+    payload = _media_recorder_audio_webm(codec)
+    with av.open(BytesIO(payload), mode="r") as container:
+        stream = container.streams.audio[0]
+        assert container.duration is None
+        assert stream.duration is None
+        expected_frames = sum(frame.samples for frame in container.decode(stream))
+
+    client, library = await _media_client(tmp_path)
+    try:
+        response = await client.post(
+            _media_path("local", "media/audio", "media-recorder.webm"),
+            data=payload,
+            headers=_media_headers("audio/webm"),
+        )
+        assert response.status == 201, await response.text()
+        asset = AssetRef.from_wire((await response.json())["asset"], resolver=library.vault)
+        audio = LoadAudio.execute(audio=asset)["audio"]
+        metadata = audio_meta(audio)
+        assert metadata["frames"] == expected_frames
+        assert metadata["duration"] == expected_frames / 48_000
+        assert metadata["shape"] == (1, 2, expected_frames)
+
+        parameters = normalize_audio_waveform_request({"waveform": "32x16"}, metadata)
+        with Image.open(BytesIO(render_audio_waveform(audio, parameters))) as image:
+            assert image.format == "PNG"
+            assert image.size == (32, 16)
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize("codec", writable_media_recorder_webm_audio_encoders())
 def test_media_recorder_audio_webm_publishes_length_and_waveform(
     tmp_path: Path, codec: str
 ) -> None:
-    async def scenario() -> None:
-        payload = _media_recorder_audio_webm(codec)
-        expected_frames = 0
-        with av.open(BytesIO(payload), mode="r") as container:
-            stream = container.streams.audio[0]
-            assert container.duration is None
-            assert stream.duration is None
-            expected_frames = sum(frame.samples for frame in container.decode(stream))
+    asyncio.run(_assert_media_recorder_audio_webm_upload(tmp_path, codec))
 
-        client, library = await _media_client(tmp_path)
+
+def test_media_recorder_webm_fixture_encoders_follow_pyav_availability() -> None:
+    available = writable_media_recorder_webm_audio_encoders()
+    expected: list[str] = []
+    for codec in ("libopus", "libvorbis"):
         try:
-            response = await client.post(
-                _media_path("local", "media/audio", "media-recorder.webm"),
-                data=payload,
-                headers=_media_headers("audio/webm"),
-            )
-            assert response.status == 201, await response.text()
-            asset = AssetRef.from_wire((await response.json())["asset"], resolver=library.vault)
-            audio = LoadAudio.execute(audio=asset)["audio"]
-            metadata = audio_meta(audio)
-            assert metadata["frames"] == expected_frames
-            assert metadata["duration"] == expected_frames / 48_000
-            assert metadata["shape"] == (1, 2, expected_frames)
+            av.Codec(codec, "w")
+        except Exception:  # noqa: BLE001 - PyAV uses several codec error classes
+            continue
+        expected.append(codec)
+    assert available == tuple(expected)
+    assert "libopus" in available
 
-            parameters = normalize_audio_waveform_request({"waveform": "32x16"}, metadata)
-            with Image.open(BytesIO(render_audio_waveform(audio, parameters))) as image:
-                assert image.format == "PNG"
-                assert image.size == (32, 16)
-        finally:
-            await client.close()
 
-    asyncio.run(scenario())
+def test_vorbis_webm_upload_remains_admitted(tmp_path: Path) -> None:
+    asyncio.run(_assert_media_recorder_audio_webm_upload(tmp_path, "vorbis"))
 
 
 def test_audio_m4a_upload_load_and_rendition_use_canonical_asset(tmp_path: Path) -> None:
