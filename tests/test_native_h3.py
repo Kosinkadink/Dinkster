@@ -33,8 +33,14 @@ from dinkster_compat_comfy.native import (
 )
 from dinkster_compat_comfy.native_residency import NativeRuntimeHandle
 from dinkster_graph import Graph, GraphNode, validate
-from dinkster_inference import MINIMAX_H3_VIDEO_MASK_MAPPING, MultiStreamLatent
+from dinkster_inference import (
+    CONDITIONING_TYPE_ID,
+    MINIMAX_H3_VIDEO_MASK_MAPPING,
+    MultiStreamLatent,
+    register_conditioning_type,
+)
 from dinkster_schema import ComboWidget, NumberWidget, build_schemas, schema_signature
+from dinkster_values import ResidencyTable, TypeRegistry
 
 
 class FakeTensor:
@@ -955,6 +961,118 @@ def test_two_conditioning_nodes_prepare_two_independent_prompt_lanes(
         cast("Any", positive_result["conditioning"])._dinkster_resident_fingerprint
         != cast("Any", negative_result["conditioning"])._dinkster_resident_fingerprint
     )
+
+
+@pytest.mark.parametrize("task", ("t2v", "i2v", "r2v"))
+def test_h3_task_seam_reaches_sampler_through_resident_wire(
+    monkeypatch: pytest.MonkeyPatch,
+    task: str,
+) -> None:
+    identity = "native:dinkster.minimax_h3:" + "1" * 64
+    sampled = _streams()
+    sampler_calls: list[dict[str, object]] = []
+
+    class Handle:
+        load_device = "cpu"
+        resource_identity = identity
+
+        @staticmethod
+        def stage(**_kwargs: object) -> nullcontext[None]:
+            return nullcontext()
+
+    class ConditionerRuntime:
+        @staticmethod
+        def condition(request: object, **_kwargs: object) -> object:
+            return SimpleNamespace(task=cast("Any", request).task)
+
+    class SamplingRuntime:
+        runtime_identity = identity
+        conditioning_identity = identity
+        model_role = "ref2va_dit" if task == "r2v" else "fl2va_dit"
+
+        @staticmethod
+        def run_ksampler_as_custom(latent: object, **kwargs: object) -> object:
+            sampler_calls.append({"latent": latent, **kwargs})
+            return sampled
+
+        sample_multistream = run_ksampler_as_custom
+
+    conditioner = Handle()
+    codecs = () if task == "t2v" else (Handle(),) if task == "i2v" else (Handle(), Handle())
+    monkeypatch.setattr(
+        native_arm,
+        "_minimax_h3_conditioner_runtime",
+        lambda *_args: (conditioner, codecs, ConditionerRuntime()),
+    )
+    monkeypatch.setattr(native_arm, "_torch", _fake_torch)
+    _install_upscale(monkeypatch)
+    image = FakeTensor((1, 32, 32, 3))
+    if task == "t2v":
+        conditioned = native_arm.NativeMiniMaxH3T2VAConditioning.execute(
+            clip=object(), target=_latent(), prompt="prompt"
+        )
+    elif task == "i2v":
+        conditioned = native_arm.NativeMiniMaxH3FL2VAConditioning.execute(
+            clip=object(),
+            video_vae=object(),
+            target=_latent(),
+            prompt="prompt",
+            first_image=image,
+        )
+    else:
+        conditioned = native_arm.NativeMiniMaxH3REF2VAConditioning.execute(
+            clip=object(),
+            video_vae=object(),
+            audio_vae=object(),
+            target=_latent(),
+            prompt="prompt",
+            references=(MiniMaxH3ImageReferenceValue(image),),
+            ref_image_size="match",
+        )
+
+    resident = cast("Any", conditioned["conditioning"])
+    registry = TypeRegistry()
+    spec = register_conditioning_type(registry, resident_table=ResidencyTable())
+    wrapped = registry.wrap(CONDITIONING_TYPE_ID, resident)
+    encoded = spec.encode(wrapped.resolve())
+    restored = spec.decode(encoded)
+    assert restored is resident
+    assert wrapped.fingerprint == resident._dinkster_resident_fingerprint
+    assert resident._dinkster_resident_owner is conditioner
+    assert resident._dinkster_resident_refs == codecs
+
+    model_handle = SimpleNamespace(
+        load_device="cpu",
+        runtime=SamplingRuntime(),
+        recipe=SimpleNamespace(
+            family_id="dinkster.minimax_h3",
+            sources=(SimpleNamespace(role="diffusion"), SimpleNamespace(role="conditioner")),
+        ),
+        stage=lambda _role, **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(
+        native_arm,
+        "_native_model",
+        lambda *_args: (model_handle, (), {}, None, None, (), None, ()),
+    )
+    _install_sampling_runtime(monkeypatch, SamplingRuntime())
+    monkeypatch.setattr(native_arm, "_catalog_id", lambda _registry, value, _kind: value)
+    result = native_arm.NativeKSampler.execute(
+        model=object(),
+        seed=7,
+        steps=1,
+        cfg=1.0,
+        sampler_name="euler",
+        scheduler="simple",
+        positive=restored,
+        negative=[],
+        latent_image=_latent(),
+        denoise=1.0,
+    )
+    assert cast("Any", result["latent"])["samples"] is sampled
+    assert len(sampler_calls) == 1
+    expected_task = {"t2v": "t2va", "i2v": "fl2va", "r2v": "ref2va"}[task]
+    assert cast("Any", sampler_calls[0]["conditioning"]).task.value == expected_task
 
 
 def test_conditioning_stages_each_participating_component(
