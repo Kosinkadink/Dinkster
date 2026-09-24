@@ -110,7 +110,6 @@ def test_architecture_exactly_matches_fp16_checkpoint_state() -> None:
         assert shape == tuple(expected[name].shape)
 
 
-@pytest.mark.skip(reason="skipped pending #427")
 def test_outputs_match_pinned_comfyui_reference_vector() -> None:
     golden = _golden()
     assert golden["baseline"] == "c67885b14556cf3e4e061862925282d403d09862"
