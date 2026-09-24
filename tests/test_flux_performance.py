@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 import pytest
-from tools.inference_parity.flux_performance import (
+from tools.inference_parity.flux_performance import (  # pyright: ignore[reportMissingImports]
     ComparisonError,
     _workload_receipt,
     build_verdict,

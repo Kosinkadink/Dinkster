@@ -8,7 +8,7 @@ from copy import deepcopy
 from typing import Any
 
 import numpy as np
-from tools.inference_parity.flux_window_comparison import (
+from tools.inference_parity.flux_window_comparison import (  # pyright: ignore[reportMissingImports]
     CHECKPOINT_SHA256,
     COMFYUI_COMMIT,
     DINKSTER_COMMIT,

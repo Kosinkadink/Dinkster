@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 import pytest
-from tools.inference_parity.minimax_h3_runtime_receipts import (
+from tools.inference_parity.minimax_h3_runtime_receipts import (  # pyright: ignore[reportMissingImports]
     ArtifactReceiptError,
     load_manifest,
     validate_manifest,

@@ -2773,6 +2773,7 @@ def test_isolated_host_supplies_export_snapshot(tmp_path: Path) -> None:
 def test_shm_transport_for_large_payloads_and_cleanup() -> None:
     if not sys.platform.startswith(("linux",)):
         pytest.skip("shm leftovers check relies on /dev/shm")
+    existing_segments = set(glob.glob("/dev/shm/dinkster*"))
 
     async def scenario() -> None:
         diagnostics: list[BoundaryDiagnostic] = []
@@ -2808,8 +2809,8 @@ def test_shm_transport_for_large_payloads_and_cleanup() -> None:
             assert blend_inputs["ratio"].transport == "inline"
         finally:
             await worker.close()
-        # Single-hop handoff (hazard H14): nothing left in /dev/shm.
-        assert glob.glob("/dev/shm/dinkster*") == []
+        # Single-hop handoff (hazard H14): this worker leaves no new segment.
+        assert not set(glob.glob("/dev/shm/dinkster*")).difference(existing_segments)
 
     asyncio.run(scenario())
 

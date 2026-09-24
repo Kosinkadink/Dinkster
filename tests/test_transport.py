@@ -105,6 +105,7 @@ def test_isolated_worker_over_tcp_matches_unix(tmp_path: Path) -> None:
     """The whole M2 flow - handshake, invocation, shm handoff, ack - over
     the TCP fallback. Fingerprints must match the unix-transport run
     (hazard H4: location - and transport - independence)."""
+    existing_segments = set(glob.glob("/dev/shm/dinkster*"))
 
     async def run_with(transport: TransportChoice) -> dict[str, str]:
         registry = core_registry()
@@ -136,7 +137,7 @@ def test_isolated_worker_over_tcp_matches_unix(tmp_path: Path) -> None:
 
     asyncio.run(scenario())
     if os.path.isdir("/dev/shm"):
-        assert glob.glob("/dev/shm/dinkster*") == []
+        assert not set(glob.glob("/dev/shm/dinkster*")).difference(existing_segments)
 
 
 def test_cancel_mid_flight_leaves_no_segments() -> None:
@@ -145,6 +146,7 @@ def test_cancel_mid_flight_leaves_no_segments() -> None:
     The large string input rides shm (threshold 64); whether the cancel
     lands before or after the child's ack, the sender's release paths must
     leave nothing behind."""
+    existing_segments = set(glob.glob("/dev/shm/dinkster*"))
 
     async def scenario() -> None:
         registry = core_registry()
@@ -172,4 +174,4 @@ def test_cancel_mid_flight_leaves_no_segments() -> None:
 
     asyncio.run(scenario())
     if os.path.isdir("/dev/shm"):
-        assert glob.glob("/dev/shm/dinkster*") == []
+        assert not set(glob.glob("/dev/shm/dinkster*")).difference(existing_segments)
