@@ -28,13 +28,16 @@ def test_supervisor_imports_no_other_dinkster_packages() -> None:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             names: tuple[str, ...] = ()
+            line = 0
             if isinstance(node, ast.Import):
                 names = tuple(alias.name for alias in node.names)
+                line = node.lineno
             elif isinstance(node, ast.ImportFrom) and node.module is not None:
                 names = (node.module,)
+                line = node.lineno
             for name in names:
                 if name.startswith("dinkster_") and not name.startswith("dinkster_supervisor"):
-                    violations.append((path.name, node.lineno, name))
+                    violations.append((path.name, line, name))
     assert violations == []
 
 
