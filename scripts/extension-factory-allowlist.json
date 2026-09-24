@@ -54,7 +54,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-inference/src/dinkster_inference/catalog.py",
-      "line": 1308,
+      "line": 1319,
       "column": 19,
       "issue": 120
     },
