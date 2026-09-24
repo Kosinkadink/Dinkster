@@ -4,10 +4,25 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dinkster_native.native_arm import NATIVE_ARM_TYPE_IDS
 from dinkster_native.native_catalog import COMFY_RUNTIME_NODE_IDS
 
 
+def manifest_with_declared_arms(source: str) -> str:
+    lines = source.splitlines(keepends=True)
+    section = lines.index("[pack.arms]\n")
+    start = lines.index("native = [\n", section + 1)
+    end = lines.index("]\n", start + 1)
+    declaration = [
+        "native = [\n",
+        *(f'    "{type_id}",\n' for type_id in NATIVE_ARM_TYPE_IDS),
+        "]\n",
+    ]
+    return "".join((*lines[:start], *declaration, *lines[end + 1 :]))
+
+
 def native_manifest(source: str) -> str:
+    source = manifest_with_declared_arms(source)
     omitted = {f'"{node_type}",' for node_type in COMFY_RUNTIME_NODE_IDS}
     text = "".join(line for line in source.splitlines(keepends=True) if line.strip() not in omitted)
     text = text.replace('name = "dinkster-compat-comfy"', 'name = "dinkster-native"', 1)
@@ -51,6 +66,8 @@ if __name__ == "__main__":
     root = Path(__file__).resolve().parents[1]
     compat = root / "packages/dinkster-compat-comfy"
     source = (compat / "dinkster-pack.toml").read_text(encoding="utf-8")
+    source = manifest_with_declared_arms(source)
+    (compat / "dinkster-pack.toml").write_text(source, encoding="utf-8")
     (root / "packages/dinkster-native/dinkster-pack.toml").write_text(
         native_manifest(source), encoding="utf-8"
     )
