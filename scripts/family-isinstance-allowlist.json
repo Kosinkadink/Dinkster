@@ -1,5 +1,5 @@
 {
-  "ceiling": 7,
+  "ceiling": 11,
   "sites": [
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
@@ -56,6 +56,38 @@
       "type": "Lumina2AssemblyPlan",
       "classification": "boundary",
       "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
+    },
+    {
+      "path": "packages/dinkster-native/src/dinkster_native/nodes_loaders.py",
+      "line": 936,
+      "column": 8,
+      "type": "model_handle.recipe.family_id in",
+      "classification": "family-comparison",
+      "reason": "Flux2 split text-component LoRA routing awaits a typed catalog capability."
+    },
+    {
+      "path": "packages/dinkster-native/src/dinkster_native/nodes_provider.py",
+      "line": 2403,
+      "column": 12,
+      "type": "handle.recipe.family_id in",
+      "classification": "family-comparison",
+      "reason": "Chroma runtime option reconstruction awaits a typed catalog capability."
+    },
+    {
+      "path": "packages/dinkster-native/src/dinkster_native/nodes_provider.py",
+      "line": 2432,
+      "column": 17,
+      "type": "handle.recipe.family_id ==",
+      "classification": "family-comparison",
+      "reason": "Z-Image control overlay admission awaits a typed catalog capability."
+    },
+    {
+      "path": "packages/dinkster-native/src/dinkster_native/nodes_provider.py",
+      "line": 2476,
+      "column": 12,
+      "type": "handle.recipe.family_id ==",
+      "classification": "family-comparison",
+      "reason": "Lumina sampling-shift handling awaits a typed catalog capability."
     }
   ]
 }

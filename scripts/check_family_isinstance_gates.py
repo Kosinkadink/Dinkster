@@ -38,6 +38,12 @@ def source_files(root: Path) -> tuple[Path, ...]:
             for file in (package / "src").rglob("*.py")
             if (package / "src").is_dir()
         )
+    ) + tuple(
+        sorted(
+            file
+            for file in (packages / "dinkster-native/src/dinkster_native").glob("*.py")
+            if file.name.startswith(("native_arm", "nodes_"))
+        )
     )
 
 
@@ -57,15 +63,48 @@ def isinstance_type(call: ast.Call) -> str | None:
     return name
 
 
+def family_comparison(node: ast.Compare) -> str | None:
+    if len(node.ops) != 1 or len(node.comparators) != 1:
+        return None
+    selector = node.left
+    if not (
+        isinstance(selector, ast.Name)
+        and selector.id in ("family", "family_id")
+        or isinstance(selector, ast.Attribute)
+        and selector.attr == "family_id"
+    ):
+        return None
+    operator = node.ops[0]
+    if isinstance(operator, ast.Eq):
+        return f"{ast.unparse(selector)} =="
+    if isinstance(operator, ast.In):
+        return f"{ast.unparse(selector)} in"
+    return None
+
+
 def scan(root: Path) -> list[ScannedSite]:
     sites: list[ScannedSite] = []
     for path in source_files(root):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        scan_family_comparisons = "dinkster-native" in path.parts
         parents: dict[ast.AST, ast.AST] = {}
         for parent in ast.walk(tree):
             for child in ast.iter_child_nodes(parent):
                 parents[child] = parent
         for node in ast.walk(tree):
+            if scan_family_comparisons and isinstance(node, ast.Compare):
+                comparison = family_comparison(node)
+                if comparison is not None:
+                    sites.append(
+                        {
+                            "path": path.relative_to(root).as_posix(),
+                            "line": node.lineno,
+                            "column": node.col_offset + 1,
+                            "type": comparison,
+                            "classification": "family-comparison",
+                        }
+                    )
+                continue
             if not isinstance(node, ast.Call):
                 continue
             checked_type = isinstance_type(node)
@@ -114,14 +153,14 @@ def main() -> int:
         if any(
             not isinstance(site, dict)
             or set(site) != set(Site.__annotations__)
-            or site.get("classification") != "boundary"
+            or site.get("classification") not in ("boundary", "family-comparison")
             or not isinstance(site.get("reason"), str)
             or not site["reason"].strip()
             or "\n" in site["reason"]
             for site in allowed_raw
         ):
             raise ValueError(
-                "each allowed site requires boundary classification and one-line reason"
+                "each allowed site requires a recognized classification and one-line reason"
             )
         allowed: list[Site] = allowed_raw
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
@@ -129,8 +168,17 @@ def main() -> int:
         return 1
 
     scanned = scan(root)
-    prohibited = [site for site in scanned if site["classification"] == "branch"]
     expected = [{key: site[key] for key in ScannedSite.__annotations__} for site in allowed]
+    expected_sites = {json.dumps(site, sort_keys=True) for site in expected}
+    prohibited = [
+        site
+        for site in scanned
+        if site["classification"] == "branch"
+        or (
+            site["classification"] == "family-comparison"
+            and json.dumps(site, sort_keys=True) not in expected_sites
+        )
+    ]
     if prohibited or len(scanned) != ceiling or scanned != expected:
         print(
             "Family isinstance gates differ from scripts/family-isinstance-allowlist.json:",

@@ -24,6 +24,13 @@ def write_fixture(root: Path, body: str) -> Path:
     return source
 
 
+def write_native_fixture(root: Path, body: str) -> Path:
+    source = root / "packages/dinkster-native/src/dinkster_native/nodes_runtime.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(body, encoding="utf-8")
+    return source
+
+
 def test_family_isinstance_guard_allows_classified_boundary_check(tmp_path: Path) -> None:
     write_fixture(
         tmp_path,
@@ -68,3 +75,27 @@ def test_family_isinstance_guard_rejects_family_branching(tmp_path: Path) -> Non
     assert result.returncode == 1
     assert "prohibited family branching" in result.stderr
     assert "FluxAssemblyPlan" in result.stderr
+
+
+def test_family_isinstance_guard_rejects_shared_family_comparisons(tmp_path: Path) -> None:
+    write_native_fixture(
+        tmp_path,
+        "def load(handle, family, family_id):\n"
+        "    if handle.recipe.family_id == TARGET.id:\n"
+        "        return special(handle)\n"
+        "    if family == 'minimax_h3':\n"
+        "        return special(handle)\n"
+        "    if family_id in FAMILY_IDS:\n"
+        "        return special(handle)\n"
+        "    return generic(handle)\n",
+    )
+    allowlist = tmp_path / "allowlist.json"
+    allowlist.write_text(json.dumps({"ceiling": 0, "sites": []}), encoding="utf-8")
+
+    result = run_guard(tmp_path, allowlist)
+
+    assert result.returncode == 1
+    assert result.stderr.count("prohibited family branching") == 3
+    assert "handle.recipe.family_id ==" in result.stderr
+    assert "family ==" in result.stderr
+    assert "family_id in" in result.stderr
