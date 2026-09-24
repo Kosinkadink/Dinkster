@@ -176,9 +176,10 @@ def _scheduled_carrier(
     carriers: list[Any] = []
     prepared_payloads: list[object] = []
     prepared_mode: bool | None = None
+    prepared_type = getattr(inference, "PreparedMultiStreamConditioning", None)
     for entry_index, raw_entry in enumerate(_condition_entries(value, input_id)):
         prepared = raw_entry[0]
-        is_prepared = type(prepared) is inference.PreparedMultiStreamConditioning
+        is_prepared = prepared_type is not None and type(prepared) is prepared_type
         prepared_value = cast("Any", prepared)
         encode_prepared: Any = None
         if prepared_mode is None:
