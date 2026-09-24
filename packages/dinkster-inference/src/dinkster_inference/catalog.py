@@ -43,6 +43,7 @@ from .families import (
     ComponentWiring,
     DetectionEvidence,
     EngineProperties,
+    FamilyCapability,
     FamilyFeature,
     FamilyFeatureHook,
     FamilyRegistry,
@@ -510,6 +511,7 @@ _CHROMA_ENGINE = EngineProperties(
     quantized_component_load_device=True,
     attention_backends=(("diffusion", "flux"), ("t5xxl", "t5"), ("vae", "vae")),
     attention_requires_route=True,
+    capabilities=frozenset({FamilyCapability.COMPONENT_EXECUTION_OPTIONS}),
 )
 
 
@@ -697,6 +699,7 @@ FLUX2_DEV = ModelFamily(
     ),
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=_flux2_memory_factor(FLUX2_DEV_CONFIG.hidden_size),
+    engine=EngineProperties(capabilities=frozenset({FamilyCapability.SPLIT_TEXT_LORA})),
 )
 
 FLUX2_KLEIN_9B = ModelFamily(
@@ -713,6 +716,7 @@ FLUX2_KLEIN_9B = ModelFamily(
     ),
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=_flux2_memory_factor(FLUX2_KLEIN_9B_CONFIG.hidden_size),
+    engine=EngineProperties(capabilities=frozenset({FamilyCapability.SPLIT_TEXT_LORA})),
 )
 
 FLUX2_KLEIN_4B = ModelFamily(
@@ -729,6 +733,7 @@ FLUX2_KLEIN_4B = ModelFamily(
     ),
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=_flux2_memory_factor(FLUX2_KLEIN_4B_CONFIG.hidden_size),
+    engine=EngineProperties(capabilities=frozenset({FamilyCapability.SPLIT_TEXT_LORA})),
 )
 
 WAN21 = ModelFamily(
@@ -846,6 +851,7 @@ Z_IMAGE = ModelFamily(
     memory_factor=Z_IMAGE_CONFIG.memory_factor,
     engine=EngineProperties(
         text_dtype=FLOAT32,
+        capabilities=frozenset({FamilyCapability.CONTROL_OVERLAY}),
         feature_hooks=(
             FamilyFeatureHook(
                 FamilyFeature.LORA_KEY_MAP,
@@ -889,6 +895,7 @@ LUMINA2 = ModelFamily(
     ),
     supported_dtypes=frozenset(LUMINA2_CONFIG.inference_dtypes),
     memory_factor=LUMINA2_CONFIG.memory_factor,
+    engine=EngineProperties(capabilities=frozenset({FamilyCapability.DIRECT_SAMPLING_SHIFT})),
 )
 
 Z_IMAGE_PIXEL_SPACE = ModelFamily(

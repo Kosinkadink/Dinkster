@@ -5,7 +5,15 @@ from pathlib import Path
 
 import pytest
 from dinkster_inference import (
+    CHROMA,
+    CHROMA_RADIANCE,
+    FLUX2_DEV,
+    FLUX2_KLEIN_4B,
+    FLUX2_KLEIN_9B,
+    LUMINA2,
+    Z_IMAGE,
     EngineProperties,
+    FamilyCapability,
     FamilyFeature,
     FamilyFeatureHook,
     PreviewDecoderProperties,
@@ -326,3 +334,20 @@ def test_every_family_feature_hook_is_typed_and_resolved_at_catalog_load() -> No
         for registered in family.engine.feature_hooks:
             assert type(registered.feature) is FamilyFeature
             assert callable(registered.target)
+
+
+def test_shared_runtime_capabilities_are_typed_and_catalog_owned() -> None:
+    expected = {
+        FamilyCapability.SPLIT_TEXT_LORA: {FLUX2_DEV.id, FLUX2_KLEIN_9B.id, FLUX2_KLEIN_4B.id},
+        FamilyCapability.COMPONENT_EXECUTION_OPTIONS: {CHROMA.id, CHROMA_RADIANCE.id},
+        FamilyCapability.CONTROL_OVERLAY: {Z_IMAGE.id},
+        FamilyCapability.DIRECT_SAMPLING_SHIFT: {LUMINA2.id},
+    }
+
+    for capability, family_ids in expected.items():
+        assert {
+            family.id for family in builtin_families() if family.engine.supports(capability)
+        } == family_ids
+
+    with pytest.raises(TypeError, match="FamilyCapability enum members"):
+        EngineProperties(capabilities=frozenset({"split-text-lora"}))  # type: ignore[arg-type]

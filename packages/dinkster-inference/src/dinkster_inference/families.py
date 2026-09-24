@@ -88,6 +88,13 @@ class FamilyFeature(Enum):
     LORA_KEY_MAP = "lora-key-map"
 
 
+class FamilyCapability(Enum):
+    SPLIT_TEXT_LORA = "split-text-lora"
+    COMPONENT_EXECUTION_OPTIONS = "component-execution-options"
+    CONTROL_OVERLAY = "control-overlay"
+    DIRECT_SAMPLING_SHIFT = "direct-sampling-shift"
+
+
 FamilyFeatureTarget = Callable[[Iterable[str], object], Mapping[str, object]]
 
 
@@ -136,6 +143,7 @@ class EngineProperties:
         tuple[str, Literal["unet", "flux", "vae", "clip", "t5", "qwen"]], ...
     ] = ()
     attention_requires_route: bool = False
+    capabilities: frozenset[FamilyCapability] = frozenset()
     feature_hooks: tuple[FamilyFeatureHook, ...] = ()
 
     def __post_init__(self) -> None:
@@ -150,6 +158,8 @@ class EngineProperties:
             raise ValueError("attention backend component roles must not be empty")
         if self.attention_requires_route and not self.attention_backends:
             raise ValueError("required attention routes need at least one attention backend")
+        if any(type(capability) is not FamilyCapability for capability in self.capabilities):
+            raise TypeError("family capabilities must be FamilyCapability enum members")
         features = tuple(hook.feature for hook in self.feature_hooks)
         if len(features) != len(set(features)):
             raise ValueError("family feature hooks must have unique feature names")
@@ -159,6 +169,9 @@ class EngineProperties:
 
     def feature_hook(self, feature: FamilyFeature) -> FamilyFeatureHook | None:
         return next((hook for hook in self.feature_hooks if hook.feature == feature), None)
+
+    def supports(self, capability: FamilyCapability) -> bool:
+        return capability in self.capabilities
 
 
 @dataclass(frozen=True)
