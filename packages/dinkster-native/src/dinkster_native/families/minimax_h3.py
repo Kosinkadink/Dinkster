@@ -450,7 +450,7 @@ def _minimax_h3_condition(
         prepared,
     )
     conditioning: list[list[object]] = [[value, cast("dict[str, object]", {})]]
-    return cls.outputs(conditioning=conditioning)
+    return cls.outputs(conditioning=inference.ResidentConditioningCarrier(conditioning))
 
 
 class NativeEmptyMiniMaxH3AV(EmptyMiniMaxH3AV):
@@ -1617,6 +1617,8 @@ class NativePreviewLatentAudio(PreviewLatentAudio):
 
 
 def _prepared_multistream_carrier(value: object, inference: Any, name: str) -> Any | None:
+    if isinstance(value, inference.ResidentConditioningCarrier):
+        value = cast("Any", value).payload
     if value == []:
         return None
     entries = cast("list[object]", value) if type(value) is list else []

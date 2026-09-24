@@ -134,6 +134,12 @@ def _latent(*, reverse: bool = False) -> dict[str, object]:
     return {"samples": _streams(reverse=reverse)}
 
 
+def _conditioning_rows(value: object) -> list[list[object]]:
+    inference = __import__("dinkster_inference")
+    assert type(value) is inference.ResidentConditioningCarrier
+    return cast("list[list[object]]", cast("Any", value).payload)
+
+
 def _install_sampling_runtime(monkeypatch: pytest.MonkeyPatch, runtime: Any) -> None:
     runtime.runtime_identity = "native:dinkster.minimax_h3:" + "1" * 64
     runtime.conditioning_identity = runtime.runtime_identity
@@ -755,7 +761,7 @@ def test_conditioning_returns_exactly_one_prepared_conditioning(
         clip=object(), target=_latent(), prompt="prompt"
     )
     assert tuple(result) == ("conditioning",)
-    conditioning = cast("list[list[object]]", result["conditioning"])
+    conditioning = _conditioning_rows(result["conditioning"])
     assert len(conditioning) == 1 and conditioning[0][1] == {}
     carrier = cast("Any", conditioning[0][0])
     assert type(carrier) is inference.PreparedMultiStreamConditioning
@@ -935,8 +941,8 @@ def test_two_conditioning_nodes_prepare_two_independent_prompt_lanes(
         "off-key vocals",
     ]
     assert all(type(call["request"]) is inference.MiniMaxH3T2VARequest for call in calls)
-    positive = cast("Any", positive_result["conditioning"])[0][0]
-    negative = cast("Any", negative_result["conditioning"])[0][0]
+    positive = cast("Any", _conditioning_rows(positive_result["conditioning"])[0][0])
+    negative = cast("Any", _conditioning_rows(negative_result["conditioning"])[0][0])
     assert positive.runtime_identity == negative.runtime_identity == identity
     assert positive.payload is not negative.payload
     assert positive.payload.prompt == "a singer"
