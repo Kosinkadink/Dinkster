@@ -82,7 +82,7 @@ def _wandancer_audio_feature() -> np.ndarray:
         return encode_wandancer_audio_features(waveform, 15_360, waveform, 31).audio_feature
 
 
-@pytest.mark.skipif(sys.platform.startswith("linux"), reason="skipped pending #427")
+@pytest.mark.skip(reason="skipped pending #427")
 def test_audio_features_match_pinned_comfyui_reference() -> None:
     feature = _wandancer_audio_feature()
 

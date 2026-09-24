@@ -110,10 +110,10 @@ def test_architecture_exactly_matches_fp16_checkpoint_state() -> None:
         assert shape == tuple(expected[name].shape)
 
 
-@pytest.mark.skip(reason="skipped pending #427")
 def test_outputs_match_pinned_comfyui_reference_vector() -> None:
     golden = _golden()
     assert golden["baseline"] == "c67885b14556cf3e4e061862925282d403d09862"
+    assert golden["generationCpu"] == "AMD Ryzen 9 5950X 16-Core Processor"
     assert golden["modelBlake3"] == MODEL_DIGEST
     assert golden["modelSha256"] == MODEL_SHA256
     assert golden["numpy"] == "2.5.1"
