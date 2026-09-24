@@ -7867,7 +7867,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
         elif node_type == "CreateVideo":
             entry["class_type"] = "dinkster.video.assemble"
             entry["inputs"] = {
-                name: str(value) if name == "bit_depth" else value
+                name: value
                 for name, value in inputs.items()
                 if name in {"images", "fps", "bit_depth", "color_space", "audio"}
             }

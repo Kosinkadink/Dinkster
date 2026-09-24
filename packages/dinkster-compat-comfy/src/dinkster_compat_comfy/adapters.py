@@ -778,6 +778,17 @@ def _make_legacy_combo_adapter(
     return adapt
 
 
+def adapt_create_video_inputs(
+    _node_id: str, inputs: dict[str, object]
+) -> tuple[dict[str, object], list[PromptProblem]]:
+    bit_depth = inputs.get("bit_depth")
+    if type(bit_depth) is not int:
+        return inputs, []
+    adapted = dict(inputs)
+    adapted["bit_depth"] = str(bit_depth)
+    return adapted, []
+
+
 _LEGACY_AREA_RENAMES = {name: f"units.{name}" for name in ("width", "height", "x", "y")}
 _LEGACY_VIDEO_AREA_RENAMES = {
     name: f"units.{name}" for name in ("width", "height", "temporal", "x", "y", "z")
@@ -785,6 +796,9 @@ _LEGACY_VIDEO_AREA_RENAMES = {
 
 COMFY_INPUT_ADAPTERS: dict[str, InputAdapter] = {
     "comfy.CustomCombo": adapt_custom_combo_inputs,
+    "CreateVideo": adapt_create_video_inputs,
+    "comfy.CreateVideo": adapt_create_video_inputs,
+    "dinkster.video.assemble": adapt_create_video_inputs,
     "dinkster.save_image": adapt_save_image_inputs,
     "ConditioningCombine": _make_legacy_combo_adapter(
         "ConditioningCombine",
