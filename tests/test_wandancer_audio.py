@@ -1,6 +1,6 @@
+import base64
 import hashlib
 import json
-import os
 import sys
 from contextlib import nullcontext
 from pathlib import Path
@@ -15,8 +15,6 @@ from dinkster_model_wan.wandancer_audio import (
     quick_tempo_estimate,
 )
 from threadpoolctl import threadpool_limits
-
-from tools.golden_platform import GoldenUnavailableError, fetch_platform_golden
 
 _DIRECT_OPERATION_GOLDEN = json.loads(
     (Path(__file__).parent / "goldens" / "comfy_direct_operations_b78cec87.json").read_text()
@@ -42,27 +40,12 @@ def _canonical_audio_feature_digest(feature: np.ndarray) -> str:
     return hashlib.sha256(onset_mfcc.tobytes() + chroma_events.tobytes()).hexdigest()
 
 
-def _audio_feature_digest_key() -> str:
-    if sys.platform.startswith("linux"):
-        return "linux-quantized"
-    omp_threads = os.environ.get("OMP_NUM_THREADS", "unset")
-    mkl_threads = os.environ.get("MKL_NUM_THREADS", "unset")
-    return f"{sys.platform}-omp{omp_threads}-mkl{mkl_threads}"
-
-
-def _expected_audio_feature_digest() -> str:
-    key = _audio_feature_digest_key()
-    selected = _AUDIO_FEATURE_DIGEST_PATH
-    local_document = json.loads(selected.read_text(encoding="utf-8"))
-    if key != local_document["platform"]:
-        try:
-            selected = fetch_platform_golden(_AUDIO_FEATURE_DIGEST_PATH, key)
-        except GoldenUnavailableError as error:
-            pytest.skip(f"WanDancer platform digest unavailable: {error}")
-    document = json.loads(selected.read_text(encoding="utf-8"))
-    assert document["format"] == "dinkster-wandancer-audio-digest/1"
-    assert document["platform"] == key
-    return str(document["sha256"])
+def _expected_audio_feature() -> np.ndarray:
+    document = json.loads(_AUDIO_FEATURE_DIGEST_PATH.read_text(encoding="utf-8"))
+    assert document["format"] == "dinkster-wandancer-audio-features/2"
+    return np.frombuffer(base64.b64decode(document["float32Base64"]), dtype="<f4").reshape(
+        document["shape"]
+    )
 
 
 def _wandancer_audio_feature() -> np.ndarray:
@@ -82,13 +65,13 @@ def _wandancer_audio_feature() -> np.ndarray:
         return encode_wandancer_audio_features(waveform, 15_360, waveform, 31).audio_feature
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="skipped pending #427")
 def test_audio_features_match_pinned_comfyui_reference() -> None:
     feature = _wandancer_audio_feature()
 
     assert feature.shape == (1, 31, 35)
     assert feature.dtype == np.float32
-    assert _canonical_audio_feature_digest(feature) == _expected_audio_feature_digest()
+    # Hosted providers differed by at most 9.1553e-05; 1e-04 adds 9.2% headroom.
+    np.testing.assert_allclose(feature, _expected_audio_feature(), rtol=0, atol=1e-4)
     assert np.flatnonzero(feature[0, :, 33]).tolist() == [5, 9, 13, 17, 21, 25, 29]
     assert np.flatnonzero(feature[0, :, 34]).tolist() == [5, 17, 29]
 

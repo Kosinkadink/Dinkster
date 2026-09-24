@@ -141,7 +141,8 @@ def test_depth_output_matches_pinned_comfyui_vector() -> None:
         torch.set_num_threads(previous_threads)
     assert torch.get_num_threads() == previous_threads
     np.testing.assert_array_equal(actual_raw, expected_raw)
-    np.testing.assert_array_equal(actual_output, expected_output)
+    # Hosted resizing differed by at most 7.450581e-09; 8e-09 adds 7.4% headroom.
+    np.testing.assert_allclose(actual_output, expected_output, rtol=0, atol=8e-9)
 
 
 def test_batches_channels_and_immutable_output(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -99,7 +99,8 @@ def test_birefnet_output_matches_pinned_comfyui_vector() -> None:
         torch.set_num_threads(previous_threads)
     assert actual.dtype == np.float32
     assert actual.shape == (1, *expected.shape)
-    np.testing.assert_array_equal(actual[0], expected)
+    # Hosted CPU kernels differed by at most 1.13e-10; 1.2e-10 adds 6.2% headroom.
+    np.testing.assert_allclose(actual[0], expected, rtol=0, atol=1.2e-10)
 
 
 def test_preprocessing_matches_comfyui_byte_grid() -> None:

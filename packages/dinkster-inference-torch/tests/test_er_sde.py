@@ -44,16 +44,8 @@ class _Noise:
     ("case_name", "parameterization"),
     [
         ("eps", Parameterization.EPS),
-        pytest.param(
-            "flow",
-            Parameterization.FLOW,
-            marks=pytest.mark.skip(reason="skipped pending #427"),
-        ),
-        pytest.param(
-            "flow",
-            Parameterization.IMAGE_TO_IMAGE_FLOW,
-            marks=pytest.mark.skip(reason="skipped pending #427"),
-        ),
+        ("flow", Parameterization.FLOW),
+        ("flow", Parameterization.IMAGE_TO_IMAGE_FLOW),
     ],
 )
 def test_torch_er_sde_matches_every_executed_reference_seam(
@@ -80,12 +72,13 @@ def test_torch_er_sde_matches_every_executed_reference_seam(
     assert model.sigmas == case["model_sigmas"]
     assert len(model.calls) == len(case["model_calls"])
     for actual, expected in zip(model.calls, case["model_calls"], strict=True):
-        assert torch.equal(actual, _tensor(expected))
+        # Hosted CPU families differed below the displayed float32 precision.
+        torch.testing.assert_close(actual, _tensor(expected), rtol=0, atol=1.2e-7)
     assert noise.bounds == [tuple(bounds) for bounds in case["noise_bounds"]]
     for actual, expected in zip(states, case["steps"], strict=True):
         assert type(actual.current) is torch.Tensor
-        assert torch.equal(actual.current, _tensor(expected))
-    assert torch.equal(result, _tensor(case["final"]))
+        torch.testing.assert_close(actual.current, _tensor(expected), rtol=0, atol=1.2e-7)
+    torch.testing.assert_close(result, _tensor(case["final"]), rtol=0, atol=1.2e-7)
     assert [(event.step, event.total, event.sigma) for event in events] == [
         (index, len(case["sigmas"]) - 1, sigma) for index, sigma in enumerate(case["sigmas"][:-1])
     ]
