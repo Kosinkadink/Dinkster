@@ -43,9 +43,7 @@ def test_repository_has_no_undeclared_capacity_literals() -> None:
 
 
 def test_capacity_literal_gate_has_exactly_two_limit_homes() -> None:
-    homes = {
-        path.relative_to(Path(__file__).parent.parent).as_posix() for path in LIMITS_MODULES
-    }
+    homes = {path.relative_to(Path(__file__).parent.parent).as_posix() for path in LIMITS_MODULES}
     assert homes == {
         "packages/dinkster-supervisor/src/dinkster_supervisor/limits.py",
         "packages/dinkster-values/src/dinkster_values/limits.py",

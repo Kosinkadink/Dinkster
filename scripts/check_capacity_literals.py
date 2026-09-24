@@ -13,6 +13,8 @@ SUPERVISOR_LIMITS_MODULE = (
     REPO_ROOT / "packages/dinkster-supervisor/src/dinkster_supervisor/limits.py"
 )
 LIMITS_MODULES = frozenset((LIMITS_MODULE.resolve(), SUPERVISOR_LIMITS_MODULE.resolve()))
+
+
 def _literal_int(node: ast.AST, value: int) -> bool:
     return isinstance(node, ast.Constant) and type(node.value) is int and node.value == value
 

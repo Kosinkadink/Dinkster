@@ -825,9 +825,7 @@ def test_reconnect_jitter_never_exceeds_cap(monkeypatch: pytest.MonkeyPatch) -> 
 def test_ws_queue_blocks_on_multiple_large_frames_and_has_heartbeat() -> None:
     async def scenario() -> None:
         large = b"x" * (INGRESS_EVENT_QUEUE_LIMIT_BYTES // 2)
-        queue = ingress_module._FrameQueue(
-            max_frames=64, max_bytes=INGRESS_EVENT_QUEUE_LIMIT_BYTES
-        )
+        queue = ingress_module._FrameQueue(max_frames=64, max_bytes=INGRESS_EVENT_QUEUE_LIMIT_BYTES)
         await queue.put(True, large)
         await queue.put(True, large)
         blocked = asyncio.create_task(queue.put(True, large))
