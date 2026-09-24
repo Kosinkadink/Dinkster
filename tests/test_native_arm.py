@@ -7676,6 +7676,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     monkeypatch: pytest.MonkeyPatch,
     row_id: str,
     shape_faithful: bool,
+    installed_default_catalogs: None,
     h3_production_compat_catalog: tuple[dict[str, Any], dict[str, tuple[str, ...]], dict[str, Any]],
 ) -> None:
     import io

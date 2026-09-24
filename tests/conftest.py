@@ -25,14 +25,16 @@ def unrestricted_cuda_devices(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(scope="session")
 def installed_default_catalogs(tmp_path_factory: pytest.TempPathFactory) -> None:
-    from dinkster_workers import diagnose, load_manifest
+    from dinkster_workers import load_manifest
     from dinkster_workers.catalog import read_catalog
+    from dinkster_workers.doctor import prepare_catalog
 
     from dinkster.comfy_compose import comfy_compat_specs
     from dinkster.compose import default_pack_specs
 
     for spec in (*default_pack_specs(), *comfy_compat_specs()):
-        report = diagnose(
+        report = prepare_catalog(
             spec.manifest, environment={**(spec.env or {}), "CUDA_VISIBLE_DEVICES": ""}
         )
+        assert report.ok, report
         assert read_catalog(load_manifest(spec.manifest)) is not None, report

@@ -26,7 +26,7 @@ runs:
     - uses: actions/checkout@v4
       with:
         repository: Kosinkadink/dinkster-evidence
-        ref: 54401048b0b5c58ceb7fb5b504eca8e52bec8343
+        ref: 176457aaca7fe2ce58d46914e400c592dcaec7cd
         path: .evidence-source
         clean: true
         persist-credentials: false
