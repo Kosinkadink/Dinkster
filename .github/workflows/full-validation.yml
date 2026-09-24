@@ -258,7 +258,7 @@ jobs:
     if: needs.validation-plan.outputs.run-heavy == 'true' && github.repository == 'Kosinkadink/Dinkster'
     name: model-tests (${{ matrix.name }})
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.timeout-minutes }}
     permissions:
       contents: read
     strategy:
@@ -269,54 +269,68 @@ jobs:
             group: inference
             suites: inference-torch,model-ipadapter
             pytest-args: -p tools.pytest_file_shard --file-shard 1/8
+            timeout-minutes: 30
           - name: inference and IPAdapter, shard 2 of 8
             group: inference
             suites: inference-torch,model-ipadapter
             pytest-args: -p tools.pytest_file_shard --file-shard 2/8
+            timeout-minutes: 30
           - name: inference and IPAdapter, shard 3 of 8
             group: inference
             suites: inference-torch,model-ipadapter
             pytest-args: -p tools.pytest_file_shard --file-shard 3/8
+            timeout-minutes: 30
           - name: inference and IPAdapter, shard 4 of 8
             group: inference
             suites: inference-torch,model-ipadapter
             pytest-args: -p tools.pytest_file_shard --file-shard 4/8
+            timeout-minutes: 30
           - name: inference and IPAdapter, shard 5 of 8
             group: inference
             suites: inference-torch,model-ipadapter
             pytest-args: -p tools.pytest_file_shard --file-shard 5/8
+            timeout-minutes: 30
           - name: inference and IPAdapter, shard 6 of 8
             group: inference
             suites: inference-torch,model-ipadapter
             pytest-args: -p tools.pytest_file_shard --file-shard 6/8
+            timeout-minutes: 30
           - name: inference and IPAdapter, shard 7 of 8
             group: inference
             suites: inference-torch,model-ipadapter
             pytest-args: -p tools.pytest_file_shard --file-shard 7/8
+            timeout-minutes: 30
           - name: inference and IPAdapter, shard 8 of 8
             group: inference
             suites: inference-torch,model-ipadapter
             pytest-args: -p tools.pytest_file_shard --file-shard 8/8
+            timeout-minutes: 30
           - name: acceptance and benchmark
             group: acceptance
             suites: acceptance-sampling,benchmark-loader
             pytest-args: ""
+            timeout-minutes: 30
           - name: HED, upscale and EfficientSAM
             group: vision-fast
             suites: hed,upscale,efficient-sam
             pytest-args: ""
+            timeout-minutes: 30
           - name: Depth Anything V2, DETR and RT-DETR
             group: vision-detection
             suites: depth-anything-v2,detr,rtdetr
             pytest-args: ""
+            timeout-minutes: 30
           - name: BiRefNet and Depth Anything V3
             group: vision-large
             suites: birefnet,depth-anything-v3
             pytest-args: ""
+            timeout-minutes: 30
           - name: SAM 3.1
             group: vision-sam
             suites: sam31
             pytest-args: ""
+            # Measured jobs reached 16:56, 23:40, 25:43, 27:49, 28:27, and 29:18; 45 preserves cleanup headroom.
+            timeout-minutes: 45
     env:
       ATEN_CPU_CAPABILITY: avx2
       MKL_CBWR: COMPATIBLE
