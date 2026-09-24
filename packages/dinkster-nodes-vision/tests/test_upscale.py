@@ -434,9 +434,13 @@ def test_upscale_outputs_match_pinned_comfyui_vectors(
     expected = _decode(cast("dict[str, dict[str, object]]", golden["cases"])[name][tiling])
     assert output.shape == (1, *expected.shape)
     assert output.dtype == np.float32
-    np.testing.assert_array_equal(
-        np.rint(output[0] * 255.0).astype(np.uint8),
-        expected,
+    # Hosted CPU kernels differed by at most one uint8 level; two levels apply
+    # the 2x spread rule, with a 1e-05 relative floor on pre-quantization floats.
+    np.testing.assert_allclose(
+        output[0],
+        expected.astype(np.float32) / 255,
+        rtol=1e-5,
+        atol=2 / 255,
     )
 
 

@@ -139,25 +139,35 @@ def test_outputs_match_pinned_comfyui_reference_vector() -> None:
             )
     assert torch.get_num_threads() == previous_threads
     assert len(capped) == 2 and capped[0] == capped[1]
-    np.testing.assert_array_equal(
+    # Hosted CPU kernels differed by at most 5.6171e-04; 1.2e-03 is more than
+    # twice that spread, with a 1e-05 relative floor for float32 model output.
+    np.testing.assert_allclose(
         outputs["pred_logits"].numpy(),
         _decode(golden["predLogits"], dtype=np.dtype(np.float32)),
+        rtol=1e-5,
+        atol=1.2e-3,
     )
-    np.testing.assert_array_equal(
+    np.testing.assert_allclose(
         outputs["pred_boxes"].numpy(),
         _decode(golden["predBoxes"], dtype=np.dtype(np.float32)),
+        rtol=1e-5,
+        atol=1.2e-3,
     )
     np.testing.assert_array_equal(
         result["labels"].numpy(),
         _decode(golden["labels"], dtype=np.dtype(np.int64)),
     )
-    np.testing.assert_array_equal(
+    np.testing.assert_allclose(
         result["boxes"].numpy(),
         _decode(golden["boxes"], dtype=np.dtype(np.float32)),
+        rtol=1e-5,
+        atol=1.2e-3,
     )
-    np.testing.assert_array_equal(
+    np.testing.assert_allclose(
         result["scores"].numpy(),
         _decode(golden["scores"], dtype=np.dtype(np.float32)),
+        rtol=1e-5,
+        atol=1.2e-3,
     )
 
 
