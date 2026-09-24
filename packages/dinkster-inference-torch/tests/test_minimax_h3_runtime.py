@@ -1090,6 +1090,7 @@ class ContextMeanDiT(torch.nn.Module):
         self.conditionings: list[MiniMaxH3DiTConditioning] = []
         self.preprocessed_contexts: list[torch.Tensor] = []
         self.input_dtypes: list[torch.dtype] = []
+        self.denoise_masks: list[MultiStreamLatent[torch.Tensor] | None] = []
         self.output_dtype = output_dtype
         self.video_patch_proj = torch.nn.Linear(1, 1, bias=False)
         self.video_patch_proj.weight.data.fill_(1.0)
@@ -1109,8 +1110,9 @@ class ContextMeanDiT(torch.nn.Module):
         sampler_sigmas: tuple[float, ...] | None = None,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
-        del sigma, sigmas, sampler_sigmas, denoise_mask
+        del sigma, sigmas, sampler_sigmas
         self.conditionings.append(conditioning)
+        self.denoise_masks.append(denoise_mask)
         projection_input = context.mean().reshape(1, 1).to(self.video_patch_proj.weight.dtype)
         velocity = float(self.video_patch_proj(projection_input).detach().item())
         self.calls.append(velocity)
@@ -1598,6 +1600,56 @@ def test_h3_context_windows_use_one_packed_layout_path(dim: int) -> None:
     assert actual_layout == expected_layout
     torch.testing.assert_close(actual_packed, expected_packed)
     assert len(actual_dit.calls) > 1
+
+
+def test_h3_temporal_windows_slice_fractional_denoise_masks() -> None:
+    expected_runtime, expected_conditioner, _expected_dit = _context_mean_runtime()
+    actual_runtime, actual_conditioner, actual_dit = _context_mean_runtime()
+    target = _target()
+    video_mask = torch.linspace(
+        0.2, 0.8, target.by_role("video").numel(), dtype=torch.float32
+    ).reshape_as(target.by_role("video"))
+    audio_mask = torch.linspace(
+        0.3, 0.9, target.by_role("audio").numel(), dtype=torch.float32
+    ).reshape_as(target.by_role("audio"))
+    mask = _h3(video_mask, audio_mask)
+    sampling = {
+        "cfg": SamplingGuidance(None, 1.0),
+        "sampler_id": "res_multistep",
+        "scheduler_id": "simple",
+        "steps": 1,
+        "denoise": 1.0,
+        "seed": 123,
+        "denoise_mask": mask,
+        "cancelled": lambda: False,
+    }
+    expected = expected_runtime.sample_multistream(
+        target,
+        conditioning=_condition_t2va(expected_conditioner, target),
+        **sampling,
+    )
+    actual = actual_runtime.sample_multistream(
+        target,
+        conditioning=_condition_t2va(actual_conditioner, target),
+        context_windows=ContextWindowsSpec(
+            ContextWindowSchedule.BATCHED,
+            ContextFuseMethod.PYRAMID,
+            length=1,
+            overlap=0,
+            dim=2,
+        ),
+        **sampling,
+    )
+    expected_packed, expected_layout = pack_latent_streams(expected)
+    actual_packed, actual_layout = pack_latent_streams(actual)
+    assert actual_layout == expected_layout
+    torch.testing.assert_close(actual_packed, expected_packed)
+    assert len(actual_dit.denoise_masks) > 1
+    assert all(mask is not None for mask in actual_dit.denoise_masks)
+    assert all(
+        cast("MultiStreamLatent[torch.Tensor]", window_mask).by_role("video").shape[2] == 1
+        for window_mask in actual_dit.denoise_masks
+    )
 
 
 def test_runtime_forwards_the_token_mask_to_both_guidance_lanes(
