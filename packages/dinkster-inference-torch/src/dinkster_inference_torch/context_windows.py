@@ -139,10 +139,7 @@ class PackedContextWindows:
             primary_extent = self.layout.by_role(primary.role).shape[primary.tensor_dim]
             for stream in axis.streams[1:]:
                 extent = self.layout.by_role(stream.role).shape[stream.tensor_dim]
-                if (
-                    stream.scale is PackedContextWindowScale.IDENTITY
-                    and extent != primary_extent
-                ):
+                if stream.scale is PackedContextWindowScale.IDENTITY and extent != primary_extent:
                     raise ValueError("identity-scaled packed window axes must have equal extents")
                 if (
                     stream.scale is PackedContextWindowScale.PROPORTIONAL
@@ -408,9 +405,7 @@ def _packed_fused(
                 raise ContextWindowsError(
                     f"context windows did not cover packed role {layout.role!r}"
                 )
-            streams.append(
-                LatentStream(layout.role, lane_accumulators[layout.role] / count)
-            )
+            streams.append(LatentStream(layout.role, lane_accumulators[layout.role] / count))
         value, layout = pack_latent_streams(MultiStreamLatent(tuple(streams)))
         if layout != packed.layout:
             raise ContextWindowsError("fused packed context-window layout changed")

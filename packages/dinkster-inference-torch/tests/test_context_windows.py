@@ -89,9 +89,7 @@ def packed_av_latent(
 ) -> tuple[torch.Tensor, PackedContextWindows, MultiStreamLatent[torch.Tensor]]:
     video = torch.arange(frames * 6, dtype=torch.float32).reshape(1, 1, frames, 2, 3)
     audio = torch.arange(audio_steps * 2, dtype=torch.float32).reshape(1, 1, 2, audio_steps)
-    streams = MultiStreamLatent(
-        (LatentStream("video", video), LatentStream("audio", audio))
-    )
+    streams = MultiStreamLatent((LatentStream("video", video), LatentStream("audio", audio)))
     packed, layout = pack_latent_streams(streams)
     windows = PackedContextWindows(
         layout,
@@ -100,9 +98,7 @@ def packed_av_latent(
                 2,
                 (
                     PackedContextWindowStream("video", 2),
-                    PackedContextWindowStream(
-                        "audio", 3, PackedContextWindowScale.PROPORTIONAL
-                    ),
+                    PackedContextWindowStream("audio", 3, PackedContextWindowScale.PROPORTIONAL),
                 ),
             ),
             PackedContextWindowAxis(4, (PackedContextWindowStream("video", 4),)),
