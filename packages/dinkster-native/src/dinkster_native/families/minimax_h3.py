@@ -1133,7 +1133,15 @@ class NativeMiniMaxH3AddGuide(MiniMaxH3AddGuide):
         )
         output = inference.PreparedMultiStreamConditioning(carrier.runtime_identity, prepared)
         conditioned: list[list[object]] = [[output, cast("dict[str, object]", {})]]
-        return cls.outputs(positive=conditioned)
+        fingerprint = _minimax_h3_latent_fingerprint(guide.latent, torch)
+        return cls.outputs(
+            positive=_minimax_h3_rewrap_conditioning(
+                positive,
+                conditioned,
+                inference,
+                f"guide:{resolved}:{guide_frames}:{fingerprint}",
+            )
+        )
 
 
 class NativeMiniMaxH3MotionContext(MiniMaxH3MotionContext):
@@ -1162,7 +1170,16 @@ class NativeMiniMaxH3MotionContext(MiniMaxH3MotionContext):
         )
         output = inference.PreparedMultiStreamConditioning(carrier.runtime_identity, prepared)
         conditioned: list[list[object]] = [[output, cast("dict[str, object]", {})]]
-        return cls.outputs(positive=conditioned, trim_time=trim_time)
+        fingerprint = _minimax_h3_latent_fingerprint(previous, torch)
+        return cls.outputs(
+            positive=_minimax_h3_rewrap_conditioning(
+                positive,
+                conditioned,
+                inference,
+                f"motion-context:{context_length}:{fingerprint}",
+            ),
+            trim_time=trim_time,
+        )
 
 
 class NativeMiniMaxH3AVEncode(MiniMaxH3AVEncode):
@@ -1774,6 +1791,45 @@ def _minimax_h3_conditioning_carrier(value: object, inference: Any, name: str) -
             f"{name} conditioning was not prepared by an official MiniMax H3 conditioner component"
         ) from error
     return prepared
+
+
+def _minimax_h3_latent_fingerprint(value: object, torch: Any) -> str:
+    digest = hashlib.sha256()
+    for stream in cast("Any", value).streams:
+        payload = stream.payload
+        digest.update(stream.role.encode("utf-8"))
+        digest.update(repr((tuple(payload.shape), payload.dtype)).encode("utf-8"))
+        try:
+            raw = payload.detach().to("cpu").contiguous().view(torch.uint8).numpy().tobytes()
+        except (AttributeError, RuntimeError, TypeError):
+            raw = repr(payload).encode("utf-8")
+        digest.update(raw)
+    return digest.hexdigest()
+
+
+def _minimax_h3_rewrap_conditioning(
+    source: object,
+    conditioning: list[list[object]],
+    inference: Any,
+    operation: str,
+) -> object:
+    if not isinstance(source, inference.ResidentConditioningCarrier):
+        return conditioning
+    resident = cast("Any", source).payload
+    if type(resident) is not _MiniMaxH3ResidentConditioning:
+        raise TypeError("MiniMax H3 conditioning has an invalid resident payload")
+    facts = (resident.fingerprint, operation)
+    fingerprint = (
+        "minimax-h3-conditioning:" + hashlib.sha256("\n".join(facts).encode("utf-8")).hexdigest()
+    )
+    return inference.ResidentConditioningCarrier(
+        _MiniMaxH3ResidentConditioning(
+            conditioning,
+            resident.owner,
+            resident.references,
+            fingerprint,
+        )
+    )
 
 
 def _minimax_h3_model_handle(

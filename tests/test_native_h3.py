@@ -1115,6 +1115,7 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inference = __import__("dinkster_inference")
+    family = importlib.import_module("dinkster_native.families.minimax_h3")
     identity = "native:dinkster.minimax_h3:" + "1" * 64
     target = MultiStreamLatent.from_pairs(
         (
@@ -1123,7 +1124,10 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
         )
     )
     initial = SimpleNamespace(guides=())
-    positive: object = [[inference.PreparedMultiStreamConditioning(identity, initial), {}]]
+    rows = [[inference.PreparedMultiStreamConditioning(identity, initial), {}]]
+    positive: object = inference.ResidentConditioningCarrier(
+        family._MiniMaxH3ResidentConditioning(rows, object(), (), "test:h3:conditioning")
+    )
     stage_calls: list[str] = []
     video_inputs: list[FakeTensor] = []
     audio_inputs: list[object] = []
@@ -1214,7 +1218,16 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
     assert resamples == [((1, 2, 44_100), 44_100)]
     assert resize_calls == [(48, 32, "center"), (48, 32, "center")]
     assert stage_calls == ["video", "audio", "video"]
-    output = cast("Any", second["positive"])[0][0]
+    first_carrier = cast("Any", first["positive"])
+    second_carrier = cast("Any", second["positive"])
+    assert type(first_carrier) is inference.ResidentConditioningCarrier
+    assert type(second_carrier) is inference.ResidentConditioningCarrier
+    assert first_carrier._dinkster_resident_fingerprint != "test:h3:conditioning"
+    assert (
+        second_carrier._dinkster_resident_fingerprint
+        != first_carrier._dinkster_resident_fingerprint
+    )
+    output = second_carrier.payload.conditioning[0][0]
     assert output.runtime_identity == identity
     assert len(output.payload.guides) == 2
 
