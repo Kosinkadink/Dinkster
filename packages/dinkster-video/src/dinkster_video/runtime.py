@@ -24,6 +24,7 @@ from dinkster_values import (
     media_semantics,
     open_video_source,
     video_source,
+    VIDEO_DECODE_WORKING_SET_LIMIT_BYTES,
 )
 from dinkster_values.audio_codec import coerce_audio
 from dinkster_values.storage import image_input
@@ -602,7 +603,7 @@ def disassemble_video(obj: object) -> dict[str, object]:
         if not isinstance(array, np.ndarray):
             array = _pixels(array, int(cast(int, probe["bit_depth"]) or 8), bool(probe["alpha"]))
         size += array.nbytes
-        if size > 512 * 1024 * 1024:
+        if size > VIDEO_DECODE_WORKING_SET_LIMIT_BYTES:
             raise ValueError("decoded video frames exceed the 512 MiB limit")
         arrays.append(cast(np.ndarray, array))
     if not arrays:

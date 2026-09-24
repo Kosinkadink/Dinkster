@@ -32,6 +32,7 @@ from types import MappingProxyType
 from typing import Any, BinaryIO, Literal, Protocol, cast
 
 import torch
+from dinkster_inference import AIMDO_VBAR_PAGE_BYTES
 from dinkster_inference.patches import (
     AdapterPatch,
     DiffPatch,
@@ -71,7 +72,7 @@ from .residency_timing import (
 from .sources import tensor_file_slice
 
 _VBAR_ALIGNMENT = 512
-_VBAR_PAGE_SIZE = 32 << 20
+_VBAR_PAGE_SIZE = AIMDO_VBAR_PAGE_BYTES
 _RAW_SCALE_ALIGNMENT = 4
 _EAGER_UNIT_LIMIT = 16 * 1024
 _CAST_ARENA_RESERVATION_BYTES = 16 * 1024**3

@@ -23,6 +23,7 @@ from dinkster_api.v1 import (
     CORE_INT,
     CORE_STRING,
     DITHERS,
+    ENCODED_MEDIA_LIMIT_BYTES,
     FRAME_FORMATS,
     SAVE_TARGET_TYPE,
     AssetError,
@@ -47,6 +48,8 @@ from dinkster_api.v1 import (
     SourceFilenameSpec,
     StringWidget,
     TypeExpr,
+    VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES,
+    VIDEO_FRAME_WORKING_SET_LIMIT_BYTES,
     read_video_metadata,
     report_value_diagnostic,
     save_video_frames,
@@ -67,9 +70,9 @@ FLOAT = TypeExpr.concrete(CORE_FLOAT)
 COMBO = TypeExpr.concrete(CORE_COMBO)
 SAVE_TARGET = TypeExpr.concrete(SAVE_TARGET_TYPE)
 
-MAX_DECODED_FRAME_BYTES = 512 * 1024 * 1024
-MAX_DECODED_AUDIO_BYTES = 256 * 1024 * 1024
-MAX_ENCODED_VIDEO_BYTES = 1024 * 1024 * 1024
+MAX_DECODED_FRAME_BYTES = VIDEO_FRAME_WORKING_SET_LIMIT_BYTES
+MAX_DECODED_AUDIO_BYTES = VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES
+MAX_ENCODED_VIDEO_BYTES = ENCODED_MEDIA_LIMIT_BYTES
 
 _REQUIRED_ENCODERS = ("libx264", "libvpx-vp9", "libsvtav1", "aac", "libopus")
 

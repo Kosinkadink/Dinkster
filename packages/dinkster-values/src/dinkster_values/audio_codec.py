@@ -27,6 +27,7 @@ from .audio_lazy import (
     iter_audio_chunks,
     mapping,
 )
+from .limits import MEBIBYTE
 from .image_codec import encode_canonical_png
 from .model import stable_hash
 from .registry import InvalidRenditionRequest, RenditionUnavailable
@@ -64,7 +65,7 @@ __all__ = [
 ]
 
 _MAGIC = b"DINKSTER-AUDIO\x02"
-_HEADER_LIMIT = 1024 * 1024
+_HEADER_LIMIT = MEBIBYTE
 
 
 def _json(obj: object) -> bytes:
