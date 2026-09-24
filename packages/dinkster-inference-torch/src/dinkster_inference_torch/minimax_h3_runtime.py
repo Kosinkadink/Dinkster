@@ -1239,9 +1239,7 @@ def _h3_packed_context_windows(
                 2,
                 (
                     PackedContextWindowStream("video", 2),
-                    PackedContextWindowStream(
-                        "audio", 3, PackedContextWindowScale.PROPORTIONAL
-                    ),
+                    PackedContextWindowStream("audio", 3, PackedContextWindowScale.PROPORTIONAL),
                 ),
             ),
             PackedContextWindowAxis(3, (PackedContextWindowStream("video", 3),)),
