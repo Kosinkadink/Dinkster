@@ -7671,7 +7671,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     from dinkster_nodes_image import IMAGE_NODES, register_image_types
     from dinkster_nodes_media_io import MEDIA_IO_NODES, register_media_types
     from dinkster_server import STATE_KEY, create_app
-    from dinkster_values import encode_video
+    from dinkster_values import decode_video, encode_video
     from dinkster_video import save_video_stream
 
     from dinkster.compat_api import add_comfy_compat_routes
@@ -7888,6 +7888,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
         if shape_faithful:
             encoded = encode_video(video)
             assert len(encoded) > 512 * 1024 * 1024
+            video = decode_video(encoded)
             output = io.BytesIO()
             container, media_type = save_video_stream(
                 video, output, container="mp4", codec="h264", crf=51

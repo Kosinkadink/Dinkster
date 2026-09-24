@@ -604,7 +604,7 @@ def _unpack_video(
             if descriptor.get("codec") != key:
                 raise ValueError("VIDEO component codec mismatch")
             data = take(descriptor)
-            if len(data) > (512 if key == "images" else 256) * 1024 * 1024:
+            if key == "audio" and len(data) > 256 * 1024 * 1024:
                 raise ValueError("VIDEO component exceeds its size limit")
             shape = _validate_array_chunk(data, descriptor["meta"], audio=key == "audio")
             if key == "images" and _component_probe(components, shape) != wire["probe"]:
