@@ -7517,7 +7517,10 @@ def test_native_h3_decomposed_sampling_executes_with_empty_negative(
     arm = _native_arm()
     inference, recipe, handle, dit_type = _h3_decomposed_handle(arm, tmp_path, monkeypatch)
     monkeypatch.setattr(arm, "multistream_sampling_preview_emitter", lambda _handle: None)
-    positive = _h3_prepared_conditioning(inference, recipe, "7")
+    rows = _h3_prepared_conditioning(inference, recipe, "7")
+    positive = inference.ResidentConditioningCarrier(
+        arm._MiniMaxH3ResidentConditioning(rows, handle, (), "test:h3:conditioning")
+    )
     video = FakeTensor((1, 24, 6, 4, 5), "video")
     audio = FakeTensor((1, 32, 97), "audio")
     streams = inference.MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))
@@ -7537,7 +7540,7 @@ def test_native_h3_decomposed_sampling_executes_with_empty_negative(
     assert len(dit_type.sample_calls) == 1
     call = dit_type.sample_calls[0]
     assert call["cfg"] == inference.SamplingGuidance(None, 3.0)
-    assert call["cond"] is positive[0][0]
+    assert call["cond"] is rows[0][0]
     assert call["seed"] == 0
     moved = cast("Any", call["latent"])
     assert type(moved) is inference.MultiStreamLatent
