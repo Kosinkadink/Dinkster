@@ -443,7 +443,7 @@ def _pack_video(
             if component is None:
                 continue
             data = encoder(component)
-            if len(data) > (512 if key == "images" else 256) * 1024 * 1024:
+            if key == "audio" and len(data) > 256 * 1024 * 1024:
                 raise ValueError(f"VIDEO {key} component exceeds its encoded size limit")
             metadata = dict(meta(component))
             metadata.pop(COST_META_KEY, None)

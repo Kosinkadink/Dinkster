@@ -7695,6 +7695,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     from dinkster_nodes_image import IMAGE_NODES, register_image_types
     from dinkster_nodes_media_io import MEDIA_IO_NODES, register_media_types
     from dinkster_server import STATE_KEY, create_app
+    from dinkster_values import encode_video
     from dinkster_video import save_video_stream
 
     from dinkster.compat_api import add_comfy_compat_routes
@@ -7777,7 +7778,8 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
         def decode_latent(self, _latent: object) -> FakeTensor:
             if self.role == "audio":
                 return FakeTensor((1, 2, 8), "decoded-audio")
-            return DecodedVideoTensor((1, 3, 2, 2, 2), "decoded-video")
+            shape = (1, 3, 124, 480, 864) if shape_faithful else (1, 3, 2, 2, 2)
+            return DecodedVideoTensor(shape, "decoded-video")
 
         @staticmethod
         def encode_content(content: object) -> object:
@@ -7908,6 +7910,8 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     def save_video(**kwargs: object) -> dict[str, object]:
         video = kwargs["video"]
         if shape_faithful:
+            encoded = encode_video(video)
+            assert len(encoded) > 512 * 1024 * 1024
             output = io.BytesIO()
             container, media_type = save_video_stream(
                 video, output, container="mp4", codec="h264", crf=51
@@ -7971,7 +7975,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
             assert response.status == 202, await response.text()
             submitted = await response.json()
             job_status: dict[str, Any] = {}
-            for _ in range(100):
+            for _ in range(1_500 if shape_faithful else 100):
                 status = await client.get(f"/api/jobs/comfy-compat/{submitted['jobId']}")
                 job_status = await status.json()
                 if job_status["state"] in ("completed", "failed", "cancelled"):
