@@ -7624,11 +7624,20 @@ H3_IMPORTER_API_CASES = (
 def h3_production_compat_catalog() -> tuple[
     dict[str, Any], dict[str, tuple[str, ...]], dict[str, Any]
 ]:
-    from dinkster.comfy_compose import comfy_compat_specs
-    from dinkster.compose import compose_serving
+    from dinkster.compose import (
+        compose_serving,
+        default_pack_ids,
+        default_pack_spec,
+    )
 
     async def snapshot() -> tuple[dict[str, Any], dict[str, tuple[str, ...]], dict[str, Any]]:
-        composition = await compose_serving(comfy_compat_specs())
+        specs = (
+            *(
+                replace(default_pack_spec(pack_id), require_catalog=True)
+                for pack_id in default_pack_ids()
+            ),
+        )
+        composition = await compose_serving(specs, include_default_packs=False)
         try:
             return (
                 dict(composition.schemas),
@@ -7687,7 +7696,8 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     node_types = {node.schema().node_type: node for node in all_nodes}
     nodes = tuple(node_types.values())
     execution_schemas = build_schemas(nodes)
-    server_schemas, server_choices, server_lazy_choices = h3_production_compat_catalog
+    production_schemas, server_choices, server_lazy_choices = h3_production_compat_catalog
+    server_schemas = {**production_schemas, **execution_schemas}
 
     registry = TypeRegistry()
     register_core_types(registry)
@@ -7915,7 +7925,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
                 choice_id: ()
                 for schema in execution_schemas.values()
                 for choice_id in schema_model._remote_choice_ids(schema)
-                if choice_id not in choices
+                if choice_id not in choices and choice_id not in server_lazy_choices
             }
         )
         app = create_app(
