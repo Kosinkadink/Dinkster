@@ -99,9 +99,7 @@ def test_detr_outputs_match_pinned_reference_vectors(tmp_path: Path) -> None:
     np.testing.assert_allclose(
         logits.numpy(), _decode_float32(golden["logits"]), rtol=0, atol=8.5e-5
     )
-    np.testing.assert_allclose(
-        boxes.numpy(), _decode_float32(golden["boxes"]), rtol=0, atol=8.5e-5
-    )
+    np.testing.assert_allclose(boxes.numpy(), _decode_float32(golden["boxes"]), rtol=0, atol=8.5e-5)
 
 
 def test_detr_detections_are_ordered_filtered_and_clipped(tmp_path: Path) -> None:

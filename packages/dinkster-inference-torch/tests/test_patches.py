@@ -243,13 +243,13 @@ def test_lora_stack_matches_comfyui_golden(case: dict[str, Any]) -> None:
     )
     expected = dec(case["expected"])
     if case["name"] == "lora_stack_convolution":
-        # Hosted CPU kernels changed values by at most one float32 ULP
-        # (2.9802322e-08); 3e-08 adds less than 0.7% headroom.
+        # Hosted and local CPU kernels differed by at most 5.9604645e-08;
+        # 6e-08 adds less than 0.7% headroom.
         assert result.shape == expected.shape
         assert result.dtype == expected.dtype == torch.float32
         assert torch.all(torch.isfinite(result))
         assert torch.all(torch.isfinite(expected))
-        torch.testing.assert_close(result, expected, rtol=0, atol=3e-8)
+        torch.testing.assert_close(result, expected, rtol=0, atol=6e-8)
     else:
         assert torch.equal(result, expected), case["name"]
 
