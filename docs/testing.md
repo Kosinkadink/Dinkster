@@ -218,6 +218,11 @@ and NVIDIA CUDA environments. Run the gates it prints with native Windows
 paths; rerunning the script reasserts the environments, while `-Force` rebuilds
 only the environments it owns.
 
+MediaRecorder WebM upload tests generate local samples only for the writable
+`libopus` and `libvorbis` encoders present in the installed PyAV wheel. The
+fixture gate always requires `libopus`; decode-side admission separately keeps
+Vorbis WebM coverage when the wheel cannot generate it through `libvorbis`.
+
 Run each vision package's full `tests` directory and the benchmark selector
 above with `.venv-torch/bin/python -m pytest -q` too. Supply the real-artifact
 environment variables documented in the provider READMEs and composite

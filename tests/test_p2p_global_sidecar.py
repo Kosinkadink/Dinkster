@@ -578,8 +578,10 @@ def test_transfer_actions_control_global_session_and_preserve_counters(
 
 
 def test_lan_and_global_activity_counters_remain_independent_across_restart(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr("dinkster_p2p.global_transfers.time.monotonic", lambda: 100.0)
     lease = _seed_lease(tmp_path)
     state_root = tmp_path / "state"
     runtime = SidecarRuntime(
