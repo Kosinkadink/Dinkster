@@ -1852,7 +1852,6 @@ from .z_image import (
 from .z_image_token_layout import ZImageTokenPlan, plan_z_image_token_layout
 
 __all__ = [
-    "AIMDO_VBAR_PAGE_BYTES",
     "AudioPreview",
     "BUILTIN_METADATA_MERGE_TABLE",
     "VAE_TYPE_ID",
@@ -1864,11 +1863,8 @@ __all__ = [
     "CONTROL_TYPE_ID",
     "CONTROL_WIRE_FORMAT",
     "EMPTY_RANGE",
-    "GIBIBYTE",
-    "INT8_BACKWARD_TEMP_LIMIT_BYTES",
     "LATENT_TYPE_ID",
     "MODEL_TYPE_ID",
-    "MEBIBYTE",
     "CLIP_TYPE_ID",
     "CLIP_VISION_TYPE_ID",
     "GUIDER_TYPE_ID",
@@ -1878,8 +1874,6 @@ __all__ = [
     "SCHEDULED_METADATA_KEYS",
     "SCHEDULED_METADATA_PREFIX",
     "SCHEDULED_METADATA_VERSION",
-    "TRELLIS2_SPARSE_DECODE_ALIGNMENT_BYTES",
-    "TRELLIS2_SPARSE_DECODE_FIXED_BYTES",
     "AreaDescriptor",
     "AreaUnits",
     "ConditioningCarrier",
