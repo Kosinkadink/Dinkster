@@ -68,7 +68,7 @@ from dinkster_inference import (
 )
 
 from .brownian import BrownianTreeNoise
-from .context_windows import windowed_conditioning_evaluation
+from .context_windows import PackedContextWindows, windowed_conditioning_evaluation
 from .denoise import (
     PackedInpaintConfiguration,
     latent_process_out,
@@ -726,6 +726,9 @@ class SamplingPipelineHooks:
         | None
     ) = None
     bind_attention: Callable[[object, SamplingAdapterContext], object | None] | None = None
+    packed_context_windows: (
+        Callable[[object, SamplingExecutionInputs], PackedContextWindows] | None
+    ) = None
     encode_conditioning: Callable[[object, str], ConditioningCarrier] | None = None
     materialize_conditioning: (
         Callable[
@@ -1173,10 +1176,16 @@ def sampling_execution(
     if context_windows is not None:
         if evaluation is None:
             raise owner.sampling_error("context windows require conditioning evaluation")
+        packed_windows = (
+            None
+            if registration.pipeline.packed_context_windows is None
+            else registration.pipeline.packed_context_windows(owner, inputs)
+        )
         evaluation = windowed_conditioning_evaluation(
             evaluation,
             context_windows,
             schedule.sigmas,
+            packed_windows,
         )
     captured: list[object] = []
 

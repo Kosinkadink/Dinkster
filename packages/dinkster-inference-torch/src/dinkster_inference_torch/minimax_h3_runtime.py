@@ -75,6 +75,12 @@ from dinkster_inference.devices import BFLOAT16, FLOAT16, FLOAT32
 from dinkster_inference.partition_compatibility import PartitionCompatibility
 
 from .conditioning_adapters import basic_conditioning_to_carrier
+from .context_windows import (
+    PackedContextWindowAxis,
+    PackedContextWindows,
+    PackedContextWindowScale,
+    PackedContextWindowStream,
+)
 from .denoise import PackedInpaintConfiguration, prepare_noise
 from .distributed import (
     SequenceDigestConsensusTransport,
@@ -1222,6 +1228,28 @@ def _prepare_h3_mask(
     )
 
 
+def _h3_packed_context_windows(
+    _runtime: object, inputs: SamplingExecutionInputs
+) -> PackedContextWindows:
+    layout = cast("_H3SamplingContext", inputs.latent_context).layout
+    return PackedContextWindows(
+        layout,
+        (
+            PackedContextWindowAxis(
+                2,
+                (
+                    PackedContextWindowStream("video", 2),
+                    PackedContextWindowStream(
+                        "audio", 3, PackedContextWindowScale.PROPORTIONAL
+                    ),
+                ),
+            ),
+            PackedContextWindowAxis(3, (PackedContextWindowStream("video", 3),)),
+            PackedContextWindowAxis(4, (PackedContextWindowStream("video", 4),)),
+        ),
+    )
+
+
 def _bind_h3_attention(runtime: object, context: SamplingAdapterContext) -> object | None:
     del runtime
     return context.options.get("attention_kernel_factory")
@@ -1421,6 +1449,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         pipeline=SamplingPipelineHooks(
             prepare_mask=_prepare_h3_mask,
             bind_attention=_bind_h3_attention,
+            packed_context_windows=_h3_packed_context_windows,
             encode_conditioning=_encode_h3_conditioning,
             materialize_conditioning=_materialize_h3_conditioning,
         ),
