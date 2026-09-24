@@ -284,14 +284,31 @@ class FakeTensor:
     def is_floating_point(self) -> bool:
         return self.dtype in ("float16", "bfloat16", "float32")
 
-    def to(self, device: object) -> FakeTensor:
-        resolved = FakeTorch.device(device)
-        self.moves.append(resolved)
-        self.device = resolved
+    def to(
+        self,
+        device: object | None = None,
+        *,
+        dtype: object | None = None,
+        copy: bool = False,
+    ) -> FakeTensor:
+        del copy
+        if device is not None:
+            resolved = FakeTorch.device(device)
+            self.moves.append(resolved)
+            self.device = resolved
+        if dtype is not None:
+            self.dtype = dtype
         return self
 
     def detach(self) -> FakeTensor:
         return self
+
+    def cpu(self) -> FakeTensor:
+        self.device = FakeTorch.device("cpu")
+        return self
+
+    def numpy(self) -> object:
+        return self.__array__()
 
     def contiguous(self) -> FakeTensor:
         return self
@@ -334,6 +351,12 @@ class FakeTensor:
 
     def __setitem__(self, key: object, value: object) -> None:
         self.setitems.append((key, value))
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> object:
+        import numpy as np
+
+        del copy
+        return np.zeros(self.shape, dtype=dtype or np.float32)
 
     def reshape(self, *shape: int) -> FakeTensor:
         return FakeTensor(tuple(shape), self.name, device=self.device, dtype=self.dtype)
@@ -385,6 +408,12 @@ class FakeTensor:
 
     def __mul__(self, other: object) -> FakeTensor:
         return self._binary(other, "mul")
+
+    def __lt__(self, other: object) -> FakeTensor:
+        return self._binary(other, "lt")
+
+    def __itruediv__(self, other: object) -> FakeTensor:
+        return self._binary(other, "div")
 
     def __rsub__(self, other: object) -> FakeTensor:
         return self._binary(other, "rsub")
@@ -477,6 +506,18 @@ class FakeTorch:
     @staticmethod
     def count_nonzero(tensor: FakeTensor) -> int:
         return int(tensor.name == "nonzero")
+
+    @staticmethod
+    def std(
+        tensor: FakeTensor,
+        *,
+        dim: tuple[int, ...],
+        keepdim: bool,
+    ) -> FakeTensor:
+        shape = tuple(1 if index in dim else size for index, size in enumerate(tensor.shape))
+        if not keepdim:
+            shape = tuple(size for index, size in enumerate(shape) if index not in dim)
+        return FakeTensor(shape, "std", device=tensor.device, dtype=tensor.dtype)
 
     @staticmethod
     def ones(
@@ -7621,20 +7662,59 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     register_media_types(registry)
     register_native_types(registry)
 
+    class DecodedVideoTensor(FakeTensor):
+        def permute(self, *dims: int) -> DecodedVideoTensor:
+            return DecodedVideoTensor(
+                tuple(self.shape[index] for index in dims),
+                self.name,
+                device=self.device,
+                dtype=self.dtype,
+            )
+
+        def flatten(self, start_dim: int = 0, end_dim: int = -1) -> Any:
+            flattened = super().flatten(start_dim, end_dim)
+            return np.zeros(flattened.shape, dtype=np.float32)
+
     class ResidentHandle:
         load_device = FakeTorch.device("cpu")
 
-        def __init__(self, identity: str) -> None:
+        def __init__(self, identity: str, role: str = "") -> None:
             self.resource_identity = identity
+            self.role = role
+            self.runtime = self
+            self.descriptor = CodecDescriptor(
+                id=f"dinkster.test_h3_{role or 'video'}_codec",
+                display_name="Test H3 Codec",
+                kind="audio" if role == "audio" else "video",
+                latent=LatentDescriptor(
+                    channels=32 if role == "audio" else 24,
+                    dimensions=1 if role == "audio" else 3,
+                ),
+                supported_dtypes=frozenset({FLOAT32}),
+                content_channels=2 if role == "audio" else 3,
+            )
 
         @staticmethod
-        def stage(**_kwargs: object):  # noqa: ANN205
+        def require_active() -> None:
+            return None
+
+        @staticmethod
+        def stage(*_args: object, **_kwargs: object):  # noqa: ANN205
             return contextmanager(lambda: (yield))()
+
+        def decode_latent(self, _latent: object) -> FakeTensor:
+            if self.role == "audio":
+                return FakeTensor((1, 2, 8), "decoded-audio")
+            return DecodedVideoTensor((1, 3, 2, 2, 2), "decoded-video")
+
+        @staticmethod
+        def encode_content(content: object) -> object:
+            return content
 
     conditioner = ResidentHandle("native:dinkster.minimax_h3:" + "7" * 64)
     codecs = (
         ResidentHandle("native:dinkster.minimax_h3:" + "8" * 64),
-        ResidentHandle("native:dinkster.minimax_h3:" + "9" * 64),
+        ResidentHandle("native:dinkster.minimax_h3:" + "9" * 64, "audio"),
     )
 
     class TinyConditionerRuntime:
@@ -7679,6 +7759,8 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     monkeypatch.setattr(arm, "_minimax_h3_image_batch", image_batch)
     monkeypatch.setattr(arm, "_minimax_h3_resize", lambda value, *_args: value)
     monkeypatch.setattr(arm, "_minimax_h3_reference_image", lambda value, *_args: value)
+    monkeypatch.setattr(arm, "_native_handle", lambda value, _name: value)
+    monkeypatch.setattr(arm, "_native_component_codec", lambda value: value)
 
     monkeypatch.setattr(
         node_types["dinkster.load_diffusion_model"],
@@ -7693,7 +7775,13 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     monkeypatch.setattr(
         node_types["dinkster.load_vae"],
         "execute",
-        staticmethod(lambda **_kwargs: {"vae": codecs[0]}),
+        staticmethod(
+            lambda **kwargs: {
+                "vae": codecs[1]
+                if "audio" in cast("AssetRef", kwargs["vae"]).name
+                else codecs[0]
+            }
+        ),
     )
     monkeypatch.setattr(
         node_types["dinkster.load_lora_model_only"],
@@ -7715,23 +7803,6 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
         node_types["dinkster.minimax_h3_add_guide"],
         "execute",
         staticmethod(lambda **kwargs: {"positive": kwargs["positive"]}),
-    )
-    monkeypatch.setattr(
-        node_types["dinkster.vae_decode"],
-        "execute",
-        staticmethod(lambda **_kwargs: {"image": np.zeros((1, 2, 2, 3), dtype=np.uint8)}),
-    )
-    monkeypatch.setattr(
-        node_types["dinkster.vae_decode_audio"],
-        "execute",
-        staticmethod(
-            lambda **_kwargs: {
-                "audio": {
-                    "waveform": np.zeros((1, 2, 8), dtype=np.float32),
-                    "sample_rate": 32_000,
-                }
-            }
-        ),
     )
     output_asset = AssetRef("blake3:" + "a" * 64, "output.mp4", 1)
     monkeypatch.setattr(

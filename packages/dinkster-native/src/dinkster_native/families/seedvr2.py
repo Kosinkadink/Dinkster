@@ -116,10 +116,15 @@ def _decode_minimax_music3_audio(
     if not isinstance(latent, torch.Tensor):
         raise TypeError("samples['samples'] must be a torch.Tensor")
     latent = cast("Any", latent)
-    if latent.is_nested:
+    if getattr(latent, "is_nested", False):
         latent = latent.unbind()[-1]
-    if latent.ndim != 3 or latent.shape[0] < 1 or latent.shape[1] != 128:
-        raise ValueError("samples['samples'] must be nonempty [batch,128,frames]")
+    music3_shape = latent.ndim == 3 and latent.shape[1] == 128
+    h3_shape = latent.ndim == 4 and latent.shape[1] == 32
+    if latent.shape[0] < 1 or not (music3_shape or h3_shape):
+        raise ValueError(
+            "samples['samples'] must be nonempty [batch,128,frames] or "
+            "[batch,32,time,frequency]"
+        )
     codec = _native_component_codec(vae)
     with codec.stage():
         with torch.inference_mode():
@@ -206,8 +211,8 @@ class GenerationVAEDecode(NativeVAEDecode):
         latent = cast("Mapping[object, object]", samples).get("samples")
         if type(latent) is inference.MultiStreamLatent:
             streams = cast("Any", latent)
-            if streams.roles != ("video",):
-                raise TypeError("samples['samples'] must contain exactly one video stream")
+            if "video" not in streams.roles:
+                raise TypeError("samples['samples'] must contain a video stream")
             latent = streams.by_role("video")
         if not isinstance(latent, torch.Tensor):
             raise TypeError("samples['samples'] must be a torch.Tensor")
@@ -294,8 +299,8 @@ class GenerationVAEDecodeTiled(Node):
         latent = cast("Mapping[object, object]", samples).get("samples")
         if type(latent) is inference.MultiStreamLatent:
             streams = cast("Any", latent)
-            if streams.roles != ("video",):
-                raise TypeError("samples['samples'] must contain exactly one video stream")
+            if "video" not in streams.roles:
+                raise TypeError("samples['samples'] must contain a video stream")
             latent = streams.by_role("video")
         if not isinstance(latent, torch.Tensor):
             raise TypeError("samples['samples'] must be a torch.Tensor")
