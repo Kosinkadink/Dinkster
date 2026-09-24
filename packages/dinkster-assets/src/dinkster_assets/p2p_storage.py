@@ -1291,11 +1291,29 @@ def _require_path_binding(path: Path, item: os.stat_result) -> None:
 
 
 def _open_regular(path: Path, *, writable: bool) -> BinaryIO:
-    flags = (os.O_RDWR if writable else os.O_RDONLY) | _binary_flag() | _nofollow_flag()
+    access_flags = (os.O_RDWR if writable else os.O_RDONLY) | _binary_flag()
+    root_handle: int | None = None
+    raw_handle: int | None = None
     try:
-        descriptor = os.open(path, flags)
+        if _p2p_windows is None:
+            descriptor = os.open(path, access_flags | _nofollow_flag())
+        else:  # pragma: no cover - exercised by Windows CI
+            root_handle = _p2p_windows.open_root(path.parent)
+            raw_handle = _p2p_windows.open_file(
+                root_handle,
+                path.name,
+                writable=writable,
+                exclusive=False,
+            )
+            descriptor = _p2p_windows.take_file_descriptor(raw_handle, access_flags)
+            raw_handle = None
     except OSError as error:
         raise P2PStorageError(f"could not open regular P2P file: {error}") from error
+    finally:
+        if raw_handle is not None:
+            _p2p_windows.close(raw_handle)
+        if root_handle is not None:
+            _p2p_windows.close(root_handle)
     handle = os.fdopen(descriptor, "r+b" if writable else "rb")
     if not stat.S_ISREG(os.fstat(descriptor).st_mode):
         handle.close()

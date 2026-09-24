@@ -2305,6 +2305,40 @@ def _output_list_flags(v1_name: str, v1_class: type, output_count: int) -> tuple
     return tuple(flags)
 
 
+_CORE_EXPANSION_SOURCE_REVISION = "b5cc8830279eae909a59de030af1e50761c36751"
+"""ComfyUI SHA the core v1 expander enumeration was produced from (the
+task reference revision, ComfyUI master at task start)."""
+
+_CORE_EXPANDER_V1_NAMES: frozenset[str] = frozenset()
+"""v1 core node names whose function returns a runtime graph expansion
+payload at _CORE_EXPANSION_SOURCE_REVISION, produced by grepping nodes.py
+and comfy_extras for expansion returns. Empty at b5cc8830 as a measured
+result: no maintained v1 core module returns an expansion payload - the one
+shipped expander there is the V3 StartLoop node (comfy_extras/nodes_loop.py,
+enable_expand=True), classified exactly by the V3 rule. Regenerate the
+enumeration when the compat reference moves; it is deliberately not extended
+to custom packs, where the runtime refusal is the only sound boundary."""
+
+
+def _returns_expand_dict(function: object) -> bool:
+    """Whether a v1 function's source statically returns a dict literal with
+    an "expand" key (execution.py's v1 expansion convention). Delegated or
+    dynamically built returns are unclassifiable at translation time and stay
+    unflagged; the loud runtime refusal covers that tail."""
+    try:
+        source = inspect.getsource(cast("Any", function))
+        tree = ast.parse(textwrap.dedent(source))
+    except (OSError, SyntaxError, TypeError, IndentationError):
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
+            if any(
+                isinstance(key, ast.Constant) and key.value == "expand" for key in node.value.keys
+            ):
+                return True
+    return False
+
+
 def _is_node_output(value: object) -> bool:
     """Whether a v1 function result is a ComfyUI V3 ``io.NodeOutput``.
 
@@ -2312,7 +2346,7 @@ def _is_node_output(value: object) -> bool:
     shim (nodes.py registers them directly; classproperties fake
     INPUT_TYPES/RETURN_TYPES and FUNCTION names EXECUTE_NORMALIZED,
     which ALWAYS returns a NodeOutput - comfy_api/latest/_io.py
-    @ b78cec87), so the v1 wrapper must recognize the shape. Detection
+    @ b5cc8830), so the v1 wrapper must recognize the shape. Detection
     is by base-class name, mirroring execution.py's
     ``isinstance(r, _NodeOutputInternal)`` without importing ComfyUI -
     this module stays pure."""
@@ -2326,7 +2360,7 @@ def _is_execution_blocker(value: object) -> bool:
 
 def _unwrap_node_output(v1_name: str, output: object) -> tuple[object, ...]:
     """A V3 NodeOutput's positional results, as the v1 result tuple
-    (execution.py's V3 branch @ b78cec87: ``r.result`` or nothing).
+    (execution.py's V3 branch @ b5cc8830: ``r.result`` or nothing).
     ``ui`` is dropped exactly like the v1 ``{"ui": ..., "result": ...}``
     convention's ui half; expansion and execution-blocking have no
     compat equivalent and refuse loudly instead of misexecuting."""
@@ -2889,10 +2923,14 @@ def translate_node(
             type_expr = TypeExpr.list_of(type_expr)
         outputs.append(OutputSpec(id=output_id, type=type_expr))
 
+    is_output_node = bool(getattr(v1_class, "OUTPUT_NODE", False))
+    has_is_changed = getattr(v1_class, "IS_CHANGED", None) is not None
+
     function_name = getattr(v1_class, "FUNCTION", None)
     if not isinstance(function_name, str) or not hasattr(v1_class, function_name):
         raise CompatError(f"{v1_name}: FUNCTION does not name a method")
-    function_is_async = inspect.iscoroutinefunction(getattr(v1_class, function_name))
+    function_object = getattr(v1_class, function_name)
+    function_is_async = inspect.iscoroutinefunction(function_object)
 
     hidden_types: Mapping[str, object] = {}
     hidden_table = cast("Mapping[str, object]", raw_inputs).get("hidden")
@@ -2915,9 +2953,6 @@ def translate_node(
         if hidden_type == "EXTRA_PNGINFO" or hidden_type == ("EXTRA_PNGINFO",)
     )
 
-    is_output_node = bool(getattr(v1_class, "OUTPUT_NODE", False))
-    has_is_changed = getattr(v1_class, "IS_CHANGED", None) is not None
-
     schema = NodeSchema(
         node_type=comfy_type_id(f"{namespace}.{v1_name}" if namespace else v1_name),
         display_name=display_name or v1_name,
@@ -2937,6 +2972,14 @@ def translate_node(
         # (the Comfy API prompt endpoint) map class_type -> node_type
         # through aliases instead of parsing namespaced type ids back apart.
         aliases=(v1_name,),
+        # Flagged only where expansion is provable at translation time: a
+        # core expander at the pinned reference revision, or a function that
+        # literally returns an "expand" dict. V3 schemas carry the exact
+        # enable_expand declaration; everything else stays unflagged and the
+        # loud runtime refusal (normalize_result) is the safety boundary.
+        may_expand_graph=(
+            v1_name in _CORE_EXPANDER_V1_NAMES or _returns_expand_dict(function_object)
+        ),
         output_node=is_output_node,
         selector=(
             SelectorSpec("switch", {"false": "on_false", "true": "on_true"})

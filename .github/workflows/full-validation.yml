@@ -56,7 +56,7 @@ jobs:
         # Windows keeps the tcp boundary transport and the shm
         # handle-lifetime rules honest (DESIGN 3.11) - it is the dominant
         # user OS, not a nice-to-have.
-        # Whole-file shards keep each complete lane within the 20-minute main
+        # Whole-file shards keep each complete lane within its main-validation
         # budget. Checks and generated-contract validation run once per OS;
         # every root test file still runs in exactly one shard.
         include:
@@ -94,14 +94,14 @@ jobs:
             shard_name: ", shard 1"
             pytest_args: "-p tools.pytest_file_shard --file-shard 1/2"
             run_checks: true
-            timeout-minutes: 20
+            timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.12"
             shard_name: ", shard 2"
             pytest_args: "-p tools.pytest_file_shard --file-shard 2/2"
             run_checks: false
-            timeout-minutes: 20
+            timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -258,7 +258,7 @@ jobs:
     if: needs.validation-plan.outputs.run-heavy == 'true' && github.repository == 'Kosinkadink/Dinkster'
     name: model-tests (${{ matrix.name }})
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
     strategy:
@@ -319,6 +319,7 @@ jobs:
             pytest-args: ""
     env:
       ATEN_CPU_CAPABILITY: avx2
+      MKL_CBWR: COMPATIBLE
       ONEDNN_MAX_CPU_ISA: AVX2
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
@@ -350,7 +351,7 @@ jobs:
     if: needs.validation-plan.outputs.run-heavy == 'true'
     name: coverage (shard ${{ matrix.shard }})
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

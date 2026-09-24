@@ -117,7 +117,10 @@ from dinkster_inference import (  # noqa: E402
     ProgressScope,
     SamplingExecutionContext,
 )
-from dinkster_inference_torch import SeedVR2DiffusionRuntime  # noqa: E402
+from dinkster_inference_torch import (  # noqa: E402
+    SeedVR2DiffusionRuntime,
+    materialize_seedvr2_conditioning,
+)
 from dinkster_inference_torch.guidance import GuidanceExecutor, GuidanceRegistry  # noqa: E402
 from dinkster_model_qwen_image.provider import (  # noqa: E402
     execute_empty_qwen_image_layered_latent,
@@ -3485,6 +3488,14 @@ def _seedvr2_source_classes(comfy_root: Path) -> dict[str, type[Any]]:
     )
 
 
+def _seedvr2_native_branch(carrier: object) -> dict[str, object]:
+    prepared = materialize_seedvr2_conditioning(cast("Any", carrier), device="cpu")
+    return {
+        "branch": prepared.branch,
+        "condition": _array_value(prepared.embeddings),
+    }
+
+
 def _seedvr2_receipts(
     root: Path,
     records: Mapping[str, Mapping[str, Any]],
@@ -3558,14 +3569,6 @@ def _seedvr2_receipts(
         metadata = cast("Mapping[str, torch.Tensor]", row[1])
         return {"branch": branch, "condition": _array_value(metadata["condition"])}
 
-    def native_branch(name: str) -> dict[str, object]:
-        row = cast("Sequence[Sequence[object]]", native_conditioning[name])[0]
-        prepared = next(iter(cast("Mapping[str, object]", row[1]).values()))
-        return {
-            "branch": cast("Any", prepared).branch,
-            "condition": _array_value(cast("Any", prepared).embeddings),
-        }
-
     outputs.extend(
         _write_mapping_receipt(
             root,
@@ -3577,8 +3580,8 @@ def _seedvr2_receipts(
                 "negative": reference_branch(1, "negative"),
             },
             native={
-                "positive": native_branch("positive"),
-                "negative": native_branch("negative"),
+                "positive": _seedvr2_native_branch(native_conditioning["positive"]),
+                "negative": _seedvr2_native_branch(native_conditioning["negative"]),
             },
         )
     )

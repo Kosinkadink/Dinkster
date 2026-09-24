@@ -115,6 +115,48 @@ runtime-generated subgraphs, or provide native plan compilation for all
 workflow-deterministic expansion. Such payloads continue to refuse loudly;
 pack authors must rewrite them using supported static graphs or regions.
 
+Importers can see the refusal coming without over-refusing. The node catalog
+exposes the risk on the schema wire as the `mayExpandGraph` capability flag,
+classified exactly where the source allows and conservatively where it does
+not. Compat translation flags:
+
+- a V3 schema whose source `Schema` declares `enable_expand=True` (ComfyUI
+  itself refuses a `NodeOutput.expand` without that declaration, so this is
+  exact),
+- a v1 function whose source statically returns a dict literal with an
+  `expand` key,
+- a v1 core node in the enumerated expander list recorded at
+  `_CORE_EXPANSION_SOURCE_REVISION` in the compat translation source
+  (regenerate the enumeration by grepping `nodes.py` and `comfy_extras` for
+  expansion returns whenever the reference revision moves). At the reference
+  revision `b5cc8830` (ComfyUI master at task start) the list is empty as a
+  measured result: the one shipped expander there is the V3 `StartLoop` node
+  (`comfy_extras/nodes_loop.py`, `enable_expand=True`), which the exact V3
+  rule already flags; `EndLoop` and every other shipped node stay unflagged.
+
+Every other translated node - delegated or dynamically built returns, and
+custom-pack nodes the source inspection cannot classify - stays unflagged,
+and the loud execution-time refusal is the safety boundary for that tail:
+deterministic refusal before any output runs beats a blanket flag that would
+silently disable whole workflow families. Ordinary Dinkster-native schemas
+never declare the flag. Workflow import uses the declaration to refuse
+unsupported structures deterministically before submission -
+Dinkster-Frontend refuses a Generic Loop containing a flagged node with
+`import.loop.runtimeExpansionUnsupported` - instead of discovering the
+refusal mid-run. The flag is static capability metadata: reading it at import
+time is a constant-time check with no runtime cost, and it never joins the
+schema signature or cache keys.
+
+Conversion limits for expansion classification:
+
+| Source shape | `mayExpandGraph` | Before import | At execution |
+| --- | --- | --- | --- |
+| V3 schema with `enable_expand=True` | flagged | loop import refuses | loud CompatError if a payload still arrives |
+| V1 function returns an `expand` dict literal | flagged | loop import refuses | loud CompatError |
+| V1 core node in the enumerated expander list | flagged | loop import refuses | loud CompatError |
+| V1 delegated/dynamic expand return, unclassifiable custom nodes | unflagged | loop import allows | loud CompatError if it expands |
+| Any Dinkster-native node | unflagged | loop import allows | expansion cannot occur |
+
 ## Accept-all inputs require a declared family
 
 Compat does not expose arbitrary `accept_all_inputs` kwargs. The one core

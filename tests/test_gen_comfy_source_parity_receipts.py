@@ -36,6 +36,27 @@ def test_minimax_h3_alias_receipts_cover_each_pinned_mapping(tmp_path: Path) -> 
     assert all(receipt["pass"] is True for receipt in receipts)
 
 
+def test_seedvr2_receipt_materializes_native_conditioning_carriers() -> None:
+    from dinkster_inference_torch import SeedVR2Conditioning, seedvr2_conditioning_to_carrier
+
+    embeddings = generator.torch.arange(34, dtype=generator.torch.float32).reshape(1, 17, 2, 1, 1)
+    conditioning = SeedVR2Conditioning(
+        embeddings,
+        None,
+        branch="negative",
+        component_identity="native:dinkster.seedvr2:test",
+    )
+
+    branch = generator._seedvr2_native_branch(  # pyright: ignore[reportPrivateUsage]
+        seedvr2_conditioning_to_carrier(conditioning)
+    )
+
+    assert branch == {
+        "branch": "negative",
+        "condition": generator._array_value(embeddings),  # pyright: ignore[reportPrivateUsage]
+    }
+
+
 def test_controlnet_loader_trace_registry_supports_builtin_assembly_construction() -> None:
     source_calls: list[dict[str, object]] = []
 
