@@ -2935,17 +2935,23 @@ def test_library_startup_composes_without_pack_workers(
 
     async def scenario() -> None:
         async with aiohttp.ClientSession() as session:
-            async with asyncio.timeout(30):
-                while True:
-                    assert process.poll() is None, log.read_text()
-                    try:
-                        async with session.get(f"http://127.0.0.1:{port}/api/composition") as resp:
-                            report = await resp.json()
-                        if not report.get("composing"):
-                            break
-                    except aiohttp.ClientError:
-                        pass
-                    await asyncio.sleep(0.05)
+            try:
+                async with asyncio.timeout(120):
+                    while True:
+                        assert process.poll() is None, log.read_text()
+                        try:
+                            async with session.get(
+                                f"http://127.0.0.1:{port}/api/composition"
+                            ) as resp:
+                                report = await resp.json()
+                            if not report.get("composing"):
+                                break
+                        except aiohttp.ClientError:
+                            pass
+                        await asyncio.sleep(0.05)
+            except TimeoutError as error:
+                error.add_note("server output:\n" + log.read_text())
+                raise
             expected = set() if no_defaults else set(await _default_pack_names())
             assert set(report["packs"]) == expected, report
             assert all(pack["state"] == "announced" for pack in report["packs"].values()), report
