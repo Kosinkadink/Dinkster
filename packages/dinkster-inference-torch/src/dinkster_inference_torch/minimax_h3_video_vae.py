@@ -27,6 +27,7 @@ from dinkster_inference.minimax_h3_codecs import (
 )
 
 from .attention import AttentionKernel, select_attention
+from .memory import get_free_memory
 from .operations import INITLESS, CastOperations, Operations, ResidencyRouted
 from .ops import cast_weight
 
@@ -947,50 +948,82 @@ class MiniMaxH3VideoVAE(ResidencyRouted, torch.nn.Module):
             result_rows.append(torch.cat(result_row, dim=-1))
         return torch.cat(result_rows, dim=-2)
 
+    def _decode_tile_row(
+        self,
+        latent_row: torch.Tensor,
+        x_starts: list[int],
+        x_lengths: list[int],
+    ) -> Generator[torch.Tensor]:
+        free = get_free_memory(latent_row.device).free_total
+        group_size = max(1, min(4, free // (128 * 2**20 * latent_row.shape[0])))
+        slices = [
+            latent_row[
+                ...,
+                x // self.vae_ratio : (x + x_length) // self.vae_ratio,
+            ]
+            for x, x_length in zip(x_starts, x_lengths, strict=True)
+        ]
+        for start in range(0, len(slices), group_size):
+            group = slices[start : start + group_size]
+            yield from self._decode_pixels(torch.cat(group)).chunk(len(group))
+
     def tiled_decode(self, latent: torch.Tensor) -> torch.Tensor:
         height = latent.shape[-2] * self.vae_ratio
         width = latent.shape[-1] * self.vae_ratio
         y_starts, y_lengths, y_overlaps = self.split_tiles(height)
         x_starts, x_lengths, x_overlaps = self.split_tiles(width)
         canvas: torch.Tensor | None = None
-        row_tails: list[torch.Tensor] = []
+        strip: torch.Tensor | None = None
         output_y = 0
         for row_index, (y, y_length) in enumerate(zip(y_starts, y_lengths, strict=True)):
             latent_y, latent_height = y // self.vae_ratio, y_length // self.vae_ratio
-            new_tails = []
+            tiles = self._decode_tile_row(
+                latent[..., latent_y : latent_y + latent_height, :], x_starts, x_lengths
+            )
+            new_strip: torch.Tensor | None = None
             left_tail: torch.Tensor | None = None
             output_x = 0
             written_height = 0
-            for column, (x, x_length) in enumerate(zip(x_starts, x_lengths, strict=True)):
-                latent_x, latent_width = x // self.vae_ratio, x_length // self.vae_ratio
-                tile = self._decode_pixels(
-                    latent[
-                        ...,
-                        latent_y : latent_y + latent_height,
-                        latent_x : latent_x + latent_width,
-                    ]
-                )
-                if row_index < len(y_starts) - 1:
-                    new_tails.append(tile[..., -y_overlaps[row_index] :, :].clone())
-                next_left = (
+            for column in range(len(x_starts)):
+                tile = next(tiles)
+                if row_index > 0:
+                    assert strip is not None
+                    x = x_starts[column]
+                    tile = self.blend(
+                        strip[..., :, x : x + x_lengths[column]],
+                        tile,
+                        y_overlaps[row_index - 1],
+                        -2,
+                    )
+                if column > 0:
+                    assert left_tail is not None
+                    tile = self.blend(left_tail, tile, x_overlaps[column - 1], -1)
+                left_tail = (
                     tile[..., :, -x_overlaps[column] :].clone()
                     if column < len(x_starts) - 1
                     else None
                 )
-                if row_index > 0:
-                    tile = self.blend(row_tails[column], tile, y_overlaps[row_index - 1], -2)
-                if column > 0:
-                    assert left_tail is not None
-                    tile = self.blend(left_tail, tile, x_overlaps[column - 1], -1)
-                left_tail = next_left
-                if row_index < len(y_starts) - 1:
-                    tile = tile[..., : -y_overlaps[row_index], :]
                 if column < len(x_starts) - 1:
                     tile = tile[..., :, : -x_overlaps[column]]
                 if canvas is None:
                     canvas = torch.empty(
                         *tile.shape[:-2], height, width, dtype=tile.dtype, device=tile.device
                     )
+                if row_index < len(y_starts) - 1:
+                    if new_strip is None:
+                        new_strip = torch.empty(
+                            *tile.shape[:-2],
+                            y_overlaps[row_index],
+                            width,
+                            dtype=tile.dtype,
+                            device=tile.device,
+                        )
+                    new_strip[
+                        ...,
+                        :,
+                        output_x : output_x + tile.shape[-1],
+                    ].copy_(tile[..., -y_overlaps[row_index] :, :])
+                    tile = tile[..., : -y_overlaps[row_index], :]
                 canvas[
                     ...,
                     output_y : output_y + tile.shape[-2],
@@ -998,7 +1031,8 @@ class MiniMaxH3VideoVAE(ResidencyRouted, torch.nn.Module):
                 ].copy_(tile)
                 output_x += tile.shape[-1]
                 written_height = tile.shape[-2]
-            row_tails = new_tails
+                del tile
+            strip = new_strip
             output_y += written_height
         assert canvas is not None
         return canvas

@@ -403,6 +403,84 @@ def test_temporal_group_norm_preserves_direct_stock_constructor() -> None:
     assert norm.bias is not None and torch.equal(norm.bias, torch.zeros(4, dtype=torch.float64))
 
 
+class TileDecodeProbe(MiniMaxH3VideoVAE):
+    def __init__(self) -> None:
+        super().__init__(
+            reduced_config(
+                tile_size=4,
+                tile_overlap_min=2,
+                tiling=True,
+                space_down=(1,),
+                time_down=(1,),
+            )
+        )
+        self.decode_batch_sizes: list[int] = []
+        self.decoded_references: list[weakref.ReferenceType[torch.Tensor]] = []
+        self.previous_alive: list[bool] = []
+
+    def _decode_pixels(self, latent: torch.Tensor) -> torch.Tensor:
+        if self.decoded_references:
+            self.previous_alive.append(self.decoded_references[-1]() is not None)
+        self.decode_batch_sizes.append(latent.shape[0])
+        corner = latent[:, :1, :, :1, :1]
+        decoded = corner.expand(-1, -1, -1, latent.shape[-2], latent.shape[-1]).clone()
+        self.decoded_references.append(weakref.ref(decoded))
+        return decoded
+
+
+def _set_free_tile_memory(monkeypatch: pytest.MonkeyPatch, bytes_free: int) -> None:
+    class Memory:
+        free_total = bytes_free
+
+    monkeypatch.setattr(vae_module, "get_free_memory", lambda _device: Memory())
+
+
+def test_tiled_decode_batches_rows_from_free_memory_without_changing_pixels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latent = torch.arange(1 * 2 * 1 * 4 * 8, dtype=torch.float32).reshape(1, 2, 1, 4, 8)
+    _set_free_tile_memory(monkeypatch, 4 * 128 * 2**20)
+    batched = TileDecodeProbe()
+    batched_pixels = batched.tiled_decode(latent)
+    assert batched.decode_batch_sizes == [3]
+
+    _set_free_tile_memory(monkeypatch, 0)
+    single = TileDecodeProbe()
+    single_pixels = single.tiled_decode(latent)
+    assert single.decode_batch_sizes == [1, 1, 1]
+    assert single.previous_alive == [False, False]
+    torch.testing.assert_close(batched_pixels, single_pixels)
+
+
+def test_tiled_decode_blends_against_composited_top_and_left_neighbors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_free_tile_memory(monkeypatch, 0)
+    latent = torch.zeros((1, 2, 1, 6, 6), dtype=torch.float32)
+    latent[:, 0] = (
+        torch.arange(6, dtype=torch.float32).view(1, 1, 6, 1) * 10
+        + torch.arange(6, dtype=torch.float32).view(1, 1, 1, 6)
+    )
+    vae = TileDecodeProbe()
+
+    actual = vae.tiled_decode(latent)
+
+    expected = torch.tensor(
+        [
+            [0.0, 0.0, 0.0, 1.0, 2.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0, 2.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0, 2.0, 2.0],
+            [10.0, 10.0, 10.0, 11.0, 12.0, 12.0],
+            [20.0, 20.0, 20.0, 21.0, 22.0, 22.0],
+            [20.0, 20.0, 20.0, 21.0, 22.0, 22.0],
+        ]
+    ).reshape(1, 1, 1, 6, 6)
+    torch.testing.assert_close(actual, expected)
+    del actual
+    gc.collect()
+    assert all(reference() is None for reference in vae.decoded_references)
+
+
 def test_temporal_group_norm_refuses_ambiguous_factory_placement() -> None:
     with pytest.raises(ValueError, match="cannot be combined"):
         TemporalIsolatedGroupNorm(2, 4, dtype=torch.float64, operations=INITLESS)
