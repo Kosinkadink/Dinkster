@@ -7614,14 +7614,25 @@ H3_IMPORTER_API_ROWS = (
     "multiframe-reference--no-lora",
     "multiframe-reference--ref2v-4step",
 )
+H3_IMPORTER_API_CASES = (
+    *((row_id, False) for row_id in H3_IMPORTER_API_ROWS),
+    ("t2v--no-lora", True),
+)
 
 
-@pytest.mark.parametrize("row_id", H3_IMPORTER_API_ROWS)
+@pytest.mark.parametrize(
+    ("row_id", "shape_faithful"),
+    H3_IMPORTER_API_CASES,
+    ids=(*H3_IMPORTER_API_ROWS, "t2v--no-lora-production-shape"),
+)
 def test_h3_importer_api_row_executes_through_native_cpu_graph(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     row_id: str,
+    shape_faithful: bool,
 ) -> None:
+    import io
+
     import numpy as np
     from aiohttp.test_utils import TestClient, TestServer
     from dinkster_compat_comfy import native, register_native_types
@@ -7629,6 +7640,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     from dinkster_nodes_image import IMAGE_NODES, register_image_types
     from dinkster_nodes_media_io import MEDIA_IO_NODES, register_media_types
     from dinkster_server import STATE_KEY, create_app
+    from dinkster_video import save_video_stream
 
     from dinkster.compat_api import add_comfy_compat_routes
     from dinkster.mounts_api import MOUNTS_KEY, MountService
@@ -7723,7 +7735,8 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     class TinyVideoCodecRuntime:
         @staticmethod
         def decode_video(_latent: object) -> DecodedVideoTensor:
-            return DecodedVideoTensor((1, 3, 2, 2, 2), "decoded-video")
+            shape = (1, 3, 124, 480, 864) if shape_faithful else (1, 3, 2, 2, 2)
+            return DecodedVideoTensor(shape, "decoded-video")
 
         @staticmethod
         def encode_video(content: object) -> object:
@@ -7834,10 +7847,22 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
         staticmethod(lambda **kwargs: {"positive": kwargs["positive"]}),
     )
     output_asset = AssetRef("blake3:" + "a" * 64, "output.mp4", 1)
+
+    def save_video(**kwargs: object) -> dict[str, object]:
+        video = kwargs["video"]
+        if shape_faithful:
+            output = io.BytesIO()
+            container, media_type = save_video_stream(
+                video, output, container="mp4", codec="h264", crf=51
+            )
+            assert container == ".mp4" and media_type == "video/mp4"
+            assert output.tell() > 0
+        return {"video": video, "asset": output_asset}
+
     monkeypatch.setattr(
         node_types["dinkster.save_video"],
         "execute",
-        staticmethod(lambda **kwargs: {"video": kwargs["video"], "asset": output_asset}),
+        staticmethod(save_video),
     )
 
     fixture = REPO_ROOT / "tests" / "fixtures" / "minimax-h3-importer-api" / f"{row_id}.json"
@@ -18845,12 +18870,13 @@ def test_generation_vae_decode_unwraps_only_one_video_stream(
     assert decoded == [video]
     assert cast("FakeTensor", output["image"]).shape == (1, 16, 16, 3)
 
-    for streams in (
-        MultiStreamLatent.from_pairs((("audio", video),)),
-        MultiStreamLatent.from_pairs((("video", video), ("audio", video))),
-    ):
-        with pytest.raises(TypeError, match="exactly one video stream"):
-            arm.GenerationVAEDecode.execute(samples={"samples": streams}, vae=Handle())
+    audio_only = MultiStreamLatent.from_pairs((("audio", video),))
+    with pytest.raises(TypeError, match="must contain a video stream"):
+        arm.GenerationVAEDecode.execute(samples={"samples": audio_only}, vae=Handle())
+
+    mixed = MultiStreamLatent.from_pairs((("video", video), ("audio", video)))
+    output = arm.GenerationVAEDecode.execute(samples={"samples": mixed}, vae=Handle())
+    assert cast("FakeTensor", output["image"]).shape == (1, 16, 16, 3)
 
 
 def test_generation_tiled_vae_decode_matches_comfy_video_tile_conversion(

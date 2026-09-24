@@ -280,8 +280,6 @@ def _components(obj: object) -> dict[str, object]:
         or (images.dtype.kind not in "fiu" and storage_dtype(images) != "bf16")
     ):
         raise ValueError("VIDEO images require numeric [B,H,W,3|4] layout")
-    if images.nbytes > 512 * 1024 * 1024:
-        raise ValueError("VIDEO images exceed 512 MiB")
     finite = (
         (images[BFLOAT16_FIELD] & 0x7F80) != 0x7F80
         if storage_dtype(images) == "bf16"
