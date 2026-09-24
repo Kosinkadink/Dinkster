@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from dinkster_values import GIBIBYTE
+
 from ..native_arm_core import (
     Any,
     Mapping,
@@ -757,7 +759,7 @@ class GenerationSeedVR2TemporalChunk(Node):
             inference_torch = importlib.import_module("dinkster_inference_torch")
             constants = importlib.import_module("dinkster_inference_torch.seedvr2_constants")
             free_gib = (
-                inference_torch.get_free_memory(select_load_device(torch)).free_total / 1024**3
+                inference_torch.get_free_memory(select_load_device(torch)).free_total / GIBIBYTE
             )
             mpx = (
                 samples.shape[0]

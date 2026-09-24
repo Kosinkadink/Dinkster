@@ -1,6 +1,7 @@
 """Canonical BitTorrent v2 descriptors for BLAKE3-identified assets."""
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import hashlib
 import os
@@ -16,7 +17,7 @@ from .identity import DIGEST_PREFIX, AssetError, new_hasher, require_digest
 
 P2P_PROTOCOL = "bittorrent-v2"
 P2P_BLOCK_LENGTH = 16 * 1024
-P2P_PIECE_LENGTH = 8 * 1024 * 1024
+P2P_PIECE_LENGTH = 8 * MEBIBYTE
 
 _BLOCKS_PER_PIECE = P2P_PIECE_LENGTH // P2P_BLOCK_LENGTH
 _HEX_256_RE = re.compile(r"^[0-9a-f]{64}$")

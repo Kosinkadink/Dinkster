@@ -12,7 +12,7 @@ from typing import Any, Protocol, cast
 import numpy as np
 import torch
 import torch.nn.functional as functional
-from dinkster_api.v1 import AssetRef
+from dinkster_api.v1 import GIBIBYTE, AssetRef
 from dinkster_inference import (
     BFLOAT16,
     FLOAT16,
@@ -1615,7 +1615,7 @@ def _wan22_s2v_conditioning(
     height = _integer(height, "height", minimum=16, maximum=16384)
     length = _integer(length, "length", minimum=1, maximum=16384)
     batch_size = _integer(batch_size, "batch_size", minimum=1, maximum=4096)
-    frame_offset = _integer(frame_offset, "frame_offset", minimum=0, maximum=1 << 30)
+    frame_offset = _integer(frame_offset, "frame_offset", minimum=0, maximum=GIBIBYTE)
     if width % 16 or height % 16:
         raise ValueError("width and height must be multiples of 16")
     if (length - 1) % 4:

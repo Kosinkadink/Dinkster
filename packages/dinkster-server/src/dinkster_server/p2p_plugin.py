@@ -1,6 +1,7 @@
 """Registration seam for the optional P2P runtime plugin."""
 
 from __future__ import annotations
+from dinkster_values import GIBIBYTE
 
 import math
 from collections.abc import Mapping
@@ -51,7 +52,7 @@ def _unavailable_defaults() -> dict[str, object]:
         "seedMode": "budgeted",
         "internetSeedRatio": 1.0,
         "internetSeedTimeSeconds": 86_400,
-        "stagingBudgetBytes": 64 * 1024**3,
+        "stagingBudgetBytes": 64 * GIBIBYTE,
         "maxActiveSeeds": 64,
         "listenPort": 0,
     }

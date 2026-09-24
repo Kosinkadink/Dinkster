@@ -2,6 +2,7 @@
 # pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 
 from __future__ import annotations
+from dinkster_api.v1 import MEBIBYTE
 
 import math
 import os
@@ -49,7 +50,7 @@ FLOAT = TypeExpr.concrete(CORE_FLOAT)
 COMBO = TypeExpr.concrete(CORE_COMBO)
 SAVE_TARGET = TypeExpr.concrete(SAVE_TARGET_TYPE)
 
-MAX_ENCODED_AUDIO_BYTES = 256 * 1024 * 1024
+MAX_ENCODED_AUDIO_BYTES = 256 * MEBIBYTE
 MAX_EMPTY_AUDIO_SECONDS = 86_400.0
 MAX_SAMPLE_RATE = 192_000
 
@@ -214,7 +215,7 @@ def _save_audio(
                     stream.bit_rate = _BIT_RATES[quality]
                 elif quality == "V0":
                     stream.codec_context.qscale = 1
-                chunk_size = max(1, min(65_536, 1024 * 1024 // (4 * facts["channels"])))
+                chunk_size = max(1, min(65_536, MEBIBYTE // (4 * facts["channels"])))
                 for start in range(0, frames, chunk_size):
                     clip = reader.read(start, min(chunk_size, frames - start), batch_index=batch)[
                         "waveform"

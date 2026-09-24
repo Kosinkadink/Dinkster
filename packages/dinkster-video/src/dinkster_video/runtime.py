@@ -1,6 +1,7 @@
 """One ordered edit plan for explicit materialization and bounded saving."""
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import heapq
 import io
@@ -1005,7 +1006,7 @@ def save_video_stream(
     ):
         with open_video_source(video_source(value)) as handle:
             if kind == probe["container"] and not tags:
-                while chunk := handle.read(1024 * 1024):
+                while chunk := handle.read(MEBIBYTE):
                     destination.write(chunk)
                 return "." + kind, mime
             with (

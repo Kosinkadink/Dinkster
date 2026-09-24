@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dinkster_api.v1 import MEBIBYTE
 
 import asyncio
 import contextlib
@@ -452,7 +453,7 @@ class RemoteRuntime:
         try:
             while True:
                 _ensure_running()
-                chunk = await asyncio.to_thread(handle.read, 1024 * 1024)
+                chunk = await asyncio.to_thread(handle.read, MEBIBYTE)
                 if not chunk:
                     return
                 yield chunk

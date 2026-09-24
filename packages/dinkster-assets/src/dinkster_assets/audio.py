@@ -1,6 +1,7 @@
 """Bind portable AUDIO sources and publish large compatibility PCM without copying it."""
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import os
 import struct
@@ -56,12 +57,12 @@ def bind_audio_value(obj: object, resolver: AssetResolver | None = None) -> Lazy
                 size = file.tell()
                 file.seek(0)
                 hasher = new_hasher()
-                while chunk := file.read(1024 * 1024):
+                while chunk := file.read(MEBIBYTE):
                     hasher.update(chunk)
                 digest = "blake3:" + hasher.hexdigest()
                 file.seek(0)
                 with vault.writer(digest) as writer:
-                    while chunk := file.read(1024 * 1024):
+                    while chunk := file.read(MEBIBYTE):
                         writer.write(chunk)
                     writer.commit()
             published = audio_from_source(AssetRef(digest, "audio.pcm", size, resolver=vault))

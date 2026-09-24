@@ -20,6 +20,7 @@ the next machine that consults it.
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -39,7 +40,7 @@ from .provenance import ProvenanceRecord, ProvenanceStore
 from .public_acquisition import PublicAcquisitionReceiptStore, PublicAcquisitionSourceV1
 from .vault import AssetVault
 
-_COPY_CHUNK_SIZE = 8 * 1024 * 1024
+_COPY_CHUNK_SIZE = 8 * MEBIBYTE
 
 AcquisitionStatus = Literal["held", "acquired", "unverifiable", "failed"]
 

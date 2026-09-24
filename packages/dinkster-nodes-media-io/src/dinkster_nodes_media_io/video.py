@@ -2,6 +2,7 @@
 # pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 
 from __future__ import annotations
+from dinkster_api.v1 import MEBIBYTE
 
 import json
 import math
@@ -756,7 +757,7 @@ class SaveVideo(Node):
                 container, codec = format.split("_", 1)
             else:
                 codec = format
-        if not isinstance(metadata, str) or len(metadata.encode("utf-8")) > 1024 * 1024:
+        if not isinstance(metadata, str) or len(metadata.encode("utf-8")) > MEBIBYTE:
             raise ValueError("video metadata must be a JSON object under 1 MiB")
         tags = json.loads(metadata)
         if not isinstance(tags, dict):
@@ -878,7 +879,7 @@ class SaveVideoFrames(Node):
         quality: int = 80,
         metadata: object = "{}",
     ) -> Mapping[str, object]:
-        if not isinstance(metadata, str) or len(metadata) > 1024 * 1024:
+        if not isinstance(metadata, str) or len(metadata) > MEBIBYTE:
             raise ValueError("video metadata must be a JSON object under 1 MiB")
         tags = json.loads(metadata)
         if not isinstance(tags, dict):

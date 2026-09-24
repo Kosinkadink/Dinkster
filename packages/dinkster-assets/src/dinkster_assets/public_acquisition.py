@@ -1,6 +1,7 @@
 """Durable evidence for verified acquisition from public HTTPS sources."""
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import contextlib
 import errno
@@ -22,7 +23,7 @@ from .identity import AssetError, require_digest
 
 PUBLIC_ACQUISITION_RECEIPT_VERSION = 1
 PUBLIC_ACQUISITION_MAX_RECEIPTS = 100_000
-PUBLIC_ACQUISITION_MAX_BYTES = 64 * 1024 * 1024
+PUBLIC_ACQUISITION_MAX_BYTES = 64 * MEBIBYTE
 PUBLIC_ACQUISITION_MAX_URL = 4096
 
 PublicSourceType = Literal[

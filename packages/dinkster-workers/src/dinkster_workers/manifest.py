@@ -47,6 +47,7 @@ inference, frontend, and training imports. Its ``privileges`` and closed
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import hashlib
 import importlib
@@ -128,8 +129,8 @@ ICON_MAX_BYTES = 64 * 1024
 # is generous. Bytes are held in memory at validation to guarantee
 # digest/byte coherence - hence the additional per-pack total budget, or
 # one pack could hold unbounded memory through many just-under-cap files.
-BLUEPRINT_MAX_BYTES = 1024 * 1024
-BLUEPRINT_PACK_MAX_BYTES = 16 * 1024 * 1024
+BLUEPRINT_MAX_BYTES = MEBIBYTE
+BLUEPRINT_PACK_MAX_BYTES = 16 * MEBIBYTE
 
 # The pack-template contract (roadmap "templates surface"): a template is
 # a complete starter workflow document - same plain-data format and the
@@ -141,14 +142,14 @@ TEMPLATE_MAX_BYTES = BLUEPRINT_MAX_BYTES
 TEMPLATE_PACK_MAX_BYTES = BLUEPRINT_PACK_MAX_BYTES
 
 DOC_PAGE_MAX_BYTES = 256 * 1024
-DOC_IMAGE_MAX_BYTES = 2 * 1024 * 1024
-DOC_VIDEO_MAX_BYTES = 16 * 1024 * 1024
-DOC_PACK_MAX_BYTES = 32 * 1024 * 1024
+DOC_IMAGE_MAX_BYTES = 2 * MEBIBYTE
+DOC_VIDEO_MAX_BYTES = 16 * MEBIBYTE
+DOC_PACK_MAX_BYTES = 32 * MEBIBYTE
 DOC_LOCALES = frozenset({"en", "zh"})
-LOCALE_CATALOG_MAX_BYTES = 1024 * 1024
-LOCALE_CATALOG_PACK_MAX_BYTES = 16 * 1024 * 1024
-FRONTEND_ASSET_MAX_BYTES = 4 * 1024 * 1024
-FRONTEND_ASSET_PACK_MAX_BYTES = 16 * 1024 * 1024
+LOCALE_CATALOG_MAX_BYTES = MEBIBYTE
+LOCALE_CATALOG_PACK_MAX_BYTES = 16 * MEBIBYTE
+FRONTEND_ASSET_MAX_BYTES = 4 * MEBIBYTE
+FRONTEND_ASSET_PACK_MAX_BYTES = 16 * MEBIBYTE
 FRONTEND_ASSET_MAX_FILES = 256
 DOC_MEDIA_TYPES = {
     ".gif": "image/gif",
@@ -171,7 +172,7 @@ _LOCALE_TAG_RE = re.compile(r"^[a-z]{2,3}(?:-[a-z0-9]{1,8})*$")
 
 COMFY_ALIASES_FILENAME = "comfy-aliases.json"
 COMFY_GROUPS_FILENAME = "comfy-groups.json"
-COMFY_ALIASES_MAX_BYTES = 4 * 1024 * 1024
+COMFY_ALIASES_MAX_BYTES = 4 * MEBIBYTE
 COMFY_ALIASES_MAX_DEPTH = 64
 COMFY_ALIASES_MAX_ITEMS = 100_000
 

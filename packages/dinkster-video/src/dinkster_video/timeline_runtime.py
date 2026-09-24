@@ -1,6 +1,7 @@
 """Timeline adapters for admitted sources and the shared CPU operation kernels."""
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import io
 import math
@@ -75,7 +76,7 @@ class SourceMedia:
             from dinkster_image_document import decode_document, render_document
 
             with self._asset(reference["asset"]).open() as handle:
-                parsed = decode_document(handle.read(1024 * 1024))
+                parsed = decode_document(handle.read(MEBIBYTE))
             resources = {ref["digest"]: ref for ref in reference.get("resources", [])}
             for dep in parsed.dependencies:
                 if (

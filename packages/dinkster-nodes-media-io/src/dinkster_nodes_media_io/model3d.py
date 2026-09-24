@@ -1,6 +1,7 @@
 """Asset-backed 3D model loading and GLB pass-through saving."""
 
 from __future__ import annotations
+from dinkster_api.v1 import GIBIBYTE
 
 import io
 import os
@@ -32,7 +33,7 @@ MODEL3D = TypeExpr.concrete(MODEL3D_TYPE)
 MODEL3D_ASSET = TypeExpr.asset_of(MODEL3D)
 SAVE_TARGET = TypeExpr.concrete(SAVE_TARGET_TYPE)
 
-MAX_ENCODED_MODEL3D_BYTES = 1024 * 1024 * 1024
+MAX_ENCODED_MODEL3D_BYTES = GIBIBYTE
 
 
 def _mount_writer() -> AssetWriter:

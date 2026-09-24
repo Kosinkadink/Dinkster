@@ -24,6 +24,7 @@ any rescan of the mount.
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import json
 import os
@@ -177,7 +178,7 @@ class AssetWriter:
             hasher = new_hasher()
             size = 0
             with tmp.open("xb") as output:
-                while chunk := source.read(8 * 1024 * 1024):
+                while chunk := source.read(8 * MEBIBYTE):
                     size += len(chunk)
                     if size > limit:
                         raise AssetError("save source exceeds limit")

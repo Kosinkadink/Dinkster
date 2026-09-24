@@ -26,6 +26,7 @@ installed default packs follow the same failure-isolated path as every other pac
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import argparse
 import asyncio
@@ -1515,7 +1516,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         dtype_policy_source = "cli"
 
-    reserve_vram = cast("int", persisted_settings.get("memory-headroom", 256 * 1024**2))
+    reserve_vram = cast("int", persisted_settings.get("memory-headroom", 256 * MEBIBYTE))
     reserve_source: SettingsSource = (
         "persisted" if "memory-headroom" in persisted_settings else "default"
     )

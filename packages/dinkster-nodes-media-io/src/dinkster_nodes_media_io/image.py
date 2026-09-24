@@ -2,6 +2,7 @@
 # pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 
 from __future__ import annotations
+from dinkster_api.v1 import MEBIBYTE
 
 import io
 import json
@@ -75,7 +76,7 @@ MAX_IMAGE_DIMENSION = 16384
 IMAGE_FILE_DECODER_ID = "dinkster.media-image-file@2"
 MASK_FILE_DECODER_ID = "dinkster.mask-file@2"
 
-MAX_MASK_PAINT_JSON_BYTES = 4 * 1024 * 1024
+MAX_MASK_PAINT_JSON_BYTES = 4 * MEBIBYTE
 MAX_MASK_PAINT_COMMANDS = 2048
 MAX_MASK_PAINT_STROKE_POINTS = 8192
 MAX_MASK_PAINT_TOTAL_POINTS = 32768

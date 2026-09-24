@@ -32,7 +32,7 @@ from types import MappingProxyType
 from typing import Any, BinaryIO, Literal, Protocol, cast
 
 import torch
-from dinkster_inference import AIMDO_VBAR_PAGE_BYTES
+from dinkster_inference import AIMDO_VBAR_PAGE_BYTES, GIBIBYTE, MEBIBYTE
 from dinkster_inference.patches import (
     AdapterPatch,
     DiffPatch,
@@ -75,7 +75,7 @@ _VBAR_ALIGNMENT = 512
 _VBAR_PAGE_SIZE = AIMDO_VBAR_PAGE_BYTES
 _RAW_SCALE_ALIGNMENT = 4
 _EAGER_UNIT_LIMIT = 16 * 1024
-_CAST_ARENA_RESERVATION_BYTES = 16 * 1024**3
+_CAST_ARENA_RESERVATION_BYTES = 16 * GIBIBYTE
 _CAST_ARENA_ALIGNMENT = 1024
 _PREFETCH_ADMISSION_CACHE_NS = 100_000_000
 _BOUNDED_ADAPTER_TYPES = (
@@ -1284,7 +1284,7 @@ class AimdoWeights:
         maximum = pinned_host.pinned_hostbuf_size(self.total_bytes())
         self._pin_state = {
             "weights": (
-                self._backend.create_host_buffer(64 * 1024**2, maximum),
+                self._backend.create_host_buffer(64 * MEBIBYTE, maximum),
                 [],
                 [-1],
                 [0],
@@ -1292,7 +1292,7 @@ class AimdoWeights:
                 {},
             ),
             "patches": (
-                self._backend.create_host_buffer(8 * 1024**2, maximum),
+                self._backend.create_host_buffer(8 * MEBIBYTE, maximum),
                 [],
                 [-1],
                 [0],

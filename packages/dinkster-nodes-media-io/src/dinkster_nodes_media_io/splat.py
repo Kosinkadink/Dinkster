@@ -1,6 +1,7 @@
 """Asset-backed gaussian splat loading and PLY export."""
 
 from __future__ import annotations
+from dinkster_api.v1 import GIBIBYTE
 
 import io
 import os
@@ -32,7 +33,7 @@ SPLAT = TypeExpr.concrete(SPLAT_TYPE)
 SPLAT_ASSET = TypeExpr.asset_of(SPLAT)
 SAVE_TARGET = TypeExpr.concrete(SAVE_TARGET_TYPE)
 
-MAX_SPLAT_PLY_BYTES = 1024 * 1024 * 1024
+MAX_SPLAT_PLY_BYTES = GIBIBYTE
 
 
 def _mount_writer() -> AssetWriter:

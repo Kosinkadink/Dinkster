@@ -1,6 +1,7 @@
 """Typed scalar conversion and piecewise-linear schedule operations."""
 
 from __future__ import annotations
+from dinkster_api.v1 import MEBIBYTE
 
 import math
 from collections.abc import Mapping, Sequence
@@ -37,7 +38,7 @@ LIST_FLOAT = TypeExpr.list_of(FLOAT)
 LIST_INT = TypeExpr.list_of(INT)
 CURVE = TypeExpr.concrete(CURVE_TYPE)
 
-MAX_CONVERSION_TEXT_BYTES = 1 << 20
+MAX_CONVERSION_TEXT_BYTES = MEBIBYTE
 MAX_SCHEDULE_TEXT_BYTES = 1 << 16
 
 

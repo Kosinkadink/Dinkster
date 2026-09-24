@@ -29,6 +29,7 @@ deliberately not wired yet - disk is not a governed device today.
 """
 
 from __future__ import annotations
+from dinkster_values import GIBIBYTE
 
 import asyncio
 import contextlib
@@ -60,7 +61,7 @@ from .wire import (
     iter_manifest_payloads,
 )
 
-DEFAULT_DISK_CACHE_BYTES = 10 * 1024**3
+DEFAULT_DISK_CACHE_BYTES = 10 * GIBIBYTE
 DEFAULT_MAX_BYTES = DEFAULT_DISK_CACHE_BYTES
 
 _ROOT_LOCKS_GUARD = threading.Lock()

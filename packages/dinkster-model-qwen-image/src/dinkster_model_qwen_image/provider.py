@@ -9,6 +9,7 @@ from typing import Any, Protocol, cast
 
 import numpy as np
 import torch
+from dinkster_api.v1 import MEBIBYTE
 from dinkster_inference import (
     BFLOAT16,
     QWEN_IMAGE_CONFIG,
@@ -414,7 +415,7 @@ def _execute_qwen_image_edit_encode(
             codec_handle = codec
         multiple = 8 if edit_plus else 1
         resized = tuple(
-            resize_qwen_image_content(image, target_pixels=1024 * 1024, multiple=multiple)
+            resize_qwen_image_content(image, target_pixels=MEBIBYTE, multiple=multiple)
             for image in references
         )
         with codec_handle.stage():

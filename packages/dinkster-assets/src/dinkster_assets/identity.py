@@ -7,6 +7,7 @@ interoperate with hashes the existing ecosystem already computed.
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import re
 from pathlib import Path
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
 DIGEST_PREFIX = "blake3:"
 _DIGEST_RE = re.compile(r"^blake3:[0-9a-f]{64}$")
 
-CHUNK_SIZE = 8 * 1024 * 1024
+CHUNK_SIZE = 8 * MEBIBYTE
 """Hash files in 8 MiB chunks (matches ComfyUI's scanner) - bounded memory
 regardless of file size."""
 

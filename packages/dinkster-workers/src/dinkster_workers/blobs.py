@@ -17,6 +17,7 @@ The frames are symmetric - either side can be sender or receiver:
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import asyncio
 import contextlib
@@ -31,7 +32,7 @@ from typing import Any, BinaryIO, TypeVar, cast
 from .boundary import BoundaryError, TransferStat, ValueStore
 from .produced_assets import result_asset_digests
 
-_CHUNK_BYTES = 8 * 1024 * 1024
+_CHUNK_BYTES = 8 * MEBIBYTE
 
 SendFrame = Callable[[dict[str, object], Sequence[bytes]], Awaitable[None]]
 _T = TypeVar("_T")

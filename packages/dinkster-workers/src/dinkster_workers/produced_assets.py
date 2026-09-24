@@ -1,6 +1,7 @@
 """Durable adoption of asset-backed results before producer acknowledgement."""
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import os
 from collections.abc import Iterator, Mapping, Sequence
@@ -16,7 +17,7 @@ from dinkster_values import (
     parse_asset_type_id,
 )
 
-_COPY_BYTES = 1024 * 1024
+_COPY_BYTES = MEBIBYTE
 
 
 def _references(raw: object, resolver: AssetResolver | None = None) -> Iterator[AssetRef]:

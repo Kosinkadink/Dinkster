@@ -52,6 +52,7 @@ Surface (present only when create_app got a ServerLibrary):
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import asyncio
 import json
@@ -139,7 +140,7 @@ _MEDIA_TYPES = frozenset(
     )
 )
 _MEDIA_NAME_LIMIT = 255
-_MEDIA_UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
+_MEDIA_UPLOAD_CHUNK_SIZE = 8 * MEBIBYTE
 _LATENT_UPLOAD_IDLE_SECONDS = 30.0
 _LATENT_UPLOAD_HEADROOM = LATENT_UPLOAD_HEADROOM_BYTES
 _T = TypeVar("_T")
@@ -154,7 +155,7 @@ class ServerLibrary:
 
     vault: AssetVault
     store: LibraryStore
-    upload_limit: int = 16 * 1024 * 1024
+    upload_limit: int = 16 * MEBIBYTE
     #: Per-kind bounds for classified media ingest; must cover _MEDIA_KINDS.
     media_upload_limits: Mapping[str, int] = _MEDIA_UPLOAD_LIMITS
     #: Optional read-only fallback for digest GETs (e.g. filesystem

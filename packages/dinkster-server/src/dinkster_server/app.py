@@ -205,6 +205,7 @@ status JSON. That keeps the envelope-first value model intact on the wire.
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import asyncio
 import contextlib
@@ -1379,7 +1380,7 @@ class ServerState:
         self.settings = settings or RuntimeSettings(
             {
                 "memory-budgets": default_budgets,
-                "memory-headroom": 256 * 1024**2,
+                "memory-headroom": 256 * MEBIBYTE,
                 "aimdo-policy": "auto",
                 "dtype-policy": {
                     "diffusion": "auto",

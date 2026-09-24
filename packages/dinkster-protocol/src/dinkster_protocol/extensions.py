@@ -7,6 +7,7 @@ authors receive the public subset through ``dinkster_api.v1``.
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import hashlib
 import json
@@ -167,7 +168,7 @@ GRAPH_COMPILE_MAX_LINKS = 16384
 GRAPH_COMPILE_MAX_PASSES = 32
 GRAPH_COMPILE_MAX_DEPTH = 16
 GRAPH_COMPILE_MAX_GENERATED_PER_PASS = 1024
-GRAPH_COMPILE_MAX_REPLY_BYTES = 8 * 1024 * 1024
+GRAPH_COMPILE_MAX_REPLY_BYTES = 8 * MEBIBYTE
 GRAPH_COMPILE_TIMEOUT_SECONDS = 30.0
 GENERATED_NODE_ID_PREFIX = "$gen-"
 

@@ -1,6 +1,7 @@
 """Invocation-owned staging of verified media for Comfy source filenames."""
 
 from __future__ import annotations
+from dinkster_values import GIBIBYTE
 
 import contextlib
 import os
@@ -16,7 +17,7 @@ from dinkster_assets import AssetError, AssetRef, classify_media, digest_bytes
 from .bootstrap import initialize_comfy_paths
 
 _CATEGORIES = frozenset(("input", "output", "temp"))
-_MAX_SOURCE_BYTES = 1024 * 1024 * 1024
+_MAX_SOURCE_BYTES = GIBIBYTE
 _HEX = frozenset("0123456789abcdef")
 _DIRECTORY_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 _FILE_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)

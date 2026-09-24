@@ -37,6 +37,7 @@ backend venvs the recipes describe.
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import math
 import re
@@ -816,7 +817,7 @@ BENCHMARK_RESIDENCY_REGIMES = ("open", "constrained")
 #: (process on Windows, machine on WSL, off elsewhere).
 BENCHMARK_RESIDENCY_SPILL_SCOPES = ("process", "machine", "off")
 
-_MIB = 1024 * 1024
+_MIB = MEBIBYTE
 
 _REQUIRED_BENCHMARK_CHECKS = (
     "load",

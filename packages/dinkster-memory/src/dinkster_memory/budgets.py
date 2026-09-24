@@ -13,9 +13,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
+from dinkster_values.limits import GIBIBYTE, MEBIBYTE
+
 __all__ = ["BudgetsError", "load_budgets", "parse_budgets", "parse_size"]
 
-_SIZE_SUFFIXES = {"k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
+_SIZE_SUFFIXES = {"k": 1024, "m": MEBIBYTE, "g": GIBIBYTE, "t": 1024 * GIBIBYTE}
 
 
 class BudgetsError(Exception):

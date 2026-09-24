@@ -15,6 +15,7 @@ The registration makes three deliberate choices:
 """
 
 from __future__ import annotations
+from dinkster_values import GIBIBYTE, MEBIBYTE
 
 import json
 from collections.abc import Mapping
@@ -105,7 +106,7 @@ def register_asset_type(registry: TypeRegistry, resolver: AssetResolver | None =
 
 def _publish_video_source(source: bytes | Path) -> AssetRef:
     size = len(source) if isinstance(source, bytes) else source.stat().st_size
-    if size > 1024 * 1024 * 1024:
+    if size > GIBIBYTE:
         raise AssetError("VIDEO source exceeds 1 GiB")
     vault = produced_asset_vault()
     if vault is None:
@@ -115,11 +116,11 @@ def _publish_video_source(source: bytes | Path) -> AssetRef:
     digest = digest_bytes(source) if isinstance(source, bytes) else digest_file(source)
     with vault.writer(digest) as writer:
         if isinstance(source, bytes):
-            for offset in range(0, size, 1024 * 1024):
-                writer.write(source[offset : offset + 1024 * 1024])
+            for offset in range(0, size, MEBIBYTE):
+                writer.write(source[offset : offset + MEBIBYTE])
         else:
             with source.open("rb") as handle:
-                while chunk := handle.read(1024 * 1024):
+                while chunk := handle.read(MEBIBYTE):
                     writer.write(chunk)
         writer.commit()
     return AssetRef(

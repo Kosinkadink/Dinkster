@@ -17,6 +17,7 @@ most once per machine.
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import contextlib
 import http.client
@@ -36,7 +37,7 @@ from .identity import AssetError, require_digest
 from .model import AssetResolution, AssetResolver, RecordedAssetResolver
 from .vault import AssetVault
 
-FETCH_CHUNK_SIZE = 8 * 1024 * 1024
+FETCH_CHUNK_SIZE = 8 * MEBIBYTE
 DEFAULT_FETCH_TIMEOUT = 60.0
 MAX_PUBLIC_REDIRECTS = 10
 

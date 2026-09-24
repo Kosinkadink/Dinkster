@@ -24,6 +24,7 @@ explicit trust_reserved - the local analog of the registry's grant table
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import asyncio
 import contextlib
@@ -2482,7 +2483,7 @@ class ServingComposer:
         native_policy: NativeDispatchPolicy | None = None,
         runtime_worker_settings: Callable[[], tuple[str, int, Mapping[str, int], tuple[str, ...]]]
         | None = None,
-        headroom_base: int = 256 * 1024**2,
+        headroom_base: int = 256 * MEBIBYTE,
         registry: TypeRegistry | None = None,
         tenant_registry: ModelTenantRegistry | None = None,
         torch_capable: Callable[[], bool] | None = None,

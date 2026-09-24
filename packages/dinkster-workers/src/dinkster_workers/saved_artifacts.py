@@ -1,6 +1,7 @@
 """Host authority for untrusted ComfyUI saved-output reports."""
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import contextlib
 import os
@@ -128,7 +129,7 @@ def _open_candidate(
 def _digest_handle(handle: BinaryIO) -> str:
     handle.seek(0)
     hasher = new_hasher()
-    while chunk := handle.read(1024 * 1024):
+    while chunk := handle.read(MEBIBYTE):
         hasher.update(chunk)
     return "blake3:" + hasher.hexdigest()
 

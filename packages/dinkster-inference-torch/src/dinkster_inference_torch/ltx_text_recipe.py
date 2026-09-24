@@ -9,6 +9,7 @@ from typing import BinaryIO, cast
 
 import torch
 from dinkster_inference import (
+    MEBIBYTE,
     AttentionPolicy,
     AttentionRouteToken,
     Conditioning,
@@ -59,7 +60,7 @@ def assemble_ltx_text_recipe(
     tokenizer_model = sources[gemma_part.source_index].read_uint8_configuration_from_file(
         source_files[gemma_part.source_index],
         LTX_GEMMA_TOKENIZER_KEYS[gemma_role],
-        limit=(64 if gemma_role == "gemma4_12b" else 8) * 1024 * 1024,
+        limit=(64 if gemma_role == "gemma4_12b" else 8) * MEBIBYTE,
     )
     modules: dict[str, torch.nn.Module] = {}
     statuses: list[AttentionStatus] = []

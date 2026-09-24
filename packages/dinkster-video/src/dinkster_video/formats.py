@@ -1,6 +1,7 @@
 """Fixed CPU animated-image and PNG-sequence writers using the shared VIDEO iterator."""
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import inspect
 import io
@@ -184,7 +185,7 @@ def format_diagnostic(
 def metadata_json(metadata: Mapping[str, object] | None) -> str:
     data = mapping(metadata if metadata is not None else {}, "video metadata")
     result = json.dumps(data, allow_nan=False, separators=(",", ":"), ensure_ascii=True)
-    if len(result) > 1024 * 1024:
+    if len(result) > MEBIBYTE:
         raise ValueError("video metadata exceeds 1 MiB")
     return result
 
@@ -233,7 +234,7 @@ def read_video_metadata(source: object) -> dict[str, object]:
             raw = raw.decode("utf-8")
         if isinstance(raw, str) and raw.startswith(_METADATA_KEY + ":"):
             raw = raw[len(_METADATA_KEY) + 1 :]
-        if not isinstance(raw, str) or len(raw) > 1024 * 1024:
+        if not isinstance(raw, str) or len(raw) > MEBIBYTE:
             raise ValueError("invalid video metadata envelope")
         return dict(mapping(json.loads(raw), "video metadata"))
 
@@ -311,7 +312,7 @@ def _insert_bytes(destination: BinaryIO, start: int, data: bytes) -> None:
     end = destination.seek(0, 2)
     cursor = end
     while cursor > start:
-        first = max(start, cursor - 1024 * 1024)
+        first = max(start, cursor - MEBIBYTE)
         destination.seek(first)
         chunk = destination.read(cursor - first)
         destination.seek(first + len(data))

@@ -12,6 +12,7 @@ mutable layer so a code reload cannot leave stale persistent entries behind.
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import asyncio
 from collections.abc import Mapping
@@ -26,7 +27,7 @@ from dinkster_values import Value
 from .disk import DiskCacheStore
 from .memory import MemoryLRUCache, entry_cost
 
-DEFAULT_DISK_SPILL_MIN_BYTES = 1024**2
+DEFAULT_DISK_SPILL_MIN_BYTES = MEBIBYTE
 
 
 class LayeredCache:

@@ -7,6 +7,7 @@ assign a media kind; they do not claim that codec payloads fully decode.
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import json
 import math
@@ -39,7 +40,7 @@ _MEDIA_ROWS = (
     (KIND_MEDIA_MODEL3D, "model/ply", "ply"),
 )
 _STRUCTURE_ITEM_LIMIT = 100_000
-_GLB_JSON_LIMIT = 64 * 1024 * 1024
+_GLB_JSON_LIMIT = 64 * MEBIBYTE
 
 
 @dataclass(frozen=True)

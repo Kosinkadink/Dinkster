@@ -22,6 +22,7 @@ to, over a network you trust or a tunnel you authenticated.
 """
 
 from __future__ import annotations
+from dinkster_values import MEBIBYTE
 
 import json
 from collections.abc import Mapping
@@ -34,7 +35,7 @@ from dinkster_caches import entry_from_wire
 from dinkster_protocol import CacheKey
 from dinkster_values import PEER_CACHE_BLOB_LIMIT_BYTES, TypeRegistry, Value
 
-_MAX_MANIFEST_BYTES = 4 * 1024 * 1024
+_MAX_MANIFEST_BYTES = 4 * MEBIBYTE
 DEFAULT_MAX_BLOB_BYTES = PEER_CACHE_BLOB_LIMIT_BYTES
 
 
