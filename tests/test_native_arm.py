@@ -7904,9 +7904,9 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
             (
                 "video",
                 FakeTensor(
-                    (1, 24, 12, 2, 2),
+                    (1, 24, 37, 2, 2),
                     "cpu",
-                    array=np.arange(1_152, dtype=np.float32).reshape(1, 24, 12, 2, 2),
+                    array=np.arange(3_552, dtype=np.float32).reshape(1, 24, 37, 2, 2),
                 ),
             ),
             (
@@ -8068,6 +8068,34 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     assert len(dit_type.sample_calls) == 1
     saved = cast("Any", result.outputs["92"]["asset"].resolve())
     assert saved.digest == output_asset.digest
+
+
+def test_h3_replay_does_not_patch_identity_or_nodes_under_test() -> None:
+    forbidden_execute_targets = {
+        "dinkster.load_lora_model_only",
+        "dinkster.minimax_h3_add_guide",
+        "GenerationLoadLoraModelOnly",
+        "NativeLoadLoraModelOnly",
+        "NativeMiniMaxH3AddGuide",
+    }
+    violations: list[str] = []
+    for path in sorted((REPO_ROOT / "tests").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+            if not isinstance(call.func, ast.Attribute) or call.func.attr != "setattr":
+                continue
+            if len(call.args) < 2 or not isinstance(call.args[1], ast.Constant):
+                continue
+            attribute = call.args[1].value
+            target = ast.unparse(call.args[0])
+            if attribute in {"tensor_record", "_dinkster_resident_fingerprint"} or (
+                attribute == "execute"
+                and any(forbidden in target for forbidden in forbidden_execute_targets)
+            ):
+                location = f"{path.relative_to(REPO_ROOT)}:{call.lineno}"
+                violations.append(f"{location}: {target}.{attribute}")
+
+    assert violations == []
 
 
 def test_native_h3_decomposed_sampling_refusals_and_non_h3_passthrough(
