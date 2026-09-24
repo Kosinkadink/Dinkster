@@ -1378,7 +1378,30 @@ def test_h3_shared_prompt_schedule_switches_at_step_boundary() -> None:
     assert dit.calls == [1.0, 2.0]
 
 
-def test_h3_shared_conditioning_mask_and_area_weight_video_regions() -> None:
+@pytest.mark.parametrize(
+    "context_windows",
+    (
+        None,
+        ContextWindowsSpec(
+            ContextWindowSchedule.BATCHED,
+            ContextFuseMethod.PYRAMID,
+            length=1,
+            overlap=0,
+            dim=2,
+        ),
+        ContextWindowsSpec(
+            ContextWindowSchedule.STATIC_STANDARD,
+            ContextFuseMethod.PYRAMID,
+            length=2,
+            overlap=1,
+            dim=4,
+        ),
+    ),
+    ids=("unwindowed", "temporal", "spatial"),
+)
+def test_h3_shared_conditioning_mask_and_area_weight_video_regions(
+    context_windows: ContextWindowsSpec | None,
+) -> None:
     runtime, conditioner, _dit = _context_mean_runtime()
     target = _target()
     prepared = _condition_t2va(conditioner, target)
@@ -1410,6 +1433,7 @@ def test_h3_shared_conditioning_mask_and_area_weight_video_regions() -> None:
         cfg=None,
         request=_h3_custom_request("euler", (1.0, 0.0)),
         compute_dtype=torch.float32,
+        context_windows=context_windows,
     ).output.by_role("video")
 
     left_result = result[..., : width // 2]
