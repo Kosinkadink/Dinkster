@@ -13,15 +13,26 @@ from dinkster_inference import (
     WAN21_CAUSAL_INITIAL_LATENT_KEY,
     WAN21_CODEC,
     WAN21_FLOW_RVS_CODEC,
+    WAN21_FUN_CONTROL_1_3B,
+    WAN21_FUN_INPAINT_1_3B,
     WAN21_HUMO_17B,
     WAN21_I2V_14B,
     WAN21_SCAIL_REPLACEMENT_KEY,
     WAN21_SIGMAS,
     WAN21_T2V_14B,
+    WAN22,
+    WAN22_ANIMATE_14B,
+    WAN22_BERNINI_14B,
+    WAN22_CAMERA_14B,
     WAN22_CODEC,
     WAN22_DANCER_SETTINGS_KEY,
+    WAN22_FUN_CONTROL_5B,
+    WAN22_FUN_CONTROL_14B,
+    WAN22_FUN_INPAINT_5B,
+    WAN22_I2V_14B,
     WAN22_S2V_14B,
     WAN22_SIGMAS,
+    WAN22_TI2V_5B,
     WAN22_WANDANCER_14B,
     Conditioning,
     ConditioningCarrier,
@@ -46,13 +57,9 @@ from dinkster_inference import (
     PromptTokenizer,
     Registry,
     SamplerDescriptor,
-    SamplerInfo,
     SamplingCancelled,
     SamplingGuidance,
     SchedulerDescriptor,
-    SolverStateEvent,
-    StepCallback,
-    StepEvent,
     TokenLayoutDescriptor,
     TokenLayoutError,
     TokenSegmentDescriptor,
@@ -2377,12 +2384,118 @@ class _Wan21DiffusionAssembly:
         return dtype
 
 
+@dataclass(frozen=True, slots=True)
+class _WanVariantRegistration:
+    id: str
+    matches: Callable[[Wan21Model, ModelFamily], bool]
+
+    def bind(self, model: Wan21Model) -> _WanVariantDenoiserAdapter:
+        config = model.config
+        features = {
+            self.id,
+            config.model_variant,
+            config.model_type,
+        }
+        if config.vace_layers is not None:
+            features.add("vace")
+        if config.in_channels > config.out_channels:
+            features.add("concat")
+        return _WanVariantDenoiserAdapter(self, model, frozenset(features))
+
+
+@dataclass(frozen=True, slots=True)
+class _WanVariantDenoiserAdapter:
+    registration: _WanVariantRegistration
+    model: Wan21Model
+    features: frozenset[str]
+
+    def has(self, feature: str) -> bool:
+        return feature in self.features
+
+    @property
+    def evaluator_identity(self) -> str | Callable[[GuidanceRole], str]:
+        return cast("Any", self.model).evaluator_identity
+
+    def prepare_conditioning(self, value: object, role: GuidanceRole) -> object:
+        return cast("Any", self.model).prepare_conditioning(value, role)
+
+    def evaluate_conditioning(
+        self,
+        x: torch.Tensor,
+        sigma: float,
+        condition: object,
+    ) -> torch.Tensor:
+        return cast("Any", self.model).evaluate_conditioning(x, sigma, condition)
+
+    def batchable(self, conditions: tuple[object, ...]) -> bool:
+        return bool(cast("Any", self.model).batchable(conditions))
+
+    def evaluate_conditioning_batch(
+        self,
+        x: torch.Tensor,
+        sigma: float,
+        conditions: tuple[object, ...],
+    ) -> tuple[torch.Tensor, ...]:
+        return cast("Any", self.model).evaluate_conditioning_batch(x, sigma, conditions)
+
+    def conditioning_identity(self, family_id: str) -> str:
+        identities = (
+            ("wandancer", "dinkster.wan22.dancer-conditioning.v1"),
+            ("humo", "dinkster.wan21.humo-conditioning.v1"),
+            ("s2v", "dinkster.wan22.s2v-conditioning.v1"),
+            ("scail", "dinkster.wan21.scail-conditioning.v1"),
+            ("scail2", "dinkster.wan21.scail-conditioning.v1"),
+            ("animate2", "dinkster.wan21.animate2-conditioning.v1"),
+            ("animate", "dinkster.wan22.animate-conditioning.v1"),
+            ("vace", "dinkster.wan21.vace-conditioning.v1"),
+            ("i2v", "dinkster.wan21.conditioning.v2"),
+            ("concat", "dinkster.wan22.conditioning.v1"),
+        )
+        return next((identity for feature, identity in identities if self.has(feature)), family_id)
+
+
+_WAN_FUN_CONFIGS = (
+    WAN21_FUN_CONTROL_1_3B,
+    WAN21_FUN_INPAINT_1_3B,
+    WAN22_FUN_CONTROL_5B,
+    WAN22_FUN_INPAINT_5B,
+    WAN22_FUN_CONTROL_14B,
+)
+_WAN22_CONFIGS = (
+    WAN22_ANIMATE_14B,
+    WAN22_BERNINI_14B,
+    WAN22_CAMERA_14B,
+    WAN22_I2V_14B,
+    WAN22_S2V_14B,
+    WAN22_TI2V_5B,
+    WAN22_WANDANCER_14B,
+)
+_WAN_VARIANT_REGISTRATIONS = (
+    _WanVariantRegistration("causal_ar", lambda model, _family: type(model) is Wan21CausalModel),
+    _WanVariantRegistration("vace", lambda model, _family: model.config.vace_layers is not None),
+    _WanVariantRegistration("fun", lambda model, _family: model.config in _WAN_FUN_CONFIGS),
+    _WanVariantRegistration(
+        "wan22",
+        lambda model, family: family.id == WAN22.id or model.config in _WAN22_CONFIGS,
+    ),
+    _WanVariantRegistration("wan21", lambda _model, _family: True),
+)
+
+
+def _wan_variant_adapter(model: Wan21Model, family: ModelFamily) -> _WanVariantDenoiserAdapter:
+    registration = next(
+        registration
+        for registration in _WAN_VARIANT_REGISTRATIONS
+        if registration.matches(model, family)
+    )
+    return registration.bind(model)
+
+
 def _wan_custom_space(
-    assembled: AssembledWan21 | _Wan21DiffusionAssembly,
+    adapter: _WanVariantDenoiserAdapter,
     sampling_shift: float | None = None,
 ) -> FlowSigmas:
-    model = assembled.diffusion
-    if type(model) is Wan21CausalModel:
+    if adapter.has("causal_ar"):
         if sampling_shift is not None:
             raise Wan21RuntimeError("Wan CausalAR sampling shift is fixed at 5.0")
         return FlowSigmas(shift=5.0)
@@ -2394,10 +2507,12 @@ def _wan_custom_space(
         ):
             raise Wan21RuntimeError("sampling_shift must be a positive finite float")
         return FlowSigmas(shift=sampling_shift)
-    if model.config.model_variant == "animate2":
+    if adapter.has("animate2"):
         return FlowSigmas(shift=5.0)
     return (
-        WAN22_SIGMAS if model.config.out_channels == WAN22_CODEC.latent.channels else WAN21_SIGMAS
+        WAN22_SIGMAS
+        if adapter.model.config.out_channels == WAN22_CODEC.latent.channels
+        else WAN21_SIGMAS
     )
 
 
@@ -2419,16 +2534,37 @@ class _Wan21CausalDenoiser:
         del x, sigma
         raise Wan21RuntimeError("Wan CausalAR requires the ar_video sampler")
 
-    def sample_autoregressive(
+    def prepare_autoregressive(
         self,
         x: torch.Tensor,
         sigmas: Sequence[float],
-        info: SamplerInfo,
         *,
         num_frame_per_block: int,
-        on_step: StepCallback | None = None,
-    ) -> torch.Tensor:
-        if x.ndim != 5 or x.shape[1] != self._model.config.out_channels:
+    ) -> _Wan21CausalSamplingSession:
+        return _Wan21CausalSamplingSession(
+            self._model,
+            self._text,
+            self._initial_latent,
+            self._compute_dtype,
+            x,
+            sigmas,
+            num_frame_per_block=num_frame_per_block,
+        )
+
+
+class _Wan21CausalSamplingSession:
+    def __init__(
+        self,
+        model: Wan21CausalModel,
+        text: torch.Tensor,
+        initial_latent: torch.Tensor | None,
+        compute_dtype: torch.dtype,
+        x: torch.Tensor,
+        sigmas: Sequence[float],
+        *,
+        num_frame_per_block: int,
+    ) -> None:
+        if x.ndim != 5 or x.shape[1] != model.config.out_channels:
             raise Wan21RuntimeError("Wan CausalAR requires rank-5 16-channel video latents")
         if type(num_frame_per_block) is not int or not 1 <= num_frame_per_block <= 64:
             raise Wan21RuntimeError("Wan CausalAR block size must be an integer in [1, 64]")
@@ -2438,15 +2574,14 @@ class _Wan21CausalDenoiser:
             raise Wan21RuntimeError("Wan CausalAR requires strictly decreasing sigmas ending at 0")
         batch, _channels, frames, height, width = x.shape
         rows_per_frame = math.ceil(height / 2) * math.ceil(width / 2)
-        text = self._text
         if text.shape[0] not in (1, batch):
             raise Wan21RuntimeError("Wan CausalAR text batch must be one or match the video batch")
-        text = text.to(device=x.device, dtype=self._compute_dtype)
+        text = text.to(device=x.device, dtype=compute_dtype)
         if text.shape[0] == 1 and batch != 1:
             text = text.expand(batch, *text.shape[1:])
         output = torch.zeros_like(x)
         start_frame = 0
-        initial = self._initial_latent
+        initial = initial_latent
         if initial is not None:
             if (
                 initial.ndim != 5
@@ -2456,99 +2591,119 @@ class _Wan21CausalDenoiser:
                 or initial.shape[3:] != x.shape[3:]
             ):
                 raise Wan21RuntimeError("Wan CausalAR initial latent must match the target video")
-            initial = initial.to(device=x.device, dtype=self._compute_dtype)
+            initial = initial.to(device=x.device, dtype=compute_dtype)
             if initial.shape[0] == 1 and batch != 1:
                 initial = initial.expand(batch, *initial.shape[1:])
-        caches = self._model.create_caches(
+        caches = model.create_caches(
             batch_size=batch,
             max_tokens=frames * rows_per_frame,
             device=x.device,
-            dtype=self._compute_dtype,
+            dtype=compute_dtype,
         )
         if initial is not None:
             start_frame = initial.shape[2]
             output[:, :, :start_frame] = initial
-            self._model.forward_block(
+            model.forward_block(
                 initial,
                 torch.zeros((batch,), device=x.device, dtype=torch.float32),
                 text,
                 time_start=0,
                 caches=caches,
             )
-        sigma_steps = max(len(sigmas) - 1, 0)
-        blocks = math.ceil((frames - start_frame) / num_frame_per_block)
-        total_evaluations = blocks * sigma_steps
-        evaluation = 0
-        for block_index in range(blocks):
-            block_frames = min(num_frame_per_block, frames - start_frame)
-            end_frame = start_frame + block_frames
-            noisy = x[:, :, start_frame:end_frame]
-            cache_rows = block_frames * rows_per_frame
-            for sigma_index in range(sigma_steps):
-                sigma = float(sigmas[sigma_index])
-                model_input = calculate_input(Parameterization.FLOW, sigma, noisy).to(
-                    dtype=self._compute_dtype
-                )
-                raw = self._model.forward_block(
-                    model_input,
-                    torch.full(
-                        (batch,),
-                        sigma * 1000.0,
-                        device=x.device,
-                        dtype=torch.float32,
-                    ),
-                    text,
-                    time_start=start_frame,
-                    caches=caches,
-                )
-                denoised = calculate_denoised(Parameterization.FLOW, sigma, raw, noisy).float()
-                progress_step = (
-                    evaluation * sigma_steps // total_evaluations if total_evaluations else 0
-                )
-                if info.on_state is not None:
-                    state = output.clone()
-                    state[:, :, start_frame:end_frame] = noisy
-                    denoised_state = output.clone()
-                    denoised_state[:, :, start_frame:end_frame] = denoised
-                    info.on_state(
-                        SolverStateEvent(
-                            progress_step,
-                            sigma_steps,
-                            sigma,
-                            "pre_update",
-                            state,
-                            denoised_state,
-                        )
-                    )
-                if on_step is not None:
-                    on_step(StepEvent(progress_step, sigma_steps, sigma))
-                sigma_next = float(sigmas[sigma_index + 1])
-                if sigma_next == 0.0:
-                    noisy = denoised
-                else:
-                    generator = torch.Generator(device=x.device).manual_seed(
-                        info.seed + block_index * 1000 + sigma_index
-                    )
-                    fresh_noise = torch.randn(
-                        denoised.shape,
-                        generator=generator,
-                        device=x.device,
-                        dtype=denoised.dtype,
-                    )
-                    noisy = denoised * (1.0 - sigma_next) + fresh_noise * sigma_next
-                    caches.rewind(cache_rows)
-                evaluation += 1
-            output[:, :, start_frame:end_frame] = noisy
-            caches.rewind(cache_rows)
-            self._model.forward_block(
-                noisy.to(dtype=self._compute_dtype),
-                torch.zeros((batch,), device=x.device, dtype=torch.float32),
-                text,
-                time_start=start_frame,
-                caches=caches,
-            )
-            start_frame = end_frame
-        return output
+        self.block_count = math.ceil((frames - start_frame) / num_frame_per_block)
+        self.sigma_step_count = max(len(sigmas) - 1, 0)
+        self._model = model
+        self._x = x
+        self._text = text
+        self._compute_dtype = compute_dtype
+        self._output = output
+        self._start_frame = start_frame
+        self._num_frame_per_block = num_frame_per_block
+        self._rows_per_frame = rows_per_frame
+        self._caches = caches
+        self._noisy: torch.Tensor | None = None
+        self._end_frame = start_frame
+        self._cache_rows = 0
+        self._next_block_index = 0
+
+    def begin_block(self, block_index: int) -> None:
+        if block_index != self._next_block_index:
+            raise RuntimeError("Wan CausalAR blocks must execute in temporal order")
+        block_frames = min(
+            self._num_frame_per_block,
+            self._x.shape[2] - self._start_frame,
+        )
+        self._end_frame = self._start_frame + block_frames
+        self._noisy = self._x[:, :, self._start_frame : self._end_frame]
+        self._cache_rows = block_frames * self._rows_per_frame
+
+    def evaluate(
+        self, sigma: float, *, capture_state: bool
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor]:
+        noisy = self._require_noisy()
+        batch = noisy.shape[0]
+        model_input = calculate_input(Parameterization.FLOW, sigma, noisy).to(
+            dtype=self._compute_dtype
+        )
+        raw = self._model.forward_block(
+            model_input,
+            torch.full(
+                (batch,),
+                sigma * 1000.0,
+                device=noisy.device,
+                dtype=torch.float32,
+            ),
+            self._text,
+            time_start=self._start_frame,
+            caches=self._caches,
+        )
+        denoised = calculate_denoised(Parameterization.FLOW, sigma, raw, noisy).float()
+        if not capture_state:
+            return None, None, denoised
+        state = self._output.clone()
+        state[:, :, self._start_frame : self._end_frame] = noisy
+        denoised_state = self._output.clone()
+        denoised_state[:, :, self._start_frame : self._end_frame] = denoised
+        return state, denoised_state, denoised
+
+    def advance(self, denoised: torch.Tensor, sigma_next: float, seed: int) -> None:
+        if sigma_next == 0.0:
+            self._noisy = denoised
+            return
+        generator = torch.Generator(device=denoised.device).manual_seed(seed)
+        fresh_noise = torch.randn(
+            denoised.shape,
+            generator=generator,
+            device=denoised.device,
+            dtype=denoised.dtype,
+        )
+        self._noisy = denoised * (1.0 - sigma_next) + fresh_noise * sigma_next
+        self._caches.rewind(self._cache_rows)
+
+    def commit_block(self) -> None:
+        noisy = self._require_noisy()
+        self._output[:, :, self._start_frame : self._end_frame] = noisy
+        self._caches.rewind(self._cache_rows)
+        self._model.forward_block(
+            noisy.to(dtype=self._compute_dtype),
+            torch.zeros((noisy.shape[0],), device=noisy.device, dtype=torch.float32),
+            self._text,
+            time_start=self._start_frame,
+            caches=self._caches,
+        )
+        self._start_frame = self._end_frame
+        self._noisy = None
+        self._next_block_index += 1
+
+    def finish(self) -> torch.Tensor:
+        if self._start_frame != self._x.shape[2]:
+            raise RuntimeError("Wan CausalAR sampling ended before every frame was committed")
+        return self._output
+
+    def _require_noisy(self) -> torch.Tensor:
+        if self._noisy is None:
+            raise RuntimeError("Wan CausalAR block has not started")
+        return self._noisy
 
 
 @dataclass(frozen=True, slots=True)
@@ -3409,11 +3564,9 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
         )
 
     def _sampling_sigma_space(self, sampling_shift: float | None) -> FlowSigmas:
-        if type(self.assembled.diffusion) is Wan21CausalModel:
-            if sampling_shift is not None:
-                raise Wan21RuntimeError("Wan CausalAR sampling shift is fixed at 5.0")
-            return FlowSigmas(shift=5.0)
-        return _wan_custom_space(self.assembled, sampling_shift)
+        return _wan_custom_space(
+            _wan_variant_adapter(self.assembled.diffusion, self.family), sampling_shift
+        )
 
     def _custom_sampling_process_in(self, latent: torch.Tensor) -> torch.Tensor:
         return self._latent_process_in(latent)
@@ -3428,10 +3581,11 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
     ) -> SamplingDenoiserExecution:
         if context.inputs is None or context.device is None:
             raise RuntimeError("Wan sampling context is unresolved")
-        if type(self.assembled.diffusion) is not Wan21CausalModel:
-            return self._standard_sampling_denoiser(compute_dtype, context)
+        adapter = _wan_variant_adapter(self.assembled.diffusion, self.family)
+        if not adapter.has("causal_ar"):
+            return self._registered_sampling_denoiser(adapter, compute_dtype, context)
         inputs = context.inputs
-        model = self.assembled.diffusion
+        model = cast("Wan21CausalModel", adapter.model)
         latent_context = cast("_WanSamplingContext", inputs.latent_context)
         latent = inputs.latent
         cfg = inputs.cfg
@@ -3539,8 +3693,9 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
 
     sample_custom = sampling_execution
 
-    def _standard_sampling_denoiser(
+    def _registered_sampling_denoiser(
         self,
+        adapter: _WanVariantDenoiserAdapter,
         compute_dtype: torch.dtype,
         context: SamplingAdapterContext,
     ) -> SamplingDenoiserExecution:
@@ -3565,9 +3720,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
         uni3c = latent_context.uni3c
         multitalk = latent_context.multitalk
         _check_cancelled(cancelled)
-        model = self.assembled.diffusion
-        if type(model) is Wan21CausalModel:
-            raise Wan21RuntimeError("Wan CausalAR requires the ar_video custom sampler")
+        model = adapter.model
         admitted_uni3c = None
         if uni3c is not None:
             if type(uni3c) is not Wan21Uni3CExecution:
@@ -3620,7 +3773,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                 value.dancer_reference_vision,
                 value.dancer_settings,
             )
-            if model.config.model_variant == "wandancer":
+            if adapter.has("wandancer"):
                 if type(model) is not Wan22DancerModel or model.config is not WAN22_WANDANCER_14B:
                     raise Wan21RuntimeError(
                         "WanDancer requires the exact native Wan 2.2 14B profile"
@@ -3682,7 +3835,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                             "WanDancer audio batch must be one or match the target video"
                         )
                 return
-            if model.config.model_variant == "humo":
+            if adapter.has("humo"):
                 if type(model) is not Wan21HumoModel or model.config is not WAN21_HUMO_17B:
                     raise Wan21RuntimeError(
                         "HuMo requires the exact native Wan 2.1 HuMo 17B profile"
@@ -3738,7 +3891,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                 return
             if any(field is not None for field in humo_fields):
                 raise Wan21RuntimeError(f"Wan {what} contains HuMo conditioning")
-            if model.config.model_variant == "s2v":
+            if adapter.has("s2v"):
                 if type(model) is not Wan22S2VModel or model.config is not WAN22_S2V_14B:
                     raise Wan21RuntimeError("S2V requires the exact native Wan 2.2 14B profile")
                 if (
@@ -3804,18 +3957,18 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                 raise Wan21RuntimeError(f"Wan {what} contains S2V conditioning")
             if any(field is not None for field in dancer_fields):
                 raise Wan21RuntimeError(f"Wan {what} contains WanDancer conditioning")
-            requires_concat = model.config.in_channels > model.config.out_channels
-            accepts_vision = model.config.model_type == "i2v"
-            requires_vace = model.config.vace_layers is not None
+            requires_concat = adapter.has("concat")
+            accepts_vision = adapter.has("i2v")
+            requires_vace = adapter.has("vace")
             requires_camera = model.config.camera_channels is not None
-            animate = model.config.model_variant == "animate"
-            animate2 = model.config.model_variant == "animate2"
-            scail = model.config.model_variant in ("scail", "scail2")
+            animate = adapter.has("animate")
+            animate2 = adapter.has("animate2")
+            scail = adapter.has("scail") or adapter.has("scail2")
             if value.context_latents:
                 if (
                     admitted_uni3c is not None
                     or type(model) is not Wan21Model
-                    or model.config.model_variant != "bernini"
+                    or not adapter.has("bernini")
                 ):
                     raise Wan21RuntimeError(
                         "Bernini context latents require exact native Wan 2.2 14B T2V"
@@ -3890,7 +4043,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                         raise Wan21RuntimeError(
                             f"Wan SCAIL {what} pose latents require a percent schedule"
                         )
-                if model.config.model_variant == "scail":
+                if adapter.has("scail"):
                     if (
                         value.scail_reference_mask is not None
                         or value.scail_driving_mask is not None
@@ -4129,7 +4282,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                         f"Wan {model.config.model_type.upper()} {what} must contain only TEXT"
                     )
                 if value.temporal_reference is not None:
-                    if model.config.model_variant != "base":
+                    if not adapter.has("base"):
                         raise Wan21RuntimeError(
                             "Wan profile does not consume Phantom subject references"
                         )
@@ -4194,11 +4347,11 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
             for value in (conditioning, uncond, middle)
         )
         if context_windows is not None:
-            if model.config.model_variant != "base" or model.config.model_type != "t2v":
+            if not adapter.has("base") or not adapter.has("t2v"):
                 raise Wan21RuntimeError(
                     "Wan context windows support only the base text-to-video profiles"
                 )
-            if model.config.vace_layers is not None:
+            if adapter.has("vace"):
                 raise Wan21RuntimeError("Wan context windows do not support VACE models")
             if admitted_uni3c is not None or admitted_multitalk is not None:
                 raise Wan21RuntimeError(
@@ -4262,9 +4415,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                 admitted_multitalk.motion_latent.to(device=load_device)
             ).to(dtype=selected_dtype)
         humo_target_concat = (
-            _humo_target_concat(video.to(dtype=selected_dtype))
-            if model.config.model_variant == "humo"
-            else None
+            _humo_target_concat(video.to(dtype=selected_dtype)) if adapter.has("humo") else None
         )
         prepared_denoise_mask: torch.Tensor | None = None
         frame_denoise_mask: torch.Tensor | None = None
@@ -4273,9 +4424,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
             if type(denoise_mask) is not torch.Tensor:
                 raise TypeError("Wan denoise_mask must be an exact torch.Tensor")
             allowed_channels = (
-                (1, 4, video.shape[1])
-                if model.config.model_variant == "scail2"
-                else (1, video.shape[1])
+                (1, 4, video.shape[1]) if adapter.has("scail2") else (1, video.shape[1])
             )
             if (
                 denoise_mask.ndim != 5
@@ -4289,7 +4438,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
             mask = denoise_mask.to(device=load_device, dtype=torch.float32)
             if not torch.all((mask >= 0.0) & (mask <= 1.0)):
                 raise Wan21RuntimeError("Wan denoise_mask values must be in [0, 1]")
-            if model.config.model_variant == "scail2":
+            if adapter.has("scail2"):
                 collapsed_mask = mask.mean(dim=1, keepdim=True)
                 prepared_denoise_mask = (
                     mask
@@ -4306,14 +4455,14 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                 prepared_denoise_mask = (
                     mask.expand_as(video) if mask.shape[1] == 1 else mask
                 ).contiguous()
-                if model.config.model_type == "ti2v":
+                if adapter.has("ti2v"):
                     frame_denoise_mask = mask.mean(dim=(1, 3, 4))
         token_plan = plan_wan21_token_layout(
             Wan21VideoLatentGeometry(video.shape[2], video.shape[3], video.shape[4])
         )
         parameterization = (
             Parameterization.IMAGE_TO_IMAGE_FLOW
-            if model.config.model_variant == "flow_rvs"
+            if adapter.has("flow_rvs")
             else Parameterization.FLOW
         )
 
@@ -4446,7 +4595,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                         channels=model.config.out_channels,
                     ).to(device=load_device)
                 ).to(dtype=selected_dtype)
-                if model.config.model_variant in ("scail", "scail2"):
+                if adapter.has("scail") or adapter.has("scail2"):
                     pose_latents = torch.cat(
                         (pose_latents, torch.ones_like(pose_latents[:, :4])), dim=1
                     )
@@ -4560,20 +4709,17 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                         *base_input.shape[2:],
                     )
                 )
-                if (
-                    model.config.camera_channels is not None
-                    or model.config.model_variant == "wandancer"
-                )
+                if (model.config.camera_channels is not None or adapter.has("wandancer"))
                 and contexts[0].concat_latent is None
                 else None
             )
             model_inputs: list[torch.Tensor] = []
             for value in contexts:
                 lane_input = base_input
-                if model.config.model_variant in ("scail", "scail2"):
+                if adapter.has("scail") or adapter.has("scail2"):
                     history = (
                         lane_input.new_zeros((batch, 4, *lane_input.shape[2:]))
-                        if scail_history is None or model.config.model_variant == "scail"
+                        if scail_history is None or adapter.has("scail")
                         else to_batch(scail_history, batch).to(dtype=selected_dtype)
                     )
                     lane_input = torch.cat((lane_input, history), dim=1)
@@ -4789,7 +4935,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
             )
             pose_schedule = contexts[0].pose_schedule
             pose_active = pose_latents is not None and (
-                model.config.model_variant not in ("animate2", "scail", "scail2")
+                not any(adapter.has(feature) for feature in ("animate2", "scail", "scail2"))
                 or (pose_schedule is not None and pose_schedule.is_active(sigma, sigmas))
             )
             if not pose_active:
@@ -4844,7 +4990,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                         vision,
                         multitalk=prepared_multitalk,
                     ).float()
-                elif model.config.model_variant == "wandancer":
+                elif adapter.has("wandancer"):
                     dancer_model = cast("Wan22DancerModel", model)
                     settings = contexts[0].dancer_settings
                     assert settings is not None
@@ -4858,7 +5004,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                         fps=settings.fps,
                         audio_inject_scale=settings.audio_inject_scale,
                     ).float()
-                elif model.config.model_variant == "humo":
+                elif adapter.has("humo"):
                     humo_model = cast("Wan21HumoModel", model)
                     assert humo_audio is not None and humo_reference is not None
                     velocity = humo_model(
@@ -4868,7 +5014,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                         audio_embed=humo_audio,
                         reference_latent=humo_reference,
                     ).float()
-                elif model.config.model_variant == "s2v":
+                elif adapter.has("s2v"):
                     s2v_model = cast("Wan22S2VModel", model)
                     velocity = s2v_model(
                         model_input,
@@ -4879,7 +5025,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                         control_video=s2v_control,
                         reference_motion=s2v_motion,
                     ).float()
-                elif model.config.model_variant in ("scail", "scail2"):
+                elif adapter.has("scail") or adapter.has("scail2"):
                     scail_model = cast("WanScailModel", model)
                     velocity = scail_model(
                         model_input,
@@ -4892,7 +5038,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                         driving_mask=scail_driving_mask,
                         replacement=contexts[0].scail_replacement,
                     ).float()
-                elif model.config.model_variant == "animate2":
+                elif adapter.has("animate2"):
                     animate2_model = cast("WanAnimate2Model", model)
                     settings = contexts[0].animate2_settings or Wan21Animate2Settings()
                     velocity = animate2_model(
@@ -4907,7 +5053,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                         reference_strength=settings.reference_strength,
                         pose_cache=pose_cache if pose_active else None,
                     ).float()
-                elif model.config.model_variant == "animate":
+                elif adapter.has("animate"):
                     velocity = model(
                         model_input,
                         timesteps,
@@ -5174,27 +5320,9 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
             if declared != token_plan.layout:
                 raise TokenLayoutError("Wan 2.1 model rows do not match the target video layout")
 
-        evaluator_identity = (
-            "dinkster.wan22.dancer-conditioning.v1"
-            if model.config.model_variant == "wandancer"
-            else "dinkster.wan21.humo-conditioning.v1"
-            if model.config.model_variant == "humo"
-            else "dinkster.wan22.s2v-conditioning.v1"
-            if model.config.model_variant == "s2v"
-            else "dinkster.wan21.bernini-conditioning.v1"
+        evaluator_identity = adapter.conditioning_identity(
+            "dinkster.wan21.bernini-conditioning.v1"
             if bernini_conditioning
-            else "dinkster.wan21.scail-conditioning.v1"
-            if model.config.model_variant in ("scail", "scail2")
-            else "dinkster.wan21.animate2-conditioning.v1"
-            if model.config.model_variant == "animate2"
-            else "dinkster.wan22.animate-conditioning.v1"
-            if model.config.model_variant == "animate"
-            else "dinkster.wan21.vace-conditioning.v1"
-            if model.config.vace_layers is not None
-            else "dinkster.wan21.conditioning.v2"
-            if model.config.model_type == "i2v"
-            else "dinkster.wan22.conditioning.v1"
-            if model.config.in_channels > model.config.out_channels
             else f"{self.family.id}.conditioning.v1"
         )
         if admitted_uni3c is not None:
@@ -5238,7 +5366,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                 cache_settings.memory_limit_bytes,
             )
         return SamplingDenoiserExecution(
-            cast("SamplingDenoiserAdapter", model),
+            cast("SamplingDenoiserAdapter", adapter),
             conditioning_evaluation=evaluation,
             sampling=replace(self.family.sampling, parameterization=parameterization),
             percent_to_sigma=sigmas.percent_to_sigma,
@@ -5248,7 +5376,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
             denoise_mask=prepared_denoise_mask,
             denoise_mask_prepared=True,
             fixed_inpaint_latent=prepared_denoise_mask is not None
-            and (model.config.model_type == "ti2v" or model.config.model_variant == "scail2"),
+            and (adapter.has("ti2v") or adapter.has("scail2")),
             close=None if pose_cache is None else pose_cache.free,
         )
 
@@ -5309,7 +5437,9 @@ class Wan21DiffusionRuntime(MultiStreamSamplingRuntime):
         return self._assembled
 
     def _sampling_sigma_space(self, sampling_shift: float | None) -> FlowSigmas:
-        return _wan_custom_space(self.assembled, sampling_shift)
+        return _wan_custom_space(
+            _wan_variant_adapter(self.assembled.diffusion, self.family), sampling_shift
+        )
 
     family = Wan21Runtime.family  # pyright: ignore[reportIncompatibleMethodOverride]
     runtime_identity = Wan21Runtime.runtime_identity
@@ -5326,7 +5456,7 @@ class Wan21DiffusionRuntime(MultiStreamSamplingRuntime):
     sample_custom = sampling_execution
     sampling_execution_registration = Wan21Runtime.sampling_execution_registration
     _sampling_denoiser = Wan21Runtime._sampling_denoiser  # pyright: ignore[reportPrivateUsage]
-    _standard_sampling_denoiser = Wan21Runtime._standard_sampling_denoiser  # pyright: ignore[reportPrivateUsage]
+    _registered_sampling_denoiser = Wan21Runtime._registered_sampling_denoiser  # pyright: ignore[reportPrivateUsage]
 
     @property
     def dense_custom_sampling_role(self) -> str | None:

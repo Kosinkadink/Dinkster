@@ -1268,6 +1268,7 @@ from .runtime_handle import (
 from .sampling import (
     ArithTensor,
     AutoregressiveDenoiser,
+    AutoregressiveSamplingSession,
     BuiltinSamplerSelection,
     CallableEvidence,
     CancellationFlag,
@@ -2895,6 +2896,7 @@ __all__ = [
     "SafetensorsSource",
     "SamplerDescriptor",
     "AutoregressiveDenoiser",
+    "AutoregressiveSamplingSession",
     "BuiltinSamplerSelection",
     "CustomSamplingRequest",
     "CustomSamplingResult",

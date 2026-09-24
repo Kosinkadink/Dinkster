@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
@@ -14,12 +15,14 @@ from dinkster_inference import (
     WAN21_CAUSAL_AR_1_3B,
     WAN21_CODEC,
     WAN21_FLOW_RVS_CODEC,
+    WAN21_FUN_CONTROL_1_3B,
     WAN21_HUMO_17B,
     WAN21_I2V_14B,
     WAN21_MULTITALK,
     WAN21_SCAIL_REPLACEMENT_KEY,
     WAN21_SIGMAS,
     WAN21_T2V_14B,
+    WAN21_VACE_1_3B,
     WAN22,
     WAN22_BERNINI_14B,
     WAN22_CODEC,
@@ -111,6 +114,63 @@ FUSE_DUAL_CFG_LANES = ConditioningBatching(ConditioningBatchingMode.MAX_FUSED_LA
 
 def test_wan_runtime_retains_text_offload_storage() -> None:
     assert Wan21Runtime.retained_offload_storage_components == frozenset({"umt5xxl"})
+
+
+@pytest.mark.parametrize(
+    "model_class, config, family, expected_registration",
+    (
+        (wan21_runtime_module.Wan21Model, Wan21Config(), WAN21, "wan21"),
+        (wan21_runtime_module.Wan21Model, WAN22_TI2V_5B, WAN22, "wan22"),
+        (wan21_runtime_module.Wan21Model, WAN21_VACE_1_3B, WAN21, "vace"),
+        (wan21_runtime_module.Wan21Model, WAN21_FUN_CONTROL_1_3B, WAN21, "fun"),
+        (Wan21CausalModel, WAN21_CAUSAL_AR_1_3B, WAN21, "causal_ar"),
+    ),
+)
+def test_wan_variants_resolve_registered_denoiser_adapters(
+    model_class: Any,
+    config: Wan21Config,
+    family: Any,
+    expected_registration: str,
+) -> None:
+    model = model_class.__new__(model_class)
+    torch.nn.Module.__init__(model)
+    model.config = config
+
+    adapter = wan21_runtime_module._wan_variant_adapter(  # pyright: ignore[reportPrivateUsage]
+        model, family
+    )
+
+    assert adapter.registration.id == expected_registration
+    assert adapter.model is model
+    assert callable(adapter.prepare_conditioning)
+    assert callable(adapter.evaluate_conditioning_batch)
+
+
+def test_bernini_conditioning_identity_depends_on_context_latents() -> None:
+    model = wan21_runtime_module.Wan21Model.__new__(wan21_runtime_module.Wan21Model)
+    torch.nn.Module.__init__(model)
+    model.config = WAN22_BERNINI_14B
+    adapter = wan21_runtime_module._wan_variant_adapter(  # pyright: ignore[reportPrivateUsage]
+        model, WAN22
+    )
+
+    assert adapter.conditioning_identity("dinkster.wan22.conditioning.v1") == (
+        "dinkster.wan22.conditioning.v1"
+    )
+    assert adapter.conditioning_identity("dinkster.wan21.bernini-conditioning.v1") == (
+        "dinkster.wan21.bernini-conditioning.v1"
+    )
+
+
+def test_wan_shared_dispatch_contains_no_variant_switch_or_private_sampling_loop() -> None:
+    module_source = inspect.getsource(wan21_runtime_module)
+
+    assert "model.config.model_variant" not in module_source
+    assert "_sample_standard_custom" not in module_source
+    assert "sample_autoregressive" not in module_source
+    assert "for sigma_index" not in inspect.getsource(
+        wan21_runtime_module._Wan21CausalSamplingSession  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 def test_diffusion_only_assembly_enrolls_with_explicit_storage_policy() -> None:
@@ -1051,6 +1111,7 @@ def test_wan_runtimes_expose_their_custom_schedule_contracts(family_id: str) -> 
 
     model = Wan21CausalModel.__new__(Wan21CausalModel)
     torch.nn.Module.__init__(model)
+    model.config = WAN21_CAUSAL_AR_1_3B
     causal, _, _, _ = _runtime(family_id=family_id)
     cast("Any", causal).assembled.diffusion = model
     assert isinstance(causal, CustomSamplingRuntime)

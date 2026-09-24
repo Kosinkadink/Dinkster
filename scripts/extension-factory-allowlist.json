@@ -22,7 +22,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_samplers",
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/_portable_solvers.py",
-      "line": 3561,
+      "line": 3595,
       "column": 23,
       "issue": 120
     },

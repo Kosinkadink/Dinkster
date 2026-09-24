@@ -14,6 +14,7 @@ from dinkster_inference import (
     Wan21Config,
     wan21_layout,
 )
+from dinkster_inference_torch._portable_solvers import DINKSTER_AR_VIDEO
 from dinkster_inference_torch.attention import select_attention
 from dinkster_inference_torch.flux import EmbedND
 from dinkster_inference_torch.operations import CastOperations
@@ -203,11 +204,11 @@ def test_causal_denoiser_refuses_schedules_that_cannot_commit_clean_blocks(
     )
 
     with pytest.raises(Wan21RuntimeError, match="strictly decreasing sigmas ending at 0"):
-        denoiser.sample_autoregressive(
+        DINKSTER_AR_VIDEO.build(num_frame_per_block=1)(
+            denoiser,
             torch.zeros((1, 16, 2, 2, 2)),
             sigmas,
             SamplerInfo(Parameterization.FLOW, seed=0),
-            num_frame_per_block=1,
         )
 
 
@@ -265,12 +266,19 @@ def test_causal_denoiser_commits_initial_and_generated_blocks_with_cache_rewinds
     )
     x = torch.arange(1 * 16 * 4 * 3 * 3, dtype=torch.float32).reshape(1, 16, 4, 3, 3)
     events: list[tuple[int, int, float]] = []
+    states: list[tuple[int, int, float, str]] = []
 
-    output = denoiser.sample_autoregressive(
+    output = DINKSTER_AR_VIDEO.build(num_frame_per_block=2)(
+        denoiser,
         x,
         (1.0, 0.5, 0.0),
-        SamplerInfo(Parameterization.FLOW, seed=23),
-        num_frame_per_block=2,
+        SamplerInfo(
+            Parameterization.FLOW,
+            seed=23,
+            on_state=lambda event: states.append(
+                (event.step, event.total, event.sigma, event.phase)
+            ),
+        ),
         on_step=lambda event: events.append((event.step, event.total, event.sigma)),
     )
 
@@ -292,3 +300,9 @@ def test_causal_denoiser_commits_initial_and_generated_blocks_with_cache_rewinds
         (3, (0.0,), 4),
     ]
     assert events == [(0, 2, 1.0), (0, 2, 0.5), (1, 2, 1.0), (1, 2, 0.5)]
+    assert states == [
+        (0, 2, 1.0, "pre_update"),
+        (0, 2, 0.5, "pre_update"),
+        (1, 2, 1.0, "pre_update"),
+        (1, 2, 0.5, "pre_update"),
+    ]

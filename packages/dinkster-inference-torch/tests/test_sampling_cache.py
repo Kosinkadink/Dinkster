@@ -49,7 +49,7 @@ class _UncondDenoiser(_Denoiser):
 
 
 class _AutoregressiveDenoiser(_Denoiser):
-    def sample_autoregressive(self, *_args: object, **_kwargs: object) -> torch.Tensor:
+    def prepare_autoregressive(self, *_args: object, **_kwargs: object) -> object:
         raise AssertionError("autoregressive sampling must not start")
 
 
