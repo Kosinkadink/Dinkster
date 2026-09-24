@@ -48,7 +48,6 @@ from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
 from .qwen_layer_placement import qwen_layer_placement
 from .qwen_text import QwenTextModel
 from .sampling_execution import (
-    CONTEXT_WINDOWS_UNSUPPORTED,
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
@@ -461,7 +460,6 @@ class AnimaDiffusionRuntime(SingleStreamSamplingRuntime):
         device=_anima_device,
         compute_dtype=_anima_compute_dtype,
         flow=True,
-        capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
         prepare_guidance=_prepare_anima_guidance,
     )
 

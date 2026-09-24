@@ -42,7 +42,6 @@ from .guidance import (
 )
 from .qwen_text import ZImageTextEncoder
 from .sampling_execution import (
-    CONTEXT_WINDOWS_UNSUPPORTED,
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
     SamplingDenoiserExecution,
@@ -417,7 +416,6 @@ class ZImageRuntime(SingleStreamSamplingRuntime):
         compute_dtype=_z_image_compute_dtype,
         flow=True,
         context_windows_option="window_plan",
-        capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
     )
 
     def __init__(

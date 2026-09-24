@@ -40,7 +40,6 @@ from .denoise import prepare_denoise_mask, to_batch
 from .operations import bound_compute_device, module_compute_device
 from .parameterizations import calculate_denoised, calculate_input
 from .sampling_execution import (
-    CONTEXT_WINDOWS_UNSUPPORTED,
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
@@ -1269,7 +1268,6 @@ class Trellis2DiffusionRuntime(DenseOrSparseSamplingRuntime):
         device_from_inputs=_trellis2_device_from_inputs,
         compute_dtype=_trellis2_compute_dtype,
         flow=True,
-        capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
     )
 
     def __init__(

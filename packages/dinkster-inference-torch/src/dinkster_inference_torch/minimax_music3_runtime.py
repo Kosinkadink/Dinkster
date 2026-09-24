@@ -45,7 +45,6 @@ from .operations import module_compute_device
 from .parameterizations import calculate_denoised
 from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
 from .sampling_execution import (
-    CONTEXT_WINDOWS_UNSUPPORTED,
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
     SamplingDenoiserExecution,
@@ -456,7 +455,6 @@ class MiniMaxMusic3DiffusionRuntime(SingleStreamSamplingRuntime):
         device=_minimax_music3_device,
         compute_dtype=_minimax_music3_compute_dtype,
         flow=True,
-        capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
     )
 
     def __init__(

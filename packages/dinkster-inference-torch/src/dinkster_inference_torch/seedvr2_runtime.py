@@ -38,7 +38,6 @@ from .guidance import (
 )
 from .operations import bound_compute_dtype, module_compute_device
 from .sampling_execution import (
-    CONTEXT_WINDOWS_UNSUPPORTED,
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
     SamplingDenoiserExecution,
@@ -329,7 +328,6 @@ class SeedVR2DiffusionRuntime(SingleStreamSamplingRuntime):
         device=_seedvr2_device,
         compute_dtype=_seedvr2_compute_dtype,
         flow=True,
-        capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
     )
 
     def __init__(

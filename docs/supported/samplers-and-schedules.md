@@ -79,9 +79,12 @@ H3 remain separate because their authenticated packed layouts cannot be
 lane-expanded without changing identity.
 TripoSplat structural latents can be sampled through both KSampler and custom sampling.
 KSampler and custom sampling install temporal or spatial context windows through
-the shared sampling pipeline for SD 1.5, SDXL, SDXL Refiner, MiniMax H3,
-LTX-Video, and Wan 2.1/2.2. Other families refuse context windows until their
-native latent layouts have execution coverage.
+the shared sampling pipeline. Real-layout execution coverage currently includes
+SD 1.5, SDXL, SDXL Refiner, MiniMax H3, LTX-Video, and Wan 2.1/2.2. Other
+families accept context windows for exploratory use but remain untested until
+later per-family validation finds and fixes any layout-specific issues. Flux2
+and Wan CausalAR refuse context windows; Wan base profiles also refuse structural
+conditioning that cannot be sliced without changing its meaning.
 The sampling runtime APIs accept denoise masks for dense image, video, audio,
 and multi-stream latents. Sparse sampling accepts masks on the same sparse
 support. Wan CausalAR does not accept denoise masks. Distributed execution does
