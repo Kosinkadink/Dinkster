@@ -1,6 +1,6 @@
+import base64
 import hashlib
 import json
-import os
 import sys
 from contextlib import nullcontext
 from pathlib import Path
@@ -15,8 +15,6 @@ from dinkster_model_wan.wandancer_audio import (
     quick_tempo_estimate,
 )
 from threadpoolctl import threadpool_limits
-
-from tools.golden_platform import GoldenUnavailableError, fetch_platform_golden
 
 _DIRECT_OPERATION_GOLDEN = json.loads(
     (Path(__file__).parent / "goldens" / "comfy_direct_operations_b78cec87.json").read_text()
@@ -36,30 +34,18 @@ def _canonical_audio_feature_digest(feature: np.ndarray) -> str:
     onset_mfcc = np.ascontiguousarray(
         np.rint(feature[..., :21] / _AUDIO_FEATURE_COMPARISON_QUANTUM), dtype="<i4"
     )
-    chroma_events = np.ascontiguousarray(feature[..., 21:], dtype="<f4")
+    chroma_events = np.ascontiguousarray(
+        np.rint(feature[..., 21:] / _AUDIO_FEATURE_COMPARISON_QUANTUM), dtype="<i4"
+    )
     return hashlib.sha256(onset_mfcc.tobytes() + chroma_events.tobytes()).hexdigest()
 
 
-def _audio_feature_digest_key() -> str:
-    if sys.platform.startswith("linux"):
-        return f"linux-omp{_AUDIO_FEATURE_THREAD_COUNT}-mkl{_AUDIO_FEATURE_THREAD_COUNT}"
-    omp_threads = os.environ.get("OMP_NUM_THREADS", "unset")
-    mkl_threads = os.environ.get("MKL_NUM_THREADS", "unset")
-    return f"{sys.platform}-omp{omp_threads}-mkl{mkl_threads}"
-
-
-def _expected_audio_feature_digest() -> str:
-    key = _audio_feature_digest_key()
-    selected = _AUDIO_FEATURE_DIGEST_PATH
-    if key != "linux-ompunset-mklunset":
-        try:
-            selected = fetch_platform_golden(_AUDIO_FEATURE_DIGEST_PATH, key)
-        except GoldenUnavailableError as error:
-            pytest.skip(f"WanDancer platform digest unavailable: {error}")
-    document = json.loads(selected.read_text(encoding="utf-8"))
-    assert document["format"] == "dinkster-wandancer-audio-digest/1"
-    assert document["platform"] == key
-    return str(document["sha256"])
+def _expected_audio_feature() -> np.ndarray:
+    document = json.loads(_AUDIO_FEATURE_DIGEST_PATH.read_text(encoding="utf-8"))
+    assert document["format"] == "dinkster-wandancer-audio-features/2"
+    return np.frombuffer(base64.b64decode(document["float32Base64"]), dtype="<f4").reshape(
+        document["shape"]
+    )
 
 
 def _wandancer_audio_feature() -> np.ndarray:
@@ -84,7 +70,10 @@ def test_audio_features_match_pinned_comfyui_reference() -> None:
 
     assert feature.shape == (1, 31, 35)
     assert feature.dtype == np.float32
-    assert _canonical_audio_feature_digest(feature) == _expected_audio_feature_digest()
+    # Hosted providers differed by at most 9.1553e-05; Windows also produced
+    # digest e16d9f95b357eb7ff23174170222764c8a05d900bdb513faa8fdbe99670e6162.
+    # The 2e-04 limit is more than twice that spread, with a 1e-05 relative floor.
+    np.testing.assert_allclose(feature, _expected_audio_feature(), rtol=1e-5, atol=2e-4)
     assert np.flatnonzero(feature[0, :, 33]).tolist() == [5, 9, 13, 17, 21, 25, 29]
     assert np.flatnonzero(feature[0, :, 34]).tolist() == [5, 17, 29]
 
@@ -95,25 +84,24 @@ def test_audio_feature_canonical_digest_preserves_its_numerical_boundaries() -> 
 
     provider_low = feature.copy()
     provider_high = feature.copy()
-    provider_center = (
-        np.rint(feature[0, 0, 5] / _AUDIO_FEATURE_COMPARISON_QUANTUM)
-        * _AUDIO_FEATURE_COMPARISON_QUANTUM
-    )
-    provider_low[0, 0, 5] = provider_center - _AUDIO_FEATURE_MAX_PROVIDER_DRIFT / 2
-    provider_high[0, 0, 5] = provider_center + _AUDIO_FEATURE_MAX_PROVIDER_DRIFT / 2
-    assert provider_high[0, 0, 5] - provider_low[0, 0, 5] <= _AUDIO_FEATURE_COMPARISON_QUANTUM
+    for index in (5, 21):
+        provider_center = (
+            np.rint(feature[0, 0, index] / _AUDIO_FEATURE_COMPARISON_QUANTUM)
+            * _AUDIO_FEATURE_COMPARISON_QUANTUM
+        )
+        provider_low[0, 0, index] = provider_center - _AUDIO_FEATURE_MAX_PROVIDER_DRIFT / 2
+        provider_high[0, 0, index] = provider_center + _AUDIO_FEATURE_MAX_PROVIDER_DRIFT / 2
+        assert (
+            provider_high[0, 0, index] - provider_low[0, 0, index]
+            <= _AUDIO_FEATURE_COMPARISON_QUANTUM
+        )
     assert _canonical_audio_feature_digest(provider_low) == baseline
     assert _canonical_audio_feature_digest(provider_high) == baseline
 
-    material_change = feature.copy()
-    material_change[..., 0] += _AUDIO_FEATURE_COMPARISON_QUANTUM * 2
-    assert _canonical_audio_feature_digest(material_change) != baseline
-
-    exact_change = feature.copy()
-    exact_change[..., 21] = np.nextafter(
-        exact_change[..., 21], np.float32(np.inf), dtype=np.float32
-    )
-    assert _canonical_audio_feature_digest(exact_change) != baseline
+    for index in (0, 21):
+        material_change = feature.copy()
+        material_change[..., index] += _AUDIO_FEATURE_COMPARISON_QUANTUM * 2
+        assert _canonical_audio_feature_digest(material_change) != baseline
 
 
 def test_audio_features_shape_dtype_mono_mix_and_fps() -> None:

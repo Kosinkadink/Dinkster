@@ -80,6 +80,7 @@ def _vault(tmp_path: Path) -> AssetVault:
 def test_birefnet_output_matches_pinned_comfyui_vector() -> None:
     golden = _golden()
     assert golden["baseline"] == "c67885b14556cf3e4e061862925282d403d09862"
+    assert golden["generationCpu"] == "AMD Ryzen 9 5950X 16-Core Processor"
     assert golden["modelBlake3"] == MODEL_DIGEST
     assert golden["modelSha256"] == MODEL_SHA256
     assert golden["numpy"] == "2.5.1"
@@ -98,7 +99,9 @@ def test_birefnet_output_matches_pinned_comfyui_vector() -> None:
         torch.set_num_threads(previous_threads)
     assert actual.dtype == np.float32
     assert actual.shape == (1, *expected.shape)
-    np.testing.assert_array_equal(actual[0], expected)
+    # Hosted CPU kernels differed by at most 1.13e-10; 2.3e-10 is twice that
+    # spread, with a 1e-05 relative floor for float32 model output.
+    np.testing.assert_allclose(actual[0], expected, rtol=1e-5, atol=2.3e-10)
 
 
 def test_preprocessing_matches_comfyui_byte_grid() -> None:

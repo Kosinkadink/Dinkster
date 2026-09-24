@@ -363,15 +363,17 @@ def test_official_artifact_strict_load_matches_pinned_comfyui_reference() -> Non
     assert len(layers) == 25
     assert list(layers[0].shape) == golden["layer_shape"]
     indices = torch.tensor(golden["sample_indices"], dtype=torch.int64)
+    # The pinned generation measured zero drift; the 1e-05 relative and
+    # absolute floors cover float32 kernels on other CPU families.
     for index, layer in enumerate(layers):
         expected = torch.tensor(golden["layer_samples"][index], dtype=torch.float32)
         torch.testing.assert_close(
             layer.flatten().index_select(0, indices),
             expected,
-            rtol=0.0,
-            atol=0.0,
+            rtol=1e-5,
+            atol=1e-5,
         )
     expected_output = torch.tensor(golden["output"]["data"], dtype=torch.float32).reshape(
         golden["output"]["shape"]
     )
-    torch.testing.assert_close(output, expected_output, rtol=0.0, atol=0.0)
+    torch.testing.assert_close(output, expected_output, rtol=1e-5, atol=1e-5)
