@@ -160,6 +160,14 @@ class ResidentConditioningCarrier:
         return fingerprint
 
 
+def conditioning(value: object, input_id: str) -> ConditioningCarrier:
+    """Admit the one native conditioning value form at a consumer boundary."""
+
+    if type(value) is not ConditioningCarrier:
+        raise TypeError(f"{input_id} must be a ConditioningCarrier")
+    return value
+
+
 def _canonical_json(value: object) -> bytes:
     return json.dumps(
         value,

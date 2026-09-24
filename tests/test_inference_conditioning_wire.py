@@ -33,6 +33,7 @@ from dinkster_inference import (
     TokenLayoutDescriptor,
     TokenSegmentDescriptor,
     canonical_conditioning_set,
+    conditioning,
     decode_conditioning_carrier,
     encode_conditioning_carrier,
     make_conditioning_carrier,
@@ -122,6 +123,16 @@ def _assert_code(code: str, action: Callable[[], object]) -> None:
         action()
     assert caught.value.code == code
     assert str(caught.value).startswith(f"conditioning-wire:{code}")
+
+
+def test_conditioning_accepts_only_the_canonical_carrier_form() -> None:
+    carrier = _carrier()
+
+    assert conditioning(carrier, "positive") is carrier
+    with pytest.raises(TypeError, match="positive must be a ConditioningCarrier"):
+        conditioning(ResidentConditioningCarrier(object()), "positive")
+    with pytest.raises(TypeError, match="negative must be a ConditioningCarrier"):
+        conditioning([[object(), {}]], "negative")
 
 
 def test_wrap_fingerprints_full_canonical_bytes_and_codec_replays_exactly() -> None:
