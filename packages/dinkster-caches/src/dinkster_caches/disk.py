@@ -43,6 +43,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
+from dinkster_values import GIBIBYTE
+
 if os.name == "nt":
     import msvcrt
 else:
@@ -60,7 +62,7 @@ from .wire import (
     iter_manifest_payloads,
 )
 
-DEFAULT_DISK_CACHE_BYTES = 10 * 1024**3
+DEFAULT_DISK_CACHE_BYTES = 10 * GIBIBYTE
 DEFAULT_MAX_BYTES = DEFAULT_DISK_CACHE_BYTES
 
 _ROOT_LOCKS_GUARD = threading.Lock()

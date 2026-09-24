@@ -12,6 +12,8 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 from dinkster_values import (
+    MEBIBYTE,
+    VIDEO_DECODE_WORKING_SET_LIMIT_BYTES,
     AudioWindowReader,
     annotate_image,
     append_audio_edit,
@@ -602,7 +604,7 @@ def disassemble_video(obj: object) -> dict[str, object]:
         if not isinstance(array, np.ndarray):
             array = _pixels(array, int(cast(int, probe["bit_depth"]) or 8), bool(probe["alpha"]))
         size += array.nbytes
-        if size > 512 * 1024 * 1024:
+        if size > VIDEO_DECODE_WORKING_SET_LIMIT_BYTES:
             raise ValueError("decoded video frames exceed the 512 MiB limit")
         arrays.append(cast(np.ndarray, array))
     if not arrays:
@@ -1004,7 +1006,7 @@ def save_video_stream(
     ):
         with open_video_source(video_source(value)) as handle:
             if kind == probe["container"] and not tags:
-                while chunk := handle.read(1024 * 1024):
+                while chunk := handle.read(MEBIBYTE):
                     destination.write(chunk)
                 return "." + kind, mime
             with (

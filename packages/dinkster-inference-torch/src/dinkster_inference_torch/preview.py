@@ -20,6 +20,7 @@ from dinkster_inference import (
     LATENT2RGB_PROVIDER,
     LATENT2RGB_WEBP_PROVIDER,
     LATENT2WAVEFORM_PROVIDER,
+    MEBIBYTE,
     EncodedPreviewAnimation,
     LatentDescriptor,
     PreviewClip,
@@ -453,7 +454,7 @@ def _splat_frame(splat: SplatTensors) -> PreviewFrame:
     # Nearest-wins z-buffer: pack (quantized depth, source index), take the
     # per-pixel minimum, then decode the winning index back to its color.
     pixel = row * size + column
-    quantized = np.clip((pixel_depth * 1024.0).astype(np.int64), 0, (1 << 20) - 1)
+    quantized = np.clip((pixel_depth * 1024.0).astype(np.int64), 0, MEBIBYTE - 1)
     key = (quantized << 32) | np.arange(pixel.size, dtype=np.int64)
     buffer = np.full(size * size, 1 << 62, np.int64)
     np.minimum.at(buffer, pixel, key)

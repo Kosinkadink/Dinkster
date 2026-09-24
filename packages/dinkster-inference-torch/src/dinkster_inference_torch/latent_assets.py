@@ -19,10 +19,10 @@ from dinkster_assets import (
     parse_latent_asset,
     valid_vae_hint,
 )
-from dinkster_inference import MultiStreamLatent
+from dinkster_inference import MEBIBYTE, MultiStreamLatent
 
-MAX_WORKFLOW_BYTES = 2 * 1024 * 1024
-MAX_PROMPT_BYTES = 1024 * 1024
+MAX_WORKFLOW_BYTES = 2 * MEBIBYTE
+MAX_PROMPT_BYTES = MEBIBYTE
 
 _TORCH_TO_SAFE = {
     "torch.float16": "F16",

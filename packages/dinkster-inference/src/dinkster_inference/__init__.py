@@ -5,6 +5,7 @@ schedulers and sampler descriptors, tokenization, checkpoint detection,
 quantization classification, assembly planning, and tiling geometry.
 """
 
+import dinkster_values as _values
 from dinkster_protocol import (
     ATTENTION_ROLES,
     AttentionCapabilityEvidence,
@@ -1842,6 +1843,13 @@ from .z_image import (
     z_image_pixel_layout,
 )
 from .z_image_token_layout import ZImageTokenPlan, plan_z_image_token_layout
+
+AIMDO_VBAR_PAGE_BYTES = _values.AIMDO_VBAR_PAGE_BYTES
+GIBIBYTE = _values.GIBIBYTE
+INT8_BACKWARD_TEMP_LIMIT_BYTES = _values.INT8_BACKWARD_TEMP_LIMIT_BYTES
+MEBIBYTE = _values.MEBIBYTE
+TRELLIS2_SPARSE_DECODE_ALIGNMENT_BYTES = _values.TRELLIS2_SPARSE_DECODE_ALIGNMENT_BYTES
+TRELLIS2_SPARSE_DECODE_FIXED_BYTES = _values.TRELLIS2_SPARSE_DECODE_FIXED_BYTES
 
 __all__ = [
     "AudioPreview",

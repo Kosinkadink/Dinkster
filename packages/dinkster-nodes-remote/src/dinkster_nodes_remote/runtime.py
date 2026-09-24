@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 import httpx
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    MEBIBYTE,
     AssetError,
     AssetRef,
     AssetVault,
@@ -452,7 +453,7 @@ class RemoteRuntime:
         try:
             while True:
                 _ensure_running()
-                chunk = await asyncio.to_thread(handle.read, 1024 * 1024)
+                chunk = await asyncio.to_thread(handle.read, MEBIBYTE)
                 if not chunk:
                     return
                 yield chunk

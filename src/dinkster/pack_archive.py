@@ -8,16 +8,17 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from blake3 import blake3
+from dinkster_values import MEBIBYTE
 from dinkster_workers import load_manifest
 
 MANIFEST_FILENAME = "dinkster-pack.toml"
 
-MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
-MAX_FILE_BYTES = 64 * 1024 * 1024
-MAX_EXPANDED_BYTES = 256 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 64 * MEBIBYTE
+MAX_FILE_BYTES = 64 * MEBIBYTE
+MAX_EXPANDED_BYTES = 256 * MEBIBYTE
 MAX_ENTRIES = 10_000
 MAX_PATH_BYTES = 512
-MAX_MANIFEST_BYTES = 1024 * 1024
+MAX_MANIFEST_BYTES = MEBIBYTE
 
 _SKIP_DIRS = frozenset(
     {

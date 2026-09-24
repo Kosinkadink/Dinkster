@@ -24,8 +24,9 @@ from typing import BinaryIO
 
 from aiohttp import web
 from dinkster_assets import open_verified
+from dinkster_values import MEBIBYTE
 
-CHUNK = 1 << 20  # streamed read size: bounded memory for any asset size
+CHUNK = MEBIBYTE  # streamed read size: bounded memory for any asset size
 
 
 def _open_sized(path: Path, digest: str) -> tuple[BinaryIO, int]:

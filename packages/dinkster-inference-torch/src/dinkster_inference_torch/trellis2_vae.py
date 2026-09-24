@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import torch
 import torch.nn.functional as F
 from dinkster_inference import (
+    GIBIBYTE,
     PBR_CHANNELS,
     SUBDIVISION_CHANNELS,
     SparseLatent,
@@ -65,7 +66,7 @@ def _neighbor_map(value: _Sparse, kernel_size: int, dilation: int) -> torch.Tens
     neighbors = torch.empty(
         (coordinates.shape[0], volume), dtype=torch.int32, device=value.feats.device
     )
-    chunk = max(1, min(coordinates.shape[0], int(0.5 * 1024**3 / (volume * 40))))
+    chunk = max(1, min(coordinates.shape[0], int(0.5 * GIBIBYTE / (volume * 40))))
     for start in range(0, coordinates.shape[0], chunk):
         end = min(start + chunk, coordinates.shape[0])
         points = coordinates[start:end, None, 1:].long() + offsets[None]
@@ -119,7 +120,7 @@ class Trellis2SparseConv3d(ResidencyRouted, torch.nn.Module):
         matrix = weight.reshape(weight.shape[0], -1).transpose(0, 1)
         bytes_per_row = volume * value.feats.shape[1] * value.feats.element_size()
         free = get_free_memory(value.feats.device).free_total
-        chunk_budget = max(0.25 * 1024**3, min(free * 0.2, 2.0 * 1024**3))
+        chunk_budget = max(0.25 * GIBIBYTE, min(free * 0.2, 2.0 * GIBIBYTE))
         chunk = max(1, min(rows, int(chunk_budget // max(bytes_per_row, 1))))
         for start in range(0, rows, chunk):
             end = min(start + chunk, rows)

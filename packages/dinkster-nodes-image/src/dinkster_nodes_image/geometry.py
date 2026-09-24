@@ -13,6 +13,7 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    MEBIBYTE,
     DynamicComboOption,
     DynamicComboSpec,
     InputSpec,
@@ -176,7 +177,7 @@ def _target_dimensions(
     elif target == "total_pixels":
         if not math.isfinite(megapixels) or megapixels <= 0:
             raise ValueError(f"megapixels must be finite and positive, got {megapixels}")
-        scale = math.sqrt(megapixels * 1024 * 1024 / (source_width * source_height))
+        scale = math.sqrt(megapixels * MEBIBYTE / (source_width * source_height))
         result = (
             max(
                 resolution_steps, round(source_width * scale / resolution_steps) * resolution_steps

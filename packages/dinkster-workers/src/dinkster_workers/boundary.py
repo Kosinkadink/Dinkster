@@ -59,6 +59,8 @@ from dinkster_protocol import (
 from dinkster_protocol.result_algebra import JsonLiteral
 from dinkster_schema import schema_from_wire, schema_to_wire
 from dinkster_values import (
+    CONVERSATION_CAS_BUDGET_BYTES,
+    WORKER_FRAME_HEADER_LIMIT_BYTES,
     BufferEncoding,
     EncodedPayload,
     ListPayload,
@@ -87,7 +89,7 @@ DEFAULT_CAS_THRESHOLD = 256 * 1024
 a network boundary: repeat crossings of the same bytes send a digest-only
 descriptor instead of the payload."""
 
-DEFAULT_CAS_BUDGET = 512 * 1024 * 1024
+DEFAULT_CAS_BUDGET = CONVERSATION_CAS_BUDGET_BYTES
 """Cap on payload bytes each side retains for conversation-scoped dedup.
 Once a codec's retained bytes reach this budget, further first-crossings
 still work - they just carry their bytes every time instead of becoming
@@ -112,7 +114,7 @@ v3: lazy-status hook frames and schema wire v16;
 v2: recursive list value descriptors (``elements``) and schema wire v2
 (recursive ``element`` type expressions)."""
 
-_MAX_HEADER_BYTES = 64 * 1024 * 1024
+_MAX_HEADER_BYTES = WORKER_FRAME_HEADER_LIMIT_BYTES
 
 
 class BoundaryError(Exception):

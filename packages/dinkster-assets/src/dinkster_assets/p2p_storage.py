@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, cast
 
+from dinkster_values import MEBIBYTE
+
 from .identity import CHUNK_SIZE, AssetError, new_hasher, require_digest
 from .integrity import AssetVerificationRecord, verification_record
 from .p2p_descriptor import (
@@ -38,7 +40,7 @@ P2P_PARTIAL_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
 _HEX = frozenset("0123456789abcdef")
 _RESUME_VERSION = 1
-_MAX_RESUME_BYTES = 16 * 1024 * 1024
+_MAX_RESUME_BYTES = 16 * MEBIBYTE
 _MAX_HEADER_BYTES = 100_000_000
 _MAX_GGUF_ITEMS = 1_000_000
 _MAX_GGUF_RANK = 4

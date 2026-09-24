@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from dinkster_inference import load_safetensors_header
+from dinkster_values import MEBIBYTE
 
 __all__ = [
     "LegacyCheckpointError",
@@ -98,7 +99,7 @@ def classify_weight_source(path: Path, logical_name: str | None = None) -> str:
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        for chunk in iter(lambda: handle.read(MEBIBYTE), b""):
             digest.update(chunk)
     return digest.hexdigest()
 

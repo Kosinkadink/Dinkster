@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dinkster_schema import LOG_LEVEL_ENV, LOG_OVERRIDES_ENV
+from dinkster_values import GIBIBYTE, MEBIBYTE
 
 from .accelerator import ACCELERATOR_ENV
 from .egress import EGRESS_PROXY_ENV, EgressProxy
@@ -116,7 +117,7 @@ _GPU_ENV_PASSTHROUGH: tuple[str, ...] = (
     "TORCH_CUDA_ARCH_LIST",
 )
 
-DEFAULT_WORKER_FSIZE_LIMIT_BYTES = 64 * 1024**3
+DEFAULT_WORKER_FSIZE_LIMIT_BYTES = 64 * GIBIBYTE
 DEFAULT_WORKER_PROCESS_LIMIT = 4096
 _WORKER_ENV_PATH = "/run/dinkster/worker-env.json"
 _PROBE_ENV_PATH = "/run/dinkster/probe-env.json"
@@ -548,7 +549,7 @@ def build_bwrap_command(
 #: lost) and max bytes any file write may produce (the probe's only
 #: legitimate output is its stdout JSON report).
 PROBE_CPU_LIMIT_S = 300
-PROBE_FSIZE_LIMIT_BYTES = 64 * 1024 * 1024
+PROBE_FSIZE_LIMIT_BYTES = 64 * MEBIBYTE
 
 #: python -c stub that installs the environment and rlimits, then runs the
 #: probe in the same interpreter so Python startup cannot inject variables

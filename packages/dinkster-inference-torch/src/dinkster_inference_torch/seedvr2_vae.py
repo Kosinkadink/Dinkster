@@ -9,6 +9,7 @@ from typing import Literal, TypeAlias, cast
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from dinkster_inference import GIBIBYTE
 from torch import Tensor
 
 from .attention import AttentionKernel, select_attention
@@ -449,7 +450,7 @@ def causal_norm_wrapper(norm_layer: nn.Module, x: torch.Tensor) -> torch.Tensor:
         if x.ndim == 5:
             b, c, t, h, w = x.shape
             x = x.transpose(1, 2).reshape(b * t, c, h, w)
-            memory_occupy = x.numel() * x.element_size() / 1024**3
+            memory_occupy = x.numel() * x.element_size() / GIBIBYTE
             if isinstance(norm_layer, nn.GroupNorm) and memory_occupy > get_norm_limit():
                 num_chunks = min(
                     BYTEDANCE_GN_CHUNKS_FP16 if x.element_size() == 2 else BYTEDANCE_GN_CHUNKS_FP32,
@@ -619,7 +620,7 @@ class InflatedCausalConv3d(ResidencyRouted, nn.Conv3d):
             (padding[4] + padding[5], padding[2] + padding[3], padding[0] + padding[1])
         ):
             shape[-3 + i] += pad_sum
-        memory_occupy = math.prod(shape) * x.element_size() / 1024**3  # GiB
+        memory_occupy = math.prod(shape) * x.element_size() / GIBIBYTE  # GiB
         if memory_occupy < self.memory_limit or split_dim == x.ndim:
             x_concat = x
             if prev_cache is not None:

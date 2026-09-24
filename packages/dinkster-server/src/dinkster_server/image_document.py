@@ -29,6 +29,7 @@ from dinkster_image_document import (
     validate_document,
 )
 from dinkster_image_document.format import MAX_DOCUMENT_BYTES, canonical_json
+from dinkster_values import IMAGE_DOCUMENT_DECODE_RESERVATION_LIMIT_BYTES
 from PIL import Image
 
 from .auth import LOCAL_PRINCIPAL, principal_for
@@ -43,7 +44,7 @@ from .library import (
 MEDIA_TYPE = IMAGE_DOCUMENT_MEDIA_TYPE
 _MAX_DOCUMENT_BYTES = MAX_DOCUMENT_BYTES
 _DECODE_BYTES_PER_PIXEL = {"image/png": 4, "image/jpeg": 10, "image/webp": 16}
-_MAX_DECODE_RESERVED_BYTES = 2 * 1024 * 1024 * 1024
+_MAX_DECODE_RESERVED_BYTES = IMAGE_DOCUMENT_DECODE_RESERVATION_LIMIT_BYTES
 _canonical_json = canonical_json
 
 __all__ = [

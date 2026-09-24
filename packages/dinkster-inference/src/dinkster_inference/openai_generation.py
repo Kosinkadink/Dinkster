@@ -21,6 +21,7 @@ from typing import Any, Self, cast
 from urllib.parse import urlsplit
 
 import aiohttp
+from dinkster_values import MEBIBYTE
 
 from .generation import (
     GenerationEvent,
@@ -38,9 +39,9 @@ from .generation import (
 from .registry import validate_registry_id
 
 _MAX_ERROR_BYTES = 64 * 1024
-_MAX_JSON_BYTES = 16 * 1024 * 1024
-_MAX_SSE_EVENT_CHARS = 1024 * 1024
-_MAX_COMPLETION_CHARS = 16 * 1024 * 1024
+_MAX_JSON_BYTES = 16 * MEBIBYTE
+_MAX_SSE_EVENT_CHARS = MEBIBYTE
+_MAX_COMPLETION_CHARS = 16 * MEBIBYTE
 _CANCEL_POLL_SECONDS = 0.05
 _REDACTED = "[REDACTED]"
 

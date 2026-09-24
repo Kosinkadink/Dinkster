@@ -45,6 +45,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
+from dinkster_values import MEBIBYTE
+
 _ROCM_INDEX_URL = "https://repo.amd.com/rocm/whl-multi-arch/"
 _ROCM_TORCH_REQUIREMENT = "torch[device-all]==2.12.0+rocm7.14.0"
 _XPU_INDEX_URL = "https://download.pytorch.org/whl/xpu"
@@ -816,7 +818,7 @@ BENCHMARK_RESIDENCY_REGIMES = ("open", "constrained")
 #: (process on Windows, machine on WSL, off elsewhere).
 BENCHMARK_RESIDENCY_SPILL_SCOPES = ("process", "machine", "off")
 
-_MIB = 1024 * 1024
+_MIB = MEBIBYTE
 
 _REQUIRED_BENCHMARK_CHECKS = (
     "load",

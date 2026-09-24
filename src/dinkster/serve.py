@@ -114,6 +114,7 @@ from dinkster_server import (
     validate_comfy_args,
 )
 from dinkster_server.image_document import InvalidDocument, validate_document
+from dinkster_values import MEBIBYTE
 from dinkster_workers import (
     PackManifest,
     SandboxPolicy,
@@ -1515,7 +1516,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         dtype_policy_source = "cli"
 
-    reserve_vram = cast("int", persisted_settings.get("memory-headroom", 256 * 1024**2))
+    reserve_vram = cast("int", persisted_settings.get("memory-headroom", 256 * MEBIBYTE))
     reserve_source: SettingsSource = (
         "persisted" if "memory-headroom" in persisted_settings else "default"
     )

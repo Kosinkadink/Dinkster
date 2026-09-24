@@ -17,12 +17,14 @@ from pathlib import Path
 from typing import Literal, Protocol, cast
 from urllib.parse import urlsplit
 
+from dinkster_values import MEBIBYTE
+
 from .fetch import FetchResult
 from .identity import AssetError, require_digest
 
 PUBLIC_ACQUISITION_RECEIPT_VERSION = 1
 PUBLIC_ACQUISITION_MAX_RECEIPTS = 100_000
-PUBLIC_ACQUISITION_MAX_BYTES = 64 * 1024 * 1024
+PUBLIC_ACQUISITION_MAX_BYTES = 64 * MEBIBYTE
 PUBLIC_ACQUISITION_MAX_URL = 4096
 
 PublicSourceType = Literal[

@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import Any, BinaryIO, Protocol, cast
 
 from dinkster_assets import AssetError, AssetRef, classify_media, digest_bytes
+from dinkster_values import GIBIBYTE
 
 from .bootstrap import initialize_comfy_paths
 
 _CATEGORIES = frozenset(("input", "output", "temp"))
-_MAX_SOURCE_BYTES = 1024 * 1024 * 1024
+_MAX_SOURCE_BYTES = GIBIBYTE
 _HEX = frozenset("0123456789abcdef")
 _DIRECTORY_FLAGS = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 _FILE_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)

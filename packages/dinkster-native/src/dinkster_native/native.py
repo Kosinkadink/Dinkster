@@ -86,6 +86,8 @@ from dinkster_values import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    GIBIBYTE,
+    MEBIBYTE,
     TypeRegistry,
     register_curve_type,
     register_model3d_type,
@@ -1413,7 +1415,7 @@ def _drop_path_reload_factories(*objects: object) -> None:
             patcher.cached_patcher_init = None
 
 
-_LORA_SD_CACHE_BUDGET = 4 * 1024**3
+_LORA_SD_CACHE_BUDGET = 4 * GIBIBYTE
 """v1's LoraLoader keeps ONE parsed state dict per live node instance,
 for the node's whole lifetime - a chain of N loaders keeps N parsed
 loras. Dinkster nodes are stateless, so the worker keeps a digest-keyed
@@ -3490,7 +3492,7 @@ class ResolutionSelector(Node):
         if type(multiple) is not int or not 8 <= multiple <= 128:
             raise ValueError("multiple must be an integer in [8, 128]")
         width_ratio, height_ratio = ratio
-        scale = math.sqrt(megapixels * 1024 * 1024 / (width_ratio * height_ratio))
+        scale = math.sqrt(megapixels * MEBIBYTE / (width_ratio * height_ratio))
         width = round(width_ratio * scale / multiple) * multiple
         height = round(height_ratio * scale / multiple) * multiple
         return cls.outputs(width=width, height=height)
