@@ -313,16 +313,17 @@ def test_foundation_comfy_alias_records() -> None:
             "tests/test_numeric_stdlib.py::test_foundation_comfy_alias_behavior",
         ]
 
-    for node_type in (
-        "dinkster.math.expression",
-        "dinkster.value.compare",
-        "dinkster.value.select",
-        "dinkster.bool.logic",
-        "dinkster.value.clamp",
-        "dinkster.value.remap",
-        "dinkster.value.random",
-    ):
-        assert native_schemas[node_type].aliases == ()
+    expected_aliases = {
+        "dinkster.math.expression": ("ComfyMathExpression",),
+        "dinkster.value.compare": (),
+        "dinkster.value.select": ("ComfySwitchNode",),
+        "dinkster.bool.logic": (),
+        "dinkster.value.clamp": (),
+        "dinkster.value.remap": (),
+        "dinkster.value.random": (),
+    }
+    for node_type, aliases in expected_aliases.items():
+        assert native_schemas[node_type].aliases == aliases
 
 
 def test_foundation_comfy_alias_behavior() -> None:

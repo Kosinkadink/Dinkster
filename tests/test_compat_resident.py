@@ -422,7 +422,12 @@ def test_media_image_loader_owns_legacy_alias_outside_compat() -> None:
     assert not hasattr(dinkster_compat_comfy, "SaveImage")
     schema = LoadImage.schema()
     assert LoadImage not in NATIVE_NODES
-    assert MEDIA_IO_CLAIMED_V1_NAMES == ("LoadImage", "SaveImage")
+    assert MEDIA_IO_CLAIMED_V1_NAMES == (
+        "LoadImage",
+        "SaveImage",
+        "CreateVideo",
+        "SaveVideo",
+    )
     assert schema.node_type == "dinkster.load_image"
     assert schema.aliases == ("LoadImage",)
     assert schema.inputs[0].type == TypeExpr.asset_of(TypeExpr.concrete("dinkster.image"))

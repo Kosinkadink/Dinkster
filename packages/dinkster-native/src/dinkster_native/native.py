@@ -4069,6 +4069,8 @@ STD_CLAIMED_V1_NAMES: tuple[str, ...] = (
     "PrimitiveStringMultiline",
     "PrimitiveBoolean",
     "CreateList",
+    "ComfyMathExpression",
+    "ComfySwitchNode",
 )
 
 # The media pack owns these native IDs; compat retains only their legacy prompt
@@ -4076,6 +4078,8 @@ STD_CLAIMED_V1_NAMES: tuple[str, ...] = (
 MEDIA_IO_CLAIMED_V1_NAMES: tuple[str, ...] = (
     "LoadImage",
     "SaveImage",
+    "CreateVideo",
+    "SaveVideo",
 )
 
 IMAGE_CLAIMED_V1_NAMES: tuple[str, ...] = ("ResizeImageMaskNode",)
