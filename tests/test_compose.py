@@ -1440,11 +1440,11 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:136426543185952dec319b9af35009b28eb1fb1d0b4386c001056c46478eb77a",
+            "blake3:97cd12cdf3bebfb48e3fdaaccfd6a363402b17bb08ad0cfed04e6d3ff9508fc4",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:d315a20fe153c56a35271b49ba72fe172a617120eaafd6ca2802df60744b01d1",
+            "blake3:f15cd65d893a9995326a097f4da27c742aecfcccdd8998b112010a1f33db8beb",
         ),
         (
             "dinkster-nodes-image",

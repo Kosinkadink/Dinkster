@@ -6858,6 +6858,66 @@
       "schemaVersion": 1,
       "version": 1
     },
+    "comfy.ComfySwitchNode": {
+      "aliases": [
+        "ComfySwitchNode"
+      ],
+      "category": "comfy/utilities/logic",
+      "description": "",
+      "displayName": "If/Else Switch",
+      "idempotent": true,
+      "interface": [
+        {
+          "id": "switch",
+          "required": true,
+          "role": "input",
+          "type": {
+            "kind": "concrete",
+            "types": [
+              "core.boolean"
+            ]
+          }
+        },
+        {
+          "id": "on_false",
+          "lazy": true,
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "variable",
+            "templateId": "switch"
+          }
+        },
+        {
+          "id": "on_true",
+          "lazy": true,
+          "required": false,
+          "role": "input",
+          "type": {
+            "kind": "variable",
+            "templateId": "switch"
+          }
+        },
+        {
+          "id": "output",
+          "role": "output",
+          "type": {
+            "kind": "variable",
+            "templateId": "switch"
+          }
+        }
+      ],
+      "nodeType": "comfy.ComfySwitchNode",
+      "schemaVersion": 1,
+      "selector": {
+        "branches": {
+          "false": "on_false",
+          "true": "on_true"
+        },
+        "input": "switch"
+      },
+      "version": 1
+    },
     "comfy.ConditioningAverage": {
       "aliases": [
         "ConditioningAverage"
@@ -72179,7 +72239,6 @@
     }
   },
   "skipped": {
-    "ComfySwitchNode": "ComfySwitchNode: V3 input 'on_false' uses unsupported lazy semantics",
     "Load3D": "Load3D: input 'model_file' file_upload/model sources are not supported",
     "Load3DAdvanced": "Load3DAdvanced: input 'model_file' file_upload/model sources are not supported",
     "Painter": "Painter: input 'mask' source upload cannot declare an ambient default"

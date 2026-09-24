@@ -383,6 +383,7 @@ class MathExpression(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.math.expression",
+            aliases=("ComfyMathExpression",),
             display_name="Math Expression",
             category="math",
             description=f"Deterministic scalar expression grammar v{EXPRESSION_GRAMMAR_VERSION}.",

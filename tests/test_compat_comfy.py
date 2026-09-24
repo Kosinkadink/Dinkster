@@ -3160,6 +3160,8 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
             return {
                 "required": {
                     "switch": ("BOOLEAN", {}),
+                },
+                "optional": {
                     "on_false": (
                         "COMFY_MATCHTYPE_V3",
                         {"template": template, "lazy": True},
@@ -3168,7 +3170,7 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
                         "COMFY_MATCHTYPE_V3",
                         {"template": template, "lazy": True},
                     ),
-                }
+                },
             }
 
         @classmethod
@@ -3186,6 +3188,7 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
     schema = node_class.schema()
     assert schema.selector == SelectorSpec("switch", {"false": "on_false", "true": "on_true"})
     assert [spec.lazy for spec in schema.inputs] == [False, True, True]
+    assert [spec.required for spec in schema.inputs] == [True, False, False]
 
     registry = TypeRegistry()
     register_core_types(registry)

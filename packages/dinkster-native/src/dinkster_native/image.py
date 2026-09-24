@@ -46,6 +46,9 @@ per the codec's layout contract), so ``comfy.MASK`` and ``dinkster.mask``
 are one value type at the boundary; only the host rendition differs
 (render_mask_png)."""
 
+IMAGE_TYPE_EQUIVALENCE_PROVIDER = "dinkster.image-array-type-equivalence@1"
+"""Stable identity for the shared Comfy/native image and mask byte contract."""
+
 
 def _decode_torch(data: bytes) -> object:
     """npy bytes -> torch tensor, the runtime form v1 nodes expect."""
@@ -67,6 +70,20 @@ def register_image_type(registry: TypeRegistry, type_id: str) -> None:
         validate_encoded=validate_image_encoded,
         validate_encoded_buffer=validate_image_encoded,
     )
+
+
+def register_image_type_equivalences(registry: TypeRegistry) -> None:
+    """Bind Comfy and native spellings after their shared codecs exist."""
+    for compat_type, native_type in (
+        ("comfy.IMAGE", "dinkster.image"),
+        ("comfy.MASK", "dinkster.mask"),
+    ):
+        if compat_type in registry and native_type in registry:
+            registry.register_type_equivalence(
+                compat_type,
+                native_type,
+                provider_id=IMAGE_TYPE_EQUIVALENCE_PROVIDER,
+            )
 
 
 def _to_torch(array: object) -> object:

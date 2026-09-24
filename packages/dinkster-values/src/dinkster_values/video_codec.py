@@ -280,8 +280,6 @@ def _components(obj: object) -> dict[str, object]:
         or (images.dtype.kind not in "fiu" and storage_dtype(images) != "bf16")
     ):
         raise ValueError("VIDEO images require numeric [B,H,W,3|4] layout")
-    if images.nbytes > 512 * 1024 * 1024:
-        raise ValueError("VIDEO images exceed 512 MiB")
     finite = (
         (images[BFLOAT16_FIELD] & 0x7F80) != 0x7F80
         if storage_dtype(images) == "bf16"
@@ -445,7 +443,7 @@ def _pack_video(
             if component is None:
                 continue
             data = encoder(component)
-            if len(data) > (512 if key == "images" else 256) * 1024 * 1024:
+            if key == "audio" and len(data) > 256 * 1024 * 1024:
                 raise ValueError(f"VIDEO {key} component exceeds its encoded size limit")
             metadata = dict(meta(component))
             metadata.pop(COST_META_KEY, None)
@@ -606,7 +604,7 @@ def _unpack_video(
             if descriptor.get("codec") != key:
                 raise ValueError("VIDEO component codec mismatch")
             data = take(descriptor)
-            if len(data) > (512 if key == "images" else 256) * 1024 * 1024:
+            if key == "audio" and len(data) > 256 * 1024 * 1024:
                 raise ValueError("VIDEO component exceeds its size limit")
             shape = _validate_array_chunk(data, descriptor["meta"], audio=key == "audio")
             if key == "images" and _component_probe(components, shape) != wire["probe"]:

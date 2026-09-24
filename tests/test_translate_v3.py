@@ -882,16 +882,18 @@ def test_direct_accept_all_inputs_lazy_and_rawlink_stay_classified() -> None:
 
     template = FakeMatchTemplate("T", [FakeComfyType("*")])
     switch = FakeInput("switch", "BOOLEAN")
-    off = FakeInput("on_false", "COMFY_MATCHTYPE_V3", template=template)
-    on = FakeInput("on_true", "COMFY_MATCHTYPE_V3", template=template)
+    off = FakeInput("on_false", "COMFY_MATCHTYPE_V3", template=template, optional=True)
+    on = FakeInput("on_true", "COMFY_MATCHTYPE_V3", template=template, optional=True)
     off.lazy = on.lazy = True
     switch_schema = FakeSchema(
         "ComfySwitchNode",
         inputs=[switch, off, on],
         outputs=[FakeOutput("COMFY_MATCHTYPE_V3", template=template)],
     )
-    assert translate(switch_schema).selector is not None
-    on.optional = True
+    translated_switch = translate(switch_schema)
+    assert translated_switch.selector is not None
+    assert [input_spec.required for input_spec in translated_switch.inputs] == [True, False, False]
+    on.lazy = False
     with pytest.raises(CompatError, match="unsupported lazy semantics"):
         translate(switch_schema)
 

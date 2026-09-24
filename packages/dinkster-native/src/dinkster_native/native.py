@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import math
 import os
 import sys
 import threading
@@ -93,7 +94,11 @@ from dinkster_workers import current_execution_context
 
 from .audio import register_audio_type
 from .devices import comfy_resident_meta
-from .image import register_image_asset_providers, register_image_type
+from .image import (
+    register_image_asset_providers,
+    register_image_type,
+    register_image_type_equivalences,
+)
 from .latent import register_latent_type
 from .native_residency import select_intermediate_device
 from .pool import default_pool
@@ -110,6 +115,16 @@ FLOAT = TypeExpr.concrete(CORE_FLOAT)
 STRING = TypeExpr.concrete(CORE_STRING)
 COMBO = TypeExpr.concrete(CORE_COMBO)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
+_ASPECT_RATIOS = {
+    "1:1 (Square)": (1, 1),
+    "2:3 (Portrait Photo)": (2, 3),
+    "3:2 (Photo)": (3, 2),
+    "3:4 (Portrait Standard)": (3, 4),
+    "4:3 (Standard)": (4, 3),
+    "9:16 (Portrait Widescreen)": (9, 16),
+    "16:9 (Widescreen)": (16, 9),
+    "21:9 (Ultrawide)": (21, 9),
+}
 MODEL = TypeExpr.concrete(comfy_type_id("MODEL"))
 CLIP = TypeExpr.concrete(comfy_type_id("CLIP"))
 CLIP_VISION = TypeExpr.concrete(comfy_type_id("CLIP_VISION"))
@@ -3382,6 +3397,179 @@ class MiniMaxH3REF2VAConditioning(Node):
         raise RuntimeError("MiniMax H3 conditioning requires the native execution arm")
 
 
+class MiniMaxH3ImageToVideo(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.minimax_h3_image_to_video",
+            display_name="MiniMax H3 Image to Video",
+            category="minimax h3/conditioning",
+            inputs=(
+                InputSpec("clip", DINKSTER_CLIP),
+                InputSpec("vae", DINKSTER_VAE),
+                InputSpec("prompt", STRING, widget=StringWidget(multiline=True)),
+                InputSpec(
+                    "width", INT, default=1344, widget=NumberWidget(min=32, max=16384, step=32)
+                ),
+                InputSpec(
+                    "height", INT, default=768, widget=NumberWidget(min=32, max=16384, step=32)
+                ),
+                InputSpec(
+                    "length", INT, default=124, widget=NumberWidget(min=5, max=3600, step=17)
+                ),
+                InputSpec("first_frame", IMAGE, required=False, default=None),
+                InputSpec("last_frame", IMAGE, required=False, default=None),
+            ),
+            outputs=(
+                OutputSpec("positive", DINKSTER_CONDITIONING),
+                OutputSpec("latent", DINKSTER_LATENT),
+            ),
+            aliases=("MiniMaxH3ImageToVideo",),
+            dispatch_affinity="native",
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        clip: object,
+        vae: object,
+        prompt: str,
+        width: int,
+        height: int,
+        length: int,
+        first_frame: object = None,
+        last_frame: object = None,
+    ) -> Mapping[str, object]:
+        raise RuntimeError("MiniMax H3 image-to-video requires the native execution arm")
+
+
+class ResolutionSelector(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.resolution_selector",
+            display_name="Resolution Selector",
+            category="utilities",
+            inputs=(
+                InputSpec(
+                    "aspect_ratio",
+                    COMBO,
+                    default="1:1 (Square)",
+                    widget=ComboWidget(options=tuple(_ASPECT_RATIOS)),
+                ),
+                InputSpec(
+                    "megapixels",
+                    FLOAT,
+                    default=1.0,
+                    widget=NumberWidget(min=0.1, max=16.0, step=0.1),
+                ),
+                InputSpec(
+                    "multiple",
+                    INT,
+                    default=8,
+                    widget=NumberWidget(min=8, max=128, step=4),
+                    advanced=True,
+                ),
+            ),
+            outputs=(OutputSpec("width", INT), OutputSpec("height", INT)),
+            aliases=("ResolutionSelector",),
+        )
+
+    @classmethod
+    def execute(
+        cls, *, aspect_ratio: str, megapixels: float, multiple: int
+    ) -> Mapping[str, object]:
+        ratio = _ASPECT_RATIOS.get(aspect_ratio)
+        if ratio is None:
+            raise ValueError(f"unknown aspect ratio {aspect_ratio!r}")
+        if type(megapixels) not in (int, float) or not math.isfinite(megapixels):
+            raise TypeError("megapixels must be a finite number")
+        if not 0.1 <= megapixels <= 16.0:
+            raise ValueError("megapixels must be in [0.1, 16.0]")
+        if type(multiple) is not int or not 8 <= multiple <= 128:
+            raise ValueError("multiple must be an integer in [8, 128]")
+        width_ratio, height_ratio = ratio
+        scale = math.sqrt(megapixels * 1024 * 1024 / (width_ratio * height_ratio))
+        width = round(width_ratio * scale / multiple) * multiple
+        height = round(height_ratio * scale / multiple) * multiple
+        return cls.outputs(width=width, height=height)
+
+
+class MiniMaxH3ReferenceToVideo(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.minimax_h3_reference_to_video",
+            display_name="MiniMax H3 Reference to Video",
+            category="minimax h3/conditioning",
+            inputs=(
+                InputSpec("clip", DINKSTER_CLIP),
+                InputSpec("vae", DINKSTER_VAE, required=False, default=None),
+                InputSpec("audio_vae", DINKSTER_VAE, required=False, default=None),
+                InputSpec("prompt", STRING, widget=StringWidget(multiline=True)),
+                InputSpec(
+                    "width", INT, default=1344, widget=NumberWidget(min=32, max=16384, step=32)
+                ),
+                InputSpec(
+                    "height", INT, default=768, widget=NumberWidget(min=32, max=16384, step=32)
+                ),
+                InputSpec(
+                    "length", INT, default=124, widget=NumberWidget(min=5, max=3600, step=17)
+                ),
+                InputSpec(
+                    "ref_image_size",
+                    COMBO,
+                    default="match",
+                    widget=ComboWidget(options=("match", "max")),
+                ),
+            ),
+            input_families=(
+                InputFamilySpec(
+                    "ref_images", IMAGE, min_members=0, max_members=9, member_prefix="ref_image_"
+                ),
+                InputFamilySpec(
+                    "ref_videos", IMAGE, min_members=0, max_members=3, member_prefix="ref_video_"
+                ),
+                InputFamilySpec(
+                    "ref_video_audios",
+                    AUDIO,
+                    min_members=0,
+                    max_members=3,
+                    member_prefix="ref_video_audio_",
+                ),
+                InputFamilySpec(
+                    "ref_audios", AUDIO, min_members=0, max_members=3, member_prefix="ref_audio_"
+                ),
+            ),
+            outputs=(
+                OutputSpec("positive", DINKSTER_CONDITIONING),
+                OutputSpec("latent", DINKSTER_LATENT),
+            ),
+            aliases=("MiniMaxH3ReferenceToVideo",),
+            dispatch_affinity="native",
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        clip: object,
+        prompt: str,
+        width: int,
+        height: int,
+        length: int,
+        ref_image_size: str,
+        vae: object = None,
+        audio_vae: object = None,
+        ref_images: Mapping[str, object],
+        ref_videos: Mapping[str, object],
+        ref_video_audios: Mapping[str, object],
+        ref_audios: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        raise RuntimeError("MiniMax H3 reference-to-video requires the native execution arm")
+
+
 class MiniMaxH3AddGuide(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -3825,6 +4013,9 @@ NATIVE_NODES: tuple[type[Node], ...] = (
     MiniMaxH3T2VAConditioning,
     MiniMaxH3FL2VAConditioning,
     MiniMaxH3REF2VAConditioning,
+    MiniMaxH3ImageToVideo,
+    MiniMaxH3ReferenceToVideo,
+    ResolutionSelector,
     MiniMaxH3AddGuide,
     MiniMaxH3MotionContext,
     MiniMaxH3AVEncode,
@@ -3878,6 +4069,8 @@ STD_CLAIMED_V1_NAMES: tuple[str, ...] = (
     "PrimitiveStringMultiline",
     "PrimitiveBoolean",
     "CreateList",
+    "ComfyMathExpression",
+    "ComfySwitchNode",
 )
 
 # The media pack owns these native IDs; compat retains only their legacy prompt
@@ -3885,6 +4078,8 @@ STD_CLAIMED_V1_NAMES: tuple[str, ...] = (
 MEDIA_IO_CLAIMED_V1_NAMES: tuple[str, ...] = (
     "LoadImage",
     "SaveImage",
+    "CreateVideo",
+    "SaveVideo",
 )
 
 IMAGE_CLAIMED_V1_NAMES: tuple[str, ...] = ("ResizeImageMaskNode",)
@@ -4178,6 +4373,7 @@ def register_native_types(registry: TypeRegistry) -> None:
         register_image_type(registry, mask_type)
     if "dinkster.mask" not in registry:
         register_image_type(registry, "dinkster.mask")
+    register_image_type_equivalences(registry)
     # Typed assets: asset<comfy.IMAGE> decode + comfy.IMAGE batch merge,
     # torch-producing worker halves of the host registrations in
     # comfy_compose.register_comfy_host_types (same provider identities).

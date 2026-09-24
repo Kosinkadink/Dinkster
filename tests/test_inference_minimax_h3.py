@@ -101,7 +101,7 @@ def h3_shapes(prefix: str = "", *, mlp_time_embedding: bool = False) -> dict[str
         shapes["time_embedder.proj_in.weight"] = (5376, 256)
         shapes["time_embedder.proj_out.weight"] = (2688, 5376)
     else:
-        shapes["adaln_t_table"] = (1000, 2688)
+        shapes["adaln_t_table"] = (1025, 8)
     for index in range(50):
         shapes[f"blocks.{index}.attn.q_norm.weight"] = (128,)
     return {prefix + key: shape for key, shape in shapes.items()}

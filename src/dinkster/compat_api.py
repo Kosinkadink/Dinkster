@@ -226,6 +226,38 @@ def _input_adapters(
     return adapters
 
 
+def _reachable_prompt(
+    prompt: Mapping[str, Any], schemas: Mapping[str, NodeSchema]
+) -> Mapping[str, Any]:
+    index = build_alias_index(schemas)
+    pending = [
+        node_id
+        for node_id, entry in prompt.items()
+        if isinstance(entry, Mapping)
+        and isinstance(entry.get("class_type"), str)
+        and len(candidates := index.get(entry["class_type"], ())) == 1
+        and schemas[candidates[0]].output_node
+    ]
+    if not pending:
+        return prompt
+    reachable = set(pending)
+    while pending:
+        entry = prompt.get(pending.pop())
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("inputs"), Mapping):
+            continue
+        for value in entry["inputs"].values():
+            if (
+                isinstance(value, list)
+                and len(value) == 2
+                and isinstance(value[0], str)
+                and value[0] in prompt
+                and value[0] not in reachable
+            ):
+                reachable.add(value[0])
+                pending.append(value[0])
+    return {node_id: entry for node_id, entry in prompt.items() if node_id in reachable}
+
+
 async def handle_comfy_prompt(request: web.Request) -> web.Response:
     state = request.app[STATE_KEY]
     principal = principal_for(request)
@@ -258,7 +290,7 @@ async def handle_comfy_prompt(request: web.Request) -> web.Response:
         for source_name in ambiguous_skips:
             skipped_classes.pop(source_name, None)
         translation = translate_prompt(
-            prompt,
+            _reachable_prompt(prompt, state.schemas),
             state.schemas,
             input_adapters=_input_adapters(request.app, state.schemas),
             skipped_classes=skipped_classes,

@@ -666,7 +666,10 @@ def comfy_compat_specs(
     # corresponding parent-visible index.
     vram_budgets = cuda_vram_budgets(memory_budgets or {})
 
-    comfy_info = _COMFY_INFO
+    comfy_info = replace(
+        _COMFY_INFO,
+        comfy_aliases=load_manifest(find_compat_manifest()).comfy_aliases,
+    )
     core_env = dict(base_env)
     if asset_vault:
         core_env["DINKSTER_ASSET_VAULT"] = str(asset_vault)

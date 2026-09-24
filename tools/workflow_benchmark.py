@@ -690,7 +690,12 @@ def parse_arguments(system: str, argv: Sequence[str] | None = None) -> argparse.
         "--seed-input", action="append", required=True, help="literal NODE_ID.INPUT to vary"
     )
     parser.add_argument("--seed", type=int, default=1064)
-    parser.add_argument("--warm-runs", type=int, default=5)
+    parser.add_argument(
+        "--warm-runs",
+        type=int,
+        default=5,
+        help="warm runs after the initial cold run; zero records a one-shot smoke",
+    )
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--startup-timeout", type=float, default=300)
     parser.add_argument("--job-timeout", type=float, default=1800)
@@ -705,8 +710,8 @@ def parse_arguments(system: str, argv: Sequence[str] | None = None) -> argparse.
         c not in "0123456789abcdef" for c in args.reference_commit
     ):
         parser.error("--reference-commit must be a full hexadecimal revision")
-    if not 1 <= args.port <= 65535 or args.warm_runs < 1:
-        parser.error("port must be valid and at least one warm run is required")
+    if not 1 <= args.port <= 65535 or args.warm_runs < 0:
+        parser.error("port must be valid and warm runs must be nonnegative")
     for name in ("startup_timeout", "job_timeout", "poll_interval"):
         value = getattr(args, name)
         if not math.isfinite(value) or value <= 0:
@@ -918,7 +923,8 @@ def main(system: str, argv: Sequence[str] | None = None) -> int:
                             "unload_record": free_evidence,
                         }
                     )
-        report["warm_summary"] = summary([row["client_wall_seconds"] for row in report["runs"][1:]])
+        warm_samples = [row["client_wall_seconds"] for row in report["runs"][1:]]
+        report["warm_summary"] = summary(warm_samples) if warm_samples else None
         for name, root in (
             ("harness", Path(__file__).resolve().parents[1]),
             ("dinkster", args.repo),

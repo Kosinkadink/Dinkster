@@ -194,7 +194,7 @@ def _int8_embedding(
         result = torch.ops.dinkster_kitchen.dequantize_int8_embedding(
             weight,
             weight_scale,
-            indices,
+            indices.to(weight.device),
             convrot_groupsize if convrot else 0,
             dtype_code,
         )
@@ -613,9 +613,10 @@ class Int8Embedding(torch.nn.Module):
             with binding.lease() as lease:
                 weight_key = binding.key("weight")
                 if binding.mechanism.weight_functions(weight_key):
+                    weight = lease.get("weight", dtype=self.compute_dtype)
                     return torch.nn.functional.embedding(
-                        indices,
-                        lease.get("weight", dtype=self.compute_dtype),
+                        indices.to(weight.device),
+                        weight,
                     )
                 stored = lease.get_stored("weight")
                 if not isinstance(stored, Int8PackedWeight):

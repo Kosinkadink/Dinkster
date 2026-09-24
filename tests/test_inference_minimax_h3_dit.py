@@ -110,7 +110,7 @@ def expected_h3_layout() -> dict[str, tuple[int, ...]]:
         "audio_patch_proj.bias": (5376,),
         "condition_proj.weight": (5376, 5120),
         "condition_proj.bias": (5376,),
-        "adaln_t_table": (1000, 2688),
+        "adaln_t_table": (1025, 8),
         "rope.inv_freq": (16,),
     }
 
@@ -138,11 +138,11 @@ def expected_h3_layout() -> dict[str, tuple[int, ...]]:
         keys[f"{root}.norm2.weight"] = (5376,)
         add_attention(f"{root}.attn")
         add_mlp(f"{root}.mlp")
-        keys[f"{root}.adaln_proj.linear.weight"] = (96768, 2688)
+        keys[f"{root}.adaln_proj.linear.weight"] = (96768, 8)
         keys[f"{root}.adaln_proj.linear.bias"] = (96768,)
 
     keys["final_layer.norm.weight"] = (5376,)
-    keys["final_layer.adaln_proj.linear.weight"] = (10752, 2688)
+    keys["final_layer.adaln_proj.linear.weight"] = (10752, 8)
     keys["final_layer.adaln_proj.linear.bias"] = (10752,)
     keys["final_layer.video_out.weight"] = (96, 5376)
     keys["final_layer.video_out.bias"] = (96,)
@@ -214,8 +214,8 @@ def test_minimax_h3_dit_layout_is_complete_exact_and_immutable() -> None:
     assert layout.keys["blocks.49.attn.out_proj.weight"] == (5376, 7168)
     assert layout.keys["blocks.49.mlp.fc1.weight"] == (28672, 5376)
     assert layout.keys["blocks.49.mlp.fc2.weight"] == (5376, 14336)
-    assert layout.keys["blocks.49.adaln_proj.linear.weight"] == (96768, 2688)
-    assert layout.keys["final_layer.adaln_proj.linear.weight"] == (10752, 2688)
+    assert layout.keys["blocks.49.adaln_proj.linear.weight"] == (96768, 8)
+    assert layout.keys["final_layer.adaln_proj.linear.weight"] == (10752, 8)
     assert layout.keys["final_layer.video_out.weight"] == (96, 5376)
     assert layout.keys["final_layer.audio_out.weight"] == (32, 5376)
     for index in range(50):

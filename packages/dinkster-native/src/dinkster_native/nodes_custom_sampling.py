@@ -109,7 +109,7 @@ def _custom_sampling_conditioning(
 
 
 def _custom_sampling_has_inpaint(value: object, input_id: str, inference: Any) -> bool:
-    if isinstance(value, inference.ConditioningCarrier):
+    if isinstance(value, (inference.ConditioningCarrier, inference.ResidentConditioningCarrier)):
         return False
     return any(
         "concat_mask" in cast("Mapping[object, object]", entry[1])

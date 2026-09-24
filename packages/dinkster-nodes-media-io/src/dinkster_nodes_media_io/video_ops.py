@@ -217,6 +217,7 @@ class AssembleVideo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.video.assemble",
+            aliases=("CreateVideo",),
             display_name="Assemble Video",
             category="video",
             inputs=(

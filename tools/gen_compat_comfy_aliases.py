@@ -17,6 +17,8 @@ from dinkster_schema.model import NodeSchema
 from dinkster_schema.replace import rule_to_wire
 from dinkster_schema.wire import schema_to_wire
 
+from tools.layer_current_h3_comfy_aliases import add_current_h3_aliases
+
 COMFY_BASELINE = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
 COMFY_REVISION = "b78cec87"
 REPO = Path(__file__).resolve().parent.parent
@@ -153,7 +155,7 @@ def build_registry(comfy_root: Path) -> dict[str, object]:
 
 def main() -> None:
     root = Path(os.environ.get("COMFYUI_ROOT", REPO.parent / "ComfyUI"))
-    registry = build_registry(root)
+    registry = add_current_h3_aliases(build_registry(root))
     encoded = json.dumps(registry, sort_keys=True, separators=(",", ":")) + "\n"
     OUT.write_text(encoded, encoding="utf-8", newline="\n")
     print(f"{OUT}: sha256={hashlib.sha256(encoded.encode()).hexdigest()}")

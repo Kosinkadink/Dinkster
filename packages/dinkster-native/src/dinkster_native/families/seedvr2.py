@@ -107,13 +107,23 @@ def _decode_minimax_music3_audio(
         raise TypeError("samples must be a latent mapping")
     torch = _torch()
     latent = cast("Mapping[object, object]", samples).get("samples")
+    inference = importlib.import_module("dinkster_inference")
+    if type(latent) is inference.MultiStreamLatent:
+        streams = cast("Any", latent)
+        if "audio" not in streams.roles:
+            raise TypeError("samples['samples'] must contain an audio stream")
+        latent = streams.by_role("audio")
     if not isinstance(latent, torch.Tensor):
         raise TypeError("samples['samples'] must be a torch.Tensor")
     latent = cast("Any", latent)
-    if latent.is_nested:
+    if getattr(latent, "is_nested", False):
         latent = latent.unbind()[-1]
-    if latent.ndim != 3 or latent.shape[0] < 1 or latent.shape[1] != 128:
-        raise ValueError("samples['samples'] must be nonempty [batch,128,frames]")
+    music3_shape = latent.ndim == 3 and latent.shape[1] == 128
+    h3_shape = latent.ndim == 4 and latent.shape[1] == 32
+    if latent.shape[0] < 1 or not (music3_shape or h3_shape):
+        raise ValueError(
+            "samples['samples'] must be nonempty [batch,128,frames] or [batch,32,time,frequency]"
+        )
     codec = _native_component_codec(vae)
     with codec.stage():
         with torch.inference_mode():
@@ -149,7 +159,9 @@ def _decode_minimax_music3_audio(
     std = torch.std(audio, dim=(1, 2), keepdim=True) * 5.0
     std[std < 1.0] = 1.0
     audio /= std
-    sample_rate = cast("Mapping[object, object]", samples).get("sample_rate", 44100)
+    sample_rate = cast("Mapping[object, object]", samples).get(
+        "sample_rate", getattr(codec, "sample_rate", 44100)
+    )
     if type(sample_rate) is not int or sample_rate <= 0:
         raise ValueError("samples sample_rate must be a positive integer")
     return {"waveform": audio, "sample_rate": sample_rate}
@@ -200,8 +212,8 @@ class GenerationVAEDecode(NativeVAEDecode):
         latent = cast("Mapping[object, object]", samples).get("samples")
         if type(latent) is inference.MultiStreamLatent:
             streams = cast("Any", latent)
-            if streams.roles != ("video",):
-                raise TypeError("samples['samples'] must contain exactly one video stream")
+            if "video" not in streams.roles:
+                raise TypeError("samples['samples'] must contain a video stream")
             latent = streams.by_role("video")
         if not isinstance(latent, torch.Tensor):
             raise TypeError("samples['samples'] must be a torch.Tensor")
@@ -288,8 +300,8 @@ class GenerationVAEDecodeTiled(Node):
         latent = cast("Mapping[object, object]", samples).get("samples")
         if type(latent) is inference.MultiStreamLatent:
             streams = cast("Any", latent)
-            if streams.roles != ("video",):
-                raise TypeError("samples['samples'] must contain exactly one video stream")
+            if "video" not in streams.roles:
+                raise TypeError("samples['samples'] must contain a video stream")
             latent = streams.by_role("video")
         if not isinstance(latent, torch.Tensor):
             raise TypeError("samples['samples'] must be a torch.Tensor")

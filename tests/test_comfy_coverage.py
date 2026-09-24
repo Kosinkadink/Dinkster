@@ -1210,8 +1210,8 @@ def test_generated_report_describes_the_pinned_corpus_and_loaded_registries(
     assert all(report_records[node_class]["refusal"] for node_class in refused)
     assert all(not report_records[node_class]["target"]["available"] for node_class in refused)
     source_parity = report["sourceParity"]
-    assert source_parity["receiptBackedMappings"] == 99
-    assert source_parity["translationDeclarations"] == 314
+    assert source_parity["receiptBackedMappings"] == 104
+    assert source_parity["translationDeclarations"] == 319
     assert source_parity["unreceiptedMappings"] == 215
     assert source_parity["refusedMappings"] == 3
     backed = set(report["receipts"]["recordsWithPassingReceipts"])
@@ -1219,6 +1219,11 @@ def test_generated_report_describes_the_pinned_corpus_and_loaded_registries(
         "comfy_alias:comfy-core/ControlNetApply",
         "comfy_alias:comfy-core/ControlNetApplyAdvanced",
         "comfy_alias:comfy-core/ControlNetLoader",
+        "comfy_alias:comfy-core/CLIPLoader",
+        "comfy_alias:comfy-core/MiniMaxH3AddGuide",
+        "comfy_alias:comfy-core/MiniMaxH3ImageToVideo",
+        "comfy_alias:comfy-core/MiniMaxH3ReferenceToVideo",
+        "comfy_alias:comfy-core/ResolutionSelector",
         "comfy_alias:comfy-core/SetUnionControlNetType",
         "comfy_group:comfy-core/remove-background-birefnet",
         "comfy_group:comfy-core/rtdetr-detect-fp16",

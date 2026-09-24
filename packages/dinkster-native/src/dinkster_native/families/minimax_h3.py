@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from ..family_registry import load_component as _load_family_component
 from ..native_arm_core import (
     _NATIVE_PREPARED_CONDITIONING_KEY,
@@ -22,8 +24,10 @@ from ..native_arm_core import (
     MiniMaxH3AVEncode,
     MiniMaxH3FL2VAConditioning,
     MiniMaxH3ImageReferenceValue,
+    MiniMaxH3ImageToVideo,
     MiniMaxH3MotionContext,
     MiniMaxH3REF2VAConditioning,
+    MiniMaxH3ReferenceToVideo,
     MiniMaxH3T2VAConditioning,
     MiniMaxH3VideoReferenceValue,
     NativeComponentHandle,
@@ -55,6 +59,26 @@ from ..native_arm_runtime import (
     _NativeModelOverlay,
     _torch_dtype,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _MiniMaxH3ResidentConditioning:
+    conditioning: list[list[object]]
+    owner: NativeComponentHandle
+    references: tuple[NativeComponentHandle, ...]
+    fingerprint: str
+
+    @property
+    def _dinkster_resident_owner(self) -> NativeComponentHandle:
+        return self.owner
+
+    @property
+    def _dinkster_resident_refs(self) -> tuple[NativeComponentHandle, ...]:
+        return self.references
+
+    @property
+    def _dinkster_resident_fingerprint(self) -> str:
+        return self.fingerprint
 
 
 def load_component(value: object, name: str, role: str | None = None) -> NativeComponentHandle:
@@ -98,6 +122,79 @@ def _minimax_h3_audio_vae_runtime(value: object, name: str = "audio_vae") -> tup
         runtime_identity=handle.resource_identity,
         compute_dtype=_torch_dtype(torch, handle.recipe.knobs.vae_dtype),
     )
+
+
+class CodecAdapter:
+    def __init__(self, value: object) -> None:
+        recipe = getattr(value, "recipe", None)
+        roles = () if recipe is None else tuple(binding.role for binding in recipe.sources)
+        inference = importlib.import_module("dinkster_inference")
+        config = inference.MINIMAX_H3_CONFIG
+        if roles == ("video-vae",):
+            self._role = "video"
+            self._handle, self._runtime = _minimax_h3_video_vae_runtime(value, "vae")
+            self.descriptor = inference.CodecDescriptor(
+                id="dinkster.minimax_h3_video_vae",
+                display_name=config.video_codec_id,
+                kind="video",
+                latent=inference.LatentDescriptor(
+                    channels=config.video_latent_channels,
+                    dimensions=3,
+                    spatial_downscale=config.video_spatial_downscale,
+                    temporal_downscale=4,
+                    temporal_causal=True,
+                    content_fps=config.video_fps,
+                ),
+                supported_dtypes=frozenset({inference.FLOAT16, inference.FLOAT32}),
+                supports_tiling=False,
+            )
+        elif roles == ("audio-vae",):
+            self._role = "audio"
+            self._handle, self._runtime = _minimax_h3_audio_vae_runtime(value, "vae")
+            self.descriptor = inference.CodecDescriptor(
+                id="dinkster.minimax_h3_audio_vae",
+                display_name=config.audio_codec_id,
+                kind="audio",
+                latent=inference.LatentDescriptor(
+                    channels=config.audio_latent_channels,
+                    dimensions=1,
+                ),
+                supported_dtypes=frozenset({inference.FLOAT32}),
+                content_channels=config.audio_content_channels,
+                supports_tiling=False,
+            )
+            self.sample_rate = config.audio_sample_rate_hz
+        else:
+            raise TypeError(f"vae must be a native MiniMax H3 codec component, got roles={roles!r}")
+        self._resource_identity = self._handle.resource_identity
+        self.load_device = self._handle.load_device
+
+    @property
+    def _dinkster_resident_owner(self) -> NativeComponentHandle:
+        return self._handle
+
+    @property
+    def resource_identity(self) -> str:
+        return self._resource_identity
+
+    def require_active(self) -> None:
+        self._handle.require_active()
+
+    def stage(self) -> Any:
+        return self._handle.stage(clear_cache_after=True)
+
+    def decode_latent(self, latent: Any) -> Any:
+        if self._role == "video":
+            return self._runtime.decode_video(latent)
+        return self._runtime.decode_audio(latent).waveform
+
+    def encode_content(self, content: Any) -> Any:
+        if self._role == "video":
+            return self._runtime.encode_video(content)
+        inference = importlib.import_module("dinkster_inference")
+        return self._runtime.encode_audio(
+            inference.MiniMaxH3AudioContent(content, self.sample_rate)
+        )
 
 
 def _latent_mask_codec_runtime(value: object, name: str) -> Any:
@@ -206,11 +303,14 @@ def _minimax_h3_image_batch(value: object, torch: Any, name: str) -> Any:
         or tensor.shape[0] <= 0
         or tensor.shape[-1] != 3
         or min(tensor.shape[1:3]) < 2
-        or not tensor.is_floating_point()
         or tensor.layout != torch.strided
     ):
         raise ValueError(f"{name} must be a strided floating [batch,height,width,3] tensor")
-    return tensor
+    if not tensor.is_floating_point():
+        if tensor.dtype not in (torch.uint8, torch.uint16):
+            raise ValueError(f"{name} must be a strided floating [batch,height,width,3] tensor")
+        tensor = tensor.to(dtype=torch.float32) / float(torch.iinfo(tensor.dtype).max)
+    return tensor.contiguous()
 
 
 def _nearest_32(value: float | int) -> int:
@@ -445,7 +545,24 @@ def _minimax_h3_condition(
         prepared,
     )
     conditioning: list[list[object]] = [[value, cast("dict[str, object]", {})]]
-    return cls.outputs(conditioning=conditioning)
+    target_geometry = tuple((stream.role, tuple(stream.payload.shape)) for stream in av.streams)
+    facts = (
+        "dinkster.minimax-h3.conditioning.v1",
+        conditioner_handle.resource_identity,
+        repr(request),
+        repr(target_geometry),
+        str(frame_count),
+    )
+    fingerprint = (
+        "minimax-h3-conditioning:" + hashlib.sha256("\n".join(facts).encode("utf-8")).hexdigest()
+    )
+    resident = _MiniMaxH3ResidentConditioning(
+        conditioning,
+        conditioner_handle,
+        codec_handles,
+        fingerprint,
+    )
+    return cls.outputs(conditioning=inference.ResidentConditioningCarrier(resident))
 
 
 class NativeEmptyMiniMaxH3AV(EmptyMiniMaxH3AV):
@@ -815,6 +932,106 @@ class NativeMiniMaxH3REF2VAConditioning(MiniMaxH3REF2VAConditioning):
         )
 
 
+def _empty_minimax_h3_target(width: int, height: int, length: int) -> object:
+    result = NativeEmptyMiniMaxH3AV.execute(
+        width=width,
+        height=height,
+        frame_count=length,
+    )
+    return result["latent"]
+
+
+class NativeMiniMaxH3ImageToVideo(MiniMaxH3ImageToVideo):
+    @classmethod
+    def execute(
+        cls,
+        *,
+        clip: object,
+        vae: object,
+        prompt: str,
+        width: int,
+        height: int,
+        length: int,
+        first_frame: object = None,
+        last_frame: object = None,
+    ) -> Mapping[str, object]:
+        latent = _empty_minimax_h3_target(width, height, length)
+        if first_frame is None and last_frame is None:
+            result = NativeMiniMaxH3T2VAConditioning.execute(
+                clip=clip,
+                target=latent,
+                prompt=prompt,
+            )
+        else:
+            result = NativeMiniMaxH3FL2VAConditioning.execute(
+                clip=clip,
+                video_vae=vae,
+                target=latent,
+                prompt=prompt,
+                first_image=first_frame,
+                last_image=last_frame,
+            )
+        return cls.outputs(positive=result["conditioning"], latent=latent)
+
+
+def _audio_reference(value: object, name: str) -> MiniMaxH3AudioReferenceValue:
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{name} must be the standard waveform/sample_rate mapping")
+    audio = cast("Mapping[object, object]", value)
+    return MiniMaxH3AudioReferenceValue(
+        cast("Any", audio.get("waveform")),
+        cast("Any", audio.get("sample_rate")),
+    )
+
+
+class NativeMiniMaxH3ReferenceToVideo(MiniMaxH3ReferenceToVideo):
+    @classmethod
+    def execute(
+        cls,
+        *,
+        clip: object,
+        prompt: str,
+        width: int,
+        height: int,
+        length: int,
+        ref_image_size: str,
+        vae: object = None,
+        audio_vae: object = None,
+        ref_images: Mapping[str, object],
+        ref_videos: Mapping[str, object],
+        ref_video_audios: Mapping[str, object],
+        ref_audios: Mapping[str, object],
+    ) -> Mapping[str, object]:
+        references: list[object] = [
+            MiniMaxH3ImageReferenceValue(image) for image in ref_images.values()
+        ]
+        for name, frames in ref_videos.items():
+            suffix = name.rsplit("_", 1)[-1]
+            soundtrack = ref_video_audios.get(f"ref_video_audio_{suffix}")
+            if soundtrack is None:
+                soundtrack = ref_video_audios.get(suffix)
+            references.append(
+                MiniMaxH3VideoReferenceValue(
+                    cast("Any", frames),
+                    None
+                    if soundtrack is None
+                    else _audio_reference(soundtrack, f"ref_video_audio_{suffix}"),
+                )
+            )
+        references.extend(_audio_reference(audio, name) for name, audio in ref_audios.items())
+        latent = _empty_minimax_h3_target(width, height, length)
+        result = NativeMiniMaxH3REF2VAConditioning.execute(
+            clip=clip,
+            video_vae=vae,
+            audio_vae=audio_vae,
+            target=latent,
+            prompt=prompt,
+            references=references,
+            ref_image_size=ref_image_size,
+        )
+        return cls.outputs(positive=result["conditioning"], latent=latent)
+
+
 class NativeMiniMaxH3AddGuide(MiniMaxH3AddGuide):
     @classmethod
     def execute(
@@ -916,7 +1133,15 @@ class NativeMiniMaxH3AddGuide(MiniMaxH3AddGuide):
         )
         output = inference.PreparedMultiStreamConditioning(carrier.runtime_identity, prepared)
         conditioned: list[list[object]] = [[output, cast("dict[str, object]", {})]]
-        return cls.outputs(positive=conditioned)
+        fingerprint = _minimax_h3_latent_fingerprint(guide.latent, torch)
+        return cls.outputs(
+            positive=_minimax_h3_rewrap_conditioning(
+                positive,
+                conditioned,
+                inference,
+                f"guide:{resolved}:{guide_frames}:{fingerprint}",
+            )
+        )
 
 
 class NativeMiniMaxH3MotionContext(MiniMaxH3MotionContext):
@@ -945,7 +1170,16 @@ class NativeMiniMaxH3MotionContext(MiniMaxH3MotionContext):
         )
         output = inference.PreparedMultiStreamConditioning(carrier.runtime_identity, prepared)
         conditioned: list[list[object]] = [[output, cast("dict[str, object]", {})]]
-        return cls.outputs(positive=conditioned, trim_time=trim_time)
+        fingerprint = _minimax_h3_latent_fingerprint(previous, torch)
+        return cls.outputs(
+            positive=_minimax_h3_rewrap_conditioning(
+                positive,
+                conditioned,
+                inference,
+                f"motion-context:{context_length}:{fingerprint}",
+            ),
+            trim_time=trim_time,
+        )
 
 
 class NativeMiniMaxH3AVEncode(MiniMaxH3AVEncode):
@@ -1512,6 +1746,10 @@ class NativePreviewLatentAudio(PreviewLatentAudio):
 
 
 def _prepared_multistream_carrier(value: object, inference: Any, name: str) -> Any | None:
+    if isinstance(value, inference.ResidentConditioningCarrier):
+        value = cast("Any", value).payload
+        if type(value) is _MiniMaxH3ResidentConditioning:
+            value = value.conditioning
     if value == []:
         return None
     entries = cast("list[object]", value) if type(value) is list else []
@@ -1553,6 +1791,45 @@ def _minimax_h3_conditioning_carrier(value: object, inference: Any, name: str) -
             f"{name} conditioning was not prepared by an official MiniMax H3 conditioner component"
         ) from error
     return prepared
+
+
+def _minimax_h3_latent_fingerprint(value: object, torch: Any) -> str:
+    digest = hashlib.sha256()
+    for stream in cast("Any", value).streams:
+        payload = stream.payload
+        digest.update(stream.role.encode("utf-8"))
+        digest.update(repr((tuple(payload.shape), payload.dtype)).encode("utf-8"))
+        try:
+            raw = payload.detach().to("cpu").contiguous().view(torch.uint8).numpy().tobytes()
+        except (AttributeError, RuntimeError, TypeError) as error:
+            raise TypeError("MiniMax H3 guide latent must expose stable tensor bytes") from error
+        digest.update(raw)
+    return digest.hexdigest()
+
+
+def _minimax_h3_rewrap_conditioning(
+    source: object,
+    conditioning: list[list[object]],
+    inference: Any,
+    operation: str,
+) -> object:
+    if not isinstance(source, inference.ResidentConditioningCarrier):
+        raise TypeError("MiniMax H3 conditioning transform requires a resident carrier")
+    resident = cast("Any", source).payload
+    if type(resident) is not _MiniMaxH3ResidentConditioning:
+        raise TypeError("MiniMax H3 conditioning has an invalid resident payload")
+    facts = (resident.fingerprint, operation)
+    fingerprint = (
+        "minimax-h3-conditioning:" + hashlib.sha256("\n".join(facts).encode("utf-8")).hexdigest()
+    )
+    return inference.ResidentConditioningCarrier(
+        _MiniMaxH3ResidentConditioning(
+            conditioning,
+            resident.owner,
+            resident.references,
+            fingerprint,
+        )
+    )
 
 
 def _minimax_h3_model_handle(
