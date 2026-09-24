@@ -599,7 +599,7 @@ def test_int8_convrot_embedding_matches_kitchen_on_cuda() -> None:
         -100, 101, (11, 256), generator=generator, device=device, dtype=torch.int8
     )
     scale = torch.rand((11, 1), generator=generator, device=device, dtype=torch.float32) / 100
-    indices = torch.tensor([[1, 7, 4], [10, 0, 3]], device=device)
+    indices = torch.tensor([[1, 7, 4], [10, 0, 3]])
     layer = Int8Embedding(
         11,
         256,
@@ -610,7 +610,7 @@ def test_int8_convrot_embedding_matches_kitchen_on_cuda() -> None:
     layer.load_state_dict({"weight": weight, "weight_scale": scale}, assign=True)
 
     expected = torch.ops.dinkster_kitchen.dequantize_int8_embedding(
-        weight, scale, indices, 256, 2
+        weight, scale, indices.to(device), 256, 2
     ).to(torch.bfloat16)
     torch.testing.assert_close(layer(indices), expected, rtol=0, atol=0)
 
