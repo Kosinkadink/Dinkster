@@ -312,6 +312,8 @@ def _resolve_patch_sets(
 class _ScheduledConditioning:
     regions: tuple[MaterializedRegion, ...]
     role: GuidanceRole
+    window_dim: int | None = None
+    window_indices: tuple[int, ...] = ()
 
 
 class ScheduledConditioningDenoiser:
@@ -591,7 +593,10 @@ class FullLatentScheduledConditioningDenoiser:
         space: Any,
         model: torch.nn.Module,
         evaluate: Callable[[torch.Tensor, float, object, GuidanceRole], torch.Tensor],
-        project: Callable[[MaterializedRegion, torch.Tensor], tuple[object, torch.Tensor]],
+        project: Callable[
+            [MaterializedRegion, torch.Tensor, int | None, tuple[int, ...]],
+            tuple[object, torch.Tensor],
+        ],
         patch_sets: Mapping[str, PatchSet[torch.Tensor]],
         compute_dtype: torch.dtype,
         device: torch.device,
@@ -636,6 +641,16 @@ class FullLatentScheduledConditioningDenoiser:
         del conditions
         return False
 
+    @staticmethod
+    def window_conditioning(
+        condition: _ScheduledConditioning,
+        dim: int,
+        indices: tuple[int, ...],
+        input_shape: Sequence[int],
+    ) -> _ScheduledConditioning:
+        del input_shape
+        return replace(condition, window_dim=dim, window_indices=indices)
+
     evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
 
     def evaluate_conditioning(
@@ -652,7 +667,12 @@ class FullLatentScheduledConditioningDenoiser:
         for region in condition.regions:
             if not region_schedule_is_active(region, sigma, self._space):
                 continue
-            prepared, multiplier = self._project(region, x)
+            prepared, multiplier = self._project(
+                region,
+                x,
+                condition.window_dim,
+                condition.window_indices,
+            )
             if multiplier.shape != x.shape or multiplier.device != x.device:
                 raise _refuse("layout-multiplier")
             scale = region.scale_vector

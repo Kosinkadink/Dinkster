@@ -1931,13 +1931,15 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             from .scheduled_sampling import FullLatentScheduledConditioningDenoiser
 
             def project_region(
-                region: MaterializedRegion, x: torch.Tensor
+                region: MaterializedRegion,
+                x: torch.Tensor,
+                window_dim: int | None,
+                window_indices: tuple[int, ...],
             ) -> tuple[object, torch.Tensor]:
                 prepared = region.family_payload
                 if type(prepared) is not MiniMaxH3PreparedConditioning:
                     raise TypeError("H3 scheduled region requires prepared conditioning")
-                streams = unpack_latent_streams(x, layout)
-                video = streams.by_role("video")
+                video = sampler_latent.by_role("video")
                 spatial = full_region_multiplier(
                     region,
                     batch=video.shape[0],
@@ -1945,7 +1947,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                     device=video.device,
                 )
                 video_multiplier = spatial.unsqueeze(2).expand_as(video)
-                audio = streams.by_role("audio")
+                audio = sampler_latent.by_role("audio")
                 audio_multiplier = (
                     torch.zeros_like(audio)
                     if region.area is not None or region.mask is not None
@@ -1958,7 +1960,14 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                     raise MiniMaxH3RuntimeError(
                         "H3 regional multiplier topology differs from the latent"
                     )
-                return prepared, multiplier
+                if window_dim is not None:
+                    selected = packed_windows.select(multiplier, window_dim, window_indices)
+                    multiplier = selected.packed
+                if multiplier.shape != x.shape:
+                    raise MiniMaxH3RuntimeError(
+                        "H3 regional multiplier window differs from the latent"
+                    )
+                return (prepared, window_dim, window_indices), multiplier
 
             def evaluate_region(
                 x: torch.Tensor,
@@ -1966,7 +1975,25 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 prepared: object,
                 role: GuidanceRole,
             ) -> torch.Tensor:
-                return evaluate(x, sigma, prepare_conditioning(prepared, role))
+                if (
+                    not isinstance(prepared, tuple)
+                    or len(prepared) != 3
+                    or type(prepared[0]) is not MiniMaxH3PreparedConditioning
+                    or prepared[1] is not None
+                    and type(prepared[1]) is not int
+                    or not isinstance(prepared[2], tuple)
+                ):
+                    raise TypeError("H3 scheduled window preparation is invalid")
+                value, window_dim, window_indices = prepared
+                condition = prepare_conditioning(value, role)
+                if window_dim is not None:
+                    condition = window_conditioning(
+                        condition,
+                        cast("int", window_dim),
+                        cast("tuple[int, ...]", window_indices),
+                        tuple(x.shape),
+                    )
+                return evaluate(x, sigma, condition)
 
             scheduled_evaluator = FullLatentScheduledConditioningDenoiser(
                 space=MINIMAX_H3_SIGMAS.video,
@@ -1986,6 +2013,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 scheduled_evaluator.evaluate_conditioning_batch,
                 evaluator_identity=lambda _role: scheduled_evaluator.evaluator_identity,
                 standard_activation_memory_factor=self.family.memory_factor,
+                window_conditioning=scheduled_evaluator.window_conditioning,
             )
             close = scheduled_evaluator.close
         replica_group_size = (
