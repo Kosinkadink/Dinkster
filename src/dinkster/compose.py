@@ -200,6 +200,7 @@ from dinkster_server import (
     validate_comfy_args,
 )
 from dinkster_values import (
+    MEBIBYTE,
     RESOURCE_ID_META_KEY,
     RESOURCES_META_KEY,
     ListPayload,
@@ -2482,7 +2483,7 @@ class ServingComposer:
         native_policy: NativeDispatchPolicy | None = None,
         runtime_worker_settings: Callable[[], tuple[str, int, Mapping[str, int], tuple[str, ...]]]
         | None = None,
-        headroom_base: int = 256 * 1024**2,
+        headroom_base: int = 256 * MEBIBYTE,
         registry: TypeRegistry | None = None,
         tenant_registry: ModelTenantRegistry | None = None,
         torch_capable: Callable[[], bool] | None = None,

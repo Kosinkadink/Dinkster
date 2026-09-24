@@ -12,6 +12,7 @@ from typing import BinaryIO
 import torch
 from dinkster_assets import AssetError, AssetRef
 from dinkster_inference import (
+    MEBIBYTE,
     SPECIAL_TOKEN_IDS,
     AttentionPolicy,
     AttentionRouteToken,
@@ -78,7 +79,7 @@ def _load_tokenizer(
     source: SafetensorsSource,
 ) -> Tokenizer:
     encoded = load_tensors_from_file(handle, source, ("tokenizer_json",))["tokenizer_json"]
-    if encoded.dtype != torch.uint8 or encoded.ndim != 1 or encoded.numel() > 16 * 1024 * 1024:
+    if encoded.dtype != torch.uint8 or encoded.ndim != 1 or encoded.numel() > 16 * MEBIBYTE:
         raise MiniMaxMusic3ComponentAssemblyError(
             "MiniMax Music 3 tokenizer_json must be bounded rank-1 uint8 data"
         )

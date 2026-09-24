@@ -12,11 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, TypeAlias
 
+from dinkster_values import MEBIBYTE
+
 from .identity import DIGEST_PREFIX, AssetError, new_hasher, require_digest
 
 P2P_PROTOCOL = "bittorrent-v2"
 P2P_BLOCK_LENGTH = 16 * 1024
-P2P_PIECE_LENGTH = 8 * 1024 * 1024
+P2P_PIECE_LENGTH = 8 * MEBIBYTE
 
 _BLOCKS_PER_PIECE = P2P_PIECE_LENGTH // P2P_BLOCK_LENGTH
 _HEX_256_RE = re.compile(r"^[0-9a-f]{64}$")

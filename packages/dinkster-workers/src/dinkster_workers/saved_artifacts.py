@@ -23,9 +23,10 @@ from dinkster_assets.identity import new_hasher
 from dinkster_assets.integrity import verification_record
 from dinkster_assets.library import append_write_record
 from dinkster_protocol import SavedArtifact, SavedArtifactCandidate
+from dinkster_values import MEBIBYTE, SAVED_ARTIFACT_LIMIT_BYTES
 
 MAX_SAVED_ARTIFACTS = 64
-MAX_SAVED_ARTIFACT_BYTES = 1024 * 1024 * 1024
+MAX_SAVED_ARTIFACT_BYTES = SAVED_ARTIFACT_LIMIT_BYTES
 MAX_ARTIFACT_NODE_ID = 512
 MAX_ARTIFACT_FILENAME = 255
 MAX_ARTIFACT_SUBFOLDER = 1024
@@ -127,7 +128,7 @@ def _open_candidate(
 def _digest_handle(handle: BinaryIO) -> str:
     handle.seek(0)
     hasher = new_hasher()
-    while chunk := handle.read(1024 * 1024):
+    while chunk := handle.read(MEBIBYTE):
         hasher.update(chunk)
     return "blake3:" + hasher.hexdigest()
 

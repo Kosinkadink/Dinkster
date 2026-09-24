@@ -32,7 +32,7 @@ from types import MappingProxyType
 from typing import cast
 
 import torch
-from dinkster_inference import ModelFamily
+from dinkster_inference import GIBIBYTE, MEBIBYTE, ModelFamily
 from dinkster_memory import (
     DEFAULT_ACCELERATOR_HEADROOM_BYTES,
     DEFAULT_INFERENCE_RESERVE_BYTES,
@@ -44,8 +44,8 @@ from dinkster_memory import (
 
 from .dtype_policy import fp16_support
 
-MiB = 1024 * 1024
-GiB = 1024 * MiB
+MiB = MEBIBYTE
+GiB = GIBIBYTE
 
 
 @dataclass(frozen=True)

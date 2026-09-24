@@ -12,6 +12,7 @@ from typing import Any, Generic, Protocol, TypeVar, cast, runtime_checkable
 
 import torch
 from dinkster_inference import (
+    MEBIBYTE,
     AttentionGuidanceDescriptor,
     CancellationToken,
     Conditioning,
@@ -82,7 +83,7 @@ def estimate_standard_activation_memory(
     if len(shape) < 2 or any(value < 1 for value in shape):
         raise ValueError("activation memory estimation requires a nonempty latent shape")
     area = len(conditions) * shape[0] * math.prod(shape[2:])
-    return math.ceil(area * 0.15 * memory_usage_factor * 1024 * 1024)
+    return math.ceil(area * 0.15 * memory_usage_factor * MEBIBYTE)
 
 
 def _default_free_memory(device: torch.device) -> int:

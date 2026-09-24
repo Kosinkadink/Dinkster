@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import cast
 
 from dinkster_schema.names import canonical_name
+from dinkster_values import MEBIBYTE
 
 from .gguf import (
     GGUFComponentMap,
@@ -182,7 +183,7 @@ def identify_gguf_artifact(source: GGUFSource) -> GGUFArtifactIdentity:
         before = os.fstat(file.fileno())
         current = load_gguf(source.path, _artifact_file=file)
         file.seek(0)
-        while chunk := file.read(8 * 1024**2):
+        while chunk := file.read(8 * MEBIBYTE):
             digest.update(chunk)
         after = os.fstat(file.fileno())
     fingerprint_before = (

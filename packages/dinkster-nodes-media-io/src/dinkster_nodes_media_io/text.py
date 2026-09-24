@@ -17,6 +17,7 @@ from typing import BinaryIO, cast
 from dinkster_api.v1 import (
     CORE_COMBO,
     CORE_STRING,
+    MEBIBYTE,
     SAVE_TARGET_TYPE,
     AssetError,
     AssetRef,
@@ -37,7 +38,7 @@ TEXT_ASSET_LIST = TypeExpr.list_of(TEXT_ASSET)
 COMBO = TypeExpr.concrete(CORE_COMBO)
 SAVE_TARGET = TypeExpr.concrete(SAVE_TARGET_TYPE)
 
-MAX_TEXT_BYTES = 64 * 1024 * 1024
+MAX_TEXT_BYTES = 64 * MEBIBYTE
 
 DEFAULT_TEXT_TARGET = {"mount": "comfy-output", "prefix": "text/ComfyUI"}
 

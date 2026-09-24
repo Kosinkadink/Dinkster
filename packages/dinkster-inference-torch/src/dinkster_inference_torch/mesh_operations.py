@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 import scipy.ndimage as ndi
 import torch
-from dinkster_inference import DenseVoxelGrid, SparseVolume, TriangleMeshBatch
+from dinkster_inference import GIBIBYTE, MEBIBYTE, DenseVoxelGrid, SparseVolume, TriangleMeshBatch
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
@@ -967,8 +967,8 @@ def _bake_ambient_occlusion(
         # ~376 B/ray (int32 stack max_stack*4 + a few [N,3] ray buffers); spend a quarter of free
         # device memory. Speed saturates around 4M rays/chunk, so cap there (about 2 GB peak) rather than
         # grow memory for no gain; floor keeps tiny GPUs from thrashing into too many chunks.
-        free = torch.cuda.mem_get_info(dev)[0] if dev.type == "cuda" else 4 * 1024**3
-        ray_chunk = int(min(1 << 22, max(1 << 20, (free * 0.25) / (num_samples * 4 + 200))))
+        free = torch.cuda.mem_get_info(dev)[0] if dev.type == "cuda" else 4 * GIBIBYTE
+        ray_chunk = int(min(4 * MEBIBYTE, max(MEBIBYTE, (free * 0.25) / (num_samples * 4 + 200))))
     face_idx, bary_uv, mask = _rasterize_uv_barycentric(low_f_np, low_uv_np, resolution)
     if not mask.any():
         return np.ones((H, W, 3), dtype=np.float32)
@@ -1436,8 +1436,8 @@ def _jfa_fill_gpu(img01, mask):
                 cby = by[ny, nx]
                 cbx = bx[ny, nx]
                 valid = cby >= 0
-                dc = torch.where(valid, (yy - cby) ** 2 + (xx - cbx) ** 2, 1 << 30)
-                db = torch.where(by >= 0, (yy - by) ** 2 + (xx - bx) ** 2, 1 << 30)
+                dc = torch.where(valid, (yy - cby) ** 2 + (xx - cbx) ** 2, GIBIBYTE)
+                db = torch.where(by >= 0, (yy - by) ** 2 + (xx - bx) ** 2, GIBIBYTE)
                 take = valid & (dc < db)
                 by = torch.where(take, cby, by)
                 bx = torch.where(take, cbx, bx)

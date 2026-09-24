@@ -38,6 +38,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Generic, Literal, TypeVar, cast
 
+from dinkster_values import MEBIBYTE
+
 from .anima import ANIMA_CONFIG, anima_layout
 from .autoencoder_kl import (
     KL_PREFIX_RENAMES,
@@ -1928,7 +1930,7 @@ def plan_wan21_standalone_component(
         if (
             tokenizer_geometry.dtype != UINT8
             or len(tokenizer_geometry.shape) != 1
-            or not 1 <= tokenizer_geometry.shape[0] <= 8 * 1024 * 1024
+            or not 1 <= tokenizer_geometry.shape[0] <= 8 * MEBIBYTE
         ):
             raise AssemblyError("umt5xxl: spiece_model must be a nonempty rank-1 uint8 tensor")
         extracted = _component_source(
@@ -2049,7 +2051,7 @@ def plan_wan_text_component(
         if (
             tokenizer_geometry.dtype != UINT8
             or len(tokenizer_geometry.shape) != 1
-            or not 1 <= tokenizer_geometry.shape[0] <= 8 * 1024 * 1024
+            or not 1 <= tokenizer_geometry.shape[0] <= 8 * MEBIBYTE
         ):
             raise AssemblyError("umt5xxl: spiece_model must be a nonempty rank-1 uint8 tensor")
     extracted = _component_source(
@@ -3211,7 +3213,7 @@ def plan_ltxav_standalone_component(
 
     if role in ("gemma3_12b", "gemma4_12b"):
         tokenizer_key = "spiece_model" if role == "gemma3_12b" else "tokenizer_json"
-        tokenizer_limit = 8 * 1024 * 1024 if role == "gemma3_12b" else 64 * 1024 * 1024
+        tokenizer_limit = 8 * MEBIBYTE if role == "gemma3_12b" else 64 * MEBIBYTE
         if tokenizer_key not in source.keys():
             raise AssemblyError(
                 f"{role}: source must contain exactly one uint8 {tokenizer_key} tensor"
@@ -3944,7 +3946,7 @@ def lumina2_tokenizer_source_key(source: WeightSource) -> str:
     if (
         geometry.dtype != UINT8
         or len(geometry.shape) != 1
-        or not 1 <= geometry.shape[0] <= 8 * 1024 * 1024
+        or not 1 <= geometry.shape[0] <= 8 * MEBIBYTE
     ):
         raise AssemblyError("gemma2_2b: spiece_model must be a nonempty rank-1 uint8 tensor")
     return candidates[0]

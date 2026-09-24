@@ -14,6 +14,7 @@ import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 import torch
+from dinkster_inference import MEBIBYTE
 from torch import Tensor
 
 from . import mesh as _mesh
@@ -239,7 +240,7 @@ def lscm_charts_batch(
     # face-heavy chart can't inflate a whole chunk
     small = chart_ids[vcounts[chart_ids] <= max_bucket_verts]
     sorted_ids = small[np.argsort(vcounts[small], kind="stable")]
-    budget = (96 << 20) // 8  # float64 elements in a chunk's A
+    budget = (96 * MEBIBYTE) // 8  # float64 elements in a chunk's A
     chunks = []
     cs = 0
     fmax_r = vmax_r = 0

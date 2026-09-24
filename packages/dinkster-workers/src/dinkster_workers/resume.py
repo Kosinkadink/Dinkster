@@ -10,12 +10,14 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
+from dinkster_values import RESUMABLE_EVENT_RETENTION_BYTES, RESUMABLE_RESULT_RETENTION_BYTES
+
 from .boundary import BoundaryError, read_frame, write_frame
 
 DEFAULT_RESUME_GRACE_S = 120.0
 MAX_RESUMABLE_INVOCATIONS = 1024
-MAX_RETAINED_RESULT_BYTES = 512 * 1024 * 1024
-MAX_RETAINED_EVENT_BYTES = 64 * 1024 * 1024
+MAX_RETAINED_RESULT_BYTES = RESUMABLE_RESULT_RETENTION_BYTES
+MAX_RETAINED_EVENT_BYTES = RESUMABLE_EVENT_RETENTION_BYTES
 
 
 def _retained_frame_bytes(header: Mapping[str, object], blobs: Sequence[bytes]) -> int:

@@ -1440,19 +1440,19 @@ def test_invalid_graph_compilers_fail_before_final_generation_materialization(
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:97cd12cdf3bebfb48e3fdaaccfd6a363402b17bb08ad0cfed04e6d3ff9508fc4",
+            "blake3:62d4ad93db627dd51bb738ea987a2dedd240fc7d6eafd5bf302b66a3d13c23bf",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:f6bfb8b19e4735f96587b4d8e4f3fcaa7778ac2bf9dd55d5e1d49a84c7617254",
+            "blake3:1f96fc07b4868b6beb922936d59c93ad53041598ed167320d14d79adf7370c8a",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:134ddbf3f2d650ead1a1aa3c50d0a564bfff50a02e3c0cabf08ae01b96189e04",
+            "blake3:7a44b85c68f0f1e59bdd8eb54a6c8012c82b2b93052f952839c8763a433b3dde",
         ),
         (
             "dinkster-nodes-remote",
-            "blake3:4685f09942fd5d6a3d85bb559f42fd99d69484dd8f6253f5dda0f2a1c3e7be39",
+            "blake3:db56d16df9059930093ac30166558e96a90644d0fc754a58ef7bc8c37baca6b4",
         ),
     ],
 )

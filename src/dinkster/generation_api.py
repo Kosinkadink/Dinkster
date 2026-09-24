@@ -34,8 +34,9 @@ from dinkster_inference import (
     GenerationTokenEvent,
 )
 from dinkster_server import principal_for
+from dinkster_values import MEBIBYTE
 
-_MAX_REQUEST_BYTES = 1 << 20
+_MAX_REQUEST_BYTES = MEBIBYTE
 _END = object()
 
 

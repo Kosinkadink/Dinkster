@@ -14,6 +14,7 @@ from dinkster_api.v1 import (
     CORE_BOOLEAN,
     CORE_FLOAT,
     CORE_STRING,
+    MEBIBYTE,
     InputSpec,
     Node,
     NodeSchema,
@@ -40,7 +41,7 @@ STRING = TypeExpr.concrete(CORE_STRING)
 POSE = TypeExpr.concrete(POSE_TYPE)
 POSE_LIST = TypeExpr.list_of(POSE)
 MAX_POSE_FRAMES = 1_024
-MAX_POSE_JSON_CHARACTERS = 16 * 1024 * 1024
+MAX_POSE_JSON_CHARACTERS = 16 * MEBIBYTE
 
 BODY_EDGES = (
     (1, 2),

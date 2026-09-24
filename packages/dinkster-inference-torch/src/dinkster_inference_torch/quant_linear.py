@@ -65,6 +65,7 @@ from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 import torch
+from dinkster_inference import INT8_BACKWARD_TEMP_LIMIT_BYTES
 
 from ._nvfp4_diagnostics import Nvfp4DiagnosticsRecorder
 from .dtype_policy import amd_fp8_matmul_supported, torch_version_numeric
@@ -111,7 +112,7 @@ def _int8_native_matmul_supported(device: torch.device) -> bool:
     return device.type != "mps"
 
 
-_INT8_TRAINING_BACKWARD_TEMP_BYTES = 128 * 1024 * 1024
+_INT8_TRAINING_BACKWARD_TEMP_BYTES = INT8_BACKWARD_TEMP_LIMIT_BYTES
 _INT8_DEQUANT_DTYPE_CODES = {
     torch.float32: 0,
     torch.float16: 1,

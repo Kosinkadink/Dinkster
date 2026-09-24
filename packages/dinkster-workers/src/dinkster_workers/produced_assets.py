@@ -10,13 +10,14 @@ from typing import cast
 from dinkster_assets import AssetError, AssetRef, AssetResolver, AssetVault, open_verified
 from dinkster_values import (
     ASSET_BASE_TYPE,
+    MEBIBYTE,
     Value,
     default_decode,
     iter_value_tree,
     parse_asset_type_id,
 )
 
-_COPY_BYTES = 1024 * 1024
+_COPY_BYTES = MEBIBYTE
 
 
 def _references(raw: object, resolver: AssetResolver | None = None) -> Iterator[AssetRef]:

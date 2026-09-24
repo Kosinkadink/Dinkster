@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from dinkster_values import MEBIBYTE
+
 from .fetch import (
     DEFAULT_FETCH_TIMEOUT,
     FetchAborted,
@@ -39,7 +41,7 @@ from .provenance import ProvenanceRecord, ProvenanceStore
 from .public_acquisition import PublicAcquisitionReceiptStore, PublicAcquisitionSourceV1
 from .vault import AssetVault
 
-_COPY_CHUNK_SIZE = 8 * 1024 * 1024
+_COPY_CHUNK_SIZE = 8 * MEBIBYTE
 
 AcquisitionStatus = Literal["held", "acquired", "unverifiable", "failed"]
 
