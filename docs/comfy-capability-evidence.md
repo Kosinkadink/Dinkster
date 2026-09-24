@@ -18,7 +18,7 @@ T0 and T1 are translation evidence only and never establish support. Missing evi
 
 ## Current ledger
 
-934 capabilities: proven 340, unverified 0, absent 591, refused 3. Supported capability claims: 18.
+935 capabilities: proven 345, unverified 0, absent 587, refused 3. Supported capability claims: 18.
 
 | Native model family | Exposure | State | Highest tier | Evidence |
 | --- | --- | --- | --- | ---: |
