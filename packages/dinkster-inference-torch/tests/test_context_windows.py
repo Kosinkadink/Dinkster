@@ -33,9 +33,9 @@ from dinkster_inference.context_windows import (
 from dinkster_inference_torch import GuidanceExecutor, GuidanceRegistry, run_sampler_engine
 from dinkster_inference_torch.context_windows import (
     PackedContextWindowAxis,
+    PackedContextWindows,
     PackedContextWindowScale,
     PackedContextWindowStream,
-    PackedContextWindows,
     apply_freenoise,
     windowed_conditioning_evaluation,
 )
