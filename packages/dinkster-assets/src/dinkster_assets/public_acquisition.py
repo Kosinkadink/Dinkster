@@ -1,7 +1,6 @@
 """Durable evidence for verified acquisition from public HTTPS sources."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import contextlib
 import errno
@@ -17,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, cast
 from urllib.parse import urlsplit
+
+from dinkster_values import MEBIBYTE
 
 from .fetch import FetchResult
 from .identity import AssetError, require_digest

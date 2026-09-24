@@ -1,7 +1,6 @@
 """Invocation-owned staging of verified media for Comfy source filenames."""
 
 from __future__ import annotations
-from dinkster_values import GIBIBYTE
 
 import contextlib
 import os
@@ -13,6 +12,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, Protocol, cast
 
 from dinkster_assets import AssetError, AssetRef, classify_media, digest_bytes
+from dinkster_values import GIBIBYTE
 
 from .bootstrap import initialize_comfy_paths
 

@@ -7,7 +7,6 @@ authors receive the public subset through ``dinkster_api.v1``.
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import hashlib
 import json
@@ -15,6 +14,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TypeAlias, TypeGuard, cast
+
+from dinkster_values import MEBIBYTE
 
 from .frontend_modules import FrontendModule, validate_frontend_modules
 from .pack_surfaces import (

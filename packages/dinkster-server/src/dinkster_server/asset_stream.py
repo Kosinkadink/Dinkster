@@ -16,7 +16,6 @@ never a concurrent close racing a read.
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import asyncio
 import os
@@ -25,6 +24,7 @@ from typing import BinaryIO
 
 from aiohttp import web
 from dinkster_assets import open_verified
+from dinkster_values import MEBIBYTE
 
 CHUNK = MEBIBYTE  # streamed read size: bounded memory for any asset size
 

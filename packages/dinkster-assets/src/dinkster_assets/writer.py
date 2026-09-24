@@ -24,7 +24,6 @@ any rescan of the mount.
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import json
 import os
@@ -32,6 +31,8 @@ import re
 import uuid
 from pathlib import Path
 from typing import BinaryIO, Protocol, cast
+
+from dinkster_values import MEBIBYTE
 
 from .identity import DIGEST_PREFIX, AssetError, new_hasher
 from .integrity import verification_record_for_publication

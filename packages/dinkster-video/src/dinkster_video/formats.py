@@ -1,7 +1,6 @@
 """Fixed CPU animated-image and PNG-sequence writers using the shared VIDEO iterator."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import inspect
 import io
@@ -18,7 +17,13 @@ from math import ceil
 from typing import Any, BinaryIO, ParamSpec, cast
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
 
-from dinkster_values import coerce_video, effective_video_facts, open_video_source, video_source
+from dinkster_values import (
+    MEBIBYTE,
+    coerce_video,
+    effective_video_facts,
+    open_video_source,
+    video_source,
+)
 from dinkster_values.image_codec import image_color
 from dinkster_values.video_edits import mapping
 

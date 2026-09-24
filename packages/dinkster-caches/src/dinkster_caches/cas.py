@@ -21,7 +21,6 @@ Concurrency and corruption posture:
 """
 
 from __future__ import annotations
-from dinkster_values import GIBIBYTE
 
 import contextlib
 import os
@@ -32,6 +31,7 @@ from collections.abc import Collection
 from pathlib import Path
 
 from dinkster_assets import digest_bytes, digest_file, require_digest
+from dinkster_values import GIBIBYTE
 
 DEFAULT_VALUE_STORE_BYTES = 10 * GIBIBYTE
 

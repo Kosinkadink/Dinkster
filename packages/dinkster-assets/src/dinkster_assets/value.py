@@ -15,7 +15,6 @@ The registration makes three deliberate choices:
 """
 
 from __future__ import annotations
-from dinkster_values import GIBIBYTE, MEBIBYTE
 
 import json
 from collections.abc import Mapping
@@ -24,6 +23,8 @@ from typing import cast
 
 from dinkster_values import (
     ASSET_BASE_TYPE,
+    GIBIBYTE,
+    MEBIBYTE,
     TypeRegistry,
     bind_video_sources,
     decode_video,

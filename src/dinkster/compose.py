@@ -24,7 +24,6 @@ explicit trust_reserved - the local analog of the registry's grant table
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import asyncio
 import contextlib
@@ -201,6 +200,7 @@ from dinkster_server import (
     validate_comfy_args,
 )
 from dinkster_values import (
+    MEBIBYTE,
     RESOURCE_ID_META_KEY,
     RESOURCES_META_KEY,
     ListPayload,

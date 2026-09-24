@@ -7,7 +7,6 @@ mode (platform newline translation); on POSIX the bytes match exactly.
 """
 
 from __future__ import annotations
-from dinkster_api.v1 import MEBIBYTE
 
 import io
 import json
@@ -18,6 +17,7 @@ from typing import BinaryIO, cast
 from dinkster_api.v1 import (
     CORE_COMBO,
     CORE_STRING,
+    MEBIBYTE,
     SAVE_TARGET_TYPE,
     AssetError,
     AssetRef,

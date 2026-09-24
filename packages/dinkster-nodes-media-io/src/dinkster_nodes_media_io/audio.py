@@ -2,7 +2,6 @@
 # pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 
 from __future__ import annotations
-from dinkster_api.v1 import MEBIBYTE
 
 import math
 import os
@@ -17,6 +16,7 @@ from dinkster_api.v1 import (
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
+    MEBIBYTE,
     SAVE_TARGET_TYPE,
     AssetError,
     AssetRef,

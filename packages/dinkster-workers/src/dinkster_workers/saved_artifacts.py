@@ -1,7 +1,6 @@
 """Host authority for untrusted ComfyUI saved-output reports."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import contextlib
 import os
@@ -24,7 +23,7 @@ from dinkster_assets.identity import new_hasher
 from dinkster_assets.integrity import verification_record
 from dinkster_assets.library import append_write_record
 from dinkster_protocol import SavedArtifact, SavedArtifactCandidate
-from dinkster_values import SAVED_ARTIFACT_LIMIT_BYTES
+from dinkster_values import MEBIBYTE, SAVED_ARTIFACT_LIMIT_BYTES
 
 MAX_SAVED_ARTIFACTS = 64
 MAX_SAVED_ARTIFACT_BYTES = SAVED_ARTIFACT_LIMIT_BYTES

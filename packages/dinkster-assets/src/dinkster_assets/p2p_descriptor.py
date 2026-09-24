@@ -1,7 +1,6 @@
 """Canonical BitTorrent v2 descriptors for BLAKE3-identified assets."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import hashlib
 import os
@@ -12,6 +11,8 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, TypeAlias
+
+from dinkster_values import MEBIBYTE
 
 from .identity import DIGEST_PREFIX, AssetError, new_hasher, require_digest
 

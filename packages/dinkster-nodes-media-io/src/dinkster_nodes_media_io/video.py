@@ -2,7 +2,6 @@
 # pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 
 from __future__ import annotations
-from dinkster_api.v1 import MEBIBYTE
 
 import json
 import math
@@ -26,7 +25,10 @@ from dinkster_api.v1 import (
     DITHERS,
     ENCODED_MEDIA_LIMIT_BYTES,
     FRAME_FORMATS,
+    MEBIBYTE,
     SAVE_TARGET_TYPE,
+    VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES,
+    VIDEO_FRAME_WORKING_SET_LIMIT_BYTES,
     AssetError,
     AssetRef,
     AssetWidget,
@@ -49,8 +51,6 @@ from dinkster_api.v1 import (
     SourceFilenameSpec,
     StringWidget,
     TypeExpr,
-    VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES,
-    VIDEO_FRAME_WORKING_SET_LIMIT_BYTES,
     read_video_metadata,
     report_value_diagnostic,
     save_video_frames,

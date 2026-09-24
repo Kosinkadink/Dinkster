@@ -17,7 +17,6 @@ most once per machine.
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import contextlib
 import http.client
@@ -32,6 +31,8 @@ from dataclasses import dataclass, field
 from http.client import HTTPMessage
 from pathlib import Path
 from typing import Protocol, cast
+
+from dinkster_values import MEBIBYTE
 
 from .identity import AssetError, require_digest
 from .model import AssetResolution, AssetResolver, RecordedAssetResolver

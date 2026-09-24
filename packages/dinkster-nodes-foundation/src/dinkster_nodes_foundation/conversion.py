@@ -1,7 +1,6 @@
 """Typed scalar conversion and piecewise-linear schedule operations."""
 
 from __future__ import annotations
-from dinkster_api.v1 import MEBIBYTE
 
 import math
 from collections.abc import Mapping, Sequence
@@ -14,6 +13,7 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    MEBIBYTE,
     ComboWidget,
     CurveWidget,
     InputSpec,

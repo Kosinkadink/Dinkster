@@ -1,7 +1,6 @@
 """Build registry-compatible deterministic pack archives."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import io
 import unicodedata
@@ -9,6 +8,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 from blake3 import blake3
+from dinkster_values import MEBIBYTE
 from dinkster_workers import load_manifest
 
 MANIFEST_FILENAME = "dinkster-pack.toml"

@@ -1,7 +1,6 @@
 """Confined resumable storage and publication for P2P asset transfers."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import contextlib
 import ctypes
@@ -19,6 +18,8 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, cast
+
+from dinkster_values import MEBIBYTE
 
 from .identity import CHUNK_SIZE, AssetError, new_hasher, require_digest
 from .integrity import AssetVerificationRecord, verification_record

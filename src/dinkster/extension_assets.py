@@ -1,12 +1,12 @@
 """Read declared installed-pack modules as data, never Python imports."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import hashlib
 from dataclasses import replace
 
 from dinkster_protocol.frontend_modules import FrontendModule, validate_frontend_modules
+from dinkster_values import MEBIBYTE
 from dinkster_workers.manifest import PackManifest
 
 MODULE_MAX_BYTES = MEBIBYTE

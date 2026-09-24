@@ -1,7 +1,6 @@
 """Deterministic CPU image geometry over BHWC NumPy arrays."""
 
 from __future__ import annotations
-from dinkster_api.v1 import MEBIBYTE
 
 import math
 from collections.abc import Mapping
@@ -14,6 +13,7 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    MEBIBYTE,
     DynamicComboOption,
     DynamicComboSpec,
     InputSpec,

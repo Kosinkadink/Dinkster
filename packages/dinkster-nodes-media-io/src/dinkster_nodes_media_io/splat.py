@@ -1,7 +1,6 @@
 """Asset-backed gaussian splat loading and PLY export."""
 
 from __future__ import annotations
-from dinkster_api.v1 import GIBIBYTE
 
 import io
 import os
@@ -9,6 +8,7 @@ from collections.abc import Mapping
 from typing import BinaryIO, cast
 
 from dinkster_api.v1 import (
+    GIBIBYTE,
     SAVE_TARGET_TYPE,
     AssetError,
     AssetRef,

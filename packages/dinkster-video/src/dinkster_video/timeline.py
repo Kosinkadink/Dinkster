@@ -10,8 +10,12 @@ from fractions import Fraction
 from typing import Any, Protocol, cast
 
 import numpy as np
-from dinkster_values import TIMELINE_ACTIVE_FRAME_LIMIT_BYTES, TIMELINE_AUDIO_WINDOW_LIMIT_BYTES
-from dinkster_values import coerce_video, edit_video
+from dinkster_values import (
+    TIMELINE_ACTIVE_FRAME_LIMIT_BYTES,
+    TIMELINE_AUDIO_WINDOW_LIMIT_BYTES,
+    coerce_video,
+    edit_video,
+)
 from dinkster_values.video_document import (
     TimelineError,
     document,

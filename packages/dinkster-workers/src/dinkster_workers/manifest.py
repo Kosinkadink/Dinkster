@@ -47,7 +47,6 @@ inference, frontend, and training imports. Its ``privileges`` and closed
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import hashlib
 import importlib
@@ -93,6 +92,7 @@ from dinkster_schema import (
     core_logger,
     validate_name,
 )
+from dinkster_values import MEBIBYTE
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 

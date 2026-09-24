@@ -12,6 +12,8 @@ import torch
 import torch.nn.functional as F
 from dinkster_inference import (
     PBR_CHANNELS,
+    TRELLIS2_SPARSE_DECODE_ALIGNMENT_BYTES,
+    TRELLIS2_SPARSE_DECODE_FIXED_BYTES,
     DenseVoxelGrid,
     InferenceComponentHandle,
     ResidentConditioningCarrier,
@@ -21,8 +23,6 @@ from dinkster_inference import (
     SparseVolume,
     TriangleMesh,
     TriangleMeshBatch,
-    TRELLIS2_SPARSE_DECODE_ALIGNMENT_BYTES,
-    TRELLIS2_SPARSE_DECODE_FIXED_BYTES,
     require_inference_component_handle,
 )
 

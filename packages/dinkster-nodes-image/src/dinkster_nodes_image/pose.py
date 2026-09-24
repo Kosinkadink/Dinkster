@@ -1,7 +1,6 @@
 """Typed pose JSON interchange and deterministic control-image rendering."""
 
 from __future__ import annotations
-from dinkster_api.v1 import MEBIBYTE
 
 import colorsys
 import json
@@ -15,6 +14,7 @@ from dinkster_api.v1 import (
     CORE_BOOLEAN,
     CORE_FLOAT,
     CORE_STRING,
+    MEBIBYTE,
     InputSpec,
     Node,
     NodeSchema,

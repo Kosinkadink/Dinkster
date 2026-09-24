@@ -1,7 +1,6 @@
 """One ordered edit plan for explicit materialization and bounded saving."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import heapq
 import io
@@ -13,6 +12,8 @@ from fractions import Fraction
 from typing import TYPE_CHECKING, Any, BinaryIO, cast
 
 from dinkster_values import (
+    MEBIBYTE,
+    VIDEO_DECODE_WORKING_SET_LIMIT_BYTES,
     AudioWindowReader,
     annotate_image,
     append_audio_edit,
@@ -25,7 +26,6 @@ from dinkster_values import (
     media_semantics,
     open_video_source,
     video_source,
-    VIDEO_DECODE_WORKING_SET_LIMIT_BYTES,
 )
 from dinkster_values.audio_codec import coerce_audio
 from dinkster_values.storage import image_input

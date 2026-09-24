@@ -27,8 +27,8 @@ from .audio_lazy import (
     iter_audio_chunks,
     mapping,
 )
-from .limits import MEBIBYTE
 from .image_codec import encode_canonical_png
+from .limits import MEBIBYTE
 from .model import stable_hash
 from .registry import InvalidRenditionRequest, RenditionUnavailable
 from .storage import array_storage_meta, storage_dtype

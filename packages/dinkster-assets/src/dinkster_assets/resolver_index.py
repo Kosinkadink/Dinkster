@@ -1,7 +1,6 @@
 """Forward-compatible declarative resolver-index format."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import json
 import re
@@ -11,6 +10,8 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import cast
 from urllib.parse import urlsplit
+
+from dinkster_values import MEBIBYTE
 
 from .component_manifest import AssetComponentManifest
 from .identity import AssetError, require_digest

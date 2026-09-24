@@ -1,7 +1,6 @@
 """Closed asset-backed ImageDocument format and canonical decoding."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import base64
 import copy
@@ -12,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from dinkster_assets import digest_bytes, is_digest
+from dinkster_values import MEBIBYTE
 from dinkster_values.image_codec import image_color
 
 IMAGE_DOCUMENT_MEDIA_TYPE = "application/vnd.dinkster.image-document+json"

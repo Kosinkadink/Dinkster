@@ -1,7 +1,6 @@
 """Bind portable AUDIO sources and publish large compatibility PCM without copying it."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import os
 import struct
@@ -9,7 +8,7 @@ import tempfile
 from collections.abc import Mapping
 from typing import Any, cast
 
-from dinkster_values import TypeRegistry
+from dinkster_values import MEBIBYTE, TypeRegistry
 from dinkster_values.audio_codec import (
     AUDIO_INLINE_LIMIT,
     AUDIO_WAVEFORM_LIMITS,

@@ -7,11 +7,12 @@ interoperate with hashes the existing ecosystem already computed.
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from dinkster_values import MEBIBYTE
 
 if TYPE_CHECKING:
     from blake3 import blake3

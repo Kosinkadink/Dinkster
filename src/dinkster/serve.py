@@ -26,7 +26,6 @@ installed default packs follow the same failure-isolated path as every other pac
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import argparse
 import asyncio
@@ -115,6 +114,7 @@ from dinkster_server import (
     validate_comfy_args,
 )
 from dinkster_server.image_document import InvalidDocument, validate_document
+from dinkster_values import MEBIBYTE
 from dinkster_workers import (
     PackManifest,
     SandboxPolicy,

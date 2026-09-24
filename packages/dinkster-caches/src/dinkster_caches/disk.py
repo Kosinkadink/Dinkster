@@ -29,7 +29,6 @@ deliberately not wired yet - disk is not a governed device today.
 """
 
 from __future__ import annotations
-from dinkster_values import GIBIBYTE
 
 import asyncio
 import contextlib
@@ -43,6 +42,8 @@ from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, TypeVar, cast
+
+from dinkster_values import GIBIBYTE
 
 if os.name == "nt":
     import msvcrt

@@ -17,7 +17,6 @@ The frames are symmetric - either side can be sender or receiver:
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import asyncio
 import contextlib
@@ -28,6 +27,8 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, BinaryIO, TypeVar, cast
+
+from dinkster_values import MEBIBYTE
 
 from .boundary import BoundaryError, TransferStat, ValueStore
 from .produced_assets import result_asset_digests

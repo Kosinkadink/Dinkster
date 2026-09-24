@@ -1,7 +1,6 @@
 """Bounded, data-only image metadata parsing."""
 
 from __future__ import annotations
-from dinkster_api.v1 import MEBIBYTE
 
 import csv
 import json
@@ -10,7 +9,7 @@ import warnings
 from collections.abc import Mapping
 from typing import Any, cast
 
-from dinkster_api.v1 import AssetRef
+from dinkster_api.v1 import MEBIBYTE, AssetRef
 
 METADATA_FORMAT = "dinkster.image-metadata/1"
 MAX_METADATA_FIELD_BYTES = MEBIBYTE

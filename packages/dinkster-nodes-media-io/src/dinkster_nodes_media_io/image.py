@@ -2,7 +2,6 @@
 # pyright: reportUnknownArgumentType=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 
 from __future__ import annotations
-from dinkster_api.v1 import MEBIBYTE
 
 import io
 import json
@@ -21,6 +20,7 @@ from dinkster_api.v1 import (
     CORE_STRING,
     ENCODED_MEDIA_LIMIT_BYTES,
     IMAGE_WORKING_SET_LIMIT_BYTES,
+    MEBIBYTE,
     SAVE_TARGET_TYPE,
     AssetError,
     AssetRef,

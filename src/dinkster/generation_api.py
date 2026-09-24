@@ -1,7 +1,6 @@
 """HTTP adapters and lifecycle ownership for neutral text generation."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import asyncio
 import contextlib
@@ -35,6 +34,7 @@ from dinkster_inference import (
     GenerationTokenEvent,
 )
 from dinkster_server import principal_for
+from dinkster_values import MEBIBYTE
 
 _MAX_REQUEST_BYTES = MEBIBYTE
 _END = object()

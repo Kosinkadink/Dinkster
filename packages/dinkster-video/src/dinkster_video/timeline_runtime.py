@@ -1,7 +1,6 @@
 """Timeline adapters for admitted sources and the shared CPU operation kernels."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import io
 import math
@@ -11,7 +10,13 @@ from fractions import Fraction
 from typing import Any, cast
 
 import numpy as np
-from dinkster_values import bind_video_sources, edit_video, media_semantics, video_from_source
+from dinkster_values import (
+    MEBIBYTE,
+    bind_video_sources,
+    edit_video,
+    media_semantics,
+    video_from_source,
+)
 from dinkster_values.curve import coerce_curve
 from dinkster_values.timeline_video import TimelineVideo
 from dinkster_values.video_document import TimelineError, json_bytes, source_video

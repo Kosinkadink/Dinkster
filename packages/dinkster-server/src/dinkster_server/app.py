@@ -205,7 +205,6 @@ status JSON. That keeps the envelope-first value model intact on the wire.
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import asyncio
 import contextlib
@@ -294,6 +293,7 @@ from dinkster_schema import (
     validate_replacement_references,
 )
 from dinkster_values import (
+    MEBIBYTE,
     InvalidRenditionRequest,
     RenditionUnavailable,
     TypeRegistry,

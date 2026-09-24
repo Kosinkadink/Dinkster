@@ -37,7 +37,6 @@ backend venvs the recipes describe.
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import math
 import re
@@ -45,6 +44,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
+
+from dinkster_values import MEBIBYTE
 
 _ROCM_INDEX_URL = "https://repo.amd.com/rocm/whl-multi-arch/"
 _ROCM_TORCH_REQUIREMENT = "torch[device-all]==2.12.0+rocm7.14.0"

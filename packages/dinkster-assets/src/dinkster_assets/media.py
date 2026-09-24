@@ -7,7 +7,6 @@ assign a media kind; they do not claim that codec payloads fully decode.
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import json
 import math
@@ -18,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
+from dinkster_values import MEBIBYTE
 from dinkster_values.media_containers import bmff_boxes as _bmff_boxes
 from dinkster_values.media_containers import ebml_elements as _ebml_elements
 

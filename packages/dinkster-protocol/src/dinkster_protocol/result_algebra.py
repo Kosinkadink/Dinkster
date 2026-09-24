@@ -3,7 +3,6 @@
 # pyright: reportUnnecessaryIsInstance=false
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import math
 import re
@@ -11,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
-from dinkster_values import Value
+from dinkster_values import MEBIBYTE, Value
 
 from . import ErrorHint, NodeError
 

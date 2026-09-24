@@ -1,13 +1,13 @@
 """Registration seam for the optional P2P runtime plugin."""
 
 from __future__ import annotations
-from dinkster_values import GIBIBYTE
 
 import math
 from collections.abc import Mapping
 from typing import cast
 
 from dinkster_assets import p2p_plugin
+from dinkster_values import GIBIBYTE
 
 P2P_SETTINGS_FIELDS = frozenset(
     {

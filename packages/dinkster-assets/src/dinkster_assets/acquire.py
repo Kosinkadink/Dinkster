@@ -20,12 +20,13 @@ the next machine that consults it.
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+
+from dinkster_values import MEBIBYTE
 
 from .fetch import (
     DEFAULT_FETCH_TIMEOUT,

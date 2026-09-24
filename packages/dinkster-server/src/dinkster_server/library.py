@@ -52,7 +52,6 @@ Surface (present only when create_app got a ServerLibrary):
 """
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import asyncio
 import json
@@ -95,6 +94,7 @@ from dinkster_assets import (
 )
 from dinkster_values import (
     LATENT_UPLOAD_HEADROOM_BYTES,
+    MEBIBYTE,
     MEDIA_AUDIO_UPLOAD_LIMIT_BYTES,
     MEDIA_IMAGE_UPLOAD_LIMIT_BYTES,
     MEDIA_MODEL3D_UPLOAD_LIMIT_BYTES,

@@ -59,8 +59,9 @@ from dinkster_protocol import (
 from dinkster_protocol.result_algebra import JsonLiteral
 from dinkster_schema import schema_from_wire, schema_to_wire
 from dinkster_values import (
-    BufferEncoding,
     CONVERSATION_CAS_BUDGET_BYTES,
+    WORKER_FRAME_HEADER_LIMIT_BYTES,
+    BufferEncoding,
     EncodedPayload,
     ListPayload,
     TypeRegistry,
@@ -71,7 +72,6 @@ from dinkster_values import (
     list_children,
     parse_list_type_id,
     stable_hash,
-    WORKER_FRAME_HEADER_LIMIT_BYTES,
 )
 from dinkster_values.storage import encoded_storage_meta
 

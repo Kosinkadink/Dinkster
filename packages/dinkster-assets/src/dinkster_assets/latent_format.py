@@ -1,7 +1,6 @@
 """Strict, allocation-free validation of supported latent safetensors files."""
 
 from __future__ import annotations
-from dinkster_values import GIBIBYTE, MEBIBYTE
 
 import json
 import re
@@ -10,6 +9,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import BinaryIO, Literal, cast
+
+from dinkster_values import GIBIBYTE, MEBIBYTE
 
 from .identity import AssetError, require_digest
 

@@ -1,7 +1,6 @@
 """Durable adoption of asset-backed results before producer acknowledgement."""
 
 from __future__ import annotations
-from dinkster_values import MEBIBYTE
 
 import os
 from collections.abc import Iterator, Mapping, Sequence
@@ -11,6 +10,7 @@ from typing import cast
 from dinkster_assets import AssetError, AssetRef, AssetResolver, AssetVault, open_verified
 from dinkster_values import (
     ASSET_BASE_TYPE,
+    MEBIBYTE,
     Value,
     default_decode,
     iter_value_tree,

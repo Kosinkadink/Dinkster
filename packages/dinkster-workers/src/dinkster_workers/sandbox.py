@@ -26,7 +26,6 @@ Policy is host/operator configuration. Pack authors never see any of this
 """
 
 from __future__ import annotations
-from dinkster_values import GIBIBYTE, MEBIBYTE
 
 import asyncio
 import json
@@ -40,6 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dinkster_schema import LOG_LEVEL_ENV, LOG_OVERRIDES_ENV
+from dinkster_values import GIBIBYTE, MEBIBYTE
 
 from .accelerator import ACCELERATOR_ENV
 from .egress import EGRESS_PROXY_ENV, EgressProxy

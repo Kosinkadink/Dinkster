@@ -1,7 +1,6 @@
 """Native, OpenRaster, and PSD layered-document interchange."""
 
 from __future__ import annotations
-from dinkster_values import GIBIBYTE, MEBIBYTE
 
 import io
 import json
@@ -14,6 +13,7 @@ from xml.etree import ElementTree as ET
 
 import numpy as np
 from dinkster_assets import AssetVault, digest_bytes
+from dinkster_values import GIBIBYTE, MEBIBYTE
 from PIL import Image
 
 from .document import (

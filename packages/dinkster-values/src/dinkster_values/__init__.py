@@ -78,19 +78,6 @@ from .latent_codec import (
     latent_fingerprint,
     validate_latent_encoded,
 )
-from .lists import (
-    LENGTH_META_KEY,
-    ListPayload,
-    iter_value_tree,
-    list_children,
-    list_type_id,
-    make_list_value,
-    parse_list_type_id,
-    stamp_resource_producer_arm,
-    value_resource_ids,
-    value_resource_provenance_refs,
-    value_resource_refs,
-)
 from .limits import (
     AIMDO_VBAR_PAGE_BYTES,
     CONDITIONING_HEADER_LIMIT_BYTES,
@@ -102,11 +89,11 @@ from .limits import (
     IMAGE_WORKING_SET_LIMIT_BYTES,
     INT8_BACKWARD_TEMP_LIMIT_BYTES,
     LATENT_UPLOAD_HEADROOM_BYTES,
+    MEBIBYTE,
     MEDIA_AUDIO_UPLOAD_LIMIT_BYTES,
     MEDIA_IMAGE_UPLOAD_LIMIT_BYTES,
     MEDIA_MODEL3D_UPLOAD_LIMIT_BYTES,
     MEDIA_VIDEO_UPLOAD_LIMIT_BYTES,
-    MEBIBYTE,
     PEER_CACHE_BLOB_LIMIT_BYTES,
     RESUMABLE_EVENT_RETENTION_BYTES,
     RESUMABLE_RESULT_RETENTION_BYTES,
@@ -121,6 +108,19 @@ from .limits import (
     VIDEO_FRAME_WORKING_SET_LIMIT_BYTES,
     VIDEO_VALUE_LIMIT_BYTES,
     WORKER_FRAME_HEADER_LIMIT_BYTES,
+)
+from .lists import (
+    LENGTH_META_KEY,
+    ListPayload,
+    iter_value_tree,
+    list_children,
+    list_type_id,
+    make_list_value,
+    parse_list_type_id,
+    stamp_resource_producer_arm,
+    value_resource_ids,
+    value_resource_provenance_refs,
+    value_resource_refs,
 )
 from .model import (
     RESOURCE_ID_META_KEY,

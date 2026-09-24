@@ -1,5 +1,4 @@
 from __future__ import annotations
-from dinkster_api.v1 import MEBIBYTE
 
 import asyncio
 import contextlib
@@ -20,6 +19,7 @@ from urllib.parse import urlparse
 import httpx
 from dinkster_api.v1 import (
     ASSET_TYPE,
+    MEBIBYTE,
     AssetError,
     AssetRef,
     AssetVault,
