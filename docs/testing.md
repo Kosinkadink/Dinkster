@@ -226,6 +226,10 @@ GPU gates in `scripts/setup_envs.sh` and the Torch README also remain required
 where applicable. No CI input or repository variable changes local pytest
 selection.
 
+For physical workflow runs, use the tracked transcript harness and the exact
+interpreter, preflight, catalog preparation, and evidence recipe in
+[Workflow benchmark invocation](workflow-benchmark.md).
+
 The `model-tests` matrix runs in full validation in `Kosinkadink/Dinkster` on
 main pushes, the daily schedule and manual dispatch. Pull requests run only
 the fast tier. Eight whole-file inference and IPAdapter shards run beside
