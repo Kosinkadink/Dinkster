@@ -43,7 +43,7 @@ from .operations import module_compute_device
 from .payloads import payload_binding_to_tensor
 from .qwen_text import Flux2DevTextEncoder, Flux2KleinTextEncoder, QwenTextModel
 from .sampling_execution import (
-    CustomSamplingCapabilities,
+    CONTEXT_WINDOWS_UNSUPPORTED,
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
     SamplingDenoiserExecution,
@@ -224,7 +224,7 @@ _FLUX2_SAMPLING_EXECUTION = SamplingExecutionRegistration(
     device=_flux2_device,
     compute_dtype=_flux2_compute_dtype,
     flow=True,
-    capabilities=CustomSamplingCapabilities(supports_context_windows=lambda _runtime: False),
+    capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
     forbidden_options=frozenset({"_compute_dtype", "_device"}),
     forbidden_options_message="Flux2 KSampler does not accept private compute placement arguments",
 )

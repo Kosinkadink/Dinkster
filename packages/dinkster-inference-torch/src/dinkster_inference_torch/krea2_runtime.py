@@ -35,6 +35,7 @@ from .krea2_dit import Krea2DiT
 from .operations import module_compute_device
 from .qwen_image_text import QwenImageLanguageModel
 from .sampling_execution import (
+    CONTEXT_WINDOWS_UNSUPPORTED,
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
     SamplingDenoiserExecution,
@@ -209,6 +210,7 @@ class Krea2DiffusionRuntime(SingleStreamSamplingRuntime):
         device=_krea2_device,
         compute_dtype=_krea2_compute_dtype,
         flow=True,
+        capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
     )
 
     def __init__(

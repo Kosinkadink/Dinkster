@@ -60,6 +60,7 @@ from .qwen_image_control import (
 )
 from .qwen_image_text import prepare_qwen_image_vision, resize_qwen_image_content
 from .sampling_execution import (
+    CONTEXT_WINDOWS_UNSUPPORTED,
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
@@ -649,6 +650,7 @@ class QwenImageRuntime(FlowSamplingRuntime):
         device=_qwen_image_device,
         compute_dtype=_qwen_image_compute_dtype,
         flow=True,
+        capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
     )
 
     def __init__(

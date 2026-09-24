@@ -38,6 +38,7 @@ from .guidance import (
 )
 from .operations import module_compute_device
 from .sampling_execution import (
+    CONTEXT_WINDOWS_UNSUPPORTED,
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
     SamplingDenoiserExecution,
@@ -277,6 +278,7 @@ class ChromaDiffusionRuntime(SingleStreamSamplingRuntime):
         device=_chroma_device,
         compute_dtype=_chroma_compute_dtype,
         flow=True,
+        capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
     )
 
     def __init__(

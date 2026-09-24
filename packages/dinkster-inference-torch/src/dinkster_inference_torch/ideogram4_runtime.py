@@ -49,6 +49,7 @@ from .parameterizations import calculate_denoised
 from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
 from .qwen_image_text import QwenImageLanguageModel
 from .sampling_execution import (
+    CONTEXT_WINDOWS_UNSUPPORTED,
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
     SamplingDenoiserExecution,
@@ -343,6 +344,7 @@ class Ideogram4DiffusionRuntime(SingleStreamSamplingRuntime):
         device=_ideogram4_device,
         compute_dtype=_ideogram4_compute_dtype,
         flow=True,
+        capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
     )
 
     def __init__(

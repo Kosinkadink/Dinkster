@@ -37,6 +37,7 @@ from .guidance import (
 )
 from .operations import module_compute_device
 from .sampling_execution import (
+    CONTEXT_WINDOWS_UNSUPPORTED,
     SamplingAdapterContext,
     SamplingDenoiserAdapter,
     SamplingDenoiserExecution,
@@ -270,6 +271,7 @@ class Lumina2DiffusionRuntime(FlowSamplingRuntime):
         device=_lumina2_device,
         compute_dtype=_lumina2_compute_dtype,
         flow=True,
+        capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
     )
 
     def __init__(

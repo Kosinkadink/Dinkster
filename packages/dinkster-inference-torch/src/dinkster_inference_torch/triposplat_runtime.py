@@ -52,6 +52,7 @@ from .operations import bound_compute_device
 from .parameterizations import calculate_denoised, calculate_input
 from .payloads import payload_binding_to_tensor, tensor_to_payload_binding
 from .sampling_execution import (
+    CONTEXT_WINDOWS_UNSUPPORTED,
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
@@ -543,6 +544,7 @@ class TripoSplatDiffusionRuntime(MultiStreamSamplingRuntime):
         device=_triposplat_device,
         compute_dtype=_triposplat_compute_dtype,
         flow=True,
+        capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
     )
 
     def __init__(

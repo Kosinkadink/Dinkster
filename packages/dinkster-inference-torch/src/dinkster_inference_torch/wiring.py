@@ -178,6 +178,7 @@ from .qwen_image_runtime import QwenImageRuntime
 from .qwen_text import OvisTextEncoder
 from .regional import flux_grouped_region_evaluator
 from .sampling_execution import (
+    CONTEXT_WINDOWS_UNSUPPORTED,
     CustomSamplingCfgValue,
     CustomSamplingCondValue,
     CustomSamplingLatentValue,
@@ -669,6 +670,7 @@ class FluxRuntime(SingleStreamSamplingRuntime):
         device=_flux_device,
         compute_dtype=_flux_compute_dtype,
         flow=True,
+        capabilities=CONTEXT_WINDOWS_UNSUPPORTED,
     )
 
     def __init__(

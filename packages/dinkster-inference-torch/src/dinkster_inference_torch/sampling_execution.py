@@ -709,6 +709,11 @@ class CustomSamplingCapabilities:
     restrictions: tuple[CustomSamplingRestriction, ...] = ()
 
 
+CONTEXT_WINDOWS_UNSUPPORTED = CustomSamplingCapabilities(
+    supports_context_windows=lambda _runtime: False
+)
+
+
 @dataclass(frozen=True)
 class SamplingPipelineHooks:
     """Family data and shape adapters consumed by the shared pipeline."""
@@ -1448,6 +1453,7 @@ def run_ksampler_as_custom(
 
 
 __all__ = [
+    "CONTEXT_WINDOWS_UNSUPPORTED",
     "CustomSamplingCfgValue",
     "CustomSamplingCondValue",
     "CustomSamplingLatentValue",
