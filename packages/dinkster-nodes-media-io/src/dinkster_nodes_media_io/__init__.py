@@ -46,6 +46,7 @@ from .audio import (
     SaveAudio,
     SaveAudioMP3,
     SaveAudioOpus,
+    writable_media_recorder_webm_audio_encoders,
 )
 from .audio_ops import (
     AUDIO_OPS_NODES,
@@ -319,4 +320,5 @@ __all__ = [
     "WebcamCapture",
     "capture_device_choices",
     "register_media_types",
+    "writable_media_recorder_webm_audio_encoders",
 ]

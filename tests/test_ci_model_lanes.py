@@ -69,74 +69,92 @@ MODEL_GROUPS = (
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 1/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 2 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 2/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 3 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 3/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 4 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 4/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 5 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 5/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 6 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 6/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 7 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 7/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 8 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 8/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "acceptance and benchmark",
         "group": "acceptance",
         "suites": "acceptance-sampling,benchmark-loader",
         "pytest-args": "",
+        "timeout-minutes": 30,
     },
     {
         "name": "HED, upscale and EfficientSAM",
         "group": "vision-fast",
         "suites": "hed,upscale,efficient-sam",
         "pytest-args": "",
+        "timeout-minutes": 30,
     },
     {
         "name": "Depth Anything V2, DETR and RT-DETR",
         "group": "vision-detection",
         "suites": "depth-anything-v2,detr,rtdetr",
         "pytest-args": "",
+        "timeout-minutes": 30,
     },
     {
         "name": "BiRefNet and Depth Anything V3",
         "group": "vision-large",
         "suites": "birefnet,depth-anything-v3",
         "pytest-args": "",
+        "timeout-minutes": 30,
     },
-    {"name": "SAM 3.1", "group": "vision-sam", "suites": "sam31", "pytest-args": ""},
+    {
+        "name": "SAM 3.1",
+        "group": "vision-sam",
+        "suites": "sam31",
+        "pytest-args": "",
+        "timeout-minutes": 45,
+    },
 )
 PR_MODEL_GROUPS = (
     {
@@ -576,7 +594,7 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
     (checkout,) = [step for step in preparation_steps if step.get("uses") == "actions/checkout@v4"]
     assert checkout["with"] == {
         "repository": "Kosinkadink/dinkster-evidence",
-        "ref": "54401048b0b5c58ceb7fb5b504eca8e52bec8343",
+        "ref": "a5949cd95ab302f73377ad5aa02a6f35565a60b9",
         "path": ".evidence-source",
         "clean": True,
         "persist-credentials": False,
@@ -822,9 +840,10 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
     assert "torch-cpu-suite" not in str(job)
 
 
-def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> None:
+def test_full_model_suites_use_cpu_golden_shards_with_per_matrix_bounds() -> None:
     assert "engine-tests" not in PR_JOBS
-    assert JOBS["model-tests"]["timeout-minutes"] == 30
+    assert JOBS["model-tests"]["timeout-minutes"] == "${{ matrix.timeout-minutes }}"
+    assert [row["timeout-minutes"] for row in MODEL_GROUPS] == [30] * 12 + [45]
     assert [row["group"] for row in MODEL_GROUPS].count("inference") == 8
     assert {row["pytest-args"] for row in MODEL_GROUPS if row["group"] == "inference"} == {
         f"-p tools.pytest_file_shard --file-shard {shard}/8" for shard in range(1, 9)
@@ -1086,7 +1105,10 @@ def test_full_validation_pytest_and_demo_jobs_are_timeout_bounded() -> None:
     assert JOBS["p2p-descriptor-macos"]["timeout-minutes"] == 15
     assert JOBS["p2p-artifact-smoke"]["timeout-minutes"] == 15
     assert JOBS["torch-cpu"]["timeout-minutes"] == 20
-    assert JOBS["model-tests"]["timeout-minutes"] == 30
+    assert JOBS["model-tests"]["timeout-minutes"] == "${{ matrix.timeout-minutes }}"
+    assert [
+        row["timeout-minutes"] for row in JOBS["model-tests"]["strategy"]["matrix"]["include"]
+    ] == [30] * 12 + [45]
     assert JOBS["coverage"]["timeout-minutes"] == 30
     assert JOBS["coverage-gate"]["timeout-minutes"] == 5
     assert JOBS["translation-coverage"]["timeout-minutes"] == 15

@@ -290,6 +290,13 @@ def _minimax_h3_payload(inference: Any, tensor: Any, reference_id: str) -> tuple
     return descriptor, tensor
 
 
+def _minimax_h3_tensor_bytes(tensor: Any, torch: Any, name: str) -> bytes:
+    try:
+        return tensor.detach().to("cpu").contiguous().view(torch.uint8).numpy().tobytes()
+    except (AttributeError, RuntimeError, TypeError) as error:
+        raise TypeError(f"{name} must expose stable tensor bytes") from error
+
+
 def _minimax_h3_image_tensor(value: object, torch: Any, name: str) -> Any:
     return _minimax_h3_image_batch(value, torch, name)[:1]
 
@@ -546,12 +553,21 @@ def _minimax_h3_condition(
     )
     conditioning: list[list[object]] = [[value, cast("dict[str, object]", {})]]
     target_geometry = tuple((stream.role, tuple(stream.payload.shape)) for stream in av.streams)
+    payload_facts = tuple(
+        reference_id
+        + ":"
+        + hashlib.sha256(
+            _minimax_h3_tensor_bytes(payload, torch, "MiniMax H3 conditioning payload")
+        ).hexdigest()
+        for reference_id, payload in sorted(payloads.items())
+    )
     facts = (
         "dinkster.minimax-h3.conditioning.v1",
         conditioner_handle.resource_identity,
         repr(request),
         repr(target_geometry),
         str(frame_count),
+        *payload_facts,
     )
     fingerprint = (
         "minimax-h3-conditioning:" + hashlib.sha256("\n".join(facts).encode("utf-8")).hexdigest()
@@ -1799,11 +1815,7 @@ def _minimax_h3_latent_fingerprint(value: object, torch: Any) -> str:
         payload = stream.payload
         digest.update(stream.role.encode("utf-8"))
         digest.update(repr((tuple(payload.shape), payload.dtype)).encode("utf-8"))
-        try:
-            raw = payload.detach().to("cpu").contiguous().view(torch.uint8).numpy().tobytes()
-        except (AttributeError, RuntimeError, TypeError) as error:
-            raise TypeError("MiniMax H3 guide latent must expose stable tensor bytes") from error
-        digest.update(raw)
+        digest.update(_minimax_h3_tensor_bytes(payload, torch, "MiniMax H3 guide latent"))
     return digest.hexdigest()
 
 

@@ -47,27 +47,33 @@ from dinkster_values import ResidencyTable, TypeRegistry
 class FakeTensor:
     layout = "strided"
 
-    def __init__(self, shape: tuple[int, ...], device: object = "cpu") -> None:
+    def __init__(
+        self,
+        shape: tuple[int, ...],
+        device: object = "cpu",
+        content: bytes | None = None,
+    ) -> None:
         self.shape = shape
         self.ndim = len(shape)
         self.dtype = "torch.float32"
         self.device = device
+        self.content = bytes(math.prod(shape)) if content is None else content
         self.contiguous_calls = 0
 
     def permute(self, *axes: int) -> FakeTensor:
-        return FakeTensor(tuple(self.shape[index] for index in axes), self.device)
+        return FakeTensor(tuple(self.shape[index] for index in axes), self.device, self.content)
 
     def unsqueeze(self, axis: int) -> FakeTensor:
         shape = list(self.shape)
         shape.insert(axis, 1)
-        return FakeTensor(tuple(shape), self.device)
+        return FakeTensor(tuple(shape), self.device, self.content)
 
     def to(self, device: object) -> FakeTensor:
         selected = device.device if type(device) is FakeTensor else device
-        return FakeTensor(self.shape, selected)
+        return FakeTensor(self.shape, selected, self.content)
 
     def clone(self) -> FakeTensor:
-        return FakeTensor(self.shape, self.device)
+        return FakeTensor(self.shape, self.device, self.content)
 
     def contiguous(self) -> FakeTensor:
         self.contiguous_calls += 1
@@ -80,7 +86,7 @@ class FakeTensor:
         return self
 
     def numpy(self) -> object:
-        return SimpleNamespace(tobytes=lambda: bytes(math.prod(self.shape)))
+        return SimpleNamespace(tobytes=lambda: self.content)
 
     def is_floating_point(self) -> bool:
         return True
@@ -90,17 +96,26 @@ class FakeTensor:
             selected = cast("tuple[object, object]", index)[1]
             if isinstance(selected, slice):
                 start, stop, step = selected.indices(self.shape[-1])
-                return FakeTensor((*self.shape[:-1], len(range(start, stop, step))), self.device)
+                return FakeTensor(
+                    (*self.shape[:-1], len(range(start, stop, step))),
+                    self.device,
+                    self.content,
+                )
         if isinstance(index, slice):
             start, stop, step = index.indices(self.shape[0])
-            return FakeTensor((len(range(start, stop, step)), *self.shape[1:]), self.device)
+            return FakeTensor(
+                (len(range(start, stop, step)), *self.shape[1:]), self.device, self.content
+            )
         if type(index) is int:
-            return FakeTensor(self.shape[1:], self.device)
+            return FakeTensor(self.shape[1:], self.device, self.content)
         raise TypeError("only leading indexing is supported")
 
     def split(self, size: int) -> tuple[FakeTensor, ...]:
         assert size == 1
-        return tuple(FakeTensor((1, *self.shape[1:]), self.device) for _ in range(self.shape[0]))
+        return tuple(
+            FakeTensor((1, *self.shape[1:]), self.device, self.content)
+            for _ in range(self.shape[0])
+        )
 
 
 class IntegerImageTensor:
@@ -915,6 +930,48 @@ def test_task_specific_conditioning_adapts_target_before_geometry(
     ]
     assert cast("Any", conditions[0]["target"]).roles == ("video", "audio")
     assert conditions[0]["frame_count"] == 1
+
+
+def test_fl2va_conditioning_fingerprint_changes_with_one_keyframe_pixel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = "native:dinkster.minimax_h3:" + "1" * 64
+
+    class Runtime:
+        @staticmethod
+        def condition(request: object, **_kwargs: object) -> object:
+            return SimpleNamespace(task=cast("Any", request).task)
+
+    conditioner = SimpleNamespace(
+        load_device="cpu",
+        resource_identity=identity,
+        stage=lambda **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(
+        native_arm,
+        "_minimax_h3_conditioner_runtime",
+        lambda *_args: (conditioner, (), Runtime()),
+    )
+    monkeypatch.setattr(native_arm, "_torch", _fake_torch)
+    monkeypatch.setattr(native_arm, "_minimax_h3_resize", lambda value, *_args: value)
+    first = bytes(32 * 32 * 3)
+    second = bytes((1,)) + first[1:]
+
+    fingerprints = tuple(
+        cast("Any", result["conditioning"])._dinkster_resident_fingerprint
+        for result in (
+            native_arm.NativeMiniMaxH3FL2VAConditioning.execute(
+                clip=object(),
+                video_vae=object(),
+                target=_latent(),
+                prompt="same prompt",
+                first_image=FakeTensor((1, 32, 32, 3), content=content),
+            )
+            for content in (first, second)
+        )
+    )
+
+    assert fingerprints[0] != fingerprints[1]
 
 
 def test_two_conditioning_nodes_prepare_two_independent_prompt_lanes(

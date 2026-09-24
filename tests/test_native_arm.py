@@ -263,12 +263,14 @@ class FakeTensor:
         device: object = "cpu",
         dtype: object = "float32",
         nbytes: int | None = None,
+        array: Any = None,
     ) -> None:
         self.shape = shape
         self.name = name
         self.device = FakeTorch.device(device)
         self.dtype = dtype
         self.nbytes = nbytes if nbytes is not None else max(1, _product(shape)) * 4
+        self.array = array
         self.moves: list[object] = []
         self.permutes: list[tuple[int, ...]] = []
         self.setitems: list[tuple[object, object]] = []
@@ -311,6 +313,9 @@ class FakeTensor:
         return self.__array__()
 
     def contiguous(self) -> FakeTensor:
+        return self
+
+    def view(self, _dtype: object) -> FakeTensor:
         return self
 
     def float(self) -> FakeTensor:
@@ -356,7 +361,21 @@ class FakeTensor:
         import numpy as np
 
         del copy
-        return np.zeros(self.shape, dtype=dtype or np.float32)
+        if self.array is None:
+            self.array = np.zeros(self.shape, dtype=np.float32)
+        return np.asarray(self.array, dtype=dtype)
+
+    def data_ptr(self) -> int:
+        import numpy as np
+
+        self.array = np.ascontiguousarray(self.__array__())
+        return int(self.array.ctypes.data)
+
+    def numel(self) -> int:
+        return _product(self.shape)
+
+    def element_size(self) -> int:
+        return self.nbytes // max(1, self.numel())
 
     def reshape(self, *shape: int) -> FakeTensor:
         return FakeTensor(tuple(shape), self.name, device=self.device, dtype=self.dtype)
@@ -428,6 +447,7 @@ def _product(values: tuple[int, ...]) -> int:
 
 class FakeTorch:
     Tensor = FakeTensor
+    uint8 = "uint8"
     float16 = "float16"
     bfloat16 = "bfloat16"
     float32 = "float32"
@@ -7434,9 +7454,32 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         def __init__(self, runtime_identity: str) -> None:
             self.assembled = SimpleNamespace(diffusion=FakeModule())
             self.runtime_identity = runtime_identity
+            self.family = inference.MINIMAX_H3
             self.model_role = "fl2va-dit"
             self.runtime_facts = ("provider=test",)
             self.receipt_identity = "h3-receipt"
+
+        def custom_sampling_sigmas(self, *_args: object, **_kwargs: object) -> tuple[float, ...]:
+            return (1.0, 0.5, 0.0)
+
+        def custom_sampling_beta_sigmas(
+            self, *_args: object, **_kwargs: object
+        ) -> tuple[float, ...]:
+            return (1.0, 0.5, 0.0)
+
+        def custom_sampling_sd_turbo_sigmas(
+            self, *_args: object, **_kwargs: object
+        ) -> tuple[float, ...]:
+            return (1.0, 0.5, 0.0)
+
+        def custom_sampling_percent_to_sigma(self, percent: float, **_kwargs: object) -> float:
+            return percent
+
+        def check_custom_sampling(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def sample_custom(self, latent: object, **_kwargs: object) -> object:
+            return inference.CustomSamplingResult(cast("Any", latent), None)
 
     class MiniMaxH3DiTRuntime:
         sample_calls: ClassVar[list[dict[str, object]]] = []
@@ -7496,6 +7539,7 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     fake_module = SimpleNamespace(
         MiniMaxH3Model=MiniMaxH3Model,
         MiniMaxH3DiTRuntime=MiniMaxH3DiTRuntime,
+        add_minimax_h3_timeline_guide=lambda prepared, _target, _guide: prepared,
         prepare_multistream_noise=MiniMaxH3DiTRuntime.prepare_custom_sampling_noise,
         torch_sampler_registry=_fake_torch_sampler_registry,
     )
@@ -7505,8 +7549,31 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "import_module",
         lambda name: fake_module if name == "dinkster_inference_torch" else real_import(name),
     )
-    monkeypatch.setattr(arm, "_torch", lambda: FakeTorch())
-    handle = _handle(arm, MiniMaxH3Model(recipe.runtime_identity), recipe=recipe)
+    torch = FakeTorch()
+    monkeypatch.setattr(arm, "_torch", lambda: torch)
+
+    def materialize(next_recipe: object, next_resolvers: object) -> object:
+        resolved = cast("Any", next_recipe)
+        return arm.NativeRuntimeHandle(
+            MiniMaxH3Model(resolved.runtime_identity),
+            torch.device("cuda:0"),
+            recipe=resolved,
+            materializer=materialize,
+            source_resolvers=cast("Mapping[str, object]", next_resolvers),
+            coordinator=_coordinator(arm),
+            _torch_module=torch,
+            _enroll_assembled=_fake_enroll_assembled,
+        )
+
+    handle = arm.NativeRuntimeHandle(
+        MiniMaxH3Model(recipe.runtime_identity),
+        torch.device("cuda:0"),
+        recipe=recipe,
+        materializer=materialize,
+        coordinator=_coordinator(arm),
+        _torch_module=torch,
+        _enroll_assembled=_fake_enroll_assembled,
+    )
     return inference, recipe, handle, MiniMaxH3DiTRuntime
 
 
@@ -7676,6 +7743,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     monkeypatch: pytest.MonkeyPatch,
     row_id: str,
     shape_faithful: bool,
+    installed_default_catalogs: None,
     h3_production_compat_catalog: tuple[dict[str, Any], dict[str, tuple[str, ...]], dict[str, Any]],
 ) -> None:
     import io
@@ -7716,8 +7784,16 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     production_schemas, server_choices, server_lazy_choices = h3_production_compat_catalog
     server_schemas = {**production_schemas, **execution_schemas}
 
+    asset_paths: dict[str, Path] = {}
+
+    class FixtureResolver:
+        @staticmethod
+        def resolve(digest: str) -> Path | None:
+            return asset_paths.get(digest)
+
     registry = TypeRegistry()
     register_core_types(registry)
+    importlib.import_module("dinkster_assets").register_asset_type(registry, FixtureResolver())
     register_foundation_types(registry)
     register_image_types(registry)
     register_media_types(registry)
@@ -7825,21 +7901,24 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     )
     target_streams = inference.MultiStreamLatent.from_pairs(
         (
-            ("video", FakeTensor((1, 24, 2, 2, 2), "cpu")),
-            ("audio", FakeTensor((1, 32, 2, 9), "cpu")),
+            (
+                "video",
+                FakeTensor(
+                    (1, 24, 37, 2, 2),
+                    "cpu",
+                    array=np.arange(3_552, dtype=np.float32).reshape(1, 24, 37, 2, 2),
+                ),
+            ),
+            (
+                "audio",
+                FakeTensor(
+                    (1, 32, 2, 9),
+                    "cpu",
+                    array=np.arange(576, dtype=np.float32).reshape(1, 32, 2, 9),
+                ),
+            ),
         )
     )
-    latent_codec = importlib.import_module("dinkster_values.latent_codec")
-    real_tensor_record = latent_codec.tensor_record
-
-    def tensor_record(value: object) -> object:
-        if isinstance(value, FakeTensor):
-            return latent_codec.EncodedLatentTensor(
-                str(value.dtype), value.shape, bytes(value.nbytes)
-            )
-        return real_tensor_record(value)
-
-    monkeypatch.setattr(latent_codec, "tensor_record", tensor_record)
     monkeypatch.setattr(
         arm,
         "_empty_minimax_h3_target",
@@ -7849,7 +7928,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
 
     def image_batch(value: object, torch: object, name: str) -> object:
         if isinstance(value, np.ndarray):
-            value = FakeTensor(tuple(value.shape), "cpu")
+            value = FakeTensor(tuple(value.shape), "cpu", array=value)
         return real_image_batch(value, torch, name)
 
     monkeypatch.setattr(arm, "_minimax_h3_image_batch", image_batch)
@@ -7877,11 +7956,6 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
         ),
     )
     monkeypatch.setattr(
-        node_types["dinkster.load_lora_model_only"],
-        "execute",
-        staticmethod(lambda **kwargs: {"model": kwargs["model"]}),
-    )
-    monkeypatch.setattr(
         node_types["dinkster.load_image"],
         "execute",
         staticmethod(
@@ -7891,11 +7965,6 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
                 "metadata": {},
             }
         ),
-    )
-    monkeypatch.setattr(
-        node_types["dinkster.minimax_h3_add_guide"],
-        "execute",
-        staticmethod(lambda **kwargs: {"positive": kwargs["positive"]}),
     )
     output_asset = AssetRef("blake3:" + "a" * 64, "output.mp4", 1)
 
@@ -7928,6 +7997,19 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
 
         @staticmethod
         def ref(path: str) -> AssetRef:
+            if "turbo" in path and path.endswith(".safetensors"):
+                lora_path = tmp_path / Path(path).name
+                if not lora_path.exists():
+                    _safetensors_shapes(
+                        lora_path,
+                        {
+                            "diffusion_model.layer.lora_A.weight": (1, 1),
+                            "diffusion_model.layer.lora_B.weight": (1, 1),
+                        },
+                    )
+                asset = _asset(lora_path)
+                asset_paths[asset.digest] = lora_path
+                return asset
             return AssetRef(f"blake3:{hashlib.blake2s(path.encode()).hexdigest()}", path, 1)
 
     def make_engine(_on_event: object = None) -> Engine:
@@ -7986,6 +8068,34 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     assert len(dit_type.sample_calls) == 1
     saved = cast("Any", result.outputs["92"]["asset"].resolve())
     assert saved.digest == output_asset.digest
+
+
+def test_h3_replay_does_not_patch_identity_or_nodes_under_test() -> None:
+    forbidden_execute_targets = {
+        "dinkster.load_lora_model_only",
+        "dinkster.minimax_h3_add_guide",
+        "GenerationLoadLoraModelOnly",
+        "NativeLoadLoraModelOnly",
+        "NativeMiniMaxH3AddGuide",
+    }
+    violations: list[str] = []
+    for path in sorted((REPO_ROOT / "tests").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+            if not isinstance(call.func, ast.Attribute) or call.func.attr != "setattr":
+                continue
+            if len(call.args) < 2 or not isinstance(call.args[1], ast.Constant):
+                continue
+            attribute = call.args[1].value
+            target = ast.unparse(call.args[0])
+            if attribute in {"tensor_record", "_dinkster_resident_fingerprint"} or (
+                attribute == "execute"
+                and any(forbidden in target for forbidden in forbidden_execute_targets)
+            ):
+                location = f"{path.relative_to(REPO_ROOT)}:{call.lineno}"
+                violations.append(f"{location}: {target}.{attribute}")
+
+    assert violations == []
 
 
 def test_native_h3_decomposed_sampling_refusals_and_non_h3_passthrough(
