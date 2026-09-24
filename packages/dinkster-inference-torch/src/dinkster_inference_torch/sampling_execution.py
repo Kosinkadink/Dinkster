@@ -705,9 +705,7 @@ class CustomSamplingCapabilities:
     supports_inpaint: Callable[[object], bool] = lambda runtime: bool(
         getattr(runtime, "supports_inpaint", False)
     )
-    supports_context_windows: Callable[[object], bool] = lambda runtime: bool(
-        getattr(runtime, "supports_context_windows", False)
-    )
+    supports_context_windows: Callable[[object], bool] = lambda _runtime: True
     restrictions: tuple[CustomSamplingRestriction, ...] = ()
 
 
