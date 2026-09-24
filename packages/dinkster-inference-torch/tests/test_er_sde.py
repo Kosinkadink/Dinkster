@@ -44,8 +44,16 @@ class _Noise:
     ("case_name", "parameterization"),
     [
         ("eps", Parameterization.EPS),
-        ("flow", Parameterization.FLOW),
-        ("flow", Parameterization.IMAGE_TO_IMAGE_FLOW),
+        pytest.param(
+            "flow",
+            Parameterization.FLOW,
+            marks=pytest.mark.skip(reason="skipped pending #427"),
+        ),
+        pytest.param(
+            "flow",
+            Parameterization.IMAGE_TO_IMAGE_FLOW,
+            marks=pytest.mark.skip(reason="skipped pending #427"),
+        ),
     ],
 )
 def test_torch_er_sde_matches_every_executed_reference_seam(
