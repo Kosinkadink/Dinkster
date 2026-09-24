@@ -314,6 +314,8 @@ native = [
     "dinkster.load_vision",
     "dinkster.load_diffusion_model",
     "dinkster.load_diffusion_components",
+    "dinkster.load_lora",
+    "dinkster.load_lora_model_only",
     "dinkster.empty_trellis2_latent_structure",
     "dinkster.trellis2_conditioning",
     "dinkster.pixal3d_conditioning",

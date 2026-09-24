@@ -6569,6 +6569,8 @@ def test_manifest_declares_exact_native_arm_with_matching_schemas() -> None:
         "dinkster.load_vision",
         "dinkster.load_diffusion_model",
         "dinkster.load_diffusion_components",
+        "dinkster.load_lora",
+        "dinkster.load_lora_model_only",
         "dinkster.empty_trellis2_latent_structure",
         "dinkster.trellis2_conditioning",
         "dinkster.pixal3d_conditioning",
@@ -7614,10 +7616,24 @@ H3_IMPORTER_API_ROWS = (
     "multiframe-reference--no-lora",
     "multiframe-reference--ref2v-4step",
 )
+H3_IMPORTER_LORA_ROWS = tuple(row for row in H3_IMPORTER_API_ROWS if "no-lora" not in row)
 H3_IMPORTER_API_CASES = (
     *((row_id, False) for row_id in H3_IMPORTER_API_ROWS),
     ("t2v--no-lora", True),
 )
+
+
+def test_h3_lora_fixtures_share_the_model_producer_native_arm() -> None:
+    manifest = load_manifest(MANIFEST)
+    native_arm_nodes = set(dict(manifest.arms)["native"])
+    required = {"dinkster.load_diffusion_model", "dinkster.load_lora_model_only"}
+    assert required <= native_arm_nodes
+
+    fixture_root = REPO_ROOT / "tests" / "fixtures" / "minimax-h3-importer-api"
+    for row_id in H3_IMPORTER_LORA_ROWS:
+        document = json.loads((fixture_root / f"{row_id}.json").read_text(encoding="utf-8"))
+        fixture_nodes = {node["class_type"] for node in document.values()}
+        assert {"UNETLoader", "LoraLoaderModelOnly"} <= fixture_nodes
 
 
 @pytest.fixture(scope="module")

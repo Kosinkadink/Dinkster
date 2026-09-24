@@ -1801,8 +1801,8 @@ def _minimax_h3_latent_fingerprint(value: object, torch: Any) -> str:
         digest.update(repr((tuple(payload.shape), payload.dtype)).encode("utf-8"))
         try:
             raw = payload.detach().to("cpu").contiguous().view(torch.uint8).numpy().tobytes()
-        except (AttributeError, RuntimeError, TypeError):
-            raw = repr(payload).encode("utf-8")
+        except (AttributeError, RuntimeError, TypeError) as error:
+            raise TypeError("MiniMax H3 guide latent must expose stable tensor bytes") from error
         digest.update(raw)
     return digest.hexdigest()
 
@@ -1814,7 +1814,7 @@ def _minimax_h3_rewrap_conditioning(
     operation: str,
 ) -> object:
     if not isinstance(source, inference.ResidentConditioningCarrier):
-        return conditioning
+        raise TypeError("MiniMax H3 conditioning transform requires a resident carrier")
     resident = cast("Any", source).payload
     if type(resident) is not _MiniMaxH3ResidentConditioning:
         raise TypeError("MiniMax H3 conditioning has an invalid resident payload")

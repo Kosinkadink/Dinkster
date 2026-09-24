@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 import sys
 from contextlib import nullcontext
 from pathlib import Path
@@ -71,6 +72,15 @@ class FakeTensor:
     def contiguous(self) -> FakeTensor:
         self.contiguous_calls += 1
         return self
+
+    def detach(self) -> FakeTensor:
+        return self
+
+    def view(self, _dtype: object) -> FakeTensor:
+        return self
+
+    def numpy(self) -> object:
+        return SimpleNamespace(tobytes=lambda: bytes(math.prod(self.shape)))
 
     def is_floating_point(self) -> bool:
         return True
@@ -174,6 +184,7 @@ def _fake_torch() -> object:
     return SimpleNamespace(
         Tensor=FakeTensor,
         strided="strided",
+        uint8="uint8",
         bfloat16="bf16",
         float16="fp16",
         float32="fp32",
@@ -1284,6 +1295,154 @@ def test_motion_context_delegates_av_tail_selection_and_preserves_identity(
     output = carrier.payload.conditioning[0][0]
     assert output.runtime_identity == identity
     assert output.payload == "continued"
+
+
+def test_every_h3_conditioning_output_is_valid_on_the_production_wire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inference = __import__("dinkster_inference")
+    identity = "native:dinkster.minimax_h3:" + "1" * 64
+
+    class ConditionerRuntime:
+        @staticmethod
+        def condition(request: object, **_kwargs: object) -> object:
+            return SimpleNamespace(task=cast("Any", request).task)
+
+    class VideoRuntime:
+        @staticmethod
+        def encode_video(_value: object) -> FakeTensor:
+            return FakeTensor((1, 24, 1, 32, 48))
+
+    owner = SimpleNamespace(
+        load_device="cpu",
+        resource_identity=identity,
+        stage=lambda **_kwargs: nullcontext(),
+    )
+    codecs = (owner,)
+    monkeypatch.setattr(native_arm, "_torch", _fake_torch)
+    monkeypatch.setattr(
+        native_arm,
+        "_minimax_h3_conditioner_runtime",
+        lambda *_args: (owner, codecs, ConditionerRuntime()),
+    )
+    monkeypatch.setattr(native_arm, "_empty_minimax_h3_target", lambda *_args: _latent())
+    monkeypatch.setattr(
+        native_arm,
+        "_minimax_h3_video_vae_runtime",
+        lambda *_args: (owner, VideoRuntime()),
+    )
+    _install_upscale(monkeypatch)
+    inference_torch = SimpleNamespace(
+        add_minimax_h3_timeline_guide=lambda _prepared, _target, _guide: object(),
+        add_minimax_h3_motion_context=lambda _prepared, _target, _previous, length: (
+            object(),
+            length / 24,
+        ),
+    )
+    real_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: inference_torch if name == "dinkster_inference_torch" else real_import(name),
+    )
+
+    image = FakeTensor((1, 32, 32, 3))
+    latent = _latent()
+    results = {
+        "dinkster.minimax_h3_t2va_conditioning": (
+            native_arm.NativeMiniMaxH3T2VAConditioning.execute(
+                clip=owner, target=latent, prompt="prompt"
+            )["conditioning"]
+        ),
+        "dinkster.minimax_h3_fl2va_conditioning": (
+            native_arm.NativeMiniMaxH3FL2VAConditioning.execute(
+                clip=owner,
+                video_vae=owner,
+                target=latent,
+                prompt="prompt",
+                first_image=image,
+            )["conditioning"]
+        ),
+        "dinkster.minimax_h3_ref2va_conditioning": (
+            native_arm.NativeMiniMaxH3REF2VAConditioning.execute(
+                clip=owner,
+                video_vae=owner,
+                audio_vae=owner,
+                target=latent,
+                prompt="prompt",
+                references=(MiniMaxH3ImageReferenceValue(image),),
+                ref_image_size="match",
+            )["conditioning"]
+        ),
+        "dinkster.minimax_h3_image_to_video": native_arm.NativeMiniMaxH3ImageToVideo.execute(
+            clip=owner,
+            vae=owner,
+            prompt="prompt",
+            width=32,
+            height=32,
+            length=5,
+        )["positive"],
+        "dinkster.minimax_h3_reference_to_video": (
+            native_arm.NativeMiniMaxH3ReferenceToVideo.execute(
+                clip=owner,
+                vae=owner,
+                audio_vae=owner,
+                prompt="prompt",
+                width=32,
+                height=32,
+                length=5,
+                ref_image_size="match",
+                ref_images={"ref_image_1": image},
+                ref_videos={},
+                ref_video_audios={},
+                ref_audios={},
+            )["positive"]
+        ),
+    }
+    results["dinkster.minimax_h3_add_guide"] = native_arm.NativeMiniMaxH3AddGuide.execute(
+        positive=results["dinkster.minimax_h3_reference_to_video"],
+        latent=latent,
+        vae=owner,
+        image=image,
+        frame_idx=0,
+    )["positive"]
+    results["dinkster.minimax_h3_motion_context"] = native_arm.NativeMiniMaxH3MotionContext.execute(
+        positive=results["dinkster.minimax_h3_add_guide"],
+        latent=latent,
+        previous_latent=latent,
+        context_length=5,
+    )["positive"]
+
+    registry = TypeRegistry()
+    spec = register_conditioning_type(registry, resident_table=ResidencyTable())
+    assert spec.coerce is not None
+    for value in results.values():
+        coerced = spec.coerce(value)
+        wrapped = registry.wrap(CONDITIONING_TYPE_ID, coerced)
+        assert spec.decode(spec.encode(wrapped.resolve())) is value
+
+    with pytest.raises(TypeError, match="requires a resident carrier"):
+        native_arm._minimax_h3_rewrap_conditioning([], [], inference, "test")
+    unstable = SimpleNamespace(
+        streams=(
+            SimpleNamespace(
+                role="video",
+                payload=SimpleNamespace(shape=(1,), dtype="torch.float32"),
+            ),
+        )
+    )
+    with pytest.raises(TypeError, match="stable tensor bytes"):
+        native_arm._minimax_h3_latent_fingerprint(unstable, _fake_torch())
+
+    assert set(results) == {
+        "dinkster.minimax_h3_t2va_conditioning",
+        "dinkster.minimax_h3_fl2va_conditioning",
+        "dinkster.minimax_h3_ref2va_conditioning",
+        "dinkster.minimax_h3_image_to_video",
+        "dinkster.minimax_h3_reference_to_video",
+        "dinkster.minimax_h3_add_guide",
+        "dinkster.minimax_h3_motion_context",
+    }
 
 
 def test_add_guide_requires_content_and_the_matching_vae(
