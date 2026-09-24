@@ -27,6 +27,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torchvision
+from golden_platform import cpu_identity
 from safetensors.torch import load_file
 from torch import nn
 
@@ -171,6 +172,7 @@ def main() -> None:
 
     document = {
         "baseline": BASELINE,
+        "generationCpu": cpu_identity(),
         "modelBlake3": MODEL_BLAKE3,
         "modelSha256": MODEL_SHA256,
         "numpy": np.__version__,
