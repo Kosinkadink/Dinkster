@@ -1,4 +1,4 @@
-"""Strict direct-import loading for independently supplied Wan 2.1 components."""
+"""Strict direct-import loading for independently supplied Wan components."""
 
 from __future__ import annotations
 
@@ -17,9 +17,11 @@ from dinkster_inference import (
     Conditioning,
     PromptTokenizer,
     Wan21ComponentAssemblyError,
+    Wan21StandaloneComponentPlan,
     Wan21StandaloneComponentRole,
     Wan21VAEConfig,
     plan_wan21_split_component,
+    plan_wan22_split_component,
     wan21_component_runtime_identity,
 )
 from dinkster_inference.assembly import ComponentPlan
@@ -52,7 +54,7 @@ _WAN21_TOKENIZER_ATTRIBUTE = "_dinkster_wan21_spiece_model"
 
 @dataclass(frozen=True)
 class Wan21LoadedComponent:
-    """One independently verified and strict-loaded Wan 2.1 component."""
+    """One independently verified and strict-loaded Wan component."""
 
     role: Wan21StandaloneComponentRole
     module: torch.nn.Module
@@ -112,32 +114,40 @@ def load_wan21_component(
     """Verify, plan, identity-check, and strict-load one Wan component."""
 
     if type(asset) is not AssetRef:
-        raise TypeError("Wan 2.1 component asset must be an AssetRef")
+        raise TypeError("Wan component asset must be an AssetRef")
     if type(expected_identity) is not str or not expected_identity:
-        raise ValueError("Wan 2.1 component requires an expected identity")
+        raise ValueError("Wan component requires an expected identity")
     identity_dtype = _IDENTITY_DTYPES.get(compute_dtype)
     if identity_dtype is None:
-        raise TypeError("Wan 2.1 component compute dtype must be bfloat16, float16, or float32")
+        raise TypeError("Wan component compute dtype must be bfloat16, float16, or float32")
     try:
         handle = asset.open()
     except (AssetError, OSError) as error:
         raise Wan21ComponentAssemblyError(
-            f"Wan 2.1 {expected_role} artifact is unavailable: {error}"
+            f"Wan {expected_role} artifact is unavailable: {error}"
         ) from error
     with handle:
         try:
             size = os.fstat(handle.fileno()).st_size
         except OSError as error:
             raise Wan21ComponentAssemblyError(
-                f"Wan 2.1 {expected_role} artifact is unavailable: {error}"
+                f"Wan {expected_role} artifact is unavailable: {error}"
             ) from error
         if size != asset.size:
             raise Wan21ComponentAssemblyError(
-                f"Wan 2.1 {expected_role} byte size differs from its asset metadata"
+                f"Wan {expected_role} byte size differs from its asset metadata"
             )
         source = load_safetensors_header_from_file(handle, path=path)
         pinned = _PinnedSource(source, handle, asset.digest, asset.size)
-        planned = plan_wan21_split_component(pinned, role=expected_role, path=path)
+        planner = (
+            plan_wan22_split_component
+            if expected_identity.startswith("native:dinkster.wan22:")
+            else plan_wan21_split_component
+        )
+        planned = cast(
+            "Wan21StandaloneComponentPlan",
+            planner(pinned, role=expected_role, path=path),
+        )
         runtime_identity = wan21_component_runtime_identity(planned, identity_dtype)
         if runtime_identity != expected_identity:
             raise Wan21ComponentAssemblyError(

@@ -1078,6 +1078,7 @@ def test_wan_runtimes_expose_their_custom_schedule_contracts(family_id: str) -> 
         (wan21_runtime_module.Wan21Model, WAN21_T2V_14B),
         (wan21_runtime_module.Wan21HumoModel, WAN21_HUMO_17B),
         (wan21_runtime_module.Wan22S2VModel, WAN22_S2V_14B),
+        (wan21_runtime_module.Wan21Model, WAN22_TI2V_5B),
         (wan21_runtime_module.Wan22DancerModel, WAN22_WANDANCER_14B),
     ),
 )

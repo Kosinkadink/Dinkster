@@ -873,7 +873,7 @@ Wan21StandaloneComponentRole = Literal["diffusion", "umt5xxl", "vae"]
 
 @dataclass(frozen=True)
 class Wan21StandaloneComponentPlan:
-    """One independently loaded Wan 2.1 T2V component."""
+    """One independently loaded Wan component."""
 
     role: Wan21StandaloneComponentRole
     component: ComponentPlan[Wan21Config | T5Config | Wan21VAEConfig]
@@ -890,6 +890,7 @@ class Wan21StandaloneComponentPlan:
                     WAN21_CAUSAL_AR_1_3B,
                     WAN21_HUMO_17B,
                     WAN22_S2V_14B,
+                    WAN22_TI2V_5B,
                     WAN22_WANDANCER_14B,
                 )
             )
@@ -906,7 +907,7 @@ class Wan21StandaloneComponentPlan:
             )
         )
         if not valid:
-            raise ValueError("standalone Wan 2.1 components require exact supported roles")
+            raise ValueError("standalone Wan components require exact supported roles")
         if self.role != "umt5xxl" and self.tokenizer_source_key:
             raise ValueError("only the standalone UMT5 component carries a tokenizer source")
 
@@ -3428,6 +3429,23 @@ def plan_ltxav_standalone_component(
     raise ValueError(f"unsupported standalone LTX-2 component role {role!r}")
 
 
+def plan_z_image_component(source: WeightSource) -> ComponentPlan[ZImageConfig]:
+    """Plan one exact latent Z-Image diffusion component."""
+    extracted = _component_source(
+        "diffusion",
+        source,
+        None,
+        FLUX_DIFFUSION_PREFIX,
+        split_prefixes=("", FLUX_DIFFUSION_PREFIX),
+    )
+    layout = z_image_layout()
+    if set(extracted.geometries) != set(layout) or any(
+        extracted.geometries[key].shape != shape for key, shape in layout.items()
+    ):
+        raise AssemblyError("diffusion: source is not an exact latent Z-Image layout")
+    return _plan("diffusion", extracted, Z_IMAGE_CONFIG)
+
+
 def plan_z_image_assembly(
     *,
     checkpoint: WeightSource | None = None,
@@ -5472,6 +5490,7 @@ __all__ = [
     "plan_wan21_assembly",
     "plan_wan21_standalone_component",
     "plan_wan22_assembly",
+    "plan_z_image_component",
     "plan_qwen_image_control",
     "plan_qwen_image_diffsynth",
     "plan_z_image_control",

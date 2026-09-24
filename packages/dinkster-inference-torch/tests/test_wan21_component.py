@@ -68,8 +68,13 @@ def _patch_planning(
         seen.update(header_handle=handle, header_path=path, header_source=source)
         return source
 
-    def plan(candidate: object, *, role: str, path: Path) -> object:
-        seen.update(planner_source=candidate, planner_role=role, planner_path=path)
+    def plan(candidate: object, *, role: str, path: Path, family: str) -> object:
+        seen.update(
+            planner_source=candidate,
+            planner_role=role,
+            planner_path=path,
+            planner_family=family,
+        )
         planned.role = role
         planned.tokenizer_source_key = "spiece_model" if role == "umt5xxl" else ""
         return planned
@@ -85,11 +90,43 @@ def _patch_planning(
         seen.update(tokenizer_handle=handle, tokenizer_source=candidate, tokenizer_key=key)
         return {key: torch.tensor(tuple(tokenizer), dtype=torch.uint8)}
 
+    def plan_wan21(candidate: object, *, role: str, path: Path) -> object:
+        return plan(candidate, role=role, path=path, family="wan21")
+
+    def plan_wan22(candidate: object, *, role: str, path: Path) -> object:
+        return plan(candidate, role=role, path=path, family="wan22")
+
     monkeypatch.setattr(component, "load_safetensors_header_from_file", load_header)
-    monkeypatch.setattr(component, "plan_wan21_split_component", plan)
+    monkeypatch.setattr(component, "plan_wan21_split_component", plan_wan21)
+    monkeypatch.setattr(component, "plan_wan22_split_component", plan_wan22)
     monkeypatch.setattr(component, "wan21_component_runtime_identity", identity)
     monkeypatch.setattr(component, "load_tensors_from_file", load_tokenizer)
     return planned
+
+
+def test_component_loader_selects_wan22_planner_from_expected_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _component_path(tmp_path)
+    identity = "native:dinkster.wan22:" + "2" * 64
+    seen: dict[str, object] = {}
+    _patch_planning(monkeypatch, expected_identity=identity, seen=seen)
+
+    def load(*_args: object, **_kwargs: object) -> torch.nn.Module:
+        return torch.nn.Identity()
+
+    monkeypatch.setattr(component, "_load_component", load)
+
+    loaded = component.load_wan21_component(
+        path,
+        asset=_asset(path),
+        expected_role="diffusion",
+        expected_identity=identity,
+        compute_dtype=torch.bfloat16,
+    )
+
+    assert loaded.runtime_identity == identity
+    assert seen["planner_family"] == "wan22"
 
 
 @pytest.mark.parametrize(

@@ -11,7 +11,7 @@ from typing import Any, cast
 import torch
 from dinkster_assets import AssetRef
 from dinkster_inference import AttentionPolicy, AttentionRouteToken
-from dinkster_inference.catalog import WAN21
+from dinkster_inference.catalog import WAN21, WAN22
 from dinkster_inference.component_checkpoint import ComponentCheckpointPlan
 from dinkster_inference.component_registry import execution_symbol
 from dinkster_inference.minimax_h3_assembly import MiniMaxH3CommonComponentRole
@@ -102,7 +102,7 @@ def wan_runtime(
     )
     return runtime_type(
         loaded.module,
-        WAN21,
+        WAN22 if identity.startswith("native:dinkster.wan22:") else WAN21,
         runtime_identity=identity,
         compute_dtype=dtype,
     )

@@ -22,6 +22,7 @@ from dinkster_inference import (
     WAN22_DANCER_SETTINGS_KEY,
     WAN22_S2V_14B,
     WAN22_SIGMAS,
+    WAN22_TI2V_5B,
     WAN22_WANDANCER_14B,
     Conditioning,
     ConditioningCarrier,
@@ -5279,14 +5280,14 @@ class Wan21DiffusionRuntime(MultiStreamSamplingRuntime):
         scheduler_registry: Registry[SchedulerDescriptor] | None = None,
     ) -> None:
         if not (
-            (type(diffusion) is Wan21Model and diffusion.config is WAN21_T2V_14B)
+            (type(diffusion) is Wan21Model and diffusion.config in (WAN21_T2V_14B, WAN22_TI2V_5B))
             or (type(diffusion) is Wan21HumoModel and diffusion.config is WAN21_HUMO_17B)
             or (type(diffusion) is Wan22S2VModel and diffusion.config is WAN22_S2V_14B)
             or (type(diffusion) is Wan22DancerModel and diffusion.config is WAN22_WANDANCER_14B)
         ):
             raise ValueError(
-                "Wan diffusion runtime requires exact Wan 2.1 T2V, HuMo, Wan 2.2 S2V, "
-                "or WanDancer 14B"
+                "Wan diffusion runtime requires exact Wan 2.1 T2V, HuMo, Wan 2.2 TI2V or S2V, "
+                "or WanDancer"
             )
         if type(family.id) is not str or not family.id.strip():
             raise ValueError("Wan diffusion runtime family identity must be a nonempty string")
