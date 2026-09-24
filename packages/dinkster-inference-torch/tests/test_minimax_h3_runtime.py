@@ -66,6 +66,11 @@ from dinkster_inference import (
     offset_first_sigma_for_snr,
     sampling_sigmas,
 )
+from dinkster_inference.context_windows import (
+    ContextFuseMethod,
+    ContextWindowSchedule,
+    ContextWindowsSpec,
+)
 from dinkster_inference_torch import (
     INFERENCE_PATCH_PROVIDERS_SURFACE,
     MASK_PAYLOAD_SPACE,
@@ -1558,6 +1563,43 @@ def test_cfg_combines_cond_and_uncond_predictions() -> None:
     torch.testing.assert_close(result_packed, expected)
 
 
+@pytest.mark.parametrize("dim", (2, 3, 4), ids=("temporal", "height", "width"))
+def test_h3_context_windows_use_one_packed_layout_path(dim: int) -> None:
+    expected_runtime, expected_conditioner, _expected_dit = _context_mean_runtime()
+    actual_runtime, actual_conditioner, actual_dit = _context_mean_runtime()
+    target = _target()
+    expected = _sample_cfg(
+        expected_runtime,
+        target,
+        _condition_t2va(expected_conditioner, target),
+        None,
+        1.0,
+    )
+    actual = actual_runtime.sample_multistream(
+        target,
+        conditioning=_condition_t2va(actual_conditioner, target),
+        cfg=SamplingGuidance(None, 1.0),
+        sampler_id="res_multistep",
+        scheduler_id="simple",
+        steps=1,
+        denoise=1.0,
+        seed=123,
+        context_windows=ContextWindowsSpec(
+            ContextWindowSchedule.BATCHED,
+            ContextFuseMethod.PYRAMID,
+            length=1,
+            overlap=0,
+            dim=dim,
+        ),
+        cancelled=lambda: False,
+    )
+    expected_packed, expected_layout = pack_latent_streams(expected)
+    actual_packed, actual_layout = pack_latent_streams(actual)
+    assert actual_layout == expected_layout
+    torch.testing.assert_close(actual_packed, expected_packed)
+    assert len(actual_dit.calls) > 1
+
+
 def test_runtime_forwards_the_token_mask_to_both_guidance_lanes(
     runtime_fixture: RuntimeFixture,
 ) -> None:
@@ -2958,10 +3000,9 @@ def test_check_custom_sampling_refuses_inpaint_guidance_and_unknown_samplers() -
         runtime.check_custom_sampling(
             request, has_denoise_mask=False, has_inpaint=True, has_context_windows=False
         )
-    with pytest.raises(MiniMaxH3RuntimeError, match="does not support context windows"):
-        runtime.check_custom_sampling(
-            request, has_denoise_mask=False, has_inpaint=False, has_context_windows=True
-        )
+    runtime.check_custom_sampling(
+        request, has_denoise_mask=False, has_inpaint=False, has_context_windows=True
+    )
     with pytest.raises(MiniMaxH3RuntimeError, match="no distilled-guidance input"):
         runtime.check_custom_sampling(
             request,
