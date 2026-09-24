@@ -7455,6 +7455,7 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     fake_module = SimpleNamespace(
         MiniMaxH3Model=MiniMaxH3Model,
         MiniMaxH3DiTRuntime=MiniMaxH3DiTRuntime,
+        prepare_multistream_noise=MiniMaxH3DiTRuntime.prepare_custom_sampling_noise,
         torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
@@ -7745,6 +7746,11 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
             f"blake3:{hashlib.blake2s(name.encode()).hexdigest()}", name, 1
         ).to_wire()
 
+    prompt = {
+        node_id: entry
+        for node_id, entry in prompt.items()
+        if entry["class_type"] not in {"ImageScaleToTotalPixels", "GetImageSize"}
+    }
     for entry in prompt.values():
         node_type = entry["class_type"]
         inputs = entry["inputs"]
@@ -7764,7 +7770,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
         elif node_type == "CreateVideo":
             entry["class_type"] = "dinkster.video.assemble"
             entry["inputs"] = {
-                name: value
+                name: str(value) if name == "bit_depth" else value
                 for name, value in inputs.items()
                 if name in {"images", "fps", "bit_depth", "color_space", "audio"}
             }
