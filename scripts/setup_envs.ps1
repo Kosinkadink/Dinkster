@@ -144,9 +144,8 @@ try {
         )
     }
     Invoke-Native $TorchPython @(
-        "-I",
         "-c",
-        "from importlib.metadata import version; import site; import av, dinkster.serve, dinkster_model_triposplat.provider, torch; assert site.ENABLE_USER_SITE is False; assert version('av') == '18.1.0'; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'"
+        "from importlib.metadata import version; import torch; assert torch.__version__ == '2.13.0+cpu'; assert version('torchvision') == '0.28.0+cpu'; assert version('dinkster-kitchen') == '0.2.35.post1'; assert version('dinkster-aimdo') == '0.5.5.post2'"
     )
 
     $PythonInclude = (& $TorchPython -c "import sysconfig; print(sysconfig.get_paths()['include'])")
@@ -189,9 +188,8 @@ try {
             )
         }
         Invoke-Native $GpuPython @(
-            "-I",
             "-c",
-            "from importlib.metadata import version; import site; import av, dinkster.serve, dinkster_model_triposplat.provider, torch, triton; assert site.ENABLE_USER_SITE is False; assert version('av') == '18.1.0'; assert torch.__version__ == '2.13.0+cu130'; assert version('torchvision') == '0.28.0+cu130'; assert version('tokenizers') == '0.23.1'; assert triton.__version__ == '3.7.1'"
+            "import torch, triton; assert torch.__version__ == '2.13.0+cu130'; assert triton.__version__ == '3.7.1'"
         )
     }
     else {

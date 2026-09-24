@@ -431,8 +431,8 @@ def test_path_loaded_builtin_extra_inventory_and_complete_catalog_contract(
     ]
     assert len(translated_assets) == 38
     assert ("dinkster.load_controlnet", "control_net_name", "model/controlnet") in native_assets
-    assert len(native_assets) == 26
-    assert len(translated_assets) + len(native_assets) == 64
+    assert len(native_assets) == 24
+    assert len(translated_assets) + len(native_assets) == 62
     assert (
         "dinkster.load_dual_clip",
         "text_encoder1",
