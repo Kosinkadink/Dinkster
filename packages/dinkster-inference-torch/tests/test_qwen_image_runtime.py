@@ -40,7 +40,7 @@ from dinkster_inference_torch import qwen_image_control as control_module
 from dinkster_inference_torch import qwen_image_runtime as runtime
 from dinkster_inference_torch import sampling_execution as sampling_execution_module
 from dinkster_inference_torch.denoise import prepare_noise
-from dinkster_inference_torch.operations import InitlessOperations
+from dinkster_inference_torch.operations import CastOperations, InitlessOperations
 from dinkster_inference_torch.qwen_image import QwenImage
 from dinkster_inference_torch.qwen_image_assembly import (
     AssembledQwenImage,
@@ -76,6 +76,21 @@ from dinkster_inference_torch.schedules import (
 )
 from dinkster_inference_torch.solvers import torch_sampler_registry
 from dinkster_inference_torch.wan21_vae import WanVAE
+
+
+def test_diffusion_only_assembly_uses_bound_compute_dtype_for_float8_storage() -> None:
+    diffusion = torch.nn.Module()
+    diffusion.img_in = CastOperations(torch.bfloat16).linear(4, 3, bias=False)
+    diffusion.img_in.weight = torch.nn.Parameter(
+        torch.arange(12, dtype=torch.float32).reshape(3, 4).to(torch.float8_e4m3fn)
+    )
+    assembled = runtime._QwenImageDiffusionAssembly(  # pyright: ignore[reportPrivateUsage]
+        cast(QwenImage, diffusion), QWEN_IMAGE
+    )
+
+    assert diffusion.img_in.weight.dtype is torch.float8_e4m3fn
+    assert assembled.compute_dtype("diffusion") is torch.bfloat16
+    assert assembled.compute_dtype("vae") is None
 
 
 def test_independent_wan_codec_component_encodes_and_decodes() -> None:
@@ -243,6 +258,7 @@ class _Diffusion(torch.nn.Module):
         self.events = events
         self.fail = fail
         self.config = config
+        self.img_in = torch.nn.Linear(1, 1, bias=False)
         self.output = torch.nn.Parameter(torch.tensor(0.25))
         self.calls: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]] = []
         self.variant_calls: list[tuple[tuple[torch.Tensor, ...], torch.Tensor | None]] = []
