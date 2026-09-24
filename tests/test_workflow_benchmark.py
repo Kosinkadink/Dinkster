@@ -62,8 +62,9 @@ def workload() -> dict[str, Any]:
     }
 
 
-def complete_report(system: str = "dinkster") -> dict[str, Any]:
+def complete_report(system: str = "dinkster", warm_runs: int = 5) -> dict[str, Any]:
     specification = workload()
+    specification["seeds"] = specification["seeds"][: warm_runs + 1]
     rows = []
     for index, seed in enumerate(specification["seeds"]):
         rows.append(
@@ -97,7 +98,7 @@ def complete_report(system: str = "dinkster") -> dict[str, Any]:
             for name in ("harness", "dinkster", "comfyui")
         },
         "workload": specification,
-        "warm_summary": summary([2.0] * 5),
+        "warm_summary": summary([2.0] * warm_runs) if warm_runs else None,
         "memory": {
             "sampled_peak_tree_rss_bytes": 100,
             "sampled_peak_device_used_bytes": None,
@@ -910,8 +911,8 @@ def test_server_process_registers_local_full_free_worker(tmp_path: Path) -> None
         installation.close()
 
 
-def allocator_report(system: str = "dinkster") -> dict[str, Any]:
-    report = complete_report(system)
+def allocator_report(system: str = "dinkster", warm_runs: int = 5) -> dict[str, Any]:
+    report = complete_report(system, warm_runs)
     report["report_version"] = 2
     report["device"] = {
         "kind": "cuda",
@@ -1059,6 +1060,21 @@ def test_cpu_report_cannot_claim_allocator_schema() -> None:
     report["report_version"] = 2
     problems = validate_workflow_report(report)
     assert "workflow report version does not match device kind" in problems
+
+
+@pytest.mark.parametrize("factory", [complete_report, allocator_report])
+def test_single_cold_run_report_is_valid(factory: Any) -> None:
+    report = factory(warm_runs=0)
+    assert len(report["runs"]) == 1
+    assert report["runs"][0]["phase"] == "cold"
+    assert report["warm_summary"] is None
+    assert validate_workflow_report(report) == ()
+
+
+def test_invalid_workload_does_not_skip_allocator_validation_state() -> None:
+    report = allocator_report()
+    report["workload"]["seeds"] = []
+    assert validate_workflow_report(report)
 
 
 def test_allocator_report_requires_unique_complete_raw_windows() -> None:
@@ -1631,9 +1647,16 @@ def test_real_http_execution_evidence_and_cleanup(
 
 
 def run_http_peer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, system: str, mode: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    system: str,
+    mode: str,
+    *,
+    warm_runs: int | None = None,
 ) -> tuple[int, dict[str, Any], Path]:
     argv = arguments(tmp_path)
+    if warm_runs is not None:
+        argv += ["--warm-runs", str(warm_runs)]
     if mode == "timeout":
         argv += ["--job-timeout", "0.15"]
     actual_command = benchmark.server_command
@@ -1662,6 +1685,18 @@ def run_http_peer(
     directory = tmp_path / "evidence"
     report = json.loads((directory / "report.json").read_text())
     return result, report, directory
+
+
+@pytest.mark.skipif(os.name != "posix", reason="workflow process containment uses POSIX sessions")
+def test_single_cold_run_reporter_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, report, _directory = run_http_peer(
+        tmp_path, monkeypatch, "dinkster", "success", warm_runs=0
+    )
+    assert result == 0, report
+    assert len(report["runs"]) == 1
+    assert report["warm_summary"] is None
 
 
 @pytest.mark.skipif(os.name != "posix", reason="workflow process containment uses POSIX sessions")
