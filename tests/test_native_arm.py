@@ -7623,14 +7623,15 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     row_id: str,
 ) -> None:
     import numpy as np
-    from dinkster_compat_comfy import (
-        COMFY_INPUT_ADAPTERS,
-        native,
-        register_native_types,
-        translate_prompt,
-    )
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_compat_comfy import native, register_native_types
     from dinkster_nodes_foundation import FOUNDATION_NODES, register_foundation_types
+    from dinkster_nodes_image import IMAGE_NODES, register_image_types
     from dinkster_nodes_media_io import MEDIA_IO_NODES, register_media_types
+    from dinkster_server import STATE_KEY, create_app
+
+    from dinkster.compat_api import add_comfy_compat_routes
+    from dinkster.mounts_api import MOUNTS_KEY, MountService
 
     arm = _native_arm()
     inference, _recipe, handle, dit_type = _h3_decomposed_handle(arm, tmp_path, monkeypatch)
@@ -7642,6 +7643,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
 
     all_nodes = (
         *FOUNDATION_NODES,
+        *IMAGE_NODES,
         *MEDIA_IO_NODES,
         *native.NATIVE_NODES,
         *arm.GENERATION_PROVIDER_NODES,
@@ -7655,6 +7657,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     registry = TypeRegistry()
     register_core_types(registry)
     register_foundation_types(registry)
+    register_image_types(registry)
     register_media_types(registry)
     register_native_types(registry)
 
@@ -7838,57 +7841,62 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     )
 
     fixture = REPO_ROOT / "tests" / "fixtures" / "minimax-h3-importer-api" / f"{row_id}.json"
-    prompt = json.loads(fixture.read_text())
 
-    def resolved_asset(name: str) -> object:
-        return AssetRef(f"blake3:{hashlib.blake2s(name.encode()).hexdigest()}", name, 1).to_wire()
+    class FixtureAssetTable:
+        @staticmethod
+        def mounts_for_kind(_kind: str) -> tuple[str, ...]:
+            return ("fixture-assets",)
 
-    prompt = {
-        node_id: entry
-        for node_id, entry in prompt.items()
-        if entry["class_type"] not in {"ImageScaleToTotalPixels", "GetImageSize"}
-    }
-    for entry in prompt.values():
-        node_type = entry["class_type"]
-        inputs = entry["inputs"]
-        if node_type == "UNETLoader":
-            inputs["diffusion_model"] = resolved_asset(inputs.pop("unet_name"))
-        elif node_type == "CLIPLoader":
-            inputs["text_encoder"] = resolved_asset(inputs.pop("clip_name"))
-        elif node_type == "VAELoader":
-            inputs["vae"] = resolved_asset(inputs.pop("vae_name"))
-        elif node_type == "LoraLoaderModelOnly":
-            inputs["lora"] = resolved_asset(inputs.pop("lora_name"))
-        elif node_type == "LoadImage":
-            inputs["image"] = resolved_asset(inputs["image"])
-        elif node_type == "SaveVideo":
-            entry["class_type"] = "dinkster.save_video"
-            entry["inputs"] = {"video": inputs["video"]}
-        elif node_type == "CreateVideo":
-            entry["class_type"] = "dinkster.video.assemble"
-            entry["inputs"] = {
-                name: value
-                for name, value in inputs.items()
-                if name in {"images", "fps", "bit_depth", "color_space", "audio"}
-            }
-        elif node_type == "ComfyMathExpression":
-            entry["class_type"] = "dinkster.math.expression"
-        elif node_type == "ComfySwitchNode":
-            entry["class_type"] = "dinkster.value.select"
-            inputs["condition"] = inputs.pop("switch")
-    translated = translate_prompt(prompt, schemas, input_adapters=COMFY_INPUT_ADAPTERS)
-    result = asyncio.run(
-        Engine(
+        @staticmethod
+        def ref(path: str) -> AssetRef:
+            return AssetRef(f"blake3:{hashlib.blake2s(path.encode()).hexdigest()}", path, 1)
+
+    def make_engine(_on_event: object = None) -> Engine:
+        return Engine(
             schemas=schemas,
             registry=registry,
             worker=InProcessWorker(build_node_types(nodes), registry),
             cache=MemoryLRUCache(),
-        ).run(translated.graph, translated.targets)
-    )
+        )
 
-    assert set(result.executed) | set(result.skipped) <= set(translated.graph.nodes)
+    async def run_fixture() -> object:
+        schema_model = importlib.import_module("dinkster_schema.model")
+        choices = {
+            choice_id: ()
+            for schema in schemas.values()
+            for choice_id in schema_model._remote_choice_ids(schema)
+        }
+        app = create_app(make_engine, schemas, choices=choices)
+        app[MOUNTS_KEY] = MountService(cast("Any", FixtureAssetTable()))
+        add_comfy_compat_routes(app)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/compat/comfy/prompt",
+                data=fixture.read_bytes(),
+                headers={"Content-Type": "application/json"},
+            )
+            assert response.status == 202, await response.text()
+            submitted = await response.json()
+            job_status: dict[str, Any] = {}
+            for _ in range(100):
+                status = await client.get(f"/api/jobs/comfy-compat/{submitted['jobId']}")
+                job_status = await status.json()
+                if job_status["state"] in ("completed", "failed", "cancelled"):
+                    break
+                await asyncio.sleep(0.02)
+            assert job_status["state"] == "completed", json.dumps(job_status, indent=2)
+            job = app[STATE_KEY].queue.job_for_run(submitted["jobRef"])
+            assert job is not None and job.result is not None
+            return job.result
+        finally:
+            await client.close()
+
+    result = cast("Any", asyncio.run(run_fixture()))
+
     assert len(dit_type.sample_calls) == 1
-    saved = cast("Any", result.outputs[translated.targets[0]]["asset"].resolve())
+    saved = cast("Any", result.outputs["92"]["asset"].resolve())
     assert saved.digest == output_asset.digest
 
 

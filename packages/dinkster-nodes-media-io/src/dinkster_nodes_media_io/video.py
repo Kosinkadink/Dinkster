@@ -645,6 +645,7 @@ class SaveVideo(Node):
         )
         return NodeSchema(
             node_type="dinkster.save_video",
+            aliases=("SaveVideo",),
             version=4,
             display_name="Save Video",
             category="video",
