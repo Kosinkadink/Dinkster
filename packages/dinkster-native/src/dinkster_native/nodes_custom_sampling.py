@@ -121,6 +121,8 @@ def _prepared_multistream_sampling_carrier(
     inference: Any,
     torch: Any,
 ) -> Any | None:
+    if isinstance(value, inference.ResidentConditioningCarrier):
+        return _prepared_multistream_carrier(value, inference, input_id)
     entries = _condition_entries(value, input_id)
     if not entries:
         return None
