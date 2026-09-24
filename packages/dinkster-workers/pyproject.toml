@@ -3,7 +3,7 @@ name = "dinkster-workers"
 version = "0.0.1"
 description = "Dinkster Worker implementations (in-process now; isolated venv and remote later)"
 requires-python = ">=3.12"
-dependencies = ["dinkster-schema", "dinkster-values", "dinkster-protocol", "dinkster-memory", "dinkster-assets", "dinkster-caches", "packaging>=23"]
+dependencies = ["dinkster-schema", "dinkster-values", "dinkster-protocol", "dinkster-memory", "dinkster-assets", "dinkster-caches", "dinkster-inference", "packaging>=23"]
 
 [project.scripts]
 dinkster-doctor = "dinkster_workers.doctor:main"
@@ -20,3 +20,4 @@ dinkster-schema = { workspace = true }
 dinkster-values = { workspace = true }
 dinkster-protocol = { workspace = true }
 dinkster-caches = { workspace = true }
+dinkster-inference = { workspace = true }

@@ -45,6 +45,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
+from dinkster_inference import EngineProperties, builtin_family_registry
+
 _ROCM_INDEX_URL = "https://repo.amd.com/rocm/whl-multi-arch/"
 _ROCM_TORCH_REQUIREMENT = "torch[device-all]==2.12.0+rocm7.14.0"
 _XPU_INDEX_URL = "https://download.pytorch.org/whl/xpu"
@@ -875,6 +877,16 @@ def _byte_count(value: object) -> int | None:
     return None
 
 
+def _benchmark_family_engine(family: object) -> EngineProperties | None:
+    if not isinstance(family, str):
+        return None
+    family_ids = FAMILY_VALIDATION_FAMILY_IDS.get(family, ())
+    if len(family_ids) != 1:
+        return None
+    registered = builtin_family_registry().get(family_ids[0])
+    return None if registered is None else registered.engine
+
+
 def _residency_problems(
     fields: Mapping[str, object],
     system: object,
@@ -891,9 +903,10 @@ def _residency_problems(
     it stays constant. Reports without the section remain readable, but
     cannot serve as canonical generic or H3 production evidence."""
     expected_routes: set[str] = set()
+    family_engine = _benchmark_family_engine(family)
     if system == "dinkster" and fields.get("placement") == BENCHMARK_DINKSTER_PRODUCTION_PLACEMENT:
-        if family == "minimax_h3":
-            expected_routes = {"diffusion", "conditioner", "video_vae", "audio_vae"}
+        if family_engine is not None and family_engine.residency_route_roles:
+            expected_routes = set(family_engine.residency_route_roles)
         elif canonical_evidence and family in ("sd15", "sdxl", "lora", "zimage", "wan21", "flux"):
             expected_routes = {"runtime"}
     if "residency" not in fields:
@@ -925,6 +938,9 @@ def _residency_problems(
         )
     required_actual = (
         "aimdo" if requested == "on" or (requested == "auto" and accelerator == "cuda") else None
+    )
+    requires_accelerator_residency = (
+        family_engine is not None and family_engine.requires_accelerator_residency
     )
     for role, value in routes.items():
         route = _as_mapping(value)
@@ -961,7 +977,7 @@ def _residency_problems(
                 and not _nonempty_str(fallback_reason)
             ):
                 problems.append(f"{where} has no reason for eager fallback")
-        if (family == "minimax_h3" or canonical_evidence) and required_actual is not None:
+        if (requires_accelerator_residency or canonical_evidence) and required_actual is not None:
             if actual != required_actual:
                 problems.append(f"{where}.mechanism is not required {required_actual}")
             if fallback_reason is not None or component_fields["fallback_components"]:
@@ -969,7 +985,7 @@ def _residency_problems(
             if not component_fields["dynamic_components"]:
                 problems.append(f"{where} did not enroll a dynamic component")
     if (
-        (family == "minimax_h3" or (canonical_evidence and expected_routes))
+        (requires_accelerator_residency or (canonical_evidence and expected_routes))
         and required_actual == "aimdo"
         and bootstrap is not True
     ):

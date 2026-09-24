@@ -955,6 +955,8 @@ MINIMAX_H3 = ModelFamily(
     aliases=MINIMAX_H3_FAMILY.aliases,
     engine=EngineProperties(
         attention_backends=(("diffusion", "flux"),),
+        residency_route_roles=("diffusion", "conditioner", "video_vae", "audio_vae"),
+        requires_accelerator_residency=True,
         feature_hooks=(
             FamilyFeatureHook(
                 FamilyFeature.LORA_KEY_MAP,

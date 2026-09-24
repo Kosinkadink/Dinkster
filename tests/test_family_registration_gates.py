@@ -11,6 +11,7 @@ from dinkster_inference import (
     FLUX2_KLEIN_4B,
     FLUX2_KLEIN_9B,
     LUMINA2,
+    MINIMAX_H3,
     Z_IMAGE,
     EngineProperties,
     FamilyCapability,
@@ -351,3 +352,16 @@ def test_shared_runtime_capabilities_are_typed_and_catalog_owned() -> None:
 
     with pytest.raises(TypeError, match="FamilyCapability enum members"):
         EngineProperties(capabilities=frozenset({"split-text-lora"}))  # type: ignore[arg-type]
+
+
+def test_worker_residency_choices_are_catalog_owned() -> None:
+    assert MINIMAX_H3.engine.residency_route_roles == (
+        "diffusion",
+        "conditioner",
+        "video_vae",
+        "audio_vae",
+    )
+    assert MINIMAX_H3.engine.requires_accelerator_residency is True
+
+    with pytest.raises(ValueError, match="needs at least one route role"):
+        EngineProperties(requires_accelerator_residency=True)

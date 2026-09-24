@@ -1502,6 +1502,7 @@ source = { editable = "packages/dinkster-workers" }
 dependencies = [
     { name = "dinkster-assets" },
     { name = "dinkster-caches" },
+    { name = "dinkster-inference" },
     { name = "dinkster-memory" },
     { name = "dinkster-protocol" },
     { name = "dinkster-schema" },
@@ -1513,6 +1514,7 @@ dependencies = [
 requires-dist = [
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
     { name = "dinkster-caches", editable = "packages/dinkster-caches" },
+    { name = "dinkster-inference", editable = "packages/dinkster-inference" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },

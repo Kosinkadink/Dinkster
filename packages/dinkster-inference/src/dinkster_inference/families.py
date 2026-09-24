@@ -143,6 +143,8 @@ class EngineProperties:
         tuple[str, Literal["unet", "flux", "vae", "clip", "t5", "qwen"]], ...
     ] = ()
     attention_requires_route: bool = False
+    residency_route_roles: tuple[str, ...] = ()
+    requires_accelerator_residency: bool = False
     capabilities: frozenset[FamilyCapability] = frozenset()
     feature_hooks: tuple[FamilyFeatureHook, ...] = ()
 
@@ -158,6 +160,12 @@ class EngineProperties:
             raise ValueError("attention backend component roles must not be empty")
         if self.attention_requires_route and not self.attention_backends:
             raise ValueError("required attention routes need at least one attention backend")
+        if any(not role for role in self.residency_route_roles):
+            raise ValueError("residency route roles must not be empty")
+        if len(self.residency_route_roles) != len(set(self.residency_route_roles)):
+            raise ValueError("residency route roles must be unique")
+        if self.requires_accelerator_residency and not self.residency_route_roles:
+            raise ValueError("required accelerator residency needs at least one route role")
         if any(type(capability) is not FamilyCapability for capability in self.capabilities):
             raise TypeError("family capabilities must be FamilyCapability enum members")
         features = tuple(hook.feature for hook in self.feature_hooks)
