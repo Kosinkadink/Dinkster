@@ -1,0 +1,17 @@
+{
+  "evidence_root": "/home/jed/models/minimax-h3/evidence/issue-418-acceptance-c6e2379-20260924T020717Z",
+  "frontend_revision": "ad89fdfc601f33e40dcc6d81436976625da2f34d",
+  "templates_revision": "fc427f00097817d3f7d8099c5259837fa51e1267",
+  "files": {
+    "i2v--fl2v-4step.json": "workflows/api/i2v--fl2v-4step.json",
+    "i2v--fl2v-8step.json": "workflows/api/i2v--fl2v-8step.json",
+    "i2v--no-lora.json": "workflows/api/i2v--no-lora.json",
+    "multiframe-reference--no-lora.json": "workflows/api/multiframe-reference--no-lora.json",
+    "multiframe-reference--ref2v-4step.json": "workflows/api/multiframe-reference--ref2v-4step.json",
+    "r2v--no-lora.json": "workflows/api/r2v--no-lora.json",
+    "r2v--ref2v-4step.json": "workflows/api/r2v--ref2v-4step.json",
+    "t2v--fl2v-4step.json": "workflows/api/t2v--fl2v-4step.json",
+    "t2v--fl2v-8step.json": "workflows/api/t2v--fl2v-8step.json",
+    "t2v--no-lora.json": "workflows/api/t2v--no-lora.json"
+  }
+}
