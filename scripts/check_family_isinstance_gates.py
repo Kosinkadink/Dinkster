@@ -24,7 +24,8 @@ class Site(ScannedSite):
 
 def source_files(root: Path) -> tuple[Path, ...]:
     packages = root / "packages"
-    return tuple(
+    worker_environment = packages / "dinkster-workers/src/dinkster_workers/backend_env.py"
+    files = tuple(
         sorted(
             file
             for package in packages.iterdir()
@@ -45,6 +46,7 @@ def source_files(root: Path) -> tuple[Path, ...]:
             if file.name.startswith(("native_arm", "nodes_"))
         )
     )
+    return files + ((worker_environment,) if worker_environment.is_file() else ())
 
 
 def isinstance_type(call: ast.Call) -> str | None:
@@ -86,12 +88,21 @@ def scan(root: Path) -> list[ScannedSite]:
     sites: list[ScannedSite] = []
     for path in source_files(root):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        scan_family_comparisons = "dinkster-native" in path.parts
         parents: dict[ast.AST, ast.AST] = {}
         for parent in ast.walk(tree):
             for child in ast.iter_child_nodes(parent):
                 parents[child] = parent
         for node in ast.walk(tree):
+            parent = parents.get(node)
+            while parent is not None and not isinstance(
+                parent, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
+                parent = parents.get(parent)
+            scan_family_comparisons = "dinkster-native" in path.parts or (
+                "dinkster-workers" in path.parts
+                and isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and parent.name == "_residency_problems"
+            )
             if scan_family_comparisons and isinstance(node, ast.Compare):
                 comparison = family_comparison(node)
                 if comparison is not None:

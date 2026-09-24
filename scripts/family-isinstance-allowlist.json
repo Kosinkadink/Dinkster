@@ -1,5 +1,5 @@
 {
-  "ceiling": 7,
+  "ceiling": 8,
   "sites": [
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
@@ -56,6 +56,14 @@
       "type": "Lumina2AssemblyPlan",
       "classification": "boundary",
       "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
+    },
+    {
+      "path": "packages/dinkster-workers/src/dinkster_workers/backend_env.py",
+      "line": 910,
+      "column": 37,
+      "type": "family in",
+      "classification": "family-comparison",
+      "reason": "Canonical single-runtime benchmark families await catalog residency declarations."
     }
   ]
 }

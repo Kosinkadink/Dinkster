@@ -31,6 +31,13 @@ def write_native_fixture(root: Path, body: str) -> Path:
     return source
 
 
+def write_worker_environment_fixture(root: Path, body: str) -> Path:
+    source = root / "packages/dinkster-workers/src/dinkster_workers/backend_env.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(body, encoding="utf-8")
+    return source
+
+
 def test_family_isinstance_guard_allows_classified_boundary_check(tmp_path: Path) -> None:
     write_fixture(
         tmp_path,
@@ -99,3 +106,23 @@ def test_family_isinstance_guard_rejects_shared_family_comparisons(tmp_path: Pat
     assert "handle.recipe.family_id ==" in result.stderr
     assert "family ==" in result.stderr
     assert "family_id in" in result.stderr
+
+
+def test_family_isinstance_guard_rejects_worker_residency_family_comparisons(
+    tmp_path: Path,
+) -> None:
+    write_worker_environment_fixture(
+        tmp_path,
+        "def _residency_problems(family):\n"
+        "    if family == 'minimax_h3':\n"
+        "        return require_accelerator_residency()\n"
+        "    return generic_residency()\n",
+    )
+    allowlist = tmp_path / "allowlist.json"
+    allowlist.write_text(json.dumps({"ceiling": 0, "sites": []}), encoding="utf-8")
+
+    result = run_guard(tmp_path, allowlist)
+
+    assert result.returncode == 1
+    assert "prohibited family branching" in result.stderr
+    assert "family ==" in result.stderr
