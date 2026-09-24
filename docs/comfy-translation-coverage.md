@@ -9,8 +9,8 @@ The previous 580-workflow denominator remains in [the historical baseline](resea
 
 | Status | Node occurrences |
 | --- | ---: |
-| mapped | 6009 |
-| quarantine | 5066 |
+| mapped | 6255 |
+| quarantine | 4820 |
 | unavailable | 0 |
 | unsupported | 217 |
 | structural | 1569 |
@@ -25,7 +25,7 @@ Evidence-supported workflows (weakest link T2 or stronger): 0 / 602.
 | Mapping kind | Tier | Declarations | Mapped occurrences | Receipt cases |
 | --- | --- | ---: | ---: | ---: |
 | op | exact | 158 | 3061 | 68 |
-| op | parametric | 99 | 2557 | 27 |
+| op | parametric | 104 | 2803 | 32 |
 | op | equivalent | 34 | 391 | 3 |
 | op | grouped | 26 | 0 | 5 |
 | family | exact | 0 | 0 | 0 |
@@ -33,11 +33,11 @@ Evidence-supported workflows (weakest link T2 or stronger): 0 / 602.
 | family | equivalent | 0 | 0 | 0 |
 | family | grouped | 0 | 0 | 0 |
 
-Receipt results: 103 passing, 0 failing, 103 total. Each canonical receipt and its source/native artifacts are replay-verified; registry evidence alone is not parity evidence.
+Receipt results: 108 passing, 0 failing, 108 total. Each canonical receipt and its source/native artifacts are replay-verified; registry evidence alone is not parity evidence.
 
 ## Source-parity receipt debt
 
-99 / 314 maintained translation declarations have at least one verified passing source/native receipt; 215 remain unreceipted. The parity unit is one unique maintained mapping, not a receipt-case count.
+104 / 319 maintained translation declarations have at least one verified passing source/native receipt; 215 remain unreceipted. The parity unit is one unique maintained mapping, not a receipt-case count.
 
 3 maintained fail-closed mappings are reported as refused and excluded from parity counts; they make no native-equivalence claim.
 
@@ -51,7 +51,7 @@ Snapshot `2026-08-26` contains 5322 packs and 111293288 downloads. Rank 355 reac
 
 | Source band | Mapped | Quarantine | Unavailable | Unsupported | Structural |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| core | 5818 | 4403 | 0 | 0 | 0 |
+| core | 6064 | 4157 | 0 | 0 | 0 |
 | top-355 | 191 | 622 | 0 | 0 | 0 |
 | rank-356-900 | 0 | 0 | 0 | 0 | 0 |
 | outside-top-900 | 0 | 41 | 0 | 0 | 0 |
@@ -65,7 +65,6 @@ Snapshot `2026-08-26` contains 5322 packs and 111293288 downloads. Rank 355 reac
 | quarantine | `VAEDecode` | `comfy-core` | 297 | 201 | no-maintained-native-alias |
 | quarantine | `SimpleMath+` | `comfyui_essentials` | 228 | 24 | no-maintained-native-alias |
 | quarantine | `LoraLoaderModelOnly` | `comfy-core` | 224 | 100 | no-maintained-native-alias |
-| quarantine | `CLIPLoader` | `comfy-core` | 218 | 159 | no-maintained-native-alias |
 | quarantine | `PreviewAny` | `comfy-core` | 197 | 85 | no-maintained-native-alias |
 | quarantine | `PrimitiveFloat` | `comfy-core` | 172 | 61 | no-maintained-native-alias |
 | quarantine | `KSamplerSelect` | `comfy-core` | 122 | 77 | no-maintained-native-alias |
@@ -86,3 +85,4 @@ Snapshot `2026-08-26` contains 5322 packs and 111293288 downloads. Rank 355 reac
 | quarantine | `CFGNorm` | `comfy-core` | 44 | 26 | no-maintained-native-alias |
 | quarantine | `SaveGLB` | `comfy-core` | 43 | 33 | no-maintained-native-alias |
 | quarantine | `ManualSigmas` | `comfy-core` | 41 | 23 | no-maintained-native-alias |
+| quarantine | `GeminiNode` | `comfy-core` | 40 | 18 | no-maintained-native-alias |
