@@ -12,10 +12,16 @@ import tomllib
 from pathlib import Path
 
 import yaml
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from tools.evidence_paths import EVIDENCE_ROOT
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+PINNED_COMFYUI_COMMIT = "b5cc8830279eae909a59de030af1e50761c36751"
+PINNED_COMFYUI_AV_REQUIREMENTS = {
+    PINNED_COMFYUI_COMMIT: "av>=17.0.0",
+}
 
 ALLOWED: dict[str, set[str]] = {
     # Acceptance is an installable end-to-end harness, not a reusable runtime
@@ -348,6 +354,15 @@ def test_media_packages_share_comfyuis_pyav_runtime() -> None:
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
     packages = {package["name"]: package for package in locked["package"]}
     assert packages["av"]["version"] == "18.1.0"
+
+
+def test_locked_pyav_satisfies_pinned_comfyui_requirement() -> None:
+    requirement = Requirement(PINNED_COMFYUI_AV_REQUIREMENTS[PINNED_COMFYUI_COMMIT])
+    locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    packages = {package["name"]: package for package in locked["package"]}
+
+    assert requirement.name == "av"
+    assert Version(packages["av"]["version"]) in requirement.specifier
 
 
 def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:
