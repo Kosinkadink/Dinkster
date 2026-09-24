@@ -159,7 +159,9 @@ def _decode_minimax_music3_audio(
     std = torch.std(audio, dim=(1, 2), keepdim=True) * 5.0
     std[std < 1.0] = 1.0
     audio /= std
-    sample_rate = cast("Mapping[object, object]", samples).get("sample_rate", 44100)
+    sample_rate = cast("Mapping[object, object]", samples).get(
+        "sample_rate", getattr(codec, "sample_rate", 44100)
+    )
     if type(sample_rate) is not int or sample_rate <= 0:
         raise ValueError("samples sample_rate must be a positive integer")
     return {"waveform": audio, "sample_rate": sample_rate}

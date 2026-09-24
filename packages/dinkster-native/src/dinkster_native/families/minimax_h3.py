@@ -124,6 +124,79 @@ def _minimax_h3_audio_vae_runtime(value: object, name: str = "audio_vae") -> tup
     )
 
 
+class CodecAdapter:
+    def __init__(self, value: object) -> None:
+        recipe = getattr(value, "recipe", None)
+        roles = () if recipe is None else tuple(binding.role for binding in recipe.sources)
+        inference = importlib.import_module("dinkster_inference")
+        config = inference.MINIMAX_H3_CONFIG
+        if roles == ("video-vae",):
+            self._role = "video"
+            self._handle, self._runtime = _minimax_h3_video_vae_runtime(value, "vae")
+            self.descriptor = inference.CodecDescriptor(
+                id="dinkster.minimax_h3_video_vae",
+                display_name=config.video_codec_id,
+                kind="video",
+                latent=inference.LatentDescriptor(
+                    channels=config.video_latent_channels,
+                    dimensions=3,
+                    spatial_downscale=config.video_spatial_downscale,
+                    temporal_downscale=4,
+                    temporal_causal=True,
+                    content_fps=config.video_fps,
+                ),
+                supported_dtypes=frozenset({inference.FLOAT16, inference.FLOAT32}),
+                supports_tiling=False,
+            )
+        elif roles == ("audio-vae",):
+            self._role = "audio"
+            self._handle, self._runtime = _minimax_h3_audio_vae_runtime(value, "vae")
+            self.descriptor = inference.CodecDescriptor(
+                id="dinkster.minimax_h3_audio_vae",
+                display_name=config.audio_codec_id,
+                kind="audio",
+                latent=inference.LatentDescriptor(
+                    channels=config.audio_latent_channels,
+                    dimensions=1,
+                ),
+                supported_dtypes=frozenset({inference.FLOAT32}),
+                content_channels=config.audio_content_channels,
+                supports_tiling=False,
+            )
+            self.sample_rate = config.audio_sample_rate_hz
+        else:
+            raise TypeError(f"vae must be a native MiniMax H3 codec component, got roles={roles!r}")
+        self._resource_identity = self._handle.resource_identity
+        self.load_device = self._handle.load_device
+
+    @property
+    def _dinkster_resident_owner(self) -> NativeComponentHandle:
+        return self._handle
+
+    @property
+    def resource_identity(self) -> str:
+        return self._resource_identity
+
+    def require_active(self) -> None:
+        self._handle.require_active()
+
+    def stage(self) -> Any:
+        return self._handle.stage(clear_cache_after=True)
+
+    def decode_latent(self, latent: Any) -> Any:
+        if self._role == "video":
+            return self._runtime.decode_video(latent)
+        return self._runtime.decode_audio(latent).waveform
+
+    def encode_content(self, content: Any) -> Any:
+        if self._role == "video":
+            return self._runtime.encode_video(content)
+        inference = importlib.import_module("dinkster_inference")
+        return self._runtime.encode_audio(
+            inference.MiniMaxH3AudioContent(content, self.sample_rate)
+        )
+
+
 def _latent_mask_codec_runtime(value: object, name: str) -> Any:
     inference = importlib.import_module("dinkster_inference")
     if isinstance(value, inference.LatentMaskCodecRuntime):

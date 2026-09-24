@@ -7674,12 +7674,16 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     class ResidentHandle:
         load_device = FakeTorch.device("cpu")
 
-        def __init__(self, identity: str, role: str = "") -> None:
+        def __init__(self, identity: str, role: str) -> None:
             self.resource_identity = identity
             self.role = role
             self.runtime = self
+            self.recipe = SimpleNamespace(
+                family_id="dinkster.minimax_h3",
+                sources=(SimpleNamespace(role=f"{role}-vae"),),
+            )
             self.descriptor = CodecDescriptor(
-                id=f"dinkster.test_h3_{role or 'video'}_codec",
+                id=f"dinkster.test_h3_{role}_codec",
                 display_name="Test H3 Codec",
                 kind="audio" if role == "audio" else "video",
                 latent=LatentDescriptor(
@@ -7707,10 +7711,39 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
         def encode_content(content: object) -> object:
             return content
 
-    conditioner = ResidentHandle("native:dinkster.minimax_h3:" + "7" * 64)
+    conditioner = ResidentHandle("native:dinkster.minimax_h3:" + "7" * 64, "video")
     codecs = (
-        ResidentHandle("native:dinkster.minimax_h3:" + "8" * 64),
+        ResidentHandle("native:dinkster.minimax_h3:" + "8" * 64, "video"),
         ResidentHandle("native:dinkster.minimax_h3:" + "9" * 64, "audio"),
+    )
+
+    class TinyVideoCodecRuntime:
+        @staticmethod
+        def decode_video(_latent: object) -> DecodedVideoTensor:
+            return DecodedVideoTensor((1, 3, 2, 2, 2), "decoded-video")
+
+        @staticmethod
+        def encode_video(content: object) -> object:
+            return content
+
+    class TinyAudioCodecRuntime:
+        @staticmethod
+        def decode_audio(_latent: object) -> object:
+            return inference.MiniMaxH3AudioContent(FakeTensor((1, 2, 8), "decoded-audio"), 32_000)
+
+        @staticmethod
+        def encode_audio(content: object) -> object:
+            return content
+
+    monkeypatch.setattr(
+        arm,
+        "_minimax_h3_video_vae_runtime",
+        lambda value, *_args: (value, TinyVideoCodecRuntime()),
+    )
+    monkeypatch.setattr(
+        arm,
+        "_minimax_h3_audio_vae_runtime",
+        lambda value, *_args: (value, TinyAudioCodecRuntime()),
     )
 
     class TinyConditionerRuntime:
@@ -7756,7 +7789,6 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     monkeypatch.setattr(arm, "_minimax_h3_resize", lambda value, *_args: value)
     monkeypatch.setattr(arm, "_minimax_h3_reference_image", lambda value, *_args: value)
     monkeypatch.setattr(arm, "_native_handle", lambda value, _name: value)
-    monkeypatch.setattr(arm, "_native_component_codec", lambda value: value)
 
     monkeypatch.setattr(
         node_types["dinkster.load_diffusion_model"],
