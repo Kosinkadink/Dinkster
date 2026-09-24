@@ -1014,9 +1014,10 @@ class TestBenchmarkReportValidation:
     @pytest.mark.parametrize("system", BENCHMARK_SYSTEMS)
     def test_complete_report_is_accepted(self, accelerator: str, family: str, system: str) -> None:
         report = complete_benchmark_report(accelerator, family, system)
-        assert validate_benchmark_report(report, accelerator=accelerator) == ()
+        requirements = H3_RESIDENCY_REQUIREMENTS if family == "minimax_h3" else {}
+        assert validate_benchmark_report(report, accelerator=accelerator, **requirements) == ()
         roundtrip = json.loads(json.dumps(report))
-        assert validate_benchmark_report(roundtrip, accelerator=accelerator) == ()
+        assert validate_benchmark_report(roundtrip, accelerator=accelerator, **requirements) == ()
 
     def test_dinkster_compile_report_is_accepted(self) -> None:
         report = complete_benchmark_report("cuda", mode="compile")
