@@ -1152,6 +1152,15 @@ class _H3SamplingContext:
     model_mask: MultiStreamLatent[torch.Tensor] | None
 
 
+_H3EvaluationCondition = tuple[
+    str,
+    torch.Tensor,
+    MiniMaxH3DiTConditioning,
+    LatentPackLayout,
+    MultiStreamLatent[torch.Tensor] | None,
+]
+
+
 def _materialize_h3_conditioning(
     runtime: object,
     carrier: object,
@@ -1602,7 +1611,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         def device_branch(
             prepared: MiniMaxH3PreparedConditioning,
             lane_identity: str,
-        ) -> tuple[str, torch.Tensor, MiniMaxH3DiTConditioning]:
+        ) -> _H3EvaluationCondition:
             dit = replace(
                 prepared.dit,
                 text_token_tags=(
@@ -1628,14 +1637,12 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 ),
                 seed=seed,
             )
-            context = model.preprocess_text_embeddings(
+            text_context = model.preprocess_text_embeddings(
                 prepared.context.to(device=device, dtype=self._compute_dtype)
             )
-            return lane_identity, context, dit
+            return lane_identity, text_context, dit, layout, model_denoise_mask
 
-        def prepare_conditioning(
-            value: object, role: GuidanceRole
-        ) -> tuple[str, torch.Tensor, MiniMaxH3DiTConditioning]:
+        def prepare_conditioning(value: object, role: GuidanceRole) -> _H3EvaluationCondition:
             if type(value) is not MiniMaxH3PreparedConditioning:
                 raise TypeError("H3 guidance lanes require MiniMaxH3PreparedConditioning")
             if value.task is not conditioning.task:
@@ -1653,9 +1660,15 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         def evaluate(
             x: torch.Tensor,
             sigma: float,
-            conditioning: tuple[str, torch.Tensor, MiniMaxH3DiTConditioning],
+            conditioning: _H3EvaluationCondition,
         ) -> torch.Tensor:
-            _lane_identity, context, dit_conditioning = conditioning
+            (
+                _lane_identity,
+                text_context,
+                dit_conditioning,
+                active_layout,
+                active_model_mask,
+            ) = conditioning
             _check_cancelled(cancelled)
             if sigma <= 0.0:
                 raise MiniMaxH3RuntimeError("H3 DiT cannot be evaluated at sigma zero")
@@ -1678,20 +1691,20 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                     inner_kernel = None
                     sequence_group_ranks: tuple[int, ...] = ()
                     try:
-                        av = unpack_latent_streams(x.to(dtype=compute_dtype), layout)
+                        av = unpack_latent_streams(x.to(dtype=compute_dtype), active_layout)
                         facts = _packed_sequence_facts(
                             av,
-                            context,
+                            text_context,
                             dit_conditioning,
                             model.config.patch,
                         )
                         model._validate_inputs(  # pyright: ignore[reportPrivateUsage]
                             av,
                             sigma,
-                            context,
+                            text_context,
                             dit_conditioning,
                             None,
-                            model_denoise_mask,
+                            active_model_mask,
                         )
                         partition = plan_sequence_partition(
                             facts.sequence_length,
@@ -1824,35 +1837,35 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                     velocity = model(
                         av,
                         sigma,
-                        context,
+                        text_context,
                         conditioning=dit_conditioning,
                         sigmas=sigmas,
                         sampler_sigmas=schedule,
-                        denoise_mask=model_denoise_mask,
+                        denoise_mask=active_model_mask,
                         attention_kernel_factory=sequence_factory,
                         sequence_sharding=sharding,
                     )
                 else:
-                    av = unpack_latent_streams(x.to(dtype=compute_dtype), layout)
+                    av = unpack_latent_streams(x.to(dtype=compute_dtype), active_layout)
                     if attention_kernel_factory is None:
                         velocity = model(
                             av,
                             sigma,
-                            context,
+                            text_context,
                             conditioning=dit_conditioning,
                             sigmas=sigmas,
                             sampler_sigmas=schedule,
-                            denoise_mask=model_denoise_mask,
+                            denoise_mask=active_model_mask,
                         )
                     else:
                         velocity = model(
                             av,
                             sigma,
-                            context,
+                            text_context,
                             conditioning=dit_conditioning,
                             sigmas=sigmas,
                             sampler_sigmas=schedule,
-                            denoise_mask=model_denoise_mask,
+                            denoise_mask=active_model_mask,
                             attention_kernel_factory=attention_kernel_factory,
                         )
                 packed_velocity, _ = pack_latent_streams(velocity)
@@ -1871,6 +1884,29 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             return value.token_layout.transforms
 
         sampler_latent = unpack_latent_streams(packed, layout)
+        packed_windows = _h3_packed_context_windows(self, inputs)
+
+        def window_conditioning(
+            prepared: _H3EvaluationCondition,
+            dim: int,
+            indices: tuple[int, ...],
+            _shape: object,
+        ) -> _H3EvaluationCondition:
+            lane, text_context, dit, prepared_layout, prepared_mask = prepared
+            if prepared_layout != layout:
+                raise MiniMaxH3RuntimeError("H3 window conditioning must start at the full layout")
+            selection = packed_windows.select(packed, dim, indices)
+            window_mask = None
+            if prepared_mask is not None:
+                packed_mask, mask_layout = pack_latent_streams(prepared_mask)
+                if mask_layout != layout:
+                    raise MiniMaxH3RuntimeError("H3 model mask topology differs from the latent")
+                selected_mask = packed_windows.select(packed_mask, dim, indices)
+                if selected_mask.layout != selection.layout:
+                    raise MiniMaxH3RuntimeError("H3 window mask topology differs from the latent")
+                window_mask = unpack_latent_streams(selected_mask.packed, selected_mask.layout)
+            return lane, text_context, dit, selection.layout, window_mask
+
         realization = context.conditioning_realization
         close = None
         if realization is None:
@@ -1882,6 +1918,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 standard_activation_memory_factor=self.family.memory_factor,
                 layout=conditioning_layout,
                 token_transforms=conditioning_transforms,
+                window_conditioning=window_conditioning,
                 validate_layout=lambda prepared, declared: _validate_h3_model_token_layout(
                     sampler_latent,
                     prepared[1],
