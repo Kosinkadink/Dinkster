@@ -18988,6 +18988,7 @@ def test_generation_vae_decode_unwraps_only_one_video_stream(
 
     mixed = MultiStreamLatent.from_pairs((("video", video), ("audio", video)))
     output = arm.GenerationVAEDecode.execute(samples={"samples": mixed}, vae=Handle())
+    assert decoded == [video, video]
     assert cast("FakeTensor", output["image"]).shape == (1, 16, 16, 3)
 
 
