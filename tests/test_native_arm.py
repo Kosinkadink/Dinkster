@@ -7620,6 +7620,27 @@ H3_IMPORTER_API_CASES = (
 )
 
 
+@pytest.fixture(scope="module")
+def h3_production_compat_catalog() -> tuple[
+    dict[str, Any], dict[str, tuple[str, ...]], dict[str, Any]
+]:
+    from dinkster.comfy_compose import comfy_compat_specs
+    from dinkster.compose import compose_serving
+
+    async def snapshot() -> tuple[dict[str, Any], dict[str, tuple[str, ...]], dict[str, Any]]:
+        composition = await compose_serving(comfy_compat_specs())
+        try:
+            return (
+                dict(composition.schemas),
+                dict(composition.choices),
+                dict(composition.lazy_choices),
+            )
+        finally:
+            await composition.close()
+
+    return asyncio.run(snapshot())
+
+
 @pytest.mark.parametrize(
     ("row_id", "shape_faithful"),
     H3_IMPORTER_API_CASES,
@@ -7630,6 +7651,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     monkeypatch: pytest.MonkeyPatch,
     row_id: str,
     shape_faithful: bool,
+    h3_production_compat_catalog: tuple[dict[str, Any], dict[str, tuple[str, ...]], dict[str, Any]],
 ) -> None:
     import io
 
@@ -7664,7 +7686,8 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
     )
     node_types = {node.schema().node_type: node for node in all_nodes}
     nodes = tuple(node_types.values())
-    schemas = build_schemas(nodes)
+    execution_schemas = build_schemas(nodes)
+    server_schemas, server_choices, server_lazy_choices = h3_production_compat_catalog
 
     registry = TypeRegistry()
     register_core_types(registry)
@@ -7878,7 +7901,7 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
 
     def make_engine(_on_event: object = None) -> Engine:
         return Engine(
-            schemas=schemas,
+            schemas=server_schemas,
             registry=registry,
             worker=InProcessWorker(build_node_types(nodes), registry),
             cache=MemoryLRUCache(),
@@ -7886,12 +7909,21 @@ def test_h3_importer_api_row_executes_through_native_cpu_graph(
 
     async def run_fixture() -> object:
         schema_model = importlib.import_module("dinkster_schema.model")
-        choices = {
-            choice_id: ()
-            for schema in schemas.values()
-            for choice_id in schema_model._remote_choice_ids(schema)
-        }
-        app = create_app(make_engine, schemas, choices=choices)
+        choices = dict(server_choices)
+        choices.update(
+            {
+                choice_id: ()
+                for schema in execution_schemas.values()
+                for choice_id in schema_model._remote_choice_ids(schema)
+                if choice_id not in choices
+            }
+        )
+        app = create_app(
+            make_engine,
+            server_schemas,
+            choices=choices,
+            lazy_choices=server_lazy_choices,
+        )
         app[MOUNTS_KEY] = MountService(cast("Any", FixtureAssetTable()))
         add_comfy_compat_routes(app)
         client = TestClient(TestServer(app))
