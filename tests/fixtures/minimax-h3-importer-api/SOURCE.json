@@ -1,6 +1,9 @@
 {
   "evidence_root": "/home/jed/models/minimax-h3/evidence/issue-418-acceptance-c6e2379-20260924T020717Z",
-  "frontend_revision": "ad89fdfc601f33e40dcc6d81436976625da2f34d",
+  "export_method": "ComfyUI frontend 1.53.6 app.loadGraphData + app.graphToPrompt",
+  "comfyui_revision": "b5cc8830279eae909a59de030af1e50761c36751",
+  "packet_frontend_revision": "ad89fdfc601f33e40dcc6d81436976625da2f34d",
+  "creator_command_retained": false,
   "templates_revision": "fc427f00097817d3f7d8099c5259837fa51e1267",
   "files": {
     "i2v--fl2v-4step.json": "workflows/api/i2v--fl2v-4step.json",
