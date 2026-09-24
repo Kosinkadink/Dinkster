@@ -495,6 +495,8 @@ NATIVE_ARM_NODES: tuple[type[Node], ...] = (
     NativeLoadVision,
     GenerationLoadDiffusionModel,
     GenerationLoadDiffusionComponents,
+    GenerationLoadLTXAVTextEncoder,
+    GenerationLoadLTXAVAudioVAE,
     GenerationEmptyTrellis2LatentStructure,
     GenerationTrellis2Conditioning,
     GenerationPixal3DConditioning,

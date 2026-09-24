@@ -3015,10 +3015,19 @@ def test_ltxav_split_vae_and_diffusion_sources_plan_by_role() -> None:
     assert plan.component.keys["patchify_proj.weight"] == "patchify_proj.weight"
 
 
-def test_general_runtime_planner_refuses_ltx_component_loading() -> None:
+def test_general_runtime_planner_composes_ltxav_checkpoint_and_refuses_incomplete_splits() -> None:
     gemma = source(ltxav_gemma_geometries(), "gemma3-12b.safetensors")
-    with pytest.raises(NativeRefusalError, match="do not match an executable architecture"):
-        plan_native(checkpoint=ltxav_checkpoint(), gemma3_12b=gemma)
+    plan = plan_native(checkpoint=ltxav_checkpoint(), gemma3_12b=gemma)
+    assert plan.family is LTXAV
+    assert tuple(
+        component.component for component in plan.identity_components if component is not None
+    ) == (
+        "diffusion",
+        "gemma3_12b",
+        "text_projection",
+        "connectors",
+        "vae",
+    )
 
     with pytest.raises(NativeRefusalError, match="wires no Gemma 3 slot"):
         plan_native(**split_sources(), gemma3_12b=gemma)

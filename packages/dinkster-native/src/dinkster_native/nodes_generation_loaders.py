@@ -427,7 +427,9 @@ class GenerationLTXAVAudioVAEDecode(Node):
             or waveform.shape[2] <= 0
         ):
             raise TypeError("LTX-2 audio decode must return nonempty floating [batch,1|2,samples]")
-        return cls.outputs(audio={"waveform": waveform, "sample_rate": audio.sample_rate})
+        return cls.outputs(
+            audio={"waveform": waveform.detach().to("cpu"), "sample_rate": audio.sample_rate}
+        )
 
 
 class GenerationLoadLora(NativeLoadLora):

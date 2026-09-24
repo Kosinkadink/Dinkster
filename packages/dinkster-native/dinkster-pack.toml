@@ -313,6 +313,8 @@ native = [
     "dinkster.load_vision",
     "dinkster.load_diffusion_model",
     "dinkster.load_diffusion_components",
+    "dinkster.load_ltxav_text_encoder",
+    "dinkster.load_ltxav_audio_vae",
     "dinkster.empty_trellis2_latent_structure",
     "dinkster.trellis2_conditioning",
     "dinkster.pixal3d_conditioning",

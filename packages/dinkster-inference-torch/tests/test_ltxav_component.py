@@ -106,6 +106,7 @@ def test_component_loader_preserves_role_identity_and_one_open_descriptor(
     planned = SimpleNamespace(
         role=role,
         component=SimpleNamespace(
+            component=role,
             config=config,
             quant=(
                 {

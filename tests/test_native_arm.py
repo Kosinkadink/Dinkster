@@ -6528,6 +6528,8 @@ def test_manifest_declares_exact_native_arm_with_matching_schemas() -> None:
         "dinkster.load_vision",
         "dinkster.load_diffusion_model",
         "dinkster.load_diffusion_components",
+        "dinkster.load_ltxav_text_encoder",
+        "dinkster.load_ltxav_audio_vae",
         "dinkster.empty_trellis2_latent_structure",
         "dinkster.trellis2_conditioning",
         "dinkster.pixal3d_conditioning",
@@ -11364,7 +11366,10 @@ def test_ltxav_audio_vae_decode_uses_standalone_codec_and_refuses_other_streams(
     assert stages == ["enter", "exit"]
     assert decoded == [latent]
     assert latent.moves == [FakeDevice("cuda:0")]
-    assert cast("Any", result["audio"])["waveform"].shape == (2, 2, 48000)
+    waveform = cast("Any", result["audio"])["waveform"]
+    assert waveform.shape == (2, 2, 48000)
+    assert waveform.device == FakeDevice("cpu")
+    assert waveform.moves == [FakeDevice("cpu")]
     assert cast("Any", result["audio"])["sample_rate"] == 48000
 
     with pytest.raises(TypeError, match="exactly one audio stream"):
@@ -22818,6 +22823,16 @@ def test_lumina2_checkpoint_downstream_registration_matches_native_policy() -> N
         )
         assert selection is not None and selection.target == producer
         assert selection.cache_tag == "producer-cache"
+
+
+def test_ltxav_native_loaders_are_advertised_as_execution_arms() -> None:
+    arm = _native_arm()
+    native_arm_node_types = {node.schema().node_type for node in arm.NATIVE_ARM_NODES}
+
+    assert {
+        "dinkster.load_ltxav_text_encoder",
+        "dinkster.load_ltxav_audio_vae",
+    } <= native_arm_node_types
 
 
 def test_lumina2_model_sampling_overlay_reaches_custom_scheduler() -> None:

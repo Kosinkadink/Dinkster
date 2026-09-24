@@ -438,6 +438,9 @@ def default_component_registry() -> ComponentRegistry:
             frame_rate_conditioning=True,
             allow_unbound_conditioning=True,
             codec_adapter="dinkster_native.families.ltx:CodecAdapter",
+            checkpoint_loader="dinkster_inference_torch.checkpoint_runtime:assemble_component_checkpoint",
+            component_realizer="dinkster_inference_torch.ltxav_component:realize_ltxav_component",
+            checkpoint_codec_factory="dinkster_inference_torch.ltxav_runtime:checkpoint_codec",
         ),
         _descriptor(
             catalog.TRIPOSPLAT,

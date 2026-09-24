@@ -62,6 +62,7 @@ class ComponentCheckpointPlan:
     role_plans: tuple[tuple[str, object], ...]
     unclaimed: tuple[str, ...] = ()
     diagnostics: tuple[str, ...] = ()
+    registered_family: ModelFamily | None = None
 
     def __post_init__(self) -> None:
         roles: dict[str, object] = {}
@@ -112,6 +113,8 @@ class ComponentCheckpointPlan:
 
     @property
     def family(self) -> ModelFamily:
+        if self.registered_family is not None:
+            return self.registered_family
         if self.descriptor.plan_family is not None:
             planned = next(
                 planned for role, planned in self.role_plans if role == self.descriptor.model_role

@@ -38,6 +38,7 @@ from dinkster_inference import (
     FLUX_DEV,
     FLUX_SCHNELL,
     KREA2,
+    LTXAV,
     OVIS_QWEN3_2B_CONFIG,
     UMT5_XXL_CONFIG,
     WAN21,
@@ -104,6 +105,8 @@ from dinkster_inference import (
     sampling_execution_context,
     sampling_sigmas,
 )
+from dinkster_inference.component_catalog import default_component_registry
+from dinkster_inference.component_checkpoint import ComponentCheckpointPlan
 from dinkster_inference.runtime import (
     AssemblyRegistration,
     NativeAssemblyPlan,
@@ -497,6 +500,44 @@ def test_load_runtime_uses_family_from_active_registry(
             assembly_registry=assembly_registry,
             family_registry=family_registry,
             registry_token="active-family",
+        )
+        is runtime
+    )
+
+
+def test_load_runtime_uses_active_family_for_component_checkpoint(
+    runtime: FluxRuntime,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    descriptor = default_component_registry().get(LTXAV.id)
+    assert descriptor is not None
+    plan = ComponentCheckpointPlan(
+        descriptor,
+        (("diffusion", component_plan("diffusion", TINY_FLUX)),),
+    )
+    registered_family = replace(
+        LTXAV,
+        engine=replace(LTXAV.engine, regional_memory_factor=7.0),
+    )
+    family_registry: Registry[ModelFamily] = Registry()
+    family_registry.register(registered_family)
+
+    def accept(*_args: object, **_kwargs: object) -> ComponentCheckpointPlan:
+        return plan
+
+    def load(planned: NativeAssemblyPlan, **_kwargs: object) -> FluxRuntime:
+        assert planned.family is registered_family
+        return runtime
+
+    monkeypatch.setattr(sys.modules[__name__], "synthetic_loader", load)
+    assembly_registry = synthetic_registry(accept)
+
+    assert (
+        load_runtime(
+            FakeSource(Path("/fake/active-component-family.safetensors"), {}),
+            assembly_registry=assembly_registry,
+            family_registry=family_registry,
+            registry_token="active-component-family",
         )
         is runtime
     )
