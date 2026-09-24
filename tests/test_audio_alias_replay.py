@@ -93,9 +93,13 @@ MP3_DECODER_BUILD_OUTPUTS = {
     },
     WINDOWS_AVCODEC_SHA256: MP3_LINUX_WINDOWS_BUILD_OUTPUTS,
     WINDOWS_AV18_AVCODEC_SHA256: {
+        # Batch 1 was measured by hosted full-validation run 36015503535.
         ("V0", 0): "62176983aa99946c747d934d6218f967e22ecacdd66041487766d42e2ba9cef3",
+        ("V0", 1): "555fa6d9cbc326dd5e211a59f63281b4d00a3c8c1e943d8444291e4ace4a385b",
         ("128k", 0): "662e3b65fb456f7b30bf441939f1f9e76b250453d62a316f61f5d2103206b657",
+        ("128k", 1): "971513a801ee730464247e5ab9cec9ada08258e9ae7159ddadf4de606fd82609",
         ("320k", 0): "ee0600dfdf604e249081a69824a1abebbc887d2d58a6d073335b4bbdb2420bfa",
+        ("320k", 1): "4f7f23da94b83a11ec2edd04131c13688823bf335f4c2b3d74deaef0a8961e7a",
     },
 }
 
