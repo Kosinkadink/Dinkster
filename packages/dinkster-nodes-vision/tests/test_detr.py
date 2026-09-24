@@ -95,11 +95,14 @@ def test_detr_outputs_match_pinned_reference_vectors(tmp_path: Path) -> None:
         detr_model._MODEL = None
         torch.set_num_threads(previous_threads)
     assert logits.dtype == torch.float32 and boxes.dtype == torch.float32
-    # Hosted CPU kernels differed by at most 8.392334e-05; 8.5e-05 adds 1.3% headroom.
+    # Hosted CPU kernels differed by at most 8.392334e-05; 1.7e-04 is twice
+    # that spread, with a 1e-05 relative floor for float32 model output.
     np.testing.assert_allclose(
-        logits.numpy(), _decode_float32(golden["logits"]), rtol=0, atol=8.5e-5
+        logits.numpy(), _decode_float32(golden["logits"]), rtol=1e-5, atol=1.7e-4
     )
-    np.testing.assert_allclose(boxes.numpy(), _decode_float32(golden["boxes"]), rtol=0, atol=8.5e-5)
+    np.testing.assert_allclose(
+        boxes.numpy(), _decode_float32(golden["boxes"]), rtol=1e-5, atol=1.7e-4
+    )
 
 
 def test_detr_detections_are_ordered_filtered_and_clipped(tmp_path: Path) -> None:

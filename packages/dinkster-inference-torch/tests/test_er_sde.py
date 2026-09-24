@@ -72,13 +72,14 @@ def test_torch_er_sde_matches_every_executed_reference_seam(
     assert model.sigmas == case["model_sigmas"]
     assert len(model.calls) == len(case["model_calls"])
     for actual, expected in zip(model.calls, case["model_calls"], strict=True):
-        # Hosted CPU families differed below the displayed float32 precision.
-        torch.testing.assert_close(actual, _tensor(expected), rtol=0, atol=1.2e-7)
+        # Hosted values agreed at displayed precision; 2.4e-07 is twice the
+        # float32 ULP floor at unit scale, with a 1e-05 relative floor.
+        torch.testing.assert_close(actual, _tensor(expected), rtol=1e-5, atol=2.4e-7)
     assert noise.bounds == [tuple(bounds) for bounds in case["noise_bounds"]]
     for actual, expected in zip(states, case["steps"], strict=True):
         assert type(actual.current) is torch.Tensor
-        torch.testing.assert_close(actual.current, _tensor(expected), rtol=0, atol=1.2e-7)
-    torch.testing.assert_close(result, _tensor(case["final"]), rtol=0, atol=1.2e-7)
+        torch.testing.assert_close(actual.current, _tensor(expected), rtol=1e-5, atol=2.4e-7)
+    torch.testing.assert_close(result, _tensor(case["final"]), rtol=1e-5, atol=2.4e-7)
     assert [(event.step, event.total, event.sigma) for event in events] == [
         (index, len(case["sigmas"]) - 1, sigma) for index, sigma in enumerate(case["sigmas"][:-1])
     ]

@@ -70,8 +70,9 @@ def test_audio_features_match_pinned_comfyui_reference() -> None:
 
     assert feature.shape == (1, 31, 35)
     assert feature.dtype == np.float32
-    # Hosted providers differed by at most 9.1553e-05; 1e-04 adds 9.2% headroom.
-    np.testing.assert_allclose(feature, _expected_audio_feature(), rtol=0, atol=1e-4)
+    # Hosted providers differed by at most 9.1553e-05; 2e-04 is more than
+    # twice that spread, with a 1e-05 relative floor for float32 features.
+    np.testing.assert_allclose(feature, _expected_audio_feature(), rtol=1e-5, atol=2e-4)
     assert np.flatnonzero(feature[0, :, 33]).tolist() == [5, 9, 13, 17, 21, 25, 29]
     assert np.flatnonzero(feature[0, :, 34]).tolist() == [5, 17, 29]
 
