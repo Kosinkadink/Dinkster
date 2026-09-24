@@ -6591,6 +6591,8 @@ def test_manifest_declares_exact_native_arm_with_matching_schemas() -> None:
         "dinkster.load_dual_clip",
         "dinkster.load_vae",
         "dinkster.load_vision",
+        "dinkster.load_lora",
+        "dinkster.load_lora_model_only",
         "dinkster.load_diffusion_model",
         "dinkster.load_diffusion_components",
         "dinkster.empty_trellis2_latent_structure",

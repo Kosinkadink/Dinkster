@@ -495,6 +495,8 @@ NATIVE_ARM_NODES: tuple[type[Node], ...] = (
     NativeLoadDualClip,
     NativeLoadVae,
     NativeLoadVision,
+    NativeLoadLora,
+    NativeLoadLoraModelOnly,
     GenerationLoadDiffusionModel,
     GenerationLoadDiffusionComponents,
     GenerationEmptyTrellis2LatentStructure,
