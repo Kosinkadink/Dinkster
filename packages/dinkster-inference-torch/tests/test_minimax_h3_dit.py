@@ -2056,7 +2056,8 @@ def test_pdd_final_layer_selects_and_weights_schedule_head_span() -> None:
     model = _reduced_model()
     final = model.final_layer
     hidden = torch.zeros(3, model.config.hidden_width)
-    time = torch.zeros(1, 2688)
+    assert final.adaln_proj.linear.in_features == 8
+    time = torch.zeros(1, 8)
     with torch.no_grad():
         final.norm.weight.fill_(1.0)
         final.adaln_proj.linear.weight.zero_()
