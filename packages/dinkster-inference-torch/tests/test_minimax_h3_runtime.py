@@ -1613,7 +1613,7 @@ def test_h3_temporal_windows_slice_fractional_denoise_masks() -> None:
         0.3, 0.9, target.by_role("audio").numel(), dtype=torch.float32
     ).reshape_as(target.by_role("audio"))
     mask = _h3(video_mask, audio_mask)
-    sampling = {
+    sampling: dict[str, Any] = {
         "cfg": SamplingGuidance(None, 1.0),
         "sampler_id": "res_multistep",
         "scheduler_id": "simple",
