@@ -107,6 +107,12 @@ def _decode_minimax_music3_audio(
         raise TypeError("samples must be a latent mapping")
     torch = _torch()
     latent = cast("Mapping[object, object]", samples).get("samples")
+    inference = importlib.import_module("dinkster_inference")
+    if type(latent) is inference.MultiStreamLatent:
+        streams = cast("Any", latent)
+        if "audio" not in streams.roles:
+            raise TypeError("samples['samples'] must contain an audio stream")
+        latent = streams.by_role("audio")
     if not isinstance(latent, torch.Tensor):
         raise TypeError("samples['samples'] must be a torch.Tensor")
     latent = cast("Any", latent)

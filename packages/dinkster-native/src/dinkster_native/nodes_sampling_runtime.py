@@ -973,6 +973,12 @@ class NativeVAEDecode(VAEDecode):
         if not isinstance(samples, Mapping):
             raise TypeError("samples must be a latent mapping")
         latent_obj = cast("Mapping[object, object]", samples).get("samples")
+        inference = importlib.import_module("dinkster_inference")
+        if type(latent_obj) is inference.MultiStreamLatent:
+            streams = cast("Any", latent_obj)
+            if "video" not in streams.roles:
+                raise TypeError("samples['samples'] must contain a video stream")
+            latent_obj = streams.by_role("video")
         if not isinstance(latent_obj, torch.Tensor):
             raise TypeError("samples['samples'] must be a torch.Tensor")
         latent = cast("Any", latent_obj)
