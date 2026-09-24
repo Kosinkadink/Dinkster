@@ -2481,10 +2481,11 @@ def _require_custom_sampling_runtime(
             raise TypeError("ModelSamplingSD3 requires a flow custom-sampling runtime")
         else:
             return _ShiftedCustomSamplingRuntime(sampling_shift, runtime), None, handle.load_device
-    handle = _require_provider_runtime(model, "model")
     inference = importlib.import_module("dinkster_inference")
+    handle = _native_handle(model, "model")
     runtime = _minimax_h3_schedule_runtime(handle, inference)
     if runtime is None:
+        handle = _require_provider_runtime(model, "model")
         runtime = handle.runtime
     if not isinstance(runtime, inference.CustomSamplingRuntime):
         raise TypeError(f"model family {runtime.family.id!r} does not support custom sampling")

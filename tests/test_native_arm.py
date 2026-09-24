@@ -7395,8 +7395,6 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             self.runtime_facts = ("provider=test",)
             self.receipt_identity = "h3-receipt"
 
-        def sample_multistream(self) -> None: ...
-
     class MiniMaxH3DiTRuntime:
         sample_calls: ClassVar[list[dict[str, object]]] = []
 
