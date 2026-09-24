@@ -7353,7 +7353,7 @@ def test_native_h3_model_only_peft_lora_precalculates_and_composes_identity(
     assert arm._minimax_h3_model_handle(patched_handle, inference) is patched_handle
 
 
-def test_native_h3_lora_entry_modes_and_refusals(
+def test_native_h3_lora_entry_modes_use_shared_loaders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     arm = _native_arm()
@@ -7392,6 +7392,7 @@ def test_native_h3_lora_entry_modes_and_refusals(
         "_native_model",
         lambda _model, _name: (handle, (), {}, None, None, (), None, ()),
     )
+    monkeypatch.setattr(arm, "_native_handle", lambda _value, _name: handle)
     monkeypatch.setattr(arm, "_native_lora_overlay", lambda *_args: overlay)
     monkeypatch.setattr(arm, "default_pool", lambda: FakePool())
 
@@ -7413,17 +7414,14 @@ def test_native_h3_lora_entry_modes_and_refusals(
         lora=lora,
         strength_model=0.0,
     ) == {"model": handle}
-    with pytest.raises(
-        ValueError,
-        match="^MiniMax H3 LoRAs require Load LoRA$",
-    ):
-        arm.NativeLoadLora.execute(
-            model=handle,
-            clip=object(),
-            lora=lora,
-            strength_model=0.5,
-            strength_clip=0.0,
-        )
+    assert arm.NativeLoadLora.execute(
+        model=handle,
+        clip=handle,
+        lora=lora,
+        strength_model=0.5,
+        strength_clip=0.0,
+    ) == {"model": clone, "clip": clone}
+    assert len(clone_calls) == 3
 
     unmatched = _asset(
         _safetensors_shapes(tmp_path / "unmatched.safetensors", {"other.tensor": (1,)})

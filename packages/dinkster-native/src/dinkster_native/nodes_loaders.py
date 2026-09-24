@@ -926,8 +926,6 @@ def _apply_native_lora_stack(
         chroma_radiance_options,
     ) = _native_model(model, "model")
     inference = importlib.import_module("dinkster_inference")
-    if model_handle.recipe.family_id == inference.MINIMAX_H3_CONFIG.family_id:
-        raise ValueError("MiniMax H3 LoRAs require Load LoRA")
 
     active: list[tuple[AssetRef, float, float]] = []
     for lora, strength_model, strength_clip in loras:
