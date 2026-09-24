@@ -137,7 +137,7 @@ def _latent(*, reverse: bool = False) -> dict[str, object]:
 def _conditioning_rows(value: object) -> list[list[object]]:
     inference = __import__("dinkster_inference")
     assert type(value) is inference.ResidentConditioningCarrier
-    return cast("list[list[object]]", cast("Any", value).payload)
+    return cast("list[list[object]]", cast("Any", value).payload.conditioning)
 
 
 def _install_sampling_runtime(monkeypatch: pytest.MonkeyPatch, runtime: Any) -> None:
@@ -767,6 +767,10 @@ def test_conditioning_returns_exactly_one_prepared_conditioning(
     assert type(carrier) is inference.PreparedMultiStreamConditioning
     assert carrier.runtime_identity == conditioner.resource_identity
     assert carrier.payload == "prepared"
+    resident = cast("Any", result["conditioning"])
+    assert resident._dinkster_resident_owner is conditioner
+    assert resident._dinkster_resident_refs == ()
+    assert resident._dinkster_resident_fingerprint.startswith("minimax-h3-conditioning:")
     assert cast("Any", calls[0]["target"]).roles == ("video", "audio")
     assert all(
         stream.payload.device == "cuda:0" for stream in cast("Any", calls[0]["target"]).streams
@@ -947,6 +951,10 @@ def test_two_conditioning_nodes_prepare_two_independent_prompt_lanes(
     assert positive.payload is not negative.payload
     assert positive.payload.prompt == "a singer"
     assert negative.payload.prompt == "off-key vocals"
+    assert (
+        cast("Any", positive_result["conditioning"])._dinkster_resident_fingerprint
+        != cast("Any", negative_result["conditioning"])._dinkster_resident_fingerprint
+    )
 
 
 def test_conditioning_stages_each_participating_component(

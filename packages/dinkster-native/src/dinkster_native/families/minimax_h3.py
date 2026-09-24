@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from ..family_registry import load_component as _load_family_component
 from ..native_arm_core import (
     _NATIVE_PREPARED_CONDITIONING_KEY,
@@ -57,6 +59,26 @@ from ..native_arm_runtime import (
     _NativeModelOverlay,
     _torch_dtype,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _MiniMaxH3ResidentConditioning:
+    conditioning: list[list[object]]
+    owner: NativeComponentHandle
+    references: tuple[NativeComponentHandle, ...]
+    fingerprint: str
+
+    @property
+    def _dinkster_resident_owner(self) -> NativeComponentHandle:
+        return self.owner
+
+    @property
+    def _dinkster_resident_refs(self) -> tuple[NativeComponentHandle, ...]:
+        return self.references
+
+    @property
+    def _dinkster_resident_fingerprint(self) -> str:
+        return self.fingerprint
 
 
 def load_component(value: object, name: str, role: str | None = None) -> NativeComponentHandle:
@@ -450,7 +472,26 @@ def _minimax_h3_condition(
         prepared,
     )
     conditioning: list[list[object]] = [[value, cast("dict[str, object]", {})]]
-    return cls.outputs(conditioning=inference.ResidentConditioningCarrier(conditioning))
+    target_geometry = tuple(
+        (stream.role, tuple(stream.payload.shape)) for stream in av.streams
+    )
+    facts = (
+        "dinkster.minimax-h3.conditioning.v1",
+        conditioner_handle.resource_identity,
+        repr(request),
+        repr(target_geometry),
+        str(frame_count),
+    )
+    fingerprint = "minimax-h3-conditioning:" + hashlib.sha256(
+        "\n".join(facts).encode("utf-8")
+    ).hexdigest()
+    resident = _MiniMaxH3ResidentConditioning(
+        conditioning,
+        conditioner_handle,
+        codec_handles,
+        fingerprint,
+    )
+    return cls.outputs(conditioning=inference.ResidentConditioningCarrier(resident))
 
 
 class NativeEmptyMiniMaxH3AV(EmptyMiniMaxH3AV):
@@ -1619,6 +1660,8 @@ class NativePreviewLatentAudio(PreviewLatentAudio):
 def _prepared_multistream_carrier(value: object, inference: Any, name: str) -> Any | None:
     if isinstance(value, inference.ResidentConditioningCarrier):
         value = cast("Any", value).payload
+        if type(value) is _MiniMaxH3ResidentConditioning:
+            value = value.conditioning
     if value == []:
         return None
     entries = cast("list[object]", value) if type(value) is list else []
