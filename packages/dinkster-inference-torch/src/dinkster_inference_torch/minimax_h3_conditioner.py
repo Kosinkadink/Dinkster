@@ -391,9 +391,22 @@ class MiniMaxH3ConditionerModel(torch.nn.Module):
             if visual_mask is None or visual_mask.shape != ids.shape:
                 raise ValueError("MiniMax H3 visual mask must match IDs")
             assert image_grid is not None
-            visual, deepstack = self.visual(
-                image_patches.to(device=embeds.device, dtype=torch.float32),
-                image_grid.to(device=embeds.device),
+            patches = image_patches.to(device=embeds.device, dtype=torch.float32)
+            grid = image_grid.to(device=embeds.device)
+            patch_counts = tuple(math.prod(int(value) for value in row) for row in grid.tolist())
+            visual_items: list[torch.Tensor] = []
+            deepstack_items: list[tuple[torch.Tensor, ...]] = []
+            start = 0
+            for index, patch_count in enumerate(patch_counts):
+                item_visual, item_deepstack = self.visual(
+                    patches[start : start + patch_count], grid[index : index + 1]
+                )
+                visual_items.append(item_visual)
+                deepstack_items.append(item_deepstack)
+                start += patch_count
+            visual = torch.cat(visual_items)
+            deepstack = tuple(
+                torch.cat(layer_items) for layer_items in zip(*deepstack_items, strict=True)
             )
             if visual.shape != (int(visual_mask.count_nonzero()), embeds.shape[-1]):
                 raise ValueError("MiniMax H3 vision output must match visual placeholders")

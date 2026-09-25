@@ -142,6 +142,57 @@ def test_vision_position_interpolation_matches_bfloat16_reference_order() -> Non
     assert not torch.equal(actual.float(), direct_float32)
 
 
+def test_conditioner_runs_each_visual_item_separately(monkeypatch: pytest.MonkeyPatch) -> None:
+    model = _reduced_model()
+    calls: list[tuple[int, list[list[int]]]] = []
+    seen: dict[str, object] = {}
+
+    def embed(ids: torch.Tensor) -> torch.Tensor:
+        return torch.zeros((1, ids.shape[1], 16))
+
+    def visual_forward(
+        patches: torch.Tensor, grid: torch.Tensor
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+        call = len(calls) + 1
+        calls.append((patches.shape[0], grid.tolist()))
+        merged = patches.shape[0] // 4
+        visual = torch.full((merged, 16), float(call))
+        deepstack = tuple(torch.full((merged, 16), float(10 * layer + call)) for layer in range(3))
+        return visual, deepstack
+
+    def forward_embeds(
+        embeds: torch.Tensor,
+        _attention_mask: torch.Tensor | None,
+        _position_ids: torch.Tensor,
+        **kwargs: object,
+    ) -> torch.Tensor:
+        seen["deepstack"] = kwargs["deepstack_features"]
+        return embeds
+
+    monkeypatch.setattr(model.model, "embed", embed)
+    monkeypatch.setattr(model.visual, "forward", visual_forward)
+    monkeypatch.setattr(model.model, "forward_embeds", forward_embeds)
+    visual_mask = torch.tensor(((False, True, False, True, True),))
+
+    output = model(
+        torch.tensor(((1, 2, 3, 4, 5),)),
+        position_ids=torch.zeros((3, 5), dtype=torch.long),
+        visual_mask=visual_mask,
+        image_patches=torch.zeros((12, 24)),
+        image_grid=torch.tensor(((1, 2, 2), (1, 2, 4))),
+    )
+
+    assert calls == [(4, [[1, 2, 2]]), (8, [[1, 2, 4]])]
+    assert output[0, visual_mask[0], 0].tolist() == [1.0, 2.0, 2.0]
+    deepstack = seen["deepstack"]
+    assert isinstance(deepstack, tuple)
+    assert [value[:, 0].tolist() for value in deepstack] == [
+        [1.0, 2.0, 2.0],
+        [11.0, 12.0, 12.0],
+        [21.0, 22.0, 22.0],
+    ]
+
+
 def test_conditioner_moves_language_indices_to_embedding_device(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
