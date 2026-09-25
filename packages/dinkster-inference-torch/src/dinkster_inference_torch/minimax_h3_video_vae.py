@@ -78,7 +78,10 @@ def _fused_norm_pad(
         return dinkster_kitchen.group_norm_silu_pad3d(
             input, None, None, 1, 0.0, (*spatial_pad, front), silu=False
         )
-    with norm.materialized_affine(input) as (weight, bias):
+    with norm._materialized_affine(input) as (  # pyright: ignore[reportPrivateUsage]
+        weight,
+        bias,
+    ):
         return dinkster_kitchen.group_norm_silu_pad3d(
             input,
             weight,
@@ -290,7 +293,7 @@ class TemporalIsolatedGroupNorm(ResidencyRouted, torch.nn.GroupNorm):
         return stored.dtype if self._compute_dtype is None else self._compute_dtype
 
     @contextmanager
-    def materialized_affine(
+    def _materialized_affine(
         self, input: torch.Tensor
     ) -> Generator[tuple[torch.Tensor | None, torch.Tensor | None]]:
         weight = cast(torch.Tensor | None, self.weight)
@@ -316,7 +319,7 @@ class TemporalIsolatedGroupNorm(ResidencyRouted, torch.nn.GroupNorm):
             )
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-        with self.materialized_affine(input) as (weight, bias):
+        with self._materialized_affine(input) as (weight, bias):
             return self._isolated_forward(input, weight, bias)
 
 

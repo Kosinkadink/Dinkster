@@ -1732,6 +1732,44 @@ def test_linear_input_act_folds_rms_norm_and_scaled_residual_equation() -> None:
     torch.testing.assert_close(actual, expected)
 
 
+def test_linear_input_act_routes_norm_and_residual_through_int8_fused_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layer = Int8Linear(
+        4,
+        3,
+        bias=False,
+        compute_dtype=torch.float32,
+        convrot=False,
+        convrot_groupsize=4,
+    )
+    source = torch.randn(2, 4)
+    norm_weight = torch.randn(4)
+    residual = torch.randn(2, 3)
+    residual_scale = torch.randn(3)
+    sentinel = torch.randn(2, 3)
+    calls: list[tuple[object, ...]] = []
+
+    def fused_forward(*args: object) -> torch.Tensor:
+        calls.append(args)
+        return sentinel
+
+    monkeypatch.setattr(layer, "_forward", fused_forward)
+    with torch.no_grad():
+        actual = linear_input_act(
+            layer,
+            source,
+            "rms_norm",
+            norm_weight,
+            1e-5,
+            residual=residual,
+            residual_scale=residual_scale,
+        )
+
+    assert actual is sentinel
+    assert calls == [(source, "rms_norm", norm_weight, 1e-5, residual, residual_scale)]
+
+
 def test_worker_thread_forward_parity() -> None:
     layer = make_layer()
     x = torch.randn(8, 4)
