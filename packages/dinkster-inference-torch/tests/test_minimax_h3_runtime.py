@@ -104,7 +104,10 @@ from dinkster_inference_torch.denoise import (
 from dinkster_inference_torch.distributed import DistributedSamplingConfig
 from dinkster_inference_torch.guidance import ConditioningValidationPath, GuidedDenoiser
 from dinkster_inference_torch.minimax_h3_conditioning import MiniMaxH3ConditionerInputs
-from dinkster_inference_torch.minimax_h3_dit import MiniMaxH3DiTConditioning
+from dinkster_inference_torch.minimax_h3_dit import (
+    MiniMaxH3ControlPatch,
+    MiniMaxH3DiTConditioning,
+)
 from dinkster_inference_torch.patch_providers import PatchProviderSnapshot
 from dinkster_inference_torch.sampling_execution import run_ksampler_as_custom
 from dinkster_inference_torch.scheduled_sampling import (
@@ -202,10 +205,11 @@ class FakeDiT:
         conditioning: MiniMaxH3DiTConditioning,
         sigmas: MiniMaxH3Sigmas,
         sampler_sigmas: tuple[float, ...] | None = None,
+        control: MiniMaxH3ControlPatch | None = None,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
         attention_kernel_factory: MiniMaxH3AttentionKernelFactory | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
-        del context, conditioning
+        del context, conditioning, control
         self.calls.append((sigma, sigmas))
         self.sampler_schedules.append(sampler_sigmas)
         self.denoise_masks.append(denoise_mask)
@@ -1108,9 +1112,10 @@ class ContextMeanDiT(torch.nn.Module):
         conditioning: MiniMaxH3DiTConditioning,
         sigmas: MiniMaxH3Sigmas,
         sampler_sigmas: tuple[float, ...] | None = None,
+        control: MiniMaxH3ControlPatch | None = None,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
-        del sigma, sigmas, sampler_sigmas
+        del sigma, sigmas, sampler_sigmas, control
         self.conditionings.append(conditioning)
         self.denoise_masks.append(denoise_mask)
         projection_input = context.mean().reshape(1, 1).to(self.video_patch_proj.weight.dtype)

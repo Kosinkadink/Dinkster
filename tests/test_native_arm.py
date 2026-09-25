@@ -6712,6 +6712,7 @@ def test_native_z_image_control_patch_loads_strict_plan_into_residency(
         plan_z_image_control=lambda value, **kwargs: events.append(("plan", value, kwargs)) or plan,
     )
     inference_torch = SimpleNamespace(
+        is_minimax_h3_fun_state_dict=lambda _value: False,
         assemble_z_image_control=lambda value, **kwargs: (
             events.append(("assemble", value, kwargs))
             or SimpleNamespace(control=control, resource_digest="resource-identity")
