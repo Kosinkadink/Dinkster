@@ -218,6 +218,7 @@ class MiniMaxH3Attention(torch.nn.Module):
         provider_evidence: MiniMaxH3AttentionProviderEvidence,
         *,
         operations: Operations,
+        gate_compress: bool = False,
     ) -> None:
         super().__init__()
         if type(geometry) is not MiniMaxH3AttentionGeometry:
@@ -239,6 +240,11 @@ class MiniMaxH3Attention(torch.nn.Module):
             geometry.inner_width,
             geometry.hidden_width,
             bias=False,
+        )
+        self.to_gate_compress = (
+            operations.linear(geometry.hidden_width, geometry.inner_width, bias=False)
+            if gate_compress
+            else None
         )
         object.__setattr__(self, "_attention_kernel", attention_kernel)
 
@@ -806,6 +812,7 @@ class _MiniMaxH3Block(torch.nn.Module):
         rotary_dim: int,
         time_dim: int,
         apply_silu: bool,
+        gate_compress: bool = False,
     ) -> None:
         super().__init__()
         self.norm1 = operations.rms_norm(config.hidden_width, eps=1e-5)
@@ -816,7 +823,13 @@ class _MiniMaxH3Block(torch.nn.Module):
             config.attention_head_dim,
             rotary_dim,
         )
-        self.attn = MiniMaxH3Attention(geometry, attention_kernel, evidence, operations=operations)
+        self.attn = MiniMaxH3Attention(
+            geometry,
+            attention_kernel,
+            evidence,
+            operations=operations,
+            gate_compress=gate_compress,
+        )
         self.mlp = _MiniMaxH3MLP(config.hidden_width, config.ffn_width, operations=operations)
         self.adaln_proj = _MiniMaxH3AdaLN(
             time_dim,
@@ -1031,14 +1044,21 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         fp32_operations: Operations | None = None,
         text_operations: Operations | None = None,
         time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve",
+        gate_compress_blocks: tuple[int, ...] = (),
     ) -> None:
         super().__init__()
         fp32_operations = operations if fp32_operations is None else fp32_operations
         text_operations = operations if text_operations is None else text_operations
         if time_embedding_kind not in ("curve", "mlp"):
             raise ValueError("time_embedding_kind must be curve or mlp")
+        if gate_compress_blocks != tuple(sorted(set(gate_compress_blocks))) or any(
+            type(index) is not int or index < 0 or index >= config.depth
+            for index in gate_compress_blocks
+        ):
+            raise ValueError("gate_compress_blocks must contain sorted unique block indices")
         self.config = config
         self.time_embedding_kind = time_embedding_kind
+        self.gate_compress_blocks = gate_compress_blocks
         rotary_dim = min(96, config.attention_head_dim // 6 * 6)
         if rotary_dim < 6:
             raise ValueError("MiniMax H3 attention head dimension must support three RoPE axes")
@@ -1078,8 +1098,9 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 rotary_dim=rotary_dim,
                 time_dim=adaln_input_width,
                 apply_silu=time_embedding_kind == "mlp",
+                gate_compress=index in gate_compress_blocks,
             )
-            for _ in range(config.depth)
+            for index in range(config.depth)
         )
         self.final_layer = _MiniMaxH3FinalLayer(
             config,
@@ -1780,6 +1801,7 @@ def assemble_minimax_h3_dit(
     text_operations: Operations | None = None,
     time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve",
     attention_selection: AttentionSelection,
+    gate_compress_blocks: tuple[int, ...] = (),
 ) -> MiniMaxH3DiT:
     """Construct the exact unregistered production H3 DiT source."""
     kernel, evidence = minimax_h3_attention_provider(attention_selection)
@@ -1791,6 +1813,7 @@ def assemble_minimax_h3_dit(
         fp32_operations=fp32_operations,
         text_operations=text_operations,
         time_embedding_kind=time_embedding_kind,
+        gate_compress_blocks=gate_compress_blocks,
     )
 
 

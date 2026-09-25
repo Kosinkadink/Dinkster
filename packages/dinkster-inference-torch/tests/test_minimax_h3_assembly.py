@@ -500,6 +500,49 @@ def test_split_plan_refuses_missing_foreign_geometry_and_path(
             )
 
 
+def test_diffusion_plan_preserves_per_block_vsa_gate_geometry(tmp_path: Path) -> None:
+    path = tmp_path / "fl2va.safetensors"
+    gate_blocks = (1, 7)
+    layout = minimax_h3_dit_layout(gate_compress_blocks=gate_blocks)
+    source = HeaderSource(
+        path,
+        {key: TensorGeometry(shape, BFLOAT16) for key, shape in layout.keys.items()},
+    )
+
+    plan = plan_minimax_h3_model_assembly(
+        source,
+        role="fl2va-dit",
+        path=path,
+    ).diffusion
+
+    assert plan.config.gate_compress_blocks == gate_blocks
+    assert plan.config.keys["blocks.1.attn.to_gate_compress.weight"] == (
+        56 * 128,
+        5376,
+    )
+    assert "blocks.0.attn.to_gate_compress.weight" not in plan.config.keys
+
+
+def test_diffusion_plan_reports_malformed_vsa_gate_shape(tmp_path: Path) -> None:
+    path = tmp_path / "fl2va.safetensors"
+    layout = minimax_h3_dit_layout(gate_compress_blocks=(3,))
+    geometries = {key: TensorGeometry(shape, BFLOAT16) for key, shape in layout.keys.items()}
+    geometries["blocks.3.attn.to_gate_compress.weight"] = TensorGeometry((56 * 128, 5375), BFLOAT16)
+
+    with pytest.raises(
+        MiniMaxH3SplitAssemblyError,
+        match=(
+            r"geometry mismatch for blocks\.3\.attn\.to_gate_compress\.weight: "
+            r"got \(7168, 5375\), expected \(7168, 5376\)"
+        ),
+    ):
+        plan_minimax_h3_model_assembly(
+            HeaderSource(path, geometries),
+            role="fl2va-dit",
+            path=path,
+        )
+
+
 def test_split_plan_accepts_float32_conditioner_storage(tmp_path: Path) -> None:
     artifacts = _paths(tmp_path)
     diffusion, conditioner, video, audio = _sources(artifacts)
@@ -647,11 +690,13 @@ def test_diffusion_builder_binds_reference_split_precision_operations(
         text_operations: object,
         time_embedding_kind: str,
         attention_selection: object,
+        gate_compress_blocks: tuple[int, ...],
     ) -> object:
         nonlocal selected
         selected = operations, fp32_operations, text_operations
         assert time_embedding_kind == "curve"
         assert attention_selection is selected_attention
+        assert gate_compress_blocks == ()
         return torch.nn.Identity()
 
     monkeypatch.setattr(assembly, "assemble_minimax_h3_dit", capture)
