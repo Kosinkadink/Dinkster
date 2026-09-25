@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
 
+import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 import torch
 import torch.nn.functional as F
 from dinkster_inference.qwen_image_text import (
@@ -700,8 +701,6 @@ class QwenImageVisionAttention(torch.nn.Module):
             (cosine[..., :half], -sine[..., half:], sine[..., :half], cosine[..., half:]),
             dim=-1,
         ).reshape(1, hidden.shape[0], 1, half, 2, 2)
-        import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
-
         query, key = dinkster_kitchen.apply_rope_split_half(
             query.unsqueeze(0), key.unsqueeze(0), matrix
         )
@@ -919,9 +918,8 @@ class QwenImageVisionTransformer(torch.nn.Module):
         positions = torch.stack((height_ids, width_ids), dim=-1)
         rotary_dim = (self.shape.hidden_size // self.shape.num_heads) // 2
         inverse = 1.0 / (
-            10_000.0
-            ** (torch.arange(0, rotary_dim, 2, device=device, dtype=torch.float32) / rotary_dim)
-        )
+            10_000.0 ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim)
+        ).to(device)
         sequence = torch.arange(max(height, width), device=device, dtype=torch.float32)
         frequencies = torch.outer(sequence, inverse)
         selected = frequencies[positions].flatten(1)

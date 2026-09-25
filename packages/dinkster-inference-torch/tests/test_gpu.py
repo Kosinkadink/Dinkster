@@ -643,6 +643,38 @@ def test_gemma4_rope_matches_cpu_precomputed_inverse_frequencies_on_cuda() -> No
     assert torch.equal(negative_sine, -expected_sine[..., 256:])
 
 
+def test_qwen_vision_rope_matches_cpu_precomputed_inverse_frequencies_on_cuda() -> None:
+    from dinkster_inference_torch.qwen_image_text import QwenImageVisionTransformer
+
+    device = torch.device("cuda:0")
+    model = QwenImageVisionTransformer.reduced(
+        hidden_size=1280,
+        output_size=8,
+        intermediate_size=16,
+        num_heads=16,
+        num_layers=0,
+        patch=(2, 14, 14),
+        spatial_merge_size=2,
+        window_size=112,
+        full_attention_blocks=(),
+    )
+    grid = torch.tensor(((1, 22, 36),), device=device)
+
+    actual = model._position_embeddings(grid, device)  # pyright: ignore[reportPrivateUsage]
+
+    height_ids = torch.arange(22, device=device).unsqueeze(1).expand(-1, 36)
+    height_ids = height_ids.reshape(11, 2, 18, 2).permute(0, 2, 1, 3).flatten()
+    width_ids = torch.arange(36, device=device).unsqueeze(0).expand(22, -1)
+    width_ids = width_ids.reshape(11, 2, 18, 2).permute(0, 2, 1, 3).flatten()
+    positions = torch.stack((height_ids, width_ids), dim=-1)
+    inverse = 1.0 / (10_000.0 ** (torch.arange(0, 40, 2).float() / 40))
+    frequencies = torch.outer(torch.arange(36, device=device).float(), inverse.to(device))
+    selected = frequencies[positions].flatten(1)
+    expected = torch.cat((selected, selected), dim=-1)
+
+    assert torch.equal(actual, expected)
+
+
 def test_int8_fused_training_forward_and_input_gradient_on_cuda() -> None:
     import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
     from dinkster_inference_torch.quant_linear import Int8Linear
