@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
+
+import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 import pytest
 import torch
 from dinkster_inference.minimax_h3_conditioner import minimax_h3_conditioner_layout
@@ -54,10 +57,19 @@ def test_full_meta_state_is_the_exact_902_key_conditioner_layout() -> None:
     model.load_state_dict(state, strict=True, assign=True)
 
 
-def test_reduced_text_and_vision_execute_with_deepstack() -> None:
+def test_reduced_text_and_vision_execute_with_deepstack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     model = _reduced_model()
     assert model.model.shape.rope_theta == 5_000_000.0
     assert model.model.shape.interleaved_mrope is True
+    backends: list[str] = []
+
+    def use_backend(name: str) -> nullcontext[None]:
+        backends.append(name)
+        return nullcontext()
+
+    monkeypatch.setattr(dinkster_kitchen, "use_backend", use_backend)
     ids = torch.tensor(((1, 2, 3, 4, 5, 6),))
     visual_mask = torch.tensor(((False, True, True, True, True, False),))
     patches = torch.randn(16, 24)
@@ -69,6 +81,7 @@ def test_reduced_text_and_vision_execute_with_deepstack() -> None:
         image_grid=torch.tensor(((1, 4, 4),)),
     )
     assert output.shape == (1, 6, 16)
+    assert backends == ["eager", "eager", "eager"]
 
 
 def test_vision_position_interpolation_matches_bfloat16_reference_order() -> None:

@@ -671,6 +671,13 @@ class QwenImageVisionAttention(torch.nn.Module):
         self.qkv = operations.linear(hidden_size, hidden_size * 3, bias=True)
         self.proj = operations.linear(hidden_size, hidden_size, bias=True)
 
+    def _apply_rope(
+        self, query: torch.Tensor, key: torch.Tensor, matrix: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
+
+        return dinkster_kitchen.apply_rope_split_half(query, key, matrix)
+
     def forward(
         self,
         hidden: torch.Tensor,
@@ -700,11 +707,7 @@ class QwenImageVisionAttention(torch.nn.Module):
             (cosine[..., :half], -sine[..., half:], sine[..., :half], cosine[..., half:]),
             dim=-1,
         ).reshape(1, hidden.shape[0], 1, half, 2, 2)
-        import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
-
-        query, key = dinkster_kitchen.apply_rope_split_half(
-            query.unsqueeze(0), key.unsqueeze(0), matrix
-        )
+        query, key = self._apply_rope(query.unsqueeze(0), key.unsqueeze(0), matrix)
         query, key = query.squeeze(0), key.squeeze(0)
         outputs: list[torch.Tensor] = []
         for start, end in zip(boundaries, boundaries[1:], strict=False):

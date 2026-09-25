@@ -61,6 +61,7 @@ from .attention import (
     AttentionSelection,
     AttentionStatus,
     resolve_role_attention,
+    select_attention,
 )
 from .distributed import (
     guidance_receipt_identity,
@@ -72,7 +73,13 @@ from .minimax_h3_dit import (
     assemble_minimax_h3_dit,
     minimax_h3_guidance_integration_facts,
 )
-from .minimax_h3_video_vae import MiniMaxH3VideoVAE, MiniMaxH3VideoVAEConfig
+from .minimax_h3_video_vae import (
+    Attention as MiniMaxH3VideoVAEAttention,
+)
+from .minimax_h3_video_vae import (
+    MiniMaxH3VideoVAE,
+    MiniMaxH3VideoVAEConfig,
+)
 from .module_residency import declare_residency_materialization_ceilings
 from .operations import CastOperations, Operations, ResidencyRouted
 from .quant_linear import Fp8Linear, Int8Embedding, Int8Linear, Nvfp4Linear
@@ -716,6 +723,11 @@ def load_minimax_h3_component(
                 verified,
                 compute_dtype=compute_dtype,
             )
+            if plan.quant:
+                kernel = select_attention("vae", "dinkster_kitchen_int8").kernel
+                for layer in module.modules():
+                    if isinstance(layer, MiniMaxH3VideoVAEAttention):
+                        object.__setattr__(layer, "_attention_kernel", kernel)
         else:
             module = _load_verified_component(
                 plan,

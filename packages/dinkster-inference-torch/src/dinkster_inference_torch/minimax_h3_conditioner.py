@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 import torch
 import torch.nn.functional as F
 from dinkster_inference.minimax_h3_conditioner import MINIMAX_H3_CONDITIONER_CONFIG
@@ -17,6 +18,16 @@ from .quant_linear import linear_input_act
 from .qwen_image_text import QwenImageLanguageModel, QwenImageVisionAttention
 
 _DEFAULT_ATTENTION = select_attention("qwen").kernel
+
+
+class _MiniMaxH3VisionAttention(QwenImageVisionAttention):
+    def _apply_rope(
+        self, query: torch.Tensor, key: torch.Tensor, matrix: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if query.dtype is not torch.float32:
+            return super()._apply_rope(query, key, matrix)  # pyright: ignore[reportPrivateUsage]
+        with dinkster_kitchen.use_backend("eager"):
+            return super()._apply_rope(query, key, matrix)  # pyright: ignore[reportPrivateUsage]
 
 
 class _PatchEmbed(torch.nn.Module):
@@ -55,7 +66,7 @@ class _VisionBlock(torch.nn.Module):
         super().__init__()
         self.norm1 = operations.layer_norm(hidden_size, eps=1e-6)
         self.norm2 = operations.layer_norm(hidden_size, eps=1e-6)
-        self.attn = QwenImageVisionAttention(
+        self.attn = _MiniMaxH3VisionAttention(
             hidden_size=hidden_size,
             num_heads=heads,
             operations=operations,
