@@ -643,24 +643,25 @@ def test_gemma4_rope_matches_cpu_precomputed_inverse_frequencies_on_cuda() -> No
     assert torch.equal(negative_sine, -expected_sine[..., 256:])
 
 
-def test_qwen_vision_rope_matches_cpu_precomputed_inverse_frequencies_on_cuda() -> None:
-    from dinkster_inference_torch.qwen_image_text import QwenImageVisionTransformer
+def test_minimax_h3_vision_rope_matches_cpu_precomputed_inverse_frequencies_on_cuda() -> None:
+    from dinkster_inference_torch.minimax_h3_conditioner import MiniMaxH3VisionModel
 
     device = torch.device("cuda:0")
-    model = QwenImageVisionTransformer.reduced(
+    model = MiniMaxH3VisionModel.reduced(
         hidden_size=1280,
         output_size=8,
         intermediate_size=16,
-        num_heads=16,
-        num_layers=0,
+        heads=16,
+        layers=0,
         patch=(2, 14, 14),
-        spatial_merge_size=2,
-        window_size=112,
-        full_attention_blocks=(),
-    )
-    grid = torch.tensor(((1, 22, 36),), device=device)
+        merge_size=2,
+        position_embeddings=16,
+        deepstack_layers=(),
+    ).to(device)
 
-    actual = model._position_embeddings(grid, device)  # pyright: ignore[reportPrivateUsage]
+    _, (actual_cosine, actual_sine), _ = model._position_values(  # pyright: ignore[reportPrivateUsage]
+        [(1, 22, 36)], device
+    )
 
     height_ids = torch.arange(22, device=device).unsqueeze(1).expand(-1, 36)
     height_ids = height_ids.reshape(11, 2, 18, 2).permute(0, 2, 1, 3).flatten()
@@ -672,7 +673,8 @@ def test_qwen_vision_rope_matches_cpu_precomputed_inverse_frequencies_on_cuda() 
     selected = frequencies[positions].flatten(1)
     expected = torch.cat((selected, selected), dim=-1)
 
-    assert torch.equal(actual, expected)
+    assert torch.equal(actual_cosine, expected.cos())
+    assert torch.equal(actual_sine, expected.sin())
 
 
 def test_int8_fused_training_forward_and_input_gradient_on_cuda() -> None:

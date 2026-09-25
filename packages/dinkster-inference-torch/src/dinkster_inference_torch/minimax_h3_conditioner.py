@@ -231,9 +231,8 @@ class MiniMaxH3VisionModel(torch.nn.Module):
         lengths: list[int] = []
         rotary_dim = (self.shape.hidden_size // self.shape.heads) // 2
         inverse = 1.0 / (
-            10_000.0
-            ** (torch.arange(0, rotary_dim, 2, device=device, dtype=torch.float32) / rotary_dim)
-        )
+            10_000.0 ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim)
+        ).to(device)
         max_side = max(max(height, width) for _, height, width in rows)
         frequency_table = torch.outer(
             torch.arange(max_side, device=device, dtype=torch.float32), inverse
