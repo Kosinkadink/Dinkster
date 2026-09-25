@@ -42,6 +42,20 @@ def _powershell_dependency_array(source: str, name: str) -> list[str]:
     return dependencies
 
 
+def _powershell_requirement_names(source: str, name: str) -> set[str]:
+    requirements = _powershell_dependency_array(source, name)
+    resolved: list[str] = []
+    for requirement in requirements:
+        if not requirement.startswith("$"):
+            resolved.append(requirement)
+            continue
+        variable = requirement.removeprefix("$")
+        match = re.search(rf'^\${variable} = "([^\"]+)"$', source, re.MULTILINE)
+        assert match is not None
+        resolved.append(match.group(1))
+    return _requirement_names(resolved)
+
+
 def _posix_editables(source: str, start: str, end: str) -> list[str]:
     section = source.split(start, 1)[1].split(end, 1)[0]
     return re.findall(r"-e ['\"]?(packages/[^\s'\"\\]+)", section)
@@ -66,6 +80,13 @@ def _posix_requirement_names(source: str, start: str, end: str) -> set[str]:
     tokens = shlex.split(command.replace("\\\n", " "))
     requirements = tokens[tokens.index("--python") + 2 : tokens.index("-e")]
     return _requirement_names(requirements)
+
+
+def _posix_variable_install_requirement_names(source: str, python: str, variable: str) -> set[str]:
+    match = re.search(rf'^{variable}="([^\"]+)"$', source, re.MULTILINE)
+    assert match is not None
+    assert f'uv pip install --python {python} "${variable}"' in source
+    return _requirement_names((match.group(1),))
 
 
 def _module_level_statements(statements: list[ast.stmt]) -> list[ast.stmt]:
@@ -144,16 +165,19 @@ def test_supported_execution_environments_cover_minimax_music3_runtime_imports()
         "package torch extra": base_requirements
         | _requirement_names(project["optional-dependencies"]["torch"]),
         "PowerShell CPU": base_requirements
-        | _requirement_names(_powershell_dependency_array(powershell, "CpuDependencies"))
+        | _powershell_requirement_names(powershell, "CpuDependencies")
         | {"torch"},
         "PowerShell CUDA": base_requirements
-        | _requirement_names(_powershell_dependency_array(powershell, "GpuDependencies"))
+        | _powershell_requirement_names(powershell, "GpuDependencies")
         | {"torch"},
         "POSIX CPU": base_requirements
         | _posix_requirement_names(
             posix,
             "uv pip install --python .venv-torch/bin/python pytest packaging",
             "# The direct PyPI URL forces",
+        )
+        | _posix_variable_install_requirement_names(
+            posix, ".venv-torch/bin/python", "kitchen_cpu_wheel"
         )
         | {"torch"},
         "POSIX CUDA": base_requirements
