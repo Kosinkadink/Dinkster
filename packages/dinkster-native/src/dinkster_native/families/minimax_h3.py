@@ -60,7 +60,7 @@ from ..native_arm_runtime import (
     _torch_dtype,
 )
 from .conditioning import _prepared_multistream_carrier, _resident_payload
-from .latent import _latent_samples
+from .latent import _adapt_multistream_latent, _latent_samples, _move_multistream_latent
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,13 +312,6 @@ def _minimax_h3_av(value: object, torch: Any, inference: Any, name: str) -> Any:
     return streams
 
 
-def _move_multistream_latent(value: Any, device: object) -> Any:
-    def move(payload: Any) -> Any:
-        return payload.to(device)
-
-    return value.map(move)
-
-
 def _minimax_h3_payload(inference: Any, tensor: Any, reference_id: str) -> tuple[Any, Any]:
     descriptor = inference.PayloadDescriptor(
         inference.PayloadReference(reference_id),
@@ -489,36 +482,6 @@ def _canonical_minimax_h3_references(values: Sequence[object]) -> tuple[object, 
     if len(images) > 9 or len(videos) > 3 or len(audios) > 3:
         raise ValueError("REF2VA allows at most 9 images, 3 videos, and 3 audio references")
     return (*images, *videos, *audios)
-
-
-def _adapt_multistream_latent(
-    value: object,
-    runtime: object,
-    torch: Any,
-    inference: Any,
-    name: str,
-) -> Mapping[object, object]:
-    if not isinstance(value, Mapping) or "samples" not in value:
-        raise TypeError(f"{name} must be a LATENT mapping containing 'samples'")
-    latent = cast("Mapping[object, object]", value)
-    samples = latent["samples"]
-    if type(samples) is inference.MultiStreamLatent:
-        return latent
-    if not isinstance(runtime, inference.MultiStreamLatentAdapterRuntime):
-        raise TypeError(f"{name} cannot be adapted to the model's latent streams")
-    if type(samples) is not torch.Tensor:
-        raise TypeError(f"{name} samples must be an exact torch.Tensor")
-    adapter = cast("Any", runtime)
-    adapted = adapter.adapt_multistream_latent(
-        samples,
-        source_spatial_downscale=latent.get("downscale_ratio_spacial"),
-        source_temporal_downscale=latent.get("downscale_ratio_temporal"),
-    )
-    if type(adapted) is not inference.MultiStreamLatent:
-        raise TypeError("latent adaptation must return an exact MultiStreamLatent")
-    result = dict(latent)
-    result["samples"] = adapted
-    return result
 
 
 def _adapt_minimax_h3_av(
@@ -2095,11 +2058,6 @@ def resolve_seedvr2_component_execution(
         [] if negative in ([], None) else prepare(negative, "negative", "negative")
     )
     return sampling_runtime, positive_rows, negative_rows
-
-
-def _sampling_memory_requirements(runtime: Any, samples: Any) -> tuple[int, int | None]:
-    estimate = getattr(runtime, "sampling_memory_requirements", None)
-    return (0, None) if estimate is None else estimate(tuple(samples.shape))
 
 
 def resolve_trellis2_component_execution(

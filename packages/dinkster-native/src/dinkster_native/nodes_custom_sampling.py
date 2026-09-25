@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from .families.conditioning import _prepared_multistream_carrier
-from .families.minimax_h3 import (
+from .families.latent import (
     _adapt_multistream_latent,
     _move_multistream_latent,
     _sampling_memory_requirements,
