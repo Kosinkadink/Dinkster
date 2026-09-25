@@ -14,7 +14,7 @@
       "kind": "assemblyBuilder",
       "call": "build_builtin_assembly_registry",
       "path": "packages/dinkster-inference/src/dinkster_inference/registries.py",
-      "line": 42,
+      "line": 44,
       "column": 20,
       "issue": 120
     },
@@ -102,7 +102,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-native/src/dinkster_native/nodes_guidance.py",
-      "line": 146,
+      "line": 142,
       "column": 26,
       "issue": 120
     },
@@ -174,7 +174,7 @@
       "kind": "registryFactory",
       "call": "default_component_registry",
       "path": "packages/dinkster-inference/src/dinkster_inference/registries.py",
-      "line": 36,
+      "line": 38,
       "column": 18,
       "issue": 120
     },
@@ -182,7 +182,7 @@
       "kind": "registryFactory",
       "call": "builtin_sampler_registry",
       "path": "packages/dinkster-inference/src/dinkster_inference/registries.py",
-      "line": 38,
+      "line": 40,
       "column": 18,
       "issue": 120
     },
@@ -190,7 +190,7 @@
       "kind": "registryFactory",
       "call": "builtin_scheduler_registry",
       "path": "packages/dinkster-inference/src/dinkster_inference/registries.py",
-      "line": 39,
+      "line": 41,
       "column": 20,
       "issue": 120
     },
@@ -198,7 +198,7 @@
       "kind": "registryFactory",
       "call": "builtin_family_registry",
       "path": "packages/dinkster-inference/src/dinkster_inference/registries.py",
-      "line": 40,
+      "line": 42,
       "column": 18,
       "issue": 120
     },
