@@ -2295,8 +2295,8 @@ def test_generation_controlnet_carriers_chain_and_roundtrip_with_resource_depend
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster_inference import (
+        ConditioningCarrier,
         ConditioningSet,
-        ResidentConditioningCarrier,
         make_conditioning_carrier,
         register_conditioning_type,
     )
@@ -2337,13 +2337,14 @@ def test_generation_controlnet_carriers_chain_and_roundtrip_with_resource_depend
         end_percent=0.75,
     )
     result = second["positive"]
-    assert isinstance(result, ResidentConditioningCarrier)
-    assert cast("Any", result.payload).conditioning is carrier
+    assert type(result) is ConditioningCarrier
+    assert cast("Any", result._dinkster_resident_payload).conditioning is carrier
+    assert result.conditioning.records[-1].channels[0][0].value == "control_hint"
     binding = arm._select_classic_control_binding(result, second["negative"])
     assert binding.application.strength == 0.5
     assert binding.application.previous.mode.token == "canny"
     assert len(binding.entries) == 2
-    assert result._dinkster_resident_refs == (resource.handle, resource.handle)
+    assert result._dinkster_resident_refs == (resource.handle,)
 
     spec = register_conditioning_type(TypeRegistry(), resident_table=pool)
     assert spec.fingerprint is not None

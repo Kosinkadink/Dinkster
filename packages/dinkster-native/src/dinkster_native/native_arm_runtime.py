@@ -1443,7 +1443,10 @@ class _ControlledConditioning:
 
 
 def _controlled_conditioning(value: object) -> _ControlledConditioning | None:
-    payload = getattr(value, "_dinkster_resident_payload", None)
+    try:
+        payload = getattr(value, "_dinkster_resident_payload", None)
+    except TypeError:
+        return None
     if isinstance(payload, _ControlledConditioning):
         return payload
     return None
