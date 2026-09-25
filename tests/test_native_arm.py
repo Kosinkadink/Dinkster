@@ -32643,7 +32643,6 @@ def test_trellis2_execution_model_wraps_resident_lanes_for_custom_sampling(
     from dinkster_inference import (
         GuidanceRole,
         PreparedMultiStreamConditioning,
-        ResidentConditioningCarrier,
     )
 
     class Runtime:
@@ -32659,6 +32658,10 @@ def test_trellis2_execution_model_wraps_resident_lanes_for_custom_sampling(
         def shares_backing(self, other: object) -> bool:
             return type(other) is Resource and self.backing is other.backing
 
+    class Carrier:
+        def __init__(self, payload: object) -> None:
+            self.bindings = (SimpleNamespace(kind="resident", payload=payload),)
+
     runtime = Runtime()
     module = SimpleNamespace(
         Trellis2DiffusionRuntime=Runtime,
@@ -32673,9 +32676,10 @@ def test_trellis2_execution_model_wraps_resident_lanes_for_custom_sampling(
     family = SimpleNamespace(id="dinkster.trellis2")
     inference = SimpleNamespace(
         TRELLIS2=family,
+        ConditioningCarrier=Carrier,
         GuidanceRole=GuidanceRole,
         PreparedMultiStreamConditioning=PreparedMultiStreamConditioning,
-        ResidentConditioningCarrier=ResidentConditioningCarrier,
+        ResidentConditioningCarrier=type("LegacyCarrier", (), {}),
     )
     handle = SimpleNamespace(
         runtime=runtime,
@@ -32688,8 +32692,8 @@ def test_trellis2_execution_model_wraps_resident_lanes_for_custom_sampling(
     backing = object()
     positive_resource = Resource(GuidanceRole.CONDITIONAL, backing)
     negative_resource = Resource(GuidanceRole.UNCONDITIONAL, backing)
-    positive = ResidentConditioningCarrier(positive_resource)
-    negative = ResidentConditioningCarrier(negative_resource)
+    positive = Carrier(positive_resource)
+    negative = Carrier(negative_resource)
 
     resolved = arm.resolve_trellis2_component_execution(handle, positive, negative, inference)
     assert resolved is not None
@@ -32714,7 +32718,7 @@ def test_trellis2_execution_model_wraps_resident_lanes_for_custom_sampling(
         arm.resolve_trellis2_component_execution(
             handle,
             positive,
-            ResidentConditioningCarrier(Resource(GuidanceRole.UNCONDITIONAL, object())),
+            Carrier(Resource(GuidanceRole.UNCONDITIONAL, object())),
             inference,
         )
 

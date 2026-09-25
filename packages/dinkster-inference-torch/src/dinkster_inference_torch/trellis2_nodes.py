@@ -12,17 +12,28 @@ import torch
 import torch.nn.functional as F
 from dinkster_inference import (
     PBR_CHANNELS,
+    TRELLIS2,
     TRELLIS2_SPARSE_DECODE_ALIGNMENT_BYTES,
     TRELLIS2_SPARSE_DECODE_FIXED_BYTES,
+    ConditioningCarrier,
+    ConditioningChannel,
+    ConditioningRecord,
+    ConditioningSet,
     DenseVoxelGrid,
     InferenceComponentHandle,
+    PayloadDescriptor,
+    PayloadReference,
     ResidentConditioningCarrier,
+    ResidentPayloadBinding,
     SparseLatent,
     SparseSubdivisionGuides,
     SparseSupport,
     SparseVolume,
+    TokenLayoutDescriptor,
+    TokenSegmentDescriptor,
     TriangleMesh,
     TriangleMeshBatch,
+    make_conditioning_carrier,
     require_inference_component_handle,
 )
 
@@ -81,9 +92,15 @@ def _component(value: object, name: str) -> InferenceComponentHandle:
 
 
 def _conditioning(value: object, name: str) -> Trellis2ConditioningResource:
-    if type(value) is not ResidentConditioningCarrier:
-        raise TypeError(f"{name} must be TRELLIS.2 conditioning")
-    resource = value.payload
+    if type(value) is ConditioningCarrier:
+        bindings = value.bindings
+        resource = (
+            bindings[0].payload if len(bindings) == 1 and bindings[0].kind == "resident" else None
+        )
+    elif type(value) is ResidentConditioningCarrier:
+        resource = value.payload
+    else:
+        resource = None
     if type(resource) is not Trellis2ConditioningResource:
         raise TypeError(f"{name} must be TRELLIS.2 conditioning")
     return resource
@@ -91,8 +108,34 @@ def _conditioning(value: object, name: str) -> Trellis2ConditioningResource:
 
 def _resident_conditioning(
     resource: Trellis2ConditioningResource,
-) -> ResidentConditioningCarrier:
-    return ResidentConditioningCarrier(resource)
+) -> ConditioningCarrier:
+    reference_id = "trellis2-prepared-conditioning"
+    shape = (1,)
+    dtype = "U8"
+    space = "trellis2-prepared-conditioning"
+    descriptor = PayloadDescriptor(PayloadReference(reference_id), shape, dtype, space)
+    conditioning = ConditioningSet(
+        (
+            ConditioningRecord(
+                channels=((ConditioningChannel.VISION_EMBEDDING, descriptor),),
+                token_layout=TokenLayoutDescriptor(
+                    TRELLIS2.id,
+                    1,
+                    ("prepared",),
+                    (TokenSegmentDescriptor("prepared", "prepared", 0, 1),),
+                ),
+            ),
+        )
+    )
+    binding = ResidentPayloadBinding(
+        reference_id,
+        shape,
+        dtype,
+        space,
+        resource,
+        resource._dinkster_resident_fingerprint,
+    )
+    return make_conditioning_carrier(conditioning, (binding,))
 
 
 def _latent(value: object, name: str) -> SparseLatent[torch.Tensor]:

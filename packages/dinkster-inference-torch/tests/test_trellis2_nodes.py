@@ -9,8 +9,8 @@ import torch
 from dinkster_inference import (
     PBR_CHANNELS,
     SUBDIVISION_CHANNELS,
+    ConditioningCarrier,
     DenseVoxelGrid,
-    ResidentConditioningCarrier,
     SparseLatent,
     SparseSubdivisionGuides,
     SparseVolume,
@@ -27,7 +27,7 @@ from dinkster_inference_torch import (
 from dinkster_inference_torch import trellis2_nodes as provider
 
 
-def _resources() -> tuple[ResidentConditioningCarrier, ResidentConditioningCarrier]:
+def _resources() -> tuple[ConditioningCarrier, ConditioningCarrier]:
     positive, negative = make_trellis2_conditioning_resources(
         Trellis2Conditioning(
             torch.ones((1, 2, 4), dtype=torch.float32),
@@ -37,14 +37,25 @@ def _resources() -> tuple[ResidentConditioningCarrier, ResidentConditioningCarri
         source_image_digest="sha256:" + "2" * 64,
         camera_angle_x=49.13,
     )
-    return ResidentConditioningCarrier(positive), ResidentConditioningCarrier(negative)
+    return provider._resident_conditioning(positive), provider._resident_conditioning(negative)
 
 
 def _resource(value: object) -> Trellis2ConditioningResource:
-    assert type(value) is ResidentConditioningCarrier
-    payload = value.payload
+    assert type(value) is ConditioningCarrier
+    assert len(value.bindings) == 1
+    assert value.bindings[0].kind == "resident"
+    payload = value.bindings[0].payload
     assert type(payload) is Trellis2ConditioningResource
     return payload
+
+
+def test_resources_use_canonical_family_carriers_with_shared_owner() -> None:
+    positive, negative = _resources()
+
+    assert positive.conditioning.records[0].token_layout is not None
+    assert positive.conditioning.records[0].token_layout.family_id == "dinkster.trellis2"
+    assert positive._dinkster_resident_owner is negative._dinkster_resident_owner
+    assert positive.bindings[0].fingerprint != negative.bindings[0].fingerprint
 
 
 def test_empty_structure_latent_matches_the_official_sampling_shape() -> None:

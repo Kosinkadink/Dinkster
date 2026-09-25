@@ -7,15 +7,20 @@ from __future__ import annotations
 from typing import Any, cast
 
 
-def _prepared_multistream_carrier(value: object, inference: Any, name: str) -> Any | None:
+def _resident_payload(value: object, inference: Any, name: str) -> Any:
     if type(value) is inference.ConditioningCarrier:
         bindings = cast("Any", value).bindings
         if len(bindings) != 1 or bindings[0].kind != "resident":
-            raise TypeError(f"{name} must contain one resident prepared payload")
-        resident = bindings[0].payload
-        value = getattr(resident, "conditioning", value)
-    elif isinstance(value, inference.ResidentConditioningCarrier):
-        resident = cast("Any", value).payload
+            raise TypeError(f"{name} must contain one resident payload")
+        return bindings[0].payload
+    if isinstance(value, inference.ResidentConditioningCarrier):
+        return cast("Any", value).payload
+    raise TypeError(f"{name} must contain a resident payload")
+
+
+def _prepared_multistream_carrier(value: object, inference: Any, name: str) -> Any | None:
+    if type(value) in (inference.ConditioningCarrier, inference.ResidentConditioningCarrier):
+        resident = _resident_payload(value, inference, name)
         value = getattr(resident, "conditioning", value)
     if value == []:
         return None

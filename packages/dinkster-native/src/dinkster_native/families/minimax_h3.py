@@ -59,7 +59,7 @@ from ..native_arm_runtime import (
     _NativeModelOverlay,
     _torch_dtype,
 )
-from .conditioning import _prepared_multistream_carrier
+from .conditioning import _prepared_multistream_carrier, _resident_payload
 from .latent import _latent_samples
 
 
@@ -2121,24 +2121,23 @@ def resolve_trellis2_component_execution(
         or recipe.runtime_identity != runtime.runtime_identity
     ):
         raise TypeError("model must be a native TRELLIS.2 diffusion component")
-    carrier_type = inference.ResidentConditioningCarrier
     resource_type = inference_torch.Trellis2ConditioningResource
-    positive_carrier = cast("Any", positive)
-    if not isinstance(positive, carrier_type) or not isinstance(
-        positive_carrier.payload, resource_type
-    ):
+    try:
+        positive_resource = _resident_payload(positive, inference, "positive")
+    except TypeError as error:
+        raise TypeError("positive must be resident TRELLIS.2 conditioning") from error
+    if not isinstance(positive_resource, resource_type):
         raise TypeError("positive must be resident TRELLIS.2 conditioning")
-    positive_resource = positive_carrier.payload
     if positive_resource.guidance_role is not inference.GuidanceRole.CONDITIONAL:
         raise ValueError("positive TRELLIS.2 conditioning has the wrong guidance lane")
     negative_resource = None
     if negative not in ([], None):
-        negative_carrier = cast("Any", negative)
-        if not isinstance(negative, carrier_type) or not isinstance(
-            negative_carrier.payload, resource_type
-        ):
+        try:
+            negative_resource = _resident_payload(negative, inference, "negative")
+        except TypeError as error:
+            raise TypeError("negative must be resident TRELLIS.2 conditioning or empty") from error
+        if not isinstance(negative_resource, resource_type):
             raise TypeError("negative must be resident TRELLIS.2 conditioning or empty")
-        negative_resource = negative_carrier.payload
         if negative_resource.guidance_role is not inference.GuidanceRole.UNCONDITIONAL:
             raise ValueError("negative TRELLIS.2 conditioning has the wrong guidance lane")
         if not positive_resource.shares_backing(negative_resource):
