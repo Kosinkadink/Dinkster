@@ -10,6 +10,7 @@ from collections.abc import Generator
 from contextlib import AbstractContextManager, contextmanager
 from typing import cast
 
+import dinkster_inference_torch.minimax_h3_video_vae as vae_module
 import pytest
 import torch
 import torch.nn.functional as F
@@ -333,6 +334,64 @@ def test_causal_conv_single_frame_matches_explicit_front_zero_padding() -> None:
     torch.testing.assert_close(conv(sample), explicit)
 
 
+@pytest.mark.parametrize("fused", (False, True), ids=("fallback", "fused"))
+def test_causal_conv_norm_pad_and_residual_match_unfused_equation(
+    monkeypatch: pytest.MonkeyPatch, fused: bool
+) -> None:
+    conv = CausalConv3d(8, 8, kernel_size=3, padding=1)
+    norm = TemporalIsolatedGroupNorm(4, 8, eps=1e-6)
+    with torch.no_grad():
+        conv.weight.copy_(torch.linspace(-0.2, 0.3, conv.weight.numel()).reshape_as(conv.weight))
+        assert conv.bias is not None and norm.weight is not None and norm.bias is not None
+        conv.bias.copy_(torch.linspace(-0.1, 0.1, 8))
+        norm.weight.copy_(torch.linspace(0.6, 1.3, 8))
+        norm.bias.copy_(torch.linspace(-0.3, 0.2, 8))
+    sample = torch.linspace(-1.7, 2.1, 1 * 8 * 2 * 3 * 4).reshape(1, 8, 2, 3, 4)
+    residual = torch.linspace(0.4, -0.2, sample.numel()).reshape_as(sample)
+
+    normalized = F.silu(norm(sample))
+    padded = F.pad(normalized, (1, 1, 1, 1, 0, 0), mode="reflect")
+    padded = F.pad(padded, (0, 0, 0, 0, 2, 0))
+    expected = F.conv3d(padded, conv.weight, conv.bias).add(residual)
+
+    def kitchen_supported(_input: torch.Tensor) -> bool:
+        return fused
+
+    monkeypatch.setattr(vae_module, "_kitchen_ndhwc", kitchen_supported)
+    calls: list[torch.Tensor | None] = []
+
+    def fused_conv(
+        input: torch.Tensor,
+        weight: torch.Tensor,
+        bias: torch.Tensor | None,
+        conv_residual: torch.Tensor | None,
+        stride: tuple[int, int, int],
+    ) -> torch.Tensor:
+        calls.append(conv_residual)
+        assert conv_residual is not None
+        return F.conv3d(input, weight, bias, stride).add(conv_residual)
+
+    if fused:
+        monkeypatch.setattr(vae_module, "_fp16_accum_conv", fused_conv)
+    actual = conv(sample, pre_norm=norm, residual=residual)
+
+    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-5)
+    assert calls == ([residual] if fused else [])
+
+
+def test_causal_conv_custom_spatial_pad_matches_downsample_equation() -> None:
+    conv = CausalConv3d(1, 1, kernel_size=3, stride=(1, 2, 2), padding=(1, 0, 0))
+    with torch.no_grad():
+        conv.weight.copy_(torch.linspace(-0.5, 0.4, conv.weight.numel()).reshape_as(conv.weight))
+        assert conv.bias is not None
+        conv.bias.fill_(0.125)
+    sample = torch.linspace(-1.0, 1.0, 1 * 1 * 2 * 4 * 6).reshape(1, 1, 2, 4, 6)
+    spatial = F.pad(sample, (0, 1, 0, 1, 0, 0), mode="reflect")
+    expected = F.conv3d(F.pad(spatial, (0, 0, 0, 0, 2, 0)), conv.weight, conv.bias, conv.stride)
+
+    torch.testing.assert_close(conv(sample, spatial_pad=(0, 1, 0, 1)), expected)
+
+
 def test_temporal_group_norm_isolates_each_frame_statistics() -> None:
     norm = TemporalIsolatedGroupNorm(2, 4, affine=False)
     first = torch.arange(16, dtype=torch.float32).reshape(1, 4, 1, 2, 2)
@@ -346,6 +405,86 @@ def test_temporal_group_norm_preserves_direct_stock_constructor() -> None:
     norm = TemporalIsolatedGroupNorm(2, 4, dtype=torch.float64)
     assert norm.weight is not None and torch.equal(norm.weight, torch.ones(4, dtype=torch.float64))
     assert norm.bias is not None and torch.equal(norm.bias, torch.zeros(4, dtype=torch.float64))
+
+
+class TileDecodeProbe(MiniMaxH3VideoVAE):
+    def __init__(self) -> None:
+        super().__init__(
+            reduced_config(
+                tile_size=4,
+                tile_overlap_min=2,
+                tiling=True,
+                space_down=(1,),
+                time_down=(1,),
+            )
+        )
+        self.decode_batch_sizes: list[int] = []
+        self.decoded_references: list[weakref.ReferenceType[torch.Tensor]] = []
+        self.previous_alive: list[bool] = []
+
+    def _decode_pixels(self, latent: torch.Tensor) -> torch.Tensor:
+        if self.decoded_references:
+            self.previous_alive.append(self.decoded_references[-1]() is not None)
+        self.decode_batch_sizes.append(latent.shape[0])
+        corner = latent[:, :1, :, :1, :1]
+        decoded = corner.expand(-1, -1, -1, latent.shape[-2], latent.shape[-1]).clone()
+        self.decoded_references.append(weakref.ref(decoded))
+        return decoded
+
+
+def _set_free_tile_memory(monkeypatch: pytest.MonkeyPatch, bytes_free: int) -> None:
+    class Memory:
+        free_total = bytes_free
+
+    def free_memory(_device: torch.device) -> Memory:
+        return Memory()
+
+    monkeypatch.setattr(vae_module, "get_free_memory", free_memory)
+
+
+def test_tiled_decode_batches_rows_from_free_memory_without_changing_pixels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latent = torch.arange(1 * 2 * 1 * 4 * 8, dtype=torch.float32).reshape(1, 2, 1, 4, 8)
+    _set_free_tile_memory(monkeypatch, 4 * 128 * 2**20)
+    batched = TileDecodeProbe()
+    batched_pixels = batched.tiled_decode(latent)
+    assert batched.decode_batch_sizes == [3]
+
+    _set_free_tile_memory(monkeypatch, 0)
+    single = TileDecodeProbe()
+    single_pixels = single.tiled_decode(latent)
+    assert single.decode_batch_sizes == [1, 1, 1]
+    assert single.previous_alive == [False, False]
+    torch.testing.assert_close(batched_pixels, single_pixels)
+
+
+def test_tiled_decode_blends_against_composited_top_and_left_neighbors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_free_tile_memory(monkeypatch, 0)
+    latent = torch.zeros((1, 2, 1, 6, 6), dtype=torch.float32)
+    latent[:, 0] = torch.arange(6, dtype=torch.float32).view(1, 1, 6, 1) * 10 + torch.arange(
+        6, dtype=torch.float32
+    ).view(1, 1, 1, 6)
+    vae = TileDecodeProbe()
+
+    actual = vae.tiled_decode(latent)
+
+    expected = torch.tensor(
+        [
+            [0.0, 0.0, 0.0, 1.0, 2.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0, 2.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0, 2.0, 2.0],
+            [10.0, 10.0, 10.0, 11.0, 12.0, 12.0],
+            [20.0, 20.0, 20.0, 21.0, 22.0, 22.0],
+            [20.0, 20.0, 20.0, 21.0, 22.0, 22.0],
+        ]
+    ).reshape(1, 1, 1, 6, 6)
+    torch.testing.assert_close(actual, expected)
+    del actual
+    gc.collect()
+    assert all(reference() is None for reference in vae.decoded_references)
 
 
 def test_temporal_group_norm_refuses_ambiguous_factory_placement() -> None:
@@ -366,6 +505,80 @@ def test_token_grid_and_split_half_rope_match_reference_layout() -> None:
     q_rot, k_rot = apply_rope_split_half(q, k, table)
     torch.testing.assert_close(q_rot, torch.tensor([[[[-10.0, 2.0, 1.0, 20.0]]]]))
     torch.testing.assert_close(k_rot, torch.tensor([[[[-11.0, 3.0, 2.0, 21.0]]]]))
+
+
+def test_transformer_fused_boundaries_match_unfused_equations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def attention_kernel(
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        *,
+        mask: torch.Tensor | None = None,
+        causal: bool = False,
+        scale: float | None = None,
+        enable_gqa: bool = False,
+    ) -> torch.Tensor:
+        del mask, causal, scale, enable_gqa
+        return q + k * 2.0 + v * 3.0
+
+    block = TransformerBlock(2, 8, attention_kernel=attention_kernel)
+    with torch.no_grad():
+        block.norm1.weight.copy_(torch.linspace(0.6, 1.4, 16))
+        block.norm2.weight.copy_(torch.linspace(1.3, 0.5, 16))
+        block.scale1.copy_(torch.linspace(-0.2, 0.3, 16))
+        block.scale2.copy_(torch.linspace(0.4, -0.1, 16))
+        linears = (block.attn.to_qkv, block.attn.to_out, block.ff.w1, block.ff.w2)
+        for index, linear in enumerate(linears):
+            linear.weight.copy_(
+                torch.linspace(
+                    -0.05 + index * 0.01, 0.07 + index * 0.01, linear.weight.numel()
+                ).reshape_as(linear.weight)
+            )
+            assert linear.bias is not None
+            linear.bias.copy_(torch.linspace(-0.03, 0.02, linear.bias.numel()))
+    source = torch.linspace(-1.2, 1.7, 1 * 3 * 16).reshape(1, 3, 16)
+    ids = create_token_ids((1, 1, 3), source.device, source.dtype)
+    rotary = RotaryEmbeddingND(6)(ids)
+
+    normalized1 = F.rms_norm(source, (16,), block.norm1.weight, block.norm1.eps)
+    qkv = F.linear(normalized1, block.attn.to_qkv.weight, block.attn.to_qkv.bias).view(1, 3, 2, 24)
+    query, key, value = qkv.chunk(3, dim=-1)
+    query = F.rms_norm(query, (8,), None, block.attn.norm_q.eps)
+    key = F.rms_norm(key, (8,), None, block.attn.norm_k.eps)
+    rotated = rotary.shape[-3] * 2
+    query_prefix, key_prefix = apply_rope_split_half(
+        query[..., :rotated], key[..., :rotated], rotary
+    )
+    query = torch.cat((query_prefix, query[..., rotated:]), dim=-1)
+    key = torch.cat((key_prefix, key[..., rotated:]), dim=-1)
+    attended = attention_kernel(query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2))
+    projected = F.linear(
+        attended.transpose(1, 2).reshape(1, 3, 16),
+        block.attn.to_out.weight,
+        block.attn.to_out.bias,
+    )
+    after_attention = source + projected * block.scale1
+    normalized2 = F.rms_norm(after_attention, (16,), block.norm2.weight, block.norm2.eps)
+    gate, up = F.linear(normalized2, block.ff.w1.weight, block.ff.w1.bias).chunk(2, dim=-1)
+    fed_forward = F.linear(F.silu(gate) * up, block.ff.w2.weight, block.ff.w2.bias)
+    expected = after_attention + fed_forward * block.scale2
+
+    original = vae_module.dinkster_kitchen.rms_rope_split_half_
+    scale_devices: list[torch.device] = []
+
+    def fused_norm_rope(*args: object, **kwargs: object) -> tuple[torch.Tensor, torch.Tensor]:
+        scale = cast(torch.Tensor, args[3])
+        scale_devices.append(scale.device)
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(vae_module.dinkster_kitchen, "rms_rope_split_half_", fused_norm_rope)
+    with torch.no_grad():
+        actual = block(source.clone(), rotary)
+
+    torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-5)
+    assert scale_devices == [source.device]
 
 
 def test_reduced_vit3d_decoder_preserves_exact_patch_reassembly() -> None:

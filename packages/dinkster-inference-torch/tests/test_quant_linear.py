@@ -1704,6 +1704,72 @@ def test_linear_input_act_matches_inference_values_and_supports_backward(
     assert bool(torch.count_nonzero(linear.weight.grad))
 
 
+def test_linear_input_act_folds_rms_norm_and_scaled_residual_equation() -> None:
+    linear = torch.nn.Linear(4, 4)
+    with torch.no_grad():
+        linear.weight.copy_(torch.linspace(-0.4, 0.5, 16).reshape(4, 4))
+        linear.bias.copy_(torch.linspace(-0.2, 0.3, 4))
+    source = torch.tensor([[[-1.5, 0.25, 2.0, -0.75], [0.5, -2.0, 1.25, 3.0]]])
+    norm_weight = torch.tensor([0.7, 1.1, 1.4, 0.6])
+    residual = torch.tensor([[[0.2, -0.3, 0.5, 1.0], [-1.0, 0.4, 0.8, -0.6]]])
+    residual_scale = torch.tensor([0.15, -0.25, 0.4, 0.75])
+    normalized = torch.nn.functional.rms_norm(source, (4,), norm_weight, 1e-5)
+    expected = (
+        residual
+        + torch.nn.functional.linear(normalized, linear.weight, linear.bias) * residual_scale
+    )
+
+    actual = linear_input_act(
+        linear,
+        source,
+        "rms_norm",
+        norm_weight,
+        1e-5,
+        residual=residual,
+        residual_scale=residual_scale,
+    )
+
+    torch.testing.assert_close(actual, expected)
+
+
+def test_linear_input_act_routes_norm_and_residual_through_int8_fused_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layer = Int8Linear(
+        4,
+        3,
+        bias=False,
+        compute_dtype=torch.float32,
+        convrot=False,
+        convrot_groupsize=4,
+    )
+    source = torch.randn(2, 4)
+    norm_weight = torch.randn(4)
+    residual = torch.randn(2, 3)
+    residual_scale = torch.randn(3)
+    sentinel = torch.randn(2, 3)
+    calls: list[tuple[object, ...]] = []
+
+    def fused_forward(*args: object) -> torch.Tensor:
+        calls.append(args)
+        return sentinel
+
+    monkeypatch.setattr(layer, "_forward", fused_forward)
+    with torch.no_grad():
+        actual = linear_input_act(
+            layer,
+            source,
+            "rms_norm",
+            norm_weight,
+            1e-5,
+            residual=residual,
+            residual_scale=residual_scale,
+        )
+
+    assert actual is sentinel
+    assert calls == [(source, "rms_norm", norm_weight, 1e-5, residual, residual_scale)]
+
+
 def test_worker_thread_forward_parity() -> None:
     layer = make_layer()
     x = torch.randn(8, 4)

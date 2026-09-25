@@ -129,7 +129,11 @@ def _int8_linear(
     out_dtype: torch.dtype,
     convrot: bool,
     convrot_groupsize: int,
-    input_act: Literal["gelu_tanh", "swiglu"] | None = None,
+    input_act: Literal["gelu_tanh", "swiglu", "rms_norm"] | None = None,
+    input_act_weight: torch.Tensor | None = None,
+    input_act_eps: float = 0.0,
+    residual: torch.Tensor | None = None,
+    residual_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     try:
         kitchen = cast(Any, importlib.import_module("dinkster_kitchen"))
@@ -148,6 +152,10 @@ def _int8_linear(
                 convrot=convrot,
                 convrot_groupsize=convrot_groupsize,
                 input_act=input_act,
+                input_act_weight=input_act_weight,
+                input_act_eps=input_act_eps,
+                residual=residual,
+                residual_scale=residual_scale,
             ),
         )
     except torch.OutOfMemoryError:
@@ -435,7 +443,11 @@ class Int8Linear(torch.nn.Module):
         weight: torch.Tensor,
         weight_scale: torch.Tensor,
         bias: torch.Tensor | None,
-        input_act: Literal["gelu_tanh", "swiglu"] | None = None,
+        input_act: Literal["gelu_tanh", "swiglu", "rms_norm"] | None = None,
+        input_act_weight: torch.Tensor | None = None,
+        input_act_eps: float = 0.0,
+        residual: torch.Tensor | None = None,
+        residual_scale: torch.Tensor | None = None,
     ) -> torch.Tensor:
         if self.fused_training:
             if self.full_precision_matmul:
@@ -471,6 +483,10 @@ class Int8Linear(torch.nn.Module):
                 convrot=self.convrot,
                 convrot_groupsize=self.convrot_groupsize,
                 input_act=input_act,
+                input_act_weight=input_act_weight,
+                input_act_eps=input_act_eps,
+                residual=residual,
+                residual_scale=residual_scale,
             )
         if self.full_precision_matmul:
             use_dequant_route = True
@@ -480,7 +496,7 @@ class Int8Linear(torch.nn.Module):
             use_dequant_route = not _int8_native_matmul_supported(input.device)
         if use_dequant_route:
             if input_act is not None:
-                input = _input_activation(input, input_act)
+                input = _input_activation(input, input_act, input_act_weight, input_act_eps)
             dequantized = _dequantize_int8(
                 weight,
                 weight_scale,
@@ -489,7 +505,8 @@ class Int8Linear(torch.nn.Module):
                 convrot_groupsize=self.convrot_groupsize,
             )
             cast_bias = None if bias is None else bias.to(dtype=self.compute_dtype)
-            return torch.nn.functional.linear(input, dequantized, cast_bias)
+            output = torch.nn.functional.linear(input, dequantized, cast_bias)
+            return _residual_epilogue(output, residual, residual_scale)
         return _int8_linear(
             input,
             weight,
@@ -499,6 +516,10 @@ class Int8Linear(torch.nn.Module):
             convrot=self.convrot,
             convrot_groupsize=self.convrot_groupsize,
             input_act=input_act,
+            input_act_weight=input_act_weight,
+            input_act_eps=input_act_eps,
+            residual=residual,
+            residual_scale=residual_scale,
         )
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
@@ -507,7 +528,11 @@ class Int8Linear(torch.nn.Module):
     def _forward(
         self,
         input: torch.Tensor,
-        input_act: Literal["gelu_tanh", "swiglu"] | None = None,
+        input_act: Literal["gelu_tanh", "swiglu", "rms_norm"] | None = None,
+        input_act_weight: torch.Tensor | None = None,
+        input_act_eps: float = 0.0,
+        residual: torch.Tensor | None = None,
+        residual_scale: torch.Tensor | None = None,
     ) -> torch.Tensor:
         binding = self._residency
         if binding is not None and not binding.mechanism.is_loaded(binding.unit):
@@ -515,12 +540,13 @@ class Int8Linear(torch.nn.Module):
                 weight_key = binding.key("weight")
                 if binding.mechanism.weight_functions(weight_key):
                     if input_act is not None:
-                        input = _input_activation(input, input_act)
-                    return torch.nn.functional.linear(
+                        input = _input_activation(input, input_act, input_act_weight, input_act_eps)
+                    output = torch.nn.functional.linear(
                         input,
                         lease.get("weight", dtype=self.compute_dtype),
                         None if self.bias is None else lease.get("bias", dtype=self.compute_dtype),
                     )
+                    return _residual_epilogue(output, residual, residual_scale)
                 stored = lease.get_stored("weight")
                 if not isinstance(stored, Int8PackedWeight):
                     raise TypeError("Int8Linear residency weight is not folded INT8 storage")
@@ -530,8 +556,22 @@ class Int8Linear(torch.nn.Module):
                     stored.scale,
                     None if self.bias is None else lease.get("bias", dtype=self.compute_dtype),
                     input_act,
+                    input_act_weight,
+                    input_act_eps,
+                    residual,
+                    residual_scale,
                 )
-        return self._execute(input, self.weight, self.weight_scale, self.bias, input_act)
+        return self._execute(
+            input,
+            self.weight,
+            self.weight_scale,
+            self.bias,
+            input_act,
+            input_act_weight,
+            input_act_eps,
+            residual,
+            residual_scale,
+        )
 
     def extra_repr(self) -> str:
         return (
@@ -642,21 +682,64 @@ def _swiglu(input: torch.Tensor) -> torch.Tensor:
 
 
 def _input_activation(
-    input: torch.Tensor, input_act: Literal["gelu_tanh", "swiglu"]
+    input: torch.Tensor,
+    input_act: Literal["gelu_tanh", "swiglu", "rms_norm"],
+    input_act_weight: torch.Tensor | None = None,
+    input_act_eps: float = 0.0,
 ) -> torch.Tensor:
     if input_act == "swiglu":
         return _swiglu(input)
+    if input_act == "rms_norm":
+        return torch.nn.functional.rms_norm(
+            input, (input.shape[-1],), input_act_weight, input_act_eps
+        )
     return torch.nn.functional.gelu(input, approximate="tanh")
+
+
+def _residual_epilogue(
+    output: torch.Tensor,
+    residual: torch.Tensor | None,
+    residual_scale: torch.Tensor | None,
+) -> torch.Tensor:
+    if residual is None:
+        return output
+    if residual_scale is None:
+        return output.add_(residual)
+    return residual.addcmul(output, residual_scale)
 
 
 def linear_input_act(
     linear: torch.nn.Module,
     input: torch.Tensor,
-    input_act: Literal["gelu_tanh", "swiglu"],
+    input_act: Literal["gelu_tanh", "swiglu", "rms_norm"] | None,
+    input_act_weight: torch.Tensor | None = None,
+    input_act_eps: float = 0.0,
+    *,
+    residual: torch.Tensor | None = None,
+    residual_scale: torch.Tensor | None = None,
 ) -> torch.Tensor:
     if isinstance(linear, Int8Linear) and not (torch.is_grad_enabled() and input.requires_grad):
-        return linear._forward(input, input_act)  # pyright: ignore[reportPrivateUsage]
-    return cast(torch.Tensor, linear(_input_activation(input, input_act)))
+        if (
+            input_act_weight is None
+            and input_act_eps == 0.0
+            and residual is None
+            and residual_scale is None
+        ):
+            return linear._forward(input, input_act)  # pyright: ignore[reportPrivateUsage]
+        return linear._forward(  # pyright: ignore[reportPrivateUsage]
+            input,
+            input_act,
+            input_act_weight,
+            input_act_eps,
+            residual,
+            residual_scale,
+        )
+    activated = (
+        input
+        if input_act is None
+        else _input_activation(input, input_act, input_act_weight, input_act_eps)
+    )
+    return _residual_epilogue(cast(torch.Tensor, linear(activated)), residual, residual_scale)
 
 
 class Nvfp4ExecutionError(RuntimeError):
