@@ -60,8 +60,6 @@ def isinstance_type(call: ast.Call) -> str | None:
     if not isinstance(checked_type, ast.Name):
         return None
     name = checked_type.id
-    if name.endswith(FAMILY_VALUE_SUFFIXES):
-        return name
     if (
         name == "NativeAssemblyPlan"
         or name.endswith("SplitAssemblyPlan")
@@ -71,23 +69,43 @@ def isinstance_type(call: ast.Call) -> str | None:
     return name
 
 
+def named_types(node: ast.AST) -> tuple[tuple[str, str], ...]:
+    if isinstance(node, ast.Name):
+        return ((node.id, node.id),)
+    if isinstance(node, ast.Attribute):
+        return ((ast.unparse(node), node.attr),)
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return tuple(item for element in node.elts for item in named_types(element))
+    return ()
+
+
+def family_value_isinstance_types(call: ast.Call) -> tuple[str, ...]:
+    if not isinstance(call.func, ast.Name) or call.func.id != "isinstance" or len(call.args) != 2:
+        return ()
+    return tuple(
+        display
+        for display, class_name in named_types(call.args[1])
+        if class_name.endswith(FAMILY_VALUE_SUFFIXES)
+    )
+
+
 def exact_type_comparison(node: ast.Compare) -> str | None:
     if len(node.ops) != 1 or len(node.comparators) != 1:
         return None
     if not isinstance(node.ops[0], (ast.Is, ast.IsNot)):
         return None
     call = node.left
-    checked_type = node.comparators[0]
+    checked_types = named_types(node.comparators[0])
     if not (
         isinstance(call, ast.Call)
         and isinstance(call.func, ast.Name)
         and call.func.id == "type"
         and len(call.args) == 1
-        and isinstance(checked_type, ast.Name)
-        and checked_type.id.endswith(FAMILY_VALUE_SUFFIXES)
+        and len(checked_types) == 1
+        and checked_types[0][1].endswith(FAMILY_VALUE_SUFFIXES)
     ):
         return None
-    return checked_type.id
+    return checked_types[0][0]
 
 
 def family_comparison(node: ast.Compare) -> str | None:
@@ -156,11 +174,9 @@ def scan(root: Path) -> list[ScannedSite]:
                 continue
             if not isinstance(node, ast.Call):
                 continue
-            checked_type = isinstance_type(node)
-            if checked_type is None:
-                continue
-            if checked_type.endswith(FAMILY_VALUE_SUFFIXES):
-                sites.append(
+            family_value_types = family_value_isinstance_types(node)
+            if family_value_types:
+                sites.extend(
                     {
                         "path": path.relative_to(root).as_posix(),
                         "line": node.lineno,
@@ -168,7 +184,11 @@ def scan(root: Path) -> list[ScannedSite]:
                         "type": checked_type,
                         "classification": "value-type",
                     }
+                    for checked_type in family_value_types
                 )
+                continue
+            checked_type = isinstance_type(node)
+            if checked_type is None:
                 continue
             unary = parents.get(node)
             branch = parents.get(unary) if isinstance(unary, ast.UnaryOp) else None

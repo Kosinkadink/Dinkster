@@ -88,7 +88,7 @@ def test_family_isinstance_guard_rejects_unlisted_family_value_type_gates(tmp_pa
     write_fixture(
         tmp_path,
         "def dispatch(value):\n"
-        "    if isinstance(value, FamilyRuntime):\n"
+        "    if isinstance(value, (FamilyRuntime, module.OtherRuntime)):\n"
         "        return special(value)\n"
         "    if type(value) is FamilyCarrier:\n"
         "        return special(value)\n"
@@ -104,8 +104,14 @@ def test_family_isinstance_guard_rejects_unlisted_family_value_type_gates(tmp_pa
     result = run_guard(tmp_path, allowlist)
 
     assert result.returncode == 1
-    assert result.stderr.count("prohibited family branching") == 4
-    for name in ("FamilyRuntime", "FamilyCarrier", "FamilyLatent", "FamilyConditioning"):
+    assert result.stderr.count("prohibited family branching") == 5
+    for name in (
+        "FamilyRuntime",
+        "module.OtherRuntime",
+        "FamilyCarrier",
+        "FamilyLatent",
+        "FamilyConditioning",
+    ):
         assert name in result.stderr
 
 
