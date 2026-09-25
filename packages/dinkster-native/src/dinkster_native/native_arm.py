@@ -36,6 +36,9 @@ from .native_arm_registry import (
     NATIVE_ARM_NODES as NATIVE_ARM_NODES,
 )
 from .native_arm_registry import (
+    NATIVE_ARM_TYPE_IDS as NATIVE_ARM_TYPE_IDS,
+)
+from .native_arm_registry import (
     NATIVE_SCHEDULING_NODES as NATIVE_SCHEDULING_NODES,
 )
 from .native_arm_registry import (

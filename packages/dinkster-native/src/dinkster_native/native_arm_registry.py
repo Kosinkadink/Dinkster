@@ -624,9 +624,12 @@ NATIVE_ARM_NODES: tuple[type[Node], ...] = (
     GenerationSeedVR2Conditioning,
 )
 
+NATIVE_ARM_TYPE_IDS: tuple[str, ...] = tuple(node.schema().node_type for node in NATIVE_ARM_NODES)
+
 __all__ = [
     "GENERATION_PROVIDER_NODES",
     "NATIVE_ARM_NODES",
+    "NATIVE_ARM_TYPE_IDS",
     "NativeClipTextEncode",
     "NativeConcatAVLatent",
     "NativeControlNetApply",

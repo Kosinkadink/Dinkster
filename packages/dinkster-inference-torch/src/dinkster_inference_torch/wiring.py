@@ -46,6 +46,7 @@ from dinkster_inference import (
     CompositeWindowPlan,
     Conditioning,
     ConditioningCarrier,
+    ContextWindowsSpec,
     ContinuousEDMSigmas,
     ContributionGain,
     DirectGainTableCurve,
@@ -378,8 +379,6 @@ def _flux_scheduled_denoiser(
     from .scheduled_sampling import (
         ScheduledConditioningDenoiser,
         ScheduledSamplingOptions,
-        prepare_scheduled_carriers,
-        validate_unconditional_carrier,
     )
 
     if (
@@ -405,40 +404,16 @@ def _flux_scheduled_denoiser(
         raise RuntimeError("scheduled guidance was admitted after validation")
     if context.inputs.cfg is not None and context.inputs.cfg.transforms:
         raise RuntimeError("scheduled guidance transforms were admitted after validation")
-    if context.inputs.denoise_mask is not None:
-        raise WiringError(f"scheduled-sampling:denoise-mask: {owner.family.id}")
-    if context.inpaint is not None:
-        raise WiringError(f"scheduled-sampling:inpaint: {owner.family.id}")
-    if context.context_windows is not None:
-        raise WiringError(f"scheduled-sampling:context-windows: {owner.family.id}")
-    if context.options.get("window_plan") is not None:
-        raise WiringError(f"scheduled-sampling:window-plan: {owner.family.id}")
     if context.guidance == "disabled":
         raise WiringError(f"scheduled-sampling:distilled-guidance: {owner.family.id}")
-    validate_unconditional_carrier(context.plan)
+    realization = context.conditioning_realization
+    if realization is None:
+        raise RuntimeError("scheduled Flux conditioning was not realized by shared sampling")
     device = torch.device(context.device)
-    realized_timeline = (
-        None
-        if context.request.timeline is None
-        else realize_sampling_timeline(
-            context.request.timeline,
-            tuple(float(sigma) for sigma in context.schedule.sigmas),
-        )
-    )
     space = owner.sampling_sigma_space()
-    conditional, unconditional, patch_sets, materialized_plan = prepare_scheduled_carriers(
-        owner,
-        context.inputs.latent,
-        context.plan,
-        resolver=scheduled.resolver,
-        device=device,
-        cancel=context.cancelled,
-        timeline=realized_timeline,
-        space=space,
-    )
     evaluator = ScheduledConditioningDenoiser(
-        conditional,
-        unconditional,
+        cast("Any", realization.conditional),
+        cast("Any", realization.unconditional),
         family=owner.family,
         space=space,
         model=owner.assembled.diffusion,
@@ -447,17 +422,10 @@ def _flux_scheduled_denoiser(
             guidance=context.guidance,
             compute_dtype=compute_dtype,
         ),
-        patch_sets=patch_sets,
+        patch_sets=cast("Any", realization.patch_sets),
         compute_dtype=compute_dtype,
         device=device,
         cancel=context.cancelled,
-    )
-    replacements = MappingProxyType(
-        {
-            condition.id: condition.conditioning
-            for condition in materialized_plan.conditions
-            if condition.conditioning is not None
-        }
     )
     return SamplingDenoiserExecution(
         cast("SamplingDenoiserAdapter", evaluator),
@@ -468,9 +436,9 @@ def _flux_scheduled_denoiser(
             evaluator.evaluate_conditioning_batch,
             evaluator_identity=lambda _role: f"{owner.family.id}.scheduled-conditioning.v1",
             standard_activation_memory_factor=owner.family.memory_factor,
+            window_conditioning=evaluator.window_conditioning,
         ),
-        conditioning_payloads=replacements,
-        solver_options=MappingProxyType({"realized_timeline": realized_timeline}),
+        solver_options=MappingProxyType({"realized_timeline": realization.timeline}),
         defer_callback_cancellation=scheduled.resolver is not None,
         close=evaluator.close,
     )
@@ -887,6 +855,7 @@ class FluxRuntime(SingleStreamSamplingRuntime):
         segment: SamplingSegment | None = None,
         denoise_mask: torch.Tensor | None = None,
         inpaint: InpaintConditioning[torch.Tensor] | None = None,
+        context_windows: ContextWindowsSpec | None = None,
         noise_inds: Sequence[int] | None = None,
         on_step: StepCallback | None = None,
         on_state: SamplingStateCallback | None = None,
@@ -917,6 +886,7 @@ class FluxRuntime(SingleStreamSamplingRuntime):
             segment=segment,
             denoise_mask=denoise_mask,
             inpaint=inpaint,
+            context_windows=context_windows,
             noise_inds=noise_inds,
             on_step=on_step,
             on_state=on_state,
@@ -1027,14 +997,8 @@ class _SDLatentAdapter(SingleStreamLatentAdapter):
             raise ScheduledSamplingError("attention-contributions", family.id)
         if context.guidance is not None:
             raise ScheduledSamplingError("distilled-guidance", family.id)
-        if (
-            denoise_mask is not None
-            or context.inpaint is not None
-            or owner.assembled.diffusion.config.in_channels == 9
-        ):
+        if context.inpaint is not None or owner.assembled.diffusion.config.in_channels == 9:
             raise ScheduledSamplingError("scheduled-sd-inpaint")
-        if context.context_windows is not None:
-            raise ScheduledSamplingError("context-windows", family.id)
         latent, noise, cond, cfg, denoise_mask = narrow_scheduled_values(
             family.id,
             latent=latent,
@@ -1063,8 +1027,6 @@ def _sd_scheduled_denoiser(
         ScheduledConditioningDenoiser,
         ScheduledSamplingError,
         ScheduledSamplingOptions,
-        prepare_scheduled_carriers,
-        validate_unconditional_carrier,
     )
 
     if (
@@ -1086,37 +1048,15 @@ def _sd_scheduled_denoiser(
         raise WiringError(
             "SD sampling does not accept adapter options: " + ", ".join(sorted(unknown))
         )
-    if context.inputs.denoise_mask is not None:
-        raise ScheduledSamplingError("denoise-mask", owner.family.id)
-    if context.inpaint is not None:
-        raise ScheduledSamplingError("scheduled-sd-inpaint")
-    if context.context_windows is not None:
-        raise ScheduledSamplingError("context-windows", owner.family.id)
     if context.options.get("control") is not None:
         raise ScheduledSamplingError("scheduled-sd-control")
     contributions = context.options.get("sd15_attention_contributions", ())
     if contributions:
         raise ScheduledSamplingError("scheduled-sd-attention")
-    validate_unconditional_carrier(context.plan)
+    realization = context.conditioning_realization
+    if realization is None:
+        raise RuntimeError("scheduled SD conditioning was not realized by shared sampling")
     device = torch.device(context.device)
-    realized_timeline = (
-        None
-        if context.request.timeline is None
-        else realize_sampling_timeline(
-            context.request.timeline,
-            tuple(float(sigma) for sigma in context.schedule.sigmas),
-        )
-    )
-    conditional, unconditional, patch_sets, materialized_plan = prepare_scheduled_carriers(
-        owner,
-        inputs.latent,
-        context.plan,
-        resolver=scheduled.resolver,
-        device=device,
-        cancel=context.cancelled,
-        timeline=realized_timeline,
-        space=owner.sampling_sigma_space(),
-    )
 
     adm = None
     if owner.assembled.diffusion.config.adm_in_channels is not None:
@@ -1133,8 +1073,8 @@ def _sd_scheduled_denoiser(
     from . import scheduled_sampling as scheduled_module
 
     evaluator = ScheduledConditioningDenoiser(
-        conditional,
-        unconditional,
+        cast("Any", realization.conditional),
+        cast("Any", realization.unconditional),
         family=owner.family,
         space=owner.sampling_sigma_space(),
         model=owner.assembled.diffusion,
@@ -1145,17 +1085,10 @@ def _sd_scheduled_denoiser(
             adm=adm,
             compute_dtype=compute_dtype,
         ),
-        patch_sets=patch_sets,
+        patch_sets=cast("Any", realization.patch_sets),
         compute_dtype=compute_dtype,
         device=device,
         cancel=context.cancelled,
-    )
-    replacements = MappingProxyType(
-        {
-            condition.id: condition.conditioning
-            for condition in materialized_plan.conditions
-            if condition.conditioning is not None
-        }
     )
     return SamplingDenoiserExecution(
         cast("SamplingDenoiserAdapter", evaluator),
@@ -1166,9 +1099,9 @@ def _sd_scheduled_denoiser(
             evaluator.evaluate_conditioning_batch,
             evaluator_identity=lambda _role: f"{owner.family.id}.scheduled-conditioning.v1",
             standard_activation_memory_factor=owner.family.memory_factor,
+            window_conditioning=evaluator.window_conditioning,
         ),
-        conditioning_payloads=replacements,
-        solver_options=MappingProxyType({"realized_timeline": realized_timeline}),
+        solver_options=MappingProxyType({"realized_timeline": realization.timeline}),
         sampling=owner.sampling,
         percent_to_sigma=owner._percent_to_sigma,  # pyright: ignore[reportPrivateUsage]
         close=evaluator.close,
@@ -1881,6 +1814,7 @@ class SDRuntime(SingleStreamSamplingRuntime):
         segment: SamplingSegment | None = None,
         denoise_mask: torch.Tensor | None = None,
         inpaint: InpaintConditioning[torch.Tensor] | None = None,
+        context_windows: ContextWindowsSpec | None = None,
         noise_inds: Sequence[int] | None = None,
         on_step: StepCallback | None = None,
         on_state: SamplingStateCallback | None = None,
@@ -1911,6 +1845,7 @@ class SDRuntime(SingleStreamSamplingRuntime):
             segment=segment,
             denoise_mask=denoise_mask,
             inpaint=inpaint,
+            context_windows=context_windows,
             noise_inds=noise_inds,
             on_step=on_step,
             on_state=on_state,

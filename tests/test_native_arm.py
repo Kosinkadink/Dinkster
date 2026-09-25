@@ -4767,6 +4767,30 @@ def test_native_lora_key_map_adds_z_image_diffusers_aliases() -> None:
     )
 
 
+def test_native_lora_key_map_uses_registered_minimax_h3_hook() -> None:
+    arm = _native_arm()
+    inference = importlib.import_module("dinkster_inference")
+
+    class MiniMaxH3Module:
+        config = inference.MINIMAX_H3_CONFIG
+
+        def state_dict(self) -> dict[str, object]:
+            return {
+                "blocks.0.attn.qkv_proj.weight": object(),
+                "final_layer.video_out.weight": object(),
+            }
+
+    handle = SimpleNamespace(
+        recipe=SimpleNamespace(family_id=inference.MINIMAX_H3_CONFIG.family_id),
+        runtime=SimpleNamespace(assembled=SimpleNamespace(diffusion=MiniMaxH3Module())),
+    )
+
+    key_map = arm._logical_lora_key_map(inference, handle)
+
+    assert key_map["blocks.0.attn.qkv_proj"] == "diffusion_model.blocks.0.attn.qkv_proj.weight"
+    assert key_map["final_layer.video_out"] == "diffusion_model.final_layer.video_out.weight"
+
+
 def test_native_lora_execution_mode_schema_is_explicit_and_backwards_compatible() -> None:
     arm = _native_arm()
     for node in (arm.NativeLoadLora, arm.NativeLoadLoraModelOnly):
@@ -6573,144 +6597,7 @@ def test_native_mesh_operations_bridge_cancellation_and_model_eviction(
 def test_manifest_declares_exact_native_arm_with_matching_schemas() -> None:
     arm = _native_arm()
     native = importlib.import_module("dinkster_compat_comfy.native")
-    expected = (
-        "dinkster.create_hook_lora",
-        "dinkster.create_hook_keyframe",
-        "dinkster.set_hook_keyframes",
-        "dinkster.conditioning_timesteps_range",
-        "dinkster.conditioning_set_properties_and_combine",
-        "dinkster.pair_conditioning_set_properties",
-        "dinkster.clip_text_encode_lumina2",
-        "dinkster.model_sampling_aura_flow",
-        "dinkster.load_model_profile",
-        "dinkster.load_clip",
-        "dinkster.load_dual_clip",
-        "dinkster.load_vae",
-        "dinkster.load_vision",
-        "dinkster.load_diffusion_model",
-        "dinkster.load_diffusion_components",
-        "dinkster.load_lora",
-        "dinkster.load_lora_model_only",
-        "dinkster.empty_trellis2_latent_structure",
-        "dinkster.trellis2_conditioning",
-        "dinkster.pixal3d_conditioning",
-        "dinkster.vae_decode_structure_trellis2",
-        "dinkster.trellis2_shape_stage",
-        "dinkster.trellis2_upsample_stage",
-        "dinkster.vae_decode_shape_trellis",
-        "dinkster.trellis2_texture_stage",
-        "dinkster.vae_decode_texture_trellis",
-        "dinkster.load_geometry_model",
-        "dinkster.estimate_geometry",
-        "dinkster.geometry_to_fov",
-        "dinkster.load_background_removal",
-        "dinkster.remove_background",
-        "dinkster.image_crop_to_mask",
-        "dinkster.preview_mask",
-        "dinkster.voxel_to_mesh",
-        "dinkster.get_mesh_info",
-        "dinkster.remesh_mesh",
-        "dinkster.decimate_mesh",
-        "dinkster.smooth_mesh_normals",
-        "dinkster.unwrap_mesh",
-        "dinkster.paint_mesh",
-        "dinkster.bake_texture_from_voxel",
-        "dinkster.bake_normal_map_from_mesh",
-        "dinkster.bake_ambient_occlusion",
-        "dinkster.render_uv_atlas",
-        "dinkster.apply_texture_to_mesh",
-        "dinkster.mesh_to_model3d",
-        "dinkster.empty_minimax_h3_av",
-        "dinkster.empty_minimax_music3_latent_audio",
-        "dinkster.minimax_music3_text_encode",
-        "dinkster.vae_decode_audio",
-        "dinkster.vae_decode_audio_tiled",
-        "dinkster.set_latent_mask_from_frames",
-        "dinkster.set_latent_mask_from_time_ranges",
-        "dinkster.inspect_latent_mask",
-        "dinkster.minimax_h3_t2va_conditioning",
-        "dinkster.minimax_h3_fl2va_conditioning",
-        "dinkster.minimax_h3_image_to_video",
-        "dinkster.minimax_h3_ref2va_conditioning",
-        "dinkster.minimax_h3_reference_to_video",
-        "dinkster.minimax_h3_add_guide",
-        "dinkster.minimax_h3_motion_context",
-        "dinkster.minimax_h3_av_encode",
-        "dinkster.minimax_h3_av_decode",
-        "dinkster.concat_av_latent",
-        "dinkster.separate_av_latent",
-        "dinkster.preview_latent_visual",
-        "dinkster.preview_latent_audio",
-        "dinkster.wan21_clip_vision_encode",
-        "dinkster.bernini_conditioning",
-        "dinkster.wan21_image_to_video",
-        "dinkster.wan_camera_embedding",
-        "dinkster.wan_camera_image_to_video",
-        "dinkster.wan_phantom_subject_to_video",
-        "dinkster.wan_track_to_video",
-        "dinkster.wan_move_tracks_from_coords",
-        "dinkster.wan_move_concat_track",
-        "dinkster.wan_move_generate_tracks",
-        "dinkster.wan_move_visualize_tracks",
-        "dinkster.wan_move_track_to_video",
-        "dinkster.wan_first_last_frame_to_video",
-        "dinkster.wan_fun_control_to_video",
-        "dinkster.wan22_fun_control_to_video",
-        "dinkster.wan_fun_inpaint_to_video",
-        "dinkster.wan_vace_to_video",
-        "dinkster.wan22_image_to_video_latent",
-        "dinkster.load_z_image_control_patch",
-        "dinkster.apply_z_image_control_patch",
-        "dinkster.clip_set_last_layer",
-        "dinkster.t5_tokenizer_options",
-        "dinkster.clip_text_encode",
-        "dinkster.text_generate",
-        "dinkster.prompt_enhance",
-        "dinkster.clip_text_encode_controlnet",
-        "dinkster.vae_decode",
-        "dinkster.vae_decode_tiled",
-        "dinkster.vae_encode",
-        "dinkster.cfg_override",
-        "dinkster.rescale_cfg",
-        "dinkster.model_sampling_sd3",
-        "dinkster.model_sampling_ltxv",
-        "dinkster.model_sampling_flux",
-        "dinkster.ksampler",
-        "dinkster.ksampler_advanced",
-        "dinkster.sampler_sa_solver",
-        "dinkster.basic_scheduler",
-        "dinkster.beta_sampling_scheduler",
-        "dinkster.sd_turbo_scheduler",
-        "dinkster.sampling_percent_to_sigma",
-        "dinkster.basic_guider",
-        "dinkster.lazy_cache",
-        "dinkster.easy_cache",
-        "dinkster.attention_schedule",
-        "dinkster.cfg_guider",
-        "dinkster.dual_cfg_guider",
-        "dinkster.dual_model_guider",
-        "dinkster.scheduled_cfg_guider",
-        "dinkster.perp_neg_guider",
-        "dinkster.disable_cfg1_optimization",
-        "dinkster.add_noise",
-        "dinkster.sampler_custom",
-        "dinkster.sampler_custom_advanced",
-        "dinkster.compat.impact_regional_sampler",
-        "dinkster.ltxav_audio_vae_decode",
-        "dinkster.vae_encode_tiled",
-        "dinkster.ltxav_reference_audio",
-        "dinkster.ltxav_id_lora_reference_audio",
-        "dinkster.ltxv_spatiotemporal_guidance",
-        "dinkster.ltxv_modality_guidance",
-        "dinkster.ltxv_duration_predictor",
-        "dinkster.ltxv_dual_cfg_guider",
-        "dinkster.ltxv_image_to_video",
-        "dinkster.ltxv_image_to_video_inplace",
-        "dinkster.ltxv_add_guide",
-        "dinkster.ltxv_crop_guides",
-        "dinkster.ltxv_latent_upsampler",
-        "dinkster.seedvr2_conditioning",
-    )
+    expected = arm.NATIVE_ARM_TYPE_IDS
     manifest = load_manifest(MANIFEST)
     assert dict(manifest.arms) == {"native": expected}
     assert manifest.arm_nodes_entry == "dinkster_compat_comfy.entry:ARM_NODES"
@@ -7349,7 +7236,7 @@ def test_native_h3_model_only_peft_lora_precalculates_and_composes_identity(
     assert arm._minimax_h3_model_handle(patched_handle, inference) is patched_handle
 
 
-def test_native_h3_lora_entry_modes_and_refusals(
+def test_native_h3_lora_entry_modes_use_shared_loaders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     arm = _native_arm()
@@ -7388,6 +7275,7 @@ def test_native_h3_lora_entry_modes_and_refusals(
         "_native_model",
         lambda _model, _name: (handle, (), {}, None, None, (), None, ()),
     )
+    monkeypatch.setattr(arm, "_native_handle", lambda _value, _name: handle)
     monkeypatch.setattr(arm, "_native_lora_overlay", lambda *_args: overlay)
     monkeypatch.setattr(arm, "default_pool", lambda: FakePool())
 
@@ -7409,17 +7297,14 @@ def test_native_h3_lora_entry_modes_and_refusals(
         lora=lora,
         strength_model=0.0,
     ) == {"model": handle}
-    with pytest.raises(
-        ValueError,
-        match="^MiniMax H3 LoRAs require Load LoRA$",
-    ):
-        arm.NativeLoadLora.execute(
-            model=handle,
-            clip=object(),
-            lora=lora,
-            strength_model=0.5,
-            strength_clip=0.0,
-        )
+    assert arm.NativeLoadLora.execute(
+        model=handle,
+        clip=handle,
+        lora=lora,
+        strength_model=0.5,
+        strength_clip=0.0,
+    ) == {"model": clone, "clip": clone}
+    assert len(clone_calls) == 3
 
     unmatched = _asset(
         _safetensors_shapes(tmp_path / "unmatched.safetensors", {"other.tensor": (1,)})
@@ -10729,6 +10614,94 @@ def test_multistream_sampler_routes_ltxav_family_with_cfg_guidance(
     assert runtime.sample_kwargs["denoise_mask"] is None
     assert runtime.sample_kwargs["steps"] == 4
     assert runtime.sample_kwargs["seed"] == 7
+
+
+def test_multistream_sampler_routes_shared_scheduling_to_custom_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_inference import PreparedMultiStreamConditioning, SamplingGuidance
+
+    arm = _native_arm()
+    torch = FakeTorch()
+    sampled_video = FakeTensor((1, 128, 13, 16, 24), "sampled-video")
+    runtime = _LTXAVSamplerRuntime(sampled_video)
+    handle = _handle(arm, runtime, torch)
+    latent = _ltxav_streams()
+    overlay = object()
+    resolver = object()
+    states: list[object] = []
+    closed: list[object] = []
+
+    class ScheduleState:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            assert kwargs["ordinary_overlays"] == (overlay,)
+            assert kwargs["ordinary_resolvers"] == {"digest": resolver}
+            states.append(self)
+
+        def resolve(self, _requests: object, _cancelled: object) -> tuple[()]:
+            return ()
+
+        def close(self) -> None:
+            closed.append(self)
+
+    payloads = iter(("scheduled-positive", "scheduled-negative"))
+
+    def scheduled_carrier(
+        _value: object,
+        _name: str,
+        _handle: object,
+        _state: object,
+    ) -> PreparedMultiStreamConditioning:
+        return PreparedMultiStreamConditioning(runtime.conditioning_identity, next(payloads))
+
+    real_import = arm.importlib.import_module
+    inference_torch = real_import("dinkster_inference_torch")
+    scheduled_options: list[tuple[object, object]] = []
+
+    def options(resolve: object, cancelled: object) -> object:
+        value = (resolve, cancelled)
+        scheduled_options.append(value)
+        return value
+
+    monkeypatch.setattr(arm, "_torch", lambda: torch)
+    monkeypatch.setattr(arm, "_NativeScheduleState", ScheduleState)
+    monkeypatch.setattr(arm, "_scheduled_carrier", scheduled_carrier)
+    monkeypatch.setattr(
+        arm.importlib,
+        "import_module",
+        lambda name: (
+            SimpleNamespace(
+                ScheduledSamplingOptions=options,
+                torch_sampler_registry=inference_torch.torch_sampler_registry,
+            )
+            if name == "dinkster_inference_torch"
+            else real_import(name)
+        ),
+    )
+
+    output = arm.NativeKSampler.execute(
+        model=arm._NativeModelOverlay(handle, (overlay,), {"digest": resolver}),
+        seed=7,
+        steps=4,
+        cfg=5.0,
+        sampler_name="euler",
+        scheduler="simple",
+        positive=[[PreparedMultiStreamConditioning(runtime.conditioning_identity, object()), {}]],
+        negative=[[PreparedMultiStreamConditioning(runtime.conditioning_identity, object()), {}]],
+        latent_image={"samples": latent},
+        denoise=1.0,
+    )
+
+    result = cast("Mapping[str, object]", output["latent"])["samples"]
+    assert cast("Any", result).by_role("video") is sampled_video
+    assert runtime.sample_kwargs is not None
+    assert runtime.sample_kwargs["conditioning"] == "scheduled-positive"
+    guidance = runtime.sample_kwargs["cfg"]
+    assert type(guidance) is SamplingGuidance
+    assert cast("Any", guidance).uncond == "scheduled-negative"
+    assert runtime.sample_kwargs["scheduled"] == scheduled_options[0]
+    assert len(states) == 1
+    assert closed == states
 
 
 def test_ltxav_clip_text_encode_feeds_multistream_sampler(
@@ -19049,6 +19022,7 @@ def test_generation_vae_decode_unwraps_only_one_video_stream(
 
     mixed = MultiStreamLatent.from_pairs((("video", video), ("audio", video)))
     output = arm.GenerationVAEDecode.execute(samples={"samples": mixed}, vae=Handle())
+    assert decoded == [video, video]
     assert cast("FakeTensor", output["image"]).shape == (1, 16, 16, 3)
 
 

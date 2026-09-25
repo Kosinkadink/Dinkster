@@ -49,9 +49,8 @@ from dinkster_inference import (
 
 from ._conditioning_layout import DeclaredConditioning, declared_token_count
 from .codecs import CodecPlugin
-from .context_windows import apply_freenoise, windowed_conditioning_evaluation
+from .context_windows import apply_freenoise
 from .denoise import to_batch
-from .guidance import ConditioningEvaluation
 from .latent_streams import normalize_latent_mask
 from .ltx_media import (
     LTXMediaError,
@@ -682,27 +681,12 @@ def _ltxv_denoiser(
         space=cast("FluxFlowSigmas", owner.sampling_sigma_space()),
         cancelled=context.cancelled,
     )
-    conditioning_evaluation = None
-    if context.context_windows is not None:
-        base = ConditioningEvaluation(
-            evaluator.prepare_conditioning,
-            evaluator.evaluate_conditioning,
-            evaluator.batchable,
-            evaluator.evaluate_conditioning_batch,
-            evaluator_identity=lambda _role: "dinkster.ltxv.conditioning.v1",
-            standard_activation_memory_factor=owner.family.memory_factor,
-        )
-        windowed = windowed_conditioning_evaluation(
-            base, context.context_windows, context.schedule.sigmas
-        )
-        conditioning_evaluation = windowed
 
     def unpack_video(value: torch.Tensor) -> object:
         return MultiStreamLatent.from_pairs((("video", value),))
 
     return SamplingDenoiserExecution(
         cast("SamplingDenoiserAdapter", evaluator),
-        conditioning_evaluation=conditioning_evaluation,
         process_in=lambda value: value,
         process_out=lambda value: value,
         unpack_state=unpack_video,
