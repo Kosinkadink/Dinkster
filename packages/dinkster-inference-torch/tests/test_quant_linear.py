@@ -74,9 +74,7 @@ def test_int8_convrot_embedding_matches_kitchen() -> None:
 
 def test_int8_embedding_bfloat16_matches_reference_rounding() -> None:
     weight = torch.zeros((2, 256), dtype=torch.int8)
-    weight[:, :4] = torch.tensor(
-        [[1, -3, 5, -7], [11, -13, 17, -19]], dtype=torch.int8
-    )
+    weight[:, :4] = torch.tensor([[1, -3, 5, -7], [11, -13, 17, -19]], dtype=torch.int8)
     scale = torch.tensor([[0.010592243634164333], [0.02731683850288391]])
     indices = torch.tensor([[1, 0]])
     layer = Int8Embedding(

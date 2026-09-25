@@ -124,7 +124,10 @@ def test_conditioner_promotes_reference_rounded_embeddings_to_float32(
     rounded = source.to(torch.bfloat16)
     seen: list[torch.Tensor] = []
 
-    monkeypatch.setattr(model.model, "embed", lambda _ids: rounded)
+    def embed(_ids: torch.Tensor) -> torch.Tensor:
+        return rounded
+
+    monkeypatch.setattr(model.model, "embed", embed)
 
     def forward_embeds(
         embeds: torch.Tensor,
