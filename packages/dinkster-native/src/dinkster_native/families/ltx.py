@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from ..family_registry import load_component
+from ..family_registry import load_component, load_registered_component
 from ..native_arm_core import (
     Any,
     ExitStack,
@@ -37,9 +37,8 @@ from ..nodes_sampling_runtime import (
     _native_component_codec,
 )
 from .conditioning import _prepared_multistream_carrier
+from .latent import _latent_samples
 from .minimax_h3 import (
-    _latent_samples,
-    load_registered_component,
     resolve_component_execution,
 )
 

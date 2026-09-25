@@ -6,7 +6,12 @@ from __future__ import annotations
 
 import hashlib
 
-from ..family_registry import load_component as _load_family_component
+from ..family_registry import (
+    load_component as _load_family_component,
+)
+from ..family_registry import (
+    load_registered_component,
+)
 from ..native_arm_core import (
     _NATIVE_PREPARED_CONDITIONING_KEY,
     Any,
@@ -41,7 +46,6 @@ from ..native_arm_core import (
     SetLatentMaskFromFrames,
     SetLatentMaskFromTimeRanges,
     _active_inference_registries,
-    _builtin_inference_registries,
     _component_bound_carrier,
     _not_cancelled,
     _split_ltx_frame_rate,
@@ -60,6 +64,7 @@ from ..native_arm_runtime import (
     _torch_dtype,
 )
 from .conditioning import _prepared_multistream_carrier
+from .latent import _latent_samples
 
 
 @dataclass(frozen=True, slots=True)
@@ -1321,17 +1326,6 @@ class NativeMiniMaxH3AVDecode(MiniMaxH3AVDecode):
         )
 
 
-def _latent_samples(value: object, torch: Any, inference: Any, name: str) -> tuple[Any, Any]:
-    if not isinstance(value, Mapping):
-        raise TypeError(f"{name} must be a LATENT mapping")
-    samples = cast("Mapping[object, object]", value).get("samples")
-    if type(samples) is torch.Tensor:
-        return samples, None
-    if type(samples) is inference.MultiStreamLatent:
-        return samples, samples
-    raise TypeError(f"{name} samples must be a tensor or MultiStreamLatent")
-
-
 def _av_stream(value: object, torch: Any, inference: Any, role: str, name: str) -> Any:
     samples, streams = _latent_samples(value, torch, inference, name)
     payload = samples if streams is None else streams.by_role(role)
@@ -2389,24 +2383,3 @@ def resolve_trellis2_component_execution(
         rows(positive_resource),
         ([] if negative_resource is None else rows(negative_resource)),
     )
-
-
-def load_registered_component(
-    value: object,
-    name: str,
-    role: str | None = None,
-    *,
-    family_id: str | None = None,
-) -> NativeComponentHandle:
-    from dinkster_inference.component_registry import execution_symbol
-
-    registry = importlib.import_module("dinkster_native.family_registry")
-    if family_id is None:
-        load = registry.registered_callable(value, "native_load")
-    else:
-        descriptor = _builtin_inference_registries().components.get(family_id)
-        reference = None if descriptor is None else descriptor.native_load
-        if reference is None:
-            raise TypeError(f"no declared native_load for family={family_id!r}")
-        load = execution_symbol(reference)
-    return load(value, name, role)

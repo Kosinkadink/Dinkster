@@ -53,6 +53,25 @@ def load_component(value: object, name: str, role: str | None = None) -> NativeC
     return handle
 
 
+def load_registered_component(
+    value: object,
+    name: str,
+    role: str | None = None,
+    *,
+    family_id: str | None = None,
+) -> NativeComponentHandle:
+    if family_id is None:
+        load = registered_callable(value, "native_load")
+    else:
+        native = importlib.import_module("dinkster_native.native_arm")
+        descriptor = native._builtin_inference_registries().components.get(family_id)
+        reference = None if descriptor is None else descriptor.native_load
+        if reference is None:
+            raise TypeError(f"no declared native_load for family={family_id!r}")
+        load = execution_symbol(reference)
+    return load(value, name, role)
+
+
 def encode_component_text(
     value: object,
     text: str,

@@ -5,12 +5,10 @@
 from __future__ import annotations
 
 from .families.ltx import _ltxav_audio_codec
-from .families.minimax_h3 import (
-    load_registered_component,
-)
 from .families.wan21 import (
     NativeClipTextEncode,
 )
+from .family_registry import load_registered_component
 from .native_arm_conditioning import (
     _conditioning_carrier,
     _rebound_conditioning_carrier,
