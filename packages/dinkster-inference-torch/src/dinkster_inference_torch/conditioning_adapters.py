@@ -41,27 +41,40 @@ def basic_conditioning_to_carrier(
     value: Conditioning[torch.Tensor],
     *,
     token_layout: TokenLayoutDescriptor | None = None,
+    reference_prefix: str = "",
 ) -> ConditioningCarrier:
     """One encode_text result -> a canonical single-record carrier."""
 
     if not isinstance(value, Conditioning):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise TypeError(f"value must be a Conditioning, got {type(value).__name__}")
-    text = tensor_to_payload_binding("text", value.embeddings, space=CONDITIONING_TEXT_SPACE)
+    if type(reference_prefix) is not str:
+        raise TypeError("reference prefix must be a string")
+    prefix = f"{reference_prefix}-" if reference_prefix else ""
+    text = tensor_to_payload_binding(
+        f"{prefix}text", value.embeddings, space=CONDITIONING_TEXT_SPACE
+    )
     bindings = [text]
     channels: list[tuple[ConditioningChannel, PayloadDescriptor]] = [
         (
             ConditioningChannel.TEXT,
-            PayloadDescriptor(PayloadReference("text"), text.shape, text.dtype, text.space),
+            PayloadDescriptor(
+                PayloadReference(text.reference_id), text.shape, text.dtype, text.space
+            ),
         )
     ]
     if value.pooled is not None:
-        pooled = tensor_to_payload_binding("pooled", value.pooled, space=CONDITIONING_POOLED_SPACE)
+        pooled = tensor_to_payload_binding(
+            f"{prefix}pooled", value.pooled, space=CONDITIONING_POOLED_SPACE
+        )
         bindings.append(pooled)
         channels.append(
             (
                 ConditioningChannel.POOLED,
                 PayloadDescriptor(
-                    PayloadReference("pooled"), pooled.shape, pooled.dtype, pooled.space
+                    PayloadReference(pooled.reference_id),
+                    pooled.shape,
+                    pooled.dtype,
+                    pooled.space,
                 ),
             )
         )

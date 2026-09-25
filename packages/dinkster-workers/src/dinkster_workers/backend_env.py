@@ -885,6 +885,8 @@ def _residency_problems(
     problems: list[str],
     *,
     canonical_evidence: bool,
+    residency_route_roles: tuple[str, ...],
+    requires_accelerator_residency: bool,
 ) -> None:
     """The optional residency section is dinkster-only mechanism-comparison
     evidence: the offload mechanism the process ran under, the VRAM
@@ -894,8 +896,8 @@ def _residency_problems(
     cannot serve as canonical generic or H3 production evidence."""
     expected_routes: set[str] = set()
     if system == "dinkster" and fields.get("placement") == BENCHMARK_DINKSTER_PRODUCTION_PLACEMENT:
-        if family == "minimax_h3":
-            expected_routes = {"diffusion", "conditioner", "video_vae", "audio_vae"}
+        if residency_route_roles:
+            expected_routes = set(residency_route_roles)
         elif canonical_evidence and family in ("sd15", "sdxl", "lora", "zimage", "wan21", "flux"):
             expected_routes = {"runtime"}
     if "residency" not in fields:
@@ -921,6 +923,13 @@ def _residency_problems(
         routes: Mapping[str, object] = {}
     else:
         routes = route_fields
+    if (
+        system == "dinkster"
+        and fields.get("placement") == BENCHMARK_DINKSTER_PRODUCTION_PLACEMENT
+        and set(routes) - {"runtime"}
+        and not residency_route_roles
+    ):
+        problems.append("catalog residency requirements missing for family-specific routes")
     if expected_routes and set(routes) != expected_routes:
         problems.append(
             "residency.routes must record exactly " + ", ".join(sorted(expected_routes))
@@ -963,7 +972,7 @@ def _residency_problems(
                 and not _nonempty_str(fallback_reason)
             ):
                 problems.append(f"{where} has no reason for eager fallback")
-        if (family == "minimax_h3" or canonical_evidence) and required_actual is not None:
+        if (requires_accelerator_residency or canonical_evidence) and required_actual is not None:
             if actual != required_actual:
                 problems.append(f"{where}.mechanism is not required {required_actual}")
             if fallback_reason is not None or component_fields["fallback_components"]:
@@ -971,7 +980,7 @@ def _residency_problems(
             if not component_fields["dynamic_components"]:
                 problems.append(f"{where} did not enroll a dynamic component")
     if (
-        (family == "minimax_h3" or (canonical_evidence and expected_routes))
+        (requires_accelerator_residency or (canonical_evidence and expected_routes))
         and required_actual == "aimdo"
         and bootstrap is not True
     ):
@@ -1038,6 +1047,8 @@ def validate_benchmark_report(
     accelerator: str,
     canonical_evidence: bool = False,
     expected_comfyui_commit: str | None = None,
+    residency_route_roles: tuple[str, ...] = (),
+    requires_accelerator_residency: bool = False,
 ) -> tuple[str, ...]:
     """Problems that make an inference benchmark report unusable as evidence.
 
@@ -1055,6 +1066,8 @@ def validate_benchmark_report(
     requires route facts for generic and H3 production handles. CUDA auto
     and explicit on must record successful bootstrap, Aimdo enrollment,
     and no component fallback, not merely a production placement label.
+    Family-specific requirements are projected from the inference catalog
+    by the caller so this validator does not invert the package dependency.
     """
     if accelerator not in BENCHMARK_ACCELERATORS:
         raise ValueError(f"unknown benchmark accelerator {accelerator!r}")
@@ -1438,7 +1451,14 @@ def validate_benchmark_report(
             problems.append("memory.peak_rss_bytes is not a positive integer")
 
     _residency_problems(
-        fields, system, accelerator, family, problems, canonical_evidence=canonical_evidence
+        fields,
+        system,
+        accelerator,
+        family,
+        problems,
+        canonical_evidence=canonical_evidence,
+        residency_route_roles=residency_route_roles,
+        requires_accelerator_residency=requires_accelerator_residency,
     )
 
     checks = _as_mapping(fields.get("checks"))

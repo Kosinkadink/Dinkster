@@ -80,6 +80,22 @@ class PreparedMultiStreamConditioning:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedConditioningCarrier:
+    """Canonical record metadata paired with lossless family payloads."""
+
+    carrier: ConditioningCarrier
+    payloads: tuple[object, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.carrier) is not ConditioningCarrier:
+            raise TypeError("prepared conditioning carrier requires a ConditioningCarrier")
+        if not isinstance(self.payloads, tuple):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise TypeError("prepared conditioning payloads must be a tuple")
+        if len(self.payloads) != len(self.carrier.conditioning.records):
+            raise ValueError("prepared conditioning payloads must match carrier records")
+
+
+@dataclass(frozen=True, slots=True)
 class AudioPreview(Generic[RuntimeTensorT]):
     waveform: RuntimeTensorT
     sample_rate: int
