@@ -1712,7 +1712,7 @@ def test_runtime_forwards_the_token_mask_to_both_guidance_lanes(
 
 
 def test_h3_fractional_denoise_mask_matches_velocity_scaling_before_x0_conversion() -> None:
-    runtime, conditioner, _dit = _context_mean_runtime()
+    runtime, conditioner, dit = _context_mean_runtime()
     target = _target()
     prepared = _condition_t2va(conditioner, target)
     positive = replace(prepared, context=torch.full_like(prepared.context, 2.0))
@@ -1744,6 +1744,7 @@ def test_h3_fractional_denoise_mask_matches_velocity_scaling_before_x0_conversio
     competing_first = -(sigmas[0] - sigmas[1]) * mask * velocity
     competing = mask * token_mask * competing_first - sigmas[1] * mask * velocity
 
+    assert dit.calls == [velocity, velocity]
     torch.testing.assert_close(output.by_role("video"), expected)
     assert not torch.allclose(output.by_role("video"), competing)
 
