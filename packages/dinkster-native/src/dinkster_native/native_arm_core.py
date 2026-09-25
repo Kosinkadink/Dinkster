@@ -381,6 +381,26 @@ def _native_clip_options(value: object) -> _NativeClipOptions:
     return value if type(value) is _NativeClipOptions else _NativeClipOptions(value)
 
 
+def _conditioning_batching_value(mode: object, max_fused_lanes: int) -> object:
+    if type(mode) is not str:
+        raise TypeError("conditioning_batching must be a string")
+    if type(max_fused_lanes) is not int or max_fused_lanes < 1:
+        raise ValueError("max_fused_lanes must be a positive integer")
+    inference = importlib.import_module("dinkster_inference")
+    try:
+        selected = inference.ConditioningBatchingMode(mode)
+    except ValueError:
+        raise ValueError(f"unknown conditioning batching mode {mode!r}") from None
+    return inference.ConditioningBatching(
+        selected,
+        max_fused_lanes=(
+            max_fused_lanes
+            if selected is inference.ConditioningBatchingMode.MAX_FUSED_LANES
+            else None
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _GuidedRows:
     """In-process pairing of materialized conditioning rows with a FluxGuidance
@@ -1328,6 +1348,7 @@ __all__ = [
     "_builtin_inference_registries",
     "_component_bound_carrier",
     "_condition_entries",
+    "_conditioning_batching_value",
     "_control_resident_refs",
     "_direct_vae_batch_size",
     "_effective_flux_guidance",

@@ -47,7 +47,7 @@ def resolve_seedvr2_component_execution(
 ) -> tuple[Any, object, object] | None:
     recipe = handle.recipe
     runtime = handle.runtime
-    sampling_runtime = getattr(runtime, "component_sampling_runtime", runtime)
+    sampling_runtime = runtime.sampling_runtime()
     if getattr(sampling_runtime, "runtime_identity", None) != recipe.runtime_identity:
         raise TypeError("component sampling runtime identity does not match its model handle")
     inference_torch = importlib.import_module("dinkster_inference_torch")

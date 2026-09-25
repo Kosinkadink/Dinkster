@@ -41,7 +41,7 @@ def _component_runtime_with_options(
 ) -> Any:
     from dinkster_inference.component_registry import execution_symbol
 
-    sampling_runtime = getattr(base_runtime, "component_sampling_runtime", base_runtime)
+    sampling_runtime = base_runtime.sampling_runtime()
     runtime_matches = any(
         isinstance(sampling_runtime, execution_symbol(reference))
         for reference in (descriptor.runtime_class, *descriptor.runtime_variants)
@@ -80,7 +80,7 @@ def _component_runtime_with_options(
         )
     if sampling_runtime is base_runtime:
         return runtime
-    replace_runtime = getattr(base_runtime, "with_component_sampling_runtime", None)
+    replace_runtime = getattr(base_runtime, "with_sampling_runtime", None)
     if not callable(replace_runtime):
         raise TypeError(f"native {label} checkpoint cannot replace its sampling runtime")
     return replace_runtime(runtime)
@@ -138,7 +138,7 @@ def _resolve_component_execution(
     if tuple(source.role for source in recipe.sources) != (descriptor.model_role,):
         runtime = handle.runtime
         if descriptor.execution_options is not None:
-            sampling_runtime = getattr(runtime, "component_sampling_runtime", runtime)
+            sampling_runtime = runtime.sampling_runtime()
             runtime = _component_runtime_with_options(
                 runtime,
                 descriptor,

@@ -12,6 +12,7 @@ import torch
 from dinkster_inference import (
     MINIMAX_H3,
     MINIMAX_H3_AUDIO_MASK_MAPPING,
+    MINIMAX_H3_CONFIG,
     MINIMAX_H3_SIGMAS,
     MINIMAX_H3_VIDEO_MASK_MAPPING,
     AdapterPatch,
@@ -62,6 +63,7 @@ from dinkster_inference import (
     TimelineGuide,
     TokenLayoutDescriptor,
     TokenSegmentDescriptor,
+    compose_execution,
     make_conditioning_carrier,
     offset_first_sigma_for_snr,
     sampling_sigmas,
@@ -553,6 +555,33 @@ def test_single_dit_component_exposes_runtime_identity(
 
     assert component.runtime_identity == identity
     assert component.receipt_identity == "ref2va-receipt"
+
+
+def test_single_dit_component_derives_conditioner_execution_identity(
+    runtime_fixture: RuntimeFixture,
+) -> None:
+    identity = "native:dinkster.minimax_h3:" + "5" * 64
+    conditioner_identity = "native:dinkster.minimax_h3:" + "6" * 64
+    component = MiniMaxH3DiTRuntime(
+        runtime_fixture.fl2va,  # type: ignore[arg-type]
+        model_role="fl2va_dit",
+        runtime_identity=identity,
+        receipt_identity="fl2va-receipt",
+    )
+
+    derived = component.with_conditioner(conditioner_identity)
+    composition = compose_execution(
+        MINIMAX_H3_CONFIG.family_id,
+        {"fl2va_dit": identity, "conditioner": conditioner_identity},
+    )
+
+    assert derived is not component
+    assert component.runtime_identity == identity
+    assert component.conditioning_identity == identity
+    assert derived.runtime_identity == composition.execution_identity
+    assert derived.conditioning_identity == conditioner_identity
+    assert derived.receipt_identity == "fl2va-receipt"
+    assert derived.sampling_runtime() is derived
 
 
 def test_empty_av_snaps_to_exact_video_audio_geometry() -> None:

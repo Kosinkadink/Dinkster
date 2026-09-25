@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping
+from copy import copy
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, cast
@@ -65,6 +66,7 @@ from dinkster_inference import (
     TokenSegmentDescriptor,
     UspMesh,
     build_canonical_manifest,
+    compose_execution,
     execution_span,
     normalize_minimax_h3_conditioning,
     plan_minimax_h3_token_layout,
@@ -1508,6 +1510,21 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
     @property
     def runtime_identity(self) -> str:
         return self._runtime_identity
+
+    def with_conditioner(self, conditioning_identity: str) -> MiniMaxH3DiTRuntime:
+        if type(conditioning_identity) is not str or not conditioning_identity:
+            raise ValueError("H3 DiT conditioning identity must be non-empty")
+        composition = compose_execution(
+            MINIMAX_H3_CONFIG.family_id,
+            {
+                self._model_role: self.runtime_identity,
+                "conditioner": conditioning_identity,
+            },
+        )
+        derived = copy(self)
+        derived._runtime_identity = composition.execution_identity
+        derived._conditioning_identity = conditioning_identity
+        return derived
 
     @property
     def conditioning_identity(self) -> str:
