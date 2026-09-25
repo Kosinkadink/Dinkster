@@ -2322,9 +2322,7 @@ def test_generation_controlnet_carriers_chain_and_roundtrip_with_resource_depend
     monkeypatch.setattr(arm, "default_pool", lambda: pool)
     descriptor = PayloadDescriptor(PayloadReference("base"), (1,), "U8", "test")
     carrier = make_conditioning_carrier(
-        ConditioningSet(
-            (ConditioningRecord(channels=((ConditioningChannel.TEXT, descriptor),)),)
-        ),
+        ConditioningSet((ConditioningRecord(channels=((ConditioningChannel.TEXT, descriptor),)),)),
         (ResidentPayloadBinding("base", (1,), "U8", "test", object(), "base"),),
     )
     union = arm.GenerationSetControlNetUnionType.execute(
