@@ -447,9 +447,11 @@ from .effect_mask import (
     SourceMaskInput,
     compile_effect_mask_field,
 )
+from .conditioning_adapters import ConditioningAdapter
 from .extensions import (
     INFERENCE_ASSEMBLIES_SURFACE,
     INFERENCE_COMPONENTS_SURFACE,
+    INFERENCE_CONDITIONING_ADAPTERS_SURFACE,
     INFERENCE_FAMILIES_SURFACE,
     INFERENCE_SAMPLERS_SURFACE,
     INFERENCE_SCHEDULERS_SURFACE,
@@ -464,6 +466,7 @@ from .extensions import (
     builtin_sampler_snapshot,
     compile_inference_graph,
     component_declaration,
+    conditioning_adapter_declaration,
     family_declaration,
     graph_compiler_declaration,
     guidance_declarations,
@@ -2015,6 +2018,9 @@ __all__ = [
     "GuidanceStrategyDescriptor",
     "guidance_declarations",
     "InferenceContribution",
+    "ConditioningAdapter",
+    "INFERENCE_CONDITIONING_ADAPTERS_SURFACE",
+    "conditioning_adapter_declaration",
     "InferenceRegistries",
     "MaterializedInferenceGeneration",
     "materialize_inference_generation",

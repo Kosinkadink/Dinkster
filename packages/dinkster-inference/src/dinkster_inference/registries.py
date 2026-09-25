@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from . import component_catalog
 from .catalog import builtin_family_registry
 from .component_registry import ComponentRegistry
+from .conditioning_adapters import ConditioningAdapter
 from .families import FamilyRegistry
 from .registry import Registry
 from .runtime import AssemblyRegistration, build_builtin_assembly_registry
@@ -29,6 +30,7 @@ class InferenceRegistries:
     families: FamilyRegistry
     components: ComponentRegistry
     assemblies: Registry[AssemblyRegistration]
+    conditioning_adapters: Registry[ConditioningAdapter]
 
 
 def builtin_registries() -> InferenceRegistries:
@@ -40,6 +42,7 @@ def builtin_registries() -> InferenceRegistries:
         families=builtin_family_registry(),
         components=components,
         assemblies=build_builtin_assembly_registry(components),
+        conditioning_adapters=Registry(),
     )
 
 
@@ -53,6 +56,7 @@ def merge(
     families = FamilyRegistry()
     components = ComponentRegistry()
     assemblies: Registry[AssemblyRegistration] = Registry()
+    conditioning_adapters: Registry[ConditioningAdapter] = Registry()
     for descriptor in base.samplers:
         samplers.register(descriptor)
     for descriptor in base.schedulers:
@@ -65,6 +69,8 @@ def merge(
         components.register(descriptor)
     for descriptor in base.assemblies:
         assemblies.register(descriptor)
+    for adapter in base.conditioning_adapters:
+        conditioning_adapters.register(adapter)
     for contribution in contributions:
         for descriptor in contribution.samplers:
             samplers.register(descriptor)
@@ -76,7 +82,16 @@ def merge(
             components.register(descriptor)
         for registration in contribution.assemblies:
             assemblies.register(registration)
-    return InferenceRegistries(samplers, schedulers, families, components, assemblies)
+        for adapter in contribution.conditioning_adapters:
+            conditioning_adapters.register(adapter)
+    return InferenceRegistries(
+        samplers,
+        schedulers,
+        families,
+        components,
+        assemblies,
+        conditioning_adapters,
+    )
 
 
 def builtin_assembly_registry() -> Registry[AssemblyRegistration]:
