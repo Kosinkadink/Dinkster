@@ -8,18 +8,15 @@ from typing import Any, cast
 
 
 def _resident_payload(value: object, inference: Any, name: str) -> Any:
-    if type(value) is inference.ConditioningCarrier:
-        bindings = cast("Any", value).bindings
-        if len(bindings) != 1 or bindings[0].kind != "resident":
-            raise TypeError(f"{name} must contain one resident payload")
-        return bindings[0].payload
-    if isinstance(value, inference.ResidentConditioningCarrier):
-        return cast("Any", value).payload
-    raise TypeError(f"{name} must contain a resident payload")
+    del inference
+    try:
+        return cast("Any", value)._dinkster_resident_payload
+    except (AttributeError, TypeError) as error:
+        raise TypeError(f"{name} must contain one resident payload") from error
 
 
 def _prepared_multistream_carrier(value: object, inference: Any, name: str) -> Any | None:
-    if type(value) in (inference.ConditioningCarrier, inference.ResidentConditioningCarrier):
+    if hasattr(value, "_dinkster_resident_payload"):
         resident = _resident_payload(value, inference, name)
         value = getattr(resident, "conditioning", value)
     if value == []:

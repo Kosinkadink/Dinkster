@@ -121,7 +121,7 @@ def _prepared_multistream_sampling_carrier(
     inference: Any,
     torch: Any,
 ) -> Any | None:
-    if type(value) in (inference.ConditioningCarrier, inference.ResidentConditioningCarrier):
+    if hasattr(value, "_dinkster_resident_payload"):
         return _prepared_multistream_carrier(value, inference, input_id)
     entries = _condition_entries(value, input_id)
     if not entries:

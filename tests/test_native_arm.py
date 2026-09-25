@@ -32660,7 +32660,7 @@ def test_trellis2_execution_model_wraps_resident_lanes_for_custom_sampling(
 
     class Carrier:
         def __init__(self, payload: object) -> None:
-            self.bindings = (SimpleNamespace(kind="resident", payload=payload),)
+            self._dinkster_resident_payload = payload
 
     runtime = Runtime()
     module = SimpleNamespace(

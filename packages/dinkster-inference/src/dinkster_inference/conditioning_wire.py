@@ -205,6 +205,13 @@ class ConditioningCarrier:
         return any(binding.kind == "resident" for binding in self.bindings)
 
     @property
+    def _dinkster_resident_payload(self) -> object:
+        resident = tuple(binding.payload for binding in self.bindings if binding.kind == "resident")
+        if len(resident) != 1:
+            raise TypeError("conditioning carrier must contain exactly one resident payload")
+        return resident[0]
+
+    @property
     def _dinkster_resident_owner(self) -> object:
         owners = self._resident_owners()
         if not owners:
@@ -251,6 +258,10 @@ class ResidentConditioningCarrier:
     def __post_init__(self) -> None:
         if self.payload is None:
             raise TypeError("resident conditioning payload must not be None")
+
+    @property
+    def _dinkster_resident_payload(self) -> object:
+        return self.payload
 
     @property
     def _dinkster_resident_owner(self) -> object:
