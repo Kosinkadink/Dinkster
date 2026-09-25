@@ -8,7 +8,13 @@ from typing import Any, cast
 
 
 def _prepared_multistream_carrier(value: object, inference: Any, name: str) -> Any | None:
-    if isinstance(value, inference.ResidentConditioningCarrier):
+    if type(value) is inference.ConditioningCarrier:
+        bindings = cast("Any", value).bindings
+        if len(bindings) != 1 or bindings[0].kind != "resident":
+            raise TypeError(f"{name} must contain one resident prepared payload")
+        resident = bindings[0].payload
+        value = getattr(resident, "conditioning", value)
+    elif isinstance(value, inference.ResidentConditioningCarrier):
         resident = cast("Any", value).payload
         value = getattr(resident, "conditioning", value)
     if value == []:

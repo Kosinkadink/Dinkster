@@ -83,6 +83,43 @@ class _MiniMaxH3ResidentConditioning:
         return self.fingerprint
 
 
+def _minimax_h3_resident_carrier(
+    resident: _MiniMaxH3ResidentConditioning, inference: Any
+) -> object:
+    reference_id = "minimax-h3-prepared-conditioning"
+    shape = (1,)
+    dtype = "U8"
+    space = "minimax-h3-prepared-conditioning"
+    descriptor = inference.PayloadDescriptor(
+        inference.PayloadReference(reference_id),
+        shape,
+        dtype,
+        space,
+    )
+    conditioning = inference.ConditioningSet(
+        (
+            inference.ConditioningRecord(
+                channels=((inference.ConditioningChannel.TEXT, descriptor),),
+                token_layout=inference.TokenLayoutDescriptor(
+                    inference.MINIMAX_H3_CONFIG.family_id,
+                    1,
+                    ("prepared",),
+                    (inference.TokenSegmentDescriptor("prepared", "prepared", 0, 1),),
+                ),
+            ),
+        )
+    )
+    binding = inference.ResidentPayloadBinding(
+        reference_id,
+        shape,
+        dtype,
+        space,
+        resident,
+        resident.fingerprint,
+    )
+    return inference.make_conditioning_carrier(conditioning, (binding,))
+
+
 def load_component(value: object, name: str, role: str | None = None) -> NativeComponentHandle:
     role_labels = {
         "qwen3vl-32b-conditioner": "conditioner",
@@ -580,7 +617,7 @@ def _minimax_h3_condition(
         codec_handles,
         fingerprint,
     )
-    return cls.outputs(conditioning=inference.ResidentConditioningCarrier(resident))
+    return cls.outputs(conditioning=_minimax_h3_resident_carrier(resident, inference))
 
 
 class NativeEmptyMiniMaxH3AV(EmptyMiniMaxH3AV):
@@ -1785,22 +1822,44 @@ def _minimax_h3_rewrap_conditioning(
     inference: Any,
     operation: str,
 ) -> object:
-    if not isinstance(source, inference.ResidentConditioningCarrier):
-        raise TypeError("MiniMax H3 conditioning transform requires a resident carrier")
-    resident = cast("Any", source).payload
+    source_binding = None
+    if type(source) is inference.ConditioningCarrier:
+        bindings = cast("Any", source).bindings
+        if len(bindings) == 1 and bindings[0].kind == "resident":
+            source_binding = bindings[0]
+            resident = source_binding.payload
+        else:
+            resident = None
+    elif isinstance(source, inference.ResidentConditioningCarrier):
+        resident = cast("Any", source).payload
+    else:
+        resident = None
     if type(resident) is not _MiniMaxH3ResidentConditioning:
-        raise TypeError("MiniMax H3 conditioning has an invalid resident payload")
+        raise TypeError("MiniMax H3 conditioning transform requires a resident carrier")
     facts = (resident.fingerprint, operation)
     fingerprint = (
         "minimax-h3-conditioning:" + hashlib.sha256("\n".join(facts).encode("utf-8")).hexdigest()
     )
-    return inference.ResidentConditioningCarrier(
-        _MiniMaxH3ResidentConditioning(
-            conditioning,
-            resident.owner,
-            resident.references,
-            fingerprint,
-        )
+    transformed = _MiniMaxH3ResidentConditioning(
+        conditioning,
+        resident.owner,
+        resident.references,
+        fingerprint,
+    )
+    if source_binding is None:
+        return _minimax_h3_resident_carrier(transformed, inference)
+    return inference.make_conditioning_carrier(
+        cast("Any", source).conditioning,
+        (
+            inference.ResidentPayloadBinding(
+                source_binding.reference_id,
+                source_binding.shape,
+                source_binding.dtype,
+                source_binding.space,
+                transformed,
+                fingerprint,
+            ),
+        ),
     )
 
 
