@@ -309,6 +309,7 @@ from .conditioning import (
     TokenSegmentDescriptor,
     canonical_conditioning_set,
 )
+from .conditioning_adapters import ConditioningAdapter
 from .conditioning_wire import (
     CONDITIONING_CARRIER_FORMAT,
     CONDITIONING_TYPE_ID,
@@ -447,7 +448,6 @@ from .effect_mask import (
     SourceMaskInput,
     compile_effect_mask_field,
 )
-from .conditioning_adapters import ConditioningAdapter
 from .extensions import (
     INFERENCE_ASSEMBLIES_SURFACE,
     INFERENCE_COMPONENTS_SURFACE,
