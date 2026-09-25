@@ -212,6 +212,8 @@ def test_matrix_run_writes_stable_layout_and_continues_failed_rows(
         dinkster_pre_python=interpreter,
         dinkster_current_root=checkout,
         dinkster_current_python=interpreter,
+        dinkster_current_commit=comparison.STACK_PINS["dinkster-current"][1],
+        dinkster_current_pushed_pacific=comparison.STACK_PINS["dinkster-current"][2],
         port_base=19000,
         ffmpeg="ffmpeg",
         ffprobe="ffprobe",

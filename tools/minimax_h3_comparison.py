@@ -540,7 +540,9 @@ def run(args: argparse.Namespace) -> int:
         ),
         Stack(
             "dinkster-current",
-            *STACK_PINS["dinkster-current"],
+            STACK_PINS["dinkster-current"][0],
+            args.dinkster_current_commit,
+            args.dinkster_current_pushed_pacific,
             args.dinkster_current_root.absolute(),
             args.dinkster_current_python.absolute(),
         ),
@@ -641,6 +643,16 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dinkster-pre-python", type=Path, required=True)
     parser.add_argument("--dinkster-current-root", type=Path, required=True)
     parser.add_argument("--dinkster-current-python", type=Path, required=True)
+    parser.add_argument(
+        "--dinkster-current-commit",
+        default=STACK_PINS["dinkster-current"][1],
+        help="full current-main revision to compare",
+    )
+    parser.add_argument(
+        "--dinkster-current-pushed-pacific",
+        default=STACK_PINS["dinkster-current"][2],
+        help="the current-main revision's pushed date and Pacific time",
+    )
     parser.add_argument("--run-id")
     parser.add_argument("--port-base", type=int, default=18760)
     parser.add_argument("--ffmpeg", default="ffmpeg")
@@ -648,6 +660,10 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if not 1 <= args.port_base <= 65506:
         parser.error("--port-base must leave room for all 30 executions")
+    if not re.fullmatch(r"[0-9a-f]{40}", args.dinkster_current_commit):
+        parser.error("--dinkster-current-commit must be a full lowercase hexadecimal revision")
+    if not args.dinkster_current_pushed_pacific.endswith((" PST", " PDT")):
+        parser.error("--dinkster-current-pushed-pacific must state a labeled Pacific time")
     return args
 
 
