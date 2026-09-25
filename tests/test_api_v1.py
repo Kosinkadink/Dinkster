@@ -71,6 +71,7 @@ GOLDEN_V1_SURFACE = (
     "ConditionScaleVector",
     "ComponentDescriptor",
     "ComponentWiring",
+    "ConditioningAdapter",
     "ControlApplication",
     "DetectionEvidence",
     "EngineProperties",

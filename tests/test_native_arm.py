@@ -2295,8 +2295,13 @@ def test_generation_controlnet_carriers_chain_and_roundtrip_with_resource_depend
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster_inference import (
+        ConditioningCarrier,
+        ConditioningChannel,
+        ConditioningRecord,
         ConditioningSet,
-        ResidentConditioningCarrier,
+        PayloadDescriptor,
+        PayloadReference,
+        ResidentPayloadBinding,
         make_conditioning_carrier,
         register_conditioning_type,
     )
@@ -2315,7 +2320,11 @@ def test_generation_controlnet_carriers_chain_and_roundtrip_with_resource_depend
     monkeypatch.setattr(arm, "_torch", lambda: FakeTorch())
     monkeypatch.setattr(arm, "_snapshot_control_hint", lambda *_args: snapshot)
     monkeypatch.setattr(arm, "default_pool", lambda: pool)
-    carrier = make_conditioning_carrier(ConditioningSet(()), ())
+    descriptor = PayloadDescriptor(PayloadReference("base"), (1,), "U8", "test")
+    carrier = make_conditioning_carrier(
+        ConditioningSet((ConditioningRecord(channels=((ConditioningChannel.TEXT, descriptor),)),)),
+        (ResidentPayloadBinding("base", (1,), "U8", "test", object(), "base"),),
+    )
     union = arm.GenerationSetControlNetUnionType.execute(
         control_net=resource, type="canny/lineart/anime_lineart/mlsd"
     )["control_net"]
@@ -2337,13 +2346,17 @@ def test_generation_controlnet_carriers_chain_and_roundtrip_with_resource_depend
         end_percent=0.75,
     )
     result = second["positive"]
-    assert isinstance(result, ResidentConditioningCarrier)
-    assert cast("Any", result.payload).conditioning is carrier
+    assert type(result) is ConditioningCarrier
+    controlled = arm._controlled_conditioning(result)
+    assert controlled is not None
+    assert controlled.conditioning is carrier
+    assert len(result._dinkster_resident_payloads) == 2
+    assert result.conditioning.records[-1].channels[0][0].value == "control_hint"
     binding = arm._select_classic_control_binding(result, second["negative"])
     assert binding.application.strength == 0.5
     assert binding.application.previous.mode.token == "canny"
     assert len(binding.entries) == 2
-    assert result._dinkster_resident_refs == (resource.handle, resource.handle)
+    assert resource.handle in result._dinkster_resident_refs
 
     spec = register_conditioning_type(TypeRegistry(), resident_table=pool)
     assert spec.fingerprint is not None
@@ -2351,9 +2364,8 @@ def test_generation_controlnet_carriers_chain_and_roundtrip_with_resource_depend
     assert spec.decode(spec.encode(result)) is result
     assert spec.fingerprint(result) == spec.fingerprint(second["negative"])
     assert spec.fingerprint(result) != spec.fingerprint(first["positive"])
-    assert spec.meta(result)[RESOURCE_REFS_META_KEY] == (
-        "resident:" + pool.rid_for(resource.handle),
-    )
+    refs = cast("tuple[str, ...]", spec.meta(result)[RESOURCE_REFS_META_KEY])
+    assert "resident:" + pool.rid_for(resource.handle) in refs
     with pytest.raises(ValueError, match="chains must match"):
         arm._select_classic_control_binding(result, first["negative"])
     deprecated = arm.GenerationApplyControlNet.execute(
@@ -19844,7 +19856,7 @@ def test_generation_flux_guidance_stamps_dinkster_conditioning_and_last_wins() -
     assert split_component_conditioning(cast("Any", inner))[1] is not None
     with pytest.raises(ValueError, match=r"guidance must be in"):
         arm.GenerationFluxGuidance.execute(conditioning=carrier, guidance=100.5)
-    with pytest.raises(TypeError, match="text-encoding node"):
+    with pytest.raises(TypeError, match="Dinkster conditioning node"):
         arm.GenerationFluxGuidance.execute(conditioning=[[object(), {}]], guidance=3.5)
     with pytest.raises(ValueError, match="empty conditioning"):
         arm.GenerationFluxGuidance.execute(
@@ -19878,7 +19890,7 @@ def test_generation_flux_disable_guidance_stamps_explicit_null_and_last_wins() -
     assert arm._split_flux_guidance(redisabled)[1] == arm._FLUX_GUIDANCE_DISABLED
     with pytest.raises(ValueError, match="strengths must match"):
         arm._effective_flux_guidance(arm._FLUX_GUIDANCE_DISABLED, 3.5)
-    with pytest.raises(TypeError, match="text-encoding node"):
+    with pytest.raises(TypeError, match="Dinkster conditioning node"):
         arm.GenerationFluxDisableGuidance.execute(conditioning=[[object(), {}]])
 
 
@@ -32643,7 +32655,6 @@ def test_trellis2_execution_model_wraps_resident_lanes_for_custom_sampling(
     from dinkster_inference import (
         GuidanceRole,
         PreparedMultiStreamConditioning,
-        ResidentConditioningCarrier,
     )
 
     class Runtime:
@@ -32659,6 +32670,10 @@ def test_trellis2_execution_model_wraps_resident_lanes_for_custom_sampling(
         def shares_backing(self, other: object) -> bool:
             return type(other) is Resource and self.backing is other.backing
 
+    class Carrier:
+        def __init__(self, payload: object) -> None:
+            self._dinkster_resident_payload = payload
+
     runtime = Runtime()
     module = SimpleNamespace(
         Trellis2DiffusionRuntime=Runtime,
@@ -32673,9 +32688,10 @@ def test_trellis2_execution_model_wraps_resident_lanes_for_custom_sampling(
     family = SimpleNamespace(id="dinkster.trellis2")
     inference = SimpleNamespace(
         TRELLIS2=family,
+        ConditioningCarrier=Carrier,
         GuidanceRole=GuidanceRole,
         PreparedMultiStreamConditioning=PreparedMultiStreamConditioning,
-        ResidentConditioningCarrier=ResidentConditioningCarrier,
+        ResidentConditioningCarrier=type("LegacyCarrier", (), {}),
     )
     handle = SimpleNamespace(
         runtime=runtime,
@@ -32688,8 +32704,8 @@ def test_trellis2_execution_model_wraps_resident_lanes_for_custom_sampling(
     backing = object()
     positive_resource = Resource(GuidanceRole.CONDITIONAL, backing)
     negative_resource = Resource(GuidanceRole.UNCONDITIONAL, backing)
-    positive = ResidentConditioningCarrier(positive_resource)
-    negative = ResidentConditioningCarrier(negative_resource)
+    positive = Carrier(positive_resource)
+    negative = Carrier(negative_resource)
 
     resolved = arm.resolve_trellis2_component_execution(handle, positive, negative, inference)
     assert resolved is not None
@@ -32714,7 +32730,7 @@ def test_trellis2_execution_model_wraps_resident_lanes_for_custom_sampling(
         arm.resolve_trellis2_component_execution(
             handle,
             positive,
-            ResidentConditioningCarrier(Resource(GuidanceRole.UNCONDITIONAL, object())),
+            Carrier(Resource(GuidanceRole.UNCONDITIONAL, object())),
             inference,
         )
 

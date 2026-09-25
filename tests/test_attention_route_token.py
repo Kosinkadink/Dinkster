@@ -381,8 +381,14 @@ def test_sage_evidence_routes_and_provider_filtering() -> None:
     with pytest.raises(ValueError, match="inconsistent with its effective policy"):
         replace(token, routes=tuple(AttentionRoute(route.role, "sage") for route in token.routes))
     auto = derive_attention_route_token(evidence, AttentionPolicyConfig())
-    assert all((route.primary, route.fallback) == ("sage", "sdpa") for route in auto.routes)
-    assert dict(auto.provider_versions) == {"sageattention": "2.2.0", "torch": "2.13.0"}
+    auto_routes = {route.role: route for route in auto.routes}
+    assert auto_routes["vae"] == AttentionRoute("vae", "sdpa", "bounded")
+    assert all(
+        (route.primary, route.fallback) == ("sdpa", None)
+        for role, route in auto_routes.items()
+        if role != "vae"
+    )
+    assert auto.provider_versions == (("torch", "2.13.0"),)
     # Sage evidence appearing on a worker must not change the token bytes of
     # any non-sage request, kitchen included.
     assert derive_attention_route_token(
@@ -405,10 +411,11 @@ def test_sage_evidence_routes_and_provider_filtering() -> None:
     assert overridden.version == 4
     routes = {route.role: route for route in overridden.routes}
     assert (routes["flux"].primary, routes["flux"].fallback) == ("sage", "sdpa")
+    assert routes["vae"] == AttentionRoute("vae", "sdpa", "bounded")
     assert all(
-        (route.primary, route.fallback) == ("sage", "sdpa")
+        (route.primary, route.fallback) == ("sdpa", None)
         for role, route in routes.items()
-        if role != "flux"
+        if role not in ("flux", "vae")
     )
     assert dict(overridden.provider_versions) == {"sageattention": "2.2.0", "torch": "2.13.0"}
 
@@ -471,13 +478,14 @@ def test_v4_auto_route_round_trip_and_forged_route_refusal() -> None:
     rocm = derive_attention_route_token(
         capability_evidence(device_kind="rocm"), AttentionPolicyConfig()
     )
-    assert len({identity(plain), identity(token), identity(rocm)}) == 3
+    assert token == plain
+    assert len({identity(plain), identity(rocm)}) == 2
     wire = attention_route_token_to_wire(token)
     assert wire["version"] == 4
     assert attention_route_token_from_wire(wire) == token
     forged = dict(wire)
     forged["routes"] = [
-        dict(route, primary="sdpa", fallback=None) if route["role"] == "flux" else route
+        dict(route, primary="sage", fallback="sdpa") if route["role"] == "flux" else route
         for route in cast("list[dict[str, object]]", wire["routes"])
     ]
     with pytest.raises(ValueError, match="inconsistent with its effective policy"):

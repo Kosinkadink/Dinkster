@@ -25,9 +25,12 @@ from . import (
     nodes_samplers,
     nodes_sampling_runtime,
 )
+from .families import execution as family_execution
+from .families import ideogram4 as nodes_ideogram4
 from .families import ltx as nodes_ltx
 from .families import minimax_h3 as nodes_minimax
 from .families import seedvr2 as nodes_vae_seedvr2
+from .families import trellis2 as nodes_trellis2
 from .families import wan21 as nodes_wan
 from .native_arm_registry import (
     GENERATION_PROVIDER_NODES as GENERATION_PROVIDER_NODES,
@@ -809,6 +812,8 @@ from .native_arm_runtime import _NativeModelOverlay as _NativeModelOverlay
 _CustomSigmasValue = native_arm_core._CustomSigmasValue
 
 _IMPLEMENTATION_MODULES = (
+    family_execution,
+    nodes_ideogram4,
     native_arm_conditioning,
     native_arm_core,
     native_arm_latent_utils,
@@ -826,6 +831,7 @@ _IMPLEMENTATION_MODULES = (
     nodes_provider,
     nodes_samplers,
     nodes_sampling_runtime,
+    nodes_trellis2,
     nodes_vae_seedvr2,
     nodes_wan,
 )

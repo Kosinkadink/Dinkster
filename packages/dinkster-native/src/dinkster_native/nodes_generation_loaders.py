@@ -5,12 +5,10 @@
 from __future__ import annotations
 
 from .families.ltx import _ltxav_audio_codec
-from .families.minimax_h3 import (
-    load_registered_component,
-)
 from .families.wan21 import (
     NativeClipTextEncode,
 )
+from .family_registry import load_registered_component
 from .native_arm_conditioning import (
     _conditioning_carrier,
     _rebound_conditioning_carrier,
@@ -125,8 +123,30 @@ def _apply_control_carrier(
         **kwargs,
     )
     resources = (*(() if previous is None else previous.resources), resource)
-    return inference.ResidentConditioningCarrier(
-        _ControlledConditioning(carrier, binding, resources)
+    controlled = _ControlledConditioning(carrier, binding, resources)
+    reference_id = "native-control-conditioning"
+    shape = (1,)
+    dtype = "U8"
+    space = "native-control-conditioning"
+    descriptor = inference.PayloadDescriptor(
+        inference.PayloadReference(reference_id), shape, dtype, space
+    )
+    control_record = inference.ConditioningRecord(
+        channels=((inference.ConditioningChannel.CONTROL_HINT, descriptor),)
+    )
+    return inference.make_conditioning_carrier(
+        inference.ConditioningSet((*carrier.conditioning.records, control_record)),
+        (
+            *carrier.bindings,
+            inference.ResidentPayloadBinding(
+                reference_id,
+                shape,
+                dtype,
+                space,
+                controlled,
+                controlled._dinkster_resident_fingerprint,
+            ),
+        ),
     )
 
 

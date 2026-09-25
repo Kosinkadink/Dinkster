@@ -1432,9 +1432,14 @@ class _ControlledConditioning:
         from dinkster_inference import encode_conditioning_carrier, encode_control_application
         from dinkster_values import stable_hash
 
+        conditioning_identity = (
+            self.conditioning._dinkster_resident_fingerprint.encode("utf-8")
+            if getattr(self.conditioning, "has_resident_payloads", False)
+            else encode_conditioning_carrier(self.conditioning)
+        )
         return stable_hash(
             [
-                encode_conditioning_carrier(self.conditioning),
+                conditioning_identity,
                 encode_control_application(self.binding.application),
                 str(self.binding.apply_to_uncond).encode("ascii"),
                 *(resource.resource_digest.encode("ascii") for resource in self.resources),
@@ -1443,12 +1448,16 @@ class _ControlledConditioning:
 
 
 def _controlled_conditioning(value: object) -> _ControlledConditioning | None:
-    inference = importlib.import_module("dinkster_inference")
-    if isinstance(value, inference.ResidentConditioningCarrier):
-        payload = cast("Any", value).payload
-        if isinstance(payload, _ControlledConditioning):
-            return payload
-    return None
+    payloads_value = getattr(value, "_dinkster_resident_payloads", ())
+    if not isinstance(payloads_value, tuple):
+        raise TypeError("resident conditioning payloads must be a tuple")
+    payloads = cast("tuple[object, ...]", payloads_value)
+    controlled = tuple(
+        payload for payload in payloads if isinstance(payload, _ControlledConditioning)
+    )
+    if len(controlled) > 1:
+        raise TypeError("conditioning carrier contains multiple native control payloads")
+    return controlled[0] if controlled else None
 
 
 def _control_resident_refs(*values: object) -> tuple[object, ...]:

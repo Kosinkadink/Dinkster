@@ -9653,8 +9653,8 @@ def test_managed_sageattention_executes_and_preserves_sdpa_fallback(
         return real_sage(*args, **kwargs)
 
     monkeypatch.setattr(attention_module, "_SAGE_ATTENTION", counting_sage)
-    selection = select_attention("flux", "auto")
-    assert selection.status.requested_policy == "auto"
+    selection = select_attention("flux", "sage")
+    assert selection.status.requested_policy == "sage"
     assert selection.status.primary == "sage"
     assert attention_provider_identity(selection.status) == (SAGE2_PROVIDER, "2.2.0.post1")
 

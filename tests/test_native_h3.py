@@ -167,8 +167,15 @@ def _latent(*, reverse: bool = False) -> dict[str, object]:
 
 def _conditioning_rows(value: object) -> list[list[object]]:
     inference = __import__("dinkster_inference")
-    assert type(value) is inference.ResidentConditioningCarrier
-    return cast("list[list[object]]", cast("Any", value).payload.conditioning)
+    return cast("list[list[object]]", _resident_payload(value, inference).conditioning)
+
+
+def _resident_payload(value: object, inference: Any) -> Any:
+    assert type(value) is inference.ConditioningCarrier
+    bindings = cast("Any", value).bindings
+    assert len(bindings) == 1
+    assert bindings[0].kind == "resident"
+    return bindings[0].payload
 
 
 def _install_sampling_runtime(monkeypatch: pytest.MonkeyPatch, runtime: Any) -> None:
@@ -802,7 +809,7 @@ def test_conditioning_returns_exactly_one_prepared_conditioning(
     resident = cast("Any", result["conditioning"])
     assert resident._dinkster_resident_owner is conditioner
     assert resident._dinkster_resident_refs == ()
-    assert resident._dinkster_resident_fingerprint.startswith("minimax-h3-conditioning:")
+    assert resident.bindings[0].fingerprint.startswith("minimax-h3-conditioning:")
     assert cast("Any", calls[0]["target"]).roles == ("video", "audio")
     assert all(
         stream.payload.device == "cuda:0" for stream in cast("Any", calls[0]["target"]).streams
@@ -1288,8 +1295,8 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
     assert stage_calls == ["video", "audio", "video"]
     first_carrier = cast("Any", first["positive"])
     second_carrier = cast("Any", second["positive"])
-    assert type(first_carrier) is inference.ResidentConditioningCarrier
-    assert type(second_carrier) is inference.ResidentConditioningCarrier
+    assert type(first_carrier) is inference.ConditioningCarrier
+    assert type(second_carrier) is inference.ConditioningCarrier
     assert first_carrier._dinkster_resident_fingerprint != "test:h3:conditioning"
     assert (
         second_carrier._dinkster_resident_fingerprint
@@ -1299,7 +1306,7 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
     spec = register_conditioning_type(registry, resident_table=ResidencyTable())
     wrapped = registry.wrap(CONDITIONING_TYPE_ID, second_carrier)
     assert spec.decode(spec.encode(wrapped.resolve())) is second_carrier
-    output = second_carrier.payload.conditioning[0][0]
+    output = _resident_payload(second_carrier, inference).conditioning[0][0]
     assert output.runtime_identity == identity
     assert len(output.payload.guides) == 2
 
@@ -1347,9 +1354,9 @@ def test_motion_context_delegates_av_tail_selection_and_preserves_identity(
     assert calls == [(initial, target, previous, 22)]
     assert result["trim_time"] == 22 / 24
     carrier = cast("Any", result["positive"])
-    assert type(carrier) is inference.ResidentConditioningCarrier
+    assert type(carrier) is inference.ConditioningCarrier
     assert carrier._dinkster_resident_fingerprint != "test:h3:motion"
-    output = carrier.payload.conditioning[0][0]
+    output = _resident_payload(carrier, inference).conditioning[0][0]
     assert output.runtime_identity == identity
     assert output.payload == "continued"
 
