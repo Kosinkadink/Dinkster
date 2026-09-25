@@ -501,6 +501,77 @@ def test_token_grid_and_split_half_rope_match_reference_layout() -> None:
     torch.testing.assert_close(k_rot, torch.tensor([[[[-11.0, 3.0, 2.0, 21.0]]]]))
 
 
+def test_transformer_fused_boundaries_match_unfused_equations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def attention_kernel(
+        query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
+    ) -> torch.Tensor:
+        return query + key * 2.0 + value * 3.0
+
+    block = TransformerBlock(2, 8, attention_kernel=attention_kernel)
+    with torch.no_grad():
+        block.norm1.weight.copy_(torch.linspace(0.6, 1.4, 16))
+        block.norm2.weight.copy_(torch.linspace(1.3, 0.5, 16))
+        block.scale1.copy_(torch.linspace(-0.2, 0.3, 16))
+        block.scale2.copy_(torch.linspace(0.4, -0.1, 16))
+        linears = (block.attn.to_qkv, block.attn.to_out, block.ff.w1, block.ff.w2)
+        for index, linear in enumerate(linears):
+            linear.weight.copy_(
+                torch.linspace(-0.05 + index * 0.01, 0.07 + index * 0.01, linear.weight.numel())
+                .reshape_as(linear.weight)
+            )
+            assert linear.bias is not None
+            linear.bias.copy_(torch.linspace(-0.03, 0.02, linear.bias.numel()))
+    source = torch.linspace(-1.2, 1.7, 1 * 3 * 16).reshape(1, 3, 16)
+    ids = create_token_ids((1, 1, 3), source.device, source.dtype)
+    rotary = RotaryEmbeddingND(6)(ids)
+
+    normalized1 = F.rms_norm(source, (16,), block.norm1.weight, block.norm1.eps)
+    qkv = F.linear(normalized1, block.attn.to_qkv.weight, block.attn.to_qkv.bias).view(
+        1, 3, 2, 24
+    )
+    query, key, value = qkv.chunk(3, dim=-1)
+    query = F.rms_norm(query, (8,), None, block.attn.norm_q.eps)
+    key = F.rms_norm(key, (8,), None, block.attn.norm_k.eps)
+    rotated = rotary.shape[-3] * 2
+    query_prefix, key_prefix = apply_rope_split_half(
+        query[..., :rotated], key[..., :rotated], rotary
+    )
+    query = torch.cat((query_prefix, query[..., rotated:]), dim=-1)
+    key = torch.cat((key_prefix, key[..., rotated:]), dim=-1)
+    attended = attention_kernel(
+        query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2)
+    )
+    projected = F.linear(
+        attended.transpose(1, 2).reshape(1, 3, 16),
+        block.attn.to_out.weight,
+        block.attn.to_out.bias,
+    )
+    after_attention = source + projected * block.scale1
+    normalized2 = F.rms_norm(after_attention, (16,), block.norm2.weight, block.norm2.eps)
+    gate, up = F.linear(normalized2, block.ff.w1.weight, block.ff.w1.bias).chunk(2, dim=-1)
+    fed_forward = F.linear(
+        F.silu(gate) * up, block.ff.w2.weight, block.ff.w2.bias
+    )
+    expected = after_attention + fed_forward * block.scale2
+
+    original = vae_module.dinkster_kitchen.rms_rope_split_half_
+    scale_devices: list[torch.device] = []
+
+    def fused_norm_rope(*args: object, **kwargs: object) -> tuple[torch.Tensor, torch.Tensor]:
+        scale = cast(torch.Tensor, args[3])
+        scale_devices.append(scale.device)
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(vae_module.dinkster_kitchen, "rms_rope_split_half_", fused_norm_rope)
+    with torch.no_grad():
+        actual = block(source.clone(), rotary)
+
+    torch.testing.assert_close(actual, expected, rtol=2e-5, atol=2e-5)
+    assert scale_devices == [source.device]
+
+
 def test_reduced_vit3d_decoder_preserves_exact_patch_reassembly() -> None:
     decoder = ViT3DDecoder(
         patch_size=2,

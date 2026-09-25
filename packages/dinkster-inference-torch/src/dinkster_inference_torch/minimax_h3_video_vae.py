@@ -28,8 +28,15 @@ from dinkster_inference.minimax_h3_codecs import (
 
 from .attention import AttentionKernel, select_attention
 from .memory import get_free_memory
-from .operations import INITLESS, CastOperations, Operations, ResidencyRouted
+from .operations import (
+    INITLESS,
+    CastOperations,
+    Operations,
+    ResidencyRouted,
+    materialized_rms_norm_weight,
+)
 from .ops import cast_weight
+from .quant_linear import linear_input_act
 
 __all__ = [
     "CausalConv3d",
@@ -496,9 +503,22 @@ class FeedForward(torch.nn.Module):
         self.w1 = operations.linear(dim, inner * 2)
         self.w2 = operations.linear(inner, dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        gate, value = self.w1(x).chunk(2, dim=-1)
-        return self.w2(F.silu(gate).mul_(value))
+    def forward(
+        self,
+        x: torch.Tensor,
+        pre_norm: torch.nn.RMSNorm,
+        residual: torch.Tensor,
+        residual_scale: torch.Tensor,
+    ) -> torch.Tensor:
+        with materialized_rms_norm_weight(pre_norm) as weight:
+            hidden = linear_input_act(self.w1, x, "rms_norm", weight, pre_norm.eps)
+        return linear_input_act(
+            self.w2,
+            hidden,
+            "swiglu",
+            residual=residual,
+            residual_scale=residual_scale,
+        )
 
 
 _DEFAULT_VAE_ATTENTION = select_attention("vae").kernel
@@ -522,27 +542,53 @@ class Attention(torch.nn.Module):
         inner = heads * dim_head
         self.norm_q = torch.nn.RMSNorm(dim_head, eps=eps, elementwise_affine=False)
         self.norm_k = torch.nn.RMSNorm(dim_head, eps=eps, elementwise_affine=False)
+        self.register_buffer("qk_norm_scale", torch.ones(dim_head), persistent=False)
         self.to_qkv = operations.linear(inner, inner * 3)
         self.to_out = operations.linear(inner, inner)
         object.__setattr__(self, "_attention_kernel", attention_kernel)
 
-    def forward(self, x: torch.Tensor, rotary: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        rotary: torch.Tensor | None,
+        pre_norm: torch.nn.RMSNorm,
+        residual: torch.Tensor,
+        residual_scale: torch.Tensor,
+    ) -> torch.Tensor:
         batch, sequence, _ = x.shape
-        qkv = self.to_qkv(x).view(batch, sequence, -1, 3 * self.dim_head)
+        with materialized_rms_norm_weight(pre_norm) as weight:
+            qkv = linear_input_act(
+                self.to_qkv, x, "rms_norm", weight, pre_norm.eps
+            ).view(batch, sequence, -1, 3 * self.dim_head)
         query, key, value = qkv.chunk(3, dim=-1)
-        query = F.rms_norm(query, (self.dim_head,), self.norm_q.weight, self.norm_q.eps)
-        key = F.rms_norm(key, (self.dim_head,), self.norm_k.weight, self.norm_k.eps)
         if rotary is not None:
             rotated = rotary.shape[-3] * 2
-            query_prefix, key_prefix = apply_rope_split_half(
-                query[..., :rotated], key[..., :rotated], rotary
+            rms_rope = (
+                dinkster_kitchen.rms_rope_split_half
+                if torch.is_grad_enabled()
+                else dinkster_kitchen.rms_rope_split_half_
             )
-            query = torch.cat((query_prefix, query[..., rotated:]), dim=-1)
-            key = torch.cat((key_prefix, key[..., rotated:]), dim=-1)
+            query, key = rms_rope(
+                query,
+                key,
+                rotary,
+                self.qk_norm_scale.to(query.device),
+                epsilon=self.norm_q.eps,
+                rot_dim=rotated,
+            )
+        else:
+            query = F.rms_norm(query, (self.dim_head,), self.norm_q.weight, self.norm_q.eps)
+            key = F.rms_norm(key, (self.dim_head,), self.norm_k.weight, self.norm_k.eps)
         output = self._attention_kernel(
             query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2)
         ).nan_to_num_(0.0)
-        return self.to_out(output.transpose(1, 2).reshape(batch, sequence, -1))
+        return linear_input_act(
+            self.to_out,
+            output.transpose(1, 2).reshape(batch, sequence, -1),
+            None,
+            residual=residual,
+            residual_scale=residual_scale,
+        )
 
 
 class TransformerBlock(ResidencyRouted, torch.nn.Module):
@@ -580,10 +626,8 @@ class TransformerBlock(ResidencyRouted, torch.nn.Module):
         scale1: torch.Tensor,
         scale2: torch.Tensor,
     ) -> torch.Tensor:
-        norm1 = self.norm1(x)
-        x = x.addcmul_(self.attn(norm1, rotary), scale1)
-        norm2 = self.norm2(x)
-        return x.addcmul_(self.ff(norm2), scale2)
+        x = self.attn(x, rotary, self.norm1, x, scale1)
+        return self.ff(x, self.norm2, x, scale2)
 
     def _prefetch_dtype(self, stored: torch.Tensor) -> torch.dtype:
         return stored.dtype if self._compute_dtype is None else self._compute_dtype
