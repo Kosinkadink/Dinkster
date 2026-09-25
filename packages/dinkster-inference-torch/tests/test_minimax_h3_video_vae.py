@@ -392,6 +392,26 @@ def test_causal_conv_custom_spatial_pad_matches_downsample_equation() -> None:
     torch.testing.assert_close(conv(sample, spatial_pad=(0, 1, 0, 1)), expected)
 
 
+def test_causal_conv_one_by_one_bypasses_kitchen_fp16_convolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conv = CausalConv3d(2, 3, kernel_size=1)
+    sample = torch.randn(1, 2, 2, 3, 4)
+    expected = F.conv3d(sample, conv.weight, conv.bias)
+
+    def kitchen_supported(_input: torch.Tensor) -> bool:
+        return True
+
+    monkeypatch.setattr(vae_module, "_kitchen_ndhwc", kitchen_supported)
+
+    def unexpected_kitchen(*_args: object, **_kwargs: object) -> torch.Tensor:
+        raise AssertionError("1x1 convolution must use native torch dispatch")
+
+    monkeypatch.setattr(vae_module, "_fp16_accum_conv", unexpected_kitchen)
+
+    assert torch.equal(conv(sample), expected)
+
+
 def test_temporal_group_norm_isolates_each_frame_statistics() -> None:
     norm = TemporalIsolatedGroupNorm(2, 4, affine=False)
     first = torch.arange(16, dtype=torch.float32).reshape(1, 4, 1, 2, 2)
@@ -700,6 +720,8 @@ class ProbeVAE(MiniMaxH3VideoVAE):
 
 def test_pixel_and_latent_transforms_are_pinned() -> None:
     vae = ProbeVAE()
+    assert vae.pixel_mean.dtype == torch.float16
+    assert vae.pixel_std.dtype == torch.float16
     pixels = (
         torch.tensor([-1.0, 1.0], dtype=torch.float32).reshape(1, 1, 2, 1, 1).repeat(1, 3, 1, 1, 1)
     )
@@ -710,7 +732,8 @@ def test_pixel_and_latent_transforms_are_pinned() -> None:
     raw = torch.tensor([-100.0, 0.0, 100.0], dtype=torch.float64).reshape(1, 3, 1, 1, 1)
     finalized = vae._finalize_pixels(raw)
     assert finalized.dtype == torch.float32
-    assert torch.equal(finalized, torch.tensor([0.0, 0.456, 1.0]).reshape(1, 3, 1, 1, 1))
+    expected_finalized = torch.tensor([0.0, 0.456, 1.0], dtype=torch.float16).float()
+    assert torch.equal(finalized, expected_finalized.reshape(1, 3, 1, 1, 1))
 
     mean = torch.arange(2, dtype=torch.float32).reshape(1, 2, 1, 1, 1)
     standardized = vae._normalize_latents(mean)

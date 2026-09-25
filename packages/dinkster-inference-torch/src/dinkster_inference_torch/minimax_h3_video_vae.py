@@ -182,7 +182,7 @@ class CausalConv3d(ResidencyRouted, torch.nn.Conv3d):
                 self.dilation,
                 self.groups,
             )
-        elif ndhwc:
+        elif ndhwc and self.kernel_size != (1, 1, 1):
             weight = weight.contiguous(memory_format=torch.channels_last_3d)
             fused_conv = _fp16_accum_conv(
                 x, weight, bias, residual, cast(tuple[int, int, int], self.stride)
@@ -826,10 +826,14 @@ class MiniMaxH3VideoVAE(ResidencyRouted, torch.nn.Module):
         self.register_buffer("latents_mean", torch.tensor(LATENTS_MEAN[: config.embed_dim]))
         self.register_buffer("latents_std", torch.tensor(LATENTS_STD[: config.embed_dim]))
         self.register_buffer(
-            "pixel_mean", torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1, 1), persistent=False
+            "pixel_mean",
+            torch.tensor(IMAGENET_MEAN, dtype=torch.float16).view(1, 3, 1, 1, 1),
+            persistent=False,
         )
         self.register_buffer(
-            "pixel_std", torch.tensor(IMAGENET_STD).view(1, 3, 1, 1, 1), persistent=False
+            "pixel_std",
+            torch.tensor(IMAGENET_STD, dtype=torch.float16).view(1, 3, 1, 1, 1),
+            persistent=False,
         )
 
     def _prefetch_dtype(self, stored: torch.Tensor) -> torch.dtype:
