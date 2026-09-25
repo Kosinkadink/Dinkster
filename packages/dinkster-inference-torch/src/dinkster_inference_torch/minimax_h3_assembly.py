@@ -66,7 +66,7 @@ from .distributed import (
     guidance_receipt_identity,
 )
 from .minimax_h3_audio import MiniMaxH3AudioVAE
-from .minimax_h3_conditioner import MiniMaxH3ConditionerModel
+from .minimax_h3_conditioner import MiniMaxH3ConditionerModel, MiniMaxH3VisionModel
 from .minimax_h3_dit import (
     MiniMaxH3DiT,
     assemble_minimax_h3_dit,
@@ -558,16 +558,15 @@ _COMFYUI_MODEL_DTYPE_PROJECTION_KEYS = frozenset(
 )
 
 
-def _uses_comfyui_model_dtype(key: str, *, time_embedding_kind: str) -> bool:
+def _uses_comfyui_model_dtype(key: str) -> bool:
     return key in _COMFYUI_MODEL_DTYPE_PROJECTION_KEYS or (
-        time_embedding_kind == "mlp"
-        and key.endswith((".adaln_proj.linear.weight", ".adaln_proj.linear.bias"))
+        key.endswith((".adaln_proj.linear.weight", ".adaln_proj.linear.bias"))
         and (key.startswith("blocks.") or key.startswith("final_layer."))
     )
 
 
 def _round_h3_projection_storage(
-    module: MiniMaxH3DiT,
+    _module: MiniMaxH3DiT,
     state: dict[str, torch.Tensor],
     *,
     diffusion_dtype: torch.dtype,
@@ -576,8 +575,7 @@ def _round_h3_projection_storage(
         return state
     return {
         key: tensor.to(diffusion_dtype)
-        if tensor.is_floating_point()
-        and _uses_comfyui_model_dtype(key, time_embedding_kind=module.time_embedding_kind)
+        if tensor.is_floating_point() and _uses_comfyui_model_dtype(key)
         else tensor
         for key, tensor in state.items()
     }
@@ -609,7 +607,13 @@ def _build_conditioner(
 ) -> MiniMaxH3ConditionerModel:
     if config != MINIMAX_H3_CONDITIONER_CONFIG:
         raise MiniMaxH3SplitAssemblyError("conditioner builder requires exact H3 config")
-    return MiniMaxH3ConditionerModel(operations=operations)
+    return MiniMaxH3ConditionerModel(
+        operations=operations,
+        visual=MiniMaxH3VisionModel(
+            operations=operations,
+            position_operations=CastOperations(torch.bfloat16),
+        ),
+    )
 
 
 def _build_audio(_config: None, *, operations: Operations) -> MiniMaxH3AudioVAE:

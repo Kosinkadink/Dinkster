@@ -56,7 +56,7 @@ from dinkster_inference_torch.minimax_h3_assembly import (
 from dinkster_inference_torch.minimax_h3_audio import MiniMaxH3AudioVAE
 from dinkster_inference_torch.minimax_h3_video_vae import MiniMaxH3VideoVAE
 from dinkster_inference_torch.module_residency import ModuleStateStore
-from dinkster_inference_torch.operations import INITLESS, CastOperations
+from dinkster_inference_torch.operations import INITLESS, CastOperations, bound_compute_dtype
 from dinkster_inference_torch.quant_linear import Int8Embedding, Int8Linear
 
 _TEST_IDENTITIES = {
@@ -753,7 +753,18 @@ def test_h3_projection_storage_matches_comfyui_model_dtype(
         {"blocks.0.adaln_proj.linear.bias": torch.ones(2, dtype=torch.float32)},
         diffusion_dtype=torch.bfloat16,
     )
-    assert curve["blocks.0.adaln_proj.linear.bias"].dtype is torch.float32
+    assert curve["blocks.0.adaln_proj.linear.bias"].dtype is torch.bfloat16
+
+
+def test_conditioner_builder_uses_bfloat16_vision_positions() -> None:
+    with torch.device("meta"):
+        conditioner = assembly._build_conditioner(  # pyright: ignore[reportPrivateUsage]
+            minimax_h3_conditioner_layout().config,
+            operations=CastOperations(torch.float32),
+        )
+
+    assert bound_compute_dtype(conditioner.visual.pos_embed) is torch.bfloat16
+    assert bound_compute_dtype(conditioner.model.embed_tokens) is torch.float32
 
 
 def test_artifact_paths_refuse_incomplete_duplicate_and_mutable_authority(

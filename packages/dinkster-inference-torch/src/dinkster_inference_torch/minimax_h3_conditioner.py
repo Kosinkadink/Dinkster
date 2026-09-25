@@ -116,10 +116,12 @@ class MiniMaxH3VisionModel(torch.nn.Module):
         self,
         *,
         operations: Operations = INITLESS,
+        position_operations: Operations | None = None,
         attention_kernel: AttentionKernel = _DEFAULT_ATTENTION,
         _shape: _VisionShape | None = None,
     ) -> None:
         super().__init__()
+        position_operations = operations if position_operations is None else position_operations
         config = MINIMAX_H3_CONDITIONER_CONFIG
         shape = _shape or _VisionShape(
             config.vision_hidden_size,
@@ -137,7 +139,7 @@ class MiniMaxH3VisionModel(torch.nn.Module):
             raise ValueError("MiniMax H3 vision configuration is inconsistent")
         self.shape = shape
         self.patch_embed = _PatchEmbed(shape.hidden_size, shape.patch, operations)
-        self.pos_embed = operations.embedding(shape.position_embeddings, shape.hidden_size)
+        self.pos_embed = position_operations.embedding(shape.position_embeddings, shape.hidden_size)
         self.blocks = torch.nn.ModuleList(
             _VisionBlock(
                 shape.hidden_size,
@@ -180,10 +182,12 @@ class MiniMaxH3VisionModel(torch.nn.Module):
         position_embeddings: int,
         deepstack_layers: tuple[int, ...],
         operations: Operations = INITLESS,
+        position_operations: Operations | None = None,
         attention_kernel: AttentionKernel = _DEFAULT_ATTENTION,
     ) -> MiniMaxH3VisionModel:
         return cls(
             operations=operations,
+            position_operations=position_operations,
             attention_kernel=attention_kernel,
             _shape=_VisionShape(
                 hidden_size,
@@ -238,7 +242,7 @@ class MiniMaxH3VisionModel(torch.nn.Module):
             h = torch.linspace(0, side - 1, height, device=device)
             w = torch.linspace(0, side - 1, width, device=device)
             h0, w0 = h.floor().long(), w.floor().long()
-            h1, w1 = h.ceil().long(), w.ceil().long()
+            h1, w1 = (h0 + 1).clamp(max=side - 1), (w0 + 1).clamp(max=side - 1)
             dh, dw = h - h0, w - w0
             indices = (
                 h0[:, None] * side + w0[None, :],
@@ -246,18 +250,21 @@ class MiniMaxH3VisionModel(torch.nn.Module):
                 h1[:, None] * side + w0[None, :],
                 h1[:, None] * side + w1[None, :],
             )
-            weights = (
-                (1 - dh)[:, None] * (1 - dw)[None, :],
-                (1 - dh)[:, None] * dw[None, :],
-                dh[:, None] * (1 - dw)[None, :],
-                dh[:, None] * dw[None, :],
-            )
-            position = torch.stack(
-                tuple(
-                    self.pos_embed(index.flatten()) * weight.flatten()[:, None]
-                    for index, weight in zip(indices, weights, strict=True)
+            lookups = tuple(self.pos_embed(index.flatten()) for index in indices)
+            weights = tuple(
+                weight.to(lookups[0].dtype)
+                for weight in (
+                    (1 - dh)[:, None] * (1 - dw)[None, :],
+                    (1 - dh)[:, None] * dw[None, :],
+                    dh[:, None] * (1 - dw)[None, :],
+                    dh[:, None] * dw[None, :],
                 )
-            ).sum(0)
+            )
+            corners = tuple(
+                lookup * weight.flatten()[:, None]
+                for lookup, weight in zip(lookups, weights, strict=True)
+            )
+            position = corners[0] + corners[1] + corners[2] + corners[3]
             row_ids = torch.arange(height, device=device)[:, None].expand(-1, width)
             col_ids = torch.arange(width, device=device)[None, :].expand(height, -1)
             coords = torch.stack((row_ids, col_ids), -1).reshape(-1, 2)
@@ -340,7 +347,8 @@ class MiniMaxH3ConditionerModel(torch.nn.Module):
             attention_kernel=attention_kernel,
         )
         self.visual = visual or MiniMaxH3VisionModel(
-            operations=operations, attention_kernel=attention_kernel
+            operations=operations,
+            attention_kernel=attention_kernel,
         )
 
     def forward(
