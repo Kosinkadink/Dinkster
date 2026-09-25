@@ -377,7 +377,7 @@ class MiniMaxH3ConditionerModel(torch.nn.Module):
         attention_mask = None if attention_mask is None else attention_mask.to(device)
         position_ids = None if position_ids is None else position_ids.to(device)
         visual_mask = None if visual_mask is None else visual_mask.to(device)
-        embeds = self.model.embed(ids)
+        embeds = self.model.embed(ids).float()
         deepstack: tuple[torch.Tensor, ...] = ()
         if image_patches is not None:
             if visual_mask is None or visual_mask.shape != ids.shape:

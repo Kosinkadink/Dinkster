@@ -75,7 +75,7 @@ from .minimax_h3_dit import (
 from .minimax_h3_video_vae import MiniMaxH3VideoVAE, MiniMaxH3VideoVAEConfig
 from .module_residency import declare_residency_materialization_ceilings
 from .operations import CastOperations, Operations, ResidencyRouted
-from .quant_linear import Fp8Linear, Int8Linear, Nvfp4Linear
+from .quant_linear import Fp8Linear, Int8Embedding, Int8Linear, Nvfp4Linear
 
 C = TypeVar("C")
 M = TypeVar("M", bound=torch.nn.Module)
@@ -694,12 +694,15 @@ def load_minimax_h3_component(
                 plan,
                 _build_conditioner,
                 verified,
-                # ComfyUI loads the text encoder with float16 storage by
-                # default but hardcodes float32 embeddings and execution.
+                # ComfyUI executes the Qwen decoder in float32.
                 compute_dtype=torch.float32,
             )
             for layer in module.modules():
-                if isinstance(layer, Fp8Linear | Int8Linear | Nvfp4Linear):
+                if isinstance(layer, Int8Embedding):
+                    # ComfyUI rounds the quantized embedding through bfloat16
+                    # before running the Qwen decoder in float32.
+                    layer.compute_dtype = torch.bfloat16
+                elif isinstance(layer, Fp8Linear | Int8Linear | Nvfp4Linear):
                     layer.compute_dtype = torch.float32
                     layer.full_precision_matmul = True
         elif expected_role == "video-vae":

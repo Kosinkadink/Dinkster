@@ -910,7 +910,14 @@ def test_standalone_component_load_preserves_plan_identity(
             compute_dtype=dtype,
             convrot=False,
             convrot_groupsize=256,
-        )
+        ),
+        Int8Embedding(
+            16,
+            256,
+            compute_dtype=torch.float32,
+            convrot=False,
+            convrot_groupsize=256,
+        ),
     )
 
     def read_header(_handle: BinaryIO, *, path: Path) -> HeaderSource:
@@ -957,6 +964,11 @@ def test_standalone_component_load_preserves_plan_identity(
         torch.float32 if role == "qwen3vl-32b-conditioner" else dtype
     )
     assert quantized.full_precision_matmul is (role == "qwen3vl-32b-conditioner")
+    embedding = cast(torch.nn.Sequential, loaded.module)[1]
+    assert isinstance(embedding, Int8Embedding)
+    assert embedding.compute_dtype is (
+        torch.bfloat16 if role == "qwen3vl-32b-conditioner" else torch.float32
+    )
 
 
 def test_standalone_component_load_refuses_wrong_structure(

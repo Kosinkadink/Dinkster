@@ -113,6 +113,40 @@ def test_conditioner_moves_language_indices_to_embedding_device(
     }
 
 
+def test_conditioner_promotes_reference_rounded_embeddings_to_float32(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _reduced_model()
+    source = torch.tensor(
+        [[[0.010592243634164333, -0.02731683850288391] + [0.0] * 14]],
+        dtype=torch.float32,
+    )
+    rounded = source.to(torch.bfloat16)
+    seen: list[torch.Tensor] = []
+
+    monkeypatch.setattr(model.model, "embed", lambda _ids: rounded)
+
+    def forward_embeds(
+        embeds: torch.Tensor,
+        _attention_mask: torch.Tensor | None,
+        _position_ids: torch.Tensor,
+        **_kwargs: object,
+    ) -> torch.Tensor:
+        seen.append(embeds)
+        return embeds
+
+    monkeypatch.setattr(model.model, "forward_embeds", forward_embeds)
+
+    output = model(torch.tensor(((1,),)))
+
+    expected = rounded.float()
+    assert output.dtype is torch.float32
+    assert torch.equal(output, expected)
+    assert len(seen) == 1
+    assert torch.equal(seen[0], expected)
+    assert not torch.equal(output, source)
+
+
 def test_conditioner_refuses_mismatched_visual_placeholder_count() -> None:
     model = _reduced_model()
     ids = torch.tensor(((1, 2, 3, 4, 5, 6),))
