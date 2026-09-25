@@ -280,8 +280,8 @@ Training capabilities are delivered by separately versioned packages.
   compiler; private-repository users can fetch and install the matching pinned
   wheel automatically with GitHub authentication. Built-in SDPA serves masked,
   non-fp16/bf16, wider-than-128-head-dim, and causal cross-length invocations
-  the quantized kernels cannot execute. Automatic routing selects SageAttention
-  when this support is authenticated.
+  the quantized kernels cannot execute. Automatic routing remains on SDPA even
+  when SageAttention support is authenticated.
 - Approximate, training-free Sol sparse attention executes through the opt-in
   `sol` policy (server default `DINKSTER_ATTENTION_POLICY=sol` or per-job/per-role
   override) with dinkster-kitchen 0.2.35.post1 on NVIDIA SM80+ workers. It serves

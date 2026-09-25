@@ -860,17 +860,20 @@ def test_auto_selection_uses_capability_route_and_truthful_vae_fallback(
         assert selection.status.sdpa_torch_runtime == evidence.sdpa_torch_runtime
 
 
-def test_auto_selection_uses_sage_and_rocm_bounded_routes(
+def test_auto_selection_keeps_sage_explicit_and_uses_rocm_bounded_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _make_sage_available(monkeypatch)
     sage = _capabilities(device_kind="cuda", sage=True)
     monkeypatch.setattr(attention_module, "discover_attention_capabilities", lambda: sage)
     selected = select_attention("unet", "auto")
+    assert selected.kernel is attention_module._SDPA  # pyright: ignore[reportPrivateUsage]
+    assert selected.status.primary == "sdpa"
+    assert selected.status.fallback is None
+
+    selected = select_attention("unet", "sage")
     assert selected.kernel is attention_module._SAGE2  # pyright: ignore[reportPrivateUsage]
     assert selected.status.primary == "sage"
-    assert selected.status.fallback == "sdpa"
-    assert selected.status.provider_versions == sage.provider_versions
 
     rocm = _capabilities(device_kind="rocm")
     monkeypatch.setattr(attention_module, "discover_attention_capabilities", lambda: rocm)
@@ -882,6 +885,29 @@ def test_auto_selection_uses_sage_and_rocm_bounded_routes(
         "torch-bounded-attention-v1",
         None,
     )
+
+
+def test_kitchen_load_disables_triton_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    disabled: list[str] = []
+    kitchen = SimpleNamespace(registry=SimpleNamespace(disable=disabled.append))
+
+    def import_kitchen(_name: str) -> SimpleNamespace:
+        return kitchen
+
+    monkeypatch.setattr(attention_module.importlib, "import_module", import_kitchen)
+    for name in (
+        "_KITCHEN_AVAILABLE",
+        "_KITCHEN_ATTENTION",
+        "_KITCHEN_PREQUANTIZE",
+        "_KITCHEN_FROM_PREQUANTIZED",
+        "_KITCHEN_SOL_ATTENTION",
+        "_KITCHEN_LIST_BACKENDS",
+    ):
+        monkeypatch.setattr(attention_module, name, attention_module._KITCHEN_UNPROBED)  # pyright: ignore[reportPrivateUsage]
+
+    attention_module._load_kitchen_apis()  # pyright: ignore[reportPrivateUsage]
+
+    assert disabled == ["triton"]
 
 
 @pytest.mark.parametrize(
@@ -1189,6 +1215,14 @@ def test_kitchen_policy_selects_kitchen_for_every_role(
     assert selection.status.primary == "dinkster_kitchen_int8"
     assert selection.kernel is attention_module._COMFY_KITCHEN_INT8  # pyright: ignore[reportPrivateUsage]
     assert isinstance(selection.kernel, QkvConsumingAttentionKernel)
+    supported_dtypes = (
+        attention_module._COMFY_KITCHEN_INT8.partition_compatibility.supported_dtypes  # pyright: ignore[reportPrivateUsage]
+    )
+    assert tuple(dtype.name for dtype in supported_dtypes) == (
+        "float32",
+        "float16",
+        "bfloat16",
+    )
     assert selection.status.fallback == "sdpa"
     assert selection.status.reason
 
@@ -2414,8 +2448,14 @@ def test_discovery_with_sage_policy_binds_routes_and_provider(
         device_kind="cuda",
         device_sm=120,
     )
-    assert all((route.primary, route.fallback) == ("sage", "sdpa") for route in auto.routes)
-    assert dict(auto.provider_versions).keys() == {"sageattention", "torch"}
+    auto_routes = {route.role: route for route in auto.routes}
+    assert auto_routes["vae"] == AttentionRoute("vae", "sdpa", "bounded")
+    assert all(
+        (route.primary, route.fallback) == ("sdpa", None)
+        for role, route in auto_routes.items()
+        if role != "vae"
+    )
+    assert auto.provider_versions == (("torch", "2.13.0+cu130"),)
 
 
 def test_resolve_role_attention_carries_authenticated_sage_evidence(
