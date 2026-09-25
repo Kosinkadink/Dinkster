@@ -38,7 +38,10 @@ def _resources() -> tuple[ConditioningCarrier, ConditioningCarrier]:
         source_image_digest="sha256:" + "2" * 64,
         camera_angle_x=49.13,
     )
-    return provider._resident_conditioning(positive), provider._resident_conditioning(negative)
+    return (
+        provider.make_trellis2_conditioning_carrier(positive),
+        provider.make_trellis2_conditioning_carrier(negative),
+    )
 
 
 def _resource(value: object) -> Trellis2ConditioningResource:

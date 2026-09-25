@@ -106,7 +106,7 @@ def _conditioning(value: object, name: str) -> Trellis2ConditioningResource:
     return resource
 
 
-def _resident_conditioning(
+def make_trellis2_conditioning_carrier(
     resource: Trellis2ConditioningResource,
 ) -> ConditioningCarrier:
     reference_id = "trellis2-prepared-conditioning"
@@ -338,8 +338,8 @@ def execute_trellis2_conditioning(
         camera_angle_x=angle,
     )
     return {
-        "positive": _resident_conditioning(positive_resource),
-        "negative": _resident_conditioning(negative_resource),
+        "positive": make_trellis2_conditioning_carrier(positive_resource),
+        "negative": make_trellis2_conditioning_carrier(negative_resource),
     }
 
 
@@ -413,8 +413,8 @@ def execute_trellis2_shape_stage(
     )
     latent = pack_sparse_latent(support, torch.zeros((support.point_count, 32)))
     return {
-        "positive": _resident_conditioning(positive_out),
-        "negative": _resident_conditioning(negative_out),
+        "positive": make_trellis2_conditioning_carrier(positive_out),
+        "negative": make_trellis2_conditioning_carrier(negative_out),
         "latent": {"samples": latent, "trellis2_frame": positive_resource.frame},
     }
 
@@ -485,8 +485,8 @@ def execute_trellis2_upsample_stage(
     )
     latent = pack_sparse_latent(support, torch.zeros((support.point_count, 32)))
     return {
-        "positive": _resident_conditioning(positive_out),
-        "negative": _resident_conditioning(negative_out),
+        "positive": make_trellis2_conditioning_carrier(positive_out),
+        "negative": make_trellis2_conditioning_carrier(negative_out),
         "latent": {"samples": latent, "trellis2_frame": positive_resource.frame},
     }
 
@@ -530,8 +530,8 @@ def execute_trellis2_texture_stage(
     )
     latent = pack_sparse_latent(support, torch.zeros_like(shape_features, device="cpu"))
     return {
-        "positive": _resident_conditioning(positive_out),
-        "negative": _resident_conditioning(negative_out),
+        "positive": make_trellis2_conditioning_carrier(positive_out),
+        "negative": make_trellis2_conditioning_carrier(negative_out),
         "latent": {"samples": latent, "trellis2_frame": _frame(shape_latent)},
     }
 
