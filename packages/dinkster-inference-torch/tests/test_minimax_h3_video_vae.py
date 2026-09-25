@@ -507,6 +507,30 @@ def test_token_grid_and_split_half_rope_match_reference_layout() -> None:
     torch.testing.assert_close(k_rot, torch.tensor([[[[-11.0, 3.0, 2.0, 21.0]]]]))
 
 
+def test_rotary_table_materializes_inverse_frequencies_in_token_dtype() -> None:
+    embedding = RotaryEmbeddingND(48)
+    ids = create_token_ids((2, 3, 5), torch.device("cpu"), torch.float16)
+
+    actual = embedding(ids)
+
+    inverse = embedding.inv_freq.to(ids)
+    angles = (embedding.angle_scale * ids[..., None].float() * inverse).flatten(2, 3)
+    cosine, sine = angles.cos(), angles.sin()
+    expected = torch.stack((cosine, -sine, sine, cosine), dim=-1).reshape(
+        *angles.shape[:2], 1, angles.shape[-1], 2, 2
+    )
+    fp32_angles = (embedding.angle_scale * ids[..., None].float() * embedding.inv_freq).flatten(
+        2, 3
+    )
+    fp32_cosine, fp32_sine = fp32_angles.cos(), fp32_angles.sin()
+    fp32_table = torch.stack((fp32_cosine, -fp32_sine, fp32_sine, fp32_cosine), dim=-1).reshape(
+        *fp32_angles.shape[:2], 1, fp32_angles.shape[-1], 2, 2
+    )
+
+    assert torch.equal(actual, expected.to(ids.dtype))
+    assert not torch.equal(actual, fp32_table.to(ids.dtype))
+
+
 def test_transformer_fused_boundaries_match_unfused_equations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

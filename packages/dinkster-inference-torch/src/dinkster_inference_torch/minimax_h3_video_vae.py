@@ -479,7 +479,7 @@ class RotaryEmbeddingND(torch.nn.Module):
         angles = (
             self.angle_scale
             * image_ids[:, :, :, None].float()
-            * self.inv_freq.to(image_ids.device)[None, None, None, :]
+            * self.inv_freq.to(image_ids)[None, None, None, :]
         ).flatten(2, 3)
         cosine, sine = torch.cos(angles), torch.sin(angles)
         table = torch.stack((cosine, -sine, sine, cosine), dim=-1).reshape(
