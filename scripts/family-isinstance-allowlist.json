@@ -65,5 +65,9 @@
       "classification": "family-comparison",
       "reason": "Canonical single-runtime benchmark families await catalog residency declarations."
     }
-  ]
+  ],
+  "value_type_allowlist": {
+    "ceiling": 192,
+    "sha256": "54c246f9647373f944a4d69aa4d8a6f8f3d9242371c9a8e4f22d7e345beff5c3"
+  }
 }

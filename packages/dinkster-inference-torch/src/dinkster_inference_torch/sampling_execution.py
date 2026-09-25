@@ -810,6 +810,10 @@ class SamplingExecutionRuntime(Protocol):
     ) -> DistributedGuidanceAdmission | None: ...
 
 
+def _is_single_stream_conditioning(value: object) -> bool:
+    return hasattr(value, "embeddings") and hasattr(value, "pooled")
+
+
 @overload
 def narrow_single_stream_custom_sampling(
     family_id: str,
@@ -879,19 +883,19 @@ def narrow_single_stream_custom_sampling(
     returned values carry the narrowed types.
     Perp-neg guidance refuses unless the family opts in with
     ``admit_perp_neg``."""
-    if type(latent) in (MultiStreamLatent, SparseLatent):
+    if not isinstance(latent, torch.Tensor):
         raise error(f"family {family_id} custom sampling requires a single-stream tensor latent")
-    if type(noise) in (MultiStreamLatent, SparseLatent):
+    if not isinstance(noise, torch.Tensor):
         raise error(f"family {family_id} custom sampling requires single-stream tensor noise")
-    if type(cond) is PreparedMultiStreamConditioning:
+    if not _is_single_stream_conditioning(cond):
         raise error(
             f"family {family_id} custom sampling requires Conditioning,"
             " not a prepared multi-stream payload"
         )
-    if type(cond) is ConditioningCarrier:
-        raise error(f"family {family_id} custom sampling does not accept a ConditioningCarrier")
     if isinstance(cfg, DualSamplingGuidance):
-        if not isinstance(cfg.uncond, Conditioning) or not isinstance(cfg.middle, Conditioning):
+        if not _is_single_stream_conditioning(cfg.uncond) or not _is_single_stream_conditioning(
+            cfg.middle
+        ):
             raise error(
                 f"family {family_id} custom sampling guidance requires a Conditioning payload"
             )
@@ -901,20 +905,26 @@ def narrow_single_stream_custom_sampling(
                 f"family {family_id} does not support PerpNegSamplingGuidance"
                 " (perp-neg guidance); pass SamplingGuidance"
             )
-        if not isinstance(cfg.uncond, Conditioning) or not isinstance(cfg.empty, Conditioning):
+        if not _is_single_stream_conditioning(cfg.uncond) or not _is_single_stream_conditioning(
+            cfg.empty
+        ):
             raise error(
                 f"family {family_id} custom sampling guidance requires a Conditioning payload"
             )
-    elif cfg is not None and cfg.uncond is not None and not isinstance(cfg.uncond, Conditioning):
+    elif (
+        cfg is not None
+        and cfg.uncond is not None
+        and not _is_single_stream_conditioning(cfg.uncond)
+    ):
         raise error(f"family {family_id} custom sampling guidance requires a Conditioning payload")
-    if type(denoise_mask) in (MultiStreamLatent, SparseLatent):
+    if denoise_mask is not None and not isinstance(denoise_mask, torch.Tensor):
         raise error(f"family {family_id} custom sampling requires a single-stream denoise mask")
     return (
-        cast("torch.Tensor", latent),
-        cast("torch.Tensor", noise),
+        latent,
+        noise,
         cast("Conditioning[torch.Tensor]", cond),
         cast("SingleStreamCustomSamplingCfg", cfg),
-        cast("torch.Tensor | None", denoise_mask),
+        denoise_mask,
     )
 
 
