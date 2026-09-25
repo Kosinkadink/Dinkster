@@ -624,6 +624,33 @@ def test_reduced_vit3d_decoder_preserves_exact_patch_reassembly() -> None:
     assert "transformer_blocks.0.attn.norm_k.weight" not in state
 
 
+def test_vit3d_decoder_presents_channel_major_tokens_to_patch_projection() -> None:
+    decoder = ViT3DDecoder(
+        patch_size=2,
+        patch_size_t=2,
+        in_channels=3,
+        out_channels=2,
+        num_layers=0,
+        heads=2,
+        dim_head=6,
+        rope_dim_ratio=1.0,
+        num_register_tokens=1,
+    )
+    for parameter in decoder.parameters():
+        torch.nn.init.constant_(parameter, 0.01)
+    latent = torch.randn(2, 2, 3, 4, 3).permute(0, 4, 1, 2, 3)
+    projected_inputs: list[torch.Tensor] = []
+    decoder.x_embedder.register_forward_pre_hook(
+        lambda _module, inputs: projected_inputs.append(inputs[0].detach().clone())
+    )
+
+    decoder(latent)
+
+    expected = latent.flatten(2).transpose(1, 2)
+    assert torch.equal(projected_inputs[0], expected)
+    assert projected_inputs[0].stride() == (72, 1, 24)
+
+
 class ProbeVAE(MiniMaxH3VideoVAE):
     def __init__(self, config: MiniMaxH3VideoVAEConfig | None = None) -> None:
         super().__init__(config or reduced_config())

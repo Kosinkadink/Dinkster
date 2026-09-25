@@ -711,7 +711,9 @@ class ViT3DDecoder(ResidencyRouted, torch.nn.Module):
 
     def _forward_owned(self, x: torch.Tensor, register_tokens: torch.Tensor) -> torch.Tensor:
         batch, _, frames, height, width = x.shape
-        hidden = self.x_embedder(x.flatten(2).transpose(1, 2))
+        tokens = x.flatten(2).transpose(1, 2)
+        tokens = tokens.transpose(1, 2).contiguous().transpose(1, 2)
+        hidden = self.x_embedder(tokens)
         patches = hidden.shape[1]
         suffix = 1 + self.num_register_tokens
         hidden = torch.cat(
