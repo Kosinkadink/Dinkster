@@ -74,7 +74,7 @@ from dinkster_inference import (
 from ._conditioning_layout import DeclaredConditioning
 from .assemble import AssembledWan21
 from .codecs import CodecPlugin
-from .context_windows import apply_freenoise, windowed_conditioning_evaluation
+from .context_windows import apply_freenoise
 from .denoise import (
     prepare_multistream_noise,
     prepare_noise,
@@ -4216,7 +4216,6 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
                     )
         _check_cancelled(cancelled)
         sigmas = self.sampling_sigma_space(context.sampling_shift)
-        schedule = context.schedule.sigmas
         load_device = torch.device(device)
         selected_dtype = compute_dtype
         uni3c_render = (
@@ -5222,9 +5221,6 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
             token_transforms=lambda _value: token_plan.transforms,
             validate_layout=validate_layout,
         )
-        if context_windows is not None:
-            evaluation = windowed_conditioning_evaluation(evaluation, context_windows, schedule)
-
         cache_settings = self._pose_cache_settings
         if cache_settings is not None:
             cache_device = (

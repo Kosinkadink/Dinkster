@@ -26,6 +26,10 @@ from dinkster_inference import (
     CancellationToken,
     Conditioning,
     ConditioningBatching,
+    ContextFuseMethod,
+    ContextWindowSchedule,
+    ContextWindowsSpec,
+    CustomSamplingRequest,
     CustomSamplingResult,
     CustomSamplingRuntime,
     DiscreteSigmas,
@@ -1891,6 +1895,120 @@ class TestAttentionGuidance:
         assert result is out
         assert torch.equal(result[2:4], original[2:4])
         assert torch.equal(result[0:2], (original[0:2] + original[2:4]) * 2.0)
+
+
+@pytest.mark.parametrize("dim", (2, 3), ids=("temporal-axis", "spatial-axis"))
+def test_sampling_execution_windows_unregistered_family_without_family_wiring(dim: int) -> None:
+    from dinkster_inference import SigmaSpace
+    from dinkster_inference_torch.sampling_runtime import SingleStreamSamplingRuntime
+
+    class DenoiserAdapter:
+        evaluator_identity = "test.synthetic.window-conditioning.v1"
+
+        @staticmethod
+        def prepare_conditioning(value: object, _role: GuidanceRole) -> object:
+            return value
+
+        @staticmethod
+        def evaluate_conditioning(
+            value: torch.Tensor, _sigma: float, context: object
+        ) -> torch.Tensor:
+            condition = cast("Conditioning[torch.Tensor]", context)
+            return value * 0.25 + condition.embeddings.mean()
+
+        @staticmethod
+        def batchable(_conditions: tuple[object, ...]) -> bool:
+            return True
+
+        def evaluate_batch(
+            self,
+            value: torch.Tensor,
+            sigma: float,
+            conditions: tuple[object, ...],
+            _context: object | None = None,
+        ) -> tuple[torch.Tensor, ...]:
+            return tuple(self.evaluate_conditioning(value, sigma, item) for item in conditions)
+
+        evaluate_conditioning_batch = evaluate_batch
+
+    def denoiser(
+        _runtime: object,
+        _dtype: torch.dtype,
+        _context: SamplingAdapterContext,
+    ) -> SamplingDenoiserExecution:
+        return SamplingDenoiserExecution(cast("SamplingDenoiserAdapter", DenoiserAdapter()))
+
+    class SeamRuntime(SingleStreamSamplingRuntime):
+        sampling_execution_registration = SamplingExecutionRegistration(
+            latent=SingleStreamLatentAdapter(lambda _latent: None),
+            denoiser=denoiser,
+            device=lambda _runtime: torch.device("cpu"),
+            compute_dtype=lambda _runtime: torch.float32,
+            flow=True,
+        )
+
+        def __init__(self) -> None:
+            self._samplers = torch_sampler_registry()
+            self._schedulers = torch_scheduler_registry()
+            self._guidance = None
+
+        @property
+        def family(self) -> Any:
+            return replace(
+                FLUX_DEV,
+                id="test.synthetic-window-family",
+                latent=replace(FLUX_DEV.single_stream_latent(), scale_factor=1.0, shift_factor=0.0),
+            )
+
+        def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
+            assert sampling_shift is None
+            return FlowSigmas()
+
+        sample_custom = sampling_execution
+
+    runtime = SeamRuntime()
+    latent = torch.zeros((1, 16, 3, 4), dtype=torch.float32)
+    conditioning = Conditioning(torch.arange(12, dtype=torch.float32).reshape(1, 3, 4))
+    sampler, scheduler = resolve_sampling(
+        runtime._samplers,
+        runtime._schedulers,
+        "dinkster.euler",
+        "dinkster.simple",
+        error=ValueError,
+    )
+    schedule = build_sampling_schedule(
+        scheduler,
+        FlowSigmas(),
+        sampler,
+        3,
+        denoise=1.0,
+        flow=True,
+    )
+    request = CustomSamplingRequest(sampler, (), schedule.pre_offset)
+    noise = prepare_noise(latent, 123)
+    baseline = runtime.sample_custom(
+        latent,
+        noise=noise,
+        cond=conditioning,
+        request=request,
+        seed=123,
+    ).output
+    windowed = runtime.sample_custom(
+        latent,
+        noise=noise,
+        cond=conditioning,
+        request=request,
+        seed=123,
+        context_windows=ContextWindowsSpec(
+            ContextWindowSchedule.STATIC_STANDARD,
+            ContextFuseMethod.PYRAMID,
+            length=2,
+            overlap=1,
+            dim=dim,
+        ),
+    ).output
+
+    torch.testing.assert_close(windowed, baseline)
 
 
 @pytest.mark.parametrize("distributed_mode", (None, "auto", "guidance", "sequence", "window"))

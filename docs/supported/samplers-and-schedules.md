@@ -78,13 +78,22 @@ TRELLIS.2, Qwen Image, and Ideogram 4 participate; sparse TRELLIS.2 and MiniMax
 H3 remain separate because their authenticated packed layouts cannot be
 lane-expanded without changing identity.
 TripoSplat structural latents can be sampled through both KSampler and custom sampling.
-KSampler and custom sampling accept context windows when the runtime supports them.
+KSampler and custom sampling install temporal or spatial context windows through
+the shared sampling pipeline. Real-layout execution coverage currently includes
+SD 1.5, SDXL, SDXL Refiner, MiniMax H3, LTX-Video, and Wan 2.1/2.2. Other
+families accept context windows for exploratory use but remain untested until
+later per-family validation finds and fixes any layout-specific issues. Flux2
+and Wan CausalAR refuse context windows; Wan base profiles also refuse structural
+conditioning that cannot be sliced without changing its meaning.
 The sampling runtime APIs accept denoise masks for dense image, video, audio,
 and multi-stream latents. Sparse sampling accepts masks on the same sparse
-support. Wan CausalAR and scheduled prompt/patch sampling do not accept
-denoise masks. Distributed execution does not require a numerical receipt or
-registered hardware. Sequence and window-distributed execution require
-compatible geometry; missing measurement evidence produces a diagnostic.
+support. Wan CausalAR does not accept denoise masks. Distributed execution does
+not require a numerical receipt or registered hardware. Sequence and
+window-distributed execution require compatible geometry; missing measurement
+evidence produces a diagnostic.
+Scheduled SD and Flux sampling support prompt ranges, conditioning regions,
+and patch schedules. Scheduled SD sampling can combine denoise masks with
+temporal or spatial context windows.
 Wan CausalAR, sampling timelines, LazyCache, and EasyCache run their complete
 sampling stage on rank 0 in distributed jobs and broadcast the final result to
 peers. Callbacks and cancellation are owned by rank 0 for those stages.

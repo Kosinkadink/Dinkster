@@ -29,7 +29,9 @@ packing halves linear axis 1.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from .anima import ANIMA_CONFIG, detect_anima
 from .chroma import (
@@ -43,6 +45,9 @@ from .families import (
     ComponentWiring,
     DetectionEvidence,
     EngineProperties,
+    FamilyCapability,
+    FamilyFeature,
+    FamilyFeatureHook,
     FamilyRegistry,
     ModelFamily,
     PreviewDecoderProperties,
@@ -57,6 +62,7 @@ from .flux2 import (
 from .ideogram4 import IDEOGRAM4_CONFIG, IDEOGRAM4_SIGMAS, detect_ideogram4
 from .krea2 import KREA2_CONFIG, detect_krea2
 from .latents import LatentDescriptor, MultiStreamLatentDescriptor
+from .lora import minimax_h3_lora_key_map, z_image_family_lora_key_map
 from .ltx import LTX_SAMPLING, LTXAV_LATENT, LTXV_LATENT, LTXAVDetector, LTXVDetector
 from .lumina2 import LUMINA2_CONFIG, detect_lumina2
 from .minimax_h3 import (
@@ -507,6 +513,7 @@ _CHROMA_ENGINE = EngineProperties(
     quantized_component_load_device=True,
     attention_backends=(("diffusion", "flux"), ("t5xxl", "t5"), ("vae", "vae")),
     attention_requires_route=True,
+    capabilities=frozenset({FamilyCapability.COMPONENT_EXECUTION_OPTIONS}),
 )
 
 
@@ -694,6 +701,7 @@ FLUX2_DEV = ModelFamily(
     ),
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=_flux2_memory_factor(FLUX2_DEV_CONFIG.hidden_size),
+    engine=EngineProperties(capabilities=frozenset({FamilyCapability.SPLIT_TEXT_LORA})),
 )
 
 FLUX2_KLEIN_9B = ModelFamily(
@@ -710,6 +718,7 @@ FLUX2_KLEIN_9B = ModelFamily(
     ),
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=_flux2_memory_factor(FLUX2_KLEIN_9B_CONFIG.hidden_size),
+    engine=EngineProperties(capabilities=frozenset({FamilyCapability.SPLIT_TEXT_LORA})),
 )
 
 FLUX2_KLEIN_4B = ModelFamily(
@@ -726,6 +735,7 @@ FLUX2_KLEIN_4B = ModelFamily(
     ),
     supported_dtypes=_COMMON_DTYPES,
     memory_factor=_flux2_memory_factor(FLUX2_KLEIN_4B_CONFIG.hidden_size),
+    engine=EngineProperties(capabilities=frozenset({FamilyCapability.SPLIT_TEXT_LORA})),
 )
 
 WAN21 = ModelFamily(
@@ -841,7 +851,17 @@ Z_IMAGE = ModelFamily(
     ),
     supported_dtypes=frozenset(Z_IMAGE_CONFIG.inference_dtypes),
     memory_factor=Z_IMAGE_CONFIG.memory_factor,
-    engine=EngineProperties(text_dtype=FLOAT32),
+    engine=EngineProperties(
+        text_dtype=FLOAT32,
+        capabilities=frozenset({FamilyCapability.CONTROL_OVERLAY}),
+        feature_hooks=(
+            FamilyFeatureHook(
+                FamilyFeature.LORA_KEY_MAP,
+                z_image_family_lora_key_map,
+                ("diffusion",),
+            ),
+        ),
+    ),
 )
 
 
@@ -877,6 +897,7 @@ LUMINA2 = ModelFamily(
     ),
     supported_dtypes=frozenset(LUMINA2_CONFIG.inference_dtypes),
     memory_factor=LUMINA2_CONFIG.memory_factor,
+    engine=EngineProperties(capabilities=frozenset({FamilyCapability.DIRECT_SAMPLING_SHIFT})),
 )
 
 Z_IMAGE_PIXEL_SPACE = ModelFamily(
@@ -934,7 +955,18 @@ MINIMAX_H3 = ModelFamily(
     wiring=ComponentWiring(text_encoders=()),
     supported_dtypes=frozenset({BFLOAT16}),
     aliases=MINIMAX_H3_FAMILY.aliases,
-    engine=EngineProperties(attention_backends=(("diffusion", "flux"),)),
+    engine=EngineProperties(
+        attention_backends=(("diffusion", "flux"),),
+        residency_route_roles=("diffusion", "conditioner", "video_vae", "audio_vae"),
+        requires_accelerator_residency=True,
+        feature_hooks=(
+            FamilyFeatureHook(
+                FamilyFeature.LORA_KEY_MAP,
+                minimax_h3_lora_key_map,
+                ("diffusion",),
+            ),
+        ),
+    ),
 )
 
 
@@ -1292,16 +1324,22 @@ def builtin_families() -> tuple[ModelFamily, ...]:
     )
 
 
+BUILTIN_FAMILIES_BY_ID: Mapping[str, ModelFamily] = MappingProxyType(
+    {family.id: family for family in builtin_families()}
+)
+
+
 def builtin_family_registry() -> FamilyRegistry:
     """A fresh registry preloaded with the grounded catalog."""
     registry = FamilyRegistry()
-    for family in builtin_families():
+    for family in BUILTIN_FAMILIES_BY_ID.values():
         registry.register(family)
     return registry
 
 
 __all__ = [
     "ANIMA",
+    "BUILTIN_FAMILIES_BY_ID",
     "CHROMA",
     "CHROMA_RADIANCE",
     "FLUX_DEV",

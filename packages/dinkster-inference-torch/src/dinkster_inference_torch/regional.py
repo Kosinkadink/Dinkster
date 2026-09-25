@@ -92,6 +92,7 @@ class MaterializedRegion:
     patch_digest: str | None = None
     realized_active_steps: frozenset[int] | None = None
     realized_timeline_digest: str | None = None
+    family_payload: object | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.conditioning, Conditioning):  # pyright: ignore[reportUnnecessaryIsInstance]
@@ -180,7 +181,7 @@ def realize_region_schedules(
     )
 
 
-def _region_schedule_is_active(
+def region_schedule_is_active(
     region: MaterializedRegion,
     sigma: float,
     space: SigmaSpace,
@@ -632,6 +633,26 @@ def _crop_and_multiplier(
     return crop, multiplier, area
 
 
+def full_region_multiplier(
+    region: MaterializedRegion,
+    *,
+    batch: int,
+    channels: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Project pinned 2D regional weights onto a complete latent plane."""
+
+    height, width = region.latent_shape
+    latent = torch.ones((batch, channels, height, width), dtype=torch.float32, device=device)
+    _crop, multiplier, area = _crop_and_multiplier(region, latent)
+    if area is None:
+        return multiplier
+    height, width, y, x_offset = area
+    result = torch.zeros_like(latent)
+    result.narrow(2, y, height).narrow(3, x_offset, width).copy_(multiplier)
+    return result
+
+
 @dataclass(frozen=True)
 class _PreparedRegion:
     region: MaterializedRegion
@@ -732,7 +753,7 @@ def evaluate_regions(
     active = [
         _PreparedRegion(region, *_crop_and_multiplier(region, x))
         for region in regions
-        if _region_schedule_is_active(region, sigma, space)
+        if region_schedule_is_active(region, sigma, space)
     ]
     for prepared in _reference_order(active):
         region = prepared.region
@@ -1397,7 +1418,7 @@ def evaluate_grouped_regions(
         ):
             for region in regions:
                 _check_cancel(cancel)
-                if _region_schedule_is_active(region, sigma, space):
+                if region_schedule_is_active(region, sigma, space):
                     pending.append(
                         _GroupedItem(
                             _PreparedRegion(region, *_crop_and_multiplier(region, x)), role

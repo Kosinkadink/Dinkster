@@ -1,9 +1,9 @@
 {
-  "ceiling": 7,
+  "ceiling": 8,
   "sites": [
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 1957,
+      "line": 1892,
       "column": 12,
       "type": "FluxAssemblyPlan",
       "classification": "boundary",
@@ -11,7 +11,7 @@
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2033,
+      "line": 1968,
       "column": 12,
       "type": "QwenImageAssemblyPlan",
       "classification": "boundary",
@@ -19,7 +19,7 @@
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2096,
+      "line": 2031,
       "column": 12,
       "type": "SDAssemblyPlan",
       "classification": "boundary",
@@ -27,7 +27,7 @@
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2180,
+      "line": 2115,
       "column": 12,
       "type": "Wan21AssemblyPlan",
       "classification": "boundary",
@@ -35,7 +35,7 @@
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2244,
+      "line": 2179,
       "column": 12,
       "type": "ZImageAssemblyPlan",
       "classification": "boundary",
@@ -43,7 +43,7 @@
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2311,
+      "line": 2246,
       "column": 12,
       "type": "Flux2AssemblyPlan",
       "classification": "boundary",
@@ -51,11 +51,19 @@
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2380,
+      "line": 2315,
       "column": 12,
       "type": "Lumina2AssemblyPlan",
       "classification": "boundary",
       "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
+    },
+    {
+      "path": "packages/dinkster-workers/src/dinkster_workers/backend_env.py",
+      "line": 901,
+      "column": 37,
+      "type": "family in",
+      "classification": "family-comparison",
+      "reason": "Canonical single-runtime benchmark families await catalog residency declarations."
     }
   ]
 }

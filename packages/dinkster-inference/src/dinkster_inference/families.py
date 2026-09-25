@@ -15,8 +15,9 @@ architectures register from packs; the core is not edited.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from types import MappingProxyType
 from typing import Literal, Protocol
 
@@ -83,6 +84,43 @@ class PreviewDecoderProperties:
             raise ValueError(f"{self.kind} preview registration requires a target")
 
 
+class FamilyFeature(Enum):
+    LORA_KEY_MAP = "lora-key-map"
+
+
+class FamilyCapability(Enum):
+    SPLIT_TEXT_LORA = "split-text-lora"
+    COMPONENT_EXECUTION_OPTIONS = "component-execution-options"
+    CONTROL_OVERLAY = "control-overlay"
+    DIRECT_SAMPLING_SHIFT = "direct-sampling-shift"
+
+
+FamilyFeatureTarget = Callable[[Iterable[str], object], Mapping[str, object]]
+
+
+@dataclass(frozen=True)
+class FamilyFeatureHook:
+    """An open family contribution to one shared engine feature.
+
+    The engine owns feature installation. The referenced callable may
+    supply only family-specific data or shape conversion at that point.
+    """
+
+    feature: FamilyFeature
+    target: FamilyFeatureTarget
+    component_roles: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.feature) is not FamilyFeature:
+            raise TypeError("family feature must be a FamilyFeature enum member")
+        if not callable(self.target):
+            raise TypeError("family feature target must resolve to a callable")
+        if any(not role or role.isspace() for role in self.component_roles):
+            raise ValueError("family feature component roles must not be empty")
+        if len(self.component_roles) != len(set(self.component_roles)):
+            raise ValueError("family feature component roles must be unique")
+
+
 @dataclass(frozen=True)
 class EngineProperties:
     """Cross-cutting engine behavior supplied by family registration."""
@@ -105,6 +143,10 @@ class EngineProperties:
         tuple[str, Literal["unet", "flux", "vae", "clip", "t5", "qwen"]], ...
     ] = ()
     attention_requires_route: bool = False
+    residency_route_roles: tuple[str, ...] = ()
+    requires_accelerator_residency: bool = False
+    capabilities: frozenset[FamilyCapability] = frozenset()
+    feature_hooks: tuple[FamilyFeatureHook, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.vae_dtypes:
@@ -118,9 +160,26 @@ class EngineProperties:
             raise ValueError("attention backend component roles must not be empty")
         if self.attention_requires_route and not self.attention_backends:
             raise ValueError("required attention routes need at least one attention backend")
+        if any(not role for role in self.residency_route_roles):
+            raise ValueError("residency route roles must not be empty")
+        if len(self.residency_route_roles) != len(set(self.residency_route_roles)):
+            raise ValueError("residency route roles must be unique")
+        if self.requires_accelerator_residency and not self.residency_route_roles:
+            raise ValueError("required accelerator residency needs at least one route role")
+        if any(type(capability) is not FamilyCapability for capability in self.capabilities):
+            raise TypeError("family capabilities must be FamilyCapability enum members")
+        features = tuple(hook.feature for hook in self.feature_hooks)
+        if len(features) != len(set(features)):
+            raise ValueError("family feature hooks must have unique feature names")
 
     def attention_backend(self, component_role: str) -> str | None:
         return dict(self.attention_backends).get(component_role)
+
+    def feature_hook(self, feature: FamilyFeature) -> FamilyFeatureHook | None:
+        return next((hook for hook in self.feature_hooks if hook.feature == feature), None)
+
+    def supports(self, capability: FamilyCapability) -> bool:
+        return capability in self.capabilities
 
 
 @dataclass(frozen=True)

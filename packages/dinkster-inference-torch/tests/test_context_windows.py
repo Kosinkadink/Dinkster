@@ -16,6 +16,8 @@ from dinkster_inference import (
     GuidanceContractError,
     GuidanceContribution,
     GuidanceRole,
+    LatentStream,
+    MultiStreamLatent,
     Parameterization,
     ProgressScope,
     SamplingExecutionContext,
@@ -30,10 +32,15 @@ from dinkster_inference.context_windows import (
 )
 from dinkster_inference_torch import GuidanceExecutor, GuidanceRegistry, run_sampler_engine
 from dinkster_inference_torch.context_windows import (
+    PackedContextWindowAxis,
+    PackedContextWindows,
+    PackedContextWindowScale,
+    PackedContextWindowStream,
     apply_freenoise,
     windowed_conditioning_evaluation,
 )
 from dinkster_inference_torch.guidance import ConditioningEvaluation
+from dinkster_inference_torch.latent_streams import pack_latent_streams, unpack_latent_streams
 from dinkster_inference_torch.sampling_execution import SamplingGuidancePlan, guided_denoiser
 from dinkster_inference_torch.solvers import euler
 
@@ -77,6 +84,29 @@ def identity_evaluation(seen: list[list[int]] | None = None) -> ConditioningEval
     return ConditioningEvaluation(lambda _value, _role: 1.0, evaluate)
 
 
+def packed_av_latent(
+    frames: int = 7, audio_steps: int = 37
+) -> tuple[torch.Tensor, PackedContextWindows, MultiStreamLatent[torch.Tensor]]:
+    video = torch.arange(frames * 6, dtype=torch.float32).reshape(1, 1, frames, 2, 3)
+    audio = torch.arange(audio_steps * 2, dtype=torch.float32).reshape(1, 1, 2, audio_steps)
+    streams = MultiStreamLatent((LatentStream("video", video), LatentStream("audio", audio)))
+    packed, layout = pack_latent_streams(streams)
+    windows = PackedContextWindows(
+        layout,
+        (
+            PackedContextWindowAxis(
+                2,
+                (
+                    PackedContextWindowStream("video", 2),
+                    PackedContextWindowStream("audio", 3, PackedContextWindowScale.PROPORTIONAL),
+                ),
+            ),
+            PackedContextWindowAxis(4, (PackedContextWindowStream("video", 4),)),
+        ),
+    )
+    return packed, windows, streams
+
+
 @pytest.mark.parametrize(
     "case",
     GOLDENS["freenoise"],
@@ -104,6 +134,36 @@ def test_windowed_identity_evaluation_reconstructs_input(fuse: ContextFuseMethod
     x = frame_latent(33)
     # The relative blend's float32 weighted average rounds at ~1e-7 relative.
     torch.testing.assert_close(wrapped.evaluate(x, 1.0, 1.0), x, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize("fuse", list(ContextFuseMethod))
+def test_packed_temporal_windows_restore_asymmetric_stream_extents(
+    fuse: ContextFuseMethod,
+) -> None:
+    packed, windows, streams = packed_av_latent()
+    wrapped = windowed_conditioning_evaluation(
+        identity_evaluation(),
+        spec_with(fuse_method=fuse, length=4, overlap=2),
+        (1.0, 0.0),
+        windows,
+    )
+    restored = unpack_latent_streams(wrapped.evaluate(packed, 1.0, 1.0), windows.layout)
+    torch.testing.assert_close(restored.by_role("video"), streams.by_role("video"))
+    torch.testing.assert_close(restored.by_role("audio"), streams.by_role("audio"))
+
+
+@pytest.mark.parametrize("fuse", list(ContextFuseMethod))
+def test_packed_spatial_windows_keep_unmapped_audio_whole(fuse: ContextFuseMethod) -> None:
+    packed, windows, streams = packed_av_latent()
+    wrapped = windowed_conditioning_evaluation(
+        identity_evaluation(),
+        spec_with(fuse_method=fuse, length=2, overlap=1, dim=4),
+        (1.0, 0.0),
+        windows,
+    )
+    restored = unpack_latent_streams(wrapped.evaluate(packed, 1.0, 1.0), windows.layout)
+    torch.testing.assert_close(restored.by_role("video"), streams.by_role("video"))
+    torch.testing.assert_close(restored.by_role("audio"), streams.by_role("audio"))
 
 
 def test_windowed_evaluation_selects_planned_windows() -> None:
