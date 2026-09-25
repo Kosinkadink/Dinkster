@@ -471,7 +471,6 @@ class GenerationLoadLoraModelOnly(NativeLoadLoraModelOnly):
         strength_model: float,
         execution_mode: str = "auto",
     ) -> Mapping[str, object]:
-        _require_provider_runtime(model, "model")
         return NativeLoadLoraModelOnly.execute(
             model=model,
             lora=lora,

@@ -7188,7 +7188,7 @@ def test_native_h3_model_only_peft_lora_precalculates_and_composes_identity(
     pool = FakePool()
     monkeypatch.setattr(arm, "default_pool", lambda: pool)
 
-    result = arm.NativeLoadLoraModelOnly.execute(
+    result = arm.GenerationLoadLoraModelOnly.execute(
         model=base,
         lora=lora,
         strength_model=0.25,
