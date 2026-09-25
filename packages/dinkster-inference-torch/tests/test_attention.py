@@ -890,7 +890,11 @@ def test_auto_selection_keeps_sage_explicit_and_uses_rocm_bounded_route(
 def test_kitchen_load_disables_triton_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     disabled: list[str] = []
     kitchen = SimpleNamespace(registry=SimpleNamespace(disable=disabled.append))
-    monkeypatch.setattr(attention_module.importlib, "import_module", lambda _name: kitchen)
+
+    def import_kitchen(_name: str) -> SimpleNamespace:
+        return kitchen
+
+    monkeypatch.setattr(attention_module.importlib, "import_module", import_kitchen)
     for name in (
         "_KITCHEN_AVAILABLE",
         "_KITCHEN_ATTENTION",
@@ -1211,7 +1215,9 @@ def test_kitchen_policy_selects_kitchen_for_every_role(
     assert selection.status.primary == "dinkster_kitchen_int8"
     assert selection.kernel is attention_module._COMFY_KITCHEN_INT8  # pyright: ignore[reportPrivateUsage]
     assert isinstance(selection.kernel, QkvConsumingAttentionKernel)
-    supported_dtypes = selection.kernel.partition_compatibility.supported_dtypes
+    supported_dtypes = (
+        attention_module._COMFY_KITCHEN_INT8.partition_compatibility.supported_dtypes  # pyright: ignore[reportPrivateUsage]
+    )
     assert tuple(dtype.name for dtype in supported_dtypes) == (
         "float32",
         "float16",
