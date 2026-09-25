@@ -13,7 +13,6 @@ from ..family_registry import (
     load_registered_component,
 )
 from ..native_arm_core import (
-    _NATIVE_PREPARED_CONDITIONING_KEY,
     Any,
     ConcatAVLatent,
     EmptyLTXAVLatent,
@@ -44,7 +43,6 @@ from ..native_arm_core import (
     Sequence,
     SetLatentMaskFromFrames,
     SetLatentMaskFromTimeRanges,
-    _component_bound_carrier,
     _not_cancelled,
     _torch,
     cast,
@@ -59,7 +57,7 @@ from ..native_arm_runtime import (
     _NativeModelOverlay,
     _torch_dtype,
 )
-from .conditioning import _prepared_multistream_carrier, _resident_payload
+from .conditioning import _prepared_multistream_carrier
 from .latent import _adapt_multistream_latent, _latent_samples, _move_multistream_latent
 
 
@@ -1933,189 +1931,4 @@ def _minimax_h3_schedule_runtime(handle: NativeRuntimeHandle, inference: Any) ->
         runtime_identity=recipe.runtime_identity,
         receipt_identity=model.receipt_identity,
         compute_dtype=_torch_dtype(_torch(), recipe.knobs.diffusion_dtype),
-    )
-
-
-def resolve_ideogram4_component_execution(
-    handle: NativeRuntimeHandle,
-    positive: object,
-    negative: object,
-    inference: Any,
-    *,
-    negative_handle: NativeRuntimeHandle | None = None,
-    image_only_negative: bool = False,
-) -> tuple[Any, object, object] | None:
-    recipe = handle.recipe
-    family_id = inference.IDEOGRAM4_CONFIG.family_id
-    if recipe.family_id != family_id:
-        return None
-    if tuple(source.role for source in recipe.sources) != ("diffusion",):
-        return None
-    inference_torch = importlib.import_module("dinkster_inference_torch")
-    base_runtime = handle.runtime
-    if (
-        not isinstance(base_runtime, inference_torch.Ideogram4DiffusionRuntime)
-        or recipe.runtime_identity != base_runtime.runtime_identity
-    ):
-        raise TypeError("model must be a native Ideogram 4 diffusion component")
-    negative_runtime = None
-    if negative_handle is not None:
-        negative_recipe = negative_handle.recipe
-        negative_base = negative_handle.runtime
-        if (
-            negative_recipe.family_id != family_id
-            or tuple(source.role for source in negative_recipe.sources) != ("diffusion",)
-            or not isinstance(negative_base, inference_torch.Ideogram4DiffusionRuntime)
-            or negative_recipe.runtime_identity != negative_base.runtime_identity
-        ):
-            raise TypeError("model_negative must be a native Ideogram 4 diffusion component")
-    positive_carrier, positive_binding = _component_bound_carrier(positive, inference)
-    if positive_binding is None:
-        raise TypeError("positive must be Ideogram 4 component-bound conditioning")
-    if positive_binding.family_id != family_id or positive_binding.role != "qwen3vl_8b":
-        raise ValueError("positive Ideogram 4 conditioning has the wrong component binding")
-    negative_carrier = None
-    if negative not in ([], None):
-        negative_carrier, negative_binding = _component_bound_carrier(negative, inference)
-        if negative_binding is None:
-            raise TypeError("negative must be Ideogram 4 component-bound conditioning or empty")
-        if negative_binding != positive_binding:
-            raise ValueError("Ideogram 4 conditioning lanes must share one component binding")
-    components = {
-        "diffusion": recipe.runtime_identity,
-        "qwen3vl_8b": positive_binding.identity,
-    }
-    if negative_handle is not None:
-        components["negative-diffusion"] = negative_handle.recipe.runtime_identity
-    composition = inference.compose_execution(family_id, components)
-    torch = _torch()
-    runtime = inference_torch.Ideogram4DiffusionRuntime(
-        base_runtime.assembled.diffusion,
-        runtime_identity=composition.execution_identity,
-        compute_dtype=_torch_dtype(torch, recipe.knobs.diffusion_dtype),
-    )
-    if negative_handle is not None:
-        negative_runtime = inference_torch.Ideogram4DiffusionRuntime(
-            negative_handle.runtime.assembled.diffusion,
-            runtime_identity=composition.execution_identity,
-            compute_dtype=_torch_dtype(torch, negative_handle.recipe.knobs.diffusion_dtype),
-        )
-    conditioning = runtime.prepare_single_stream_conditioning(positive_carrier)
-    rows = [[conditioning.embeddings, {_NATIVE_PREPARED_CONDITIONING_KEY: conditioning}]]
-    negative_rows: object = []
-    target_runtime = runtime if negative_runtime is None else negative_runtime
-    uncond = (
-        target_runtime.image_only_conditioning()
-        if image_only_negative
-        else (
-            None
-            if negative_carrier is None
-            else target_runtime.prepare_single_stream_conditioning(negative_carrier)
-        )
-    )
-    if uncond is not None:
-        if negative_runtime is not None:
-            uncond = inference_torch.RoutedConditioning(
-                embeddings=uncond.embeddings,
-                pooled=uncond.pooled,
-                evaluation=negative_runtime.conditioning_evaluation(),
-                source=uncond,
-            )
-        negative_rows = [[uncond.embeddings, {_NATIVE_PREPARED_CONDITIONING_KEY: uncond}]]
-    return runtime, rows, negative_rows
-
-
-def resolve_seedvr2_component_execution(
-    handle: NativeRuntimeHandle,
-    positive: object,
-    negative: object,
-    inference: Any,
-) -> tuple[Any, object, object] | None:
-    recipe = handle.recipe
-    runtime = handle.runtime
-    sampling_runtime = getattr(runtime, "component_sampling_runtime", runtime)
-    if getattr(sampling_runtime, "runtime_identity", None) != recipe.runtime_identity:
-        raise TypeError("component sampling runtime identity does not match its model handle")
-    inference_torch = importlib.import_module("dinkster_inference_torch")
-
-    def prepare(value: object, name: str, branch: str) -> object:
-        conditioning = inference_torch.materialize_seedvr2_conditioning(
-            value, device=handle.load_device
-        )
-        if conditioning.branch != branch:
-            raise TypeError(f"{name} must come from Apply SeedVR2 Conditioning")
-        if conditioning.component_identity != recipe.runtime_identity:
-            raise ValueError(f"{name} SeedVR2 conditioning belongs to a different model")
-        return [
-            [
-                conditioning.embeddings,
-                {_NATIVE_PREPARED_CONDITIONING_KEY: conditioning},
-            ]
-        ]
-
-    positive_rows = prepare(positive, "positive", "positive")
-    negative_rows: object = (
-        [] if negative in ([], None) else prepare(negative, "negative", "negative")
-    )
-    return sampling_runtime, positive_rows, negative_rows
-
-
-def resolve_trellis2_component_execution(
-    handle: NativeRuntimeHandle, positive: object, negative: object, inference: Any
-) -> tuple[Any, object, object] | None:
-    recipe = handle.recipe
-    if recipe.family_id != inference.TRELLIS2.id:
-        return None
-    source_roles = tuple(source.role for source in recipe.sources)
-    if source_roles not in (
-        ("diffusion",),
-        ("shape", "shape-512", "structure", "texture", "texture-512"),
-    ):
-        return None
-    inference_torch = importlib.import_module("dinkster_inference_torch")
-    runtime = handle.runtime
-    if (
-        not isinstance(runtime, inference_torch.Trellis2DiffusionRuntime)
-        or recipe.runtime_identity != runtime.runtime_identity
-    ):
-        raise TypeError("model must be a native TRELLIS.2 diffusion component")
-    resource_type = inference_torch.Trellis2ConditioningResource
-    try:
-        positive_resource = _resident_payload(positive, inference, "positive")
-    except TypeError as error:
-        raise TypeError("positive must be resident TRELLIS.2 conditioning") from error
-    if not isinstance(positive_resource, resource_type):
-        raise TypeError("positive must be resident TRELLIS.2 conditioning")
-    if positive_resource.guidance_role is not inference.GuidanceRole.CONDITIONAL:
-        raise ValueError("positive TRELLIS.2 conditioning has the wrong guidance lane")
-    negative_resource = None
-    if negative not in ([], None):
-        try:
-            negative_resource = _resident_payload(negative, inference, "negative")
-        except TypeError as error:
-            raise TypeError("negative must be resident TRELLIS.2 conditioning or empty") from error
-        if not isinstance(negative_resource, resource_type):
-            raise TypeError("negative must be resident TRELLIS.2 conditioning or empty")
-        if negative_resource.guidance_role is not inference.GuidanceRole.UNCONDITIONAL:
-            raise ValueError("negative TRELLIS.2 conditioning has the wrong guidance lane")
-        if not positive_resource.shares_backing(negative_resource):
-            raise ValueError("TRELLIS.2 conditioning lanes must share one backing resource")
-        if negative_resource.stage != positive_resource.stage:
-            raise ValueError("TRELLIS.2 conditioning lanes must use the same stage")
-
-    def rows(resource: object) -> list[list[object]]:
-        return [
-            [
-                inference.PreparedMultiStreamConditioning(
-                    runtime.conditioning_identity,
-                    resource,
-                ),
-                dict[str, object](),
-            ]
-        ]
-
-    return (
-        runtime,
-        rows(positive_resource),
-        ([] if negative_resource is None else rows(negative_resource)),
     )
