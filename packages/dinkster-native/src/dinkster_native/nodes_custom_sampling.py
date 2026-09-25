@@ -439,6 +439,9 @@ def _execute_generation_custom_sampling(
     runtime_sampling_shift = _runtime_sampling_shift(runtime, sampling_shift)
     bound_sample_custom = _bind_sampling_shift(runtime.sample_custom, runtime_sampling_shift)
     positive_is_carrier = isinstance(positive, inference.ConditioningCarrier)
+    positive_needs_preparation = (
+        positive_is_carrier and not cast("Any", positive).has_resident_payloads
+    )
     negative_is_carrier = negative is not None and isinstance(
         negative, inference.ConditioningCarrier
     )
@@ -583,6 +586,7 @@ def _execute_generation_custom_sampling(
             rows = (
                 _prepare_provider_multistream_conditioning(value, name, runtime, inference)
                 if isinstance(value, inference.ConditioningCarrier)
+                and not cast("Any", value).has_resident_payloads
                 else value
             )
             return _scheduled_carrier(rows, name, handle, schedule_state)
@@ -604,7 +608,7 @@ def _execute_generation_custom_sampling(
             )
 
             cond = scheduled_lane(positive, "positive")
-        elif positive_is_carrier:
+        elif positive_needs_preparation:
             cond = _prepare_provider_multistream_conditioning(
                 positive, "positive", runtime, inference
             )[0][0]
@@ -622,7 +626,7 @@ def _execute_generation_custom_sampling(
             uncond = None
         elif schedule_state is not None:
             uncond = scheduled_lane(negative, "negative")
-        elif negative_is_carrier:
+        elif negative_is_carrier and not cast("Any", negative).has_resident_payloads:
             uncond = _prepare_provider_multistream_conditioning(
                 negative, "negative", runtime, inference
             )[0][0]
@@ -634,7 +638,10 @@ def _execute_generation_custom_sampling(
         if empty is not None:
             if schedule_state is not None:
                 empty_cond = scheduled_lane(empty, "empty_conditioning")
-            elif isinstance(empty, inference.ConditioningCarrier):
+            elif (
+                isinstance(empty, inference.ConditioningCarrier)
+                and not cast("Any", empty).has_resident_payloads
+            ):
                 empty_cond = _prepare_provider_multistream_conditioning(
                     empty, "empty_conditioning", runtime, inference
                 )[0][0]
@@ -647,7 +654,10 @@ def _execute_generation_custom_sampling(
         if middle is not None:
             if schedule_state is not None:
                 middle_cond = scheduled_lane(middle, "cond2")
-            elif isinstance(middle, inference.ConditioningCarrier):
+            elif (
+                isinstance(middle, inference.ConditioningCarrier)
+                and not cast("Any", middle).has_resident_payloads
+            ):
                 middle_cond = _prepare_provider_multistream_conditioning(
                     middle, "cond2", runtime, inference
                 )[0][0]
