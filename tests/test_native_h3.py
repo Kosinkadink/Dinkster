@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import math
 import sys
 from contextlib import nullcontext
 from pathlib import Path
@@ -33,38 +34,59 @@ from dinkster_compat_comfy.native import (
 )
 from dinkster_compat_comfy.native_residency import NativeRuntimeHandle
 from dinkster_graph import Graph, GraphNode, validate
-from dinkster_inference import MINIMAX_H3_VIDEO_MASK_MAPPING, MultiStreamLatent
+from dinkster_inference import (
+    CONDITIONING_TYPE_ID,
+    MINIMAX_H3_VIDEO_MASK_MAPPING,
+    MultiStreamLatent,
+    register_conditioning_type,
+)
 from dinkster_schema import ComboWidget, NumberWidget, build_schemas, schema_signature
+from dinkster_values import ResidencyTable, TypeRegistry
 
 
 class FakeTensor:
     layout = "strided"
 
-    def __init__(self, shape: tuple[int, ...], device: object = "cpu") -> None:
+    def __init__(
+        self,
+        shape: tuple[int, ...],
+        device: object = "cpu",
+        content: bytes | None = None,
+    ) -> None:
         self.shape = shape
         self.ndim = len(shape)
         self.dtype = "torch.float32"
         self.device = device
+        self.content = bytes(math.prod(shape)) if content is None else content
         self.contiguous_calls = 0
 
     def permute(self, *axes: int) -> FakeTensor:
-        return FakeTensor(tuple(self.shape[index] for index in axes), self.device)
+        return FakeTensor(tuple(self.shape[index] for index in axes), self.device, self.content)
 
     def unsqueeze(self, axis: int) -> FakeTensor:
         shape = list(self.shape)
         shape.insert(axis, 1)
-        return FakeTensor(tuple(shape), self.device)
+        return FakeTensor(tuple(shape), self.device, self.content)
 
     def to(self, device: object) -> FakeTensor:
         selected = device.device if type(device) is FakeTensor else device
-        return FakeTensor(self.shape, selected)
+        return FakeTensor(self.shape, selected, self.content)
 
     def clone(self) -> FakeTensor:
-        return FakeTensor(self.shape, self.device)
+        return FakeTensor(self.shape, self.device, self.content)
 
     def contiguous(self) -> FakeTensor:
         self.contiguous_calls += 1
         return self
+
+    def detach(self) -> FakeTensor:
+        return self
+
+    def view(self, _dtype: object) -> FakeTensor:
+        return self
+
+    def numpy(self) -> object:
+        return SimpleNamespace(tobytes=lambda: self.content)
 
     def is_floating_point(self) -> bool:
         return True
@@ -74,17 +96,61 @@ class FakeTensor:
             selected = cast("tuple[object, object]", index)[1]
             if isinstance(selected, slice):
                 start, stop, step = selected.indices(self.shape[-1])
-                return FakeTensor((*self.shape[:-1], len(range(start, stop, step))), self.device)
+                return FakeTensor(
+                    (*self.shape[:-1], len(range(start, stop, step))),
+                    self.device,
+                    self.content,
+                )
         if isinstance(index, slice):
             start, stop, step = index.indices(self.shape[0])
-            return FakeTensor((len(range(start, stop, step)), *self.shape[1:]), self.device)
+            return FakeTensor(
+                (len(range(start, stop, step)), *self.shape[1:]), self.device, self.content
+            )
         if type(index) is int:
-            return FakeTensor(self.shape[1:], self.device)
+            return FakeTensor(self.shape[1:], self.device, self.content)
         raise TypeError("only leading indexing is supported")
 
     def split(self, size: int) -> tuple[FakeTensor, ...]:
         assert size == 1
-        return tuple(FakeTensor((1, *self.shape[1:]), self.device) for _ in range(self.shape[0]))
+        return tuple(
+            FakeTensor((1, *self.shape[1:]), self.device, self.content)
+            for _ in range(self.shape[0])
+        )
+
+
+class IntegerImageTensor:
+    layout = "strided"
+
+    def __init__(
+        self,
+        shape: tuple[int, ...],
+        dtype: object,
+        *,
+        divisor: float | None = None,
+        contiguous: bool = False,
+    ) -> None:
+        self.shape = shape
+        self.ndim = len(shape)
+        self.dtype = dtype
+        self.divisor = divisor
+        self.was_made_contiguous = contiguous
+
+    def is_floating_point(self) -> bool:
+        return self.dtype == "float32"
+
+    def to(self, *, dtype: object) -> IntegerImageTensor:
+        return IntegerImageTensor(self.shape, dtype)
+
+    def __truediv__(self, divisor: float) -> IntegerImageTensor:
+        return IntegerImageTensor(self.shape, self.dtype, divisor=divisor)
+
+    def contiguous(self) -> IntegerImageTensor:
+        return IntegerImageTensor(
+            self.shape,
+            self.dtype,
+            divisor=self.divisor,
+            contiguous=True,
+        )
 
 
 def _streams(*, reverse: bool = False) -> MultiStreamLatent[FakeTensor]:
@@ -97,6 +163,12 @@ def _streams(*, reverse: bool = False) -> MultiStreamLatent[FakeTensor]:
 
 def _latent(*, reverse: bool = False) -> dict[str, object]:
     return {"samples": _streams(reverse=reverse)}
+
+
+def _conditioning_rows(value: object) -> list[list[object]]:
+    inference = __import__("dinkster_inference")
+    assert type(value) is inference.ResidentConditioningCarrier
+    return cast("list[list[object]]", cast("Any", value).payload.conditioning)
 
 
 def _install_sampling_runtime(monkeypatch: pytest.MonkeyPatch, runtime: Any) -> None:
@@ -127,12 +199,36 @@ def _fake_torch() -> object:
     return SimpleNamespace(
         Tensor=FakeTensor,
         strided="strided",
+        uint8="uint8",
         bfloat16="bf16",
         float16="fp16",
         float32="fp32",
         inference_mode=nullcontext,
         ones_like=lambda value: FakeTensor(value.shape),
     )
+
+
+@pytest.mark.parametrize(("dtype", "maximum"), (("uint8", 255), ("uint16", 65535)))
+def test_h3_image_batch_normalizes_integer_asset_storage(dtype: str, maximum: int) -> None:
+    torch = SimpleNamespace(
+        Tensor=IntegerImageTensor,
+        strided="strided",
+        uint8="uint8",
+        uint16="uint16",
+        float32="float32",
+        iinfo=lambda selected: SimpleNamespace(max={"uint8": 255, "uint16": 65535}[selected]),
+    )
+
+    result = native_arm._minimax_h3_image_batch(
+        IntegerImageTensor((2, 3, 5, 3), dtype),
+        torch,
+        "reference",
+    )
+
+    assert result.shape == (2, 3, 5, 3)
+    assert result.dtype == "float32"
+    assert result.divisor == maximum
+    assert result.was_made_contiguous is True
 
 
 def test_h3_schemas_use_declared_resident_graph_types() -> None:
@@ -697,12 +793,16 @@ def test_conditioning_returns_exactly_one_prepared_conditioning(
         clip=object(), target=_latent(), prompt="prompt"
     )
     assert tuple(result) == ("conditioning",)
-    conditioning = cast("list[list[object]]", result["conditioning"])
+    conditioning = _conditioning_rows(result["conditioning"])
     assert len(conditioning) == 1 and conditioning[0][1] == {}
     carrier = cast("Any", conditioning[0][0])
     assert type(carrier) is inference.PreparedMultiStreamConditioning
     assert carrier.runtime_identity == conditioner.resource_identity
     assert carrier.payload == "prepared"
+    resident = cast("Any", result["conditioning"])
+    assert resident._dinkster_resident_owner is conditioner
+    assert resident._dinkster_resident_refs == ()
+    assert resident._dinkster_resident_fingerprint.startswith("minimax-h3-conditioning:")
     assert cast("Any", calls[0]["target"]).roles == ("video", "audio")
     assert all(
         stream.payload.device == "cuda:0" for stream in cast("Any", calls[0]["target"]).streams
@@ -832,6 +932,48 @@ def test_task_specific_conditioning_adapts_target_before_geometry(
     assert conditions[0]["frame_count"] == 1
 
 
+def test_fl2va_conditioning_fingerprint_changes_with_one_keyframe_pixel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = "native:dinkster.minimax_h3:" + "1" * 64
+
+    class Runtime:
+        @staticmethod
+        def condition(request: object, **_kwargs: object) -> object:
+            return SimpleNamespace(task=cast("Any", request).task)
+
+    conditioner = SimpleNamespace(
+        load_device="cpu",
+        resource_identity=identity,
+        stage=lambda **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(
+        native_arm,
+        "_minimax_h3_conditioner_runtime",
+        lambda *_args: (conditioner, (), Runtime()),
+    )
+    monkeypatch.setattr(native_arm, "_torch", _fake_torch)
+    monkeypatch.setattr(native_arm, "_minimax_h3_resize", lambda value, *_args: value)
+    first = bytes(32 * 32 * 3)
+    second = bytes((1,)) + first[1:]
+
+    fingerprints = tuple(
+        cast("Any", result["conditioning"])._dinkster_resident_fingerprint
+        for result in (
+            native_arm.NativeMiniMaxH3FL2VAConditioning.execute(
+                clip=object(),
+                video_vae=object(),
+                target=_latent(),
+                prompt="same prompt",
+                first_image=FakeTensor((1, 32, 32, 3), content=content),
+            )
+            for content in (first, second)
+        )
+    )
+
+    assert fingerprints[0] != fingerprints[1]
+
+
 def test_two_conditioning_nodes_prepare_two_independent_prompt_lanes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -877,12 +1019,128 @@ def test_two_conditioning_nodes_prepare_two_independent_prompt_lanes(
         "off-key vocals",
     ]
     assert all(type(call["request"]) is inference.MiniMaxH3T2VARequest for call in calls)
-    positive = cast("Any", positive_result["conditioning"])[0][0]
-    negative = cast("Any", negative_result["conditioning"])[0][0]
+    positive = cast("Any", _conditioning_rows(positive_result["conditioning"])[0][0])
+    negative = cast("Any", _conditioning_rows(negative_result["conditioning"])[0][0])
     assert positive.runtime_identity == negative.runtime_identity == identity
     assert positive.payload is not negative.payload
     assert positive.payload.prompt == "a singer"
     assert negative.payload.prompt == "off-key vocals"
+    assert (
+        cast("Any", positive_result["conditioning"])._dinkster_resident_fingerprint
+        != cast("Any", negative_result["conditioning"])._dinkster_resident_fingerprint
+    )
+
+
+@pytest.mark.parametrize("task", ("t2v", "i2v", "r2v"))
+def test_h3_task_seam_reaches_sampler_through_resident_wire(
+    monkeypatch: pytest.MonkeyPatch,
+    task: str,
+) -> None:
+    identity = "native:dinkster.minimax_h3:" + "1" * 64
+    sampled = _streams()
+    sampler_calls: list[dict[str, object]] = []
+
+    class Handle:
+        load_device = "cpu"
+        resource_identity = identity
+
+        @staticmethod
+        def stage(**_kwargs: object) -> nullcontext[None]:
+            return nullcontext()
+
+    class ConditionerRuntime:
+        @staticmethod
+        def condition(request: object, **_kwargs: object) -> object:
+            return SimpleNamespace(task=cast("Any", request).task)
+
+    class SamplingRuntime:
+        runtime_identity = identity
+        conditioning_identity = identity
+        model_role = "ref2va_dit" if task == "r2v" else "fl2va_dit"
+
+        @staticmethod
+        def run_ksampler_as_custom(latent: object, **kwargs: object) -> object:
+            sampler_calls.append({"latent": latent, **kwargs})
+            return sampled
+
+        sample_multistream = run_ksampler_as_custom
+
+    conditioner = Handle()
+    codecs = () if task == "t2v" else (Handle(),) if task == "i2v" else (Handle(), Handle())
+    monkeypatch.setattr(
+        native_arm,
+        "_minimax_h3_conditioner_runtime",
+        lambda *_args: (conditioner, codecs, ConditionerRuntime()),
+    )
+    monkeypatch.setattr(native_arm, "_torch", _fake_torch)
+    _install_upscale(monkeypatch)
+    image = FakeTensor((1, 32, 32, 3))
+    if task == "t2v":
+        conditioned = native_arm.NativeMiniMaxH3T2VAConditioning.execute(
+            clip=object(), target=_latent(), prompt="prompt"
+        )
+    elif task == "i2v":
+        conditioned = native_arm.NativeMiniMaxH3FL2VAConditioning.execute(
+            clip=object(),
+            video_vae=object(),
+            target=_latent(),
+            prompt="prompt",
+            first_image=image,
+        )
+    else:
+        conditioned = native_arm.NativeMiniMaxH3REF2VAConditioning.execute(
+            clip=object(),
+            video_vae=object(),
+            audio_vae=object(),
+            target=_latent(),
+            prompt="prompt",
+            references=(MiniMaxH3ImageReferenceValue(image),),
+            ref_image_size="match",
+        )
+
+    resident = cast("Any", conditioned["conditioning"])
+    registry = TypeRegistry()
+    spec = register_conditioning_type(registry, resident_table=ResidencyTable())
+    wrapped = registry.wrap(CONDITIONING_TYPE_ID, resident)
+    encoded = spec.encode(wrapped.resolve())
+    restored = spec.decode(encoded)
+    assert restored is resident
+    assert wrapped.fingerprint == resident._dinkster_resident_fingerprint
+    assert resident._dinkster_resident_owner is conditioner
+    assert resident._dinkster_resident_refs == codecs
+
+    model_handle = SimpleNamespace(
+        load_device="cpu",
+        runtime=SamplingRuntime(),
+        recipe=SimpleNamespace(
+            family_id="dinkster.minimax_h3",
+            sources=(SimpleNamespace(role="diffusion"), SimpleNamespace(role="conditioner")),
+        ),
+        stage=lambda _role, **_kwargs: nullcontext(),
+    )
+    monkeypatch.setattr(
+        native_arm,
+        "_native_model",
+        lambda *_args: (model_handle, (), {}, None, None, (), None, ()),
+    )
+    _install_sampling_runtime(monkeypatch, SamplingRuntime())
+    monkeypatch.setattr(native_arm, "_catalog_id", lambda _registry, value, _kind: value)
+    result = native_arm.NativeKSampler.execute(
+        model=object(),
+        seed=7,
+        steps=1,
+        cfg=1.0,
+        sampler_name="euler",
+        scheduler="simple",
+        positive=restored,
+        negative=[],
+        latent_image=_latent(),
+        denoise=1.0,
+    )
+    assert cast("Any", result["latent"])["samples"] is sampled
+    assert len(sampler_calls) == 1
+    expected_task = {"t2v": "t2va", "i2v": "fl2va", "r2v": "ref2va"}[task]
+    assert cast("Any", sampler_calls[0]["conditioning"]).task.value == expected_task
 
 
 def test_conditioning_stages_each_participating_component(
@@ -925,6 +1183,7 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inference = __import__("dinkster_inference")
+    family = importlib.import_module("dinkster_native.families.minimax_h3")
     identity = "native:dinkster.minimax_h3:" + "1" * 64
     target = MultiStreamLatent.from_pairs(
         (
@@ -933,7 +1192,10 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
         )
     )
     initial = SimpleNamespace(guides=())
-    positive: object = [[inference.PreparedMultiStreamConditioning(identity, initial), {}]]
+    rows = [[inference.PreparedMultiStreamConditioning(identity, initial), {}]]
+    positive: object = inference.ResidentConditioningCarrier(
+        family._MiniMaxH3ResidentConditioning(rows, object(), (), "test:h3:conditioning")
+    )
     stage_calls: list[str] = []
     video_inputs: list[FakeTensor] = []
     audio_inputs: list[object] = []
@@ -1024,7 +1286,20 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
     assert resamples == [((1, 2, 44_100), 44_100)]
     assert resize_calls == [(48, 32, "center"), (48, 32, "center")]
     assert stage_calls == ["video", "audio", "video"]
-    output = cast("Any", second["positive"])[0][0]
+    first_carrier = cast("Any", first["positive"])
+    second_carrier = cast("Any", second["positive"])
+    assert type(first_carrier) is inference.ResidentConditioningCarrier
+    assert type(second_carrier) is inference.ResidentConditioningCarrier
+    assert first_carrier._dinkster_resident_fingerprint != "test:h3:conditioning"
+    assert (
+        second_carrier._dinkster_resident_fingerprint
+        != first_carrier._dinkster_resident_fingerprint
+    )
+    registry = TypeRegistry()
+    spec = register_conditioning_type(registry, resident_table=ResidencyTable())
+    wrapped = registry.wrap(CONDITIONING_TYPE_ID, second_carrier)
+    assert spec.decode(spec.encode(wrapped.resolve())) is second_carrier
+    output = second_carrier.payload.conditioning[0][0]
     assert output.runtime_identity == identity
     assert len(output.payload.guides) == 2
 
@@ -1033,9 +1308,13 @@ def test_motion_context_delegates_av_tail_selection_and_preserves_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inference = __import__("dinkster_inference")
+    family = importlib.import_module("dinkster_native.families.minimax_h3")
     identity = "native:dinkster.minimax_h3:" + "1" * 64
     initial = object()
-    positive: object = [[inference.PreparedMultiStreamConditioning(identity, initial), {}]]
+    rows = [[inference.PreparedMultiStreamConditioning(identity, initial), {}]]
+    positive: object = inference.ResidentConditioningCarrier(
+        family._MiniMaxH3ResidentConditioning(rows, object(), (), "test:h3:motion")
+    )
     target = _streams()
     previous = _streams()
     calls: list[tuple[object, object, object, int]] = []
@@ -1067,9 +1346,160 @@ def test_motion_context_delegates_av_tail_selection_and_preserves_identity(
 
     assert calls == [(initial, target, previous, 22)]
     assert result["trim_time"] == 22 / 24
-    output = cast("Any", result["positive"])[0][0]
+    carrier = cast("Any", result["positive"])
+    assert type(carrier) is inference.ResidentConditioningCarrier
+    assert carrier._dinkster_resident_fingerprint != "test:h3:motion"
+    output = carrier.payload.conditioning[0][0]
     assert output.runtime_identity == identity
     assert output.payload == "continued"
+
+
+def test_every_h3_conditioning_output_is_valid_on_the_production_wire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inference = __import__("dinkster_inference")
+    identity = "native:dinkster.minimax_h3:" + "1" * 64
+
+    class ConditionerRuntime:
+        @staticmethod
+        def condition(request: object, **_kwargs: object) -> object:
+            return SimpleNamespace(task=cast("Any", request).task)
+
+    class VideoRuntime:
+        @staticmethod
+        def encode_video(_value: object) -> FakeTensor:
+            return FakeTensor((1, 24, 1, 32, 48))
+
+    owner = SimpleNamespace(
+        load_device="cpu",
+        resource_identity=identity,
+        stage=lambda **_kwargs: nullcontext(),
+    )
+    codecs = (owner,)
+    monkeypatch.setattr(native_arm, "_torch", _fake_torch)
+    monkeypatch.setattr(
+        native_arm,
+        "_minimax_h3_conditioner_runtime",
+        lambda *_args: (owner, codecs, ConditionerRuntime()),
+    )
+    monkeypatch.setattr(native_arm, "_empty_minimax_h3_target", lambda *_args: _latent())
+    monkeypatch.setattr(
+        native_arm,
+        "_minimax_h3_video_vae_runtime",
+        lambda *_args: (owner, VideoRuntime()),
+    )
+    _install_upscale(monkeypatch)
+    inference_torch = SimpleNamespace(
+        add_minimax_h3_timeline_guide=lambda _prepared, _target, _guide: object(),
+        add_minimax_h3_motion_context=lambda _prepared, _target, _previous, length: (
+            object(),
+            length / 24,
+        ),
+    )
+    real_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: inference_torch if name == "dinkster_inference_torch" else real_import(name),
+    )
+
+    image = FakeTensor((1, 32, 32, 3))
+    latent = _latent()
+    results = {
+        "dinkster.minimax_h3_t2va_conditioning": (
+            native_arm.NativeMiniMaxH3T2VAConditioning.execute(
+                clip=owner, target=latent, prompt="prompt"
+            )["conditioning"]
+        ),
+        "dinkster.minimax_h3_fl2va_conditioning": (
+            native_arm.NativeMiniMaxH3FL2VAConditioning.execute(
+                clip=owner,
+                video_vae=owner,
+                target=latent,
+                prompt="prompt",
+                first_image=image,
+            )["conditioning"]
+        ),
+        "dinkster.minimax_h3_ref2va_conditioning": (
+            native_arm.NativeMiniMaxH3REF2VAConditioning.execute(
+                clip=owner,
+                video_vae=owner,
+                audio_vae=owner,
+                target=latent,
+                prompt="prompt",
+                references=(MiniMaxH3ImageReferenceValue(image),),
+                ref_image_size="match",
+            )["conditioning"]
+        ),
+        "dinkster.minimax_h3_image_to_video": native_arm.NativeMiniMaxH3ImageToVideo.execute(
+            clip=owner,
+            vae=owner,
+            prompt="prompt",
+            width=32,
+            height=32,
+            length=5,
+        )["positive"],
+        "dinkster.minimax_h3_reference_to_video": (
+            native_arm.NativeMiniMaxH3ReferenceToVideo.execute(
+                clip=owner,
+                vae=owner,
+                audio_vae=owner,
+                prompt="prompt",
+                width=32,
+                height=32,
+                length=5,
+                ref_image_size="match",
+                ref_images={"ref_image_1": image},
+                ref_videos={},
+                ref_video_audios={},
+                ref_audios={},
+            )["positive"]
+        ),
+    }
+    results["dinkster.minimax_h3_add_guide"] = native_arm.NativeMiniMaxH3AddGuide.execute(
+        positive=results["dinkster.minimax_h3_reference_to_video"],
+        latent=latent,
+        vae=owner,
+        image=image,
+        frame_idx=0,
+    )["positive"]
+    results["dinkster.minimax_h3_motion_context"] = native_arm.NativeMiniMaxH3MotionContext.execute(
+        positive=results["dinkster.minimax_h3_add_guide"],
+        latent=latent,
+        previous_latent=latent,
+        context_length=5,
+    )["positive"]
+
+    registry = TypeRegistry()
+    spec = register_conditioning_type(registry, resident_table=ResidencyTable())
+    assert spec.coerce is not None
+    for value in results.values():
+        coerced = spec.coerce(value)
+        wrapped = registry.wrap(CONDITIONING_TYPE_ID, coerced)
+        assert spec.decode(spec.encode(wrapped.resolve())) is value
+
+    with pytest.raises(TypeError, match="requires a resident carrier"):
+        native_arm._minimax_h3_rewrap_conditioning([], [], inference, "test")
+    unstable = SimpleNamespace(
+        streams=(
+            SimpleNamespace(
+                role="video",
+                payload=SimpleNamespace(shape=(1,), dtype="torch.float32"),
+            ),
+        )
+    )
+    with pytest.raises(TypeError, match="stable tensor bytes"):
+        native_arm._minimax_h3_latent_fingerprint(unstable, _fake_torch())
+
+    assert set(results) == {
+        "dinkster.minimax_h3_t2va_conditioning",
+        "dinkster.minimax_h3_fl2va_conditioning",
+        "dinkster.minimax_h3_ref2va_conditioning",
+        "dinkster.minimax_h3_image_to_video",
+        "dinkster.minimax_h3_reference_to_video",
+        "dinkster.minimax_h3_add_guide",
+        "dinkster.minimax_h3_motion_context",
+    }
 
 
 def test_add_guide_requires_content_and_the_matching_vae(

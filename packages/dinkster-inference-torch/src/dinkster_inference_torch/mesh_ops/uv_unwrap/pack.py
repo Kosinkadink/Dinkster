@@ -14,6 +14,7 @@ from typing import cast
 
 import numpy as np
 import torch
+from dinkster_inference import GIBIBYTE, MEBIBYTE
 from torch import Tensor
 from torch.nn.functional import max_pool1d
 
@@ -478,8 +479,8 @@ def _raster_all_torch(uvs_tex, uv_offsets, faces_cat, face_offsets, bw_t, bh_t, 
     face_counts = torch.from_numpy(np.diff(face_offsets)).to(device=device, dtype=torch.long)
     face_charts = torch.arange(n, device=device).repeat_interleave(face_counts)
     uv_offsets_t = torch.as_tensor(uv_offsets, dtype=torch.long, device=device)
-    free = torch.cuda.mem_get_info(device)[0] if device.type == "cuda" else 4 * 1024 * 1024 * 1024
-    budget = int(min(1 << 23, max(1 << 20, (free * 0.25) / 56)))
+    free = torch.cuda.mem_get_info(device)[0] if device.type == "cuda" else 4 * GIBIBYTE
+    budget = int(min(8 * MEBIBYTE, max(MEBIBYTE, (free * 0.25) / 56)))
     for fs in range(0, total_faces, _TORCH_RASTER_FACE_BATCH):
         fe = min(fs + _TORCH_RASTER_FACE_BATCH, total_faces)
         cid = face_charts[fs:fe]

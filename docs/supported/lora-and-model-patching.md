@@ -50,6 +50,8 @@
   requests.
 - Native per-step strength curves for simple LoRA patches on owned linear and
   two-dimensional convolution weights through hook keyframes
+- Scheduled conditioning carriers can bind a LoRA patch state to a conditioning
+  mask, so the patched prediction contributes only inside that region.
 - Conditioning-scoped regional LoRA execution with float32 masks, optional
   mask-derived bounds, strength and percent-range scheduling, overlap
   normalization, and default-region coverage

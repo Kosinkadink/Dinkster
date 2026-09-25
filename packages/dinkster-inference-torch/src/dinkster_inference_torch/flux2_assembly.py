@@ -11,6 +11,7 @@ from typing import BinaryIO, cast
 import torch
 from dinkster_assets import AssetError, AssetRef
 from dinkster_inference import (
+    MEBIBYTE,
     Flux2ComponentAssemblyError,
     Flux2ComponentRole,
     TekkenBpe,
@@ -42,7 +43,7 @@ _IDENTITY_DTYPES: Mapping[torch.dtype, DType] = {
 FLUX2_TEKKEN_ATTRIBUTE = "_dinkster_flux2_tekken"
 
 # Byte cap for the checkpoint-embedded tekken_model tokenizer payload.
-TEKKEN_MODEL_BYTE_CAP = 64 * 1024 * 1024
+TEKKEN_MODEL_BYTE_CAP = 64 * MEBIBYTE
 
 
 @dataclass(frozen=True)

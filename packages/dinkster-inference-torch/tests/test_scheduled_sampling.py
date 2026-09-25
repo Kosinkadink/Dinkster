@@ -21,6 +21,9 @@ from dinkster_inference import (
     SDXL_REFINER,
     AdapterPatch,
     Conditioning,
+    ContextFuseMethod,
+    ContextWindowSchedule,
+    ContextWindowsSpec,
     CustomSamplingRequest,
     DiffPatch,
     DiscreteSigmas,
@@ -1343,15 +1346,6 @@ def test_sd_scheduled_inpaint_and_guidance_refuse_before_materialization() -> No
             scheduler_id="dinkster.normal",
             steps=1,
         )
-    with pytest.raises(ScheduledSamplingError, match="scheduled-sd-inpaint"):
-        runtime.sample_scheduled(
-            sd_latent(),
-            cond=invalid,
-            denoise_mask=torch.ones((1, 8, 8)),
-            sampler_id="dinkster.euler",
-            scheduler_id="dinkster.normal",
-            steps=1,
-        )
     cast(Any, runtime).assembled.diffusion.config = replace(
         runtime.assembled.diffusion.config, in_channels=9
     )
@@ -1363,6 +1357,97 @@ def test_sd_scheduled_inpaint_and_guidance_refuse_before_materialization() -> No
             scheduler_id="dinkster.normal",
             steps=1,
         )
+
+
+def test_sd_scheduled_sampling_combines_denoise_mask_and_context_windows() -> None:
+    runtime = _runtime("sd")
+    latent = sd_latent()
+    mask = torch.ones_like(latent)
+    mask[..., :4, :] = 0.0
+    carrier = _conditioning_carrier(SD15.id, sd_cond("cond"))
+    baseline = runtime.sample_scheduled(
+        latent,
+        cond=carrier,
+        denoise_mask=mask,
+        sampler_id="dinkster.euler",
+        scheduler_id="dinkster.normal",
+        steps=1,
+        seed=29,
+        compute_dtype=torch.float32,
+    )
+    output = runtime.sample_scheduled(
+        latent,
+        cond=carrier,
+        denoise_mask=mask,
+        context_windows=ContextWindowsSpec(
+            ContextWindowSchedule.STATIC_STANDARD,
+            ContextFuseMethod.PYRAMID,
+            length=4,
+            overlap=2,
+            dim=2,
+        ),
+        sampler_id="dinkster.euler",
+        scheduler_id="dinkster.normal",
+        steps=1,
+        seed=29,
+        compute_dtype=torch.float32,
+    )
+
+    assert torch.equal(output[..., :4, :], baseline[..., :4, :])
+    assert not torch.equal(output[..., 4:, :], baseline[..., 4:, :])
+
+
+def test_sd_scheduled_lora_is_scoped_by_conditioning_mask() -> None:
+    runtime = _runtime("sd")
+    latent = sd_latent()
+    right = torch.zeros((1, 8, 8), dtype=torch.float32)
+    right[..., 4:] = 1.0
+    left = 1.0 - right
+    conditioning = sd_cond("cond")
+    ordinary = regional_carrier(
+        (
+            {"text": conditioning.embeddings, "mask": right},
+            {"text": conditioning.embeddings, "mask": left},
+        ),
+        family=SD15.id,
+    )
+    patched = regional_carrier(
+        (
+            {
+                "text": conditioning.embeddings,
+                "mask": right,
+                "extension_metadata": _metadata(SD15.id),
+            },
+            {"text": conditioning.embeddings, "mask": left},
+        ),
+        family=SD15.id,
+    )
+    baseline = runtime.sample_scheduled(
+        latent,
+        cond=ordinary,
+        sampler_id="dinkster.euler",
+        scheduler_id="dinkster.normal",
+        steps=1,
+        seed=31,
+        compute_dtype=torch.float32,
+    )
+    resolver_calls: list[object] = []
+    output = runtime.sample_scheduled(
+        latent,
+        cond=patched,
+        resolver=_conv_lora_resolver(runtime.assembled.diffusion, resolver_calls),
+        sampler_id="dinkster.euler",
+        scheduler_id="dinkster.normal",
+        steps=1,
+        seed=31,
+        compute_dtype=torch.float32,
+    )
+
+    assert len(resolver_calls) == 1
+    left_delta = float((output[..., :4] - baseline[..., :4]).abs().amax().detach())
+    right_delta = float((output[..., 4:] - baseline[..., 4:]).abs().amax().detach())
+    assert right_delta > 1.0
+    assert right_delta > left_delta * 1000.0
 
 
 def test_private_denoiser_prepares_once_and_refuses_stride_drift_with_cleanup() -> None:

@@ -29,8 +29,10 @@ from .families.minimax_h3 import (
     NativeMiniMaxH3AVDecode,
     NativeMiniMaxH3AVEncode,
     NativeMiniMaxH3FL2VAConditioning,
+    NativeMiniMaxH3ImageToVideo,
     NativeMiniMaxH3MotionContext,
     NativeMiniMaxH3REF2VAConditioning,
+    NativeMiniMaxH3ReferenceToVideo,
     NativeMiniMaxH3T2VAConditioning,
     NativePreviewLatentAudio,
     NativePreviewLatentVisual,
@@ -495,6 +497,8 @@ NATIVE_ARM_NODES: tuple[type[Node], ...] = (
     NativeLoadVision,
     GenerationLoadDiffusionModel,
     GenerationLoadDiffusionComponents,
+    GenerationLoadLora,
+    GenerationLoadLoraModelOnly,
     GenerationEmptyTrellis2LatentStructure,
     GenerationTrellis2Conditioning,
     GenerationPixal3DConditioning,
@@ -534,7 +538,9 @@ NATIVE_ARM_NODES: tuple[type[Node], ...] = (
     NativeInspectLatentMask,
     NativeMiniMaxH3T2VAConditioning,
     NativeMiniMaxH3FL2VAConditioning,
+    NativeMiniMaxH3ImageToVideo,
     NativeMiniMaxH3REF2VAConditioning,
+    NativeMiniMaxH3ReferenceToVideo,
     NativeMiniMaxH3AddGuide,
     NativeMiniMaxH3MotionContext,
     NativeMiniMaxH3AVEncode,
@@ -618,9 +624,12 @@ NATIVE_ARM_NODES: tuple[type[Node], ...] = (
     GenerationSeedVR2Conditioning,
 )
 
+NATIVE_ARM_TYPE_IDS: tuple[str, ...] = tuple(node.schema().node_type for node in NATIVE_ARM_NODES)
+
 __all__ = [
     "GENERATION_PROVIDER_NODES",
     "NATIVE_ARM_NODES",
+    "NATIVE_ARM_TYPE_IDS",
     "NativeClipTextEncode",
     "NativeConcatAVLatent",
     "NativeControlNetApply",
@@ -653,7 +662,9 @@ __all__ = [
     "NativeMiniMaxH3AVDecode",
     "NativeMiniMaxH3AVEncode",
     "NativeMiniMaxH3FL2VAConditioning",
+    "NativeMiniMaxH3ImageToVideo",
     "NativeMiniMaxH3REF2VAConditioning",
+    "NativeMiniMaxH3ReferenceToVideo",
     "NativeMiniMaxH3T2VAConditioning",
     "NativeMiniMaxMusic3TextEncode",
     "NativePairConditioningSetProperties",

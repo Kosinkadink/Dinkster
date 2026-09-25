@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, cast
 
+from dinkster_values import MEBIBYTE
+
 from .identity import CHUNK_SIZE, AssetError, new_hasher, require_digest
 from .integrity import AssetVerificationRecord, verification_record
 from .p2p_descriptor import (
@@ -38,7 +40,7 @@ P2P_PARTIAL_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
 _HEX = frozenset("0123456789abcdef")
 _RESUME_VERSION = 1
-_MAX_RESUME_BYTES = 16 * 1024 * 1024
+_MAX_RESUME_BYTES = 16 * MEBIBYTE
 _MAX_HEADER_BYTES = 100_000_000
 _MAX_GGUF_ITEMS = 1_000_000
 _MAX_GGUF_RANK = 4
@@ -1291,11 +1293,29 @@ def _require_path_binding(path: Path, item: os.stat_result) -> None:
 
 
 def _open_regular(path: Path, *, writable: bool) -> BinaryIO:
-    flags = (os.O_RDWR if writable else os.O_RDONLY) | _binary_flag() | _nofollow_flag()
+    access_flags = (os.O_RDWR if writable else os.O_RDONLY) | _binary_flag()
+    root_handle: int | None = None
+    raw_handle: int | None = None
     try:
-        descriptor = os.open(path, flags)
+        if _p2p_windows is None:
+            descriptor = os.open(path, access_flags | _nofollow_flag())
+        else:  # pragma: no cover - exercised by Windows CI
+            root_handle = _p2p_windows.open_root(path.parent)
+            raw_handle = _p2p_windows.open_file(
+                root_handle,
+                path.name,
+                writable=writable,
+                exclusive=False,
+            )
+            descriptor = _p2p_windows.take_file_descriptor(raw_handle, access_flags)
+            raw_handle = None
     except OSError as error:
         raise P2PStorageError(f"could not open regular P2P file: {error}") from error
+    finally:
+        if raw_handle is not None:
+            _p2p_windows.close(raw_handle)
+        if root_handle is not None:
+            _p2p_windows.close(root_handle)
     handle = os.fdopen(descriptor, "r+b" if writable else "rb")
     if not stat.S_ISREG(os.fstat(descriptor).st_mode):
         handle.close()

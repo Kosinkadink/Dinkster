@@ -1222,19 +1222,12 @@ def _logical_lora_key_map(
     hidden_size = getattr(config, "hidden_size", None)
     if isinstance(hidden_size, int) and hidden_size > 0:
         key_map.update(inference.flux_linear1_qkv_key_map(diffusion_keys, hidden_size))
-    if handle.recipe.family_id == inference.Z_IMAGE_CONFIG.family_id:
-        hidden_width = getattr(config, "hidden_width", None)
-        if not isinstance(hidden_width, int) or hidden_width <= 0:
-            raise RuntimeError("native Z-Image runtime has no valid hidden width")
-        key_map.update(inference.z_image_diffusers_key_map(diffusion_keys, hidden_width))
-    if handle.recipe.family_id == inference.MINIMAX_H3_CONFIG.family_id:
-        key_map.update(
-            {
-                key.removeprefix("diffusion_model.").removesuffix(".weight"): key
-                for key in diffusion_keys
-                if key.endswith(".weight")
-            }
-        )
+    family = _active_inference_registries().families.get(handle.recipe.family_id)
+    hook = (
+        None if family is None else family.engine.feature_hook(inference.FamilyFeature.LORA_KEY_MAP)
+    )
+    if hook is not None and (not hook.component_roles or "diffusion" in hook.component_roles):
+        key_map.update(hook.target(diffusion_keys, config))
     clip_keys: list[str] = []
     for component, logical_component in (
         ("clip_l", "clip_l"),
@@ -2145,6 +2138,9 @@ def _classic_control_context(binding: _ClassicControlBinding | None, **kwargs: A
 
 
 def _uses_native_scheduling(value: object) -> bool:
+    inference = importlib.import_module("dinkster_inference")
+    if isinstance(value, (inference.ConditioningCarrier, inference.ResidentConditioningCarrier)):
+        return False
     for entry in _condition_entries(value, "conditioning"):
         metadata = cast("Mapping[object, object]", entry[1])
         if (

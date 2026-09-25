@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from dinkster_values import (
+    CONDITIONING_HEADER_LIMIT_BYTES,
     ResidencyTable,
     ResidentCodec,
     ResidentLookupError,
@@ -45,7 +46,7 @@ _MAGIC = b"DMFC"
 _RESIDENT_MAGIC = b"DMFR\x01"
 _VERSION = 1
 _PREFIX_SIZE = len(_MAGIC) + 1 + 8
-_MAX_HEADER_BYTES = 64 * 1024 * 1024
+_MAX_HEADER_BYTES = CONDITIONING_HEADER_LIMIT_BYTES
 _MAX_PAYLOADS = 4096
 _DTYPE_WIDTHS = {
     "F64": 8,

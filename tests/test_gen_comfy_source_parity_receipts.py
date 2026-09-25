@@ -15,6 +15,48 @@ pytest.importorskip("torch")
 from tools import gen_comfy_source_parity_receipts as generator  # noqa: E402
 
 
+def test_minimax_h3_alias_receipts_cover_each_pinned_mapping(tmp_path: Path) -> None:
+    records = generator._mapping_records("comfy-core")
+
+    outputs = generator._minimax_h3_alias_receipts(tmp_path, records)
+
+    receipts = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in outputs
+        if path.name.endswith(".receipt.json")
+    ]
+    assert len(outputs) == 15
+    assert {receipt["mapping"]["registryId"] for receipt in receipts} == {
+        "comfy_alias:comfy-core/CLIPLoader",
+        "comfy_alias:comfy-core/MiniMaxH3AddGuide",
+        "comfy_alias:comfy-core/MiniMaxH3ImageToVideo",
+        "comfy_alias:comfy-core/MiniMaxH3ReferenceToVideo",
+        "comfy_alias:comfy-core/ResolutionSelector",
+    }
+    assert all(receipt["pass"] is True for receipt in receipts)
+
+
+def test_seedvr2_receipt_materializes_native_conditioning_carriers() -> None:
+    from dinkster_inference_torch import SeedVR2Conditioning, seedvr2_conditioning_to_carrier
+
+    embeddings = generator.torch.arange(34, dtype=generator.torch.float32).reshape(1, 17, 2, 1, 1)
+    conditioning = SeedVR2Conditioning(
+        embeddings,
+        None,
+        branch="negative",
+        component_identity="native:dinkster.seedvr2:test",
+    )
+
+    branch = generator._seedvr2_native_branch(  # pyright: ignore[reportPrivateUsage]
+        seedvr2_conditioning_to_carrier(conditioning)
+    )
+
+    assert branch == {
+        "branch": "negative",
+        "condition": generator._array_value(embeddings),  # pyright: ignore[reportPrivateUsage]
+    }
+
+
 def test_controlnet_loader_trace_registry_supports_builtin_assembly_construction() -> None:
     source_calls: list[dict[str, object]] = []
 

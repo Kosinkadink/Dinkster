@@ -54,15 +54,15 @@
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-inference/src/dinkster_inference/catalog.py",
-      "line": 1298,
-      "column": 19,
+      "line": 1328,
+      "column": 38,
       "issue": 120
     },
     {
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-inference/src/dinkster_inference/gguf.py",
-      "line": 844,
+      "line": 846,
       "column": 23,
       "issue": 120
     },
@@ -70,7 +70,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_families",
       "path": "packages/dinkster-inference/src/dinkster_inference/gguf.py",
-      "line": 986,
+      "line": 988,
       "column": 23,
       "issue": 120
     },
@@ -134,7 +134,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 2056,
+      "line": 2057,
       "column": 59,
       "issue": 120
     },
@@ -142,7 +142,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 2614,
+      "line": 2615,
       "column": 32,
       "issue": 120
     },
@@ -150,7 +150,7 @@
       "kind": "descriptorCatalog",
       "call": "builtin_sampler_snapshot",
       "path": "src/dinkster/compose.py",
-      "line": 4635,
+      "line": 4636,
       "column": 28,
       "issue": 120
     },
@@ -166,7 +166,7 @@
       "kind": "registryFactory",
       "call": "builtin_gguf_storage_registry",
       "path": "packages/dinkster-inference/src/dinkster_inference/gguf.py",
-      "line": 1236,
+      "line": 1238,
       "column": 53,
       "issue": 120
     },

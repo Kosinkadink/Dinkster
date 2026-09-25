@@ -451,8 +451,8 @@ class NativeKSampler(KSampler):
             and isinstance(active_runtime, inference.MultiStreamFamilyRuntime)
         ):
             runtime = active_runtime
-            if ordinary_overlays or ordinary_resolvers or z_image_control is not None:
-                raise TypeError("multi-stream sampling does not accept model overlays")
+            if z_image_control is not None:
+                raise TypeError("multi-stream sampling does not accept Z-Image ControlNet")
             noise_inds = _batch_index_noise_inds(latent_mapping)
             noise_kwargs = {} if noise_inds is None else {"noise_inds": noise_inds}
             runtime_sampling_shift = _runtime_sampling_shift(runtime, sampling_shift)
@@ -470,14 +470,51 @@ class NativeKSampler(KSampler):
                         denoise_mask = _move_multistream_latent(denoise_mask, handle.load_device)
                 else:
                     raise TypeError("multi-stream noise_mask must be a tensor or MultiStreamLatent")
-            prepared = _prepared_multistream_conditioning(
-                positive, inference, "positive", runtime.conditioning_identity
+            scheduled = (
+                bool(ordinary_overlays)
+                or _uses_native_scheduling(positive)
+                or _uses_native_scheduling(negative)
             )
+            schedule_state = None
+            inference_torch: Any = None
+            uncond_envelope: Any = None
+            if scheduled:
+                inference_torch = importlib.import_module("dinkster_inference_torch")
+                schedule_state = _NativeScheduleState(
+                    handle,
+                    inference,
+                    inference_torch,
+                    ordinary_overlays=ordinary_overlays,
+                    ordinary_resolvers=ordinary_resolvers,
+                )
+                try:
+                    prepared_envelope = _scheduled_carrier(
+                        positive, "positive", handle, schedule_state
+                    )
+                    prepared = cast("Any", prepared_envelope).payload
+                    uncond_envelope = (
+                        None
+                        if negative == []
+                        else _scheduled_carrier(negative, "negative", handle, schedule_state)
+                    )
+                except BaseException:
+                    schedule_state.close()
+                    raise
+            else:
+                prepared = _prepared_multistream_conditioning(
+                    positive, inference, "positive", runtime.conditioning_identity
+                )
             if prepared is None:
                 raise TypeError("positive must contain prepared multi-stream conditioning")
-            uncond = _prepared_multistream_conditioning(
-                negative, inference, "negative", runtime.conditioning_identity
-            )
+            if negative == []:
+                uncond = None
+            elif scheduled:
+                assert uncond_envelope is not None
+                uncond = uncond_envelope.payload
+            else:
+                uncond = _prepared_multistream_conditioning(
+                    negative, inference, "negative", runtime.conditioning_identity
+                )
             context = current_execution_context()
             sampler_registry, extension_ids, _ = _sampler_registry(
                 inference,
@@ -528,6 +565,7 @@ class NativeKSampler(KSampler):
                 "observer",
                 "parent_span_id",
                 "sampling_shift",
+                "scheduled",
                 *context_windows_kwargs,
             }
             with native_execution_span("sample", "sample", device=str(handle.load_device)) as span:
@@ -537,8 +575,11 @@ class NativeKSampler(KSampler):
                         extension_ids, context.cancelled if context is not None else _not_cancelled
                     ),
                     _staged_applications(applications, handle, stage_runtime=False),
+                    ExitStack() as schedule_cleanup,
                 ):
-                    with torch.inference_mode():
+                    if schedule_state is not None:
+                        schedule_cleanup.callback(schedule_state.close)
+                    with torch.no_grad() if schedule_state is not None else torch.inference_mode():
                         application_kwargs = _application_kwargs(
                             applications,
                             handle,
@@ -579,6 +620,18 @@ class NativeKSampler(KSampler):
                                 else _not_cancelled,
                                 observer=current_native_observer(),
                                 parent_span_id=parent,
+                                **(
+                                    {}
+                                    if schedule_state is None
+                                    else {
+                                        "scheduled": inference_torch.ScheduledSamplingOptions(
+                                            schedule_state.resolve,
+                                            context.cancelled
+                                            if context is not None
+                                            else _not_cancelled,
+                                        )
+                                    }
+                                ),
                                 **noise_kwargs,
                                 **context_windows_kwargs,
                                 **application_kwargs,
@@ -973,6 +1026,12 @@ class NativeVAEDecode(VAEDecode):
         if not isinstance(samples, Mapping):
             raise TypeError("samples must be a latent mapping")
         latent_obj = cast("Mapping[object, object]", samples).get("samples")
+        inference = importlib.import_module("dinkster_inference")
+        if type(latent_obj) is inference.MultiStreamLatent:
+            streams = cast("Any", latent_obj)
+            if "video" not in streams.roles:
+                raise TypeError("samples['samples'] must contain a video stream")
+            latent_obj = streams.by_role("video")
         if not isinstance(latent_obj, torch.Tensor):
             raise TypeError("samples['samples'] must be a torch.Tensor")
         latent = cast("Any", latent_obj)

@@ -4,7 +4,23 @@ import ast
 from pathlib import Path
 
 import pytest
-from dinkster_inference import EngineProperties, PreviewDecoderProperties, builtin_families
+from dinkster_inference import (
+    CHROMA,
+    CHROMA_RADIANCE,
+    FLUX2_DEV,
+    FLUX2_KLEIN_4B,
+    FLUX2_KLEIN_9B,
+    LUMINA2,
+    MINIMAX_H3,
+    Z_IMAGE,
+    EngineProperties,
+    FamilyCapability,
+    FamilyFeature,
+    FamilyFeatureHook,
+    PreviewDecoderProperties,
+    builtin_families,
+    minimax_h3_lora_key_map,
+)
 from dinkster_inference.component_catalog import default_component_registry
 from family_gate_scanner import (
     EXTERNAL_PROOF_FAMILY_IDS,
@@ -277,6 +293,13 @@ def test_registered_engine_properties_cover_shared_family_behavior() -> None:
 
     components = {descriptor.id: descriptor for descriptor in default_component_registry()}
     assert components["dinkster.minimax_h3"].family.engine.attention_backend("diffusion") == "flux"
+    assert components["dinkster.minimax_h3"].family.engine.feature_hook(
+        FamilyFeature.LORA_KEY_MAP
+    ) == FamilyFeatureHook(
+        FamilyFeature.LORA_KEY_MAP,
+        minimax_h3_lora_key_map,
+        ("diffusion",),
+    )
     assert components["dinkster.minimax_music3"].family.engine.attention_backends == (
         ("diffusion", "flux"),
         ("text", "qwen"),
@@ -296,3 +319,49 @@ def test_engine_properties_reject_invalid_attention_registration() -> None:
         EngineProperties(attention_backends=(("diffusion", "flux"), ("diffusion", "qwen")))
     with pytest.raises(ValueError, match="need at least one attention backend"):
         EngineProperties(attention_requires_route=True)
+
+
+def test_every_family_feature_hook_is_typed_and_resolved_at_catalog_load() -> None:
+    hook = FamilyFeatureHook(
+        FamilyFeature.LORA_KEY_MAP,
+        minimax_h3_lora_key_map,
+        ("custom-role",),
+    )
+
+    properties = EngineProperties(feature_hooks=(hook,))
+
+    assert properties.feature_hook(FamilyFeature.LORA_KEY_MAP) is hook
+    for family in builtin_families():
+        for registered in family.engine.feature_hooks:
+            assert type(registered.feature) is FamilyFeature
+            assert callable(registered.target)
+
+
+def test_shared_runtime_capabilities_are_typed_and_catalog_owned() -> None:
+    expected = {
+        FamilyCapability.SPLIT_TEXT_LORA: {FLUX2_DEV.id, FLUX2_KLEIN_9B.id, FLUX2_KLEIN_4B.id},
+        FamilyCapability.COMPONENT_EXECUTION_OPTIONS: {CHROMA.id, CHROMA_RADIANCE.id},
+        FamilyCapability.CONTROL_OVERLAY: {Z_IMAGE.id},
+        FamilyCapability.DIRECT_SAMPLING_SHIFT: {LUMINA2.id},
+    }
+
+    for capability, family_ids in expected.items():
+        assert {
+            family.id for family in builtin_families() if family.engine.supports(capability)
+        } == family_ids
+
+    with pytest.raises(TypeError, match="FamilyCapability enum members"):
+        EngineProperties(capabilities=frozenset({"split-text-lora"}))  # type: ignore[arg-type]
+
+
+def test_worker_residency_choices_are_catalog_owned() -> None:
+    assert MINIMAX_H3.engine.residency_route_roles == (
+        "diffusion",
+        "conditioner",
+        "video_vae",
+        "audio_vae",
+    )
+    assert MINIMAX_H3.engine.requires_accelerator_residency is True
+
+    with pytest.raises(ValueError, match="needs at least one route role"):
+        EngineProperties(requires_accelerator_residency=True)

@@ -17,6 +17,7 @@ from typing import cast
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_compat_comfy import (
+    NATIVE_NODES,
     CompatError,
     CompatTranslation,
     comfy_type_id,
@@ -2305,6 +2306,103 @@ def test_v1_mapping_result_with_none_expand_refuses_by_key_presence() -> None:
         node.execute(n=1)
 
 
+def test_translated_schema_declares_may_expand_graph_and_still_refuses() -> None:
+    """A v1 function that statically returns an "expand" dict is flagged, the
+    wire round-trips the flag as capability metadata outside the schema
+    signature, and the flagged node still refuses an expansion payload loudly
+    at runtime."""
+
+    class V1MaybeExpand:
+        RETURN_TYPES = ("INT",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"n": ("INT", {"default": 1})}}
+
+        def run(self, n):  # noqa: ANN001, ANN201
+            return {"result": (n,), "expand": {"nodes": {}}}
+
+    node = translate_node("MaybeExpand", V1MaybeExpand, CompatTranslation())
+    schema = node.schema()
+    assert schema.may_expand_graph is True
+    wire = schema_to_wire(schema)
+    assert wire["mayExpandGraph"] is True
+    assert schema_from_wire(wire) == schema
+    assert schema_signature(schema) == schema_signature(
+        dataclasses.replace(schema, may_expand_graph=False)
+    )
+    with pytest.raises(CompatError, match="requested graph expansion"):
+        node.execute(n=1)
+
+
+def test_ordinary_v1_node_does_not_claim_expansion() -> None:
+    class V1Ordinary:
+        RETURN_TYPES = ("INT",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"n": ("INT", {"default": 1})}}
+
+        def run(self, n):  # noqa: ANN001, ANN201
+            return {"result": (n,)}
+
+    schema = translate_node("Ordinary", V1Ordinary, CompatTranslation()).schema()
+    assert schema.may_expand_graph is False
+    assert "mayExpandGraph" not in schema_to_wire(schema)
+
+
+def test_delegated_expand_return_stays_unflagged_and_refuses_at_runtime() -> None:
+    """A dynamically built return is unclassifiable at translation time: the
+    schema stays unflagged and the loud runtime refusal is the boundary."""
+
+    class V1DelegatedExpand:
+        RETURN_TYPES = ("INT",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"n": ("INT", {"default": 1})}}
+
+        def run(self, n):  # noqa: ANN001, ANN201
+            payload = {"expand": {"nodes": {}}, "result": (n,)}
+            return payload
+
+    node = translate_node("DelegatedExpand", V1DelegatedExpand, CompatTranslation())
+    assert node.schema().may_expand_graph is False
+    with pytest.raises(CompatError, match="requested graph expansion"):
+        node.execute(n=1)
+
+
+def test_core_expander_enumeration_flags_the_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_compat_comfy import translate as translate_module
+
+    class V1CoreExpander:
+        RETURN_TYPES = ("INT",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"n": ("INT", {"default": 1})}}
+
+        def run(self, n):  # noqa: ANN001, ANN201
+            return (n,)
+
+    monkeypatch.setattr(translate_module, "_CORE_EXPANDER_V1_NAMES", frozenset({"CoreExpander"}))
+    schema = translate_node("CoreExpander", V1CoreExpander, CompatTranslation()).schema()
+    assert schema.may_expand_graph is True
+    assert "mayExpandGraph" in schema_to_wire(schema)
+
+
+def test_native_compat_schemas_do_not_claim_expansion() -> None:
+    for node_class in NATIVE_NODES:
+        assert node_class.schema().may_expand_graph is False
+        assert "mayExpandGraph" not in schema_to_wire(node_class.schema())
+
+
 def test_v1_scalar_execution_blocker_refuses_loudly() -> None:
     class ExecutionBlocker:
         pass
@@ -3062,6 +3160,8 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
             return {
                 "required": {
                     "switch": ("BOOLEAN", {}),
+                },
+                "optional": {
                     "on_false": (
                         "COMFY_MATCHTYPE_V3",
                         {"template": template, "lazy": True},
@@ -3070,7 +3170,7 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
                         "COMFY_MATCHTYPE_V3",
                         {"template": template, "lazy": True},
                     ),
-                }
+                },
             }
 
         @classmethod
@@ -3088,6 +3188,7 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
     schema = node_class.schema()
     assert schema.selector == SelectorSpec("switch", {"false": "on_false", "true": "on_true"})
     assert [spec.lazy for spec in schema.inputs] == [False, True, True]
+    assert [spec.required for spec in schema.inputs] == [True, False, False]
 
     registry = TypeRegistry()
     register_core_types(registry)

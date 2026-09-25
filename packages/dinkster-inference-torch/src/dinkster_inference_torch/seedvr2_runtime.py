@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import torch
 from dinkster_inference import (
+    MEBIBYTE,
     SEEDVR2,
     SEEDVR2_CODEC,
     SEEDVR2_SIGMAS,
@@ -387,7 +388,7 @@ class SeedVR2DiffusionRuntime(SingleStreamSamplingRuntime):
         else:
             raise TypeError("SeedVR2 sampling memory requires a supported compute dtype")
         batch_area = latent_shape[0] * latent_shape[2] * latent_shape[3] * latent_shape[4]
-        minimum = int(batch_area * element_size * 0.01 * 2.0 * 1024 * 1024)
+        minimum = int(batch_area * element_size * 0.01 * 2.0 * MEBIBYTE)
         return minimum * 2, minimum
 
     sample_custom = sampling_execution

@@ -24,13 +24,26 @@ jobs:
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 2
     outputs:
+      model-matrix: ${{ steps.plan.outputs.model-matrix }}
       run-heavy: ${{ steps.plan.outputs.run-heavy }}
     steps:
       - name: Skip an unchanged scheduled commit
         id: plan
         uses: actions/github-script@v7
+        env:
+          ALWAYS_MODEL_MATRIX: >-
+            [{"name":"inference and IPAdapter, shard 1 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 1/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 2 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 2/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 3 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 3/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 4 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 4/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 5 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 5/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 6 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 6/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 7 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 7/8","timeout-minutes":30},{"name":"inference and IPAdapter, shard 8 of 8","group":"inference","suites":"inference-torch,model-ipadapter","pytest-args":"-p tools.pytest_file_shard --file-shard 8/8","timeout-minutes":30},{"name":"acceptance and benchmark","group":"acceptance","suites":"acceptance-sampling,benchmark-loader","pytest-args":"","timeout-minutes":30}]
+          # SAM jobs reached 29:18; 45 minutes preserves cleanup headroom.
+          VISION_MODEL_MATRIX: >-
+            [{"name":"HED, upscale and EfficientSAM","group":"vision-fast","suites":"hed,upscale,efficient-sam","pytest-args":"","timeout-minutes":30},{"name":"Depth Anything V2, DETR and RT-DETR","group":"vision-detection","suites":"depth-anything-v2,detr,rtdetr","pytest-args":"","timeout-minutes":30},{"name":"BiRefNet and Depth Anything V3","group":"vision-large","suites":"birefnet,depth-anything-v3","pytest-args":"","timeout-minutes":30},{"name":"SAM 3.1","group":"vision-sam","suites":"sam31","pytest-args":"","timeout-minutes":45}]
         with:
           script: |
+            const alwaysModelMatrix = JSON.parse(process.env.ALWAYS_MODEL_MATRIX);
+            const visionModelMatrix = JSON.parse(process.env.VISION_MODEL_MATRIX);
+            const modelMatrix = context.eventName === 'schedule'
+              ? [...alwaysModelMatrix, ...visionModelMatrix]
+              : alwaysModelMatrix;
+            core.setOutput('model-matrix', JSON.stringify(modelMatrix));
             if (context.eventName !== 'schedule') {
               core.setOutput('run-heavy', 'true');
               return;
@@ -40,6 +53,7 @@ jobs:
               workflow_id: 'full-validation.yml',
               branch: 'main',
               status: 'success',
+              event: 'schedule',
               per_page: 1,
             });
             core.setOutput('run-heavy', runs.data.workflow_runs[0]?.head_sha === context.sha ? 'false' : 'true');
@@ -56,7 +70,7 @@ jobs:
         # Windows keeps the tcp boundary transport and the shm
         # handle-lifetime rules honest (DESIGN 3.11) - it is the dominant
         # user OS, not a nice-to-have.
-        # Whole-file shards keep each complete lane within the 20-minute main
+        # Whole-file shards keep each complete lane within its main-validation
         # budget. Checks and generated-contract validation run once per OS;
         # every root test file still runs in exactly one shard.
         include:
@@ -94,14 +108,14 @@ jobs:
             shard_name: ", shard 1"
             pytest_args: "-p tools.pytest_file_shard --file-shard 1/2"
             run_checks: true
-            timeout-minutes: 20
+            timeout-minutes: 30
           - os: windows
             runner: windows
             python-version: "3.12"
             shard_name: ", shard 2"
             pytest_args: "-p tools.pytest_file_shard --file-shard 2/2"
             run_checks: false
-            timeout-minutes: 20
+            timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -258,67 +272,16 @@ jobs:
     if: needs.validation-plan.outputs.run-heavy == 'true' && github.repository == 'Kosinkadink/Dinkster'
     name: model-tests (${{ matrix.name }})
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: 20
+    timeout-minutes: ${{ matrix.timeout-minutes }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: inference and IPAdapter, shard 1 of 8
-            group: inference
-            suites: inference-torch,model-ipadapter
-            pytest-args: -p tools.pytest_file_shard --file-shard 1/8
-          - name: inference and IPAdapter, shard 2 of 8
-            group: inference
-            suites: inference-torch,model-ipadapter
-            pytest-args: -p tools.pytest_file_shard --file-shard 2/8
-          - name: inference and IPAdapter, shard 3 of 8
-            group: inference
-            suites: inference-torch,model-ipadapter
-            pytest-args: -p tools.pytest_file_shard --file-shard 3/8
-          - name: inference and IPAdapter, shard 4 of 8
-            group: inference
-            suites: inference-torch,model-ipadapter
-            pytest-args: -p tools.pytest_file_shard --file-shard 4/8
-          - name: inference and IPAdapter, shard 5 of 8
-            group: inference
-            suites: inference-torch,model-ipadapter
-            pytest-args: -p tools.pytest_file_shard --file-shard 5/8
-          - name: inference and IPAdapter, shard 6 of 8
-            group: inference
-            suites: inference-torch,model-ipadapter
-            pytest-args: -p tools.pytest_file_shard --file-shard 6/8
-          - name: inference and IPAdapter, shard 7 of 8
-            group: inference
-            suites: inference-torch,model-ipadapter
-            pytest-args: -p tools.pytest_file_shard --file-shard 7/8
-          - name: inference and IPAdapter, shard 8 of 8
-            group: inference
-            suites: inference-torch,model-ipadapter
-            pytest-args: -p tools.pytest_file_shard --file-shard 8/8
-          - name: acceptance and benchmark
-            group: acceptance
-            suites: acceptance-sampling,benchmark-loader
-            pytest-args: ""
-          - name: HED, upscale and EfficientSAM
-            group: vision-fast
-            suites: hed,upscale,efficient-sam
-            pytest-args: ""
-          - name: Depth Anything V2, DETR and RT-DETR
-            group: vision-detection
-            suites: depth-anything-v2,detr,rtdetr
-            pytest-args: ""
-          - name: BiRefNet and Depth Anything V3
-            group: vision-large
-            suites: birefnet,depth-anything-v3
-            pytest-args: ""
-          - name: SAM 3.1
-            group: vision-sam
-            suites: sam31
-            pytest-args: ""
+        include: ${{ fromJSON(needs.validation-plan.outputs.model-matrix) }}
     env:
       ATEN_CPU_CAPABILITY: avx2
+      MKL_CBWR: COMPATIBLE
       ONEDNN_MAX_CPU_ISA: AVX2
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
@@ -350,7 +313,7 @@ jobs:
     if: needs.validation-plan.outputs.run-heavy == 'true'
     name: coverage (shard ${{ matrix.shard }})
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

@@ -14,6 +14,9 @@
 - Pinned core video nodes `LoadVideo`, `Video Slice`, `CreateVideo`,
   `GetVideoComponents`, `SaveVideo`, and `SaveWEBM`, including guarded saved
   output import as execution artifacts
+- Official MiniMax H3 image-to-video and reference-to-video source nodes, plus
+  Resolution Selector, lower to native nodes from workflows pinned to ComfyUI
+  `b5cc8830279eae909a59de030af1e50761c36751`.
 - Native aliases for those video nodes plus `VideoTrim` and `VideoCrop`,
   including flat and nested saver selections, numeric depth choices, and
   lossless VIDEO_EDIT widget values. The pinned template corpus replays all
@@ -43,3 +46,12 @@
   is not supported, and other checkpoint families are refused.
 - Not supported: V3-only (`comfy_entrypoint`) packs, pack HTTP routes/web
   assets, executor hooks - these are diagnosed, not emulated
+- Compat-translated node schemas declare `mayExpandGraph` on the schema wire
+  where expansion is provable at translation time (V3 `enable_expand`, v1
+  functions that literally return an "expand" dict, and the enumerated core
+  expander list pinned to a ComfyUI revision), so importers can refuse
+  unsupported runtime graph expansion before import
+  (`import.loop.runtimeExpansionUnsupported` on a Generic Loop containing a
+  flagged node). Dynamically built or delegated v1 returns are unclassifiable
+  and stay unflagged; executing one that expands still refuses loudly. See
+  the conversion-limits table in `docs/compat-porting-recipes.md`.

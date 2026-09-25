@@ -64,6 +64,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, cast, runtime_checkable
 
 import torch
+from dinkster_inference import MEBIBYTE
 from dinkster_inference.patches import PatchEntry, PatchSet
 
 from . import pinned_host
@@ -283,7 +284,7 @@ def _discard_cuda_async_error(device: torch.device) -> None:
         pass
 
 
-_CUDA_STAGING_SLOT_BYTES = (96 * 1024**2, 32 * 1024**2)
+_CUDA_STAGING_SLOT_BYTES = (96 * MEBIBYTE, 32 * MEBIBYTE)
 
 
 class _CudaTransferStager:

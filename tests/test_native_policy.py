@@ -25,6 +25,8 @@ from dinkster_compat_comfy.native import (
     NATIVE_NODES,
     EmptyMiniMaxH3AV,
     EmptyMiniMaxMusic3LatentAudio,
+    MiniMaxH3ImageToVideo,
+    MiniMaxH3ReferenceToVideo,
 )
 from dinkster_compat_comfy.native_arm import NATIVE_ARM_NODES, NATIVE_SCHEDULING_NODES
 from dinkster_engine import ExecutionSelection
@@ -99,6 +101,8 @@ NATIVE_DISPATCH_SCHEMAS = {
         *(node.schema() for node in NATIVE_SCHEDULING_NODES),
         EmptyMiniMaxH3AV.schema(),
         EmptyMiniMaxMusic3LatentAudio.schema(),
+        MiniMaxH3ImageToVideo.schema(),
+        MiniMaxH3ReferenceToVideo.schema(),
     )
 }
 
@@ -3046,7 +3050,7 @@ def test_schema_dispatch_affinity_routes_without_a_policy_id_list() -> None:
 
 
 def test_native_dispatch_schema_inventory_and_current_wire_compatibility() -> None:
-    assert len(NATIVE_DISPATCH_SCHEMAS) == 8
+    assert len(NATIVE_DISPATCH_SCHEMAS) == 10
     assert all(schema.dispatch_affinity == "native" for schema in NATIVE_DISPATCH_SCHEMAS.values())
     catalog_schemas = {
         schema.node_type: schema

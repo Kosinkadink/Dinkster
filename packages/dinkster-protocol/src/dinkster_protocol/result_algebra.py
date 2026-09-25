@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
-from dinkster_values import Value
+from dinkster_values import MEBIBYTE, Value
 
 from . import ErrorHint, NodeError
 
@@ -19,7 +19,7 @@ RESULT_ALGEBRA_VERSION = 1
 RESULT_ALGEBRA_MAX_COUNT = 4096
 RESULT_ALGEBRA_MAX_LITERAL_DEPTH = 32
 RESULT_ALGEBRA_MAX_LITERAL_ITEMS = 16384
-RESULT_ALGEBRA_MAX_DOCUMENT_BYTES = 1024 * 1024
+RESULT_ALGEBRA_MAX_DOCUMENT_BYTES = MEBIBYTE
 RESULT_ALGEBRA_MAX_NESTING = 64
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")

@@ -2400,7 +2400,10 @@ def _require_custom_sampling_runtime(
         ) = _native_model(model, "model")
         inference = importlib.import_module("dinkster_inference")
         runtime = handle.runtime
-        if handle.recipe.family_id in (inference.CHROMA.id, inference.CHROMA_RADIANCE.id):
+        family = _active_inference_registries().families.get(handle.recipe.family_id)
+        if family is not None and family.engine.supports(
+            inference.FamilyCapability.COMPONENT_EXECUTION_OPTIONS
+        ):
             if (
                 overlays
                 or resolvers
@@ -2429,7 +2432,8 @@ def _require_custom_sampling_runtime(
             )
         if (
             control is not None
-            and handle.recipe.family_id == inference.Z_IMAGE_CONFIG.family_id
+            and family is not None
+            and family.engine.supports(inference.FamilyCapability.CONTROL_OVERLAY)
             and sampling_shift is None
             and not overlays
             and not resolvers
@@ -2473,7 +2477,9 @@ def _require_custom_sampling_runtime(
         runtime = handle.runtime
         if sampling_shift is None:
             raise ValueError(f"{node_name} does not accept a model overlay")
-        if handle.recipe.family_id == inference.LUMINA2_CONFIG.family_id:
+        if family is not None and family.engine.supports(
+            inference.FamilyCapability.DIRECT_SAMPLING_SHIFT
+        ):
             model = handle
         elif not isinstance(
             runtime, inference.CustomSamplingRuntime
@@ -2481,10 +2487,11 @@ def _require_custom_sampling_runtime(
             raise TypeError("ModelSamplingSD3 requires a flow custom-sampling runtime")
         else:
             return _ShiftedCustomSamplingRuntime(sampling_shift, runtime), None, handle.load_device
-    handle = _require_provider_runtime(model, "model")
     inference = importlib.import_module("dinkster_inference")
+    handle = _native_handle(model, "model")
     runtime = _minimax_h3_schedule_runtime(handle, inference)
     if runtime is None:
+        handle = _require_provider_runtime(model, "model")
         runtime = handle.runtime
     if not isinstance(runtime, inference.CustomSamplingRuntime):
         raise TypeError(f"model family {runtime.family.id!r} does not support custom sampling")

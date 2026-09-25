@@ -11,6 +11,7 @@ from typing import BinaryIO, Protocol, cast
 
 import torch
 from dinkster_inference import (
+    MEBIBYTE,
     AttentionPolicy,
     AttentionRouteToken,
     Conditioning,
@@ -44,7 +45,7 @@ from .quant_linear import Fp8Linear, Int8Linear, Nvfp4Linear
 from .text_recipes import LoadedTextRecipe
 
 ATTENTION_MASK_METADATA = "dinkster.newbie/attention_mask"
-TOKENIZER_BYTE_CAP = 8 * 1024 * 1024
+TOKENIZER_BYTE_CAP = 8 * MEBIBYTE
 
 
 class _SentencePiece(Protocol):

@@ -30,7 +30,7 @@ from dinkster.comfy_compose import comfy_compat_specs
 from dinkster.compat_api import add_comfy_compat_routes
 from dinkster.compose import CompositionError
 from tests.test_compat_prompt import LatentSink
-from tools.gen_native_comfy_manifests import native_manifest
+from tools.gen_native_comfy_manifests import manifest_with_declared_arms, native_manifest
 
 
 def test_snapshot_round_trips_and_records_provenance() -> None:
@@ -38,12 +38,17 @@ def test_snapshot_round_trips_and_records_provenance() -> None:
     assert snapshot["sourceRepository"] == "https://github.com/Comfy-Org/ComfyUI"
     assert snapshot["sourceCommit"] == "15eb748b3ec5f8a0a2d470b7fb280e2d7579f916"
     assert snapshot["schemaWireVersion"] == SCHEMA_WIRE_VERSION
-    assert len(snapshot["schemas"]) == 641
+    assert len(snapshot["schemas"]) == 642
     for name, wire in snapshot["schemas"].items():
         assert name == wire["nodeType"]
         assert schema_to_wire(schema_from_wire(wire)) == wire
     assert "comfy.KSampler" in snapshot["schemas"]
     assert "comfy.CLIPTextEncode" in snapshot["schemas"]
+    assert snapshot["schemas"]["comfy.ComfySwitchNode"]["selector"] == {
+        "input": "switch",
+        "branches": {"false": "on_false", "true": "on_true"},
+    }
+    assert "ComfySwitchNode" not in snapshot["skipped"]
 
 
 def test_native_entry_does_not_import_comfyui(tmp_path: Path) -> None:
@@ -237,7 +242,11 @@ def test_native_entry_registers_every_schema_value_type() -> None:
 
 @pytest.mark.parametrize("native_only", [True, False])
 def test_native_manifest_catalogs_match_provider_claims(tmp_path: Path, native_only: bool) -> None:
-    from dinkster_native.native_arm import GENERATION_PROVIDER_NODES, NATIVE_ARM_NODES
+    from dinkster_native.native_arm import (
+        GENERATION_PROVIDER_NODES,
+        NATIVE_ARM_NODES,
+        NATIVE_ARM_TYPE_IDS,
+    )
     from dinkster_native.native_catalog import COMFY_RUNTIME_NODE_IDS
     from dinkster_native.usdu import USDU_CARRIER_NODES
     from dinkster_nodes_generation import GENERATION_SCHEMA_NODES
@@ -245,6 +254,20 @@ def test_native_manifest_catalogs_match_provider_claims(tmp_path: Path, native_o
     generation, provider = comfy_compat_specs(None if native_only else tmp_path)
     owner_manifest = load_manifest(generation.manifest)
     provider_manifest = load_manifest(provider.manifest)
+    assert provider.packs is not None
+    aliases = provider.packs["comfy"].comfy_aliases
+    assert aliases is not None
+    assert {
+        record.source.node_class
+        for record in aliases.records
+        if record.source.revision == "b5cc8830279eae909a59de030af1e50761c36751"
+    } == {
+        "CLIPLoader",
+        "MiniMaxH3ImageToVideo",
+        "MiniMaxH3ReferenceToVideo",
+        "MiniMaxH3AddGuide",
+        "ResolutionSelector",
+    }
     excluded = COMFY_RUNTIME_NODE_IDS if native_only else frozenset()
     owner_types = {node.schema().node_type for node in GENERATION_SCHEMA_NODES}
     assert set(generation.optional_execution) == excluded
@@ -261,6 +284,7 @@ def test_native_manifest_catalogs_match_provider_claims(tmp_path: Path, native_o
         for node in NATIVE_ARM_NODES
         if node.schema().node_type not in excluded
     )
+    assert NATIVE_ARM_TYPE_IDS == tuple(node.schema().node_type for node in NATIVE_ARM_NODES)
     if not native_only:
         assert COMFY_RUNTIME_NODE_IDS <= set(provider_manifest.executes)
     path = Path(provider.manifest)
@@ -270,6 +294,25 @@ def test_native_manifest_catalogs_match_provider_claims(tmp_path: Path, native_o
         assert path.read_text() == native_manifest(compat_manifest.read_text())
     assert Path(generation.manifest).name == "dinkster-pack.toml"
     assert owner_manifest.nodes_entry == "dinkster_nodes_generation:GENERATION_SCHEMA_NODES"
+
+
+def test_arm_declaration_drives_registry_and_both_manifests() -> None:
+    from dinkster_native.native_arm import NATIVE_ARM_NODES, NATIVE_ARM_TYPE_IDS
+    from dinkster_native.native_catalog import COMFY_RUNTIME_NODE_IDS
+
+    compat_path = Path(__file__).parents[1] / "packages/dinkster-compat-comfy/dinkster-pack.toml"
+    native_path = Path(__file__).parents[1] / "packages/dinkster-native/dinkster-pack.toml"
+    compat_source = compat_path.read_text(encoding="utf-8")
+    compat = load_manifest(compat_path)
+    native = load_manifest(native_path)
+
+    assert tuple(node.schema().node_type for node in NATIVE_ARM_NODES) == NATIVE_ARM_TYPE_IDS
+    assert dict(compat.arms)["native"] == NATIVE_ARM_TYPE_IDS
+    assert dict(native.arms)["native"] == tuple(
+        type_id for type_id in NATIVE_ARM_TYPE_IDS if type_id not in COMFY_RUNTIME_NODE_IDS
+    )
+    assert compat_source == manifest_with_declared_arms(compat_source)
+    assert native_path.read_text(encoding="utf-8") == native_manifest(compat_source)
 
 
 def test_standalone_specs_preserve_native_worker_configuration(tmp_path: Path) -> None:

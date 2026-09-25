@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from dinkster_inference import BUILTIN_FAMILIES_BY_ID
 from dinkster_protocol import attention_route_token_from_wire
 from dinkster_workers.backend_env import validate_benchmark_report
 
@@ -226,8 +227,18 @@ def comparability_problems(
         if not isinstance(accelerator, str):
             problems.append(f"{label} accelerator is missing")
             continue
+        family_id = report.get("family_id")
+        registered = BUILTIN_FAMILIES_BY_ID.get(family_id) if isinstance(family_id, str) else None
+        engine = None if registered is None else registered.engine
         try:
-            incomplete = validate_benchmark_report(report, accelerator=accelerator)
+            incomplete = validate_benchmark_report(
+                report,
+                accelerator=accelerator,
+                residency_route_roles=() if engine is None else engine.residency_route_roles,
+                requires_accelerator_residency=(
+                    False if engine is None else engine.requires_accelerator_residency
+                ),
+            )
         except ValueError as error:
             problems.append(f"{label} report validation failed: {error}")
         else:

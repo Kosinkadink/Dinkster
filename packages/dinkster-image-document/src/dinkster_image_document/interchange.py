@@ -13,6 +13,7 @@ from xml.etree import ElementTree as ET
 
 import numpy as np
 from dinkster_assets import AssetVault, digest_bytes
+from dinkster_values import GIBIBYTE, MEBIBYTE
 from PIL import Image
 
 from .document import (
@@ -25,7 +26,7 @@ from .document import (
 )
 from .format import BLEND_MODES, InvalidDocument, canonical_json, ordered_layer_ids
 
-MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
+MAX_ARCHIVE_BYTES = GIBIBYTE
 
 
 def _ora_blend(mode: str) -> str:
@@ -386,7 +387,7 @@ def import_ora(data: bytes) -> ImageDocument:
                         writer.commit()
             return document
         xml = archive.read("stack.xml")
-        if len(xml) > 4 * 1024 * 1024 or b"<!ENTITY" in xml or b"<!DOCTYPE" in xml:
+        if len(xml) > 4 * MEBIBYTE or b"<!ENTITY" in xml or b"<!DOCTYPE" in xml:
             raise InvalidDocument("unsafe OpenRaster XML")
         root = ET.fromstring(xml)
         document = empty_document(int(root.attrib["w"]), int(root.attrib["h"]))

@@ -31,8 +31,9 @@ from collections.abc import Collection
 from pathlib import Path
 
 from dinkster_assets import digest_bytes, digest_file, require_digest
+from dinkster_values import GIBIBYTE
 
-DEFAULT_VALUE_STORE_BYTES = 10 * 1024**3
+DEFAULT_VALUE_STORE_BYTES = 10 * GIBIBYTE
 
 
 class CASError(Exception):

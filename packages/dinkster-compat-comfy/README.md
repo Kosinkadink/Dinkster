@@ -55,7 +55,7 @@ be configured without any ComfyUI directory.
 
 The bundled `core_schemas.json` records ComfyUI commit
 `15eb748b3ec5f8a0a2d470b7fb280e2d7579f916`, the fresh master comparison pin.
-It contains 641 translated core schemas and four explicit translation skips;
+It contains 642 translated core schemas and three explicit translation skips;
 custom packs and partner API nodes are excluded. Regenerate from the repository
 root with Python 3.12 on Linux, without a GPU:
 

@@ -60,7 +60,9 @@ _FRAME_PER_TOKEN = MINIMAX_H3_VIDEO_TEMPORAL_MAPPING.content_frames_per_latent
 _FRAME_RESCALE = MINIMAX_H3_VIDEO_TEMPORAL_MAPPING.timeline_position(1)
 _VISUAL_CONDITION_TIMESTEP = 0.999
 _AUDIO_CONDITION_TIMESTEP = 1.0
-_TIME_EMBED_DIM = 2688
+_MLP_TIME_EMBED_DIM = 2688
+_CURVE_TABLE_ROWS = 1025
+_CURVE_TIME_EMBED_DIM = 8
 
 _ModulationRow = int | torch.Tensor
 _ModulationSegment = tuple[int, int, _ModulationRow]
@@ -612,7 +614,7 @@ class _MiniMaxH3TimeEmbedder(torch.nn.Module):
     def __init__(self, hidden_width: int, *, operations: Operations) -> None:
         super().__init__()
         self.proj_in = operations.linear(256, hidden_width)
-        self.proj_out = operations.linear(hidden_width, _TIME_EMBED_DIM)
+        self.proj_out = operations.linear(hidden_width, _MLP_TIME_EMBED_DIM)
 
     def forward(self, time: torch.Tensor) -> torch.Tensor:
         half = 128
@@ -802,6 +804,7 @@ class _MiniMaxH3Block(torch.nn.Module):
         operations: Operations,
         fp32_operations: Operations,
         rotary_dim: int,
+        time_dim: int,
         apply_silu: bool,
     ) -> None:
         super().__init__()
@@ -816,7 +819,7 @@ class _MiniMaxH3Block(torch.nn.Module):
         self.attn = MiniMaxH3Attention(geometry, attention_kernel, evidence, operations=operations)
         self.mlp = _MiniMaxH3MLP(config.hidden_width, config.ffn_width, operations=operations)
         self.adaln_proj = _MiniMaxH3AdaLN(
-            _TIME_EMBED_DIM,
+            time_dim,
             config.hidden_width,
             6,
             3,
@@ -853,6 +856,7 @@ class _MiniMaxH3FinalLayer(torch.nn.Module):
         self,
         config: MiniMaxH3Config,
         *,
+        time_dim: int,
         apply_silu: bool,
         operations: Operations,
         fp32_operations: Operations,
@@ -861,7 +865,7 @@ class _MiniMaxH3FinalLayer(torch.nn.Module):
         patch_width = config.video_latent_channels * math.prod(config.patch)
         self.norm = operations.rms_norm(config.hidden_width, eps=1e-5)
         self.adaln_proj = _MiniMaxH3AdaLN(
-            _TIME_EMBED_DIM,
+            time_dim,
             config.hidden_width,
             2,
             1,
@@ -914,14 +918,7 @@ class _MiniMaxH3FinalLayer(torch.nn.Module):
             sigma_next = sampler_sigmas[min(index + 1, len(sampler_sigmas) - 1)]
             start, stop = (
                 round(
-                    (
-                        1.0
-                        - sigma
-                        / (
-                            schedule_shifts[0]
-                            + sigma * (1.0 - schedule_shifts[0])
-                        )
-                    )
+                    (1.0 - sigma / (schedule_shifts[0] + sigma * (1.0 - schedule_shifts[0])))
                     * video_heads
                 )
                 for sigma in (video_sigma, sigma_next)
@@ -1052,7 +1049,9 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         )
         self.condition_proj = text_operations.linear(config.text_width, config.hidden_width)
         if time_embedding_kind == "curve":
-            self.register_buffer("adaln_t_table", torch.empty(1000, _TIME_EMBED_DIM))
+            self.register_buffer(
+                "adaln_t_table", torch.empty(_CURVE_TABLE_ROWS, _CURVE_TIME_EMBED_DIM)
+            )
         else:
             self.time_embedder = _MiniMaxH3TimeEmbedder(
                 config.hidden_width, operations=fp32_operations
@@ -1066,6 +1065,9 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
             rotary_dim=rotary_dim,
         )
         adaln_operations = fp32_operations if time_embedding_kind == "curve" else operations
+        adaln_input_width = (
+            _CURVE_TIME_EMBED_DIM if time_embedding_kind == "curve" else _MLP_TIME_EMBED_DIM
+        )
         self.blocks = torch.nn.ModuleList(
             _MiniMaxH3Block(
                 config,
@@ -1074,12 +1076,14 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 operations=operations,
                 fp32_operations=adaln_operations,
                 rotary_dim=rotary_dim,
+                time_dim=adaln_input_width,
                 apply_silu=time_embedding_kind == "mlp",
             )
             for _ in range(config.depth)
         )
         self.final_layer = _MiniMaxH3FinalLayer(
             config,
+            time_dim=adaln_input_width,
             apply_silu=time_embedding_kind == "mlp",
             operations=adaln_operations,
             fp32_operations=fp32_operations,

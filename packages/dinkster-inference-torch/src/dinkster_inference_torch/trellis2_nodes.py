@@ -12,6 +12,8 @@ import torch
 import torch.nn.functional as F
 from dinkster_inference import (
     PBR_CHANNELS,
+    TRELLIS2_SPARSE_DECODE_ALIGNMENT_BYTES,
+    TRELLIS2_SPARSE_DECODE_FIXED_BYTES,
     DenseVoxelGrid,
     InferenceComponentHandle,
     ResidentConditioningCarrier,
@@ -39,10 +41,8 @@ from .trellis2_runtime import (
 )
 
 _ORIGIN = (-0.5, -0.5, -0.5)
-_GIB = 1024**3
-_MIB = 1024**2
-_SPARSE_DECODE_FIXED_BYTES = 6 * _GIB
-_SPARSE_DECODE_ALIGNMENT = 256 * _MIB
+_SPARSE_DECODE_FIXED_BYTES = TRELLIS2_SPARSE_DECODE_FIXED_BYTES
+_SPARSE_DECODE_ALIGNMENT = TRELLIS2_SPARSE_DECODE_ALIGNMENT_BYTES
 _MAX_MEMORY_REQUIRED = 2**63 - 1
 
 

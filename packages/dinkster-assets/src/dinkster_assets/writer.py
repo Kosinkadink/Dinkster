@@ -32,6 +32,8 @@ import uuid
 from pathlib import Path
 from typing import BinaryIO, Protocol, cast
 
+from dinkster_values import MEBIBYTE
+
 from .identity import DIGEST_PREFIX, AssetError, new_hasher
 from .integrity import verification_record_for_publication
 from .library import append_write_record
@@ -177,7 +179,7 @@ class AssetWriter:
             hasher = new_hasher()
             size = 0
             with tmp.open("xb") as output:
-                while chunk := source.read(8 * 1024 * 1024):
+                while chunk := source.read(8 * MEBIBYTE):
                     size += len(chunk)
                     if size > limit:
                         raise AssetError("save source exceeds limit")

@@ -17,6 +17,8 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import BinaryIO, Literal, TypeAlias, cast
 
+from dinkster_values import GIBIBYTE, MEBIBYTE
+
 from .catalog import builtin_families
 from .devices import BFLOAT16, FLOAT16, FLOAT32, DType
 from .registry import Registry
@@ -28,7 +30,7 @@ _VERSION = 3
 _DEFAULT_ALIGNMENT = 32
 _MAX_HEADER_BYTES = 100_000_000
 _MAX_ITEMS = 1_000_000
-_MAX_STRING_BYTES = 1 << 30
+_MAX_STRING_BYTES = GIBIBYTE
 _MAX_ARRAY_ITEMS = 1_000_000
 _MAX_RANK = 4
 _MAX_TENSOR_NAME_BYTES = 127
@@ -372,7 +374,7 @@ class _GGUFArtifactHandle:
             return False
         self.file.seek(0)
         digest = hashlib.sha256()
-        while chunk := self.file.read(8 * 1024**2):
+        while chunk := self.file.read(8 * MEBIBYTE):
             digest.update(chunk)
         if self._current_fingerprint() != fingerprint or digest.digest() != self._file_sha256:
             return False
@@ -416,7 +418,7 @@ class _GGUFArtifactHandle:
             self.file.seek(0)
             position = 0
             range_index = 0
-            while chunk := self.file.read(8 * 1024**2):
+            while chunk := self.file.read(8 * MEBIBYTE):
                 digest.update(chunk)
                 chunk_end = position + len(chunk)
                 while (

@@ -401,6 +401,7 @@ def _golden_asset(tmp_path: Path, name: str) -> AssetRef:
 def test_realesrgan_goldens_pin_the_reference_environment() -> None:
     golden = _golden()
     assert golden["baseline"] == "a1079ba16f2674734b065eb036fbfdddaa321a4d"
+    assert golden["generationCpu"] == "AMD Ryzen 9 5950X 16-Core Processor"
     assert golden["numpy"] == "2.5.1"
     assert golden["spandrel"] == "0.4.2"
     assert golden["torch"] == "2.13.0+cpu"
@@ -433,9 +434,13 @@ def test_upscale_outputs_match_pinned_comfyui_vectors(
     expected = _decode(cast("dict[str, dict[str, object]]", golden["cases"])[name][tiling])
     assert output.shape == (1, *expected.shape)
     assert output.dtype == np.float32
-    np.testing.assert_array_equal(
-        np.rint(output[0] * 255.0).astype(np.uint8),
-        expected,
+    # Hosted CPU kernels differed by at most one uint8 level; two levels apply
+    # the 2x spread rule, with a 1e-05 relative floor on pre-quantization floats.
+    np.testing.assert_allclose(
+        output[0],
+        expected.astype(np.float32) / 255,
+        rtol=1e-5,
+        atol=2 / 255,
     )
 
 

@@ -43,6 +43,7 @@ from dinkster_inference import (
     NoiseKind,
     PerpNegSamplingGuidance,
     PreparedMultiStreamConditioning,
+    RealizedSamplingTimeline,
     Registry,
     SamplerDescriptor,
     SamplingDescriptor,
@@ -58,6 +59,7 @@ from dinkster_inference import (
     cfg_needs_uncond,
     execution_span,
     offset_first_sigma_for_snr,
+    realize_sampling_timeline,
     sampling_environment_cancellation,
     sampling_environment_extension_ids,
     sampling_execution_context,
@@ -66,6 +68,7 @@ from dinkster_inference import (
 )
 
 from .brownian import BrownianTreeNoise
+from .context_windows import PackedContextWindows, windowed_conditioning_evaluation
 from .denoise import (
     PackedInpaintConfiguration,
     latent_process_out,
@@ -513,6 +516,9 @@ class SamplingExecutionInputs:
     cfg: SamplingGuidance[Any] | DualSamplingGuidance[Any] | PerpNegSamplingGuidance[Any] | None
     denoise_mask: torch.Tensor | None
     latent_context: object | None = None
+    conditioning_payloads: Mapping[int, tuple[object, ...]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 @dataclass(frozen=True)
@@ -534,6 +540,16 @@ class SamplingAdapterContext:
     cancelled: Callable[[], bool] = lambda: False
     observer: object | None = None
     parent_span_id: int | None = None
+    attention_binding: object | None = None
+    conditioning_realization: SamplingConditioningRealization | None = None
+
+
+@dataclass(frozen=True)
+class SamplingConditioningRealization:
+    conditional: tuple[object, ...]
+    unconditional: tuple[object, ...]
+    patch_sets: Mapping[str, object]
+    timeline: RealizedSamplingTimeline | None
 
 
 class SamplingLatentAdapter(Protocol):
@@ -689,10 +705,45 @@ class CustomSamplingCapabilities:
     supports_inpaint: Callable[[object], bool] = lambda runtime: bool(
         getattr(runtime, "supports_inpaint", False)
     )
-    supports_context_windows: Callable[[object], bool] = lambda runtime: bool(
-        getattr(runtime, "supports_context_windows", False)
-    )
+    supports_context_windows: Callable[[object], bool] = lambda _runtime: True
     restrictions: tuple[CustomSamplingRestriction, ...] = ()
+
+
+@dataclass(frozen=True)
+class SamplingPipelineHooks:
+    """Family data and shape adapters consumed by the shared pipeline."""
+
+    prepare_mask: (
+        Callable[
+            [
+                object,
+                SamplingExecutionInputs,
+                CustomSamplingLatentValue | None,
+                SamplingAdapterContext,
+            ],
+            SamplingExecutionInputs,
+        ]
+        | None
+    ) = None
+    bind_attention: Callable[[object, SamplingAdapterContext], object | None] | None = None
+    packed_context_windows: (
+        Callable[[object, SamplingExecutionInputs], PackedContextWindows] | None
+    ) = None
+    encode_conditioning: Callable[[object, str], ConditioningCarrier] | None = None
+    materialize_conditioning: (
+        Callable[
+            [
+                object,
+                ConditioningCarrier,
+                tuple[object, ...],
+                SamplingExecutionInputs,
+                torch.device,
+                Callable[[], bool],
+            ],
+            tuple[object, ...],
+        ]
+        | None
+    ) = None
 
 
 @dataclass(frozen=True)
@@ -713,6 +764,7 @@ class SamplingExecutionRegistration:
     ) = None
     context_windows_option: str | None = None
     capabilities: CustomSamplingCapabilities = CustomSamplingCapabilities()
+    pipeline: SamplingPipelineHooks = SamplingPipelineHooks()
     forbidden_options: frozenset[str] = frozenset()
     forbidden_options_message: str = "sampling option is not supported"
 
@@ -756,6 +808,10 @@ class SamplingExecutionRuntime(Protocol):
         cfg: CustomSamplingCfgValue,
         executor: GuidanceExecutor | None,
     ) -> DistributedGuidanceAdmission | None: ...
+
+
+def _is_single_stream_conditioning(value: object) -> bool:
+    return hasattr(value, "embeddings") and hasattr(value, "pooled")
 
 
 @overload
@@ -827,19 +883,19 @@ def narrow_single_stream_custom_sampling(
     returned values carry the narrowed types.
     Perp-neg guidance refuses unless the family opts in with
     ``admit_perp_neg``."""
-    if type(latent) in (MultiStreamLatent, SparseLatent):
+    if not isinstance(latent, torch.Tensor):
         raise error(f"family {family_id} custom sampling requires a single-stream tensor latent")
-    if type(noise) in (MultiStreamLatent, SparseLatent):
+    if not isinstance(noise, torch.Tensor):
         raise error(f"family {family_id} custom sampling requires single-stream tensor noise")
-    if type(cond) is PreparedMultiStreamConditioning:
+    if not _is_single_stream_conditioning(cond):
         raise error(
             f"family {family_id} custom sampling requires Conditioning,"
             " not a prepared multi-stream payload"
         )
-    if type(cond) is ConditioningCarrier:
-        raise error(f"family {family_id} custom sampling does not accept a ConditioningCarrier")
     if isinstance(cfg, DualSamplingGuidance):
-        if not isinstance(cfg.uncond, Conditioning) or not isinstance(cfg.middle, Conditioning):
+        if not _is_single_stream_conditioning(cfg.uncond) or not _is_single_stream_conditioning(
+            cfg.middle
+        ):
             raise error(
                 f"family {family_id} custom sampling guidance requires a Conditioning payload"
             )
@@ -849,20 +905,26 @@ def narrow_single_stream_custom_sampling(
                 f"family {family_id} does not support PerpNegSamplingGuidance"
                 " (perp-neg guidance); pass SamplingGuidance"
             )
-        if not isinstance(cfg.uncond, Conditioning) or not isinstance(cfg.empty, Conditioning):
+        if not _is_single_stream_conditioning(cfg.uncond) or not _is_single_stream_conditioning(
+            cfg.empty
+        ):
             raise error(
                 f"family {family_id} custom sampling guidance requires a Conditioning payload"
             )
-    elif cfg is not None and cfg.uncond is not None and not isinstance(cfg.uncond, Conditioning):
+    elif (
+        cfg is not None
+        and cfg.uncond is not None
+        and not _is_single_stream_conditioning(cfg.uncond)
+    ):
         raise error(f"family {family_id} custom sampling guidance requires a Conditioning payload")
-    if type(denoise_mask) in (MultiStreamLatent, SparseLatent):
+    if denoise_mask is not None and not isinstance(denoise_mask, torch.Tensor):
         raise error(f"family {family_id} custom sampling requires a single-stream denoise mask")
     return (
-        cast("torch.Tensor", latent),
-        cast("torch.Tensor", noise),
+        latent,
+        noise,
         cast("Conditioning[torch.Tensor]", cond),
         cast("SingleStreamCustomSamplingCfg", cfg),
-        cast("torch.Tensor | None", denoise_mask),
+        denoise_mask,
     )
 
 
@@ -936,6 +998,15 @@ def sampling_execution(
             context=adapter_context,
             error=owner.sampling_error,
         )
+        if registration.pipeline.prepare_mask is not None:
+            inputs = registration.pipeline.prepare_mask(
+                owner,
+                inputs,
+                denoise_mask,
+                adapter_context,
+            )
+    if context_windows is not None and type(context_windows) is not ContextWindowsSpec:
+        raise owner.sampling_error("context windows must be an exact ContextWindowsSpec")
     owner.check_custom_sampling(
         request,
         has_denoise_mask=inputs.denoise_mask is not None,
@@ -995,6 +1066,63 @@ def sampling_execution(
         if admitted_plan is None
         else admitted_plan
     )
+    conditioning_realization = None
+    if any(
+        type(cast("object", condition.conditioning)) is ConditioningCarrier
+        for condition in plan.conditions
+    ):
+        from .scheduled_sampling import (
+            ScheduledSamplingOptions,
+            prepare_scheduled_carriers,
+            validate_unconditional_carrier,
+        )
+
+        scheduled = options.get("scheduled")
+        if scheduled is None:
+            scheduled = ScheduledSamplingOptions()
+        elif type(scheduled) is not ScheduledSamplingOptions:
+            raise TypeError("scheduled must be an exact ScheduledSamplingOptions or None")
+        validate_unconditional_carrier(plan)
+        realized_timeline = (
+            None
+            if request.timeline is None
+            else realize_sampling_timeline(
+                request.timeline,
+                tuple(float(sigma) for sigma in schedule.sigmas),
+            )
+        )
+        conditional, unconditional, patch_sets, plan = prepare_scheduled_carriers(
+            owner,
+            inputs.latent,
+            plan,
+            resolver=scheduled.resolver,
+            device=inputs.latent.device if device is None else torch.device(device),
+            cancel=cancelled,
+            timeline=realized_timeline,
+            space=space,
+            payloads=inputs.conditioning_payloads,
+            materialize=(
+                None
+                if registration.pipeline.materialize_conditioning is None
+                else lambda carrier, record_payloads: cast(
+                    "Callable[..., tuple[object, ...]]",
+                    registration.pipeline.materialize_conditioning,
+                )(
+                    owner,
+                    carrier,
+                    record_payloads,
+                    inputs,
+                    inputs.latent.device if device is None else torch.device(device),
+                    cancelled,
+                )
+            ),
+        )
+        conditioning_realization = SamplingConditioningRealization(
+            cast("tuple[object, ...]", conditional),
+            cast("tuple[object, ...]", unconditional),
+            cast("Mapping[str, object]", patch_sets),
+            realized_timeline,
+        )
     adapter_context = replace(
         adapter_context,
         inputs=inputs,
@@ -1006,7 +1134,13 @@ def sampling_execution(
         device=device,
         compute_dtype=compute_dtype,
         cancelled=cancelled,
+        conditioning_realization=conditioning_realization,
     )
+    if registration.pipeline.bind_attention is not None:
+        adapter_context = replace(
+            adapter_context,
+            attention_binding=registration.pipeline.bind_attention(owner, adapter_context),
+        )
     denoiser_execution = registration.denoiser(owner, compute_dtype, adapter_context)
     if denoiser_execution.conditioning_payloads:
         known_lanes = {condition.id for condition in plan.conditions}
@@ -1050,6 +1184,20 @@ def sampling_execution(
             adapter.evaluate_conditioning_batch,
             evaluator_identity=resolved_evaluator_identity,
             standard_activation_memory_factor=owner.family.memory_factor,
+        )
+    if context_windows is not None:
+        if evaluation is None:
+            raise owner.sampling_error("context windows require conditioning evaluation")
+        packed_windows = (
+            None
+            if registration.pipeline.packed_context_windows is None
+            else registration.pipeline.packed_context_windows(owner, inputs)
+        )
+        evaluation = windowed_conditioning_evaluation(
+            evaluation,
+            context_windows,
+            schedule.sigmas,
+            packed_windows,
         )
     captured: list[object] = []
 
@@ -1314,11 +1462,13 @@ __all__ = [
     "CustomSamplingCondValue",
     "CustomSamplingLatentValue",
     "SamplingAdapterContext",
+    "SamplingConditioningRealization",
     "SamplingDenoiserAdapter",
     "SamplingExecutionInputs",
     "SamplingExecutionRegistration",
     "SamplingGuidancePlan",
     "SamplingLatentAdapter",
+    "SamplingPipelineHooks",
     "SamplingSchedule",
     "SingleStreamLatentAdapter",
     "SingleStreamCustomSamplingCfg",

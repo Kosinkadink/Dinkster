@@ -4,7 +4,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -48,81 +50,114 @@ VISION_SUITES = (
     "packages/dinkster-nodes-vision/tests/test_depth_anything_v3.py",
     "packages/dinkster-nodes-vision/tests/test_sam31.py",
 )
+
+
+def _bash_executable() -> str:
+    if sys.platform != "win32":
+        return "bash"
+    git = shutil.which("git")
+    if git is not None:
+        bash = Path(git).parent.parent / "bin" / "bash.exe"
+        if bash.is_file():
+            return str(bash)
+    raise AssertionError("Git for Windows bash is unavailable")
+
+
 MODEL_GROUPS = (
     {
         "name": "inference and IPAdapter, shard 1 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 1/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 2 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 2/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 3 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 3/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 4 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 4/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 5 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 5/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 6 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 6/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 7 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 7/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "inference and IPAdapter, shard 8 of 8",
         "group": "inference",
         "suites": "inference-torch,model-ipadapter",
         "pytest-args": "-p tools.pytest_file_shard --file-shard 8/8",
+        "timeout-minutes": 30,
     },
     {
         "name": "acceptance and benchmark",
         "group": "acceptance",
         "suites": "acceptance-sampling,benchmark-loader",
         "pytest-args": "",
+        "timeout-minutes": 30,
     },
     {
         "name": "HED, upscale and EfficientSAM",
         "group": "vision-fast",
         "suites": "hed,upscale,efficient-sam",
         "pytest-args": "",
+        "timeout-minutes": 30,
     },
     {
         "name": "Depth Anything V2, DETR and RT-DETR",
         "group": "vision-detection",
         "suites": "depth-anything-v2,detr,rtdetr",
         "pytest-args": "",
+        "timeout-minutes": 30,
     },
     {
         "name": "BiRefNet and Depth Anything V3",
         "group": "vision-large",
         "suites": "birefnet,depth-anything-v3",
         "pytest-args": "",
+        "timeout-minutes": 30,
     },
-    {"name": "SAM 3.1", "group": "vision-sam", "suites": "sam31", "pytest-args": ""},
+    {
+        "name": "SAM 3.1",
+        "group": "vision-sam",
+        "suites": "sam31",
+        "pytest-args": "",
+        "timeout-minutes": 45,
+    },
 )
+ALWAYS_MODEL_GROUPS = MODEL_GROUPS[:9]
+VISION_MODEL_GROUPS = MODEL_GROUPS[9:]
 PR_MODEL_GROUPS = (
     {
         "name": "inference and IPAdapter, shard 1 of 8",
@@ -289,6 +324,23 @@ def test_fork_pull_requests_use_hosted_runners_and_record_private_jobs_not_run()
         }
 
 
+def test_windows_bash_resolves_from_the_git_installation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git = tmp_path / "Git" / "cmd" / "git.exe"
+    bash = tmp_path / "Git" / "bin" / "bash.exe"
+    git.parent.mkdir(parents=True)
+    bash.parent.mkdir(parents=True)
+    git.touch()
+    bash.touch()
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        shutil, "which", lambda executable: str(git) if executable == "git" else None
+    )
+
+    assert _bash_executable() == str(bash)
+
+
 @pytest.mark.parametrize(
     ("force_not_run", "secret_value_1", "secret_value_2", "expected_available", "summary"),
     [
@@ -322,7 +374,7 @@ def test_private_dependency_check_reports_each_missing_secret(
     step_summary = tmp_path / "summary"
     result = subprocess.run(
         [
-            "bash",
+            _bash_executable(),
             "-e",
             "-o",
             "pipefail",
@@ -544,7 +596,7 @@ def test_receipts_use_pinned_evidence_with_a_separate_readonly_key() -> None:
     (checkout,) = [step for step in preparation_steps if step.get("uses") == "actions/checkout@v4"]
     assert checkout["with"] == {
         "repository": "Kosinkadink/dinkster-evidence",
-        "ref": "54401048b0b5c58ceb7fb5b504eca8e52bec8343",
+        "ref": "a5949cd95ab302f73377ad5aa02a6f35565a60b9",
         "path": ".evidence-source",
         "clean": True,
         "persist-credentials": False,
@@ -674,17 +726,48 @@ def test_full_model_job_remains_on_main_validation() -> None:
     assert workflow[True]["pull_request"] is None
 
 
+@pytest.mark.parametrize(
+    ("event", "expected_groups"),
+    [
+        ("push", ALWAYS_MODEL_GROUPS),
+        ("workflow_dispatch", ALWAYS_MODEL_GROUPS),
+        ("workflow_call", ALWAYS_MODEL_GROUPS),
+        ("schedule", MODEL_GROUPS),
+    ],
+)
+def test_full_validation_selects_model_groups_for_each_trigger(
+    event: str, expected_groups: tuple[dict[str, object], ...]
+) -> None:
+    plan_step = JOBS["validation-plan"]["steps"][0]
+    always_groups = tuple(json.loads(plan_step["env"]["ALWAYS_MODEL_MATRIX"]))
+    vision_groups = tuple(json.loads(plan_step["env"]["VISION_MODEL_MATRIX"]))
+    selected = always_groups + vision_groups if event == "schedule" else always_groups
+    assert selected == expected_groups
+    assert {group["group"] for group in always_groups} == {"inference", "acceptance"}
+    assert {group["group"] for group in vision_groups} == {
+        "vision-fast",
+        "vision-detection",
+        "vision-large",
+        "vision-sam",
+    }
+
+
 def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
     job = JOBS["model-tests"]
     assert job["strategy"] == {
         "fail-fast": False,
-        "matrix": {"include": list(MODEL_GROUPS)},
+        "matrix": {"include": "${{ fromJSON(needs.validation-plan.outputs.model-matrix) }}"},
     }
-    suites = [
-        suite
-        for group in job["strategy"]["matrix"]["include"]
-        for suite in group["suites"].split(",")
-    ]
+    plan = JOBS["validation-plan"]
+    plan_step = plan["steps"][0]
+    assert json.loads(plan_step["env"]["ALWAYS_MODEL_MATRIX"]) == list(ALWAYS_MODEL_GROUPS)
+    assert json.loads(plan_step["env"]["VISION_MODEL_MATRIX"]) == list(VISION_MODEL_GROUPS)
+    script = plan_step["with"]["script"]
+    assert "context.eventName === 'schedule'" in script
+    assert "? [...alwaysModelMatrix, ...visionModelMatrix]" in script
+    assert ": alwaysModelMatrix" in script
+    assert "core.setOutput('model-matrix', JSON.stringify(modelMatrix))" in script
+    suites = [suite for group in MODEL_GROUPS for suite in group["suites"].split(",")]
     assert set(suites) == EXPECTED_MODEL_SUITES
     assert all(
         suites.count(suite) == (8 if suite in {"inference-torch", "model-ipadapter"} else 1)
@@ -705,6 +788,7 @@ def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
     }
     assert job["env"] == {
         "ATEN_CPU_CAPABILITY": "avx2",
+        "MKL_CBWR": "COMPATIBLE",
         "ONEDNN_MAX_CPU_ISA": "AVX2",
         "OMP_NUM_THREADS": "4",
         "MKL_NUM_THREADS": "4",
@@ -789,9 +873,12 @@ def test_pr_workflow_runs_bounded_fast_and_engine_suites() -> None:
     assert "torch-cpu-suite" not in str(job)
 
 
-def test_pr_engine_suites_use_cpu_golden_shards_with_a_thirty_minute_bound() -> None:
+def test_full_model_suites_use_cpu_golden_shards_with_per_matrix_bounds() -> None:
     assert "engine-tests" not in PR_JOBS
-    assert JOBS["model-tests"]["timeout-minutes"] == 20
+    assert JOBS["model-tests"]["timeout-minutes"] == "${{ matrix.timeout-minutes }}"
+    assert [row["timeout-minutes"] for row in MODEL_GROUPS] == [30] * 12 + [45]
+    assert [row["timeout-minutes"] for row in ALWAYS_MODEL_GROUPS] == [30] * 9
+    assert [row["timeout-minutes"] for row in VISION_MODEL_GROUPS] == [30] * 3 + [45]
     assert [row["group"] for row in MODEL_GROUPS].count("inference") == 8
     assert {row["pytest-args"] for row in MODEL_GROUPS if row["group"] == "inference"} == {
         f"-p tools.pytest_file_shard --file-shard {shard}/8" for shard in range(1, 9)
@@ -891,13 +978,13 @@ def test_windows_file_shards_refresh_tracked_files_after_checkout(tmp_path: Path
     assert status.stdout == ""
 
     subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", repair_commands],
+        [_bash_executable(), "-e", "-o", "pipefail", "-c", repair_commands],
         cwd=clone,
         check=True,
     )
     assert license_file.read_bytes() == lf_bytes
     subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", repair_commands],
+        [_bash_executable(), "-e", "-o", "pipefail", "-c", repair_commands],
         cwd=clone,
         check=True,
     )
@@ -924,13 +1011,17 @@ def test_full_validation_batches_pushes_without_cancelling_active_runs() -> None
         "cancel-in-progress": False,
     }
     plan = JOBS["validation-plan"]
-    assert plan["outputs"] == {"run-heavy": "${{ steps.plan.outputs.run-heavy }}"}
+    assert plan["outputs"] == {
+        "model-matrix": "${{ steps.plan.outputs.model-matrix }}",
+        "run-heavy": "${{ steps.plan.outputs.run-heavy }}",
+    }
     script = plan["steps"][0]["with"]["script"]
     for required in (
         "context.eventName !== 'schedule'",
         "workflow_id: 'full-validation.yml'",
         "branch: 'main'",
         "status: 'success'",
+        "event: 'schedule'",
         "per_page: 1",
         "workflow_runs[0]?.head_sha === context.sha",
     ):
@@ -1047,14 +1138,15 @@ def test_full_validation_pytest_and_demo_jobs_are_timeout_bounded() -> None:
         20,
         20,
         20,
-        20,
-        20,
+        30,
+        30,
     ]
     assert JOBS["p2p-descriptor-macos"]["timeout-minutes"] == 15
     assert JOBS["p2p-artifact-smoke"]["timeout-minutes"] == 15
     assert JOBS["torch-cpu"]["timeout-minutes"] == 20
-    assert JOBS["model-tests"]["timeout-minutes"] == 20
-    assert JOBS["coverage"]["timeout-minutes"] == 20
+    assert JOBS["model-tests"]["timeout-minutes"] == "${{ matrix.timeout-minutes }}"
+    assert [row["timeout-minutes"] for row in MODEL_GROUPS] == [30] * 12 + [45]
+    assert JOBS["coverage"]["timeout-minutes"] == 30
     assert JOBS["coverage-gate"]["timeout-minutes"] == 5
     assert JOBS["translation-coverage"]["timeout-minutes"] == 15
     # A hung pytest run self-identifies the stuck test through pytest's

@@ -12,6 +12,7 @@ from typing import Any, cast
 import torch
 import torch.nn.functional as F
 from dinkster_inference import (
+    MEBIBYTE,
     Conditioning,
     ConditioningCarrier,
     ConditioningChannel,
@@ -715,7 +716,7 @@ class QwenImageRuntime(FlowSamplingRuntime):
         multiple = 1 if len(images) == 1 else 8
         references = tuple(
             self.encode_content(
-                resize_qwen_image_content(image, target_pixels=1024 * 1024, multiple=multiple)
+                resize_qwen_image_content(image, target_pixels=MEBIBYTE, multiple=multiple)
             )
             for image in images
         )
@@ -842,7 +843,7 @@ class QwenImageTextRuntime:
             dtype=torch.long,
             device=self._input_device(),
         )
-        vision_target = 384 * 384 if edit_plus else 1024 * 1024
+        vision_target = 384 * 384 if edit_plus else MEBIBYTE
         vision_inputs = tuple(
             prepare_qwen_image_vision(image, target_pixels=vision_target) for image in images
         )

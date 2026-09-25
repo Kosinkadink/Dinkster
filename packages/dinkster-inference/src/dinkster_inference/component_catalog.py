@@ -255,6 +255,9 @@ def default_component_registry() -> ComponentRegistry:
             conditioning_format="carrier",
             execution_resolver="dinkster_native.native_arm:resolve_minimax_h3_component_execution",
             native_load="dinkster_native.families.minimax_h3:load_component",
+            codec_adapter="dinkster_native.families.minimax_h3:CodecAdapter",
+            native_decode=_NATIVE_COMPONENT_DECODE,
+            native_encode=_NATIVE_COMPONENT_ENCODE,
             default_text_dtype=FLOAT16,
         ),
         _descriptor(

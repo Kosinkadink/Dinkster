@@ -6,6 +6,8 @@ import importlib
 from collections.abc import Sequence
 from typing import Protocol, cast
 
+from dinkster_inference import MEBIBYTE
+
 #: SentencePiece piece count. The transformer vocabulary is larger
 #: (262208): the trailing rows back multimodal soft tokens such as
 #: <image_soft_token> 262144, which the prompt policy maps without
@@ -13,7 +15,7 @@ from typing import Protocol, cast
 GEMMA_SENTENCEPIECE_VOCAB_SIZE = 262144
 
 LUMINA2_TOKENIZER_ATTRIBUTE = "_dinkster_lumina2_sentencepiece"
-LUMINA2_TOKENIZER_BYTE_CAP = 8 * 1024 * 1024
+LUMINA2_TOKENIZER_BYTE_CAP = 8 * MEBIBYTE
 
 
 class _SentencePieceProcessor(Protocol):

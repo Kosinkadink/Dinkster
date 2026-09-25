@@ -29,6 +29,7 @@ COMFYUI_REFERENCE_REVISIONS = frozenset(
         "c67885b1",
         "8a33128f",
         "15eb748b",
+        "b5cc8830279eae909a59de030af1e50761c36751",
         "f00bfd610cb001381603669e2cc01160ae37aaf3",
     )
 )

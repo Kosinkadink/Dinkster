@@ -13,8 +13,9 @@ generation, snapshot, and immutable PatchSet before model or staging work.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import ExitStack, nullcontext
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Protocol, cast
 
@@ -44,11 +45,13 @@ from .regional import (
     materialize_regions,
     prepare_grouped_patches,
     realize_region_schedules,
+    region_schedule_is_active,
 )
 from .regional import (
     sd_grouped_region_evaluator as sd_grouped_region_evaluator,
 )
 from .sampling_execution import SamplingGuidancePlan
+from .scaled_patches import PreparedScaledPatches, ScaledPatchError
 
 
 class ScheduledSamplingError(ValueError):
@@ -200,17 +203,28 @@ def _materialize_carrier(
     device: torch.device,
     runtime_identity: str,
     cancel: Callable[[], bool],
+    payloads: tuple[object, ...] = (),
+    materialize: (
+        Callable[[ConditioningCarrier, tuple[object, ...]], tuple[object, ...]] | None
+    ) = None,
 ) -> tuple[tuple[MaterializedRegion, ...], tuple[ScheduledPatchResolutionRequest, ...]]:
     _check_cancel(cancel)
     try:
         canonical = encode_conditioning_carrier(carrier)
-        regions = materialize_regions(
-            carrier,
-            family_id,
-            int(latent.shape[-2]),
-            int(latent.shape[-1]),
-            device,
+        regions = (
+            materialize_regions(
+                carrier,
+                family_id,
+                int(latent.shape[-2]),
+                int(latent.shape[-1]),
+                device,
+            )
+            if materialize is None
+            else materialize(carrier, payloads)
         )
+        if any(not isinstance(region, MaterializedRegion) for region in regions):
+            raise TypeError("conditioning materializer must return MaterializedRegion values")
+        regions = cast("tuple[MaterializedRegion, ...]", regions)
     except RegionalConditioningError as error:
         raise _refuse("materialization", error.code) from None
     except (TypeError, ValueError) as error:
@@ -298,6 +312,8 @@ def _resolve_patch_sets(
 class _ScheduledConditioning:
     regions: tuple[MaterializedRegion, ...]
     role: GuidanceRole
+    window_dim: int | None = None
+    window_indices: tuple[int, ...] = ()
 
 
 class ScheduledConditioningDenoiser:
@@ -328,21 +344,45 @@ class ScheduledConditioningDenoiser:
         self._compute_dtype = compute_dtype
         self._device = device
         self._cancel = cancel
-        self._prepared: PreparedGroupedPatches | None = None
+        self._prepared: dict[tuple[object, ...], PreparedGroupedPatches] = {}
+        self._window_conditions: dict[
+            tuple[int, int, tuple[int, ...], tuple[int, ...]], _ScheduledConditioning
+        ] = {}
         self._closed = False
         self.prepare_count = 0
         self.model_calls = 0
         self.staged_bytes = 0
 
-    def _owner(self, x: torch.Tensor) -> PreparedGroupedPatches:
+    def _owner(
+        self,
+        x: torch.Tensor,
+        conditional: tuple[MaterializedRegion, ...],
+        unconditional: tuple[MaterializedRegion, ...],
+    ) -> PreparedGroupedPatches:
         _check_cancel(self._cancel)
         if self._closed:
             raise _refuse("denoiser-closed")
-        if self._prepared is None:
+        regions = (*conditional, *unconditional)
+        key = (
+            id(conditional),
+            id(unconditional),
+            tuple(x.shape),
+            tuple(
+                (
+                    region.area,
+                    region.latent_shape,
+                    id(region.mask),
+                    region.patch_digest,
+                )
+                for region in regions
+            ),
+        )
+        prepared = self._prepared.get(key)
+        if prepared is None:
             try:
-                self._prepared = prepare_grouped_patches(
-                    self._conditional,
-                    self._unconditional,
+                prepared = prepare_grouped_patches(
+                    conditional,
+                    unconditional,
                     x,
                     self._family_id,
                     self._space,
@@ -354,9 +394,10 @@ class ScheduledConditioningDenoiser:
                 )
             except RegionalConditioningError as error:
                 raise _refuse("preparation", error.code) from None
+            self._prepared[key] = prepared
             self.prepare_count += 1
-            self.staged_bytes = self._prepared.staged_bytes
-        return self._prepared
+            self.staged_bytes += prepared.staged_bytes
+        return prepared
 
     @staticmethod
     def prepare_conditioning(value: object, role: GuidanceRole) -> _ScheduledConditioning:
@@ -372,6 +413,67 @@ class ScheduledConditioningDenoiser:
             conditions
         )
 
+    def window_conditioning(
+        self,
+        condition: _ScheduledConditioning,
+        dim: int,
+        indices: tuple[int, ...],
+        input_shape: Sequence[int],
+    ) -> _ScheduledConditioning:
+        if len(input_shape) != 4 or dim not in (2, 3):
+            raise _refuse("window-layout")
+        shape = tuple(input_shape)
+        key = (id(condition), dim, indices, shape)
+        cached = self._window_conditions.get(key)
+        if cached is not None:
+            return cached
+        latent_shape = (input_shape[2], input_shape[3])
+        window_shape = list(latent_shape)
+        window_shape[dim - 2] = len(indices)
+        mapped: list[MaterializedRegion] = []
+        for region in condition.regions:
+            if region.latent_shape != latent_shape:
+                raise _refuse("window-region-shape")
+            mask = region.mask
+            if mask is not None:
+                index = torch.tensor(indices, dtype=torch.long, device=mask.device)
+                mask = mask.index_select(dim - 1, index)
+            area = region.area
+            if area is None:
+                mapped.append(replace(region, mask=mask, latent_shape=tuple(window_shape)))
+                continue
+            extent = area[dim - 2]
+            offset = area[dim]
+            positions = tuple(
+                position
+                for position, source_index in enumerate(indices)
+                if offset <= source_index < offset + extent
+            )
+            if not positions:
+                continue
+            starts = [positions[0]]
+            stops: list[int] = []
+            for previous, current in zip(positions, positions[1:], strict=False):
+                if current != previous + 1:
+                    stops.append(previous + 1)
+                    starts.append(current)
+            stops.append(positions[-1] + 1)
+            for start, stop in zip(starts, stops, strict=True):
+                local_area = list(area)
+                local_area[dim - 2] = stop - start
+                local_area[dim] = start
+                mapped.append(
+                    replace(
+                        region,
+                        area=cast("tuple[int, int, int, int]", tuple(local_area)),
+                        mask=mask,
+                        latent_shape=tuple(window_shape),
+                    )
+                )
+        result = _ScheduledConditioning(tuple(mapped), condition.role)
+        self._window_conditions[key] = result
+        return result
+
     def _evaluate_lanes(
         self,
         x: torch.Tensor,
@@ -379,7 +481,7 @@ class ScheduledConditioningDenoiser:
         conditional: tuple[MaterializedRegion, ...],
         unconditional: tuple[MaterializedRegion, ...],
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        owner = self._owner(x)
+        owner = self._owner(x, conditional, unconditional)
         try:
             result = evaluate_grouped_regions(
                 conditional,
@@ -474,9 +576,132 @@ class ScheduledConditioningDenoiser:
         if self._closed:
             return
         self._closed = True
-        if self._prepared is not None:
-            self._prepared.close()
-            self._prepared = None
+        for prepared in self._prepared.values():
+            prepared.close()
+        self._prepared.clear()
+        self._window_conditions.clear()
+
+
+class FullLatentScheduledConditioningDenoiser:
+    """Shared scheduled-region evaluation for structural latent layouts."""
+
+    evaluator_identity = "dinkster.scheduled-full-latent.v1"
+
+    def __init__(
+        self,
+        *,
+        space: Any,
+        model: torch.nn.Module,
+        evaluate: Callable[[torch.Tensor, float, object, GuidanceRole], torch.Tensor],
+        project: Callable[
+            [MaterializedRegion, torch.Tensor, int | None, tuple[int, ...]],
+            tuple[object, torch.Tensor],
+        ],
+        patch_sets: Mapping[str, PatchSet[torch.Tensor]],
+        compute_dtype: torch.dtype,
+        device: torch.device,
+        cancel: Callable[[], bool],
+    ) -> None:
+        self._space = space
+        self._model = model
+        self._evaluate = evaluate
+        self._project = project
+        self._compute_dtype = compute_dtype
+        self._device = device
+        self._cancel = cancel
+        self._stack = ExitStack()
+        self._patches: dict[str, PreparedScaledPatches] = {}
+        self._closed = False
+        try:
+            for digest, patch_set in sorted(patch_sets.items()):
+                if patch_set.structural_digest != digest:
+                    raise _refuse("patch-mapping")
+                self._patches[digest] = self._stack.enter_context(
+                    PreparedScaledPatches(
+                        model,
+                        patch_set,
+                        device,
+                        compute_dtype,
+                        cancel,
+                    )
+                )
+        except ScaledPatchError as error:
+            self._stack.close()
+            raise _refuse("patch-preparation", error.code) from None
+        except BaseException:
+            self._stack.close()
+            raise
+
+    @staticmethod
+    def prepare_conditioning(value: object, role: GuidanceRole) -> _ScheduledConditioning:
+        return ScheduledConditioningDenoiser.prepare_conditioning(value, role)
+
+    @staticmethod
+    def batchable(conditions: tuple[_ScheduledConditioning, ...]) -> bool:
+        del conditions
+        return False
+
+    @staticmethod
+    def window_conditioning(
+        condition: _ScheduledConditioning,
+        dim: int,
+        indices: tuple[int, ...],
+        input_shape: Sequence[int],
+    ) -> _ScheduledConditioning:
+        del input_shape
+        return replace(condition, window_dim=dim, window_indices=indices)
+
+    evaluate_conditioning_batch = _engine_evaluate_conditioning_batch
+
+    def evaluate_conditioning(
+        self,
+        x: torch.Tensor,
+        sigma: float,
+        condition: _ScheduledConditioning,
+    ) -> torch.Tensor:
+        _check_cancel(self._cancel)
+        if self._closed:
+            raise _refuse("denoiser-closed")
+        output = torch.zeros_like(x)
+        count = torch.ones_like(x) * 1e-37
+        for region in condition.regions:
+            if not region_schedule_is_active(region, sigma, self._space):
+                continue
+            prepared, multiplier = self._project(
+                region,
+                x,
+                condition.window_dim,
+                condition.window_indices,
+            )
+            if multiplier.shape != x.shape or multiplier.device != x.device:
+                raise _refuse("layout-multiplier")
+            scale = region.scale_vector
+            if scale is None:
+                scale = torch.ones(1, dtype=torch.float32, device=x.device)
+            if scale.numel() not in (1, x.shape[0]):
+                raise _refuse("scale-batch")
+            owner = None if region.patch_digest is None else self._patches.get(region.patch_digest)
+            if region.patch_digest is not None and owner is None:
+                raise _refuse("patch-mapping")
+            try:
+                activation = nullcontext() if owner is None else owner.activate(scale)
+                with activation:
+                    _check_cancel(self._cancel)
+                    value = self._evaluate(x, sigma, prepared, condition.role)
+            except ScaledPatchError as error:
+                raise _refuse("patch-activation", error.code) from None
+            if value.shape != x.shape or value.dtype != x.dtype or value.device != x.device:
+                raise _refuse("callback-contract")
+            output.add_(value * multiplier)
+            count.add_(multiplier)
+        return output / count
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._stack.close()
+        self._patches.clear()
 
 
 def prepare_scheduled_carriers(
@@ -489,6 +714,10 @@ def prepare_scheduled_carriers(
     cancel: Callable[[], bool],
     timeline: RealizedSamplingTimeline | None,
     space: Any,
+    payloads: Mapping[int, tuple[object, ...]] = MappingProxyType({}),
+    materialize: (
+        Callable[[ConditioningCarrier, tuple[object, ...]], tuple[object, ...]] | None
+    ) = None,
 ) -> tuple[
     tuple[MaterializedRegion, ...],
     tuple[MaterializedRegion, ...],
@@ -497,14 +726,28 @@ def prepare_scheduled_carriers(
 ]:
     cond = cast("ConditioningCarrier", plan.conditions[0].conditioning)
     conditional, cond_requests = _materialize_carrier(
-        cond, runtime.family.id, latent, device, runtime.runtime_identity, cancel
+        cond,
+        runtime.family.id,
+        latent,
+        device,
+        runtime.runtime_identity,
+        cancel,
+        payloads.get(id(cond), ()),
+        materialize,
     )
     unconditional: tuple[MaterializedRegion, ...] = ()
     uncond_requests: tuple[ScheduledPatchResolutionRequest, ...] = ()
     if plan.needs_unconditional:
         uncond = cast("ConditioningCarrier", plan.conditions[1].conditioning)
         unconditional, uncond_requests = _materialize_carrier(
-            uncond, runtime.family.id, latent, device, runtime.runtime_identity, cancel
+            uncond,
+            runtime.family.id,
+            latent,
+            device,
+            runtime.runtime_identity,
+            cancel,
+            payloads.get(id(uncond), ()),
+            materialize,
         )
     if timeline is not None:
         conditional = realize_region_schedules(conditional, timeline, space)

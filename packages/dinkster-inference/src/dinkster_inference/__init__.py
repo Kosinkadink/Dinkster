@@ -5,6 +5,7 @@ schedulers and sampler descriptors, tokenization, checkpoint detection,
 quantization classification, assembly planning, and tiling geometry.
 """
 
+import dinkster_values as _values
 from dinkster_protocol import (
     ATTENTION_ROLES,
     AttentionCapabilityEvidence,
@@ -169,6 +170,7 @@ from .autoencoder_kl import (
 )
 from .catalog import (
     ANIMA,
+    BUILTIN_FAMILIES_BY_ID,
     CHROMA,
     CHROMA_RADIANCE,
     FLUX2_DEV,
@@ -481,7 +483,10 @@ from .families import (
     DetectionResult,
     EngineProperties,
     EvidenceValue,
+    FamilyCapability,
     FamilyDetector,
+    FamilyFeature,
+    FamilyFeatureHook,
     FamilyRegistry,
     ModelFamily,
     PreviewDecoderProperties,
@@ -792,6 +797,7 @@ from .lora import (
     clip_lora_key_map,
     decode_lora,
     flux_linear1_qkv_key_map,
+    minimax_h3_lora_key_map,
     native_unet_key_map,
     normalize_lora_keys,
     qwen_image_lora_key_map,
@@ -1254,6 +1260,7 @@ from .runtime import (
     NativeCapability,
     NativeRefusalCategory,
     NativeRefusalError,
+    PreparedConditioningCarrier,
     PreparedMultiStreamConditioning,
     RuntimeTensor,
     SamplingSpaceOverrideRuntime,
@@ -1843,6 +1850,13 @@ from .z_image import (
 )
 from .z_image_token_layout import ZImageTokenPlan, plan_z_image_token_layout
 
+AIMDO_VBAR_PAGE_BYTES = _values.AIMDO_VBAR_PAGE_BYTES
+GIBIBYTE = _values.GIBIBYTE
+INT8_BACKWARD_TEMP_LIMIT_BYTES = _values.INT8_BACKWARD_TEMP_LIMIT_BYTES
+MEBIBYTE = _values.MEBIBYTE
+TRELLIS2_SPARSE_DECODE_ALIGNMENT_BYTES = _values.TRELLIS2_SPARSE_DECODE_ALIGNMENT_BYTES
+TRELLIS2_SPARSE_DECODE_FIXED_BYTES = _values.TRELLIS2_SPARSE_DECODE_FIXED_BYTES
+
 __all__ = [
     "AudioPreview",
     "BUILTIN_METADATA_MERGE_TABLE",
@@ -2039,6 +2053,7 @@ __all__ = [
     "AssemblyError",
     "AttachmentDeclaration",
     "BFLOAT16",
+    "BUILTIN_FAMILIES_BY_ID",
     "BOFTSpec",
     "BOOL",
     "CLIP_BOS",
@@ -2172,6 +2187,9 @@ __all__ = [
     "EmbeddingResolver",
     "EmbeddingSlot",
     "EvidenceValue",
+    "FamilyCapability",
+    "FamilyFeature",
+    "FamilyFeatureHook",
     "ExecutionComposition",
     "ExecutionObserver",
     "ExecutionObserverAttachment",
@@ -2750,6 +2768,7 @@ __all__ = [
     "PatchValue",
     "PreparedWeightAdapter",
     "PreparedMultiStreamConditioning",
+    "PreparedConditioningCarrier",
     "PlannedTile",
     "PlainValue",
     "PlanNode",
@@ -3133,6 +3152,7 @@ __all__ = [
     "minimax_h3_dit_runtime_identity",
     "minimax_h3_dit_layout",
     "minimax_h3_conditioner_layout",
+    "minimax_h3_lora_key_map",
     "minimax_music3_dav_layout",
     "minimax_music3_diffusion_layout",
     "minimax_music3_latent_length",

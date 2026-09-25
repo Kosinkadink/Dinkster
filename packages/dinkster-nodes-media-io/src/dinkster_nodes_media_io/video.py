@@ -23,8 +23,12 @@ from dinkster_api.v1 import (
     CORE_INT,
     CORE_STRING,
     DITHERS,
+    ENCODED_MEDIA_LIMIT_BYTES,
     FRAME_FORMATS,
+    MEBIBYTE,
     SAVE_TARGET_TYPE,
+    VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES,
+    VIDEO_FRAME_WORKING_SET_LIMIT_BYTES,
     AssetError,
     AssetRef,
     AssetWidget,
@@ -67,9 +71,9 @@ FLOAT = TypeExpr.concrete(CORE_FLOAT)
 COMBO = TypeExpr.concrete(CORE_COMBO)
 SAVE_TARGET = TypeExpr.concrete(SAVE_TARGET_TYPE)
 
-MAX_DECODED_FRAME_BYTES = 512 * 1024 * 1024
-MAX_DECODED_AUDIO_BYTES = 256 * 1024 * 1024
-MAX_ENCODED_VIDEO_BYTES = 1024 * 1024 * 1024
+MAX_DECODED_FRAME_BYTES = VIDEO_FRAME_WORKING_SET_LIMIT_BYTES
+MAX_DECODED_AUDIO_BYTES = VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES
+MAX_ENCODED_VIDEO_BYTES = ENCODED_MEDIA_LIMIT_BYTES
 
 _REQUIRED_ENCODERS = ("libx264", "libvpx-vp9", "libsvtav1", "aac", "libopus")
 
@@ -645,6 +649,7 @@ class SaveVideo(Node):
         )
         return NodeSchema(
             node_type="dinkster.save_video",
+            aliases=("SaveVideo",),
             version=4,
             display_name="Save Video",
             category="video",
@@ -752,7 +757,7 @@ class SaveVideo(Node):
                 container, codec = format.split("_", 1)
             else:
                 codec = format
-        if not isinstance(metadata, str) or len(metadata.encode("utf-8")) > 1024 * 1024:
+        if not isinstance(metadata, str) or len(metadata.encode("utf-8")) > MEBIBYTE:
             raise ValueError("video metadata must be a JSON object under 1 MiB")
         tags = json.loads(metadata)
         if not isinstance(tags, dict):
@@ -874,7 +879,7 @@ class SaveVideoFrames(Node):
         quality: int = 80,
         metadata: object = "{}",
     ) -> Mapping[str, object]:
-        if not isinstance(metadata, str) or len(metadata) > 1024 * 1024:
+        if not isinstance(metadata, str) or len(metadata) > MEBIBYTE:
             raise ValueError("video metadata must be a JSON object under 1 MiB")
         tags = json.loads(metadata)
         if not isinstance(tags, dict):

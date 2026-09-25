@@ -307,9 +307,11 @@ def test_video_ops_schemas_preserve_value_and_preview_contracts() -> None:
     assert trim.node_type == "dinkster.video.trim"
     for schema in (window, rate, assemble, disassemble, trim):
         assert schema.category == "video"
-        assert schema.aliases == ()
         assert schema.output_node is False
         assert schema.outputs[0].preview is True
+    assert assemble.aliases == ("CreateVideo",)
+    for schema in (window, rate, disassemble, trim):
+        assert schema.aliases == ()
     # Assemble and disassemble exchange plain comfy.VIDEO values, not assets.
     assert assemble.outputs[0].type.kind == "concrete"
     assert assemble.outputs[0].type.types == ("comfy.VIDEO",)

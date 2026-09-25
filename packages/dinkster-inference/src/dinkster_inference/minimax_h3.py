@@ -39,7 +39,7 @@ _SHAPES: Mapping[str, tuple[int, ...]] = MappingProxyType(
     }
 )
 _TIME_EMBEDDING_SHAPES: tuple[Mapping[str, tuple[int, ...]], ...] = (
-    MappingProxyType({"adaln_t_table": (1000, 2688)}),
+    MappingProxyType({"adaln_t_table": (1025, 8)}),
     MappingProxyType(
         {
             "time_embedder.proj_in.weight": (5376, 256),

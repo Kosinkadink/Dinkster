@@ -926,8 +926,6 @@ def _apply_native_lora_stack(
         chroma_radiance_options,
     ) = _native_model(model, "model")
     inference = importlib.import_module("dinkster_inference")
-    if model_handle.recipe.family_id == inference.MINIMAX_H3_CONFIG.family_id:
-        raise ValueError("MiniMax H3 LoRAs require Load LoRA")
 
     active: list[tuple[AssetRef, float, float]] = []
     for lora, strength_model, strength_clip in loras:
@@ -935,8 +933,11 @@ def _apply_native_lora_stack(
             raise TypeError(f"lora must be an AssetRef, got {type(lora).__name__}")
         if strength_model != 0.0 or strength_clip != 0.0:
             active.append((lora, strength_model, strength_clip))
-    if model_handle.recipe.family_id in inference.FLUX2_TEXT_ROLE_BY_FAMILY and isinstance(
-        clip, NativeComponentHandle
+    family = _active_inference_registries().families.get(model_handle.recipe.family_id)
+    if (
+        family is not None
+        and family.engine.supports(inference.FamilyCapability.SPLIT_TEXT_LORA)
+        and isinstance(clip, NativeComponentHandle)
     ):
         text_handle = load_registered_component(clip, "clip")
         if text_handle.recipe is None or (

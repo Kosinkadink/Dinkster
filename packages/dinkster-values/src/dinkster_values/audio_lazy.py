@@ -11,8 +11,10 @@ from io import BytesIO
 from tempfile import SpooledTemporaryFile
 from typing import Any, BinaryIO, Protocol, cast, runtime_checkable
 
+from .limits import MEBIBYTE
+
 AUDIO_INLINE_LIMIT = 256 * 1024
-AUDIO_WINDOW_LIMIT = 32 * 1024 * 1024
+AUDIO_WINDOW_LIMIT = 32 * MEBIBYTE
 
 
 class AudioRangeError(ValueError):

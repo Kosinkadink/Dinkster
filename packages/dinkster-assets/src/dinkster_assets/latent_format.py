@@ -10,15 +10,17 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import BinaryIO, Literal, cast
 
+from dinkster_values import GIBIBYTE, MEBIBYTE
+
 from .identity import AssetError, require_digest
 
 LATENT_SUFFIX = ".latent"
 LATENT_MEDIA_TYPE = "application/x-comfy-latent"
 LATENT_ASSET_KIND = "data/latent"
 LATENT_SCHEMA_KEY = "dinkster_latent_schema"
-MAX_LATENT_HEADER_BYTES = 4 * 1024 * 1024
+MAX_LATENT_HEADER_BYTES = 4 * MEBIBYTE
 MAX_LATENT_SCHEMA_BYTES = 64 * 1024
-MAX_LATENT_DATA_BYTES = 1024 * 1024 * 1024
+MAX_LATENT_DATA_BYTES = GIBIBYTE
 MAX_LATENT_STREAMS = 64
 MAX_VAE_HINT_BYTES = 8 * 1024
 

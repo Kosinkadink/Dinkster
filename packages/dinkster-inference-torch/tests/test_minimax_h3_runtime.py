@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, cast
@@ -12,7 +14,14 @@ from dinkster_inference import (
     MINIMAX_H3_AUDIO_MASK_MAPPING,
     MINIMAX_H3_SIGMAS,
     MINIMAX_H3_VIDEO_MASK_MAPPING,
+    AdapterPatch,
+    AreaDescriptor,
+    AreaUnits,
     CancellationFlag,
+    Conditioning,
+    ConditioningChannel,
+    ConditioningRecord,
+    ConditioningSet,
     CustomSamplingRequest,
     CustomSamplingResult,
     DualSamplingGuidance,
@@ -21,7 +30,9 @@ from dinkster_inference import (
     GuidanceContractError,
     GuidanceEvaluationRequest,
     GuidancePredictions,
+    KeyedContribution,
     LatentStream,
+    MaskDescriptor,
     MiniMaxH3AudioContent,
     MiniMaxH3AudioReference,
     MiniMaxH3FL2VARequest,
@@ -34,8 +45,12 @@ from dinkster_inference import (
     MiniMaxH3VideoReference,
     MultiStreamLatent,
     Parameterization,
+    PatchEntry,
+    PatchSet,
     PayloadDescriptor,
     PayloadReference,
+    PercentRange,
+    PreparedConditioningCarrier,
     PreparedMultiStreamConditioning,
     Registry,
     SamplingCancelled,
@@ -45,11 +60,22 @@ from dinkster_inference import (
     SchedulerDescriptor,
     StepEvent,
     TimelineGuide,
+    TokenLayoutDescriptor,
+    TokenSegmentDescriptor,
+    make_conditioning_carrier,
     offset_first_sigma_for_snr,
     sampling_sigmas,
 )
+from dinkster_inference.context_windows import (
+    ContextFuseMethod,
+    ContextWindowSchedule,
+    ContextWindowsSpec,
+)
 from dinkster_inference_torch import (
+    INFERENCE_PATCH_PROVIDERS_SURFACE,
+    MASK_PAYLOAD_SPACE,
     AttentionKernel,
+    LoRAAdapter,
     MiniMaxH3AttentionKernelFactory,
     MiniMaxH3AudioVaeRuntime,
     MiniMaxH3ConditionerRuntime,
@@ -59,9 +85,11 @@ from dinkster_inference_torch import (
     MiniMaxH3VideoVaeRuntime,
     add_minimax_h3_motion_context,
     add_minimax_h3_timeline_guide,
+    basic_conditioning_to_carrier,
     empty_minimax_h3_av,
     pack_latent_streams,
     prepare_noise,
+    tensor_to_payload_binding,
     unpack_latent_streams,
 )
 from dinkster_inference_torch import sampling_execution as sampling_execution_module
@@ -77,7 +105,14 @@ from dinkster_inference_torch.distributed import DistributedSamplingConfig
 from dinkster_inference_torch.guidance import ConditioningValidationPath, GuidedDenoiser
 from dinkster_inference_torch.minimax_h3_conditioning import MiniMaxH3ConditionerInputs
 from dinkster_inference_torch.minimax_h3_dit import MiniMaxH3DiTConditioning
+from dinkster_inference_torch.patch_providers import PatchProviderSnapshot
 from dinkster_inference_torch.sampling_execution import run_ksampler_as_custom
+from dinkster_inference_torch.scheduled_sampling import (
+    ScheduledPatchResolution,
+    ScheduledPatchResolutionRequest,
+    ScheduledPatchResolver,
+    ScheduledSamplingOptions,
+)
 from dinkster_inference_torch.schedules import (
     custom_beta_sigmas,
     custom_percent_to_sigma,
@@ -1045,16 +1080,20 @@ def test_unset_distributed_mode_preserves_factory_bytes_and_every_guidance_evalu
     assert torch.equal(actual.by_role("audio"), expected.by_role("audio"))
 
 
-class ContextMeanDiT:
+class ContextMeanDiT(torch.nn.Module):
     """Velocity equals the conditioning context's mean, so the cond and
     uncond branches produce distinguishable predictions."""
 
     def __init__(self, output_dtype: torch.dtype = torch.float32) -> None:
+        super().__init__()
         self.calls: list[float] = []
+        self.conditionings: list[MiniMaxH3DiTConditioning] = []
         self.preprocessed_contexts: list[torch.Tensor] = []
         self.input_dtypes: list[torch.dtype] = []
+        self.denoise_masks: list[MultiStreamLatent[torch.Tensor] | None] = []
         self.output_dtype = output_dtype
         self.video_patch_proj = torch.nn.Linear(1, 1, bias=False)
+        self.video_patch_proj.weight.data.fill_(1.0)
 
     def preprocess_text_embeddings(self, context: torch.Tensor) -> torch.Tensor:
         self.preprocessed_contexts.append(context)
@@ -1071,8 +1110,11 @@ class ContextMeanDiT:
         sampler_sigmas: tuple[float, ...] | None = None,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
-        del sigma, conditioning, sigmas, sampler_sigmas, denoise_mask
-        velocity = float(context.mean())
+        del sigma, sigmas, sampler_sigmas
+        self.conditionings.append(conditioning)
+        self.denoise_masks.append(denoise_mask)
+        projection_input = context.mean().reshape(1, 1).to(self.video_patch_proj.weight.dtype)
+        velocity = float(self.video_patch_proj(projection_input).detach().item())
         self.calls.append(velocity)
         self.input_dtypes.append(value.by_role("video").dtype)
         return _h3(
@@ -1095,6 +1137,131 @@ def _context_mean_runtime() -> tuple[
         runtime_identity="test:h3:conditioner",
     )
     return runtime, conditioner, dit
+
+
+def _h3_prepared_carrier(
+    runtime: MiniMaxH3DiTRuntime,
+    entries: tuple[
+        tuple[
+            h3_runtime_module.MiniMaxH3PreparedConditioning,
+            PercentRange,
+            torch.Tensor | None,
+            AreaDescriptor | None,
+            tuple[tuple[str, Any], ...],
+        ],
+        ...,
+    ],
+) -> PreparedMultiStreamConditioning:
+    records: list[ConditioningRecord] = []
+    bindings = []
+    payloads: list[object] = []
+    for index, (prepared, schedule, mask, area, extension_metadata) in enumerate(entries):
+        text = tensor_to_payload_binding(
+            f"text-{index}", prepared.context, space="conditioning-text"
+        )
+        bindings.append(text)
+        mask_descriptor = None
+        if mask is not None:
+            mask_binding = tensor_to_payload_binding(
+                f"mask-{index}", mask, space=MASK_PAYLOAD_SPACE
+            )
+            bindings.append(mask_binding)
+            mask_descriptor = MaskDescriptor(PayloadReference(mask_binding.reference_id))
+        records.append(
+            ConditioningRecord(
+                channels=(
+                    (
+                        ConditioningChannel.TEXT,
+                        PayloadDescriptor(
+                            PayloadReference(text.reference_id),
+                            text.shape,
+                            text.dtype,
+                            text.space,
+                        ),
+                    ),
+                ),
+                area=area,
+                mask=mask_descriptor,
+                schedule=schedule,
+                extension_metadata=extension_metadata,
+                token_layout=TokenLayoutDescriptor(
+                    MINIMAX_H3.id,
+                    1,
+                    ("text",),
+                    (TokenSegmentDescriptor("text", "text", 0, prepared.context.shape[1]),),
+                ),
+            )
+        )
+        payloads.append(prepared)
+    carrier = make_conditioning_carrier(ConditioningSet(tuple(records)), tuple(bindings))
+    return PreparedMultiStreamConditioning(
+        runtime.conditioning_identity,
+        PreparedConditioningCarrier(carrier, tuple(payloads)),
+    )
+
+
+_H3_TEST_OVERLAY = "1" * 64
+_H3_TEST_STACK = hashlib.sha256(
+    json.dumps([_H3_TEST_OVERLAY], separators=(",", ":")).encode()
+).hexdigest()
+
+
+def _h3_patch_metadata() -> tuple[tuple[str, object], ...]:
+    effective = hashlib.sha256(
+        json.dumps(
+            {
+                "version": 1,
+                "target": MINIMAX_H3.id,
+                "text": None,
+                "diffusion": _H3_TEST_STACK,
+                "transforms": [],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    return (
+        ("dinkster.inference/version", 1),
+        ("dinkster.inference/target", MINIMAX_H3.id),
+        ("dinkster.inference/text-overlay-digests", ()),
+        ("dinkster.inference/diffusion-overlay-digests", (_H3_TEST_OVERLAY,)),
+        ("dinkster.inference/transform-ids", ()),
+        ("dinkster.inference/transform-digests", ()),
+        ("dinkster.inference/effective-patch-state", effective),
+        ("dinkster.inference/diffusion-overlay-stack-digest", _H3_TEST_STACK),
+    )
+
+
+def _h3_lora_resolver(model: ContextMeanDiT, calls: list[object]) -> ScheduledPatchResolver:
+    patch_set = PatchSet(
+        {
+            "video_patch_proj.weight": (
+                PatchEntry(AdapterPatch(LoRAAdapter(torch.ones((1, 1)), torch.ones((1, 1))))),
+            )
+        },
+        structural_digest=_H3_TEST_STACK,
+    )
+    declaration = KeyedContribution(INFERENCE_PATCH_PROVIDERS_SURFACE, "test.provider")
+    snapshot = PatchProviderSnapshot((declaration,))
+
+    def resolve(
+        requests: tuple[ScheduledPatchResolutionRequest, ...],
+        cancel: Callable[[], bool],
+    ) -> tuple[ScheduledPatchResolution, ...]:
+        calls.append((requests, cancel))
+        return tuple(
+            ScheduledPatchResolution(
+                request,
+                "worker-generation-1",
+                snapshot,
+                declaration.id,
+                declaration,
+                patch_set,
+            )
+            for request in requests
+        )
+
+    return resolve
 
 
 def test_sampling_casts_latents_to_the_diffusion_compute_dtype() -> None:
@@ -1148,6 +1315,230 @@ def test_sampling_upcasts_velocity_before_sigma_multiplication() -> None:
     torch.testing.assert_close(denoised.by_role("video"), expected, rtol=0, atol=0)
 
 
+def test_h3_prepared_carrier_uses_shared_scheduled_conditioning() -> None:
+    runtime, conditioner, dit = _context_mean_runtime()
+    target = _target()
+    prepared = _condition_t2va(conditioner, target)
+    scheduled = replace(prepared, context=torch.ones_like(prepared.context))
+    carrier = basic_conditioning_to_carrier(
+        Conditioning(scheduled.context),
+        token_layout=TokenLayoutDescriptor(
+            MINIMAX_H3.id,
+            1,
+            ("text",),
+            (TokenSegmentDescriptor("text", "text", 0, scheduled.context.shape[1]),),
+        ),
+    )
+    cond = PreparedMultiStreamConditioning(
+        runtime.conditioning_identity,
+        PreparedConditioningCarrier(carrier, (scheduled,)),
+    )
+
+    runtime.sample_custom(
+        target,
+        noise=target.map(torch.zeros_like),
+        cond=cond,
+        cfg=None,
+        request=_h3_custom_request("euler", (0.7, 0.0)),
+        compute_dtype=torch.float32,
+    )
+
+    assert dit.calls == [1.0]
+    assert dit.conditionings == [scheduled.dit]
+    assert scheduled.task is prepared.task
+    assert scheduled.frame_count == prepared.frame_count
+    assert scheduled.dit is prepared.dit
+    assert scheduled.target_layout is prepared.target_layout
+    assert scheduled.token_layout is prepared.token_layout
+
+
+def test_h3_shared_prompt_schedule_switches_at_step_boundary() -> None:
+    runtime, conditioner, dit = _context_mean_runtime()
+    target = _target()
+    prepared = _condition_t2va(conditioner, target)
+    first = replace(prepared, context=torch.ones_like(prepared.context))
+    second = replace(prepared, context=torch.full_like(prepared.context, 2.0))
+    cond = _h3_prepared_carrier(
+        runtime,
+        (
+            (first, PercentRange(0.0, 0.5), None, None, ()),
+            (second, PercentRange(0.5, 1.0), None, None, ()),
+        ),
+    )
+
+    runtime.sample_custom(
+        target,
+        noise=target.map(torch.zeros_like),
+        cond=cond,
+        cfg=None,
+        request=_h3_custom_request("euler", (1.0, 0.7, 0.0)),
+        compute_dtype=torch.float32,
+    )
+
+    assert dit.calls == [1.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    "context_windows",
+    (
+        None,
+        ContextWindowsSpec(
+            ContextWindowSchedule.BATCHED,
+            ContextFuseMethod.PYRAMID,
+            length=1,
+            overlap=0,
+            dim=2,
+        ),
+        ContextWindowsSpec(
+            ContextWindowSchedule.STATIC_STANDARD,
+            ContextFuseMethod.PYRAMID,
+            length=2,
+            overlap=1,
+            dim=4,
+        ),
+    ),
+    ids=("unwindowed", "temporal", "spatial"),
+)
+def test_h3_shared_conditioning_mask_and_area_weight_video_regions(
+    context_windows: ContextWindowsSpec | None,
+) -> None:
+    runtime, conditioner, _dit = _context_mean_runtime()
+    target = _target()
+    prepared = _condition_t2va(conditioner, target)
+    first = replace(prepared, context=torch.ones_like(prepared.context))
+    second = replace(prepared, context=torch.full_like(prepared.context, 3.0))
+    video = target.by_role("video")
+    height, width = video.shape[-2:]
+    left = torch.zeros((1, height, width), dtype=torch.float32)
+    left[..., : width // 2] = 1.0
+    right = AreaDescriptor(
+        height,
+        width - width // 2,
+        0,
+        width // 2,
+        AreaUnits.LATENT_CELLS,
+    )
+    cond = _h3_prepared_carrier(
+        runtime,
+        (
+            (first, PercentRange(0.0, 1.0), left, None, ()),
+            (second, PercentRange(0.0, 1.0), None, right, ()),
+        ),
+    )
+
+    result = runtime.sample_custom(
+        target,
+        noise=target.map(torch.zeros_like),
+        cond=cond,
+        cfg=None,
+        request=_h3_custom_request("euler", (1.0, 0.0)),
+        compute_dtype=torch.float32,
+        context_windows=context_windows,
+    ).output.by_role("video")
+
+    left_result = result[..., : width // 2]
+    right_result = result[..., width // 2 :]
+    torch.testing.assert_close(left_result, torch.full_like(left_result, -1.0))
+    torch.testing.assert_close(right_result, torch.full_like(right_result, -3.0))
+
+
+def test_h3_shared_lora_schedule_switches_at_step_boundary() -> None:
+    dit = ContextMeanDiT()
+    runtime = MiniMaxH3DiTRuntime(
+        dit,  # type: ignore[arg-type]
+        model_role="fl2va_dit",
+        runtime_identity="test:h3:fl2va",
+        compute_dtype=torch.float32,
+    )
+    conditioner = MiniMaxH3ConditionerRuntime(
+        FakeConditioner(),  # type: ignore[arg-type]
+        runtime_identity="test:h3:conditioner",
+    )
+    target = _target()
+    base = _condition_t2va(conditioner, target)
+    prepared = replace(base, context=torch.ones_like(base.context))
+    cond = _h3_prepared_carrier(
+        runtime,
+        (
+            (
+                prepared,
+                PercentRange(0.0, 0.5),
+                None,
+                None,
+                _h3_patch_metadata(),
+            ),
+            (prepared, PercentRange(0.5, 1.0), None, None, ()),
+        ),
+    )
+    resolver_calls: list[object] = []
+
+    runtime.sample_custom(
+        target,
+        noise=target.map(torch.zeros_like),
+        cond=cond,
+        cfg=None,
+        request=_h3_custom_request("euler", (1.0, 0.7, 0.0)),
+        compute_dtype=torch.float32,
+        scheduled=ScheduledSamplingOptions(resolver=_h3_lora_resolver(dit, resolver_calls)),
+    )
+
+    assert len(resolver_calls) == 1
+    assert dit.calls == [2.0, 1.0]
+
+
+def test_h3_shared_lora_mask_confines_patch_to_video_region() -> None:
+    dit = ContextMeanDiT()
+    runtime = MiniMaxH3DiTRuntime(
+        dit,  # type: ignore[arg-type]
+        model_role="fl2va_dit",
+        runtime_identity="test:h3:fl2va",
+        compute_dtype=torch.float32,
+    )
+    conditioner = MiniMaxH3ConditionerRuntime(
+        FakeConditioner(),  # type: ignore[arg-type]
+        runtime_identity="test:h3:conditioner",
+    )
+    target = _target()
+    base = _condition_t2va(conditioner, target)
+    prepared = replace(base, context=torch.ones_like(base.context))
+    video = target.by_role("video")
+    height, width = video.shape[-2:]
+    left = torch.zeros((1, height, width), dtype=torch.float32)
+    left[..., : width // 2] = 1.0
+    cond = _h3_prepared_carrier(
+        runtime,
+        (
+            (
+                prepared,
+                PercentRange(0.0, 1.0),
+                left,
+                None,
+                _h3_patch_metadata(),
+            ),
+            (prepared, PercentRange(0.0, 1.0), None, None, ()),
+        ),
+    )
+    resolver_calls: list[object] = []
+
+    result = runtime.sample_custom(
+        target,
+        noise=target.map(torch.zeros_like),
+        cond=cond,
+        cfg=None,
+        request=_h3_custom_request("euler", (1.0, 0.0)),
+        compute_dtype=torch.float32,
+        scheduled=ScheduledSamplingOptions(resolver=_h3_lora_resolver(dit, resolver_calls)),
+    ).output.by_role("video")
+
+    assert len(resolver_calls) == 1
+    torch.testing.assert_close(
+        result[..., : width // 2], torch.full_like(result[..., : width // 2], -1.5)
+    )
+    torch.testing.assert_close(
+        result[..., width // 2 :], torch.full_like(result[..., width // 2 :], -1.0)
+    )
+
+
 def _condition_t2va(
     runtime: MiniMaxH3ConditionerRuntime,
     target: MultiStreamLatent[torch.Tensor],
@@ -1198,6 +1589,93 @@ def test_cfg_combines_cond_and_uncond_predictions() -> None:
     torch.testing.assert_close(result_packed, expected)
 
 
+@pytest.mark.parametrize("dim", (2, 3, 4), ids=("temporal", "height", "width"))
+def test_h3_context_windows_use_one_packed_layout_path(dim: int) -> None:
+    expected_runtime, expected_conditioner, _expected_dit = _context_mean_runtime()
+    actual_runtime, actual_conditioner, actual_dit = _context_mean_runtime()
+    target = _target()
+    expected = _sample_cfg(
+        expected_runtime,
+        target,
+        _condition_t2va(expected_conditioner, target),
+        None,
+        1.0,
+    )
+    actual = actual_runtime.sample_multistream(
+        target,
+        conditioning=_condition_t2va(actual_conditioner, target),
+        cfg=SamplingGuidance(None, 1.0),
+        sampler_id="res_multistep",
+        scheduler_id="simple",
+        steps=1,
+        denoise=1.0,
+        seed=123,
+        context_windows=ContextWindowsSpec(
+            ContextWindowSchedule.BATCHED,
+            ContextFuseMethod.PYRAMID,
+            length=1,
+            overlap=0,
+            dim=dim,
+        ),
+        cancelled=lambda: False,
+    )
+    expected_packed, expected_layout = pack_latent_streams(expected)
+    actual_packed, actual_layout = pack_latent_streams(actual)
+    assert actual_layout == expected_layout
+    torch.testing.assert_close(actual_packed, expected_packed)
+    assert len(actual_dit.calls) > 1
+
+
+def test_h3_temporal_windows_slice_fractional_denoise_masks() -> None:
+    expected_runtime, expected_conditioner, _expected_dit = _context_mean_runtime()
+    actual_runtime, actual_conditioner, actual_dit = _context_mean_runtime()
+    target = _target()
+    video_mask = torch.linspace(
+        0.2, 0.8, target.by_role("video").numel(), dtype=torch.float32
+    ).reshape_as(target.by_role("video"))
+    audio_mask = torch.linspace(
+        0.3, 0.9, target.by_role("audio").numel(), dtype=torch.float32
+    ).reshape_as(target.by_role("audio"))
+    mask = _h3(video_mask, audio_mask)
+    sampling: dict[str, Any] = {
+        "cfg": SamplingGuidance(None, 1.0),
+        "sampler_id": "res_multistep",
+        "scheduler_id": "simple",
+        "steps": 1,
+        "denoise": 1.0,
+        "seed": 123,
+        "denoise_mask": mask,
+        "cancelled": lambda: False,
+    }
+    expected = expected_runtime.sample_multistream(
+        target,
+        conditioning=_condition_t2va(expected_conditioner, target),
+        **sampling,
+    )
+    actual = actual_runtime.sample_multistream(
+        target,
+        conditioning=_condition_t2va(actual_conditioner, target),
+        context_windows=ContextWindowsSpec(
+            ContextWindowSchedule.BATCHED,
+            ContextFuseMethod.PYRAMID,
+            length=1,
+            overlap=0,
+            dim=2,
+        ),
+        **sampling,
+    )
+    expected_packed, expected_layout = pack_latent_streams(expected)
+    actual_packed, actual_layout = pack_latent_streams(actual)
+    assert actual_layout == expected_layout
+    torch.testing.assert_close(actual_packed, expected_packed)
+    assert len(actual_dit.denoise_masks) > 1
+    assert all(mask is not None for mask in actual_dit.denoise_masks)
+    assert all(
+        cast("MultiStreamLatent[torch.Tensor]", window_mask).by_role("video").shape[2] == 1
+        for window_mask in actual_dit.denoise_masks
+    )
+
+
 def test_runtime_forwards_the_token_mask_to_both_guidance_lanes(
     runtime_fixture: RuntimeFixture,
 ) -> None:
@@ -1231,6 +1709,29 @@ def test_runtime_forwards_the_token_mask_to_both_guidance_lanes(
         assert type(actual) is MultiStreamLatent
         torch.testing.assert_close(actual.by_role("video"), expected.by_role("video"))
         torch.testing.assert_close(actual.by_role("audio"), expected.by_role("audio"))
+
+
+def test_h3_fractional_denoise_mask_blends_at_the_declared_video_cells() -> None:
+    runtime, conditioner, _dit = _context_mean_runtime()
+    target = _target()
+    prepared = _condition_t2va(conditioner, target)
+    positive = replace(prepared, context=torch.full_like(prepared.context, 2.0))
+    video = target.by_role("video")
+    mask = torch.full_like(video, 0.25)
+    mask[..., :, 1] = 0.75
+
+    result = runtime.sample_custom(
+        target,
+        noise=target.map(torch.zeros_like),
+        cond=PreparedMultiStreamConditioning(runtime.conditioning_identity, positive),
+        cfg=None,
+        request=_h3_custom_request("euler", (1.0, 0.0)),
+        denoise_mask=mask,
+        compute_dtype=torch.float32,
+    ).output.by_role("video")
+
+    torch.testing.assert_close(result[..., :, 0], torch.full_like(result[..., :, 0], -0.5))
+    torch.testing.assert_close(result[..., :, 1], torch.full_like(result[..., :, 1], -1.5))
 
 
 @pytest.mark.parametrize("bad_value", (float("nan"), -0.1, 1.1))
@@ -2575,10 +3076,9 @@ def test_check_custom_sampling_refuses_inpaint_guidance_and_unknown_samplers() -
         runtime.check_custom_sampling(
             request, has_denoise_mask=False, has_inpaint=True, has_context_windows=False
         )
-    with pytest.raises(MiniMaxH3RuntimeError, match="does not support context windows"):
-        runtime.check_custom_sampling(
-            request, has_denoise_mask=False, has_inpaint=False, has_context_windows=True
-        )
+    runtime.check_custom_sampling(
+        request, has_denoise_mask=False, has_inpaint=False, has_context_windows=True
+    )
     with pytest.raises(MiniMaxH3RuntimeError, match="no distilled-guidance input"):
         runtime.check_custom_sampling(
             request,

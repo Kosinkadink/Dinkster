@@ -263,12 +263,14 @@ class FakeTensor:
         device: object = "cpu",
         dtype: object = "float32",
         nbytes: int | None = None,
+        array: Any = None,
     ) -> None:
         self.shape = shape
         self.name = name
         self.device = FakeTorch.device(device)
         self.dtype = dtype
         self.nbytes = nbytes if nbytes is not None else max(1, _product(shape)) * 4
+        self.array = array
         self.moves: list[object] = []
         self.permutes: list[tuple[int, ...]] = []
         self.setitems: list[tuple[object, object]] = []
@@ -284,16 +286,36 @@ class FakeTensor:
     def is_floating_point(self) -> bool:
         return self.dtype in ("float16", "bfloat16", "float32")
 
-    def to(self, device: object) -> FakeTensor:
-        resolved = FakeTorch.device(device)
-        self.moves.append(resolved)
-        self.device = resolved
+    def to(
+        self,
+        device: object | None = None,
+        *,
+        dtype: object | None = None,
+        copy: bool = False,
+    ) -> FakeTensor:
+        del copy
+        if device is not None:
+            resolved = FakeTorch.device(device)
+            self.moves.append(resolved)
+            self.device = resolved
+        if dtype is not None:
+            self.dtype = dtype
         return self
 
     def detach(self) -> FakeTensor:
         return self
 
+    def cpu(self) -> FakeTensor:
+        self.device = FakeTorch.device("cpu")
+        return self
+
+    def numpy(self) -> object:
+        return self.__array__()
+
     def contiguous(self) -> FakeTensor:
+        return self
+
+    def view(self, _dtype: object) -> FakeTensor:
         return self
 
     def float(self) -> FakeTensor:
@@ -334,6 +356,26 @@ class FakeTensor:
 
     def __setitem__(self, key: object, value: object) -> None:
         self.setitems.append((key, value))
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> object:
+        import numpy as np
+
+        del copy
+        if self.array is None:
+            self.array = np.zeros(self.shape, dtype=np.float32)
+        return np.asarray(self.array, dtype=dtype)
+
+    def data_ptr(self) -> int:
+        import numpy as np
+
+        self.array = np.ascontiguousarray(self.__array__())
+        return int(self.array.ctypes.data)
+
+    def numel(self) -> int:
+        return _product(self.shape)
+
+    def element_size(self) -> int:
+        return self.nbytes // max(1, self.numel())
 
     def reshape(self, *shape: int) -> FakeTensor:
         return FakeTensor(tuple(shape), self.name, device=self.device, dtype=self.dtype)
@@ -386,6 +428,12 @@ class FakeTensor:
     def __mul__(self, other: object) -> FakeTensor:
         return self._binary(other, "mul")
 
+    def __lt__(self, other: object) -> FakeTensor:
+        return self._binary(other, "lt")
+
+    def __itruediv__(self, other: object) -> FakeTensor:
+        return self._binary(other, "div")
+
     def __rsub__(self, other: object) -> FakeTensor:
         return self._binary(other, "rsub")
 
@@ -399,6 +447,7 @@ def _product(values: tuple[int, ...]) -> int:
 
 class FakeTorch:
     Tensor = FakeTensor
+    uint8 = "uint8"
     float16 = "float16"
     bfloat16 = "bfloat16"
     float32 = "float32"
@@ -477,6 +526,18 @@ class FakeTorch:
     @staticmethod
     def count_nonzero(tensor: FakeTensor) -> int:
         return int(tensor.name == "nonzero")
+
+    @staticmethod
+    def std(
+        tensor: FakeTensor,
+        *,
+        dim: tuple[int, ...],
+        keepdim: bool,
+    ) -> FakeTensor:
+        shape = tuple(1 if index in dim else size for index, size in enumerate(tensor.shape))
+        if not keepdim:
+            shape = tuple(size for index, size in enumerate(shape) if index not in dim)
+        return FakeTensor(shape, "std", device=tensor.device, dtype=tensor.dtype)
 
     @staticmethod
     def ones(
@@ -4706,7 +4767,7 @@ def test_native_lora_key_map_adds_z_image_diffusers_aliases() -> None:
     )
 
 
-def test_native_lora_key_map_adds_minimax_h3_direct_stems() -> None:
+def test_native_lora_key_map_uses_registered_minimax_h3_hook() -> None:
     arm = _native_arm()
     inference = importlib.import_module("dinkster_inference")
 
@@ -4727,10 +4788,7 @@ def test_native_lora_key_map_adds_minimax_h3_direct_stems() -> None:
     key_map = arm._logical_lora_key_map(inference, handle)
 
     assert key_map["blocks.0.attn.qkv_proj"] == "diffusion_model.blocks.0.attn.qkv_proj.weight"
-    assert (
-        key_map["final_layer.video_out"]
-        == "diffusion_model.final_layer.video_out.weight"
-    )
+    assert key_map["final_layer.video_out"] == "diffusion_model.final_layer.video_out.weight"
 
 
 def test_native_lora_execution_mode_schema_is_explicit_and_backwards_compatible() -> None:
@@ -6539,140 +6597,7 @@ def test_native_mesh_operations_bridge_cancellation_and_model_eviction(
 def test_manifest_declares_exact_native_arm_with_matching_schemas() -> None:
     arm = _native_arm()
     native = importlib.import_module("dinkster_compat_comfy.native")
-    expected = (
-        "dinkster.create_hook_lora",
-        "dinkster.create_hook_keyframe",
-        "dinkster.set_hook_keyframes",
-        "dinkster.conditioning_timesteps_range",
-        "dinkster.conditioning_set_properties_and_combine",
-        "dinkster.pair_conditioning_set_properties",
-        "dinkster.clip_text_encode_lumina2",
-        "dinkster.model_sampling_aura_flow",
-        "dinkster.load_model_profile",
-        "dinkster.load_clip",
-        "dinkster.load_dual_clip",
-        "dinkster.load_vae",
-        "dinkster.load_vision",
-        "dinkster.load_diffusion_model",
-        "dinkster.load_diffusion_components",
-        "dinkster.empty_trellis2_latent_structure",
-        "dinkster.trellis2_conditioning",
-        "dinkster.pixal3d_conditioning",
-        "dinkster.vae_decode_structure_trellis2",
-        "dinkster.trellis2_shape_stage",
-        "dinkster.trellis2_upsample_stage",
-        "dinkster.vae_decode_shape_trellis",
-        "dinkster.trellis2_texture_stage",
-        "dinkster.vae_decode_texture_trellis",
-        "dinkster.load_geometry_model",
-        "dinkster.estimate_geometry",
-        "dinkster.geometry_to_fov",
-        "dinkster.load_background_removal",
-        "dinkster.remove_background",
-        "dinkster.image_crop_to_mask",
-        "dinkster.preview_mask",
-        "dinkster.voxel_to_mesh",
-        "dinkster.get_mesh_info",
-        "dinkster.remesh_mesh",
-        "dinkster.decimate_mesh",
-        "dinkster.smooth_mesh_normals",
-        "dinkster.unwrap_mesh",
-        "dinkster.paint_mesh",
-        "dinkster.bake_texture_from_voxel",
-        "dinkster.bake_normal_map_from_mesh",
-        "dinkster.bake_ambient_occlusion",
-        "dinkster.render_uv_atlas",
-        "dinkster.apply_texture_to_mesh",
-        "dinkster.mesh_to_model3d",
-        "dinkster.empty_minimax_h3_av",
-        "dinkster.empty_minimax_music3_latent_audio",
-        "dinkster.minimax_music3_text_encode",
-        "dinkster.vae_decode_audio",
-        "dinkster.vae_decode_audio_tiled",
-        "dinkster.set_latent_mask_from_frames",
-        "dinkster.set_latent_mask_from_time_ranges",
-        "dinkster.inspect_latent_mask",
-        "dinkster.minimax_h3_t2va_conditioning",
-        "dinkster.minimax_h3_fl2va_conditioning",
-        "dinkster.minimax_h3_ref2va_conditioning",
-        "dinkster.minimax_h3_add_guide",
-        "dinkster.minimax_h3_motion_context",
-        "dinkster.minimax_h3_av_encode",
-        "dinkster.minimax_h3_av_decode",
-        "dinkster.concat_av_latent",
-        "dinkster.separate_av_latent",
-        "dinkster.preview_latent_visual",
-        "dinkster.preview_latent_audio",
-        "dinkster.wan21_clip_vision_encode",
-        "dinkster.bernini_conditioning",
-        "dinkster.wan21_image_to_video",
-        "dinkster.wan_camera_embedding",
-        "dinkster.wan_camera_image_to_video",
-        "dinkster.wan_phantom_subject_to_video",
-        "dinkster.wan_track_to_video",
-        "dinkster.wan_move_tracks_from_coords",
-        "dinkster.wan_move_concat_track",
-        "dinkster.wan_move_generate_tracks",
-        "dinkster.wan_move_visualize_tracks",
-        "dinkster.wan_move_track_to_video",
-        "dinkster.wan_first_last_frame_to_video",
-        "dinkster.wan_fun_control_to_video",
-        "dinkster.wan22_fun_control_to_video",
-        "dinkster.wan_fun_inpaint_to_video",
-        "dinkster.wan_vace_to_video",
-        "dinkster.wan22_image_to_video_latent",
-        "dinkster.load_z_image_control_patch",
-        "dinkster.apply_z_image_control_patch",
-        "dinkster.clip_set_last_layer",
-        "dinkster.t5_tokenizer_options",
-        "dinkster.clip_text_encode",
-        "dinkster.text_generate",
-        "dinkster.prompt_enhance",
-        "dinkster.clip_text_encode_controlnet",
-        "dinkster.vae_decode",
-        "dinkster.vae_decode_tiled",
-        "dinkster.vae_encode",
-        "dinkster.cfg_override",
-        "dinkster.rescale_cfg",
-        "dinkster.model_sampling_sd3",
-        "dinkster.model_sampling_ltxv",
-        "dinkster.model_sampling_flux",
-        "dinkster.ksampler",
-        "dinkster.ksampler_advanced",
-        "dinkster.sampler_sa_solver",
-        "dinkster.basic_scheduler",
-        "dinkster.beta_sampling_scheduler",
-        "dinkster.sd_turbo_scheduler",
-        "dinkster.sampling_percent_to_sigma",
-        "dinkster.basic_guider",
-        "dinkster.lazy_cache",
-        "dinkster.easy_cache",
-        "dinkster.attention_schedule",
-        "dinkster.cfg_guider",
-        "dinkster.dual_cfg_guider",
-        "dinkster.dual_model_guider",
-        "dinkster.scheduled_cfg_guider",
-        "dinkster.perp_neg_guider",
-        "dinkster.disable_cfg1_optimization",
-        "dinkster.add_noise",
-        "dinkster.sampler_custom",
-        "dinkster.sampler_custom_advanced",
-        "dinkster.compat.impact_regional_sampler",
-        "dinkster.ltxav_audio_vae_decode",
-        "dinkster.vae_encode_tiled",
-        "dinkster.ltxav_reference_audio",
-        "dinkster.ltxav_id_lora_reference_audio",
-        "dinkster.ltxv_spatiotemporal_guidance",
-        "dinkster.ltxv_modality_guidance",
-        "dinkster.ltxv_duration_predictor",
-        "dinkster.ltxv_dual_cfg_guider",
-        "dinkster.ltxv_image_to_video",
-        "dinkster.ltxv_image_to_video_inplace",
-        "dinkster.ltxv_add_guide",
-        "dinkster.ltxv_crop_guides",
-        "dinkster.ltxv_latent_upsampler",
-        "dinkster.seedvr2_conditioning",
-    )
+    expected = arm.NATIVE_ARM_TYPE_IDS
     manifest = load_manifest(MANIFEST)
     assert dict(manifest.arms) == {"native": expected}
     assert manifest.arm_nodes_entry == "dinkster_compat_comfy.entry:ARM_NODES"
@@ -7311,7 +7236,7 @@ def test_native_h3_model_only_peft_lora_precalculates_and_composes_identity(
     assert arm._minimax_h3_model_handle(patched_handle, inference) is patched_handle
 
 
-def test_native_h3_lora_entry_modes_and_refusals(
+def test_native_h3_lora_entry_modes_use_shared_loaders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     arm = _native_arm()
@@ -7350,6 +7275,7 @@ def test_native_h3_lora_entry_modes_and_refusals(
         "_native_model",
         lambda _model, _name: (handle, (), {}, None, None, (), None, ()),
     )
+    monkeypatch.setattr(arm, "_native_handle", lambda _value, _name: handle)
     monkeypatch.setattr(arm, "_native_lora_overlay", lambda *_args: overlay)
     monkeypatch.setattr(arm, "default_pool", lambda: FakePool())
 
@@ -7371,17 +7297,14 @@ def test_native_h3_lora_entry_modes_and_refusals(
         lora=lora,
         strength_model=0.0,
     ) == {"model": handle}
-    with pytest.raises(
-        ValueError,
-        match="^MiniMax H3 LoRAs require Load LoRA$",
-    ):
-        arm.NativeLoadLora.execute(
-            model=handle,
-            clip=object(),
-            lora=lora,
-            strength_model=0.5,
-            strength_clip=0.0,
-        )
+    assert arm.NativeLoadLora.execute(
+        model=handle,
+        clip=handle,
+        lora=lora,
+        strength_model=0.5,
+        strength_clip=0.0,
+    ) == {"model": clone, "clip": clone}
+    assert len(clone_calls) == 3
 
     unmatched = _asset(
         _safetensors_shapes(tmp_path / "unmatched.safetensors", {"other.tensor": (1,)})
@@ -7416,11 +7339,32 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         def __init__(self, runtime_identity: str) -> None:
             self.assembled = SimpleNamespace(diffusion=FakeModule())
             self.runtime_identity = runtime_identity
+            self.family = inference.MINIMAX_H3
             self.model_role = "fl2va-dit"
             self.runtime_facts = ("provider=test",)
             self.receipt_identity = "h3-receipt"
 
-        def sample_multistream(self) -> None: ...
+        def custom_sampling_sigmas(self, *_args: object, **_kwargs: object) -> tuple[float, ...]:
+            return (1.0, 0.5, 0.0)
+
+        def custom_sampling_beta_sigmas(
+            self, *_args: object, **_kwargs: object
+        ) -> tuple[float, ...]:
+            return (1.0, 0.5, 0.0)
+
+        def custom_sampling_sd_turbo_sigmas(
+            self, *_args: object, **_kwargs: object
+        ) -> tuple[float, ...]:
+            return (1.0, 0.5, 0.0)
+
+        def custom_sampling_percent_to_sigma(self, percent: float, **_kwargs: object) -> float:
+            return percent
+
+        def check_custom_sampling(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def sample_custom(self, latent: object, **_kwargs: object) -> object:
+            return inference.CustomSamplingResult(cast("Any", latent), None)
 
     class MiniMaxH3DiTRuntime:
         sample_calls: ClassVar[list[dict[str, object]]] = []
@@ -7464,6 +7408,15 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
         def check_custom_sampling(self, request: object, **_kwargs: object) -> None: ...
 
+        @staticmethod
+        def prepare_custom_sampling_noise(latent: object, seed: int, noise_inds: object) -> object:
+            del seed, noise_inds
+            return cast("Any", latent).map(
+                lambda stream: FakeTensor(
+                    stream.shape, "noise", device=stream.device, dtype=stream.dtype
+                )
+            )
+
         def sample_custom(self, latent: object, **kwargs: object) -> object:
             type(self).sample_calls.append({"latent": latent, **kwargs})
             return inference.CustomSamplingResult(cast("Any", latent), None)
@@ -7471,6 +7424,8 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     fake_module = SimpleNamespace(
         MiniMaxH3Model=MiniMaxH3Model,
         MiniMaxH3DiTRuntime=MiniMaxH3DiTRuntime,
+        add_minimax_h3_timeline_guide=lambda prepared, _target, _guide: prepared,
+        prepare_multistream_noise=MiniMaxH3DiTRuntime.prepare_custom_sampling_noise,
         torch_sampler_registry=_fake_torch_sampler_registry,
     )
     real_import = arm.importlib.import_module
@@ -7479,8 +7434,31 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "import_module",
         lambda name: fake_module if name == "dinkster_inference_torch" else real_import(name),
     )
-    monkeypatch.setattr(arm, "_torch", lambda: FakeTorch())
-    handle = _handle(arm, MiniMaxH3Model(recipe.runtime_identity), recipe=recipe)
+    torch = FakeTorch()
+    monkeypatch.setattr(arm, "_torch", lambda: torch)
+
+    def materialize(next_recipe: object, next_resolvers: object) -> object:
+        resolved = cast("Any", next_recipe)
+        return arm.NativeRuntimeHandle(
+            MiniMaxH3Model(resolved.runtime_identity),
+            torch.device("cuda:0"),
+            recipe=resolved,
+            materializer=materialize,
+            source_resolvers=cast("Mapping[str, object]", next_resolvers),
+            coordinator=_coordinator(arm),
+            _torch_module=torch,
+            _enroll_assembled=_fake_enroll_assembled,
+        )
+
+    handle = arm.NativeRuntimeHandle(
+        MiniMaxH3Model(recipe.runtime_identity),
+        torch.device("cuda:0"),
+        recipe=recipe,
+        materializer=materialize,
+        coordinator=_coordinator(arm),
+        _torch_module=torch,
+        _enroll_assembled=_fake_enroll_assembled,
+    )
     return inference, recipe, handle, MiniMaxH3DiTRuntime
 
 
@@ -7544,7 +7522,10 @@ def test_native_h3_decomposed_sampling_executes_with_empty_negative(
     arm = _native_arm()
     inference, recipe, handle, dit_type = _h3_decomposed_handle(arm, tmp_path, monkeypatch)
     monkeypatch.setattr(arm, "multistream_sampling_preview_emitter", lambda _handle: None)
-    positive = _h3_prepared_conditioning(inference, recipe, "7")
+    rows = _h3_prepared_conditioning(inference, recipe, "7")
+    positive = inference.ResidentConditioningCarrier(
+        arm._MiniMaxH3ResidentConditioning(rows, handle, (), "test:h3:conditioning")
+    )
     video = FakeTensor((1, 24, 6, 4, 5), "video")
     audio = FakeTensor((1, 32, 97), "audio")
     streams = inference.MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))
@@ -7564,7 +7545,7 @@ def test_native_h3_decomposed_sampling_executes_with_empty_negative(
     assert len(dit_type.sample_calls) == 1
     call = dit_type.sample_calls[0]
     assert call["cfg"] == inference.SamplingGuidance(None, 3.0)
-    assert call["cond"] is positive[0][0]
+    assert call["cond"] is rows[0][0]
     assert call["seed"] == 0
     moved = cast("Any", call["latent"])
     assert type(moved) is inference.MultiStreamLatent
@@ -7573,6 +7554,433 @@ def test_native_h3_decomposed_sampling_executes_with_empty_negative(
     assert type(result) is inference.MultiStreamLatent
     assert result.roles == ("video", "audio")
     assert type(denoised["samples"]) is inference.MultiStreamLatent
+
+
+H3_IMPORTER_API_ROWS = (
+    "t2v--no-lora",
+    "t2v--fl2v-8step",
+    "t2v--fl2v-4step",
+    "i2v--no-lora",
+    "i2v--fl2v-8step",
+    "i2v--fl2v-4step",
+    "r2v--no-lora",
+    "r2v--ref2v-4step",
+    "multiframe-reference--no-lora",
+    "multiframe-reference--ref2v-4step",
+)
+H3_IMPORTER_LORA_ROWS = tuple(row for row in H3_IMPORTER_API_ROWS if "no-lora" not in row)
+H3_IMPORTER_API_CASES = (
+    *((row_id, False) for row_id in H3_IMPORTER_API_ROWS),
+    ("t2v--no-lora", True),
+)
+
+
+def test_h3_lora_fixtures_share_the_model_producer_native_arm() -> None:
+    manifest = load_manifest(MANIFEST)
+    native_arm_nodes = set(dict(manifest.arms)["native"])
+    required = {"dinkster.load_diffusion_model", "dinkster.load_lora_model_only"}
+    assert required <= native_arm_nodes
+
+    fixture_root = REPO_ROOT / "tests" / "fixtures" / "minimax-h3-importer-api"
+    for row_id in H3_IMPORTER_LORA_ROWS:
+        document = json.loads((fixture_root / f"{row_id}.json").read_text(encoding="utf-8"))
+        fixture_nodes = {node["class_type"] for node in document.values()}
+        assert {"UNETLoader", "LoraLoaderModelOnly"} <= fixture_nodes
+
+
+@pytest.fixture(scope="module")
+def h3_production_compat_catalog() -> tuple[
+    dict[str, Any], dict[str, tuple[str, ...]], dict[str, Any]
+]:
+    from dinkster.compose import (
+        compose_serving,
+        default_pack_ids,
+        default_pack_spec,
+    )
+
+    async def snapshot() -> tuple[dict[str, Any], dict[str, tuple[str, ...]], dict[str, Any]]:
+        specs = (
+            *(
+                replace(default_pack_spec(pack_id), require_catalog=True)
+                for pack_id in default_pack_ids()
+            ),
+        )
+        composition = await compose_serving(specs, include_default_packs=False)
+        try:
+            return (
+                dict(composition.schemas),
+                dict(composition.choices),
+                dict(composition.lazy_choices),
+            )
+        finally:
+            await composition.close()
+
+    return asyncio.run(snapshot())
+
+
+@pytest.mark.parametrize(
+    ("row_id", "shape_faithful"),
+    H3_IMPORTER_API_CASES,
+    ids=(*H3_IMPORTER_API_ROWS, "t2v--no-lora-production-shape"),
+)
+def test_h3_importer_api_row_executes_through_native_cpu_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    row_id: str,
+    shape_faithful: bool,
+    installed_default_catalogs: None,
+    h3_production_compat_catalog: tuple[dict[str, Any], dict[str, tuple[str, ...]], dict[str, Any]],
+) -> None:
+    import io
+
+    import numpy as np
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_compat_comfy import native, register_native_types
+    from dinkster_nodes_foundation import FOUNDATION_NODES, register_foundation_types
+    from dinkster_nodes_image import IMAGE_NODES, register_image_types
+    from dinkster_nodes_media_io import MEDIA_IO_NODES, register_media_types
+    from dinkster_server import STATE_KEY, create_app
+    from dinkster_values import decode_video, encode_video
+    from dinkster_video import save_video_stream
+
+    from dinkster.compat_api import add_comfy_compat_routes
+    from dinkster.mounts_api import MOUNTS_KEY, MountService
+
+    arm = _native_arm()
+    inference, _recipe, handle, dit_type = _h3_decomposed_handle(arm, tmp_path, monkeypatch)
+    handle.runtime.model_role = (
+        "ref2va-dit" if row_id.startswith(("r2v", "multiframe")) else "fl2va-dit"
+    )
+    dit_type.sample_calls.clear()
+    monkeypatch.setattr(arm, "multistream_sampling_preview_emitter", lambda _handle: None)
+
+    all_nodes = (
+        *FOUNDATION_NODES,
+        *IMAGE_NODES,
+        *MEDIA_IO_NODES,
+        *native.NATIVE_NODES,
+        *arm.GENERATION_PROVIDER_NODES,
+        *arm.NATIVE_SCHEDULING_NODES,
+        *arm.NATIVE_ARM_NODES,
+    )
+    node_types = {node.schema().node_type: node for node in all_nodes}
+    nodes = tuple(node_types.values())
+    execution_schemas = build_schemas(nodes)
+    production_schemas, server_choices, server_lazy_choices = h3_production_compat_catalog
+    server_schemas = {**production_schemas, **execution_schemas}
+
+    asset_paths: dict[str, Path] = {}
+
+    class FixtureResolver:
+        @staticmethod
+        def resolve(digest: str) -> Path | None:
+            return asset_paths.get(digest)
+
+    registry = TypeRegistry()
+    register_core_types(registry)
+    importlib.import_module("dinkster_assets").register_asset_type(registry, FixtureResolver())
+    register_foundation_types(registry)
+    register_image_types(registry)
+    register_media_types(registry)
+    register_native_types(registry)
+
+    class DecodedVideoTensor(FakeTensor):
+        def permute(self, *dims: int) -> DecodedVideoTensor:
+            return DecodedVideoTensor(
+                tuple(self.shape[index] for index in dims),
+                self.name,
+                device=self.device,
+                dtype=self.dtype,
+            )
+
+        def flatten(self, start_dim: int = 0, end_dim: int = -1) -> Any:
+            flattened = super().flatten(start_dim, end_dim)
+            return np.zeros(flattened.shape, dtype=np.float32)
+
+    class ResidentHandle:
+        load_device = FakeTorch.device("cpu")
+
+        def __init__(self, identity: str, role: str) -> None:
+            self.resource_identity = identity
+            self.role = role
+            self.runtime = self
+            self.recipe = SimpleNamespace(
+                family_id="dinkster.minimax_h3",
+                sources=(SimpleNamespace(role=f"{role}-vae"),),
+            )
+            self.descriptor = CodecDescriptor(
+                id=f"dinkster.test_h3_{role}_codec",
+                display_name="Test H3 Codec",
+                kind="audio" if role == "audio" else "video",
+                latent=LatentDescriptor(
+                    channels=32 if role == "audio" else 24,
+                    dimensions=1 if role == "audio" else 3,
+                ),
+                supported_dtypes=frozenset({FLOAT32}),
+                content_channels=2 if role == "audio" else 3,
+            )
+
+        @staticmethod
+        def require_active() -> None:
+            return None
+
+        @staticmethod
+        def stage(*_args: object, **_kwargs: object):  # noqa: ANN205
+            return contextmanager(lambda: (yield))()
+
+        def decode_latent(self, _latent: object) -> FakeTensor:
+            if self.role == "audio":
+                return FakeTensor((1, 2, 8), "decoded-audio")
+            shape = (1, 3, 124, 480, 864) if shape_faithful else (1, 3, 2, 2, 2)
+            return DecodedVideoTensor(shape, "decoded-video")
+
+        @staticmethod
+        def encode_content(content: object) -> object:
+            return content
+
+    conditioner = ResidentHandle("native:dinkster.minimax_h3:" + "7" * 64, "video")
+    codecs = (
+        ResidentHandle("native:dinkster.minimax_h3:" + "8" * 64, "video"),
+        ResidentHandle("native:dinkster.minimax_h3:" + "9" * 64, "audio"),
+    )
+
+    class TinyVideoCodecRuntime:
+        @staticmethod
+        def decode_video(_latent: object) -> DecodedVideoTensor:
+            shape = (1, 3, 124, 480, 864) if shape_faithful else (1, 3, 2, 2, 2)
+            return DecodedVideoTensor(shape, "decoded-video")
+
+        @staticmethod
+        def encode_video(content: object) -> object:
+            return content
+
+    class TinyAudioCodecRuntime:
+        @staticmethod
+        def decode_audio(_latent: object) -> object:
+            return inference.MiniMaxH3AudioContent(FakeTensor((1, 2, 8), "decoded-audio"), 32_000)
+
+        @staticmethod
+        def encode_audio(content: object) -> object:
+            return content
+
+    monkeypatch.setattr(
+        arm,
+        "_minimax_h3_video_vae_runtime",
+        lambda value, *_args: (value, TinyVideoCodecRuntime()),
+    )
+    monkeypatch.setattr(
+        arm,
+        "_minimax_h3_audio_vae_runtime",
+        lambda value, *_args: (value, TinyAudioCodecRuntime()),
+    )
+
+    class TinyConditionerRuntime:
+        @staticmethod
+        def condition(request: object, **_kwargs: object) -> object:
+            return SimpleNamespace(task=cast("Any", request).task)
+
+    monkeypatch.setattr(
+        arm,
+        "_minimax_h3_conditioner_runtime",
+        lambda *_args: (conditioner, codecs, TinyConditionerRuntime()),
+    )
+    target_streams = inference.MultiStreamLatent.from_pairs(
+        (
+            (
+                "video",
+                FakeTensor(
+                    (1, 24, 37, 2, 2),
+                    "cpu",
+                    array=np.arange(3_552, dtype=np.float32).reshape(1, 24, 37, 2, 2),
+                ),
+            ),
+            (
+                "audio",
+                FakeTensor(
+                    (1, 32, 2, 9),
+                    "cpu",
+                    array=np.arange(576, dtype=np.float32).reshape(1, 32, 2, 9),
+                ),
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        arm,
+        "_empty_minimax_h3_target",
+        lambda *_args: {"samples": target_streams},
+    )
+    real_image_batch = arm._minimax_h3_image_batch
+
+    def image_batch(value: object, torch: object, name: str) -> object:
+        if isinstance(value, np.ndarray):
+            value = FakeTensor(tuple(value.shape), "cpu", array=value)
+        return real_image_batch(value, torch, name)
+
+    monkeypatch.setattr(arm, "_minimax_h3_image_batch", image_batch)
+    monkeypatch.setattr(arm, "_minimax_h3_resize", lambda value, *_args: value)
+    monkeypatch.setattr(arm, "_minimax_h3_reference_image", lambda value, *_args: value)
+    monkeypatch.setattr(arm, "_native_handle", lambda value, _name: value)
+
+    monkeypatch.setattr(
+        node_types["dinkster.load_diffusion_model"],
+        "execute",
+        staticmethod(lambda **_kwargs: {"model": handle}),
+    )
+    monkeypatch.setattr(
+        node_types["dinkster.load_clip"],
+        "execute",
+        staticmethod(lambda **_kwargs: {"clip": conditioner}),
+    )
+    monkeypatch.setattr(
+        node_types["dinkster.load_vae"],
+        "execute",
+        staticmethod(
+            lambda **kwargs: {
+                "vae": codecs[1] if "audio" in cast("AssetRef", kwargs["vae"]).name else codecs[0]
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        node_types["dinkster.load_image"],
+        "execute",
+        staticmethod(
+            lambda **_kwargs: {
+                "image": np.zeros((1, 32, 32, 3), dtype=np.uint8),
+                "mask": np.zeros((1, 32, 32), dtype=np.uint8),
+                "metadata": {},
+            }
+        ),
+    )
+    output_asset = AssetRef("blake3:" + "a" * 64, "output.mp4", 1)
+
+    def save_video(**kwargs: object) -> dict[str, object]:
+        video = kwargs["video"]
+        if shape_faithful:
+            encoded = encode_video(video)
+            assert len(encoded) > 512 * 1024 * 1024
+            video = decode_video(encoded)
+            output = io.BytesIO()
+            container, media_type = save_video_stream(
+                video, output, container="mp4", codec="h264", crf=51
+            )
+            assert container == ".mp4" and media_type == "video/mp4"
+            assert output.tell() > 0
+        return {"video": video, "asset": output_asset}
+
+    monkeypatch.setattr(
+        node_types["dinkster.save_video"],
+        "execute",
+        staticmethod(save_video),
+    )
+
+    fixture = REPO_ROOT / "tests" / "fixtures" / "minimax-h3-importer-api" / f"{row_id}.json"
+
+    class FixtureAssetTable:
+        @staticmethod
+        def mounts_for_kind(_kind: str) -> tuple[str, ...]:
+            return ("fixture-assets",)
+
+        @staticmethod
+        def ref(path: str) -> AssetRef:
+            if "turbo" in path and path.endswith(".safetensors"):
+                lora_path = tmp_path / Path(path).name
+                if not lora_path.exists():
+                    _safetensors_shapes(
+                        lora_path,
+                        {
+                            "diffusion_model.layer.lora_A.weight": (1, 1),
+                            "diffusion_model.layer.lora_B.weight": (1, 1),
+                        },
+                    )
+                asset = _asset(lora_path)
+                asset_paths[asset.digest] = lora_path
+                return asset
+            return AssetRef(f"blake3:{hashlib.blake2s(path.encode()).hexdigest()}", path, 1)
+
+    def make_engine(_on_event: object = None) -> Engine:
+        return Engine(
+            schemas=server_schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+        )
+
+    async def run_fixture() -> object:
+        schema_model = importlib.import_module("dinkster_schema.model")
+        choices = dict(server_choices)
+        choices.update(
+            {
+                choice_id: ()
+                for schema in execution_schemas.values()
+                for choice_id in schema_model._remote_choice_ids(schema)
+                if choice_id not in choices and choice_id not in server_lazy_choices
+            }
+        )
+        app = create_app(
+            make_engine,
+            server_schemas,
+            choices=choices,
+            lazy_choices=server_lazy_choices,
+        )
+        app[MOUNTS_KEY] = MountService(cast("Any", FixtureAssetTable()))
+        add_comfy_compat_routes(app)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            response = await client.post(
+                "/api/compat/comfy/prompt",
+                data=fixture.read_bytes(),
+                headers={"Content-Type": "application/json"},
+            )
+            assert response.status == 202, await response.text()
+            submitted = await response.json()
+            job_status: dict[str, Any] = {}
+            for _ in range(1_500 if shape_faithful else 100):
+                status = await client.get(f"/api/jobs/comfy-compat/{submitted['jobId']}")
+                job_status = await status.json()
+                if job_status["state"] in ("completed", "failed", "cancelled"):
+                    break
+                await asyncio.sleep(0.02)
+            assert job_status["state"] == "completed", json.dumps(job_status, indent=2)
+            job = app[STATE_KEY].queue.job_for_run(submitted["jobRef"])
+            assert job is not None and job.result is not None
+            return job.result
+        finally:
+            await client.close()
+
+    result = cast("Any", asyncio.run(run_fixture()))
+
+    assert len(dit_type.sample_calls) == 1
+    saved = cast("Any", result.outputs["92"]["asset"].resolve())
+    assert saved.digest == output_asset.digest
+
+
+def test_h3_replay_does_not_patch_identity_or_nodes_under_test() -> None:
+    forbidden_execute_targets = {
+        "dinkster.load_lora_model_only",
+        "dinkster.minimax_h3_add_guide",
+        "GenerationLoadLoraModelOnly",
+        "NativeLoadLoraModelOnly",
+        "NativeMiniMaxH3AddGuide",
+    }
+    violations: list[str] = []
+    for path in sorted((REPO_ROOT / "tests").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+            if not isinstance(call.func, ast.Attribute) or call.func.attr != "setattr":
+                continue
+            if len(call.args) < 2 or not isinstance(call.args[1], ast.Constant):
+                continue
+            attribute = call.args[1].value
+            target = ast.unparse(call.args[0])
+            if attribute in {"tensor_record", "_dinkster_resident_fingerprint"} or (
+                attribute == "execute"
+                and any(forbidden in target for forbidden in forbidden_execute_targets)
+            ):
+                location = f"{path.relative_to(REPO_ROOT)}:{call.lineno}"
+                violations.append(f"{location}: {target}.{attribute}")
+
+    assert violations == []
 
 
 def test_native_h3_decomposed_sampling_refusals_and_non_h3_passthrough(
@@ -10206,6 +10614,94 @@ def test_multistream_sampler_routes_ltxav_family_with_cfg_guidance(
     assert runtime.sample_kwargs["denoise_mask"] is None
     assert runtime.sample_kwargs["steps"] == 4
     assert runtime.sample_kwargs["seed"] == 7
+
+
+def test_multistream_sampler_routes_shared_scheduling_to_custom_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_inference import PreparedMultiStreamConditioning, SamplingGuidance
+
+    arm = _native_arm()
+    torch = FakeTorch()
+    sampled_video = FakeTensor((1, 128, 13, 16, 24), "sampled-video")
+    runtime = _LTXAVSamplerRuntime(sampled_video)
+    handle = _handle(arm, runtime, torch)
+    latent = _ltxav_streams()
+    overlay = object()
+    resolver = object()
+    states: list[object] = []
+    closed: list[object] = []
+
+    class ScheduleState:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            assert kwargs["ordinary_overlays"] == (overlay,)
+            assert kwargs["ordinary_resolvers"] == {"digest": resolver}
+            states.append(self)
+
+        def resolve(self, _requests: object, _cancelled: object) -> tuple[()]:
+            return ()
+
+        def close(self) -> None:
+            closed.append(self)
+
+    payloads = iter(("scheduled-positive", "scheduled-negative"))
+
+    def scheduled_carrier(
+        _value: object,
+        _name: str,
+        _handle: object,
+        _state: object,
+    ) -> PreparedMultiStreamConditioning:
+        return PreparedMultiStreamConditioning(runtime.conditioning_identity, next(payloads))
+
+    real_import = arm.importlib.import_module
+    inference_torch = real_import("dinkster_inference_torch")
+    scheduled_options: list[tuple[object, object]] = []
+
+    def options(resolve: object, cancelled: object) -> object:
+        value = (resolve, cancelled)
+        scheduled_options.append(value)
+        return value
+
+    monkeypatch.setattr(arm, "_torch", lambda: torch)
+    monkeypatch.setattr(arm, "_NativeScheduleState", ScheduleState)
+    monkeypatch.setattr(arm, "_scheduled_carrier", scheduled_carrier)
+    monkeypatch.setattr(
+        arm.importlib,
+        "import_module",
+        lambda name: (
+            SimpleNamespace(
+                ScheduledSamplingOptions=options,
+                torch_sampler_registry=inference_torch.torch_sampler_registry,
+            )
+            if name == "dinkster_inference_torch"
+            else real_import(name)
+        ),
+    )
+
+    output = arm.NativeKSampler.execute(
+        model=arm._NativeModelOverlay(handle, (overlay,), {"digest": resolver}),
+        seed=7,
+        steps=4,
+        cfg=5.0,
+        sampler_name="euler",
+        scheduler="simple",
+        positive=[[PreparedMultiStreamConditioning(runtime.conditioning_identity, object()), {}]],
+        negative=[[PreparedMultiStreamConditioning(runtime.conditioning_identity, object()), {}]],
+        latent_image={"samples": latent},
+        denoise=1.0,
+    )
+
+    result = cast("Mapping[str, object]", output["latent"])["samples"]
+    assert cast("Any", result).by_role("video") is sampled_video
+    assert runtime.sample_kwargs is not None
+    assert runtime.sample_kwargs["conditioning"] == "scheduled-positive"
+    guidance = runtime.sample_kwargs["cfg"]
+    assert type(guidance) is SamplingGuidance
+    assert cast("Any", guidance).uncond == "scheduled-negative"
+    assert runtime.sample_kwargs["scheduled"] == scheduled_options[0]
+    assert len(states) == 1
+    assert closed == states
 
 
 def test_ltxav_clip_text_encode_feeds_multistream_sampler(
@@ -18520,12 +19016,14 @@ def test_generation_vae_decode_unwraps_only_one_video_stream(
     assert decoded == [video]
     assert cast("FakeTensor", output["image"]).shape == (1, 16, 16, 3)
 
-    for streams in (
-        MultiStreamLatent.from_pairs((("audio", video),)),
-        MultiStreamLatent.from_pairs((("video", video), ("audio", video))),
-    ):
-        with pytest.raises(TypeError, match="exactly one video stream"):
-            arm.GenerationVAEDecode.execute(samples={"samples": streams}, vae=Handle())
+    audio_only = MultiStreamLatent.from_pairs((("audio", video),))
+    with pytest.raises(TypeError, match="must contain a video stream"):
+        arm.GenerationVAEDecode.execute(samples={"samples": audio_only}, vae=Handle())
+
+    mixed = MultiStreamLatent.from_pairs((("video", video), ("audio", video)))
+    output = arm.GenerationVAEDecode.execute(samples={"samples": mixed}, vae=Handle())
+    assert decoded == [video, video]
+    assert cast("FakeTensor", output["image"]).shape == (1, 16, 16, 3)
 
 
 def test_generation_tiled_vae_decode_matches_comfy_video_tile_conversion(

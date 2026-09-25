@@ -36,6 +36,9 @@ from .native_arm_registry import (
     NATIVE_ARM_NODES as NATIVE_ARM_NODES,
 )
 from .native_arm_registry import (
+    NATIVE_ARM_TYPE_IDS as NATIVE_ARM_TYPE_IDS,
+)
+from .native_arm_registry import (
     NATIVE_SCHEDULING_NODES as NATIVE_SCHEDULING_NODES,
 )
 from .native_arm_registry import (
@@ -693,10 +696,16 @@ from .native_arm_registry import (
     NativeMiniMaxH3FL2VAConditioning as NativeMiniMaxH3FL2VAConditioning,
 )
 from .native_arm_registry import (
+    NativeMiniMaxH3ImageToVideo as NativeMiniMaxH3ImageToVideo,
+)
+from .native_arm_registry import (
     NativeMiniMaxH3MotionContext as NativeMiniMaxH3MotionContext,
 )
 from .native_arm_registry import (
     NativeMiniMaxH3REF2VAConditioning as NativeMiniMaxH3REF2VAConditioning,
+)
+from .native_arm_registry import (
+    NativeMiniMaxH3ReferenceToVideo as NativeMiniMaxH3ReferenceToVideo,
 )
 from .native_arm_registry import (
     NativeMiniMaxH3T2VAConditioning as NativeMiniMaxH3T2VAConditioning,

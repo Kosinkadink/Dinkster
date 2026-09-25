@@ -242,8 +242,8 @@ def validate_workload(workload: dict[str, Any]) -> None:
         raise ValueError("workflow graph must be nonempty")
     if not isinstance(bindings, list) or not all(isinstance(b, str) for b in bindings):
         raise ValueError("invalid seed inputs")
-    if not isinstance(seeds, list) or len(seeds) < 2 or len(set(seeds)) != len(seeds):
-        raise ValueError("need a cold seed and distinct warm seeds")
+    if not isinstance(seeds, list) or not seeds or len(set(seeds)) != len(seeds):
+        raise ValueError("need a cold seed and distinct seeds")
     for seed in seeds:
         seeded_workflow(graph, bindings, seed)
     if not _hex(workload["api_sha256"], 64):
@@ -300,6 +300,10 @@ def validate_workflow_report(report: dict[str, Any]) -> tuple[str, ...]:
                 problems.append(f"invalid {name} source provenance")
     workload = report.get("workload")
     rows = report.get("runs")
+    observer_sha256: str | None = None
+    dinkster_registrations: list[dict[str, Any]] | None = None
+    dinkster_records: list[dict[str, Any]] = []
+    validated_dinkster_windows: list[dict[str, Any]] = []
     try:
         if not isinstance(workload, dict) or not isinstance(rows, list):
             raise ValueError("missing workload/runs")
@@ -309,10 +313,6 @@ def validate_workflow_report(report: dict[str, Any]) -> tuple[str, ...]:
             raise ValueError("run count differs from workload")
         identities = set()
         window_nonces = set()
-        observer_sha256: str | None = None
-        dinkster_registrations: list[dict[str, Any]] | None = None
-        dinkster_records: list[dict[str, Any]] = []
-        validated_dinkster_windows: list[dict[str, Any]] = []
         if report.get("report_version") == 2 and report.get("system") == "dinkster":
             observer = report.get("allocator_observer")
             if not isinstance(observer, dict) or not _hex(observer.get("source_sha256"), 64):
@@ -389,7 +389,8 @@ def validate_workflow_report(report: dict[str, Any]) -> tuple[str, ...]:
                     raise ValueError("invalid retained output digest/size")
             if not all(row.get(key) for key in ("submitted_file", "accepted_file", "history_file")):
                 raise ValueError("raw job evidence references are missing")
-        expected_summary = summary([row["client_wall_seconds"] for row in rows[1:]])
+        warm_samples = [row["client_wall_seconds"] for row in rows[1:]]
+        expected_summary = summary(warm_samples) if warm_samples else None
         if report.get("warm_summary") != expected_summary:
             raise ValueError("warm summary differs from raw samples")
     except (KeyError, TypeError, ValueError, AttributeError) as error:

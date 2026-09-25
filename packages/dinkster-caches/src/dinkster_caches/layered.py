@@ -21,12 +21,12 @@ from typing import cast
 from weakref import WeakValueDictionary
 
 from dinkster_protocol import CacheKey, CacheStore
-from dinkster_values import Value
+from dinkster_values import MEBIBYTE, Value
 
 from .disk import DiskCacheStore
 from .memory import MemoryLRUCache, entry_cost
 
-DEFAULT_DISK_SPILL_MIN_BYTES = 1024**2
+DEFAULT_DISK_SPILL_MIN_BYTES = MEBIBYTE
 
 
 class LayeredCache:

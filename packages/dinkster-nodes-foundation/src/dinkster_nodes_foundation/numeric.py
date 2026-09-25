@@ -110,6 +110,7 @@ class ValueSelect(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.value.select",
+            aliases=("ComfySwitchNode",),
             display_name="Select Value",
             category="logic",
             inputs=(

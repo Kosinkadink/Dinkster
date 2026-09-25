@@ -36,7 +36,7 @@ from typing import TypeVar, cast
 
 import torch
 import torch.nn.functional as F
-from dinkster_inference import LTXVideoVAEConfig
+from dinkster_inference import GIBIBYTE, MEBIBYTE, LTXVideoVAEConfig
 
 from .ltx_model import _CombinedTimestepEmbedding  # pyright: ignore[reportPrivateUsage]
 from .operations import INITLESS, Operations, ResidencyRouted
@@ -48,10 +48,10 @@ __all__ = [
     "ltxv_vae_max_chunk_bytes",
 ]
 
-_MIN_VRAM_FOR_CHUNK_SCALING = 6 * 1024**3
-_MAX_VRAM_FOR_CHUNK_SCALING = 24 * 1024**3
-_MIN_CHUNK_BYTES = 32 * 1024**2
-_MAX_CHUNK_BYTES = 128 * 1024**2
+_MIN_VRAM_FOR_CHUNK_SCALING = 6 * GIBIBYTE
+_MAX_VRAM_FOR_CHUNK_SCALING = 24 * GIBIBYTE
+_MIN_CHUNK_BYTES = 32 * MEBIBYTE
+_MAX_CHUNK_BYTES = 128 * MEBIBYTE
 
 
 def ltxv_vae_max_chunk_bytes(total_memory_bytes: float) -> int:

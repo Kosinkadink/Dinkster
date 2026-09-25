@@ -13,6 +13,8 @@ from .families.minimax_h3 import (
     _sampling_memory_requirements,
 )
 from .native_arm_core import (
+    _NATIVE_MASK_BOUNDS_KEY,
+    _NATIVE_MASK_KEY,
     Any,
     ExitStack,
     KSampler,
@@ -44,6 +46,7 @@ from .native_arm_core import (
     multistream_sampling_preview_emitter,
     nullcontext,
     preview_stage,
+    replace,
     report_progress,
     sampling_preview_emitter,
 )
@@ -63,9 +66,12 @@ from .native_arm_runtime import (
     _require_classic_control_keyword,
     _sampling_space_runtime,
     _select_classic_control_binding,
+    _uses_native_scheduling,
 )
 from .native_arm_scheduling import (
     _catalog_id,
+    _NativeScheduleState,
+    _scheduled_carrier,
 )
 from .nodes_provider import (
     _bind_sampling_shift,
@@ -108,8 +114,115 @@ def _custom_sampling_conditioning(
     return _conditioning(prepared, input_id, torch, inference)
 
 
+def _prepared_multistream_sampling_carrier(
+    value: object,
+    input_id: str,
+    runtime: object,
+    inference: Any,
+    torch: Any,
+) -> Any | None:
+    if isinstance(value, inference.ResidentConditioningCarrier):
+        return _prepared_multistream_carrier(value, inference, input_id)
+    entries = _condition_entries(value, input_id)
+    if not entries:
+        return None
+    if len(entries) == 1 and entries[0][1] == {}:
+        return _prepared_multistream_carrier(value, inference, input_id)
+    registration = getattr(runtime, "sampling_execution_registration", None)
+    pipeline = getattr(registration, "pipeline", None)
+    encode = getattr(pipeline, "encode_conditioning", None)
+    if not callable(encode):
+        raise TypeError(f"{input_id} runtime cannot schedule prepared conditioning")
+    inference_torch = importlib.import_module("dinkster_inference_torch")
+    runtime_value = cast("Any", runtime)
+    records: list[Any] = []
+    bindings: list[Any] = []
+    payloads: list[object] = []
+    for index, entry in enumerate(entries):
+        prepared = entry[0]
+        metadata = cast("Mapping[object, object]", entry[1])
+        if type(prepared) is not inference.PreparedMultiStreamConditioning:
+            raise TypeError(f"{input_id} must contain prepared multi-stream conditioning")
+        prepared_value = cast("Any", prepared)
+        if prepared_value.runtime_identity != runtime_value.conditioning_identity:
+            raise ValueError(f"{input_id} conditioning was prepared by a different runtime")
+        unsupported = set(metadata) - {
+            "start_percent",
+            "end_percent",
+            "strength",
+            _NATIVE_MASK_KEY,
+            _NATIVE_MASK_BOUNDS_KEY,
+        }
+        if unsupported:
+            raise ValueError(
+                f"{input_id} scheduled prepared metadata is unsupported: "
+                + ", ".join(sorted(repr(key) for key in unsupported))
+            )
+        carrier = cast("Any", encode(prepared_value.payload, f"{input_id}-{index}"))
+        if (
+            type(carrier) is not inference.ConditioningCarrier
+            or len(carrier.conditioning.records) != 1
+        ):
+            raise TypeError("prepared conditioning encoder must return one canonical record")
+        start_value = metadata.get("start_percent", 0.0)
+        end_value = metadata.get("end_percent", 1.0)
+        strength_value = metadata.get("strength", 1.0)
+        if any(type(item) not in (int, float) for item in (start_value, end_value, strength_value)):
+            raise TypeError(f"{input_id} schedule bounds and strength must be numeric")
+        start = float(cast("int | float", start_value))
+        end = float(cast("int | float", end_value))
+        strength = float(cast("int | float", strength_value))
+        record = carrier.conditioning.records[0]
+        mask = metadata.get(_NATIVE_MASK_KEY)
+        mask_descriptor = None
+        extra_bindings = ()
+        if mask is not None:
+            if not isinstance(mask, torch.Tensor):
+                raise TypeError(f"{input_id} mask must be a torch.Tensor")
+            mask = cast("Any", mask)
+            mask_tensor = mask if mask.ndim >= 3 else mask.unsqueeze(0)
+            mask_binding = inference_torch.tensor_to_payload_binding(
+                f"{input_id}-{index}-mask",
+                mask_tensor,
+                space=inference_torch.MASK_PAYLOAD_SPACE,
+            )
+            mask_descriptor = inference.MaskDescriptor(
+                inference.PayloadReference(mask_binding.reference_id),
+                strength,
+                metadata.get(_NATIVE_MASK_BOUNDS_KEY) is True,
+            )
+            extra_bindings = (mask_binding,)
+        area = None
+        if mask_descriptor is None and strength != 1.0:
+            area = inference.AreaDescriptor(
+                1.0,
+                1.0,
+                0.0,
+                0.0,
+                inference.AreaUnits.PERCENT,
+                strength,
+            )
+        records.append(
+            replace(
+                record,
+                area=area,
+                mask=mask_descriptor,
+                schedule=inference.PercentRange(start, end),
+            )
+        )
+        bindings.extend((*carrier.bindings, *extra_bindings))
+        payloads.append(prepared_value.payload)
+    carrier = inference.make_conditioning_carrier(
+        inference.ConditioningSet(tuple(records)), tuple(bindings)
+    )
+    return inference.PreparedMultiStreamConditioning(
+        runtime_value.conditioning_identity,
+        inference.PreparedConditioningCarrier(carrier, tuple(payloads)),
+    )
+
+
 def _custom_sampling_has_inpaint(value: object, input_id: str, inference: Any) -> bool:
-    if isinstance(value, inference.ConditioningCarrier):
+    if isinstance(value, (inference.ConditioningCarrier, inference.ResidentConditioningCarrier)):
         return False
     return any(
         "concat_mask" in cast("Mapping[object, object]", entry[1])
@@ -222,7 +335,7 @@ def _execute_generation_custom_sampling(
     (
         handle,
         overlays,
-        _,
+        overlay_resolvers,
         z_image_control,
         sampling_shift,
         model_guidance_transforms,
@@ -239,10 +352,6 @@ def _execute_generation_custom_sampling(
         model_guidance_transforms
     )
     guidance_transforms = (*model_guidance_transforms, *guider_transforms)
-    if overlays:
-        raise ValueError(
-            "custom sampling does not accept model overlays other than guidance transforms"
-        )
     negative_handle = None
     if model_negative is not None:
         negative_model, negative_applications = _application_chain_model(
@@ -406,6 +515,10 @@ def _execute_generation_custom_sampling(
             and isinstance(runtime, inference.MultiStreamFamilyRuntime)
         )
     )
+    if overlays and not multistream_family:
+        raise ValueError(
+            "custom sampling does not accept model overlays other than guidance transforms"
+        )
     sparse_family = type(latent.get("samples")) is inference.SparseLatent
     if multistream_family:
         latent = _adapt_multistream_latent(latent, runtime, torch, inference, "latent_image")
@@ -462,13 +575,43 @@ def _execute_generation_custom_sampling(
     empty_inpaint: Any = None
     middle_cond: Any = None
     middle_inpaint: Any = None
+    schedule_state: _NativeScheduleState | None = None
     if multistream_family:
-        if positive_is_carrier:
+
+        def scheduled_lane(value: object, name: str) -> object:
+            assert schedule_state is not None
+            rows = (
+                _prepare_provider_multistream_conditioning(value, name, runtime, inference)
+                if isinstance(value, inference.ConditioningCarrier)
+                else value
+            )
+            return _scheduled_carrier(rows, name, handle, schedule_state)
+
+        scheduled = (
+            bool(overlays)
+            or _uses_native_scheduling(positive)
+            or (negative is not None and _uses_native_scheduling(negative))
+            or (empty is not None and _uses_native_scheduling(empty))
+            or (middle is not None and _uses_native_scheduling(middle))
+        )
+        if scheduled:
+            schedule_state = _NativeScheduleState(
+                handle,
+                inference,
+                inference_torch,
+                ordinary_overlays=overlays,
+                ordinary_resolvers=overlay_resolvers,
+            )
+
+            cond = scheduled_lane(positive, "positive")
+        elif positive_is_carrier:
             cond = _prepare_provider_multistream_conditioning(
                 positive, "positive", runtime, inference
             )[0][0]
         else:
-            cond = _prepared_multistream_carrier(positive, inference, "positive")
+            cond = _prepared_multistream_sampling_carrier(
+                positive, "positive", runtime, inference, torch
+            )
             if cond is None:
                 raise TypeError("positive must contain prepared multi-stream conditioning")
         cond_inpaint = None
@@ -477,29 +620,41 @@ def _execute_generation_custom_sampling(
         # entries raise inside the carrier helper.
         if negative is None:
             uncond = None
+        elif schedule_state is not None:
+            uncond = scheduled_lane(negative, "negative")
         elif negative_is_carrier:
             uncond = _prepare_provider_multistream_conditioning(
                 negative, "negative", runtime, inference
             )[0][0]
         else:
-            uncond = _prepared_multistream_carrier(negative, inference, "negative")
+            uncond = _prepared_multistream_sampling_carrier(
+                negative, "negative", runtime, inference, torch
+            )
         uncond_inpaint = None
         if empty is not None:
-            if isinstance(empty, inference.ConditioningCarrier):
+            if schedule_state is not None:
+                empty_cond = scheduled_lane(empty, "empty_conditioning")
+            elif isinstance(empty, inference.ConditioningCarrier):
                 empty_cond = _prepare_provider_multistream_conditioning(
                     empty, "empty_conditioning", runtime, inference
                 )[0][0]
             else:
-                empty_cond = _prepared_multistream_carrier(empty, inference, "empty_conditioning")
+                empty_cond = _prepared_multistream_sampling_carrier(
+                    empty, "empty_conditioning", runtime, inference, torch
+                )
                 if empty_cond is None:
                     raise TypeError("empty_conditioning must contain multi-stream conditioning")
         if middle is not None:
-            if isinstance(middle, inference.ConditioningCarrier):
+            if schedule_state is not None:
+                middle_cond = scheduled_lane(middle, "cond2")
+            elif isinstance(middle, inference.ConditioningCarrier):
                 middle_cond = _prepare_provider_multistream_conditioning(
                     middle, "cond2", runtime, inference
                 )[0][0]
             else:
-                middle_cond = _prepared_multistream_carrier(middle, inference, "cond2")
+                middle_cond = _prepared_multistream_sampling_carrier(
+                    middle, "cond2", runtime, inference, torch
+                )
                 if middle_cond is None:
                     raise TypeError("cond2 must contain multi-stream conditioning")
     else:
@@ -713,7 +868,7 @@ def _execute_generation_custom_sampling(
             else nullcontext()
         ),
         preview_stage(preview),
-        torch.inference_mode(),
+        torch.no_grad() if schedule_state is not None else torch.inference_mode(),
         inference.use_sampling_environment(
             sampler.extension_ids, context.cancelled if context is not None else _not_cancelled
         ),
@@ -739,9 +894,12 @@ def _execute_generation_custom_sampling(
                 "cancelled",
                 "observer",
                 "parent_span_id",
+                "scheduled",
             },
         ) as application_kwargs,
     ):
+        if schedule_state is not None:
+            control_stages.callback(schedule_state.close)
         if classic_control is not None:
             control_kwargs["control"] = classic_control
         for control_handle in classic_control_handles:
@@ -794,6 +952,16 @@ def _execute_generation_custom_sampling(
             noise_inds=noise_inds,
             on_step=report_step,
             on_state=(preview.on_state if preview is not None else None),
+            **(
+                {}
+                if schedule_state is None
+                else {
+                    "scheduled": inference_torch.ScheduledSamplingOptions(
+                        schedule_state.resolve,
+                        context.cancelled if context is not None else _not_cancelled,
+                    )
+                }
+            ),
             **latent_kwargs,
             **control_kwargs,
             **application_kwargs,
