@@ -1837,9 +1837,7 @@ def test_cfgpp_receives_synthetic_or_real_unconditional_prediction(
         video_elements = layout.by_role("video").elements
         for model_input, sigma, uncond in uncond_records:
             expected = model_input - 5.0 * sigma
-            expected[..., :video_elements] = (
-                model_input[..., :video_elements] - 0.5 * 5.0 * sigma
-            )
+            expected[..., :video_elements] = model_input[..., :video_elements] - 0.5 * 5.0 * sigma
             torch.testing.assert_close(uncond, expected)
     assert result.roles == target.roles
 
