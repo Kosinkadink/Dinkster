@@ -464,10 +464,9 @@ def test_tiled_decode_blends_against_composited_top_and_left_neighbors(
 ) -> None:
     _set_free_tile_memory(monkeypatch, 0)
     latent = torch.zeros((1, 2, 1, 6, 6), dtype=torch.float32)
-    latent[:, 0] = (
-        torch.arange(6, dtype=torch.float32).view(1, 1, 6, 1) * 10
-        + torch.arange(6, dtype=torch.float32).view(1, 1, 1, 6)
-    )
+    latent[:, 0] = torch.arange(6, dtype=torch.float32).view(1, 1, 6, 1) * 10 + torch.arange(
+        6, dtype=torch.float32
+    ).view(1, 1, 1, 6)
     vae = TileDecodeProbe()
 
     actual = vae.tiled_decode(latent)
@@ -533,8 +532,9 @@ def test_transformer_fused_boundaries_match_unfused_equations(
         linears = (block.attn.to_qkv, block.attn.to_out, block.ff.w1, block.ff.w2)
         for index, linear in enumerate(linears):
             linear.weight.copy_(
-                torch.linspace(-0.05 + index * 0.01, 0.07 + index * 0.01, linear.weight.numel())
-                .reshape_as(linear.weight)
+                torch.linspace(
+                    -0.05 + index * 0.01, 0.07 + index * 0.01, linear.weight.numel()
+                ).reshape_as(linear.weight)
             )
             assert linear.bias is not None
             linear.bias.copy_(torch.linspace(-0.03, 0.02, linear.bias.numel()))
@@ -543,9 +543,7 @@ def test_transformer_fused_boundaries_match_unfused_equations(
     rotary = RotaryEmbeddingND(6)(ids)
 
     normalized1 = F.rms_norm(source, (16,), block.norm1.weight, block.norm1.eps)
-    qkv = F.linear(normalized1, block.attn.to_qkv.weight, block.attn.to_qkv.bias).view(
-        1, 3, 2, 24
-    )
+    qkv = F.linear(normalized1, block.attn.to_qkv.weight, block.attn.to_qkv.bias).view(1, 3, 2, 24)
     query, key, value = qkv.chunk(3, dim=-1)
     query = F.rms_norm(query, (8,), None, block.attn.norm_q.eps)
     key = F.rms_norm(key, (8,), None, block.attn.norm_k.eps)
@@ -555,9 +553,7 @@ def test_transformer_fused_boundaries_match_unfused_equations(
     )
     query = torch.cat((query_prefix, query[..., rotated:]), dim=-1)
     key = torch.cat((key_prefix, key[..., rotated:]), dim=-1)
-    attended = attention_kernel(
-        query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2)
-    )
+    attended = attention_kernel(query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2))
     projected = F.linear(
         attended.transpose(1, 2).reshape(1, 3, 16),
         block.attn.to_out.weight,
@@ -566,9 +562,7 @@ def test_transformer_fused_boundaries_match_unfused_equations(
     after_attention = source + projected * block.scale1
     normalized2 = F.rms_norm(after_attention, (16,), block.norm2.weight, block.norm2.eps)
     gate, up = F.linear(normalized2, block.ff.w1.weight, block.ff.w1.bias).chunk(2, dim=-1)
-    fed_forward = F.linear(
-        F.silu(gate) * up, block.ff.w2.weight, block.ff.w2.bias
-    )
+    fed_forward = F.linear(F.silu(gate) * up, block.ff.w2.weight, block.ff.w2.bias)
     expected = after_attention + fed_forward * block.scale2
 
     original = vae_module.dinkster_kitchen.rms_rope_split_half_

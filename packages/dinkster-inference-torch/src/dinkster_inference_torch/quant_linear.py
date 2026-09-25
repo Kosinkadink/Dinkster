@@ -540,9 +540,7 @@ class Int8Linear(torch.nn.Module):
                 weight_key = binding.key("weight")
                 if binding.mechanism.weight_functions(weight_key):
                     if input_act is not None:
-                        input = _input_activation(
-                            input, input_act, input_act_weight, input_act_eps
-                        )
+                        input = _input_activation(input, input_act, input_act_weight, input_act_eps)
                     output = torch.nn.functional.linear(
                         input,
                         lease.get("weight", dtype=self.compute_dtype),
@@ -741,9 +739,7 @@ def linear_input_act(
         if input_act is None
         else _input_activation(input, input_act, input_act_weight, input_act_eps)
     )
-    return _residual_epilogue(
-        cast(torch.Tensor, linear(activated)), residual, residual_scale
-    )
+    return _residual_epilogue(cast(torch.Tensor, linear(activated)), residual, residual_scale)
 
 
 class Nvfp4ExecutionError(RuntimeError):

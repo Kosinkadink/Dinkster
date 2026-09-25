@@ -562,9 +562,9 @@ class Attention(torch.nn.Module):
         batch, sequence, _ = x.shape
         with materialized_rms_norm_weight(pre_norm) as weight:
             eps = torch.finfo(x.dtype).eps if pre_norm.eps is None else pre_norm.eps
-            qkv = linear_input_act(
-                self.to_qkv, x, "rms_norm", weight, eps
-            ).view(batch, sequence, -1, 3 * self.dim_head)
+            qkv = linear_input_act(self.to_qkv, x, "rms_norm", weight, eps).view(
+                batch, sequence, -1, 3 * self.dim_head
+            )
         query, key, value = qkv.chunk(3, dim=-1)
         if rotary is not None:
             rotated = rotary.shape[-3] * 2
@@ -579,9 +579,7 @@ class Attention(torch.nn.Module):
                 rotary,
                 self.qk_norm_scale.to(query.device),
                 epsilon=(
-                    torch.finfo(query.dtype).eps
-                    if self.norm_q.eps is None
-                    else self.norm_q.eps
+                    torch.finfo(query.dtype).eps if self.norm_q.eps is None else self.norm_q.eps
                 ),
                 rot_dim=rotated,
             )

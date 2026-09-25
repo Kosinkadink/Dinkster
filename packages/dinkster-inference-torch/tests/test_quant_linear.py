@@ -1714,9 +1714,10 @@ def test_linear_input_act_folds_rms_norm_and_scaled_residual_equation() -> None:
     residual = torch.tensor([[[0.2, -0.3, 0.5, 1.0], [-1.0, 0.4, 0.8, -0.6]]])
     residual_scale = torch.tensor([0.15, -0.25, 0.4, 0.75])
     normalized = torch.nn.functional.rms_norm(source, (4,), norm_weight, 1e-5)
-    expected = residual + torch.nn.functional.linear(
-        normalized, linear.weight, linear.bias
-    ) * residual_scale
+    expected = (
+        residual
+        + torch.nn.functional.linear(normalized, linear.weight, linear.bias) * residual_scale
+    )
 
     actual = linear_input_act(
         linear,
