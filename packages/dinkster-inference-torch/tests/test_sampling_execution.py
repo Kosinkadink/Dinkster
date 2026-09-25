@@ -243,6 +243,25 @@ class TestNarrowSingleStreamCustomSampling:
         with pytest.raises(_FamilyError, match="not a prepared multi-stream payload"):
             self._narrow(cond=prepared)
 
+    def test_dispatches_single_stream_conditioning_by_protocol_fields(self) -> None:
+        class ProtocolConditioning:
+            embeddings = torch.zeros(1, 3, 16)
+            pooled = None
+
+        conditioning = ProtocolConditioning()
+
+        assert self._narrow(cond=cast("Any", conditioning))[2] is conditioning
+
+    def test_refuses_foreign_single_stream_values(self) -> None:
+        with pytest.raises(_FamilyError, match="single-stream tensor latent"):
+            self._narrow(latent=object())
+        with pytest.raises(_FamilyError, match="single-stream tensor noise"):
+            self._narrow(noise=object())
+        with pytest.raises(_FamilyError, match="not a prepared multi-stream payload"):
+            self._narrow(cond=object())
+        with pytest.raises(_FamilyError, match="single-stream denoise mask"):
+            self._narrow(denoise_mask=object())
+
     def test_admits_dual_guidance(self) -> None:
         latent = torch.zeros(1, 4, 8, 8)
         noise = torch.ones(1, 4, 8, 8)
