@@ -309,7 +309,14 @@ from .conditioning import (
     TokenSegmentDescriptor,
     canonical_conditioning_set,
 )
-from .conditioning_adapters import ConditioningAdapter
+from .conditioning_adapters import (
+    ConditioningAdapter,
+    ConditioningAdapterLookup,
+    ConditioningLayoutIncompatibility,
+    conditioning_family_id,
+    prepare_conditioning,
+    release_conditioning,
+)
 from .conditioning_wire import (
     CONDITIONING_CARRIER_FORMAT,
     CONDITIONING_TYPE_ID,
@@ -2025,6 +2032,11 @@ __all__ = [
     "guidance_declarations",
     "InferenceContribution",
     "ConditioningAdapter",
+    "ConditioningAdapterLookup",
+    "ConditioningLayoutIncompatibility",
+    "conditioning_family_id",
+    "prepare_conditioning",
+    "release_conditioning",
     "INFERENCE_CONDITIONING_ADAPTERS_SURFACE",
     "conditioning_adapter_declaration",
     "InferenceRegistries",
