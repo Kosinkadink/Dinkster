@@ -156,6 +156,8 @@ MODEL_GROUPS = (
         "timeout-minutes": 45,
     },
 )
+ALWAYS_MODEL_GROUPS = MODEL_GROUPS[:9]
+VISION_MODEL_GROUPS = MODEL_GROUPS[9:]
 PR_MODEL_GROUPS = (
     {
         "name": "inference and IPAdapter, shard 1 of 8",
@@ -724,17 +726,48 @@ def test_full_model_job_remains_on_main_validation() -> None:
     assert workflow[True]["pull_request"] is None
 
 
+@pytest.mark.parametrize(
+    ("event", "expected_groups"),
+    [
+        ("push", ALWAYS_MODEL_GROUPS),
+        ("workflow_dispatch", ALWAYS_MODEL_GROUPS),
+        ("workflow_call", ALWAYS_MODEL_GROUPS),
+        ("schedule", MODEL_GROUPS),
+    ],
+)
+def test_full_validation_selects_model_groups_for_each_trigger(
+    event: str, expected_groups: tuple[dict[str, object], ...]
+) -> None:
+    plan_step = JOBS["validation-plan"]["steps"][0]
+    always_groups = tuple(json.loads(plan_step["env"]["ALWAYS_MODEL_MATRIX"]))
+    vision_groups = tuple(json.loads(plan_step["env"]["VISION_MODEL_MATRIX"]))
+    selected = always_groups + vision_groups if event == "schedule" else always_groups
+    assert selected == expected_groups
+    assert {group["group"] for group in always_groups} == {"inference", "acceptance"}
+    assert {group["group"] for group in vision_groups} == {
+        "vision-fast",
+        "vision-detection",
+        "vision-large",
+        "vision-sam",
+    }
+
+
 def test_dedicated_job_retains_readonly_credentials_and_cpu_dispatch() -> None:
     job = JOBS["model-tests"]
     assert job["strategy"] == {
         "fail-fast": False,
-        "matrix": {"include": list(MODEL_GROUPS)},
+        "matrix": {"include": "${{ fromJSON(needs.validation-plan.outputs.model-matrix) }}"},
     }
-    suites = [
-        suite
-        for group in job["strategy"]["matrix"]["include"]
-        for suite in group["suites"].split(",")
-    ]
+    plan = JOBS["validation-plan"]
+    plan_step = plan["steps"][0]
+    assert json.loads(plan_step["env"]["ALWAYS_MODEL_MATRIX"]) == list(ALWAYS_MODEL_GROUPS)
+    assert json.loads(plan_step["env"]["VISION_MODEL_MATRIX"]) == list(VISION_MODEL_GROUPS)
+    script = plan_step["with"]["script"]
+    assert "context.eventName === 'schedule'" in script
+    assert "? [...alwaysModelMatrix, ...visionModelMatrix]" in script
+    assert ": alwaysModelMatrix" in script
+    assert "core.setOutput('model-matrix', JSON.stringify(modelMatrix))" in script
+    suites = [suite for group in MODEL_GROUPS for suite in group["suites"].split(",")]
     assert set(suites) == EXPECTED_MODEL_SUITES
     assert all(
         suites.count(suite) == (8 if suite in {"inference-torch", "model-ipadapter"} else 1)
@@ -844,6 +877,8 @@ def test_full_model_suites_use_cpu_golden_shards_with_per_matrix_bounds() -> Non
     assert "engine-tests" not in PR_JOBS
     assert JOBS["model-tests"]["timeout-minutes"] == "${{ matrix.timeout-minutes }}"
     assert [row["timeout-minutes"] for row in MODEL_GROUPS] == [30] * 12 + [45]
+    assert [row["timeout-minutes"] for row in ALWAYS_MODEL_GROUPS] == [30] * 9
+    assert [row["timeout-minutes"] for row in VISION_MODEL_GROUPS] == [30] * 3 + [45]
     assert [row["group"] for row in MODEL_GROUPS].count("inference") == 8
     assert {row["pytest-args"] for row in MODEL_GROUPS if row["group"] == "inference"} == {
         f"-p tools.pytest_file_shard --file-shard {shard}/8" for shard in range(1, 9)
@@ -976,13 +1011,17 @@ def test_full_validation_batches_pushes_without_cancelling_active_runs() -> None
         "cancel-in-progress": False,
     }
     plan = JOBS["validation-plan"]
-    assert plan["outputs"] == {"run-heavy": "${{ steps.plan.outputs.run-heavy }}"}
+    assert plan["outputs"] == {
+        "model-matrix": "${{ steps.plan.outputs.model-matrix }}",
+        "run-heavy": "${{ steps.plan.outputs.run-heavy }}",
+    }
     script = plan["steps"][0]["with"]["script"]
     for required in (
         "context.eventName !== 'schedule'",
         "workflow_id: 'full-validation.yml'",
         "branch: 'main'",
         "status: 'success'",
+        "event: 'schedule'",
         "per_page: 1",
         "workflow_runs[0]?.head_sha === context.sha",
     ):
@@ -1106,9 +1145,7 @@ def test_full_validation_pytest_and_demo_jobs_are_timeout_bounded() -> None:
     assert JOBS["p2p-artifact-smoke"]["timeout-minutes"] == 15
     assert JOBS["torch-cpu"]["timeout-minutes"] == 20
     assert JOBS["model-tests"]["timeout-minutes"] == "${{ matrix.timeout-minutes }}"
-    assert [
-        row["timeout-minutes"] for row in JOBS["model-tests"]["strategy"]["matrix"]["include"]
-    ] == [30] * 12 + [45]
+    assert [row["timeout-minutes"] for row in MODEL_GROUPS] == [30] * 12 + [45]
     assert JOBS["coverage"]["timeout-minutes"] == 30
     assert JOBS["coverage-gate"]["timeout-minutes"] == 5
     assert JOBS["translation-coverage"]["timeout-minutes"] == 15
