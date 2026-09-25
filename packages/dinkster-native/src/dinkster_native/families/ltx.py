@@ -37,10 +37,8 @@ from ..nodes_sampling_runtime import (
     _native_component_codec,
 )
 from .conditioning import _prepared_multistream_carrier
+from .execution import resolve_component_execution
 from .latent import _latent_samples
-from .minimax_h3 import (
-    resolve_component_execution,
-)
 
 
 class CodecAdapter:

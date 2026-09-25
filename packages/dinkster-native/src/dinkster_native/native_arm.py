@@ -25,6 +25,7 @@ from . import (
     nodes_samplers,
     nodes_sampling_runtime,
 )
+from .families import execution as family_execution
 from .families import ltx as nodes_ltx
 from .families import minimax_h3 as nodes_minimax
 from .families import seedvr2 as nodes_vae_seedvr2
@@ -809,6 +810,7 @@ from .native_arm_runtime import _NativeModelOverlay as _NativeModelOverlay
 _CustomSigmasValue = native_arm_core._CustomSigmasValue
 
 _IMPLEMENTATION_MODULES = (
+    family_execution,
     native_arm_conditioning,
     native_arm_core,
     native_arm_latent_utils,

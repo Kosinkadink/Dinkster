@@ -4,10 +4,8 @@
 
 from __future__ import annotations
 
-from .families.minimax_h3 import (
-    _component_runtime_with_options,
-    _minimax_h3_schedule_runtime,
-)
+from .families.execution import _component_runtime_with_options
+from .families.minimax_h3 import _minimax_h3_schedule_runtime
 from .native_arm_core import (
     _ASSET,
     _BOOLEAN,
