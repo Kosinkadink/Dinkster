@@ -1711,27 +1711,41 @@ def test_runtime_forwards_the_token_mask_to_both_guidance_lanes(
         torch.testing.assert_close(actual.by_role("audio"), expected.by_role("audio"))
 
 
-def test_h3_fractional_denoise_mask_blends_at_the_declared_video_cells() -> None:
+def test_h3_fractional_denoise_mask_matches_velocity_scaling_before_x0_conversion() -> None:
     runtime, conditioner, _dit = _context_mean_runtime()
     target = _target()
     prepared = _condition_t2va(conditioner, target)
     positive = replace(prepared, context=torch.full_like(prepared.context, 2.0))
     video = target.by_role("video")
-    mask = torch.full_like(video, 0.25)
-    mask[..., :, 1] = 0.75
+    mask = (
+        torch.tensor(
+            ((0.0, 0.25), (0.75, 1.0)),
+            dtype=video.dtype,
+        )
+        .reshape(1, 1, 1, 2, 2)
+        .expand_as(video)
+    )
+    sigmas = (0.9, 0.35, 0.0)
 
-    result = runtime.sample_custom(
+    output = runtime.sample_custom(
         target,
         noise=target.map(torch.zeros_like),
         cond=PreparedMultiStreamConditioning(runtime.conditioning_identity, positive),
         cfg=None,
-        request=_h3_custom_request("euler", (1.0, 0.0)),
+        request=_h3_custom_request("euler", sigmas),
         denoise_mask=mask,
         compute_dtype=torch.float32,
-    ).output.by_role("video")
+    ).output
 
-    torch.testing.assert_close(result[..., :, 0], torch.full_like(result[..., :, 0], -0.5))
-    torch.testing.assert_close(result[..., :, 1], torch.full_like(result[..., :, 1], -1.5))
+    velocity = 2.0
+    token_mask = torch.ones_like(mask)
+    first = -(sigmas[0] - sigmas[1]) * mask.square() * velocity
+    expected = mask * token_mask * first - sigmas[1] * mask.square() * velocity
+    competing_first = -(sigmas[0] - sigmas[1]) * mask * velocity
+    competing = mask * token_mask * competing_first - sigmas[1] * mask * velocity
+
+    torch.testing.assert_close(output.by_role("video"), expected)
+    assert not torch.allclose(output.by_role("video"), competing)
 
 
 @pytest.mark.parametrize("bad_value", (float("nan"), -0.1, 1.1))
@@ -1819,8 +1833,14 @@ def test_cfgpp_receives_synthetic_or_real_unconditional_prediction(
     assert dit.calls == ([2.0, 5.0] * 3 if real_uncond else [2.0] * 3)
     assert len(uncond_records) == 3
     if real_uncond:
+        _, layout = pack_latent_streams(target)
+        video_elements = layout.by_role("video").elements
         for model_input, sigma, uncond in uncond_records:
-            torch.testing.assert_close(uncond, model_input - 5.0 * sigma)
+            expected = model_input - 5.0 * sigma
+            expected[..., :video_elements] = (
+                model_input[..., :video_elements] - 0.5 * 5.0 * sigma
+            )
+            torch.testing.assert_close(uncond, expected)
     assert result.roles == target.roles
 
 
