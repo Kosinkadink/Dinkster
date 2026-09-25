@@ -113,7 +113,9 @@
   one-prompt conditioning nodes for positive and negative lanes, CFG++ sampling
   with real or synthetic unconditional prediction, custom sampling (SamplerCustom,
   SamplerCustomAdvanced, and the model-dependent sigma nodes) over the same
-  video/audio streams, AV encode/decode
+  video/audio streams, AV encode/decode, and MiniMax H3 Fun ControlNet Union
+  v1/v2 control-video or masked-source conditioning with strength and sampling
+  windows through the same sampling engine.
 <!-- capability:dinkster.minimax_music3 -->
 - MiniMax Music 3 text-to-music generation through the official split-component
   workflow. Diffusion supports the FP16, FP32, and INT8 ConvRot artifacts; the

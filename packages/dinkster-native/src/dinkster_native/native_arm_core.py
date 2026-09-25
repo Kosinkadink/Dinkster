@@ -77,6 +77,7 @@ from .model_aware_schedules import (
 from .native import (
     SCHEDULED_HOOKS_KEY,
     WAN_CAMERA_POSES,
+    ApplyMiniMaxH3FunControlPatch,
     ApplyZImageControlPatch,
     BerniniConditioning,
     CLIPTextEncode,
@@ -1148,6 +1149,7 @@ __all__ = [
     "ALIGN_YOUR_STEPS_NOISE_LEVELS",
     "AcceleratorMemoryPolicyError",
     "Any",
+    "ApplyMiniMaxH3FunControlPatch",
     "ApplyZImageControlPatch",
     "AssetRef",
     "AssetWidget",

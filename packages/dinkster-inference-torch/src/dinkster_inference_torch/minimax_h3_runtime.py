@@ -105,6 +105,7 @@ from .minimax_h3_conditioning import (
     MiniMaxH3VisionValue,
     realize_minimax_h3_conditioner_inputs,
 )
+from .minimax_h3_control import MiniMaxH3FunControlConditioning
 from .minimax_h3_dit import (
     MiniMaxH3Attention,
     MiniMaxH3DiT,
@@ -1297,6 +1298,7 @@ class _H3LatentAdapter:
         owner = cast("MiniMaxH3DiTRuntime", runtime)
         unknown = set(context.options) - {
             "attention_kernel_factory",
+            "control",
             "noise_inds",
             "scheduler_label",
             "scheduled",
@@ -1304,6 +1306,11 @@ class _H3LatentAdapter:
         if unknown:
             raise MiniMaxH3RuntimeError(
                 "MiniMax H3 sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+            )
+        control = context.options.get("control")
+        if control is not None and type(control) is not MiniMaxH3FunControlConditioning:
+            raise MiniMaxH3RuntimeError(
+                "MiniMax H3 control must be exact MiniMaxH3FunControlConditioning"
             )
         if type(latent) is not MultiStreamLatent:
             raise MiniMaxH3RuntimeError(
@@ -1568,6 +1575,9 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         requested_sequence = (
             requested_distributed is not None and requested_distributed.mode == "sequence"
         )
+        control = cast("MiniMaxH3FunControlConditioning | None", context.options.get("control"))
+        if requested_sequence and control is not None:
+            raise MiniMaxH3RuntimeError("MiniMax H3 control does not support sequence sharding")
         if requested_sequence and attention_kernel_factory is not None:
             raise MiniMaxH3RuntimeError(
                 "single-job sequence mode owns the attention kernel factory"
@@ -1680,6 +1690,17 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 component_role="diffusion",
                 device=str(x.device),
             ):
+                active_control = (
+                    None
+                    if control is None
+                    else control.patch_for_sigma(
+                        sigma,
+                        lambda percent: self.custom_sampling_percent_to_sigma(
+                            percent,
+                            return_actual_sigma=True,
+                        ),
+                    )
+                )
                 local_rank_zero = rank_zero_sampling_active()
                 if use_sequence and not local_rank_zero:
                     assert distributed is not None
@@ -1841,6 +1862,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                         conditioning=dit_conditioning,
                         sigmas=sigmas,
                         sampler_sigmas=schedule,
+                        control=active_control,
                         denoise_mask=active_model_mask,
                         attention_kernel_factory=sequence_factory,
                         sequence_sharding=sharding,
@@ -1855,6 +1877,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             conditioning=dit_conditioning,
                             sigmas=sigmas,
                             sampler_sigmas=schedule,
+                            control=active_control,
                             denoise_mask=active_model_mask,
                         )
                     else:
@@ -1865,6 +1888,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             conditioning=dit_conditioning,
                             sigmas=sigmas,
                             sampler_sigmas=schedule,
+                            control=active_control,
                             denoise_mask=active_model_mask,
                             attention_kernel_factory=attention_kernel_factory,
                         )

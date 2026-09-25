@@ -725,6 +725,48 @@ class NativeLoadZImageControlPatch(LoadZImageControlPatch):
                 ),
                 (f"resource={assembled.resource_digest}",),
             )
+        elif inference_torch.is_minimax_h3_fun_state_dict(dict.fromkeys(source.keys())):
+            checkpoint = importlib.import_module("dinkster_inference_torch.checkpoint")
+            state_dict, metadata = checkpoint.load_checkpoint_with_metadata(
+                model_patch.local_path()
+            )
+            if not isinstance(state_dict, Mapping):
+                raise TypeError("MiniMax H3 Fun control checkpoint must contain a state dict")
+            attention = importlib.import_module("dinkster_inference_torch.attention")
+            selection = attention.resolve_role_attention(
+                "flux", context.attention_policy, context.attention_route_token
+            )
+            h3_dit = importlib.import_module("dinkster_inference_torch.minimax_h3_dit")
+            kernel, evidence = h3_dit.minimax_h3_attention_provider(selection)
+            time_embedding_kind = (
+                "curve"
+                if metadata is not None
+                and metadata.get("minimax_h3_fun_controlnet") == "adaln_basis"
+                else "mlp"
+            )
+            module = inference_torch.load_minimax_h3_fun_control(
+                state_dict,
+                metadata,
+                attention_kernel=kernel,
+                evidence=evidence,
+                time_embedding_kind=time_embedding_kind,
+            )
+            family_id = inference.MINIMAX_H3_CONFIG.family_id
+            resource_identity = inference.build_runtime_identity_from_facts(
+                family_id,
+                (
+                    f"family={family_id}",
+                    "component=minimax-h3-fun-control",
+                    f"asset={model_patch.digest}",
+                    f"time_embedding_kind={time_embedding_kind}",
+                ),
+                diffusion_dtype=inference.BFLOAT16.name,
+                text_dtype="unloaded",
+                vae_dtype="unloaded",
+                fp8_matmul=False,
+                attention_policy=context.attention_policy,
+                attention_route_token=context.attention_route_token,
+            )
         else:
             plan = inference.plan_z_image_control(source, asset_digest=model_patch.digest)
             assembled = inference_torch.assemble_z_image_control(plan, **attention_kwargs)

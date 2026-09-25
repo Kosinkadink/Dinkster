@@ -1,9 +1,9 @@
 ## LoRA and model patching
 
-- Native ModelPatchLoader for the official Z-Image Turbo Fun ControlNet Union
-  and Wan 2.1 InfiniteTalk/MultiTalk patches, with ZImageFunControlnet workflow
-  compatibility through KSampler, SamplerCustom, and SamplerCustomAdvanced for
-  Z-Image
+- Native ModelPatchLoader for the official Z-Image Turbo and MiniMax H3 Fun
+  ControlNet Union models and Wan 2.1 InfiniteTalk/MultiTalk patches. Z-Image
+  and MiniMax H3 Fun control execute through KSampler, SamplerCustom, and
+  SamplerCustomAdvanced.
 - Native Load LoRA and Load LoRA (Model Only) generation nodes use
   precalculated weights. `auto` selects precalculation; explicit `attach` is
   refused because canonical conditioning carries encoded values rather than

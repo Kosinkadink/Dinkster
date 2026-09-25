@@ -2295,6 +2295,10 @@ def test_native_comfy_equivalents_keep_upstream_names_and_aliases() -> None:
             "Apply Z-Image Fun ControlNet",
             ("ZImageFunControlnet",),
         ),
+        "dinkster.apply_minimax_h3_fun_control_patch": (
+            "Apply MiniMax H3 Fun ControlNet",
+            ("MiniMaxH3FunControlNetApply",),
+        ),
         "dinkster.empty_minimax_h3_av": (
             "Empty MiniMax H3 AV Latent",
             ("EmptyMiniMaxH3LatentAV",),

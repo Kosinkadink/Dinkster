@@ -341,7 +341,7 @@ def test_shared_runtime_capabilities_are_typed_and_catalog_owned() -> None:
     expected = {
         FamilyCapability.SPLIT_TEXT_LORA: {FLUX2_DEV.id, FLUX2_KLEIN_9B.id, FLUX2_KLEIN_4B.id},
         FamilyCapability.COMPONENT_EXECUTION_OPTIONS: {CHROMA.id, CHROMA_RADIANCE.id},
-        FamilyCapability.CONTROL_OVERLAY: {Z_IMAGE.id},
+        FamilyCapability.CONTROL_OVERLAY: {MINIMAX_H3.id, Z_IMAGE.id},
         FamilyCapability.DIRECT_SAMPLING_SHIFT: {LUMINA2.id},
     }
 
