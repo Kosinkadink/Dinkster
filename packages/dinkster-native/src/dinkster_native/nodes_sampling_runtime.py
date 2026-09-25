@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .families.conditioning import _prepared_multistream_conditioning
 from .families.minimax_h3 import (
     _adapt_multistream_latent,
     _move_multistream_latent,
-    _prepared_multistream_conditioning,
     _resolve_component_execution,
     _sampling_memory_requirements,
 )

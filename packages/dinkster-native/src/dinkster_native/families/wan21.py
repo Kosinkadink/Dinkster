@@ -44,7 +44,7 @@ from ..native_arm_runtime import (
     _native_handle,
 )
 from ..native_residency import NativeComponentHandle
-from .minimax_h3 import _prepared_multistream_conditioning
+from .conditioning import _prepared_multistream_conditioning
 
 
 def is_runtime_family(family_id: str) -> bool:

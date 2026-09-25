@@ -59,6 +59,7 @@ from ..native_arm_runtime import (
     _NativeModelOverlay,
     _torch_dtype,
 )
+from .conditioning import _prepared_multistream_carrier
 
 
 @dataclass(frozen=True, slots=True)
@@ -1759,37 +1760,6 @@ class NativePreviewLatentAudio(PreviewLatentAudio):
         if type(audio) is not inference.AudioPreview:
             raise TypeError("audio stream preview must return AudioPreview")
         return cls.outputs(audio={"waveform": audio.waveform, "sample_rate": audio.sample_rate})
-
-
-def _prepared_multistream_carrier(value: object, inference: Any, name: str) -> Any | None:
-    if isinstance(value, inference.ResidentConditioningCarrier):
-        value = cast("Any", value).payload
-        if type(value) is _MiniMaxH3ResidentConditioning:
-            value = value.conditioning
-    if value == []:
-        return None
-    entries = cast("list[object]", value) if type(value) is list else []
-    entry = (
-        cast("list[object]", entries[0]) if len(entries) == 1 and type(entries[0]) is list else []
-    )
-    if (
-        len(entry) != 2
-        or type(entry[0]) is not inference.PreparedMultiStreamConditioning
-        or entry[1] != {}
-    ):
-        raise TypeError(f"{name} must contain exact prepared multi-stream conditioning")
-    return cast("Any", entry[0])
-
-
-def _prepared_multistream_conditioning(
-    value: object, inference: Any, name: str, runtime_identity: str
-) -> object | None:
-    prepared = _prepared_multistream_carrier(value, inference, name)
-    if prepared is None:
-        return None
-    if prepared.runtime_identity != runtime_identity:
-        raise ValueError(f"{name} conditioning was prepared by a different runtime")
-    return cast("object", prepared.payload)
 
 
 def _minimax_h3_conditioning_carrier(value: object, inference: Any, name: str) -> Any | None:
