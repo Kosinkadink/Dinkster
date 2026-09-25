@@ -687,10 +687,10 @@ until rank consensus covers the realized row and layout.
 
 ### SageAttention
 
-Automatic routing selects SageAttention when the worker authenticates this
-support. Explicit Sage selection remains available. Automatic VAE attention
-uses SDPA with bounded-memory OOM fallback except on ROCm, where bounded-memory
-attention is primary. Explicit policies do not acquire this fallback.
+SageAttention remains an explicit policy when the worker authenticates its
+support. Automatic routing uses SDPA. Automatic VAE attention uses SDPA with
+bounded-memory OOM fallback except on ROCm, where bounded-memory attention is
+primary. Explicit policies do not acquire this fallback.
 
 ## Validation gates (run from the repo root)
 
