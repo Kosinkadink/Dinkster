@@ -1444,10 +1444,17 @@ class _ControlledConditioning:
 
 def _controlled_conditioning(value: object) -> _ControlledConditioning | None:
     inference = importlib.import_module("dinkster_inference")
-    if isinstance(value, inference.ResidentConditioningCarrier):
+    if type(value) is inference.ConditioningCarrier:
+        bindings = cast("Any", value).bindings
+        payload = (
+            bindings[0].payload if len(bindings) == 1 and bindings[0].kind == "resident" else None
+        )
+    elif isinstance(value, inference.ResidentConditioningCarrier):
         payload = cast("Any", value).payload
-        if isinstance(payload, _ControlledConditioning):
-            return payload
+    else:
+        payload = None
+    if isinstance(payload, _ControlledConditioning):
+        return payload
     return None
 
 
