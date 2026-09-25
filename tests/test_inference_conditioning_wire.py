@@ -129,9 +129,9 @@ def test_conditioning_accepts_only_the_canonical_carrier_form() -> None:
     carrier = _carrier()
 
     assert conditioning(carrier, "positive") is carrier
-    with pytest.raises(TypeError, match="positive must be a ConditioningCarrier"):
+    with pytest.raises(TypeError, match="positive must come from a Dinkster conditioning node"):
         conditioning(ResidentConditioningCarrier(object()), "positive")
-    with pytest.raises(TypeError, match="negative must be a ConditioningCarrier"):
+    with pytest.raises(TypeError, match="negative must come from a Dinkster conditioning node"):
         conditioning([[object(), {}]], "negative")
 
 

@@ -49,10 +49,8 @@ class GenerationFluxGuidance(Node):
     def execute(cls, *, conditioning: object, guidance: float) -> Mapping[str, object]:
         if not 0.0 <= guidance <= 100.0:
             raise ValueError(f"guidance must be in [0.0, 100.0], got {guidance}")
-        inference = importlib.import_module("dinkster_inference")
-        if type(conditioning) is not inference.ConditioningCarrier:
-            raise TypeError("conditioning must come from a Dinkster text-encoding node")
-        return cls.outputs(conditioning=_with_flux_guidance(conditioning, float(guidance)))
+        carrier = _conditioning_carrier(conditioning, "conditioning")
+        return cls.outputs(conditioning=_with_flux_guidance(carrier, float(guidance)))
 
 
 class GenerationFluxDisableGuidance(Node):
@@ -62,10 +60,8 @@ class GenerationFluxDisableGuidance(Node):
 
     @classmethod
     def execute(cls, *, conditioning: object) -> Mapping[str, object]:
-        inference: Any = importlib.import_module("dinkster_inference")
-        if type(conditioning) is not inference.ConditioningCarrier:
-            raise TypeError("conditioning must come from a Dinkster text-encoding node")
-        return cls.outputs(conditioning=_with_flux_guidance(conditioning, None))
+        carrier = _conditioning_carrier(conditioning, "conditioning")
+        return cls.outputs(conditioning=_with_flux_guidance(carrier, None))
 
 
 class GenerationReferenceLatent(Node):

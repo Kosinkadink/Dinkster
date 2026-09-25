@@ -19870,7 +19870,7 @@ def test_generation_flux_guidance_stamps_dinkster_conditioning_and_last_wins() -
     assert split_component_conditioning(cast("Any", inner))[1] is not None
     with pytest.raises(ValueError, match=r"guidance must be in"):
         arm.GenerationFluxGuidance.execute(conditioning=carrier, guidance=100.5)
-    with pytest.raises(TypeError, match="text-encoding node"):
+    with pytest.raises(TypeError, match="Dinkster conditioning node"):
         arm.GenerationFluxGuidance.execute(conditioning=[[object(), {}]], guidance=3.5)
     with pytest.raises(ValueError, match="empty conditioning"):
         arm.GenerationFluxGuidance.execute(
@@ -19904,7 +19904,7 @@ def test_generation_flux_disable_guidance_stamps_explicit_null_and_last_wins() -
     assert arm._split_flux_guidance(redisabled)[1] == arm._FLUX_GUIDANCE_DISABLED
     with pytest.raises(ValueError, match="strengths must match"):
         arm._effective_flux_guidance(arm._FLUX_GUIDANCE_DISABLED, 3.5)
-    with pytest.raises(TypeError, match="text-encoding node"):
+    with pytest.raises(TypeError, match="Dinkster conditioning node"):
         arm.GenerationFluxDisableGuidance.execute(conditioning=[[object(), {}]])
 
 

@@ -164,7 +164,7 @@ def conditioning(value: object, input_id: str) -> ConditioningCarrier:
     """Admit the one native conditioning value form at a consumer boundary."""
 
     if type(value) is not ConditioningCarrier:
-        raise TypeError(f"{input_id} must be a ConditioningCarrier")
+        raise TypeError(f"{input_id} must come from a Dinkster conditioning node")
     return value
 
 
