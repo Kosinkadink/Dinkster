@@ -9,6 +9,7 @@ import struct
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 from dinkster_caches import DiskCacheStore
@@ -225,8 +226,14 @@ def test_round_trip_reconstructs_records_payloads_and_empty_singleton() -> None:
     assert canonical_conditioning_set(decoded.conditioning) == canonical_conditioning_set(
         carrier.conditioning
     )
-    assert [(item.reference_id, item.data) for item in decoded.bindings] == [
-        (item.reference_id, item.data) for item in carrier.bindings
+    assert all(type(item) is PayloadBinding for item in decoded.bindings)
+    assert all(type(item) is PayloadBinding for item in carrier.bindings)
+    assert [
+        (item.reference_id, item.data)
+        for item in cast(tuple[PayloadBinding, ...], decoded.bindings)
+    ] == [
+        (item.reference_id, item.data)
+        for item in cast(tuple[PayloadBinding, ...], carrier.bindings)
     ]
     assert decoded.conditioning.records[1].schedule is EMPTY_RANGE
     first = decoded.conditioning.records[0]
