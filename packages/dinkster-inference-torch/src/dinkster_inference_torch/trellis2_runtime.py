@@ -479,7 +479,14 @@ class Trellis2ConditioningResource:
 
     @property
     def _dinkster_resident_fingerprint(self) -> str:
+        return self.fingerprint
+
+    @property
+    def fingerprint(self) -> str:
         return f"{self._storage._dinkster_resident_fingerprint}:{self._lane.value}"
+
+    def shares_storage_with(self, other: Trellis2ConditioningResource) -> bool:
+        return self._storage is other._storage
 
     @property
     def stage(self) -> Trellis2Stage:

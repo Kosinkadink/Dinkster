@@ -67,7 +67,7 @@
     }
   ],
   "value_type_allowlist": {
-    "ceiling": 270,
-    "sha256": "17ddd07c486d78b778e29cccb5c32fc095a3444ab064b8057db9c4c6e52e4ecb"
+    "ceiling": 268,
+    "sha256": "1f47b4d40a0df2f80087e480a0de33dfc1183c65b84733be0820add7a036cac1"
   }
 }

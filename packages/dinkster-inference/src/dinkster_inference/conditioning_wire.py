@@ -7,7 +7,7 @@ import math
 import struct
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Literal, TypeAlias, cast
 
 from dinkster_values import (
     CONDITIONING_HEADER_LIMIT_BYTES,
@@ -83,6 +83,7 @@ class PayloadBinding:
     dtype: str
     space: str
     data: bytes
+    kind: Literal["materialized"] = field(default="materialized", init=False)
 
     def __post_init__(self) -> None:
         reference_id = cast("object", self.reference_id)
@@ -122,13 +123,134 @@ class PayloadBinding:
             )
 
 
+def _validate_deferred_binding(
+    reference_id: object,
+    shape: object,
+    dtype: object,
+    space: object,
+    fingerprint: object,
+) -> None:
+    if not isinstance(reference_id, str) or not reference_id:
+        raise ConditioningWireError("invalid-binding", "reference_id must be non-empty")
+    if (
+        not isinstance(shape, tuple)
+        or not shape
+        or any(type(dim) is not int or dim < 0 for dim in cast("tuple[object, ...]", shape))
+    ):
+        raise ConditioningWireError("invalid-binding", "shape must contain non-negative ints")
+    if not isinstance(dtype, str) or dtype not in _DTYPE_WIDTHS:
+        raise ConditioningWireError("unknown-dtype", repr(dtype))
+    if not isinstance(space, str) or not space:
+        raise ConditioningWireError("invalid-binding", "space must be non-empty")
+    if not isinstance(fingerprint, str) or not fingerprint:
+        raise ConditioningWireError("invalid-binding", "fingerprint must be non-empty")
+
+
+@dataclass(frozen=True)
+class LivePayloadBinding:
+    """Same-process payload with stable producer identity and deferred bytes."""
+
+    reference_id: str
+    shape: tuple[int, ...]
+    dtype: str
+    space: str
+    payload: object
+    fingerprint: str
+    materialize: Callable[[object], bytes]
+    kind: Literal["live"] = field(default="live", init=False)
+
+    def __post_init__(self) -> None:
+        _validate_deferred_binding(
+            self.reference_id, self.shape, self.dtype, self.space, self.fingerprint
+        )
+        if self.payload is None:
+            raise ConditioningWireError("invalid-binding", "live payload must not be None")
+        if not callable(self.materialize):
+            raise ConditioningWireError("invalid-binding", "materialize must be callable")
+
+
+@dataclass(frozen=True)
+class ResidentPayloadBinding:
+    """Non-materializable payload retained by its owning worker process."""
+
+    reference_id: str
+    shape: tuple[int, ...]
+    dtype: str
+    space: str
+    payload: object
+    fingerprint: str
+    kind: Literal["resident"] = field(default="resident", init=False)
+
+    def __post_init__(self) -> None:
+        _validate_deferred_binding(
+            self.reference_id, self.shape, self.dtype, self.space, self.fingerprint
+        )
+        if self.payload is None:
+            raise ConditioningWireError("invalid-binding", "resident payload must not be None")
+
+
+ConditioningPayloadBinding: TypeAlias = PayloadBinding | LivePayloadBinding | ResidentPayloadBinding
+
+
 @dataclass(frozen=True)
 class ConditioningCarrier:
-    """Canonical records plus their deduplicated, content-addressed payloads."""
+    """Canonical records plus materialized, live, or resident payloads."""
 
     conditioning: ConditioningSet
-    bindings: tuple[PayloadBinding, ...]
+    bindings: tuple[ConditioningPayloadBinding, ...]
     canonical_bytes: bytes | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def has_resident_payloads(self) -> bool:
+        return any(binding.kind == "resident" for binding in self.bindings)
+
+    @property
+    def _dinkster_resident_payloads(self) -> tuple[object, ...]:
+        return tuple(binding.payload for binding in self.bindings if binding.kind == "resident")
+
+    @property
+    def _dinkster_resident_payload(self) -> object:
+        resident = self._dinkster_resident_payloads
+        if len(resident) != 1:
+            raise TypeError("conditioning carrier must contain exactly one resident payload")
+        return resident[0]
+
+    @property
+    def _dinkster_resident_owner(self) -> object:
+        owners = self._resident_owners()
+        if not owners:
+            raise TypeError("conditioning carrier has no resident payload owner")
+        return owners[0]
+
+    @property
+    def _dinkster_resident_refs(self) -> tuple[object, ...]:
+        return self._resident_owners()[1:]
+
+    @property
+    def _dinkster_resident_fingerprint(self) -> str:
+        if not self.has_resident_payloads:
+            raise TypeError("conditioning carrier has no resident payload fingerprint")
+        return _deferred_carrier_fingerprint(self)
+
+    def _resident_owners(self) -> tuple[object, ...]:
+        owners: list[object] = []
+        identities: set[int] = set()
+        for binding in self.bindings:
+            if binding.kind != "resident":
+                continue
+            payload = binding.payload
+            primary = cast("object", getattr(payload, "_dinkster_resident_owner", payload))
+            refs_value = cast("object", getattr(payload, "_dinkster_resident_refs", ()))
+            if not isinstance(refs_value, tuple):
+                raise TypeError("resident payload references must be a tuple")
+            refs = cast("tuple[object, ...]", refs_value)
+            for owner in (primary, *refs):
+                if owner is None:
+                    raise TypeError("resident payload owners must not be None")
+                if id(owner) not in identities:
+                    identities.add(id(owner))
+                    owners.append(owner)
+        return tuple(owners)
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +262,14 @@ class ResidentConditioningCarrier:
     def __post_init__(self) -> None:
         if self.payload is None:
             raise TypeError("resident conditioning payload must not be None")
+
+    @property
+    def _dinkster_resident_payload(self) -> object:
+        return self.payload
+
+    @property
+    def _dinkster_resident_payloads(self) -> tuple[object, ...]:
+        return (self.payload,)
 
     @property
     def _dinkster_resident_owner(self) -> object:
@@ -160,6 +290,14 @@ class ResidentConditioningCarrier:
         return fingerprint
 
 
+def conditioning(value: object, input_id: str) -> ConditioningCarrier:
+    """Admit the one native conditioning value form at a consumer boundary."""
+
+    if type(value) is not ConditioningCarrier:
+        raise TypeError(f"{input_id} must come from a Dinkster conditioning node")
+    return value
+
+
 def _canonical_json(value: object) -> bytes:
     return json.dumps(
         value,
@@ -170,13 +308,104 @@ def _canonical_json(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def _content_id(binding: PayloadBinding) -> str:
-    return "pcid:" + stable_hash(
+def _binding_identity(binding: ConditioningPayloadBinding) -> bytes:
+    if binding.kind == "materialized":
+        return binding.data
+    return binding.fingerprint.encode("utf-8")
+
+
+def _content_id(binding: ConditioningPayloadBinding) -> str:
+    identity = [
+        _canonical_json(list(binding.shape)),
+        binding.dtype.encode("utf-8"),
+        binding.space.encode("utf-8"),
+    ]
+    if binding.kind != "materialized":
+        identity.append(binding.kind.encode("ascii"))
+    identity.append(_binding_identity(binding))
+    return "pcid:" + stable_hash(identity)
+
+
+def _binding_signature(binding: ConditioningPayloadBinding) -> tuple[object, ...]:
+    return (
+        binding.kind,
+        binding.shape,
+        binding.dtype,
+        binding.space,
+        _binding_identity(binding),
+    )
+
+
+def _with_reference_id(
+    binding: ConditioningPayloadBinding, reference_id: str
+) -> ConditioningPayloadBinding:
+    if binding.kind == "materialized":
+        return PayloadBinding(
+            reference_id, binding.shape, binding.dtype, binding.space, binding.data
+        )
+    if binding.kind == "live":
+        return LivePayloadBinding(
+            reference_id,
+            binding.shape,
+            binding.dtype,
+            binding.space,
+            binding.payload,
+            binding.fingerprint,
+            binding.materialize,
+        )
+    return ResidentPayloadBinding(
+        reference_id,
+        binding.shape,
+        binding.dtype,
+        binding.space,
+        binding.payload,
+        binding.fingerprint,
+    )
+
+
+def _materialized_binding(binding: ConditioningPayloadBinding) -> PayloadBinding:
+    if binding.kind == "materialized":
+        return binding
+    if binding.kind == "resident":
+        raise ConditioningWireError(
+            "resident-payload", f"{binding.reference_id!r} cannot materialize across workers"
+        )
+    try:
+        data = binding.materialize(binding.payload)
+    except Exception as error:
+        raise ConditioningWireError(
+            "materialize-payload", f"{binding.reference_id!r}: {error}"
+        ) from error
+    return PayloadBinding(binding.reference_id, binding.shape, binding.dtype, binding.space, data)
+
+
+def _materialized_carrier(carrier: ConditioningCarrier) -> ConditioningCarrier:
+    if carrier.has_resident_payloads:
+        raise ConditioningWireError("resident-payload", "carrier cannot materialize across workers")
+    return make_conditioning_carrier(
+        carrier.conditioning,
+        tuple(_materialized_binding(binding) for binding in carrier.bindings),
+    )
+
+
+def _deferred_carrier_fingerprint(carrier: ConditioningCarrier) -> str:
+    return stable_hash(
         [
-            _canonical_json(list(binding.shape)),
-            binding.dtype.encode("utf-8"),
-            binding.space.encode("utf-8"),
-            binding.data,
+            canonical_conditioning_set(carrier.conditioning).encode("utf-8"),
+            *(
+                _canonical_json(
+                    {
+                        "id": binding.reference_id,
+                        "kind": binding.kind,
+                        "fingerprint": (
+                            _content_id(binding)
+                            if binding.kind == "materialized"
+                            else binding.fingerprint
+                        ),
+                    }
+                )
+                for binding in carrier.bindings
+            ),
         ]
     )
 
@@ -266,7 +495,7 @@ def _rewrite_conditioning(value: ConditioningSet, ids: Mapping[str, str]) -> Con
 
 
 def make_conditioning_carrier(
-    conditioning: ConditioningSet, bindings: Iterable[PayloadBinding]
+    conditioning: ConditioningSet, bindings: Iterable[ConditioningPayloadBinding]
 ) -> ConditioningCarrier:
     """Bind every reference, rewrite it to content identity, and deduplicate."""
 
@@ -275,14 +504,16 @@ def make_conditioning_carrier(
     described, reachable = _reachable_references(conditioning)
     if len(reachable) > _MAX_PAYLOADS:
         raise ConditioningWireError("payload-count-limit")
-    by_reference: dict[str, PayloadBinding] = {}
+    by_reference: dict[str, ConditioningPayloadBinding] = {}
     for binding in bindings:
-        if not isinstance(cast("object", binding), PayloadBinding):
-            raise ConditioningWireError("invalid-binding", "expected PayloadBinding")
+        if not isinstance(
+            cast("object", binding), (PayloadBinding, LivePayloadBinding, ResidentPayloadBinding)
+        ):
+            raise ConditioningWireError("invalid-binding", "unknown conditioning payload binding")
         if binding.reference_id not in reachable:
             raise ConditioningWireError("unknown-binding", repr(binding.reference_id))
         previous = by_reference.get(binding.reference_id)
-        if previous is not None and previous != binding:
+        if previous is not None and _binding_signature(previous) != _binding_signature(binding):
             raise ConditioningWireError("conflicting-binding", repr(binding.reference_id))
         by_reference[binding.reference_id] = binding
     missing = sorted(reachable - by_reference.keys())
@@ -290,7 +521,7 @@ def make_conditioning_carrier(
         raise ConditioningWireError("unbound-reference", repr(missing[0]))
 
     ids: dict[str, str] = {}
-    canonical_bindings: dict[str, PayloadBinding] = {}
+    canonical_bindings: dict[str, ConditioningPayloadBinding] = {}
     for reference_id in sorted(reachable):
         binding = by_reference[reference_id]
         for expected in described.get(reference_id, ()):
@@ -298,13 +529,11 @@ def make_conditioning_carrier(
                 raise ConditioningWireError("descriptor-mismatch", repr(reference_id))
         content_id = _content_id(binding)
         ids[reference_id] = content_id
-        canonical = PayloadBinding(
-            content_id, binding.shape, binding.dtype, binding.space, binding.data
-        )
+        canonical = _with_reference_id(binding, content_id)
         previous = canonical_bindings.get(content_id)
-        if previous is not None and previous != canonical:
+        if previous is not None and _binding_signature(previous) != _binding_signature(canonical):
             raise ConditioningWireError("content-id-collision", content_id)
-        canonical_bindings[content_id] = canonical
+        canonical_bindings.setdefault(content_id, canonical)
 
     rewritten = _rewrite_conditioning(conditioning, ids)
     return ConditioningCarrier(
@@ -352,10 +581,12 @@ def _build_carrier_bytes(carrier: ConditioningCarrier) -> bytes:
     if not isinstance(cast("object", carrier), ConditioningCarrier):
         raise ConditioningWireError("invalid-carrier", "expected ConditioningCarrier")
     _validate_canonical_carrier(carrier)
+    materialized_carrier = _materialized_carrier(carrier)
+    materialized = cast("tuple[PayloadBinding, ...]", materialized_carrier.bindings)
     header = {
         "format": CONDITIONING_CARRIER_FORMAT,
-        "conditioning": json.loads(canonical_conditioning_set(carrier.conditioning)),
-        "payload_manifest": [_manifest(binding) for binding in carrier.bindings],
+        "conditioning": json.loads(canonical_conditioning_set(materialized_carrier.conditioning)),
+        "payload_manifest": [_manifest(binding) for binding in materialized],
     }
     header_bytes = _canonical_json(header)
     if len(header_bytes) > _MAX_HEADER_BYTES:
@@ -366,7 +597,7 @@ def _build_carrier_bytes(carrier: ConditioningCarrier) -> bytes:
             bytes((_VERSION,)),
             struct.pack("<Q", len(header_bytes)),
             header_bytes,
-            *(binding.data for binding in carrier.bindings),
+            *(binding.data for binding in materialized),
         )
     )
 
@@ -771,6 +1002,10 @@ def register_conditioning_type(
         if type(obj) is ResidentConditioningCarrier:
             return resident_codec.fingerprint(obj)
         carrier = cast("ConditioningCarrier", obj)
+        if carrier.has_resident_payloads:
+            return resident_codec.fingerprint(carrier)
+        if any(binding.kind == "live" for binding in carrier.bindings):
+            return _deferred_carrier_fingerprint(carrier)
         encoded = encode_conditioning_carrier(carrier)
         return stable_hash([encoded])
 
@@ -778,14 +1013,16 @@ def register_conditioning_type(
         if type(obj) is ResidentConditioningCarrier:
             return _RESIDENT_MAGIC + resident_codec.encode(obj)
         carrier = cast("ConditioningCarrier", obj)
+        if carrier.has_resident_payloads:
+            return _RESIDENT_MAGIC + resident_codec.encode(carrier)
         if carrier.canonical_bytes is None:
-            raise ConditioningWireError("carrier-not-wrapped")
+            return encode_conditioning_carrier(carrier)
         return carrier.canonical_bytes
 
     def decode(data: bytes) -> object:
         if data.startswith(_RESIDENT_MAGIC):
             value = resident_codec.decode(data[len(_RESIDENT_MAGIC) :])
-            if type(value) is not ResidentConditioningCarrier:
+            if type(value) not in (ConditioningCarrier, ResidentConditioningCarrier):
                 raise ConditioningWireError("invalid-resident-carrier")
             return value
         return decode_conditioning_carrier(data)
@@ -802,7 +1039,9 @@ def register_conditioning_type(
         decode_conditioning_carrier(data, metadata)
 
     def metadata(obj: object) -> Mapping[str, object]:
-        if type(obj) is ResidentConditioningCarrier:
+        if type(obj) is ResidentConditioningCarrier or (
+            type(obj) is ConditioningCarrier and obj.has_resident_payloads
+        ):
             return {
                 **resident_codec.metadata(obj),
                 "format": RESIDENT_CONDITIONING_FORMAT,

@@ -9,6 +9,7 @@ import struct
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 from dinkster_caches import DiskCacheStore
@@ -33,6 +34,7 @@ from dinkster_inference import (
     TokenLayoutDescriptor,
     TokenSegmentDescriptor,
     canonical_conditioning_set,
+    conditioning,
     decode_conditioning_carrier,
     encode_conditioning_carrier,
     make_conditioning_carrier,
@@ -122,6 +124,16 @@ def _assert_code(code: str, action: Callable[[], object]) -> None:
         action()
     assert caught.value.code == code
     assert str(caught.value).startswith(f"conditioning-wire:{code}")
+
+
+def test_conditioning_accepts_only_the_canonical_carrier_form() -> None:
+    carrier = _carrier()
+
+    assert conditioning(carrier, "positive") is carrier
+    with pytest.raises(TypeError, match="positive must come from a Dinkster conditioning node"):
+        conditioning(ResidentConditioningCarrier(object()), "positive")
+    with pytest.raises(TypeError, match="negative must come from a Dinkster conditioning node"):
+        conditioning([[object(), {}]], "negative")
 
 
 def test_wrap_fingerprints_full_canonical_bytes_and_codec_replays_exactly() -> None:
@@ -214,8 +226,14 @@ def test_round_trip_reconstructs_records_payloads_and_empty_singleton() -> None:
     assert canonical_conditioning_set(decoded.conditioning) == canonical_conditioning_set(
         carrier.conditioning
     )
-    assert [(item.reference_id, item.data) for item in decoded.bindings] == [
-        (item.reference_id, item.data) for item in carrier.bindings
+    assert all(type(item) is PayloadBinding for item in decoded.bindings)
+    assert all(type(item) is PayloadBinding for item in carrier.bindings)
+    assert [
+        (item.reference_id, item.data)
+        for item in cast(tuple[PayloadBinding, ...], decoded.bindings)
+    ] == [
+        (item.reference_id, item.data)
+        for item in cast(tuple[PayloadBinding, ...], carrier.bindings)
     ]
     assert decoded.conditioning.records[1].schedule is EMPTY_RANGE
     first = decoded.conditioning.records[0]

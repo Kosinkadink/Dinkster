@@ -6,7 +6,12 @@ import ctypes
 import sys
 
 import torch
-from dinkster_inference import PayloadBinding
+from dinkster_inference import (
+    ConditioningPayloadBinding,
+    LivePayloadBinding,
+    PayloadBinding,
+    ResidentPayloadBinding,
+)
 
 _TORCH_TO_WIRE: dict[torch.dtype, str] = {
     torch.float64: "F64",
@@ -78,10 +83,20 @@ def tensor_to_payload_binding(
     return PayloadBinding(reference_id, tuple(normalized.shape), dtype, space, data)
 
 
-def payload_binding_to_tensor(binding: PayloadBinding) -> torch.Tensor:
+def payload_binding_to_tensor(binding: ConditioningPayloadBinding) -> torch.Tensor:
     """Decode one binding into a tensor backed by newly owned writable storage."""
-    if not isinstance(binding, PayloadBinding):  # pyright: ignore[reportUnnecessaryIsInstance]
-        raise TensorPayloadError("binding must be a PayloadBinding")
+    if isinstance(binding, ResidentPayloadBinding):
+        raise TensorPayloadError(f"resident payload {binding.reference_id!r} cannot materialize")
+    if isinstance(binding, LivePayloadBinding):
+        try:
+            data = binding.materialize(binding.payload)
+        except Exception as error:
+            raise TensorPayloadError(
+                f"live payload {binding.reference_id!r} failed to materialize: {error}"
+            ) from error
+        binding = PayloadBinding(
+            binding.reference_id, binding.shape, binding.dtype, binding.space, data
+        )
     dtype = _WIRE_TO_TORCH.get(binding.dtype)
     if dtype is None:
         raise TensorPayloadError(f"unsupported payload dtype: {binding.dtype}")

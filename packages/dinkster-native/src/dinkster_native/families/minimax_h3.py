@@ -6,9 +6,13 @@ from __future__ import annotations
 
 import hashlib
 
-from ..family_registry import load_component as _load_family_component
+from ..family_registry import (
+    load_component as _load_family_component,
+)
+from ..family_registry import (
+    load_registered_component,
+)
 from ..native_arm_core import (
-    _NATIVE_PREPARED_CONDITIONING_KEY,
     Any,
     ConcatAVLatent,
     EmptyLTXAVLatent,
@@ -31,7 +35,6 @@ from ..native_arm_core import (
     MiniMaxH3T2VAConditioning,
     MiniMaxH3VideoReferenceValue,
     NativeComponentHandle,
-    NativeResidencyBusyError,
     NativeRuntimeHandle,
     Node,
     PreviewLatentAudio,
@@ -40,17 +43,12 @@ from ..native_arm_core import (
     Sequence,
     SetLatentMaskFromFrames,
     SetLatentMaskFromTimeRanges,
-    _active_inference_registries,
-    _builtin_inference_registries,
-    _component_bound_carrier,
     _not_cancelled,
-    _split_ltx_frame_rate,
     _torch,
     cast,
     current_execution_context,
     dataclass,
     importlib,
-    log,
     math,
     native_execution_span,
 )
@@ -59,6 +57,8 @@ from ..native_arm_runtime import (
     _NativeModelOverlay,
     _torch_dtype,
 )
+from .conditioning import _prepared_multistream_carrier
+from .latent import _adapt_multistream_latent, _latent_samples, _move_multistream_latent
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +79,43 @@ class _MiniMaxH3ResidentConditioning:
     @property
     def _dinkster_resident_fingerprint(self) -> str:
         return self.fingerprint
+
+
+def _minimax_h3_resident_carrier(
+    resident: _MiniMaxH3ResidentConditioning, inference: Any
+) -> object:
+    reference_id = "minimax-h3-prepared-conditioning"
+    shape = (1,)
+    dtype = "U8"
+    space = "minimax-h3-prepared-conditioning"
+    descriptor = inference.PayloadDescriptor(
+        inference.PayloadReference(reference_id),
+        shape,
+        dtype,
+        space,
+    )
+    conditioning = inference.ConditioningSet(
+        (
+            inference.ConditioningRecord(
+                channels=((inference.ConditioningChannel.TEXT, descriptor),),
+                token_layout=inference.TokenLayoutDescriptor(
+                    inference.MINIMAX_H3_CONFIG.family_id,
+                    1,
+                    ("prepared",),
+                    (inference.TokenSegmentDescriptor("prepared", "prepared", 0, 1),),
+                ),
+            ),
+        )
+    )
+    binding = inference.ResidentPayloadBinding(
+        reference_id,
+        shape,
+        dtype,
+        space,
+        resident,
+        resident.fingerprint,
+    )
+    return inference.make_conditioning_carrier(conditioning, (binding,))
 
 
 def load_component(value: object, name: str, role: str | None = None) -> NativeComponentHandle:
@@ -273,13 +310,6 @@ def _minimax_h3_av(value: object, torch: Any, inference: Any, name: str) -> Any:
     return streams
 
 
-def _move_multistream_latent(value: Any, device: object) -> Any:
-    def move(payload: Any) -> Any:
-        return payload.to(device)
-
-    return value.map(move)
-
-
 def _minimax_h3_payload(inference: Any, tensor: Any, reference_id: str) -> tuple[Any, Any]:
     descriptor = inference.PayloadDescriptor(
         inference.PayloadReference(reference_id),
@@ -452,36 +482,6 @@ def _canonical_minimax_h3_references(values: Sequence[object]) -> tuple[object, 
     return (*images, *videos, *audios)
 
 
-def _adapt_multistream_latent(
-    value: object,
-    runtime: object,
-    torch: Any,
-    inference: Any,
-    name: str,
-) -> Mapping[object, object]:
-    if not isinstance(value, Mapping) or "samples" not in value:
-        raise TypeError(f"{name} must be a LATENT mapping containing 'samples'")
-    latent = cast("Mapping[object, object]", value)
-    samples = latent["samples"]
-    if type(samples) is inference.MultiStreamLatent:
-        return latent
-    if not isinstance(runtime, inference.MultiStreamLatentAdapterRuntime):
-        raise TypeError(f"{name} cannot be adapted to the model's latent streams")
-    if type(samples) is not torch.Tensor:
-        raise TypeError(f"{name} samples must be an exact torch.Tensor")
-    adapter = cast("Any", runtime)
-    adapted = adapter.adapt_multistream_latent(
-        samples,
-        source_spatial_downscale=latent.get("downscale_ratio_spacial"),
-        source_temporal_downscale=latent.get("downscale_ratio_temporal"),
-    )
-    if type(adapted) is not inference.MultiStreamLatent:
-        raise TypeError("latent adaptation must return an exact MultiStreamLatent")
-    result = dict(latent)
-    result["samples"] = adapted
-    return result
-
-
 def _adapt_minimax_h3_av(
     value: object,
     runtime: object,
@@ -578,7 +578,7 @@ def _minimax_h3_condition(
         codec_handles,
         fingerprint,
     )
-    return cls.outputs(conditioning=inference.ResidentConditioningCarrier(resident))
+    return cls.outputs(conditioning=_minimax_h3_resident_carrier(resident, inference))
 
 
 class NativeEmptyMiniMaxH3AV(EmptyMiniMaxH3AV):
@@ -1320,17 +1320,6 @@ class NativeMiniMaxH3AVDecode(MiniMaxH3AVDecode):
         )
 
 
-def _latent_samples(value: object, torch: Any, inference: Any, name: str) -> tuple[Any, Any]:
-    if not isinstance(value, Mapping):
-        raise TypeError(f"{name} must be a LATENT mapping")
-    samples = cast("Mapping[object, object]", value).get("samples")
-    if type(samples) is torch.Tensor:
-        return samples, None
-    if type(samples) is inference.MultiStreamLatent:
-        return samples, samples
-    raise TypeError(f"{name} samples must be a tensor or MultiStreamLatent")
-
-
 def _av_stream(value: object, torch: Any, inference: Any, role: str, name: str) -> Any:
     samples, streams = _latent_samples(value, torch, inference, name)
     payload = samples if streams is None else streams.by_role(role)
@@ -1761,37 +1750,6 @@ class NativePreviewLatentAudio(PreviewLatentAudio):
         return cls.outputs(audio={"waveform": audio.waveform, "sample_rate": audio.sample_rate})
 
 
-def _prepared_multistream_carrier(value: object, inference: Any, name: str) -> Any | None:
-    if isinstance(value, inference.ResidentConditioningCarrier):
-        value = cast("Any", value).payload
-        if type(value) is _MiniMaxH3ResidentConditioning:
-            value = value.conditioning
-    if value == []:
-        return None
-    entries = cast("list[object]", value) if type(value) is list else []
-    entry = (
-        cast("list[object]", entries[0]) if len(entries) == 1 and type(entries[0]) is list else []
-    )
-    if (
-        len(entry) != 2
-        or type(entry[0]) is not inference.PreparedMultiStreamConditioning
-        or entry[1] != {}
-    ):
-        raise TypeError(f"{name} must contain exact prepared multi-stream conditioning")
-    return cast("Any", entry[0])
-
-
-def _prepared_multistream_conditioning(
-    value: object, inference: Any, name: str, runtime_identity: str
-) -> object | None:
-    prepared = _prepared_multistream_carrier(value, inference, name)
-    if prepared is None:
-        return None
-    if prepared.runtime_identity != runtime_identity:
-        raise ValueError(f"{name} conditioning was prepared by a different runtime")
-    return cast("object", prepared.payload)
-
-
 def _minimax_h3_conditioning_carrier(value: object, inference: Any, name: str) -> Any | None:
     prepared = _prepared_multistream_carrier(value, inference, name)
     if prepared is None:
@@ -1825,22 +1783,44 @@ def _minimax_h3_rewrap_conditioning(
     inference: Any,
     operation: str,
 ) -> object:
-    if not isinstance(source, inference.ResidentConditioningCarrier):
-        raise TypeError("MiniMax H3 conditioning transform requires a resident carrier")
-    resident = cast("Any", source).payload
+    source_binding = None
+    if type(source) is inference.ConditioningCarrier:
+        bindings = cast("Any", source).bindings
+        if len(bindings) == 1 and bindings[0].kind == "resident":
+            source_binding = bindings[0]
+            resident = source_binding.payload
+        else:
+            resident = None
+    elif isinstance(source, inference.ResidentConditioningCarrier):
+        resident = cast("Any", source).payload
+    else:
+        resident = None
     if type(resident) is not _MiniMaxH3ResidentConditioning:
-        raise TypeError("MiniMax H3 conditioning has an invalid resident payload")
+        raise TypeError("MiniMax H3 conditioning transform requires a resident carrier")
     facts = (resident.fingerprint, operation)
     fingerprint = (
         "minimax-h3-conditioning:" + hashlib.sha256("\n".join(facts).encode("utf-8")).hexdigest()
     )
-    return inference.ResidentConditioningCarrier(
-        _MiniMaxH3ResidentConditioning(
-            conditioning,
-            resident.owner,
-            resident.references,
-            fingerprint,
-        )
+    transformed = _MiniMaxH3ResidentConditioning(
+        conditioning,
+        resident.owner,
+        resident.references,
+        fingerprint,
+    )
+    if source_binding is None:
+        return _minimax_h3_resident_carrier(transformed, inference)
+    return inference.make_conditioning_carrier(
+        cast("Any", source).conditioning,
+        (
+            inference.ResidentPayloadBinding(
+                source_binding.reference_id,
+                source_binding.shape,
+                source_binding.dtype,
+                source_binding.space,
+                transformed,
+                fingerprint,
+            ),
+        ),
     )
 
 
@@ -1952,491 +1932,3 @@ def _minimax_h3_schedule_runtime(handle: NativeRuntimeHandle, inference: Any) ->
         receipt_identity=model.receipt_identity,
         compute_dtype=_torch_dtype(_torch(), recipe.knobs.diffusion_dtype),
     )
-
-
-@dataclass(frozen=True, slots=True)
-class _ResolvedComponentExecution:
-    runtime: Any
-    positive: object
-    negative: object
-    conditioning_prepared: bool
-
-    def values(self) -> tuple[Any, object, object]:
-        return self.runtime, self.positive, self.negative
-
-
-def _component_runtime_with_options(
-    base_runtime: Any,
-    descriptor: Any,
-    family_id: str,
-    runtime_identity: str,
-    compute_dtype: Any,
-    sampling_shift: float | None,
-    option_windows: tuple[Any, ...],
-) -> Any:
-    from dinkster_inference.component_registry import execution_symbol
-
-    sampling_runtime = getattr(base_runtime, "component_sampling_runtime", base_runtime)
-    runtime_matches = any(
-        isinstance(sampling_runtime, execution_symbol(reference))
-        for reference in (descriptor.runtime_class, *descriptor.runtime_variants)
-    )
-    label = descriptor.family.display_name
-    if not runtime_matches or base_runtime.runtime_identity != sampling_runtime.runtime_identity:
-        raise TypeError(f"model must be a native {label} diffusion component")
-    if sampling_runtime.family.id != family_id:
-        raise ValueError(
-            f"runtime producer family {sampling_runtime.family.id!r} does not match "
-            f"reconstruction recipe family {family_id!r}"
-        )
-    runtime_options = descriptor.execution_options(sampling_runtime, sampling_shift, option_windows)
-    assembled = getattr(sampling_runtime, "assembled", None)
-    module = sampling_runtime.model if assembled is None else assembled.diffusion
-    with_execution_options = getattr(sampling_runtime, "with_execution_options", None)
-    if callable(with_execution_options):
-        runtime = with_execution_options(
-            runtime_identity=runtime_identity,
-            compute_dtype=compute_dtype,
-            **runtime_options,
-        )
-    elif descriptor.runtime_with_family:
-        runtime = type(sampling_runtime)(
-            module,
-            sampling_runtime.family,
-            runtime_identity=runtime_identity,
-            **runtime_options,
-        )
-    else:
-        runtime = type(sampling_runtime)(
-            module,
-            runtime_identity=runtime_identity,
-            compute_dtype=compute_dtype,
-            **runtime_options,
-        )
-    if sampling_runtime is base_runtime:
-        return runtime
-    replace_runtime = getattr(base_runtime, "with_component_sampling_runtime", None)
-    if not callable(replace_runtime):
-        raise TypeError(f"native {label} checkpoint cannot replace its sampling runtime")
-    return replace_runtime(runtime)
-
-
-def _resolve_component_execution(
-    handle: NativeRuntimeHandle,
-    positive: object,
-    negative: object,
-    inference: Any,
-    *,
-    sampling_shift: float | None = None,
-    option_windows: tuple[Any, ...] = (),
-    negative_handle: NativeRuntimeHandle | None = None,
-    image_only_negative: bool = False,
-) -> _ResolvedComponentExecution | None:
-    from dinkster_inference.component_registry import execution_symbol
-
-    recipe = handle.recipe
-    descriptor = _active_inference_registries().components.get(recipe.family_id)
-    if descriptor is None:
-        return None
-    execution_options: dict[str, Any] = {}
-    if negative_handle is not None:
-        execution_options["negative_handle"] = negative_handle
-    if image_only_negative:
-        execution_options["image_only_negative"] = True
-    if descriptor.execution_resolver is not None:
-        execution = execution_symbol(descriptor.execution_resolver)(
-            handle,
-            positive,
-            negative,
-            inference,
-            **execution_options,
-        )
-        if execution is not None:
-            return _ResolvedComponentExecution(*execution, conditioning_prepared=True)
-        if execution_options:
-            raise TypeError("runtime does not support separate-model or image-only guidance")
-        log.warning(
-            "component execution resolver declined registered descriptor %s; "
-            "using runtime without preparing conditioning",
-            descriptor.id,
-        )
-        return _ResolvedComponentExecution(
-            handle.runtime,
-            positive,
-            negative,
-            conditioning_prepared=False,
-        )
-    if execution_options:
-        raise ValueError(
-            "component runtime does not implement separate negative-model conditioning"
-        )
-    if tuple(source.role for source in recipe.sources) != (descriptor.model_role,):
-        runtime = handle.runtime
-        if descriptor.execution_options is not None:
-            sampling_runtime = getattr(runtime, "component_sampling_runtime", runtime)
-            runtime = _component_runtime_with_options(
-                runtime,
-                descriptor,
-                recipe.family_id,
-                recipe.runtime_identity,
-                sampling_runtime.assembled.compute_dtype("diffusion"),
-                sampling_shift,
-                option_windows,
-            )
-        return _ResolvedComponentExecution(
-            runtime,
-            positive,
-            negative,
-            conditioning_prepared=False,
-        )
-    base_runtime = handle.runtime
-    runtime_matches = any(
-        isinstance(base_runtime, execution_symbol(reference))
-        for reference in (descriptor.runtime_class, *descriptor.runtime_variants)
-    )
-    label = descriptor.family.display_name
-    if not runtime_matches or recipe.runtime_identity != base_runtime.runtime_identity:
-        raise TypeError(f"model must be a native {label} diffusion component")
-    if base_runtime.family.id != recipe.family_id:
-        raise ValueError(
-            f"runtime producer family {base_runtime.family.id!r} does not match "
-            f"reconstruction recipe family {recipe.family_id!r}"
-        )
-    positive_carrier, positive_binding = _component_bound_carrier(positive, inference)
-    if positive_binding is None:
-        if descriptor.allow_unbound_conditioning:
-            return _ResolvedComponentExecution(
-                base_runtime,
-                positive,
-                negative,
-                conditioning_prepared=False,
-            )
-        raise TypeError(f"positive must be {label} component-bound conditioning")
-    conditioning_families = (recipe.family_id, *descriptor.shared_conditioning_families)
-    if positive_binding.family_id not in conditioning_families:
-        raise ValueError(f"positive {label} conditioning has the wrong component family")
-    conditioning_roles = descriptor.conditioning_roles or descriptor.text_encoder_roles
-    if positive_binding.role not in conditioning_roles:
-        raise ValueError(f"positive {label} conditioning has the wrong component role")
-    negative_carrier = None
-    if negative not in ([], None):
-        negative_carrier, negative_binding = _component_bound_carrier(negative, inference)
-        if negative_binding is None:
-            raise TypeError(f"negative must be {label} component-bound conditioning or empty")
-        if negative_binding.family_id not in conditioning_families:
-            raise ValueError(f"negative {label} conditioning has the wrong component family")
-        if negative_binding.role != positive_binding.role:
-            raise ValueError(f"negative {label} conditioning has the wrong component role")
-        if negative_binding != positive_binding:
-            raise ValueError(f"{label} conditioning lanes must share one component binding")
-    composition = inference.compose_execution(
-        recipe.family_id,
-        {
-            descriptor.model_role: recipe.runtime_identity,
-            positive_binding.role: positive_binding.identity,
-        },
-        shared_component_families=frozenset(descriptor.shared_conditioning_families),
-    )
-    if descriptor.execution_options is None:
-        assembled = getattr(base_runtime, "assembled", None)
-        module = base_runtime.model if assembled is None else assembled.diffusion
-        if descriptor.runtime_with_family:
-            runtime = type(base_runtime)(
-                module,
-                base_runtime.family,
-                runtime_identity=composition.execution_identity,
-            )
-        else:
-            runtime = type(base_runtime)(
-                module,
-                runtime_identity=composition.execution_identity,
-                compute_dtype=_torch_dtype(_torch(), recipe.knobs.diffusion_dtype),
-            )
-    else:
-        runtime = _component_runtime_with_options(
-            base_runtime,
-            descriptor,
-            recipe.family_id,
-            composition.execution_identity,
-            _torch_dtype(_torch(), recipe.knobs.diffusion_dtype),
-            sampling_shift,
-            option_windows,
-        )
-
-    def prepare(carrier: object) -> object:
-        prepare_method = getattr(runtime, descriptor.prepare_conditioning, None)
-        prepare_options: dict[str, object] = {}
-        if descriptor.frame_rate_conditioning:
-            carrier, frame_rate = _split_ltx_frame_rate(carrier, inference)
-            if frame_rate is not None:
-                prepare_options["frame_rate"] = frame_rate
-        conditioning = (
-            execution_symbol(descriptor.prepare_conditioning)(carrier, device=handle.load_device)
-            if prepare_method is None
-            else prepare_method(carrier, **prepare_options)
-        )
-        if descriptor.conditioning_format == "raw":
-            return conditioning
-        if descriptor.conditioning_format == "multistream":
-            prepared: list[list[Any]] = [
-                [
-                    inference.PreparedMultiStreamConditioning(
-                        runtime.conditioning_identity, conditioning
-                    ),
-                    {},
-                ]
-            ]
-            return prepared
-        return [[conditioning.embeddings, {_NATIVE_PREPARED_CONDITIONING_KEY: conditioning}]]
-
-    result: tuple[Any, object, object] = (
-        runtime,
-        prepare(positive_carrier),
-        (
-            (None if descriptor.conditioning_format == "raw" else [])
-            if negative_carrier is None
-            else prepare(negative_carrier)
-        ),
-    )
-    if descriptor.release_conditioning:
-        try:
-            handle.coordinator.advisory_unload_components(positive_binding.identity)
-        except NativeResidencyBusyError:
-            pass
-    return _ResolvedComponentExecution(*result, conditioning_prepared=True)
-
-
-def resolve_component_execution(
-    handle: NativeRuntimeHandle,
-    positive: object,
-    negative: object,
-    inference: Any,
-    *,
-    sampling_shift: float | None = None,
-    option_windows: tuple[Any, ...] = (),
-    negative_handle: NativeRuntimeHandle | None = None,
-    image_only_negative: bool = False,
-) -> tuple[Any, object, object] | None:
-    resolved = _resolve_component_execution(
-        handle,
-        positive,
-        negative,
-        inference,
-        sampling_shift=sampling_shift,
-        option_windows=option_windows,
-        negative_handle=negative_handle,
-        image_only_negative=image_only_negative,
-    )
-    return None if resolved is None else resolved.values()
-
-
-def resolve_ideogram4_component_execution(
-    handle: NativeRuntimeHandle,
-    positive: object,
-    negative: object,
-    inference: Any,
-    *,
-    negative_handle: NativeRuntimeHandle | None = None,
-    image_only_negative: bool = False,
-) -> tuple[Any, object, object] | None:
-    recipe = handle.recipe
-    family_id = inference.IDEOGRAM4_CONFIG.family_id
-    if recipe.family_id != family_id:
-        return None
-    if tuple(source.role for source in recipe.sources) != ("diffusion",):
-        return None
-    inference_torch = importlib.import_module("dinkster_inference_torch")
-    base_runtime = handle.runtime
-    if (
-        not isinstance(base_runtime, inference_torch.Ideogram4DiffusionRuntime)
-        or recipe.runtime_identity != base_runtime.runtime_identity
-    ):
-        raise TypeError("model must be a native Ideogram 4 diffusion component")
-    negative_runtime = None
-    if negative_handle is not None:
-        negative_recipe = negative_handle.recipe
-        negative_base = negative_handle.runtime
-        if (
-            negative_recipe.family_id != family_id
-            or tuple(source.role for source in negative_recipe.sources) != ("diffusion",)
-            or not isinstance(negative_base, inference_torch.Ideogram4DiffusionRuntime)
-            or negative_recipe.runtime_identity != negative_base.runtime_identity
-        ):
-            raise TypeError("model_negative must be a native Ideogram 4 diffusion component")
-    positive_carrier, positive_binding = _component_bound_carrier(positive, inference)
-    if positive_binding is None:
-        raise TypeError("positive must be Ideogram 4 component-bound conditioning")
-    if positive_binding.family_id != family_id or positive_binding.role != "qwen3vl_8b":
-        raise ValueError("positive Ideogram 4 conditioning has the wrong component binding")
-    negative_carrier = None
-    if negative not in ([], None):
-        negative_carrier, negative_binding = _component_bound_carrier(negative, inference)
-        if negative_binding is None:
-            raise TypeError("negative must be Ideogram 4 component-bound conditioning or empty")
-        if negative_binding != positive_binding:
-            raise ValueError("Ideogram 4 conditioning lanes must share one component binding")
-    components = {
-        "diffusion": recipe.runtime_identity,
-        "qwen3vl_8b": positive_binding.identity,
-    }
-    if negative_handle is not None:
-        components["negative-diffusion"] = negative_handle.recipe.runtime_identity
-    composition = inference.compose_execution(family_id, components)
-    torch = _torch()
-    runtime = inference_torch.Ideogram4DiffusionRuntime(
-        base_runtime.assembled.diffusion,
-        runtime_identity=composition.execution_identity,
-        compute_dtype=_torch_dtype(torch, recipe.knobs.diffusion_dtype),
-    )
-    if negative_handle is not None:
-        negative_runtime = inference_torch.Ideogram4DiffusionRuntime(
-            negative_handle.runtime.assembled.diffusion,
-            runtime_identity=composition.execution_identity,
-            compute_dtype=_torch_dtype(torch, negative_handle.recipe.knobs.diffusion_dtype),
-        )
-    conditioning = runtime.prepare_single_stream_conditioning(positive_carrier)
-    rows = [[conditioning.embeddings, {_NATIVE_PREPARED_CONDITIONING_KEY: conditioning}]]
-    negative_rows: object = []
-    target_runtime = runtime if negative_runtime is None else negative_runtime
-    uncond = (
-        target_runtime.image_only_conditioning()
-        if image_only_negative
-        else (
-            None
-            if negative_carrier is None
-            else target_runtime.prepare_single_stream_conditioning(negative_carrier)
-        )
-    )
-    if uncond is not None:
-        if negative_runtime is not None:
-            uncond = inference_torch.RoutedConditioning(
-                embeddings=uncond.embeddings,
-                pooled=uncond.pooled,
-                evaluation=negative_runtime.conditioning_evaluation(),
-                source=uncond,
-            )
-        negative_rows = [[uncond.embeddings, {_NATIVE_PREPARED_CONDITIONING_KEY: uncond}]]
-    return runtime, rows, negative_rows
-
-
-def resolve_seedvr2_component_execution(
-    handle: NativeRuntimeHandle,
-    positive: object,
-    negative: object,
-    inference: Any,
-) -> tuple[Any, object, object] | None:
-    recipe = handle.recipe
-    runtime = handle.runtime
-    sampling_runtime = getattr(runtime, "component_sampling_runtime", runtime)
-    if getattr(sampling_runtime, "runtime_identity", None) != recipe.runtime_identity:
-        raise TypeError("component sampling runtime identity does not match its model handle")
-    inference_torch = importlib.import_module("dinkster_inference_torch")
-
-    def prepare(value: object, name: str, branch: str) -> object:
-        conditioning = inference_torch.materialize_seedvr2_conditioning(
-            value, device=handle.load_device
-        )
-        if conditioning.branch != branch:
-            raise TypeError(f"{name} must come from Apply SeedVR2 Conditioning")
-        if conditioning.component_identity != recipe.runtime_identity:
-            raise ValueError(f"{name} SeedVR2 conditioning belongs to a different model")
-        return [
-            [
-                conditioning.embeddings,
-                {_NATIVE_PREPARED_CONDITIONING_KEY: conditioning},
-            ]
-        ]
-
-    positive_rows = prepare(positive, "positive", "positive")
-    negative_rows: object = (
-        [] if negative in ([], None) else prepare(negative, "negative", "negative")
-    )
-    return sampling_runtime, positive_rows, negative_rows
-
-
-def _sampling_memory_requirements(runtime: Any, samples: Any) -> tuple[int, int | None]:
-    estimate = getattr(runtime, "sampling_memory_requirements", None)
-    return (0, None) if estimate is None else estimate(tuple(samples.shape))
-
-
-def resolve_trellis2_component_execution(
-    handle: NativeRuntimeHandle, positive: object, negative: object, inference: Any
-) -> tuple[Any, object, object] | None:
-    recipe = handle.recipe
-    if recipe.family_id != inference.TRELLIS2.id:
-        return None
-    source_roles = tuple(source.role for source in recipe.sources)
-    if source_roles not in (
-        ("diffusion",),
-        ("shape", "shape-512", "structure", "texture", "texture-512"),
-    ):
-        return None
-    inference_torch = importlib.import_module("dinkster_inference_torch")
-    runtime = handle.runtime
-    if (
-        not isinstance(runtime, inference_torch.Trellis2DiffusionRuntime)
-        or recipe.runtime_identity != runtime.runtime_identity
-    ):
-        raise TypeError("model must be a native TRELLIS.2 diffusion component")
-    carrier_type = inference.ResidentConditioningCarrier
-    resource_type = inference_torch.Trellis2ConditioningResource
-    positive_carrier = cast("Any", positive)
-    if not isinstance(positive, carrier_type) or not isinstance(
-        positive_carrier.payload, resource_type
-    ):
-        raise TypeError("positive must be resident TRELLIS.2 conditioning")
-    positive_resource = positive_carrier.payload
-    if positive_resource.guidance_role is not inference.GuidanceRole.CONDITIONAL:
-        raise ValueError("positive TRELLIS.2 conditioning has the wrong guidance lane")
-    negative_resource = None
-    if negative not in ([], None):
-        negative_carrier = cast("Any", negative)
-        if not isinstance(negative, carrier_type) or not isinstance(
-            negative_carrier.payload, resource_type
-        ):
-            raise TypeError("negative must be resident TRELLIS.2 conditioning or empty")
-        negative_resource = negative_carrier.payload
-        if negative_resource.guidance_role is not inference.GuidanceRole.UNCONDITIONAL:
-            raise ValueError("negative TRELLIS.2 conditioning has the wrong guidance lane")
-        if not positive_resource.shares_backing(negative_resource):
-            raise ValueError("TRELLIS.2 conditioning lanes must share one backing resource")
-        if negative_resource.stage != positive_resource.stage:
-            raise ValueError("TRELLIS.2 conditioning lanes must use the same stage")
-
-    def rows(resource: object) -> list[list[object]]:
-        return [
-            [
-                inference.PreparedMultiStreamConditioning(
-                    runtime.conditioning_identity,
-                    resource,
-                ),
-                dict[str, object](),
-            ]
-        ]
-
-    return (
-        runtime,
-        rows(positive_resource),
-        ([] if negative_resource is None else rows(negative_resource)),
-    )
-
-
-def load_registered_component(
-    value: object,
-    name: str,
-    role: str | None = None,
-    *,
-    family_id: str | None = None,
-) -> NativeComponentHandle:
-    from dinkster_inference.component_registry import execution_symbol
-
-    registry = importlib.import_module("dinkster_native.family_registry")
-    if family_id is None:
-        load = registry.registered_callable(value, "native_load")
-    else:
-        descriptor = _builtin_inference_registries().components.get(family_id)
-        reference = None if descriptor is None else descriptor.native_load
-        if reference is None:
-            raise TypeError(f"no declared native_load for family={family_id!r}")
-        load = execution_symbol(reference)
-    return load(value, name, role)

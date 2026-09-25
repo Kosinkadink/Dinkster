@@ -30,6 +30,7 @@ from dinkster_protocol import (
 )
 
 from .component_registry import ComponentDescriptor
+from .conditioning_adapters import ConditioningAdapter
 from .families import ModelFamily
 from .graph_compilers import (
     GraphCompilerDescriptor,
@@ -49,6 +50,7 @@ INFERENCE_SCHEDULERS_SURFACE = "inference.schedulers"
 INFERENCE_FAMILIES_SURFACE = "inference.families"
 INFERENCE_COMPONENTS_SURFACE = "inference.components"
 INFERENCE_ASSEMBLIES_SURFACE = "inference.assemblies"
+INFERENCE_CONDITIONING_ADAPTERS_SURFACE = "inference.conditioning-adapters"
 SAMPLER_CATALOG_ENV = "DINKSTER_INFERENCE_CATALOG"
 _CATALOG_FORMAT = "dinkster.sampler-catalog-v1"
 
@@ -81,6 +83,7 @@ class InferenceContribution:
     families: tuple[ModelFamily, ...] = ()
     components: tuple[ComponentDescriptor, ...] = ()
     assemblies: tuple[AssemblyRegistration, ...] = ()
+    conditioning_adapters: tuple[ConditioningAdapter, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -91,6 +94,7 @@ class InferenceContribution:
             and not self.families
             and not self.components
             and not self.assemblies
+            and not self.conditioning_adapters
         ):
             raise ValueError("inference contribution must be nonempty")
         samplers = cast("object", self.samplers)
@@ -116,6 +120,7 @@ class InferenceContribution:
             ("families", self.families, ModelFamily),
             ("components", self.components, ComponentDescriptor),
             ("assemblies", self.assemblies, AssemblyRegistration),
+            ("conditioning_adapters", self.conditioning_adapters, ConditioningAdapter),
         ):
             if not isinstance(cast("object", values), tuple) or not all(
                 isinstance(item, expected) for item in cast("tuple[object, ...]", values)
@@ -349,6 +354,15 @@ def assembly_declaration(registration: AssemblyRegistration) -> KeyedContributio
         id=registration.id,
         aliases=registration.aliases,
         behavior_metadata=(("loader", registration.load),),
+    )
+
+
+def conditioning_adapter_declaration(adapter: ConditioningAdapter) -> KeyedContribution:
+    """Project a conditioning adapter onto its family identity."""
+    return KeyedContribution(
+        surface_id=INFERENCE_CONDITIONING_ADAPTERS_SURFACE,
+        id=adapter.id,
+        aliases=adapter.aliases,
     )
 
 
@@ -609,6 +623,10 @@ def _materialize_inference_generation(
             produced_assemblies = tuple(
                 assembly_declaration(registration) for registration in contribution.assemblies
             )
+            produced_conditioning_adapters = tuple(
+                conditioning_adapter_declaration(adapter)
+                for adapter in contribution.conditioning_adapters
+            )
             declarations = (
                 sampler_declarations
                 + scheduler_declarations
@@ -617,6 +635,7 @@ def _materialize_inference_generation(
                 + produced_families
                 + produced_components
                 + produced_assemblies
+                + produced_conditioning_adapters
             )
             guidance.extend(produced_guidance)
             graph_compilers.extend(contribution.graph_compilers)
@@ -790,6 +809,7 @@ def sampler_choice_values(snapshot: SamplerRegistrySnapshot) -> tuple[str, ...]:
 __all__ = [
     "INFERENCE_ASSEMBLIES_SURFACE",
     "INFERENCE_COMPONENTS_SURFACE",
+    "INFERENCE_CONDITIONING_ADAPTERS_SURFACE",
     "INFERENCE_FAMILIES_SURFACE",
     "INFERENCE_SAMPLERS_SURFACE",
     "INFERENCE_SCHEDULERS_SURFACE",
@@ -814,6 +834,7 @@ __all__ = [
     "scheduler_declaration",
     "family_declaration",
     "component_declaration",
+    "conditioning_adapter_declaration",
     "assembly_declaration",
     "write_sampler_catalog",
 ]

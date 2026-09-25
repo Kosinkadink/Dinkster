@@ -7,9 +7,11 @@ from __future__ import annotations
 from dinkster_values import GIBIBYTE
 
 from ..native_arm_core import (
+    _NATIVE_PREPARED_CONDITIONING_KEY,
     Any,
     Mapping,
     NativeComponentHandle,
+    NativeRuntimeHandle,
     Node,
     NodeSchema,
     Sequence,
@@ -35,6 +37,41 @@ from ..nodes_sampling_runtime import (
     NativeVAEEncode,
     _native_component_codec,
 )
+
+
+def resolve_seedvr2_component_execution(
+    handle: NativeRuntimeHandle,
+    positive: object,
+    negative: object,
+    inference: Any,
+) -> tuple[Any, object, object] | None:
+    recipe = handle.recipe
+    runtime = handle.runtime
+    sampling_runtime = getattr(runtime, "component_sampling_runtime", runtime)
+    if getattr(sampling_runtime, "runtime_identity", None) != recipe.runtime_identity:
+        raise TypeError("component sampling runtime identity does not match its model handle")
+    inference_torch = importlib.import_module("dinkster_inference_torch")
+
+    def prepare(value: object, name: str, branch: str) -> object:
+        conditioning = inference_torch.materialize_seedvr2_conditioning(
+            value, device=handle.load_device
+        )
+        if conditioning.branch != branch:
+            raise TypeError(f"{name} must come from Apply SeedVR2 Conditioning")
+        if conditioning.component_identity != recipe.runtime_identity:
+            raise ValueError(f"{name} SeedVR2 conditioning belongs to a different model")
+        return [
+            [
+                conditioning.embeddings,
+                {_NATIVE_PREPARED_CONDITIONING_KEY: conditioning},
+            ]
+        ]
+
+    positive_rows = prepare(positive, "positive", "positive")
+    negative_rows: object = (
+        [] if negative in ([], None) else prepare(negative, "negative", "negative")
+    )
+    return sampling_runtime, positive_rows, negative_rows
 
 
 def load_component(value: object, name: str, role: str | None = None) -> NativeComponentHandle:

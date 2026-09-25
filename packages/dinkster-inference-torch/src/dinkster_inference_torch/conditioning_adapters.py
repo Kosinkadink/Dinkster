@@ -15,9 +15,9 @@ from dinkster_inference import (
     Conditioning,
     ConditioningCarrier,
     ConditioningChannel,
+    ConditioningPayloadBinding,
     ConditioningRecord,
     ConditioningSet,
-    PayloadBinding,
     PayloadDescriptor,
     PayloadReference,
     PercentRange,
@@ -130,7 +130,7 @@ def materialize_basic_conditioning(
 
 def _materialize(
     descriptor: PayloadDescriptor,
-    bindings: dict[str, PayloadBinding],
+    bindings: dict[str, ConditioningPayloadBinding],
     channel: ConditioningChannel,
     device: torch.device | str,
 ) -> torch.Tensor:
