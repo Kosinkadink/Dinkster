@@ -711,6 +711,18 @@ def native_unet_key_map(model_keys: Iterable[str]) -> dict[str, str]:
     return key_map
 
 
+def minimax_h3_lora_key_map(
+    model_keys: Iterable[str], _config: object | None = None
+) -> dict[str, str]:
+    """Map direct MiniMax H3 LoRA stems to loaded diffusion rows."""
+
+    return {
+        key.removeprefix("diffusion_model.").removesuffix(".weight"): key
+        for key in model_keys
+        if key.startswith("diffusion_model.") and key.endswith(".weight")
+    }
+
+
 _UNET_RESNET_TO_DIFFUSERS = {
     "in_layers.2.weight": "conv1.weight",
     "in_layers.2.bias": "conv1.bias",
@@ -944,6 +956,16 @@ def z_image_diffusers_key_map(
     return key_map
 
 
+def z_image_family_lora_key_map(
+    model_keys: Iterable[str], config: object
+) -> dict[str, PatchTarget]:
+    """Build Z-Image aliases from its registered model configuration."""
+    hidden_width = getattr(config, "hidden_width", None)
+    if not isinstance(hidden_width, int) or hidden_width <= 0:
+        raise ValueError("Z-Image LoRA mapping requires a positive hidden width")
+    return z_image_diffusers_key_map(model_keys, hidden_width)
+
+
 def clip_lora_key_map(model_keys: Iterable[str]) -> dict[str, str]:
     """Text-encoder stem aliases, ported from comfy/lora.py
     model_lora_keys_clip @ b78cec87 (pure key-list logic; the
@@ -1047,6 +1069,7 @@ __all__ = [
     "clip_lora_key_map",
     "decode_lora",
     "flux_linear1_qkv_key_map",
+    "minimax_h3_lora_key_map",
     "native_unet_key_map",
     "normalize_lora_keys",
     "qwen_image_lora_key_map",
