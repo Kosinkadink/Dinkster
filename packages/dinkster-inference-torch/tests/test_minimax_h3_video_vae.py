@@ -354,7 +354,10 @@ def test_causal_conv_norm_pad_and_residual_match_unfused_equation(
     padded = F.pad(padded, (0, 0, 0, 0, 2, 0))
     expected = F.conv3d(padded, conv.weight, conv.bias).add(residual)
 
-    monkeypatch.setattr(vae_module, "_kitchen_ndhwc", lambda _input: fused)
+    def kitchen_supported(_input: torch.Tensor) -> bool:
+        return fused
+
+    monkeypatch.setattr(vae_module, "_kitchen_ndhwc", kitchen_supported)
     calls: list[torch.Tensor | None] = []
 
     def fused_conv(
@@ -365,6 +368,7 @@ def test_causal_conv_norm_pad_and_residual_match_unfused_equation(
         stride: tuple[int, int, int],
     ) -> torch.Tensor:
         calls.append(conv_residual)
+        assert conv_residual is not None
         return F.conv3d(input, weight, bias, stride).add(conv_residual)
 
     if fused:
@@ -432,7 +436,10 @@ def _set_free_tile_memory(monkeypatch: pytest.MonkeyPatch, bytes_free: int) -> N
     class Memory:
         free_total = bytes_free
 
-    monkeypatch.setattr(vae_module, "get_free_memory", lambda _device: Memory())
+    def free_memory(_device: torch.device) -> Memory:
+        return Memory()
+
+    monkeypatch.setattr(vae_module, "get_free_memory", free_memory)
 
 
 def test_tiled_decode_batches_rows_from_free_memory_without_changing_pixels(
@@ -505,9 +512,17 @@ def test_transformer_fused_boundaries_match_unfused_equations(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def attention_kernel(
-        query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        *,
+        mask: torch.Tensor | None = None,
+        causal: bool = False,
+        scale: float | None = None,
+        enable_gqa: bool = False,
     ) -> torch.Tensor:
-        return query + key * 2.0 + value * 3.0
+        del mask, causal, scale, enable_gqa
+        return q + k * 2.0 + v * 3.0
 
     block = TransformerBlock(2, 8, attention_kernel=attention_kernel)
     with torch.no_grad():

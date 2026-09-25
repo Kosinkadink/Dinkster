@@ -78,7 +78,7 @@ def _fused_norm_pad(
         return dinkster_kitchen.group_norm_silu_pad3d(
             input, None, None, 1, 0.0, (*spatial_pad, front), silu=False
         )
-    with norm._materialized_affine(input) as (weight, bias):
+    with norm.materialized_affine(input) as (weight, bias):
         return dinkster_kitchen.group_norm_silu_pad3d(
             input,
             weight,
@@ -181,7 +181,9 @@ class CausalConv3d(ResidencyRouted, torch.nn.Conv3d):
             )
         elif ndhwc:
             weight = weight.contiguous(memory_format=torch.channels_last_3d)
-            fused_conv = _fp16_accum_conv(x, weight, bias, residual, self.stride)
+            fused_conv = _fp16_accum_conv(
+                x, weight, bias, residual, cast(tuple[int, int, int], self.stride)
+            )
             if fused_conv is not None:
                 return fused_conv
             output = F.conv3d(
@@ -288,7 +290,7 @@ class TemporalIsolatedGroupNorm(ResidencyRouted, torch.nn.GroupNorm):
         return stored.dtype if self._compute_dtype is None else self._compute_dtype
 
     @contextmanager
-    def _materialized_affine(
+    def materialized_affine(
         self, input: torch.Tensor
     ) -> Generator[tuple[torch.Tensor | None, torch.Tensor | None]]:
         weight = cast(torch.Tensor | None, self.weight)
@@ -314,7 +316,7 @@ class TemporalIsolatedGroupNorm(ResidencyRouted, torch.nn.GroupNorm):
             )
 
     def forward(self, input: torch.Tensor) -> torch.Tensor:
-        with self._materialized_affine(input) as (weight, bias):
+        with self.materialized_affine(input) as (weight, bias):
             return self._isolated_forward(input, weight, bias)
 
 
@@ -511,7 +513,8 @@ class FeedForward(torch.nn.Module):
         residual_scale: torch.Tensor,
     ) -> torch.Tensor:
         with materialized_rms_norm_weight(pre_norm) as weight:
-            hidden = linear_input_act(self.w1, x, "rms_norm", weight, pre_norm.eps)
+            eps = torch.finfo(x.dtype).eps if pre_norm.eps is None else pre_norm.eps
+            hidden = linear_input_act(self.w1, x, "rms_norm", weight, eps)
         return linear_input_act(
             self.w2,
             hidden,
@@ -526,6 +529,7 @@ _DEFAULT_VAE_ATTENTION = select_attention("vae").kernel
 
 class Attention(torch.nn.Module):
     _attention_kernel: AttentionKernel
+    qk_norm_scale: torch.Tensor
 
     def __init__(
         self,
@@ -557,8 +561,9 @@ class Attention(torch.nn.Module):
     ) -> torch.Tensor:
         batch, sequence, _ = x.shape
         with materialized_rms_norm_weight(pre_norm) as weight:
+            eps = torch.finfo(x.dtype).eps if pre_norm.eps is None else pre_norm.eps
             qkv = linear_input_act(
-                self.to_qkv, x, "rms_norm", weight, pre_norm.eps
+                self.to_qkv, x, "rms_norm", weight, eps
             ).view(batch, sequence, -1, 3 * self.dim_head)
         query, key, value = qkv.chunk(3, dim=-1)
         if rotary is not None:
@@ -573,7 +578,11 @@ class Attention(torch.nn.Module):
                 key,
                 rotary,
                 self.qk_norm_scale.to(query.device),
-                epsilon=self.norm_q.eps,
+                epsilon=(
+                    torch.finfo(query.dtype).eps
+                    if self.norm_q.eps is None
+                    else self.norm_q.eps
+                ),
                 rot_dim=rotated,
             )
         else:
