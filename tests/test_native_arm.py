@@ -2296,7 +2296,12 @@ def test_generation_controlnet_carriers_chain_and_roundtrip_with_resource_depend
 ) -> None:
     from dinkster_inference import (
         ConditioningCarrier,
+        ConditioningChannel,
+        ConditioningRecord,
         ConditioningSet,
+        PayloadDescriptor,
+        PayloadReference,
+        ResidentPayloadBinding,
         make_conditioning_carrier,
         register_conditioning_type,
     )
@@ -2315,7 +2320,13 @@ def test_generation_controlnet_carriers_chain_and_roundtrip_with_resource_depend
     monkeypatch.setattr(arm, "_torch", lambda: FakeTorch())
     monkeypatch.setattr(arm, "_snapshot_control_hint", lambda *_args: snapshot)
     monkeypatch.setattr(arm, "default_pool", lambda: pool)
-    carrier = make_conditioning_carrier(ConditioningSet(()), ())
+    descriptor = PayloadDescriptor(PayloadReference("base"), (1,), "U8", "test")
+    carrier = make_conditioning_carrier(
+        ConditioningSet(
+            (ConditioningRecord(channels=((ConditioningChannel.TEXT, descriptor),)),)
+        ),
+        (ResidentPayloadBinding("base", (1,), "U8", "test", object(), "base"),),
+    )
     union = arm.GenerationSetControlNetUnionType.execute(
         control_net=resource, type="canny/lineart/anime_lineart/mlsd"
     )["control_net"]
@@ -2338,13 +2349,16 @@ def test_generation_controlnet_carriers_chain_and_roundtrip_with_resource_depend
     )
     result = second["positive"]
     assert type(result) is ConditioningCarrier
-    assert cast("Any", result._dinkster_resident_payload).conditioning is carrier
+    controlled = arm._controlled_conditioning(result)
+    assert controlled is not None
+    assert controlled.conditioning is carrier
+    assert len(result._dinkster_resident_payloads) == 2
     assert result.conditioning.records[-1].channels[0][0].value == "control_hint"
     binding = arm._select_classic_control_binding(result, second["negative"])
     assert binding.application.strength == 0.5
     assert binding.application.previous.mode.token == "canny"
     assert len(binding.entries) == 2
-    assert result._dinkster_resident_refs == (resource.handle,)
+    assert resource.handle in result._dinkster_resident_refs
 
     spec = register_conditioning_type(TypeRegistry(), resident_table=pool)
     assert spec.fingerprint is not None
@@ -2352,9 +2366,8 @@ def test_generation_controlnet_carriers_chain_and_roundtrip_with_resource_depend
     assert spec.decode(spec.encode(result)) is result
     assert spec.fingerprint(result) == spec.fingerprint(second["negative"])
     assert spec.fingerprint(result) != spec.fingerprint(first["positive"])
-    assert spec.meta(result)[RESOURCE_REFS_META_KEY] == (
-        "resident:" + pool.rid_for(resource.handle),
-    )
+    refs = cast("tuple[str, ...]", spec.meta(result)[RESOURCE_REFS_META_KEY])
+    assert "resident:" + pool.rid_for(resource.handle) in refs
     with pytest.raises(ValueError, match="chains must match"):
         arm._select_classic_control_binding(result, first["negative"])
     deprecated = arm.GenerationApplyControlNet.execute(
