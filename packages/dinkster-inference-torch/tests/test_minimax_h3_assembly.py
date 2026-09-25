@@ -57,7 +57,7 @@ from dinkster_inference_torch.minimax_h3_audio import MiniMaxH3AudioVAE
 from dinkster_inference_torch.minimax_h3_video_vae import MiniMaxH3VideoVAE
 from dinkster_inference_torch.module_residency import ModuleStateStore
 from dinkster_inference_torch.operations import INITLESS, CastOperations
-from dinkster_inference_torch.quant_linear import Int8Linear
+from dinkster_inference_torch.quant_linear import Int8Embedding, Int8Linear
 
 _TEST_IDENTITIES = {
     role: ((index, "blake3:" + f"{index:x}" * 64),)

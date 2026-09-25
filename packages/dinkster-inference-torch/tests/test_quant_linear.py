@@ -83,6 +83,7 @@ def test_int8_embedding_bfloat16_matches_reference_rounding() -> None:
         2,
         256,
         compute_dtype=torch.bfloat16,
+        per_channel=True,
         convrot=False,
         convrot_groupsize=256,
     )
