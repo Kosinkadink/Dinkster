@@ -10,8 +10,10 @@ from dinkster_inference import (
     ConditioningChannel,
     ConditioningRecord,
     ConditioningSet,
+    LivePayloadBinding,
     PayloadDescriptor,
     PayloadReference,
+    ResidentPayloadBinding,
     encode_conditioning_carrier,
     make_conditioning_carrier,
 )
@@ -98,6 +100,27 @@ def test_noncontiguous_detached_normalization_and_carrier_byte_stability() -> No
     rebuilt = tensor_to_payload_binding("tensor", payload_binding_to_tensor(binding), space="text")
     second = encode_conditioning_carrier(make_conditioning_carrier(conditioning, (rebuilt,)))
     assert first == second
+
+
+def test_live_payload_materializes_and_resident_payload_refuses() -> None:
+    source = torch.tensor((1.0, -2.0), dtype=torch.float32)
+    data = tensor_to_payload_binding("source", source, space="proof").data
+    live = LivePayloadBinding(
+        "live",
+        (2,),
+        "F32",
+        "proof",
+        object(),
+        "live-fingerprint",
+        lambda _payload: data,
+    )
+    assert torch.equal(payload_binding_to_tensor(live), source)
+
+    resident = ResidentPayloadBinding(
+        "resident", (2,), "F32", "proof", object(), "resident-fingerprint"
+    )
+    with pytest.raises(TensorPayloadError, match="resident payload 'resident'"):
+        payload_binding_to_tensor(resident)
 
 
 def test_scalar_sparse_quantized_complex_unsigned_and_unknown_refuse_without_casts() -> None:

@@ -26,6 +26,7 @@ from dinkster_inference import (
     Conditioning,
     ConditioningCarrier,
     ConditioningChannel,
+    ConditioningPayloadBinding,
     ConditioningRecord,
     ConditioningSet,
     CustomSamplingResult,
@@ -38,7 +39,6 @@ from dinkster_inference import (
     MultiStreamLatent,
     MultiStreamLatentAdapterRuntime,
     Parameterization,
-    PayloadBinding,
     PayloadDescriptor,
     PayloadReference,
     PercentRange,
@@ -699,7 +699,7 @@ def _basic_wan_text_payload(
     carrier: object,
     *,
     name: str,
-) -> tuple[PayloadDescriptor, PayloadBinding, TokenLayoutDescriptor]:
+) -> tuple[PayloadDescriptor, ConditioningPayloadBinding, TokenLayoutDescriptor]:
     if type(carrier) is not ConditioningCarrier:
         raise TypeError(f"{name} must be an exact ConditioningCarrier")
     typed = carrier

@@ -133,7 +133,7 @@ def _resident_conditioning(
         dtype,
         space,
         resource,
-        resource._dinkster_resident_fingerprint,
+        resource.fingerprint,
     )
     return make_conditioning_carrier(conditioning, (binding,))
 

@@ -11,6 +11,7 @@ from dinkster_inference import (
     SUBDIVISION_CHANNELS,
     ConditioningCarrier,
     DenseVoxelGrid,
+    ResidentPayloadBinding,
     SparseLatent,
     SparseSubdivisionGuides,
     SparseVolume,
@@ -54,8 +55,14 @@ def test_resources_use_canonical_family_carriers_with_shared_owner() -> None:
 
     assert positive.conditioning.records[0].token_layout is not None
     assert positive.conditioning.records[0].token_layout.family_id == "dinkster.trellis2"
-    assert positive._dinkster_resident_owner is negative._dinkster_resident_owner
-    assert positive.bindings[0].fingerprint != negative.bindings[0].fingerprint
+    positive_resource = _resource(positive)
+    negative_resource = _resource(negative)
+    assert positive_resource.shares_storage_with(negative_resource)
+    positive_binding = positive.bindings[0]
+    negative_binding = negative.bindings[0]
+    assert isinstance(positive_binding, ResidentPayloadBinding)
+    assert isinstance(negative_binding, ResidentPayloadBinding)
+    assert positive_binding.fingerprint != negative_binding.fingerprint
 
 
 def test_empty_structure_latent_matches_the_official_sampling_shape() -> None:

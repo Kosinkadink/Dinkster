@@ -26,12 +26,12 @@ from dinkster_inference import (
     Conditioning,
     ConditioningCarrier,
     ConditioningChannel,
+    ConditioningPayloadBinding,
     ConditioningRange,
     ExtensionInputValue,
     GuidanceRole,
     ModelFamily,
     PatchSet,
-    PayloadBinding,
     PercentRange,
     RealizedSamplingTimeline,
     SigmaSpace,
@@ -215,8 +215,8 @@ def _refuse(code: str, detail: str = "") -> RegionalConditioningError:
     return RegionalConditioningError(code, detail)
 
 
-def _binding_map(carrier: ConditioningCarrier) -> dict[str, PayloadBinding]:
-    bindings: dict[str, PayloadBinding] = {}
+def _binding_map(carrier: ConditioningCarrier) -> dict[str, ConditioningPayloadBinding]:
+    bindings: dict[str, ConditioningPayloadBinding] = {}
     for binding in carrier.bindings:
         if binding.reference_id in bindings:
             raise _refuse("duplicate-binding", binding.reference_id)
@@ -225,7 +225,7 @@ def _binding_map(carrier: ConditioningCarrier) -> dict[str, PayloadBinding]:
 
 
 def _decode_channel(
-    binding: PayloadBinding,
+    binding: ConditioningPayloadBinding,
     *,
     descriptor_shape: tuple[int, ...],
     descriptor_dtype: str,
@@ -276,7 +276,7 @@ def _validate_layout(
 
 
 def _materialize_mask(
-    binding: PayloadBinding,
+    binding: ConditioningPayloadBinding,
     *,
     latent_height: int,
     latent_width: int,
