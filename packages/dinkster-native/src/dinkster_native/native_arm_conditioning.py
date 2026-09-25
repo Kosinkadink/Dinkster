@@ -16,7 +16,7 @@ _CONDITIONING_WIRE_BY_ITEMSIZE = {2: "F16", 4: "F32", 8: "F64"}
 
 def _conditioning_carrier(value: object, name: str) -> Any:
     inference = importlib.import_module("dinkster_inference")
-    return cast("Any", inference.conditioning(value, name))
+    return inference.conditioning(value, name)
 
 
 def _conditioning_op_float(value: object, name: str, low: float, high: float) -> float:
