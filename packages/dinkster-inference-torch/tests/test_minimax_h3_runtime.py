@@ -583,6 +583,18 @@ def test_single_dit_component_derives_conditioner_execution_identity(
     assert derived.receipt_identity == "fl2va-receipt"
     assert derived.sampling_runtime() is derived
 
+    replacement_identity = "native:dinkster.minimax_h3:" + "7" * 64
+    replacement = derived.with_conditioner(replacement_identity)
+    replacement_composition = compose_execution(
+        MINIMAX_H3_CONFIG.family_id,
+        {"fl2va_dit": identity, "conditioner": replacement_identity},
+    )
+    assert replacement.runtime_identity == replacement_composition.execution_identity
+    assert (
+        derived.with_conditioner(conditioner_identity).runtime_identity
+        == derived.runtime_identity
+    )
+
 
 def test_empty_av_snaps_to_exact_video_audio_geometry() -> None:
     value = empty_minimax_h3_av(

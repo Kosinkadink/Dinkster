@@ -1489,6 +1489,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             raise ValueError("H3 DiT compute dtype must be bfloat16 or float32")
         self._model = model
         self._model_role = model_role
+        self._component_identity = runtime_identity
         self._runtime_identity = runtime_identity
         self._receipt_identity = receipt_identity
         self._conditioning_identity = (
@@ -1518,7 +1519,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         composition = compose_execution(
             MINIMAX_H3_CONFIG.family_id,
             {
-                self._model_role: self.runtime_identity,
+                self._model_role: self._component_identity,
                 "conditioner": conditioning_identity,
             },
         )
