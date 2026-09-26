@@ -159,9 +159,10 @@ import os
 import sys
 from dinkster_compat_comfy import bootstrap
 from dinkster_compat_comfy.translate import CompatTranslation
+from dinkster_compat_comfy.prompt import build_alias_index
 from dinkster_native.nodes_conditioning import GenerationBlockSparseAttention
 from dinkster_nodes_generation.nodes import BlockSparseAttention
-from dinkster_schema import build_node_types
+from dinkster_schema import build_node_types, build_schemas
 
 class TranslatedBlockSparseAttention(GenerationBlockSparseAttention):
     pass
@@ -179,6 +180,9 @@ nodes = [
 assert nodes == [GenerationBlockSparseAttention]
 assert nodes[0].schema() == BlockSparseAttention.schema()
 build_node_types(entry.COMFY_NODES)
+assert build_alias_index(build_schemas(entry.COMFY_NODES))['BlockSparseAttention'] == [
+    'comfy.BlockSparseAttention'
+]
 """
     env = {key: value for key, value in os.environ.items() if key != "DINKSTER_COMFY_NATIVE_ONLY"}
     result = subprocess.run(

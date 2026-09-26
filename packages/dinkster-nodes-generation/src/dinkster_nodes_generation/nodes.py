@@ -1798,6 +1798,7 @@ class BlockSparseAttention(_SchemaOnlyNode):
                 ),
             ),
             outputs=(OutputSpec("MODEL", MODEL),),
+            aliases=("BlockSparseAttention",),
         )
 
 
