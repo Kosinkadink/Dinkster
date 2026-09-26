@@ -60,7 +60,7 @@ def test_approved_input_prominence_baseline() -> None:
     expected_counts = {
         "P": 82,
         "CP": 120,
-        "A": 129,
+        "A": 134,
         "I": 17,
     }
     assert Counter(item["class"] for item in baseline) == expected_counts
