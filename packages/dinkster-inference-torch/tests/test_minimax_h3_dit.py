@@ -2400,12 +2400,12 @@ def test_bf16_text_preprocessing_feeds_bf16_diffusion() -> None:
     assert output.by_role("audio").dtype is torch.bfloat16
 
 
-def test_reduced_keyframe_and_reference_forwards_pack_every_realized_condition() -> None:
+def test_reduced_keyframe_and_reference_forwards_pack_mixed_dtype_conditions() -> None:
     spy = _RecordingKernel()
     model = _reduced_model(spy)
     _fill_reduced_model(model)
     value, context = _inputs()
-    keyframe = value.by_role("video")[:, :, :1].clone()
+    keyframe = value.by_role("video")[:, :, :1].double()
     tags = torch.tensor(((1, 0, 1),))
     keyframe_output = model(
         value,
@@ -2424,12 +2424,18 @@ def test_reduced_keyframe_and_reference_forwards_pack_every_realized_condition()
     assert spy.calls[-1][0].shape[-2] == 3 + 6 + 2 * 6 + 12
 
     references = (
-        MiniMaxH3ReferenceLatents(MiniMaxH3ReferenceKind.IMAGE, video=torch.zeros(1, 24, 1, 3, 3)),
-        MiniMaxH3ReferenceLatents(MiniMaxH3ReferenceKind.AUDIO, audio=torch.zeros(1, 32, 2, 2)),
+        MiniMaxH3ReferenceLatents(
+            MiniMaxH3ReferenceKind.IMAGE,
+            video=torch.zeros(1, 24, 1, 3, 3, dtype=torch.float64),
+        ),
+        MiniMaxH3ReferenceLatents(
+            MiniMaxH3ReferenceKind.AUDIO,
+            audio=torch.zeros(1, 32, 2, 2, dtype=torch.float64),
+        ),
         MiniMaxH3ReferenceLatents(
             MiniMaxH3ReferenceKind.VIDEO,
-            video=torch.zeros(1, 24, 2, 2, 2),
-            audio=torch.zeros(1, 32, 2, 2),
+            video=torch.zeros(1, 24, 2, 2, 2, dtype=torch.float64),
+            audio=torch.zeros(1, 32, 2, 2, dtype=torch.float64),
         ),
     )
     reference_output = model(

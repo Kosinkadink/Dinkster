@@ -1328,12 +1328,8 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
     def _validate_condition_tensor(
         condition: torch.Tensor, target: torch.Tensor, name: str
     ) -> None:
-        if (
-            not condition.is_floating_point()
-            or condition.device != target.device
-            or condition.dtype != target.dtype
-        ):
-            raise ValueError(f"{name} must share the target device and dtype")
+        if not condition.is_floating_point() or condition.device != target.device:
+            raise ValueError(f"{name} must be floating on the target device")
 
     def _rope_table(
         self, position_ids: torch.Tensor, device: torch.device, dtype: torch.dtype
