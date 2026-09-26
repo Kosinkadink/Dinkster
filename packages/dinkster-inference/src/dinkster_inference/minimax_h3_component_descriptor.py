@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -20,6 +20,7 @@ from .minimax_h3_assembly import (
 from .minimax_h3_dit import (
     MiniMaxH3DiTRole,
     minimax_h3_dit_component_identity,
+    minimax_h3_dit_provider_facts,
     minimax_h3_dit_runtime_identity,
 )
 from .recipe import ReconstructionRecipe, RuntimeKnobs, WeightSourceBinding, WeightSourceRef
@@ -85,6 +86,40 @@ def detect_h3_components(
 
 
 class H3ComponentDescriptor(ComponentDescriptor):
+    def rebind_attention_recipe(self, recipe: ReconstructionRecipe) -> ReconstructionRecipe:
+        token = recipe.knobs.attention_route_token
+        if token is None or recipe.family_id != self.id:
+            return recipe
+        if token.version == 3:
+            raise RuntimeError(
+                f"required attention policy {token.requested_policy!r} is unavailable "
+                "on the selected worker"
+            )
+        artifact_role = cast(
+            "MiniMaxH3DiTRole",
+            next(
+                fact.removeprefix("artifact_role=")
+                for fact in recipe.component_identity
+                if fact.startswith("artifact_role=")
+            ),
+        )
+        providers = dict(token.provider_versions)
+        effective_policy = cast(
+            "AttentionPolicy",
+            next(route.primary for route in token.routes if route.role == "flux"),
+        )
+        runtime_facts = minimax_h3_dit_provider_facts(
+            artifact_role,
+            quantized=any(fact.startswith("int8_provider=") for fact in recipe.knobs.runtime_facts),
+            torch_version=providers["torch"],
+            dinkster_kitchen_version=providers.get("dinkster-kitchen"),
+            attention_policy=effective_policy,
+        )
+        return replace(
+            recipe,
+            knobs=replace(recipe.knobs, runtime_facts=runtime_facts),
+        )
+
     def component_identity(
         self,
         role: str,

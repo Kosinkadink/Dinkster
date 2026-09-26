@@ -516,6 +516,7 @@ def _build_component_runtime_handle(
         raise RuntimeError(f"{label} component overlays must target only {role}")
 
     def materializer(next_recipe: Any, next_resolvers: Mapping[str, object]) -> Any:
+        next_recipe = descriptor.rebind_attention_recipe(next_recipe)
         next_asset = _source_asset(_recipe_source(next_recipe, role), next_resolvers)
         return _build_component_runtime_handle(
             descriptor,

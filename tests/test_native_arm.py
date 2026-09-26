@@ -1821,6 +1821,8 @@ def test_minimax_h3_component_builder_enrolls_through_aimdo(
         def __init__(self, _module: object, mechanism: object, _device: object, **kwargs: object):
             self.mechanism = mechanism
             self.residency_route = cast("Callable[[], object]", kwargs["residency_route_facts"])()
+            self.materializer = cast("Callable[..., object]", kwargs["materializer"])
+            self.source_resolvers = cast("Mapping[str, object]", kwargs["source_resolvers"])
 
         def attach_pool(self, _pool: object) -> None:
             pass
@@ -1865,6 +1867,16 @@ def test_minimax_h3_component_builder_enrolls_through_aimdo(
     )
     assert coordinator_calls == [{"free_memory": dynamic_free_memory}]
     assert "mechanism_factory" in enrollment_calls[0]
+
+    rebound: list[object] = []
+
+    def rebind(_descriptor: object, next_recipe: object) -> object:
+        rebound.append(next_recipe)
+        return next_recipe
+
+    monkeypatch.setattr(type(descriptor), "rebind_attention_recipe", rebind)
+    handle.materializer(recipe, handle.source_resolvers)
+    assert rebound == [recipe]
 
 
 def test_native_generic_qwen_loaders_publish_components_and_a_diffusion_runtime(
@@ -32882,6 +32894,86 @@ def test_model_attention_backend_preserves_role_overrides_and_same_worker_token(
     assert rebound.requested_role_policies == (("flux", "dinkster_kitchen_int8"),)
     assert canonical_attention_route_token_bytes(rebound) == canonical_attention_route_token_bytes(
         token
+    )
+
+
+@pytest.mark.parametrize("quantized", (False, True))
+def test_h3_attention_recipe_rebinding_refreshes_provider_identity_facts(
+    quantized: bool,
+) -> None:
+    from dinkster_inference import (
+        ReconstructionRecipe,
+        RuntimeKnobs,
+        WeightSourceBinding,
+        WeightSourceRef,
+        minimax_h3_dit_component_identity,
+        minimax_h3_dit_provider_facts,
+        minimax_h3_dit_runtime_identity,
+    )
+    from dinkster_inference.component_catalog import default_component_registry
+    from dinkster_protocol import (
+        AttentionCapabilityEvidence,
+        AttentionPolicyConfig,
+        derive_attention_route_token,
+    )
+
+    digest = "blake3:" + "1" * 64
+    size = 123
+    capabilities = AttentionCapabilityEvidence(
+        version=1,
+        device_kind="cuda",
+        device_sm=120,
+        sdpa_torch_runtime="2.13.0",
+        adapter_contract_revision="test",
+        available_policies=("sdpa", "dinkster_kitchen_int8"),
+        provider_versions=(("dinkster-kitchen", "0.2.31"), ("torch", "2.13.0+cu130")),
+    )
+    token = derive_attention_route_token(
+        capabilities,
+        AttentionPolicyConfig("sdpa", (("flux", "dinkster_kitchen_int8"),)),
+    )
+    source = WeightSourceRef(digest, "h3.safetensors", size)
+    recipe = ReconstructionRecipe(
+        sources=(WeightSourceBinding("diffusion", source),),
+        family_id="dinkster.minimax_h3",
+        component_identity=minimax_h3_dit_component_identity(digest, size, "fl2va-dit"),
+        knobs=RuntimeKnobs(
+            diffusion_dtype="bfloat16",
+            text_dtype="unloaded",
+            vae_dtype="unloaded",
+            fp8_matmul=False,
+            runtime_facts=minimax_h3_dit_provider_facts(
+                "fl2va-dit",
+                quantized=quantized,
+                torch_version="2.12.0+cu129",
+                dinkster_kitchen_version=("0.2.30" if quantized else None),
+            ),
+            attention_policy="sdpa",
+            attention_route_token=token,
+        ),
+    )
+
+    descriptor = default_component_registry().get("dinkster.minimax_h3")
+    assert descriptor is not None
+    rebound = descriptor.rebind_attention_recipe(recipe)
+    expected_facts = minimax_h3_dit_provider_facts(
+        "fl2va-dit",
+        quantized=quantized,
+        torch_version="2.13.0+cu130",
+        dinkster_kitchen_version="0.2.31",
+        attention_policy="dinkster_kitchen_int8",
+    )
+
+    assert recipe.knobs.runtime_facts != expected_facts
+    assert rebound.knobs.runtime_facts == expected_facts
+    assert rebound.runtime_identity == minimax_h3_dit_runtime_identity(
+        asset_digest=digest,
+        asset_size=size,
+        role="fl2va-dit",
+        diffusion_dtype="bfloat16",
+        attention_policy="sdpa",
+        attention_route_token=token,
+        runtime_facts=expected_facts,
     )
 
 
