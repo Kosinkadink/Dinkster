@@ -46,6 +46,7 @@ from dinkster_schema import (
     StringWidget,
     build_node_types,
     build_schemas,
+    claim_covers,
     elaborate,
     schema_signature,
     schema_to_wire,
@@ -161,7 +162,12 @@ def test_generation_manifest_owns_native_schema_contracts() -> None:
     scheduler_ids = tuple(item.id for item in builtin_schedulers())
 
     assert manifest.name == "dinkster-nodes-generation"
+    assert manifest.namespaces == ("dinkster", "comfy")
     assert manifest.schema_only == GENERATION_SCHEMA_NODE_IDS
+    for node_type in GENERATION_SCHEMA_NODE_IDS:
+        assert any(claim_covers(claim, node_type) for claim in manifest.namespaces), (
+            f"{node_type} is outside the manifest claims {manifest.namespaces}"
+        )
     assert [(item.id, item.version) for item in manifest.capabilities] == [
         ("dinkster.generation.schemas", "1.0.0")
     ]
@@ -290,6 +296,9 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
             "dinkster.conditioning_set_timestep_range",
             "dinkster.conditioning_zero_out",
             "dinkster.chroma_radiance_options",
+            "comfy.BlockSparseAttention",
+            "comfy.MiniMaxH3SigmaShift",
+            "comfy.ModelAttentionBackend",
             "dinkster.chroma_model_sampling",
             "dinkster.model_sampling_sd3",
             "dinkster.model_sampling_ltxv",
@@ -480,6 +489,9 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
         "dinkster.conditioning_set_timestep_range": "Conditioning Set Timestep Range",
         "dinkster.conditioning_zero_out": "Conditioning Zero Out",
         "dinkster.chroma_radiance_options": "Chroma Radiance Options",
+        "comfy.BlockSparseAttention": "Model Sparse Attention",
+        "comfy.MiniMaxH3SigmaShift": "ModelSamplingMiniMaxH3",
+        "comfy.ModelAttentionBackend": "Model Attention Backend",
         "dinkster.chroma_model_sampling": "Chroma Model Sampling",
         "dinkster.model_sampling_sd3": "Model Sampling SD3",
         "dinkster.model_sampling_ltxv": "ModelSamplingLTXV",
@@ -1463,6 +1475,34 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
                 "end_sigma": ("core.float",),
                 "nerf_tile_size": ("core.int",),
                 "force_sequential_txt_ids": ("core.boolean",),
+            },
+            {"model": ("dinkster.model",)},
+        ),
+        "comfy.BlockSparseAttention": (
+            {
+                "model": ("dinkster.model",),
+                "start_percent": ("core.float",),
+                "end_percent": ("core.float",),
+                "dense_blocks": ("core.string",),
+                "min_tokens": ("core.int",),
+                "extra_tokens": ("core.int",),
+                "sink_conditioning": ("core.combo",),
+                "verbose": ("core.boolean",),
+            },
+            {"MODEL": ("dinkster.model",)},
+        ),
+        "comfy.MiniMaxH3SigmaShift": (
+            {
+                "model": ("dinkster.model",),
+                "shift_video": ("core.float",),
+                "shift_audio": ("core.float",),
+            },
+            {"MODEL": ("dinkster.model",)},
+        ),
+        "comfy.ModelAttentionBackend": (
+            {
+                "model": ("dinkster.model",),
+                "attention": ("core.combo",),
             },
             {"model": ("dinkster.model",)},
         ),

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from importlib.metadata import version as _distribution_version
-from typing import Protocol, cast, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 import torch
 import torch.nn.functional as F
@@ -218,6 +219,7 @@ class MiniMaxH3Attention(torch.nn.Module):
         provider_evidence: MiniMaxH3AttentionProviderEvidence,
         *,
         operations: Operations,
+        gate_compress: bool = False,
     ) -> None:
         super().__init__()
         if type(geometry) is not MiniMaxH3AttentionGeometry:
@@ -239,6 +241,11 @@ class MiniMaxH3Attention(torch.nn.Module):
             geometry.inner_width,
             geometry.hidden_width,
             bias=False,
+        )
+        self.to_gate_compress = (
+            operations.linear(geometry.hidden_width, geometry.inner_width, bias=False)
+            if gate_compress
+            else None
         )
         object.__setattr__(self, "_attention_kernel", attention_kernel)
 
@@ -323,6 +330,19 @@ class MiniMaxH3Attention(torch.nn.Module):
             )
         output = output.transpose(1, 2).reshape(1, sequence, geometry.inner_width)
         return self.out_proj(output)
+
+
+class MiniMaxH3BlockAttention(Protocol):
+    def __call__(
+        self,
+        attention: MiniMaxH3Attention,
+        hidden: torch.Tensor,
+        rope_table: torch.Tensor,
+        block_index: int,
+    ) -> torch.Tensor | None: ...
+
+
+MiniMaxH3BlockAttentionFactory = Callable[[MiniMaxH3PackedSequenceFacts], MiniMaxH3BlockAttention]
 
 
 def minimax_h3_attention_provider(
@@ -847,6 +867,7 @@ class _MiniMaxH3Block(torch.nn.Module):
         rotary_dim: int,
         time_dim: int,
         apply_silu: bool,
+        gate_compress: bool = False,
     ) -> None:
         super().__init__()
         self.norm1 = operations.rms_norm(config.hidden_width, eps=1e-5)
@@ -857,7 +878,13 @@ class _MiniMaxH3Block(torch.nn.Module):
             config.attention_head_dim,
             rotary_dim,
         )
-        self.attn = MiniMaxH3Attention(geometry, attention_kernel, evidence, operations=operations)
+        self.attn = MiniMaxH3Attention(
+            geometry,
+            attention_kernel,
+            evidence,
+            operations=operations,
+            gate_compress=gate_compress,
+        )
         self.mlp = _MiniMaxH3MLP(config.hidden_width, config.ffn_width, operations=operations)
         self.adaln_proj = _MiniMaxH3AdaLN(
             time_dim,
@@ -876,10 +903,19 @@ class _MiniMaxH3Block(torch.nn.Module):
         rope_table: torch.Tensor,
         *,
         attention_kernel: AttentionKernel | None = None,
+        block_attention: MiniMaxH3BlockAttention | None = None,
+        block_index: int = 0,
     ) -> torch.Tensor:
         shift_attn, scale_attn, gate_attn, shift_mlp, scale_mlp, gate_mlp = self.adaln_proj(time)
         normalized = _modulate(self.norm1(hidden), shift_attn, scale_attn, segments)
-        if attention_kernel is None:
+        sparse_update = (
+            None
+            if block_attention is None
+            else block_attention(self.attn, normalized, rope_table, block_index)
+        )
+        if sparse_update is not None:
+            hidden = _gated_residual(hidden, gate_attn, sparse_update, segments)
+        elif attention_kernel is None:
             hidden = _gated_residual(hidden, gate_attn, self.attn(normalized, rope_table), segments)
         else:
             hidden = _gated_residual(
@@ -1073,14 +1109,18 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         fp32_operations: Operations | None = None,
         text_operations: Operations | None = None,
         time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve",
+        gate_compress: bool = False,
     ) -> None:
         super().__init__()
         fp32_operations = operations if fp32_operations is None else fp32_operations
         text_operations = operations if text_operations is None else text_operations
         if time_embedding_kind not in ("curve", "mlp"):
             raise ValueError("time_embedding_kind must be curve or mlp")
+        if type(gate_compress) is not bool:
+            raise TypeError("gate_compress must be a bool")
         self.config = config
         self.time_embedding_kind = time_embedding_kind
+        self.gate_compress = gate_compress
         rotary_dim = min(96, config.attention_head_dim // 6 * 6)
         if rotary_dim < 6:
             raise ValueError("MiniMax H3 attention head dimension must support three RoPE axes")
@@ -1120,6 +1160,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 rotary_dim=rotary_dim,
                 time_dim=adaln_input_width,
                 apply_silu=time_embedding_kind == "mlp",
+                gate_compress=gate_compress,
             )
             for _ in range(config.depth)
         )
@@ -1464,6 +1505,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
         attention_kernel_factory: MiniMaxH3AttentionKernelFactory | None = None,
         sequence_sharding: MiniMaxH3SequenceSharding | None = None,
+        block_attention_factory: MiniMaxH3BlockAttentionFactory | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
         if sequence_sharding is not None:
             if type(sequence_sharding) is not MiniMaxH3SequenceSharding:
@@ -1494,6 +1536,12 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 sampler_sigmas,
                 control=cast("MiniMaxH3ControlPatch | None", control),
                 denoise_mask=denoise_mask,
+                **cast(
+                    "Any",
+                    {}
+                    if block_attention_factory is None
+                    else {"block_attention_factory": block_attention_factory},
+                ),
             )
         elif sequence_sharding is None:
             output = self._forward_network(
@@ -1506,6 +1554,12 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 control=cast("MiniMaxH3ControlPatch | None", control),
                 denoise_mask=denoise_mask,
                 attention_kernel_factory=attention_kernel_factory,
+                **cast(
+                    "Any",
+                    {}
+                    if block_attention_factory is None
+                    else {"block_attention_factory": block_attention_factory},
+                ),
             )
         else:
             output = self._forward_network(
@@ -1519,6 +1573,12 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 denoise_mask=denoise_mask,
                 attention_kernel_factory=attention_kernel_factory,
                 sequence_sharding=sequence_sharding,
+                **cast(
+                    "Any",
+                    {}
+                    if block_attention_factory is None
+                    else {"block_attention_factory": block_attention_factory},
+                ),
             )
         first = 1.0 - sigmas.audio_scale
         second = (1.0 + (sigmas.audio_scale - 1.0) * audio_sigma_tensor).to(
@@ -1540,6 +1600,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
         attention_kernel_factory: MiniMaxH3AttentionKernelFactory | None = None,
         sequence_sharding: MiniMaxH3SequenceSharding | None = None,
+        block_attention_factory: MiniMaxH3BlockAttentionFactory | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
         video_source, audio_source = value.by_role("video"), value.by_role("audio")
         original_shape = video_source.shape[2:]
@@ -1560,6 +1621,14 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 "tuple[tuple[int, int, MiniMaxH3PackedSegmentKind], ...]",
                 layout.segments,
             ),
+            (
+                video.shape[2] // self.config.patch[0],
+                video.shape[3] // self.config.patch[1],
+                video.shape[4] // self.config.patch[2],
+            ),
+        )
+        block_attention = (
+            None if block_attention_factory is None else block_attention_factory(facts)
         )
         attention_kernel = None
         if attention_kernel_factory is None:
@@ -1736,7 +1805,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
             local_segments = _translate_modulation_segments(segments_tuple, shard.start, shard.stop)
             queue = make_prefetch_queue(self.blocks)
             try:
-                for block in self.blocks:
+                for block_index, block in enumerate(self.blocks):
                     prefetch_queue_pop(queue, block)
                     hidden = block(
                         hidden,
@@ -1744,6 +1813,14 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                         local_segments,
                         rope_table,
                         attention_kernel=attention_kernel,
+                        **(
+                            {}
+                            if block_attention is None
+                            else {
+                                "block_attention": block_attention,
+                                "block_index": block_index,
+                            }
+                        ),
                     )
                 prefetch_queue_pop(queue, None)
             finally:
@@ -1771,7 +1848,20 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                     if control is not None:
                         control.before_base_block(hidden, block_index)
                     if attention_kernel is None:
-                        hidden = block(hidden, time_embedding, segments_tuple, rope_table)
+                        hidden = block(
+                            hidden,
+                            time_embedding,
+                            segments_tuple,
+                            rope_table,
+                            **(
+                                {}
+                                if block_attention is None
+                                else {
+                                    "block_attention": block_attention,
+                                    "block_index": block_index,
+                                }
+                            ),
+                        )
                     else:
                         hidden = block(
                             hidden,
@@ -1779,6 +1869,14 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                             segments_tuple,
                             rope_table,
                             attention_kernel=attention_kernel,
+                            **(
+                                {}
+                                if block_attention is None
+                                else {
+                                    "block_attention": block_attention,
+                                    "block_index": block_index,
+                                }
+                            ),
                         )
                     if control is not None:
                         hidden = control.after_base_block(hidden, block_index, control_context)
@@ -1836,6 +1934,7 @@ def assemble_minimax_h3_dit(
     text_operations: Operations | None = None,
     time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve",
     attention_selection: AttentionSelection,
+    gate_compress: bool = False,
 ) -> MiniMaxH3DiT:
     """Construct the exact unregistered production H3 DiT source."""
     kernel, evidence = minimax_h3_attention_provider(attention_selection)
@@ -1847,6 +1946,7 @@ def assemble_minimax_h3_dit(
         fp32_operations=fp32_operations,
         text_operations=text_operations,
         time_embedding_kind=time_embedding_kind,
+        gate_compress=gate_compress,
     )
 
 

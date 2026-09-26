@@ -22,7 +22,7 @@ import weakref
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol, cast
 
 from dinkster_inference import (
@@ -36,6 +36,11 @@ from dinkster_inference import (
     InferenceRuntimeHandle,
     PatchOverlay,
     ReconstructionRecipe,
+)
+from dinkster_protocol import (
+    AttentionPolicyConfig,
+    derive_attention_route_token,
+    validate_attention_policy,
 )
 from dinkster_workers import KNOWN_ACCELERATORS, AcceleratorError, current_execution_context
 from dinkster_workers.accelerator import ACCELERATOR_ENV
@@ -1670,10 +1675,47 @@ class NativeRuntimeHandle:
         state and patched stores are always newly materialized because the
         residency mechanisms mutate loaded storage while retaining backups.
         """
+        return self._clone_recipe(
+            self._recipe.append_overlays(overlays_delta),
+            source_resolvers=source_resolvers,
+        )
+
+    def clone_with_attention_policy(
+        self,
+        attention_policy: object,
+    ) -> NativeRuntimeHandle:
+        """Rematerialize this runtime with one explicit attention route."""
+        policy = validate_attention_policy(attention_policy)
+        context = current_execution_context()
+        if context is None or context.attention_capabilities is None:
+            raise RuntimeError("an attention backend requires selected worker capability evidence")
+        source_token = self._recipe.knobs.attention_route_token
+        role_policies = () if source_token is None else source_token.requested_role_policies
+        token = derive_attention_route_token(
+            context.attention_capabilities,
+            AttentionPolicyConfig(policy, role_policies),
+        )
+        if token.version == 3:
+            raise RuntimeError(
+                f"required attention policy {policy!r} is unavailable on the selected worker"
+            )
+        knobs = replace(
+            self._recipe.knobs,
+            attention_policy=policy,
+            attention_route_token=token,
+        )
+        return self._clone_recipe(replace(self._recipe, knobs=knobs))
+
+    def _clone_recipe(
+        self,
+        recipe: ReconstructionRecipe,
+        *,
+        source_resolvers: Mapping[str, object] | None = None,
+    ) -> NativeRuntimeHandle:
         self.require_active()
         attachments = self._attachments_for_clone()
         clone = self._materialize_recipe(
-            self._recipe.append_overlays(overlays_delta),
+            recipe,
             attachments=attachments,
             source_resolvers=source_resolvers,
         )

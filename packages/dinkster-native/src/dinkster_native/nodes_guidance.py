@@ -28,6 +28,7 @@ from .native_arm_runtime import (
     _native_model_sampling_cache,
     _native_model_sampling_space,
     _native_model_sampling_timeline,
+    _native_model_sparse_attention,
     _NativeModelOverlay,
 )
 from .nodes_provider import (
@@ -127,6 +128,7 @@ def _model_with_guidance_transform(
         sampling_cache=_native_model_sampling_cache(model),
         sampling_timeline=_native_model_sampling_timeline(model),
         sampling_space=_native_model_sampling_space(model),
+        sparse_attention=_native_model_sparse_attention(model),
     )
 
 
@@ -254,6 +256,7 @@ class GenerationLazyCache(Node):
                 sampling_cache=cache,
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                sparse_attention=_native_model_sparse_attention(model),
             )
         )
 
@@ -303,6 +306,7 @@ class GenerationEasyCache(Node):
                 sampling_cache=cache,
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                sparse_attention=_native_model_sparse_attention(model),
             )
         )
 
@@ -407,6 +411,7 @@ class GenerationAttentionSchedule(Node):
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=schedule,
                 sampling_space=_native_model_sampling_space(model),
+                sparse_attention=_native_model_sparse_attention(model),
             )
         )
 
@@ -436,6 +441,7 @@ def _model_with_context_windows(model: object, spec: ContextWindowsSpec) -> _Nat
         sampling_cache=_native_model_sampling_cache(model),
         sampling_timeline=_native_model_sampling_timeline(model),
         sampling_space=_native_model_sampling_space(model),
+        sparse_attention=_native_model_sparse_attention(model),
     )
 
 

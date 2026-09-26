@@ -54,7 +54,14 @@ from dinkster_inference import (
     require_inference_component_handle,
 )
 from dinkster_memory import PageMap
-from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
+from dinkster_protocol import (
+    ATTENTION_ROLES,
+    AttentionCapabilityEvidence,
+    AttentionPolicyConfig,
+    AttentionRoute,
+    AttentionRouteToken,
+    derive_attention_route_token,
+)
 from dinkster_schema import MappingSource, build_node_types, build_schemas, schema_signature
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import ExecutionContext, InProcessWorker
@@ -1372,7 +1379,10 @@ assert [node.schema().node_type for node in GENERATION_PROVIDER_NODES] == [
     "dinkster.conditioning_merge", "dinkster.conditioning_scale",
     "dinkster.conditioning_set_area", "dinkster.conditioning_set_mask",
     "dinkster.conditioning_set_timestep_range", "dinkster.conditioning_zero_out",
-    "dinkster.chroma_radiance_options", "dinkster.chroma_model_sampling",
+    "dinkster.chroma_radiance_options", "comfy.BlockSparseAttention",
+    "comfy.MiniMaxH3SigmaShift",
+    "comfy.ModelAttentionBackend",
+    "dinkster.chroma_model_sampling",
     "dinkster.model_sampling_sd3",
     "dinkster.model_sampling_ltxv",
     "dinkster.model_sampling_flux",
@@ -1599,16 +1609,16 @@ def test_native_load_dual_clip_forwards_ordered_sources_and_context(
     handle = object()
     calls: list[tuple[object, ...]] = []
     torch = FakeTorch(cuda=True)
-    route_token = AttentionRouteToken(
+    capabilities = AttentionCapabilityEvidence(
         1,
-        tuple(AttentionRoute(role, "sdpa") for role in ATTENTION_ROLES),
-        (("torch", "2.13.0"),),
-        "dinkster.attention-kernel.v1",
         "cpu",
         None,
         "2.13.0",
-        "sdpa",
+        "dinkster.attention-kernel.v1",
+        ("sdpa",),
+        (("torch", "2.13.0"),),
     )
+    route_token = derive_attention_route_token(capabilities, AttentionPolicyConfig("sdpa"))
 
     def build(*args: object, **kwargs: object) -> object:
         calls.append((*args, kwargs))
@@ -1625,6 +1635,7 @@ def test_native_load_dual_clip_forwards_ordered_sources_and_context(
             vae_dtype="unloaded",
             attention_policy="sdpa",
             attention_route_token=route_token,
+            attention_capabilities=capabilities,
         )
     ):
         result = arm.NativeLoadDualClip.execute(
@@ -1810,6 +1821,8 @@ def test_minimax_h3_component_builder_enrolls_through_aimdo(
         def __init__(self, _module: object, mechanism: object, _device: object, **kwargs: object):
             self.mechanism = mechanism
             self.residency_route = cast("Callable[[], object]", kwargs["residency_route_facts"])()
+            self.materializer = cast("Callable[..., object]", kwargs["materializer"])
+            self.source_resolvers = cast("Mapping[str, object]", kwargs["source_resolvers"])
 
         def attach_pool(self, _pool: object) -> None:
             pass
@@ -1854,6 +1867,34 @@ def test_minimax_h3_component_builder_enrolls_through_aimdo(
     )
     assert coordinator_calls == [{"free_memory": dynamic_free_memory}]
     assert "mechanism_factory" in enrollment_calls[0]
+
+    rebound: list[tuple[object, object]] = []
+
+    def rebind(_descriptor: object, next_recipe: object, runtime_versions: object) -> object:
+        rebound.append((next_recipe, runtime_versions))
+        return next_recipe
+
+    monkeypatch.setattr(type(descriptor), "rebind_attention_recipe", rebind)
+    capabilities = AttentionCapabilityEvidence(
+        version=1,
+        device_kind="cuda",
+        device_sm=120,
+        sdpa_torch_runtime="2.13.0",
+        adapter_contract_revision="test",
+        available_policies=("sdpa",),
+        provider_versions=(("torch", "2.13.0+cu130"),),
+    )
+    token = derive_attention_route_token(capabilities, AttentionPolicyConfig())
+    with use_execution_context(
+        ExecutionContext(
+            "native",
+            None,
+            attention_route_token=token,
+            attention_capabilities=capabilities,
+        )
+    ):
+        handle.materializer(recipe, handle.source_resolvers)
+    assert rebound == [(recipe, {"torch": "2.13.0+cu130"})]
 
 
 def test_native_generic_qwen_loaders_publish_components_and_a_diffusion_runtime(
@@ -4500,11 +4541,13 @@ def test_native_zero_strength_precalculate_materializes_pending_overlays(
     overlay = object()
     resolvers = {"blake3:" + "a" * 64: object()}
     timeline = SamplingTimelineSchedule("sage", 0.0, 1.0)
+    sparse_attention = object()
     pending = arm._NativeModelOverlay(
         base,
         (overlay,),
         resolvers,
         sampling_timeline=timeline,
+        sparse_attention=sparse_attention,
     )
     full_clone = object()
     model_clone = object()
@@ -4543,15 +4586,47 @@ def test_native_zero_strength_precalculate_materializes_pending_overlays(
     assert type(full["model"]) is arm._NativeModelOverlay
     assert full["model"].handle is full_clone
     assert full["model"].sampling_timeline is timeline
+    assert full["model"].sparse_attention is sparse_attention
     assert full["clip"] is full_clone
     assert type(model_only["model"]) is arm._NativeModelOverlay
     assert model_only["model"].handle is model_clone
     assert model_only["model"].sampling_timeline is timeline
+    assert model_only["model"].sparse_attention is sparse_attention
     assert calls == [((overlay,), resolvers), ((overlay,), resolvers)]
     assert pool.labels == [
         (full_clone, "test.safetensors + LoRA stack"),
         (model_clone, "test.safetensors + LoRA stack"),
     ]
+
+
+def test_native_zero_strength_precalculate_preserves_sparse_only_overlay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arm = _native_arm()
+    base = _handle(arm, _runtime())
+    lora = _asset(_safetensors(tmp_path / "unused.safetensors"))
+    overlay = object()
+    sparse_attention = object()
+    pending = arm._NativeModelOverlay(
+        base,
+        (overlay,),
+        {},
+        sparse_attention=sparse_attention,
+    )
+    clone = object()
+    monkeypatch.setattr(base, "clone", lambda *_args, **_kwargs: clone)
+    monkeypatch.setattr(arm, "default_pool", lambda: FakePool())
+
+    output = arm.NativeLoadLoraModelOnly.execute(
+        model=pending,
+        lora=lora,
+        strength_model=0.0,
+        execution_mode="precalculate",
+    )["model"]
+
+    assert type(output) is arm._NativeModelOverlay
+    assert output.handle is clone
+    assert output.sparse_attention is sparse_attention
 
 
 def test_native_model_only_lora_stacks_without_materializing_runtime(
@@ -11583,16 +11658,16 @@ def test_build_ltxav_text_handle_composes_profile_components(
     built: list[tuple[object, str, str, object, dict[str, object]]] = []
     composed: list[tuple[tuple[object, ...], str]] = []
     result = object()
-    token = AttentionRouteToken(
+    capabilities = AttentionCapabilityEvidence(
         1,
-        tuple(AttentionRoute(role, "sdpa") for role in ATTENTION_ROLES),
-        (("torch", "2.13.0"),),
-        "dinkster.attention-kernel.v1",
         "cpu",
         None,
         "2.13.0",
-        "auto",
+        "dinkster.attention-kernel.v1",
+        ("sdpa",),
+        (("torch", "2.13.0"),),
     )
+    token = derive_attention_route_token(capabilities, AttentionPolicyConfig())
 
     def identity(
         _inference: object,
@@ -11647,6 +11722,7 @@ def test_build_ltxav_text_handle_composes_profile_components(
             text_dtype="bfloat16",
             vae_dtype="unloaded",
             attention_route_token=token,
+            attention_capabilities=capabilities,
         )
     ):
         loaded = arm._build_ltxav_text_handle(
@@ -32590,6 +32666,397 @@ def test_model_sampling_flux_requires_runtime_capability() -> None:
     arm = _native_arm()
     with pytest.raises(TypeError, match="sampling-space override"):
         arm.GenerationModelSamplingFlux.execute(model=_handle(arm, _runtime()))
+
+
+def test_block_sparse_attention_binds_official_h3_controls() -> None:
+    arm = _native_arm()
+    handle = _handle(arm, _runtime())
+
+    patched = arm.GenerationBlockSparseAttention.execute(
+        model=handle,
+        selection="vsa",
+        **{
+            "selection.keep_percent": 12.5,
+            "start_percent": 0.15,
+            "end_percent": 0.9,
+            "dense_blocks": "0, 2, 47-49",
+            "min_tokens": 4096,
+            "extra_tokens": 256,
+            "sink_conditioning": "exact_kv",
+            "verbose": True,
+        },
+    )["MODEL"]
+
+    config = patched.sparse_attention
+    assert config.selection == "vsa"
+    assert config.keep_percent == 12.5
+    assert config.start_percent == 0.15
+    assert config.end_percent == 0.9
+    assert config.dense_blocks == frozenset((0, 2, 47, 48, 49))
+    assert config.min_tokens == 4096
+    assert config.sink_conditioning == "exact_kv"
+    assert config.verbose is True
+    repatched = arm.GenerationDisableCFG1Optimization.execute(model=patched)["model"]
+    assert repatched.sparse_attention is config
+
+
+def test_minimax_h3_sigma_shift_binds_paired_sampling_space_and_overlay_state() -> None:
+    from dinkster_inference import FlowSigmas, MiniMaxH3Sigmas
+
+    arm = _native_arm()
+    accepted: list[MiniMaxH3Sigmas] = []
+    runtime = _runtime()
+    runtime.with_sampling_space = lambda space: accepted.append(space) or runtime
+    recipe = replace(
+        _recipe(),
+        family_id="dinkster.minimax_h3",
+        component_identity=("family=dinkster.minimax_h3",),
+    )
+    runtime.family = SimpleNamespace(id="dinkster.minimax_h3")
+    runtime.runtime_identity = recipe.runtime_identity
+    handle = _handle(arm, runtime, recipe=recipe)
+    sparse = object()
+    original = arm._NativeModelOverlay(
+        handle,
+        (),
+        {},
+        sampling_shift=1.2,
+        sparse_attention=sparse,
+    )
+
+    patched = arm.GenerationMiniMaxH3SigmaShift.execute(
+        model=original,
+        shift_video=9.0,
+        shift_audio=2.5,
+    )["MODEL"]
+
+    assert accepted == [patched.sampling_space]
+    assert patched.sampling_space == MiniMaxH3Sigmas(
+        FlowSigmas(shift=9.0),
+        audio_shift=2.5,
+    )
+    assert patched.handle is handle
+    assert patched.sampling_shift is None
+    assert patched.sparse_attention is sparse
+    assert original.sampling_space is None
+
+
+@pytest.mark.parametrize(
+    ("attention", "kitchen_available", "expected_policy", "expected_primary", "expected_version"),
+    (
+        ("pytorch attention", True, "sdpa", "sdpa", 1),
+        (
+            "comfy kitchen attention",
+            True,
+            "dinkster_kitchen_int8",
+            "dinkster_kitchen_int8",
+            1,
+        ),
+        ("comfy kitchen attention", False, "dinkster_kitchen_int8", "sdpa", 3),
+        ("unknown backend", True, "sdpa", "sdpa", 1),
+    ),
+)
+def test_model_attention_backend_rematerializes_policy_and_preserves_overlay_state(
+    monkeypatch: pytest.MonkeyPatch,
+    attention: str,
+    kitchen_available: bool,
+    expected_policy: str,
+    expected_primary: str,
+    expected_version: int,
+) -> None:
+    from dinkster_protocol import (
+        AttentionCapabilityEvidence,
+        AttentionPolicyConfig,
+        derive_attention_route_token,
+    )
+
+    arm = _native_arm()
+    source_capabilities = AttentionCapabilityEvidence(
+        version=1,
+        available_policies=(("sdpa", "dinkster_kitchen_int8") if kitchen_available else ("sdpa",)),
+        provider_versions=(
+            (("dinkster-kitchen", "1.0"), ("torch", "2.10.0"))
+            if kitchen_available
+            else (("torch", "2.10.0"),)
+        ),
+        adapter_contract_revision="test",
+        device_kind="cuda",
+        device_sm=80,
+        sdpa_torch_runtime="2.10.0",
+    )
+    destination_capabilities = replace(source_capabilities, device_sm=90)
+    token = derive_attention_route_token(source_capabilities, AttentionPolicyConfig())
+    recipe = replace(
+        _recipe(),
+        knobs=replace(
+            _recipe().knobs,
+            attention_policy="auto",
+            attention_route_token=token,
+        ),
+    )
+    runtime = _runtime()
+    runtime.runtime_identity = recipe.runtime_identity
+    handle = _handle(arm, runtime, recipe=recipe)
+    replacement = _handle(arm, _runtime())
+    accepted: list[Any] = []
+
+    def clone_recipe(_handle, next_recipe, **_kwargs):  # noqa: ANN001, ANN202
+        accepted.append(next_recipe)
+        return replacement
+
+    monkeypatch.setattr(
+        arm.NativeRuntimeHandle,
+        "_clone_recipe",
+        clone_recipe,
+    )
+    sparse = object()
+    original = arm._NativeModelOverlay(
+        handle,
+        (),
+        {},
+        sparse_attention=sparse,
+    )
+
+    context_token = derive_attention_route_token(destination_capabilities, AttentionPolicyConfig())
+    with use_execution_context(
+        ExecutionContext(
+            "native",
+            None,
+            attention_route_token=context_token,
+            attention_capabilities=destination_capabilities,
+        )
+    ):
+        if expected_version == 3:
+            with pytest.raises(RuntimeError, match="required attention policy"):
+                arm.GenerationModelAttentionBackend.execute(
+                    model=original,
+                    attention=attention,
+                )
+            assert accepted == []
+            return
+        patched = arm.GenerationModelAttentionBackend.execute(
+            model=original,
+            attention=attention,
+        )["model"]
+
+    assert len(accepted) == 1
+    next_recipe = accepted[0]
+    assert next_recipe.knobs.attention_policy == expected_policy
+    assert next_recipe.knobs.attention_route_token.requested_policy == expected_policy
+    assert next_recipe.knobs.attention_route_token.version == expected_version
+    assert next_recipe.knobs.attention_route_token.device_sm == 90
+    assert {
+        (route.primary, route.fallback) for route in next_recipe.knobs.attention_route_token.routes
+    } == {
+        (
+            expected_primary,
+            "sdpa" if expected_primary == "dinkster_kitchen_int8" else None,
+        )
+    }
+    assert patched.handle is replacement
+    assert patched.sparse_attention is sparse
+
+
+def test_model_attention_backend_preserves_role_overrides_and_same_worker_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_protocol import (
+        AttentionCapabilityEvidence,
+        AttentionPolicyConfig,
+        canonical_attention_route_token_bytes,
+        derive_attention_route_token,
+    )
+
+    arm = _native_arm()
+    capabilities = AttentionCapabilityEvidence(
+        version=1,
+        available_policies=("sdpa", "dinkster_kitchen_int8"),
+        provider_versions=(("dinkster-kitchen", "1.0"), ("torch", "2.10.0")),
+        adapter_contract_revision="test",
+        device_kind="cuda",
+        device_sm=90,
+        sdpa_torch_runtime="2.10.0",
+    )
+    config = AttentionPolicyConfig("sdpa", (("flux", "dinkster_kitchen_int8"),))
+    token = derive_attention_route_token(capabilities, config)
+    recipe = replace(
+        _recipe(),
+        knobs=replace(
+            _recipe().knobs,
+            attention_policy="sdpa",
+            attention_route_token=token,
+        ),
+    )
+    runtime = _runtime()
+    runtime.runtime_identity = recipe.runtime_identity
+    handle = _handle(arm, runtime, recipe=recipe)
+    accepted: list[Any] = []
+
+    def clone_recipe(_handle, next_recipe, **_kwargs):  # noqa: ANN001, ANN202
+        accepted.append(next_recipe)
+        return handle
+
+    monkeypatch.setattr(arm.NativeRuntimeHandle, "_clone_recipe", clone_recipe)
+    with use_execution_context(
+        ExecutionContext(
+            "native",
+            None,
+            attention_policy="sdpa",
+            attention_route_token=token,
+            attention_capabilities=capabilities,
+        )
+    ):
+        assert handle.clone_with_attention_policy("sdpa") is handle
+
+    rebound = accepted[0].knobs.attention_route_token
+    assert rebound.requested_role_policies == (("flux", "dinkster_kitchen_int8"),)
+    assert canonical_attention_route_token_bytes(rebound) == canonical_attention_route_token_bytes(
+        token
+    )
+
+
+@pytest.mark.parametrize("quantized", (False, True))
+def test_h3_attention_recipe_rebinding_refreshes_provider_identity_facts(
+    quantized: bool,
+) -> None:
+    from dinkster_inference import (
+        ReconstructionRecipe,
+        RuntimeKnobs,
+        WeightSourceBinding,
+        WeightSourceRef,
+        minimax_h3_dit_component_identity,
+        minimax_h3_dit_provider_facts,
+        minimax_h3_dit_runtime_identity,
+    )
+    from dinkster_inference.component_catalog import default_component_registry
+    from dinkster_protocol import (
+        AttentionCapabilityEvidence,
+        AttentionPolicyConfig,
+        derive_attention_route_token,
+    )
+
+    digest = "blake3:" + "1" * 64
+    size = 123
+    capabilities = AttentionCapabilityEvidence(
+        version=1,
+        device_kind="cuda",
+        device_sm=120,
+        sdpa_torch_runtime="2.13.0",
+        adapter_contract_revision="test",
+        available_policies=("sdpa", "dinkster_kitchen_int8"),
+        provider_versions=(("dinkster-kitchen", "0.2.31"), ("torch", "2.13.0+cu130")),
+    )
+    token = derive_attention_route_token(
+        capabilities,
+        AttentionPolicyConfig("sdpa", (("flux", "dinkster_kitchen_int8"),)),
+    )
+    source = WeightSourceRef(digest, "h3.safetensors", size)
+    recipe = ReconstructionRecipe(
+        sources=(WeightSourceBinding("diffusion", source),),
+        family_id="dinkster.minimax_h3",
+        component_identity=minimax_h3_dit_component_identity(digest, size, "fl2va-dit"),
+        knobs=RuntimeKnobs(
+            diffusion_dtype="bfloat16",
+            text_dtype="unloaded",
+            vae_dtype="unloaded",
+            fp8_matmul=False,
+            runtime_facts=minimax_h3_dit_provider_facts(
+                "fl2va-dit",
+                quantized=quantized,
+                torch_version="2.12.0+cu129",
+                dinkster_kitchen_version=("0.2.30" if quantized else None),
+            ),
+            attention_policy="sdpa",
+            attention_route_token=token,
+        ),
+    )
+
+    descriptor = default_component_registry().get("dinkster.minimax_h3")
+    assert descriptor is not None
+    rebound = descriptor.rebind_attention_recipe(recipe)
+    expected_facts = minimax_h3_dit_provider_facts(
+        "fl2va-dit",
+        quantized=quantized,
+        torch_version="2.13.0+cu130",
+        dinkster_kitchen_version="0.2.31",
+        attention_policy="dinkster_kitchen_int8",
+    )
+
+    assert recipe.knobs.runtime_facts != expected_facts
+    assert rebound.knobs.runtime_facts == expected_facts
+    assert rebound.runtime_identity == minimax_h3_dit_runtime_identity(
+        asset_digest=digest,
+        asset_size=size,
+        role="fl2va-dit",
+        diffusion_dtype="bfloat16",
+        attention_policy="sdpa",
+        attention_route_token=token,
+        runtime_facts=expected_facts,
+    )
+
+
+def test_h3_attention_recipe_rebinding_uses_destination_runtime_versions() -> None:
+    from dinkster_inference import (
+        ReconstructionRecipe,
+        RuntimeKnobs,
+        WeightSourceBinding,
+        WeightSourceRef,
+        minimax_h3_dit_component_identity,
+        minimax_h3_dit_provider_facts,
+    )
+    from dinkster_inference.component_catalog import default_component_registry
+    from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
+
+    class TorchVersion(str):
+        pass
+
+    source = WeightSourceRef("blake3:" + "1" * 64, "h3.safetensors", 123)
+    token = AttentionRouteToken(
+        version=1,
+        routes=tuple(AttentionRoute(role, "sdpa") for role in ATTENTION_ROLES),
+        provider_versions=(("torch", TorchVersion("2.13.0+cu130")),),
+        adapter_contract_revision="test",
+        device_kind="cuda",
+        device_sm=120,
+        sdpa_torch_runtime="2.13.0",
+        requested_policy="sdpa",
+    )
+    recipe = ReconstructionRecipe(
+        sources=(WeightSourceBinding("diffusion", source),),
+        family_id="dinkster.minimax_h3",
+        component_identity=minimax_h3_dit_component_identity(
+            source.digest, source.size, "fl2va-dit"
+        ),
+        knobs=RuntimeKnobs(
+            diffusion_dtype="bfloat16",
+            text_dtype="unloaded",
+            vae_dtype="unloaded",
+            fp8_matmul=False,
+            runtime_facts=minimax_h3_dit_provider_facts(
+                "fl2va-dit",
+                quantized=True,
+                torch_version="2.12.0+cu129",
+                dinkster_kitchen_version="0.2.30",
+            ),
+            attention_policy="sdpa",
+            attention_route_token=token,
+        ),
+    )
+
+    descriptor = default_component_registry().get("dinkster.minimax_h3")
+    assert descriptor is not None
+    rebound = descriptor.rebind_attention_recipe(
+        recipe,
+        {"torch": "2.13.0+cu130", "dinkster-kitchen": "0.2.31"},
+    )
+
+    assert rebound.knobs.runtime_facts == minimax_h3_dit_provider_facts(
+        "fl2va-dit",
+        quantized=True,
+        torch_version="2.13.0+cu130",
+        dinkster_kitchen_version="0.2.31",
+        attention_policy="sdpa",
+    )
 
 
 def test_cfg_override_binds_percent_range_to_model_sigmas(

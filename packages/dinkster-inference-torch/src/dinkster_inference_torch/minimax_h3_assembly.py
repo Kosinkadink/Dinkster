@@ -606,6 +606,7 @@ def _build_diffusion(
         text_operations=operations,
         time_embedding_kind=layout.time_embedding_kind,
         attention_selection=attention_selection,
+        gate_compress=layout.gate_compress,
     )
 
 

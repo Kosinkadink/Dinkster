@@ -3,7 +3,7 @@
 
 [pack]
 name = "dinkster-nodes-generation"
-namespaces = ["dinkster"]
+namespaces = ["dinkster", "comfy"]
 schema-only = [
     "dinkster.empty_trellis2_latent_structure",
     "dinkster.trellis2_conditioning",
@@ -100,6 +100,9 @@ schema-only = [
     "dinkster.conditioning_set_timestep_range",
     "dinkster.conditioning_zero_out",
     "dinkster.chroma_radiance_options",
+    "comfy.BlockSparseAttention",
+    "comfy.MiniMaxH3SigmaShift",
+    "comfy.ModelAttentionBackend",
     "dinkster.chroma_model_sampling",
     "dinkster.model_sampling_sd3",
     "dinkster.model_sampling_ltxv",

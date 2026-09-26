@@ -29,6 +29,7 @@ from dinkster_inference import (
     DualSamplingGuidance,
     ExecutionObserverAttachment,
     ExecutionSpanEvent,
+    FlowSigmas,
     GuidanceContractError,
     GuidanceEvaluationRequest,
     GuidancePredictions,
@@ -566,6 +567,22 @@ def test_single_dit_component_exposes_runtime_identity(
     assert component.runtime_identity == identity
     assert component.receipt_identity == "ref2va-receipt"
     assert component.assembled.diffusion is runtime_fixture.ref2va
+
+
+def test_h3_sampling_space_override_preserves_paired_video_audio_shifts(
+    runtime_fixture: RuntimeFixture,
+) -> None:
+    original = runtime_fixture.fl2va_runtime
+    sigmas = MiniMaxH3Sigmas(FlowSigmas(shift=9.0), audio_shift=2.5)
+
+    derived = original.with_sampling_space(sigmas)
+
+    assert derived is not original
+    assert derived._sigmas is sigmas  # pyright: ignore[reportPrivateUsage]
+    assert derived._sampling_sigma_space(None) == sigmas.video  # pyright: ignore[reportPrivateUsage]
+    assert original._sigmas is MINIMAX_H3_SIGMAS  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(MiniMaxH3RuntimeError, match="requires MiniMaxH3Sigmas"):
+        original.with_sampling_space(FlowSigmas(shift=9.0))
 
 
 def test_h3_component_factory_preserves_loaded_assembly(

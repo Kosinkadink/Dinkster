@@ -1507,6 +1507,11 @@ async def serve_connection(
                     vae_dtype=invocation.vae_dtype,
                     attention_policy=invocation.attention_policy,
                     attention_route_token=invocation.attention_route_token,
+                    attention_capabilities=(
+                        selected_worker.attention_capabilities
+                        if invocation.attention_route_token is not None
+                        else None
+                    ),
                     preview_mode=invocation.preview_mode,
                     preview_animation=invocation.preview_animation,
                     cancelled=lambda: (

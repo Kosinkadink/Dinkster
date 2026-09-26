@@ -148,6 +148,53 @@ class MiniMaxH3Config:
             raise ValueError("MiniMaxH3Config only represents the exact staged profile")
 
 
+@dataclass(frozen=True, slots=True)
+class MiniMaxH3SparseAttentionConfig:
+    """Validated BlockSparseAttention controls for one H3 sampling execution."""
+
+    selection: str
+    keep_percent: float = 10.0
+    tau: float = 1.3
+    start_percent: float = 0.2
+    end_percent: float = 1.0
+    dense_blocks: frozenset[int] = frozenset()
+    min_tokens: int = 12_288
+    extra_tokens: int = 256
+    sink_conditioning: str = "exact_kv_and_rows"
+    verbose: bool = False
+
+    def __post_init__(self) -> None:
+        if self.selection not in ("sol-attn", "sla", "vsa"):
+            raise ValueError("selection must be sol-attn, sla, or vsa")
+        for name, value, low, high in (
+            ("keep_percent", self.keep_percent, 0.5, 95.0),
+            ("tau", self.tau, 0.0, 4.0),
+            ("start_percent", self.start_percent, 0.0, 1.0),
+            ("end_percent", self.end_percent, 0.0, 1.0),
+        ):
+            if (
+                type(value) not in (int, float)
+                or not math.isfinite(value)
+                or not low <= value <= high
+            ):
+                raise ValueError(f"{name} must be finite and in [{low}, {high}]")
+        if self.start_percent > self.end_percent:
+            raise ValueError("start_percent must not exceed end_percent")
+        if type(self.min_tokens) is not int or self.min_tokens < 0:
+            raise ValueError("min_tokens must be a non-negative integer")
+        if type(self.extra_tokens) is not int or not 0 <= self.extra_tokens <= 256:
+            raise ValueError("extra_tokens must be an integer in [0, 256]")
+        if self.sink_conditioning not in ("exact_kv", "exact_kv_and_rows", "off"):
+            raise ValueError("sink_conditioning must be exact_kv, exact_kv_and_rows, or off")
+        if type(self.verbose) is not bool:
+            raise TypeError("verbose must be a bool")
+        if any(
+            type(index) is not int or not 0 <= index < MINIMAX_H3_CONFIG.depth
+            for index in self.dense_blocks
+        ):
+            raise ValueError("dense_blocks must contain H3 block indices")
+
+
 MINIMAX_H3_CONFIG = MiniMaxH3Config()
 
 
@@ -835,6 +882,7 @@ __all__ = [
     "MiniMaxH3ConditionerPlan",
     "MiniMaxH3ConditioningRequest",
     "MiniMaxH3Config",
+    "MiniMaxH3SparseAttentionConfig",
     "MiniMaxH3DiTKeyframePayload",
     "MiniMaxH3DiTPayloadKind",
     "MiniMaxH3DiTReferencePayload",

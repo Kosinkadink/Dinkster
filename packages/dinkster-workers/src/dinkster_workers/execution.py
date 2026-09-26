@@ -10,12 +10,16 @@ from typing import Protocol
 
 from dinkster_assets import AssetRef
 from dinkster_protocol import (
+    AttentionCapabilityEvidence,
     AttentionPolicy,
+    AttentionPolicyConfig,
     AttentionRouteToken,
     ExportSnapshot,
     MediaSourceAuthority,
     PreviewAnimation,
     PreviewMode,
+    canonical_attention_route_token_bytes,
+    derive_attention_route_token,
     is_extension_snapshot_digest,
     resolve_attention_runtime_status,
     validate_preview_animation,
@@ -65,6 +69,7 @@ class ExecutionContext:
     vae_dtype: str | None = None
     attention_policy: AttentionPolicy = "auto"
     attention_route_token: AttentionRouteToken | None = None
+    attention_capabilities: AttentionCapabilityEvidence | None = None
     extension_snapshot_digest: str | None = None
     inference_registries: object | None = None
     preview_mode: PreviewMode = "off"
@@ -92,6 +97,24 @@ class ExecutionContext:
                 "ExecutionContext component dtypes must be complete and require expected identity"
             )
         resolve_attention_runtime_status(self.attention_policy, self.attention_route_token)
+        if self.attention_capabilities is not None:
+            if self.attention_route_token is None:
+                raise ValueError(
+                    "ExecutionContext attention capabilities require an attention route token"
+                )
+            expected_token = derive_attention_route_token(
+                self.attention_capabilities,
+                AttentionPolicyConfig(
+                    self.attention_policy,
+                    self.attention_route_token.requested_role_policies,
+                ),
+            )
+            if canonical_attention_route_token_bytes(
+                expected_token
+            ) != canonical_attention_route_token_bytes(self.attention_route_token):
+                raise ValueError(
+                    "ExecutionContext attention route token does not match worker capabilities"
+                )
         validate_preview_mode(self.preview_mode)
         validate_preview_animation(self.preview_animation)
         if self.started_at_ns < 0:
