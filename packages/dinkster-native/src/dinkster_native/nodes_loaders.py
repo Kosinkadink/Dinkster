@@ -726,6 +726,11 @@ class NativeLoadZImageControlPatch(LoadZImageControlPatch):
                 (f"resource={assembled.resource_digest}",),
             )
         elif inference_torch.is_minimax_h3_fun_state_dict(dict.fromkeys(source.keys())):
+            quant = inference.split_quantization(
+                {key: source.entry(key).geometry for key in source.keys()},
+                source.metadata(),
+                payload_reader=source.read_uint8_configuration,
+            ).layers
             checkpoint = importlib.import_module("dinkster_inference_torch.checkpoint")
             state_dict, metadata = checkpoint.load_checkpoint_with_metadata(
                 model_patch.local_path()
@@ -750,6 +755,7 @@ class NativeLoadZImageControlPatch(LoadZImageControlPatch):
                 attention_kernel=kernel,
                 evidence=evidence,
                 time_embedding_kind=time_embedding_kind,
+                quant=quant,
             )
             family_id = inference.MINIMAX_H3_CONFIG.family_id
             resource_identity = inference.build_runtime_identity_from_facts(

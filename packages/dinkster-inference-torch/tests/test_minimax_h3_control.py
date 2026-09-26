@@ -15,6 +15,7 @@ from dinkster_inference import (
     PercentRange,
 )
 from dinkster_inference.latents import LatentStream
+from dinkster_inference.quantization import LayerQuant
 from dinkster_inference_torch import (
     MiniMaxH3FunControl,
     MiniMaxH3FunControlConditioning,
@@ -33,7 +34,8 @@ from dinkster_inference_torch.minimax_h3_dit import (
     MiniMaxH3ControlBlockContext,
     MiniMaxH3DiT,
 )
-from dinkster_inference_torch.operations import InitlessOperations
+from dinkster_inference_torch.operations import InitlessOperations, bound_compute_dtype
+from dinkster_inference_torch.quant_linear import Int8Linear
 
 # Expected placements derived from the official ComfyUI implementation
 # (commit 95539f563449): control blocks spread evenly over the fifty base
@@ -354,6 +356,64 @@ def test_loader_round_trips_checkpoint_and_metadata() -> None:
     assert set(original_state) == set(loaded_state)
     for key, value in original_state.items():
         assert torch.equal(value, loaded_state[key]), key
+
+
+def test_loader_strict_loads_comfy_int8_convrot_control_projections() -> None:
+    state = dict(_control_model(V1_INJECTION_LAYERS).state_dict())
+    layers = (
+        "control_blocks.0.before_proj",
+        "control_blocks.3.after_proj",
+    )
+    config = torch.tensor(
+        list(
+            json.dumps(
+                {
+                    "format": "int8_tensorwise",
+                    "convrot": True,
+                    "convrot_groupsize": 4,
+                }
+            ).encode("utf-8")
+        ),
+        dtype=torch.uint8,
+    )
+    quant: dict[str, LayerQuant] = {}
+    for index, layer in enumerate(layers):
+        weight_key = f"{layer}.weight"
+        scale_key = f"{layer}.weight_scale"
+        config_key = f"{layer}.comfy_quant"
+        weight = state[weight_key]
+        state[weight_key] = torch.arange(weight.numel(), dtype=torch.int8).reshape(weight.shape)
+        state[scale_key] = torch.full((weight.shape[0], 1), 0.125 + index, dtype=torch.float32)
+        state[config_key] = config.clone()
+        quant[layer] = LayerQuant(
+            layer=layer,
+            format="int8_tensorwise",
+            weight=weight_key,
+            weight_scale=scale_key,
+            config=config_key,
+            parameters={"convrot": True, "convrot_groupsize": 4},
+        )
+
+    loaded = load_minimax_h3_fun_control(
+        state,
+        None,
+        attention_kernel=builtin_sdpa_kernel(),
+        evidence=_evidence(),
+        quant=quant,
+    )
+
+    assert bound_compute_dtype(loaded.control_proj_in) is torch.float32
+    ordinary_projection = cast("torch.nn.Module", loaded.control_blocks[1].after_proj)
+    assert bound_compute_dtype(ordinary_projection) is torch.bfloat16
+    loaded_state = loaded.state_dict()
+    for layer in layers:
+        projection = loaded.get_submodule(layer)
+        assert type(projection) is Int8Linear
+        assert projection.convrot
+        assert projection.convrot_groupsize == 4
+        assert torch.equal(loaded_state[f"{layer}.weight"], state[f"{layer}.weight"])
+        assert torch.equal(loaded_state[f"{layer}.weight_scale"], state[f"{layer}.weight_scale"])
+        assert f"{layer}.comfy_quant" not in loaded_state
 
 
 class _RecordingPatch:

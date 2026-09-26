@@ -22,7 +22,9 @@ from blake3 import blake3
 from dinkster_inference import ControlApplication
 from dinkster_inference.minimax_h3_codecs import IMAGENET_MEAN
 from dinkster_inference.minimax_h3_dit import MiniMaxH3TimeEmbeddingKind
+from dinkster_inference.quantization import LayerQuant
 
+from .assemble import load_quantized_state_dict, quantized_state_operations
 from .attention import AttentionKernel
 from .minimax_h3_dit import (
     _CURVE_TIME_EMBED_DIM,  # pyright: ignore[reportPrivateUsage]
@@ -34,7 +36,7 @@ from .minimax_h3_dit import (
     _PackedLayout,  # pyright: ignore[reportPrivateUsage]
     _patchify_video,  # pyright: ignore[reportPrivateUsage]
 )
-from .operations import INITLESS, Operations
+from .operations import INITLESS, CastOperations, Operations
 
 # Every video-kind packed row carries this many control columns per token:
 # 49 latent channels over the (1, 2, 2) video patch.
@@ -495,6 +497,7 @@ def load_minimax_h3_fun_control(
     operations: Operations = INITLESS,
     fp32_operations: Operations | None = None,
     time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve",
+    quant: Mapping[str, LayerQuant] | None = None,
 ) -> MiniMaxH3FunControl:
     """Strict-load one Fun control checkpoint into its model patch."""
     if not is_minimax_h3_fun_state_dict(state_dict):
@@ -512,6 +515,10 @@ def load_minimax_h3_fun_control(
         attention_head_dim=head_dim,
         ffn_width=state_dict["control_blocks.0.mlp.fc1.weight"].shape[0] // 2,
     )
+    if quant and operations is INITLESS:
+        operations = quantized_state_operations(state_dict, quant, torch.bfloat16)
+        if fp32_operations is None:
+            fp32_operations = CastOperations(torch.float32)
     model = MiniMaxH3FunControl(
         shapes,
         attention_kernel,
@@ -522,7 +529,16 @@ def load_minimax_h3_fun_control(
         fp32_operations=fp32_operations,
         time_embedding_kind=time_embedding_kind,
     )
-    model.load_state_dict(state_dict, strict=True)
+    if quant:
+        load_quantized_state_dict(
+            "MiniMax H3 Fun control",
+            model,
+            state_dict,
+            quant,
+            compute_dtype=torch.bfloat16,
+        )
+    else:
+        model.load_state_dict(state_dict, strict=True)
     return model
 
 

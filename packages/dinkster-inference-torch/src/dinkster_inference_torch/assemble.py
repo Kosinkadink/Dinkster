@@ -826,6 +826,14 @@ class _ResolvedQuant:
     convrot_groupsize: int = 256
 
 
+@dataclass(frozen=True)
+class _DirectStatePlan:
+    component: str
+    keys: Mapping[str, str]
+    quant: Mapping[str, LayerQuant]
+    transforms: Mapping[str, TensorTransform] = field(default_factory=dict)
+
+
 def _decode_layer_config(component: str, layer: str, config: torch.Tensor) -> dict[str, object]:
     """The per-layer ``.comfy_quant`` JSON (what the reference's
     _load_quantized_module json.loads from the popped tensor
@@ -1206,7 +1214,7 @@ def _apply_transform(
 
 
 def _component_state(
-    plan: ComponentPlan[C],
+    plan: ComponentPlan[C] | _DirectStatePlan,
     tensors: Mapping[str, torch.Tensor],
     resolved: Mapping[str, _ResolvedQuant],
     skip: frozenset[str] = frozenset(),
@@ -1373,6 +1381,15 @@ def _pick_operations(
         if tensor.is_floating_point() and tensor.dtype != compute_dtype:
             return CastOperations(compute_dtype)
     return INITLESS
+
+
+def quantized_state_operations(
+    state: Mapping[str, torch.Tensor],
+    quant: Mapping[str, LayerQuant],
+    compute_dtype: torch.dtype,
+) -> Operations:
+    """Select construction operations for a direct-key quantized state dict."""
+    return _pick_operations(state, _quant_member_keys(quant), compute_dtype)
 
 
 def _load_component(
@@ -1556,6 +1573,56 @@ def _load_component(
                 submodule.bind_fp8_matmul(True)
             else:
                 bind_fp8_matmul_layer(submodule, True)
+    return module
+
+
+def load_quantized_state_dict(
+    component: str,
+    module: M,
+    tensors: Mapping[str, torch.Tensor],
+    quant: Mapping[str, LayerQuant],
+    *,
+    compute_dtype: torch.dtype,
+) -> M:
+    """Strict-load a direct-key state dict with planned quantized layers."""
+    resolved = {
+        layer: _resolve_quant(component, layer_quant, tensors)
+        for layer, layer_quant in quant.items()
+    }
+    artifacts = {
+        key
+        for layer_quant in quant.values()
+        for key in (
+            layer_quant.weight_scale,
+            layer_quant.weight_scale_2,
+            layer_quant.input_scale,
+            layer_quant.pre_quant_scale,
+            layer_quant.config,
+            *layer_quant.payloads.values(),
+        )
+        if key is not None
+    }
+    plan = _DirectStatePlan(
+        component,
+        {key: key for key in tensors if key not in artifacts},
+        quant,
+    )
+    state = _component_state(plan, tensors, resolved)
+    for layer, selected in resolved.items():
+        if selected.format == "int8_tensorwise":
+            _swap_in_int8_layer(component, module, layer, selected, compute_dtype=compute_dtype)
+        elif selected.format == "nvfp4":
+            _swap_in_nvfp4_linear(
+                component,
+                module,
+                layer,
+                quant[layer],
+                selected,
+                compute_dtype=compute_dtype,
+            )
+        else:
+            _swap_in_fp8_linear(component, module, layer, selected, compute_dtype=compute_dtype)
+    module.load_state_dict(state, strict=True, assign=True)
     return module
 
 
