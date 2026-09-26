@@ -485,6 +485,7 @@ def test_official_h3_fun_workflow_resolves_control_nodes_and_widgets() -> None:
     loader = aliases["ModelPatchLoader"]
     apply = aliases["MiniMaxH3FunControlNetApply"]
     assert loader.node_type == "dinkster.load_z_image_control_patch"
+    assert loader.dispatch_affinity == "native"
     assert apply.node_type == "dinkster.apply_minimax_h3_fun_control_patch"
     assert nodes["ModelPatchLoader"]["widgets_values"] == [
         "minimax_h3_fun_controlnet_union_pruned_int8_convrot.safetensors"

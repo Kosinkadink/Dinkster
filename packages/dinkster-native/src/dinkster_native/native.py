@@ -1352,6 +1352,7 @@ class LoadZImageControlPatch(Node):
             outputs=(OutputSpec("model_patch", MODEL_PATCH),),
             aliases=("ModelPatchLoader",),
             search_terms=("z-image", "fun controlnet", "wan", "infinite talk", "model patch"),
+            dispatch_affinity="native",
         )
 
     @classmethod
