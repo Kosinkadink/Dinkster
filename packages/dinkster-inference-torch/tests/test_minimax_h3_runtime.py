@@ -36,6 +36,7 @@ from dinkster_inference import (
     MiniMaxH3AudioContent,
     MiniMaxH3AudioReference,
     MiniMaxH3FL2VARequest,
+    MiniMaxH3ImageReference,
     MiniMaxH3Keyframe,
     MiniMaxH3KeyframeRole,
     MiniMaxH3REF2VARequest,
@@ -2680,6 +2681,60 @@ def test_fl2va_payload_is_realized_for_conditioner_and_dit_once(
             payloads={"first": image, "foreign": image},
             cancelled=lambda: False,
         )
+
+
+def test_h3_video_condition_latents_preserve_vae_output_dtype_with_bfloat16_target(
+    runtime_fixture: RuntimeFixture,
+) -> None:
+    frame = torch.zeros((1, 32, 32, 3), dtype=torch.float32)
+    first = PayloadDescriptor(
+        PayloadReference("first"), tuple(frame.shape), "float32", "worker:minimax-h3"
+    )
+    image = PayloadDescriptor(
+        PayloadReference("image"), tuple(frame.shape), "float32", "worker:minimax-h3"
+    )
+    video = PayloadDescriptor(
+        PayloadReference("video"), tuple(frame.shape), "float32", "worker:minimax-h3"
+    )
+    target = empty_minimax_h3_av(
+        width=32,
+        height=32,
+        frame_count=5,
+        device="cpu",
+        dtype=torch.bfloat16,
+    )
+
+    keyframes = runtime_fixture.conditioner_runtime.condition(
+        MiniMaxH3FL2VARequest(
+            "keyframe",
+            (MiniMaxH3Keyframe(MiniMaxH3KeyframeRole.FIRST, first),),
+        ),
+        target=target,
+        frame_count=5,
+        payloads={"first": frame},
+        cancelled=lambda: False,
+    )
+    references = runtime_fixture.conditioner_runtime.condition(
+        MiniMaxH3REF2VARequest(
+            "references",
+            (
+                MiniMaxH3ImageReference(image),
+                MiniMaxH3VideoReference((video,), (0,), (0.0,)),
+            ),
+        ),
+        target=target,
+        frame_count=5,
+        payloads={"image": frame, "video": frame},
+        cancelled=lambda: False,
+    )
+
+    assert keyframes.dit.keyframes[0].video.dtype == torch.float16
+    assert all(reference.video is not None for reference in references.dit.references)
+    assert all(
+        reference.video.dtype == torch.float16
+        for reference in references.dit.references
+        if reference.video is not None
+    )
 
 
 def test_ref2va_audio_payload_preserves_explicit_sample_rate(
