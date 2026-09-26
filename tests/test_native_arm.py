@@ -32487,6 +32487,36 @@ def test_model_sampling_flux_requires_runtime_capability() -> None:
         arm.GenerationModelSamplingFlux.execute(model=_handle(arm, _runtime()))
 
 
+def test_block_sparse_attention_binds_official_h3_controls() -> None:
+    arm = _native_arm()
+    handle = _handle(arm, _runtime())
+
+    patched = arm.GenerationBlockSparseAttention.execute(
+        model=handle,
+        selection="vsa",
+        **{
+            "selection.keep_percent": 12.5,
+            "start_percent": 0.15,
+            "end_percent": 0.9,
+            "dense_blocks": "0, 2, 47-49",
+            "min_tokens": 4096,
+            "extra_tokens": 256,
+            "sink_conditioning": "exact_kv",
+            "verbose": True,
+        },
+    )["MODEL"]
+
+    config = patched.sparse_attention
+    assert config.selection == "vsa"
+    assert config.keep_percent == 12.5
+    assert config.start_percent == 0.15
+    assert config.end_percent == 0.9
+    assert config.dense_blocks == frozenset((0, 2, 47, 48, 49))
+    assert config.min_tokens == 4096
+    assert config.sink_conditioning == "exact_kv"
+    assert config.verbose is True
+
+
 def test_cfg_override_binds_percent_range_to_model_sigmas(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
