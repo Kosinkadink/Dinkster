@@ -2782,6 +2782,7 @@ class Wan21Runtime(MultiStreamSamplingRuntime):
     supports_sampling_shift = True
     supports_denoised_capture = True
     supports_batch_noise_indices = False
+    text_encode_options = frozenset({"min_padding", "min_length"})
     sampling_execution_registration = SamplingExecutionRegistration(
         latent=cast("SamplingLatentAdapter", _WanLatentAdapter()),
         denoiser=lambda runtime, compute_dtype, context: cast(

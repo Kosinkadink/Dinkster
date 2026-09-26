@@ -6,9 +6,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .families.ltx import (
-    _ltxav_guidance_runtime,
-)
 from .native_arm_core import (
     _DISABLE_CFG1_OPTIMIZATION,
     ALIGN_YOUR_STEPS_NOISE_LEVELS,
@@ -19,6 +16,7 @@ from .native_arm_core import (
     Mapping,
     Node,
     NodeSchema,
+    _conditioning_batching_value,
     _CustomGuiderValue,
     _CustomNoiseValue,
     _CustomSamplerValue,
@@ -26,7 +24,6 @@ from .native_arm_core import (
     _DualCFGGuiderValue,
     _DualModelGuiderValue,
     _inference_registries,
-    _LTXAVDualGuiderValue,
     _PerpNegGuiderValue,
     _sampler_registry,
     _torch,
@@ -939,26 +936,6 @@ class GenerationSamplingPercentToSigma(Node):
         )
 
 
-def _conditioning_batching_value(mode: object, max_fused_lanes: int) -> object:
-    if type(mode) is not str:
-        raise TypeError("conditioning_batching must be a string")
-    if type(max_fused_lanes) is not int or max_fused_lanes < 1:
-        raise ValueError("max_fused_lanes must be a positive integer")
-    inference = importlib.import_module("dinkster_inference")
-    try:
-        selected = inference.ConditioningBatchingMode(mode)
-    except ValueError:
-        raise ValueError(f"unknown conditioning batching mode {mode!r}") from None
-    return inference.ConditioningBatching(
-        selected,
-        max_fused_lanes=(
-            max_fused_lanes
-            if selected is inference.ConditioningBatchingMode.MAX_FUSED_LANES
-            else None
-        ),
-    )
-
-
 class GenerationBasicGuider(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -1107,40 +1084,6 @@ class GenerationScheduledCFGGuider(Node):
                 _conditioning_batching_value(conditioning_batching, max_fused_lanes),
             ),
             sigmas=sigmas,
-        )
-
-
-class GenerationLTXVDualCFGGuider(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return _generation_provider_schema("dinkster.ltxv_dual_cfg_guider")
-
-    @classmethod
-    def execute(
-        cls,
-        *,
-        model: object,
-        positive: object,
-        negative: object,
-        video_cfg: float,
-        audio_cfg: float,
-        conditioning_batching: str = "auto",
-        max_fused_lanes: int = 2,
-    ) -> Mapping[str, object]:
-        _check_bounds(
-            ("video_cfg", video_cfg, 0.0, KSampler.MAX_CFG),
-            ("audio_cfg", audio_cfg, 0.0, KSampler.MAX_CFG),
-        )
-        _ltxav_guidance_runtime(model)
-        return cls.outputs(
-            guider=_LTXAVDualGuiderValue(
-                model,
-                positive,
-                negative,
-                video_cfg,
-                audio_cfg,
-                _conditioning_batching_value(conditioning_batching, max_fused_lanes),
-            )
         )
 
 

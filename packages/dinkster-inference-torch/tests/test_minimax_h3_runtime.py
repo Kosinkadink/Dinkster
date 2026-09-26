@@ -4,6 +4,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from types import SimpleNamespace
 from typing import Any, cast
 
 import dinkster_inference_torch.minimax_h3_runtime as h3_runtime_module
@@ -12,6 +13,7 @@ import torch
 from dinkster_inference import (
     MINIMAX_H3,
     MINIMAX_H3_AUDIO_MASK_MAPPING,
+    MINIMAX_H3_CONFIG,
     MINIMAX_H3_SIGMAS,
     MINIMAX_H3_VIDEO_MASK_MAPPING,
     AdapterPatch,
@@ -63,6 +65,7 @@ from dinkster_inference import (
     TimelineGuide,
     TokenLayoutDescriptor,
     TokenSegmentDescriptor,
+    compose_execution,
     make_conditioning_carrier,
     offset_first_sigma_for_snr,
     sampling_sigmas,
@@ -96,6 +99,7 @@ from dinkster_inference_torch import (
 from dinkster_inference_torch import sampling_execution as sampling_execution_module
 from dinkster_inference_torch.attention import builtin_sdpa_kernel
 from dinkster_inference_torch.brownian import BrownianTreeNoise
+from dinkster_inference_torch.component_runtime import h3_runtime
 from dinkster_inference_torch.denoise import (
     PackedInpaintConfiguration,
     _InpaintDenoiser,  # pyright: ignore[reportPrivateUsage]
@@ -104,6 +108,10 @@ from dinkster_inference_torch.denoise import (
 )
 from dinkster_inference_torch.distributed import DistributedSamplingConfig
 from dinkster_inference_torch.guidance import ConditioningValidationPath, GuidedDenoiser
+from dinkster_inference_torch.minimax_h3_assembly import (
+    AssembledMiniMaxH3Model,
+    MiniMaxH3Model,
+)
 from dinkster_inference_torch.minimax_h3_conditioning import MiniMaxH3ConditionerInputs
 from dinkster_inference_torch.minimax_h3_dit import MiniMaxH3DiTConditioning
 from dinkster_inference_torch.patch_providers import PatchProviderSnapshot
@@ -554,6 +562,63 @@ def test_single_dit_component_exposes_runtime_identity(
 
     assert component.runtime_identity == identity
     assert component.receipt_identity == "ref2va-receipt"
+    assert component.assembled.diffusion is runtime_fixture.ref2va
+
+
+def test_h3_component_factory_preserves_loaded_assembly(
+    runtime_fixture: RuntimeFixture,
+) -> None:
+    identity = "native:dinkster.minimax_h3:" + "5" * 64
+    assembled = AssembledMiniMaxH3Model(
+        runtime_fixture.fl2va,  # type: ignore[arg-type]
+        _component_compute_dtypes={"diffusion": torch.float32},
+    )
+    loaded = SimpleNamespace(
+        runtime=MiniMaxH3Model(assembled, identity, "fl2va-dit", receipt_identity="receipt")
+    )
+
+    runtime = h3_runtime(loaded, identity, torch.float32)
+
+    assert runtime.assembled is assembled
+    assert runtime.assembled.diffusion is runtime_fixture.fl2va
+
+
+def test_single_dit_component_derives_conditioner_execution_identity(
+    runtime_fixture: RuntimeFixture,
+) -> None:
+    identity = "native:dinkster.minimax_h3:" + "5" * 64
+    conditioner_identity = "native:dinkster.minimax_h3:" + "6" * 64
+    component = MiniMaxH3DiTRuntime(
+        runtime_fixture.fl2va,  # type: ignore[arg-type]
+        model_role="fl2va_dit",
+        runtime_identity=identity,
+        receipt_identity="fl2va-receipt",
+    )
+
+    derived = component.with_conditioner(conditioner_identity)
+    composition = compose_execution(
+        MINIMAX_H3_CONFIG.family_id,
+        {"fl2va_dit": identity, "conditioner": conditioner_identity},
+    )
+
+    assert derived is not component
+    assert component.runtime_identity == identity
+    assert component.conditioning_identity == identity
+    assert derived.runtime_identity == composition.execution_identity
+    assert derived.conditioning_identity == conditioner_identity
+    assert derived.receipt_identity == "fl2va-receipt"
+    assert derived.sampling_runtime() is derived
+
+    replacement_identity = "native:dinkster.minimax_h3:" + "7" * 64
+    replacement = derived.with_conditioner(replacement_identity)
+    replacement_composition = compose_execution(
+        MINIMAX_H3_CONFIG.family_id,
+        {"fl2va_dit": identity, "conditioner": replacement_identity},
+    )
+    assert replacement.runtime_identity == replacement_composition.execution_identity
+    assert (
+        derived.with_conditioner(conditioner_identity).runtime_identity == derived.runtime_identity
+    )
 
 
 def test_empty_av_snaps_to_exact_video_audio_geometry() -> None:

@@ -20,6 +20,7 @@ from dinkster_inference.component_checkpoint import ComponentCheckpointPlan
 from dinkster_inference.component_registry import build_component_runtime, execution_symbol
 
 from .operations import module_compute_device
+from .sampling_runtime import SamplingRuntime
 
 
 @dataclass(frozen=True)
@@ -52,7 +53,7 @@ class ComponentAssembly:
         return self.component_dtypes.get(self.model_role if role == "diffusion" else role)
 
 
-class ComponentCheckpointRuntime:
+class ComponentCheckpointRuntime(SamplingRuntime):
     """Own companions while sampling stays bound to the original diffusion runtime."""
 
     preserves_text_conditioning = True
@@ -92,7 +93,6 @@ class ComponentCheckpointRuntime:
             self.prepare_text_conditioning = self._prepare_text_conditioning
         self.sample_custom = diffusion.sample_custom
         self.check_custom_sampling = diffusion.check_custom_sampling
-        self.sampling_sigma_space = diffusion.sampling_sigma_space
         self.custom_sampling_sigmas = diffusion.custom_sampling_sigmas
         self.custom_sampling_beta_sigmas = diffusion.custom_sampling_beta_sigmas
         self.custom_sampling_sd_turbo_sigmas = diffusion.custom_sampling_sd_turbo_sigmas
@@ -110,11 +110,10 @@ class ComponentCheckpointRuntime:
     def conditioning_identity(self) -> str:
         return getattr(self.diffusion, "conditioning_identity", self.runtime_identity)
 
-    @property
-    def component_sampling_runtime(self) -> Any:
+    def sampling_runtime(self) -> SamplingRuntime:
         return self.diffusion
 
-    def with_component_sampling_runtime(self, diffusion: Any) -> ComponentCheckpointRuntime:
+    def with_sampling_runtime(self, diffusion: Any) -> ComponentCheckpointRuntime:
         return ComponentCheckpointRuntime(
             diffusion,
             self.assembled,
@@ -123,12 +122,23 @@ class ComponentCheckpointRuntime:
             prepare_conditioning=self._prepare_conditioning,
         )
 
+    def _sampling_sigma_space(self, sampling_shift: float | None) -> Any:
+        return self.diffusion.sampling_sigma_space(sampling_shift)
+
+    @property
+    def text_encode_options(  # pyright: ignore[reportIncompatibleVariableOverride]
+        self,
+    ) -> frozenset[str]:
+        return self.diffusion.text_encode_options
+
     @property
     def supports_denoised_capture(self) -> bool:
         return getattr(self.diffusion, "supports_denoised_capture", False)
 
     @property
-    def supports_sampling_shift(self) -> bool:
+    def supports_sampling_shift(  # pyright: ignore[reportIncompatibleVariableOverride]
+        self,
+    ) -> bool:
         return getattr(self.diffusion, "supports_sampling_shift", False)
 
     @property
