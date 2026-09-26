@@ -41,6 +41,7 @@ from dinkster_inference import (
     PatchOverlay,
     ReconstructionRecipe,
 )
+from dinkster_values.limits import DEVICE_MEMORY_RECONCILIATION_BOUND_BYTES
 from dinkster_workers import KNOWN_ACCELERATORS, AcceleratorError, current_execution_context
 from dinkster_workers.accelerator import ACCELERATOR_ENV
 
@@ -48,7 +49,6 @@ from .memory_policy import native_memory_policy
 
 NativeStageEvent = ExecutionSpanEvent
 NativeStageObserver = ExecutionObserver
-_DEVICE_RECONCILIATION_BOUND_BYTES = 1 << 20
 
 
 @dataclass(frozen=True)
@@ -1789,7 +1789,7 @@ class NativeRuntimeHandle:
                     device=device,
                     measured_bytes=measured,
                     allocator_measured_bytes=allocator,
-                    reconciliation_bound_bytes=_DEVICE_RECONCILIATION_BOUND_BYTES,
+                    reconciliation_bound_bytes=DEVICE_MEMORY_RECONCILIATION_BOUND_BYTES,
                     unknown_bytes=unknown,
                 )
             )

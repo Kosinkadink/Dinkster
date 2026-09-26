@@ -56,7 +56,11 @@ from dinkster_inference import (
 from dinkster_memory import PageMap
 from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
 from dinkster_schema import MappingSource, build_node_types, build_schemas, schema_signature
-from dinkster_values import TypeRegistry, register_core_types
+from dinkster_values import (
+    DEVICE_MEMORY_RECONCILIATION_BOUND_BYTES,
+    TypeRegistry,
+    register_core_types,
+)
 from dinkster_workers import ExecutionContext, InProcessWorker
 from dinkster_workers.execution import use_execution_context
 from dinkster_workers.manifest import load_manifest
@@ -3529,7 +3533,7 @@ def test_native_memory_snapshot_exposes_raw_allocator_measurement_and_bound() ->
     assert device.allocator_measured_bytes == 100
     assert device.measured_bytes == 100
     assert device.unknown_bytes == 60
-    assert device.reconciliation_bound_bytes == 1 << 20
+    assert device.reconciliation_bound_bytes == DEVICE_MEMORY_RECONCILIATION_BOUND_BYTES
 
 
 def test_native_memory_observer_records_cross_model_stage_eviction() -> None:
