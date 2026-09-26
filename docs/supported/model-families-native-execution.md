@@ -115,7 +115,10 @@
   SamplerCustomAdvanced, and the model-dependent sigma nodes) over the same
   video/audio streams, AV encode/decode, and MiniMax H3 Fun ControlNet Union
   v1/v2 control-video or masked-source conditioning with strength and sampling
-  windows through the same sampling engine.
+  windows through the same sampling engine. Model Sparse Attention supports
+  Sol-Attn, SLA, and FastH3 VSA controls on eligible CUDA execution. VSA uses
+  optional checkpoint `to_gate_compress` layers when present and otherwise
+  runs its fine stage without the learned coarse branch.
 <!-- capability:dinkster.minimax_music3 -->
 - MiniMax Music 3 text-to-music generation through the official split-component
   workflow. Diffusion supports the FP16, FP32, and INT8 ConvRot artifacts; the

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable, Mapping
 from copy import copy
@@ -1610,6 +1611,15 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             if attention_binding.sparse is None
             else MiniMaxH3SparseAttention(attention_binding.sparse)
         )
+        if (
+            attention_binding.sparse is not None
+            and attention_binding.sparse.selection == "vsa"
+            and not self._model.gate_compress
+        ):
+            logging.warning(
+                "VSA: the model has no to_gate_compress layers; "
+                "running the fine stage without the coarse branch"
+            )
         scheduler_label = request.source_scheduler_id or "custom"
         model_role = self._model_role
         model = self._model
