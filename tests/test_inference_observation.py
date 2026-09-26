@@ -60,7 +60,7 @@ def test_receipt_preserves_distinct_components_transitions_unknown_and_peak() ->
             DeviceMemorySnapshot(
                 device="cuda:3",
                 measured_bytes=112,
-                reconciliation_bound_bytes=12,
+                reconciliation_bound_bytes=0,
                 unknown_bytes=12,
             ),
         ),
@@ -76,7 +76,7 @@ def test_receipt_preserves_distinct_components_transitions_unknown_and_peak() ->
             DeviceMemorySnapshot(
                 device="cuda:3",
                 measured_bytes=128,
-                reconciliation_bound_bytes=8,
+                reconciliation_bound_bytes=0,
                 unknown_bytes=8,
             ),
         ),
@@ -134,7 +134,7 @@ def test_snapshot_deduplicates_shared_storage_for_reconciliation() -> None:
             DeviceMemorySnapshot(
                 device="cuda:3",
                 measured_bytes=80,
-                reconciliation_bound_bytes=5,
+                reconciliation_bound_bytes=0,
                 unknown_bytes=5,
             ),
         ),
@@ -150,11 +150,11 @@ def test_snapshot_deduplicates_shared_storage_for_reconciliation() -> None:
         (
             (_component("diffusion.main", resident=75),),
             DeviceMemorySnapshot("cuda:3", 70, 0, 0),
-            "exceed measured",
+            "reconciliation bound",
         ),
         (
             (_component("diffusion.main", resident=75),),
-            DeviceMemorySnapshot("cuda:3", 90, 14, 15),
+            DeviceMemorySnapshot("cuda:3", 90, 14, 0),
             "reconciliation bound",
         ),
         (

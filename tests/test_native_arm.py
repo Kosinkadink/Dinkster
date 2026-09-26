@@ -17,7 +17,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
@@ -3317,7 +3317,8 @@ def test_native_stage_observer_brackets_residency_and_execution() -> None:
         handle.advisory_unload()
         handle.terminal_release()
 
-    assert [cast(Any, event).operation for event in events] == [
+    spans = [event for event in events if cast(Any, event).phase in ("begin", "end")]
+    assert [cast(Any, event).operation for event in spans] == [
         "lease",
         "prefetch",
         "prefetch",
@@ -3327,25 +3328,58 @@ def test_native_stage_observer_brackets_residency_and_execution() -> None:
         "release",
         "release",
     ]
-    assert [cast(Any, event).phase for event in events] == ["begin", "begin", "end", "end"] + [
+    assert [cast(Any, event).phase for event in spans] == ["begin", "begin", "end", "end"] + [
         "begin",
         "end",
     ] * 2
-    lease = cast(Any, events[0])
-    assert cast(Any, events[1]).parent_span_id == lease.span_id
-    assert cast(Any, events[2]).parent_span_id == lease.span_id
-    assert cast(Any, events[3]).span_id == lease.span_id
+    lease = cast(Any, spans[0])
+    assert cast(Any, spans[1]).parent_span_id == lease.span_id
+    assert cast(Any, spans[2]).parent_span_id == lease.span_id
+    assert cast(Any, spans[3]).span_id == lease.span_id
     assert lease.component_role == "diffusion"
     assert all(cast(Any, event).stage == "load" for event in events)
     assert all(cast(Any, event).invocation_id == "test-invocation" for event in events)
     for begin, end in (
-        (events[0], events[3]),
-        (events[1], events[2]),
-        (events[4], events[5]),
-        (events[6], events[7]),
+        (spans[0], spans[3]),
+        (spans[1], spans[2]),
+        (spans[4], spans[5]),
+        (spans[6], spans[7]),
     ):
         assert cast(Any, begin).span_id == cast(Any, end).span_id
         assert cast(Any, begin).monotonic_ns <= cast(Any, end).monotonic_ns
+
+    snapshots = [
+        cast(Any, event).memory_snapshot for event in events if cast(Any, event).phase == "snapshot"
+    ]
+    assert [snapshot.boundary for snapshot in snapshots] == [
+        "post-load",
+        "stage-end",
+        "post-offload",
+        "release",
+    ]
+    assert [component.component_id for component in snapshots[0].components] == [
+        "clip_l",
+        "diffusion",
+        "vae",
+    ]
+    assert [component.loaded_bytes for component in snapshots[0].components] == [0, 40, 0]
+    assert all(component.loaded_bytes == 0 for component in snapshots[-1].components)
+    decisions = [
+        cast(Any, event).memory_decision for event in events if cast(Any, event).phase == "decision"
+    ]
+    assert [
+        (decision.component_id, decision.action, decision.reason) for decision in decisions
+    ] == [
+        ("diffusion", "place", "stage-admission"),
+        ("clip_l", "retain", "stage-admission"),
+        ("vae", "retain", "stage-admission"),
+        ("diffusion", "offload", "advisory-unload"),
+        ("clip_l", "retain", "advisory-unload"),
+        ("vae", "retain", "advisory-unload"),
+        ("diffusion", "retain", "terminal-release"),
+        ("clip_l", "retain", "terminal-release"),
+        ("vae", "retain", "terminal-release"),
+    ]
 
 
 def test_native_stage_observer_failures_do_not_change_execution() -> None:
@@ -3364,7 +3398,71 @@ def test_native_stage_observer_failures_do_not_change_execution() -> None:
             pass
         handle.advisory_unload()
         handle.terminal_release()
-    assert calls == 8
+    assert calls == 21
+
+
+def test_native_memory_observation_preserves_manager_calls_and_marks_first_sampling_once() -> None:
+    arm = _native_arm()
+    residency = importlib.import_module("dinkster_compat_comfy.native_residency")
+
+    def run(observe: bool) -> tuple[list[tuple[int, int, bool]], list[str]]:
+        manager = FakeManager()
+        handle = _handle(arm, _runtime(), coordinator=_coordinator(arm, manager))
+        events: list[Any] = []
+        context = residency.observe_native_stages(events.append) if observe else nullcontext()
+        with context:
+            with handle.stage("diffusion", observer_stage="sample"):
+                pass
+            with handle.stage("diffusion", observer_stage="sample"):
+                pass
+            handle.advisory_unload()
+        calls = [
+            (len(mechanisms), memory_required, force_full_load)
+            for mechanisms, memory_required, force_full_load in manager.loads
+        ]
+        boundaries = [
+            event.memory_snapshot.boundary for event in events if event.memory_snapshot is not None
+        ]
+        return calls, boundaries
+
+    unobserved_calls, unobserved_boundaries = run(False)
+    observed_calls, observed_boundaries = run(True)
+
+    assert observed_calls == unobserved_calls == [(1, 0, False), (1, 0, False)]
+    assert unobserved_boundaries == []
+    assert observed_boundaries == [
+        "first-sampling-seam",
+        "stage-end",
+        "post-load",
+        "stage-end",
+        "post-offload",
+    ]
+
+
+def test_native_memory_snapshot_deduplicates_shared_component_storage() -> None:
+    arm = _native_arm()
+    residency = importlib.import_module("dinkster_compat_comfy.native_residency")
+    handle = _handle(arm, _runtime())
+    diffusion = next(
+        mechanism
+        for component, _role, mechanism in handle._component_mechanisms  # pyright: ignore[reportPrivateUsage]
+        if component == "diffusion"
+    )
+    handle._component_mechanisms = tuple(  # pyright: ignore[reportPrivateUsage]
+        (component, role, diffusion if component == "clip_l" else mechanism)
+        for component, role, mechanism in handle._component_mechanisms  # pyright: ignore[reportPrivateUsage]
+    )
+    events: list[Any] = []
+
+    with residency.observe_native_stages(events.append):
+        with handle.stage("diffusion"):
+            pass
+
+    snapshot = next(event.memory_snapshot for event in events if event.memory_snapshot is not None)
+    components = {component.component_id: component for component in snapshot.components}
+    assert components["clip_l"].storage_id == components["diffusion"].storage_id
+    assert components["clip_l"].resident_bytes == components["diffusion"].resident_bytes == 40
+    assert snapshot.devices[0].measured_bytes == 40
 
 
 @pytest.mark.parametrize(

@@ -53,6 +53,7 @@ from .memory import get_free_memory
 from .ops import DeferredPatch, PreparedPatchSource, WeightFunction, cast_weight
 from .quant import FP8_DTYPES, Fp8ScaledWeight, Int8PackedWeight, Nvfp4PackedWeight
 from .residency import (
+    ResidencyMemoryAccounting,
     ResidencyUnit,
     ResidencyUnitState,
     WeightLease,
@@ -1646,6 +1647,38 @@ class AimdoWeights:
 
     def offloaded_bytes(self) -> int:
         return self.total_bytes() - self.loaded_bytes()
+
+    def memory_accounting(self) -> ResidencyMemoryAccounting:
+        with self._lock:
+            eager = self._eager_loaded_bytes()
+            demand_total = sum(
+                self._unit_bytes(unit)
+                for unit in self._units
+                if unit.name not in self._eager_loaded
+            )
+            vbar = 0 if self._vbar is None else self._backend.loaded_size(self._vbar)
+            logical_vbar = min(vbar, demand_total)
+            workspace = (
+                0
+                if self._stream_state is None
+                else sum(
+                    self._backend.cast_arena_size(arena)
+                    for arena in self._stream_state.arenas.values()
+                )
+            )
+            shared_id = (
+                None
+                if self._stream_state is None
+                else f"aimdo-cast-arena:{self.load_device}:{id(self._stream_state)}"
+            )
+            return ResidencyMemoryAccounting(
+                weights=eager + logical_vbar,
+                other_reclaimable=max(0, vbar - logical_vbar),
+                allocator_weight_bytes=eager,
+                shared_workspace_id=shared_id,
+                shared_workspace_bytes=workspace,
+                memory_compiler="disabled",
+            )
 
     def is_loaded(self, unit: str) -> bool:
         state = self._unit_states.get(unit)

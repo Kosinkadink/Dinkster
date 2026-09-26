@@ -27,7 +27,11 @@ from typing import Any, Protocol, cast
 
 from dinkster_inference import (
     AttachmentDeclaration,
+    ComponentMemorySnapshot,
     DependencyPlan,
+    DeviceMemorySnapshot,
+    ExecutionMemoryDecision,
+    ExecutionMemorySnapshot,
     ExecutionObserver,
     ExecutionObserverAttachment,
     ExecutionSpan,
@@ -645,6 +649,7 @@ class NativeResidencyCoordinator:
             raise TypeError("native stage memory_required must be an exact integer")
         if memory_required < 0:
             raise ValueError("native stage memory_required must be nonnegative")
+        observe_memory = current_native_observer() is not None
         with self.placement_pass():
             with ExitStack() as reservations:
                 stage = (tuple(mechanisms), memory_required, minimum_memory)
@@ -671,12 +676,17 @@ class NativeResidencyCoordinator:
                         for _mechanisms, _required, minimum in self._active_stages
                         if minimum is not None
                     ]
+                    memory_before = (
+                        handle._memory_state()  # pyright: ignore[reportPrivateUsage]
+                        if observe_memory
+                        else {}
+                    )
                     with native_execution_span(
                         observer_stage,
                         "prefetch",
                         parent_span_id=parent_span_id,
                         device=_mechanism_device(mechanisms),
-                    ):
+                    ) as prefetch_span:
                         self.manager.load(
                             active_mechanisms,
                             memory_required=active_memory_required,
@@ -693,6 +703,31 @@ class NativeResidencyCoordinator:
                             mechanism.loaded_bytes() > 0 for mechanism in mechanisms
                         ):
                             handle.run_lifecycle("load")
+                        memory_parent = (
+                            parent_span_id if prefetch_span is None else prefetch_span.span_id
+                        )
+                        if observe_memory:
+                            handle._record_memory_decisions(  # pyright: ignore[reportPrivateUsage]
+                                memory_before,
+                                stage=observer_stage,
+                                parent_span_id=memory_parent,
+                                reason="stage-admission",
+                                decreasing_action="evict",
+                            )
+                        attachment = current_native_observer()
+                        boundary = "post-load"
+                        if (
+                            observer_stage == "sample"
+                            and attachment is not None
+                            and attachment.claim_once("first-sampling-seam")
+                        ):
+                            boundary = "first-sampling-seam"
+                        if observe_memory:
+                            handle._record_memory_snapshot(  # pyright: ignore[reportPrivateUsage]
+                                boundary,
+                                stage=observer_stage,
+                                parent_span_id=memory_parent,
+                            )
                     handle.run_lifecycle("pre-run")
                     handle.run_lifecycle("inject")
                     yield
@@ -727,6 +762,12 @@ class NativeResidencyCoordinator:
                             primary.add_note(f"native cache cleanup also failed: {exc!r}")
                     try:
                         self._reconcile()
+                        if observe_memory:
+                            handle._record_memory_snapshot(  # pyright: ignore[reportPrivateUsage]
+                                "stage-end",
+                                stage=observer_stage,
+                                parent_span_id=parent_span_id,
+                            )
                     finally:
                         if self._active_stages.pop() is not stage:
                             raise RuntimeError("native residency stages exited out of order")
@@ -737,6 +778,12 @@ class NativeResidencyCoordinator:
         if not self._lock.acquire(blocking=False):
             raise NativeResidencyBusyError("native stage is active; advisory unload refused")
         try:
+            observe_memory = current_native_observer() is not None
+            memory_before = (
+                handle._memory_state()  # pyright: ignore[reportPrivateUsage]
+                if observe_memory
+                else {}
+            )
             with native_execution_span(
                 "load", "offload", device=_mechanism_device(handle.mechanisms)
             ):
@@ -759,6 +806,17 @@ class NativeResidencyCoordinator:
                     if was_loaded:
                         handle.run_lifecycle("unload")
                     self._reconcile()
+                    if observe_memory:
+                        handle._record_memory_decisions(  # pyright: ignore[reportPrivateUsage]
+                            memory_before,
+                            stage="load",
+                            parent_span_id=None,
+                            reason="advisory-unload",
+                            decreasing_action="offload",
+                        )
+                        handle._record_memory_snapshot(  # pyright: ignore[reportPrivateUsage]
+                            "post-offload", stage="load", parent_span_id=None
+                        )
         finally:
             self._lock.release()
 
@@ -772,6 +830,12 @@ class NativeResidencyCoordinator:
         component_role: str,
     ) -> None:
         with self._lock:
+            observe_memory = current_native_observer() is not None
+            memory_before = (
+                handle._memory_state()  # pyright: ignore[reportPrivateUsage]
+                if observe_memory
+                else {}
+            )
             with native_execution_span(
                 observer_stage,
                 "offload",
@@ -802,11 +866,30 @@ class NativeResidencyCoordinator:
                     for device in devices:
                         self.manager.empty_cache(device)
                     self._reconcile()
+                    if observe_memory:
+                        handle._record_memory_decisions(  # pyright: ignore[reportPrivateUsage]
+                            memory_before,
+                            stage=observer_stage,
+                            parent_span_id=parent_span_id,
+                            reason="stage-lifecycle",
+                            decreasing_action="offload",
+                        )
+                        handle._record_memory_snapshot(  # pyright: ignore[reportPrivateUsage]
+                            "post-offload",
+                            stage=observer_stage,
+                            parent_span_id=parent_span_id,
+                        )
                     if primary is not None:
                         raise primary
 
     def terminal_release(self, handle: NativeRuntimeHandle) -> None:
         with self._lock:
+            observe_memory = current_native_observer() is not None
+            memory_before = (
+                handle._memory_state()  # pyright: ignore[reportPrivateUsage]
+                if observe_memory
+                else {}
+            )
             with native_execution_span(
                 "load", "release", device=_mechanism_device(handle.mechanisms)
             ):
@@ -842,6 +925,17 @@ class NativeResidencyCoordinator:
                     else:
                         primary.add_note(f"native cleanup also failed: {exc!r}")
                 finally:
+                    if observe_memory:
+                        handle._record_memory_decisions(  # pyright: ignore[reportPrivateUsage]
+                            memory_before,
+                            stage="load",
+                            parent_span_id=None,
+                            reason="terminal-release",
+                            decreasing_action="offload",
+                        )
+                        handle._record_memory_snapshot(  # pyright: ignore[reportPrivateUsage]
+                            "release", stage="load", parent_span_id=None
+                        )
                     handle.mark_released()
                     self._handles.discard(handle)
                     handle.drop_materialized()
@@ -1411,6 +1505,7 @@ class NativeRuntimeHandle:
                 + ", ".join(sorted(unknown_retained))
             )
         mechanisms: list[_ResidencyMechanism] = []
+        component_mechanisms: list[tuple[str, str, _ResidencyMechanism]] = []
         eager_role_lists: dict[str, list[_ResidencyMechanism]] = {role: [] for role in role_lists}
         for component, mechanism in enrolled.items():
             try:
@@ -1425,6 +1520,7 @@ class NativeRuntimeHandle:
             if component not in streamed_components:
                 eager_role_lists[role].append(mechanism)
             mechanisms.append(mechanism)
+            component_mechanisms.append((component, role, mechanism))
         by_role = {
             role: tuple(role_mechanisms)
             for role, role_mechanisms in role_lists.items()
@@ -1450,7 +1546,212 @@ class NativeRuntimeHandle:
             if role in by_role
         }
         self.mechanisms = tuple(mechanisms)
+        self._component_mechanisms = tuple(component_mechanisms)
         self.coordinator.enroll(self)
+
+    def _memory_state(self) -> dict[int, int]:
+        try:
+            return {id(mechanism): mechanism.loaded_bytes() for mechanism in self.mechanisms}
+        except Exception:
+            return {}
+
+    def _record_memory_decisions(
+        self,
+        before: Mapping[int, int],
+        *,
+        stage: ExecutionStage,
+        parent_span_id: int | None,
+        reason: str,
+        decreasing_action: str,
+    ) -> None:
+        attachment = current_native_observer()
+        if attachment is None:
+            return
+        try:
+            self._emit_memory_decisions(
+                attachment,
+                before,
+                stage=stage,
+                parent_span_id=parent_span_id,
+                reason=reason,
+                decreasing_action=decreasing_action,
+            )
+        except Exception:
+            pass
+
+    def _emit_memory_decisions(
+        self,
+        attachment: ExecutionObserverAttachment,
+        before: Mapping[int, int],
+        *,
+        stage: ExecutionStage,
+        parent_span_id: int | None,
+        reason: str,
+        decreasing_action: str,
+    ) -> None:
+        for component, role, mechanism in self._component_mechanisms:
+            previous = before.get(id(mechanism), 0)
+            loaded = mechanism.loaded_bytes()
+            if loaded > previous:
+                action = "place"
+                byte_count = loaded - previous
+            elif loaded < previous:
+                action = decreasing_action
+                byte_count = previous - loaded
+            else:
+                action = "retain"
+                byte_count = loaded
+            attachment.record_memory_decision(
+                stage,
+                "residency-policy",
+                ExecutionMemoryDecision(
+                    component_id=component,
+                    component_role=role,
+                    device=str(mechanism.load_device),
+                    source="residency-policy",
+                    action=cast("Any", action),
+                    byte_count=byte_count,
+                    reason=reason,
+                ),
+                parent_span_id=parent_span_id,
+            )
+
+    def _record_memory_snapshot(
+        self,
+        boundary: str,
+        *,
+        stage: ExecutionStage,
+        parent_span_id: int | None,
+    ) -> None:
+        attachment = current_native_observer()
+        if attachment is None:
+            return
+        try:
+            self._emit_memory_snapshot(
+                attachment, boundary, stage=stage, parent_span_id=parent_span_id
+            )
+        except Exception:
+            pass
+
+    def _emit_memory_snapshot(
+        self,
+        attachment: ExecutionObserverAttachment,
+        boundary: str,
+        *,
+        stage: ExecutionStage,
+        parent_span_id: int | None,
+    ) -> None:
+        entries: list[tuple[str, str, _ResidencyMechanism, Any]] = []
+        for component, role, mechanism in self._component_mechanisms:
+            accounting_fn = getattr(mechanism, "memory_accounting", None)
+            accounting = accounting_fn() if callable(accounting_fn) else None
+            entries.append((component, role, mechanism, accounting))
+        entries.sort(key=lambda entry: entry[0])
+        storage_ids = {
+            id(mechanism): f"{self._recipe.runtime_identity}:{entries_for_mechanism[0]}"
+            for mechanism in self.mechanisms
+            if (
+                entries_for_mechanism := sorted(
+                    component
+                    for component, _role, enrolled, _accounting in entries
+                    if enrolled is mechanism
+                )
+            )
+        }
+        claimed_workspaces: set[str] = set()
+        components: list[ComponentMemorySnapshot] = []
+        allocator_weights: dict[str, int] = {}
+        compiler_states: set[str] = set()
+        accounting_by_mechanism: dict[int, tuple[dict[str, int], int, str | None]] = {}
+        counted_allocator_storage: set[tuple[str, str]] = set()
+        for component, role, mechanism, accounting in entries:
+            loaded = mechanism.loaded_bytes()
+            mechanism_id = id(mechanism)
+            cached = accounting_by_mechanism.get(mechanism_id)
+            if cached is None:
+                page_classes = {
+                    "weights": loaded,
+                    "activation-runtime-workspace": 0,
+                    "execution-result-cache": 0,
+                    "other-reclaimable": 0,
+                    "unknown": 0,
+                }
+                allocator_weight = loaded
+                compiler_state = None
+                if accounting is not None:
+                    page_classes.update(
+                        {
+                            "weights": accounting.weights,
+                            "activation-runtime-workspace": accounting.activation_runtime_workspace,
+                            "execution-result-cache": accounting.execution_result_cache,
+                            "other-reclaimable": accounting.other_reclaimable,
+                            "unknown": accounting.unknown,
+                        }
+                    )
+                    allocator_weight = accounting.allocator_weight_bytes
+                    compiler_state = accounting.memory_compiler
+                    workspace_id = accounting.shared_workspace_id
+                    if workspace_id and workspace_id not in claimed_workspaces:
+                        claimed_workspaces.add(workspace_id)
+                        page_classes["activation-runtime-workspace"] += (
+                            accounting.shared_workspace_bytes
+                        )
+                cached = (page_classes, allocator_weight, compiler_state)
+                accounting_by_mechanism[mechanism_id] = cached
+            page_classes, allocator_weight, compiler_state = cached
+            if compiler_state is not None:
+                compiler_states.add(compiler_state)
+            device = str(mechanism.load_device)
+            allocator_key = (device, storage_ids[mechanism_id])
+            if allocator_key not in counted_allocator_storage:
+                counted_allocator_storage.add(allocator_key)
+                allocator_weights[device] = allocator_weights.get(device, 0) + allocator_weight
+            components.append(
+                ComponentMemorySnapshot(
+                    component_id=component,
+                    component_role=role,
+                    storage_id=storage_ids[id(mechanism)],
+                    device=device,
+                    total_bytes=mechanism.total_bytes(),
+                    loaded_bytes=loaded,
+                    offloaded_bytes=mechanism.offloaded_bytes(),
+                    resident_bytes=sum(page_classes.values()),
+                    bytes_by_page_class=cast("Any", page_classes),
+                )
+            )
+        devices: list[DeviceMemorySnapshot] = []
+        for device in sorted({component.device for component in components}):
+            owned: dict[str, ComponentMemorySnapshot] = {}
+            for component in components:
+                if component.device == device:
+                    owned.setdefault(component.storage_id, component)
+            classified = sum(component.resident_bytes for component in owned.values())
+            torch = importlib.import_module("torch")
+            allocator = (
+                int(torch.cuda.memory_allocated(torch.device(device)))
+                if device.startswith("cuda") and torch.cuda.is_available()
+                else allocator_weights.get(device, 0)
+            )
+            unknown = max(0, allocator - allocator_weights.get(device, 0))
+            devices.append(DeviceMemorySnapshot(device, classified + unknown, 0, unknown))
+        compiler = (
+            "active"
+            if "active" in compiler_states
+            else "disabled"
+            if "disabled" in compiler_states
+            else "unavailable"
+        )
+        attachment.record_memory_snapshot(
+            stage,
+            "residency",
+            ExecutionMemorySnapshot(
+                boundary=cast("Any", boundary),
+                components=tuple(components),
+                devices=tuple(devices),
+                memory_compiler=cast("Any", compiler),
+            ),
+            parent_span_id=parent_span_id,
+        )
 
     @property
     def runtime(self) -> Any:

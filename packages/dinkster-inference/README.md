@@ -43,6 +43,20 @@ Dependencies: `dinkster-schema` only (for the closed name grammar).
 Deliberately NOT a dependency: torch, numpy, comfy. Mapping a `DType`
 to a framework dtype is the executing backend's job (stage 4+).
 
+## Execution memory observations
+
+`ExecutionObserverAttachment` emits invocation-local memory decisions and
+snapshots alongside stage spans. `ExecutionMemoryReceipt` serializes these as
+`dinkster.execution-memory.v1`, including stable component and shared-storage
+identities, logical loaded/offloaded bytes, physical resident bytes split into
+weights, activation/runtime workspace, execution/result cache, other
+reclaimable, and unknown pages, plus memory-compiler state and per-device peak
+residency. Device reconciliation requires
+`abs(measured - classified - unknown) <= reconciliationBoundBytes`; producers
+must report an explicit bound rather than silently absorbing unexplained bytes.
+Observation is diagnostic only: observer and accounting failures cannot alter
+placement or execution.
+
 ## Training API
 
 The separately versioned training runtime consumes these package-root exports:

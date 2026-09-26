@@ -131,12 +131,8 @@ class ExecutionMemorySnapshot:
                 if previous.bytes_by_page_class != component.bytes_by_page_class:
                     raise ValueError("shared storage must report identical page classes")
             classified = sum(component.resident_bytes for component in owned.values())
-            difference = device.measured_bytes - classified
-            if difference < 0:
-                raise ValueError("classified component pages exceed measured device bytes")
-            if difference != device.unknown_bytes:
-                raise ValueError("memory device unknown bytes must be the unreconciled remainder")
-            if difference > device.reconciliation_bound_bytes:
+            reconciled = classified + device.unknown_bytes
+            if abs(device.measured_bytes - reconciled) > device.reconciliation_bound_bytes:
                 raise ValueError("memory device totals exceed the reconciliation bound")
 
 
@@ -216,12 +212,22 @@ class ExecutionObserverAttachment:
         self._observer = observer
         self._lock = threading.Lock()
         self._next_span_id = 1
+        self._markers: set[str] = set()
 
     def _next_id(self) -> int:
         with self._lock:
             span_id = self._next_span_id
             self._next_span_id += 1
         return span_id
+
+    def claim_once(self, marker: str) -> bool:
+        if not marker:
+            raise ValueError("execution observer marker must be nonempty")
+        with self._lock:
+            if marker in self._markers:
+                return False
+            self._markers.add(marker)
+            return True
 
     def begin(
         self,
