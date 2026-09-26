@@ -591,8 +591,7 @@ def test_single_dit_component_derives_conditioner_execution_identity(
     )
     assert replacement.runtime_identity == replacement_composition.execution_identity
     assert (
-        derived.with_conditioner(conditioner_identity).runtime_identity
-        == derived.runtime_identity
+        derived.with_conditioner(conditioner_identity).runtime_identity == derived.runtime_identity
     )
 
 

@@ -384,7 +384,6 @@ def test_codec_adapter_rejects_runtime_without_codec_execution() -> None:
     recipe = _recipe()
 
     class _SamplerOnly(_FakeCustomSamplingRuntime):
-
         def sample_multistream(self, latent: object, **kwargs: object) -> object:
             raise NotImplementedError
 
