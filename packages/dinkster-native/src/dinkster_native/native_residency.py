@@ -37,7 +37,11 @@ from dinkster_inference import (
     PatchOverlay,
     ReconstructionRecipe,
 )
-from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
+from dinkster_protocol import (
+    AttentionPolicyConfig,
+    derive_attention_route_token,
+    validate_attention_policy,
+)
 from dinkster_workers import KNOWN_ACCELERATORS, AcceleratorError, current_execution_context
 from dinkster_workers.accelerator import ACCELERATOR_ENV
 
@@ -1679,32 +1683,22 @@ class NativeRuntimeHandle:
     def clone_with_attention_policy(
         self,
         attention_policy: object,
-        attention_route_token: object | None,
     ) -> NativeRuntimeHandle:
         """Rematerialize this runtime with one explicit attention route."""
-        if not isinstance(attention_route_token, AttentionRouteToken):
-            raise ValueError("an attention backend requires an authenticated route token")
-        policy = cast("str", attention_policy)
-        kitchen_available = any(
-            name == "dinkster-kitchen" for name, _version in attention_route_token.provider_versions
+        policy = validate_attention_policy(attention_policy)
+        context = current_execution_context()
+        if context is None or context.attention_capabilities is None:
+            raise RuntimeError("an attention backend requires selected worker capability evidence")
+        source_token = self._recipe.knobs.attention_route_token
+        role_policies = () if source_token is None else source_token.requested_role_policies
+        token = derive_attention_route_token(
+            context.attention_capabilities,
+            AttentionPolicyConfig(policy, role_policies),
         )
-        portable_fallback = policy == "dinkster_kitchen_int8" and not kitchen_available
-        primary = "sdpa" if portable_fallback else policy
-        fallback = "sdpa" if primary == "dinkster_kitchen_int8" else None
-        providers = tuple(
-            pair
-            for pair in attention_route_token.provider_versions
-            if pair[0] not in {"dinkster-kitchen", "sageattention"}
-            or (pair[0] == "dinkster-kitchen" and primary == "dinkster_kitchen_int8")
-        )
-        token = replace(
-            attention_route_token,
-            version=3 if portable_fallback else 1,
-            routes=tuple(AttentionRoute(role, primary, fallback) for role in ATTENTION_ROLES),
-            provider_versions=providers,
-            requested_policy=policy,
-            requested_role_policies=(),
-        )
+        if token.version == 3:
+            raise RuntimeError(
+                f"required attention policy {policy!r} is unavailable on the selected worker"
+            )
         knobs = replace(
             self._recipe.knobs,
             attention_policy=policy,

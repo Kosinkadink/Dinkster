@@ -54,7 +54,14 @@ from dinkster_inference import (
     require_inference_component_handle,
 )
 from dinkster_memory import PageMap
-from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
+from dinkster_protocol import (
+    ATTENTION_ROLES,
+    AttentionCapabilityEvidence,
+    AttentionPolicyConfig,
+    AttentionRoute,
+    AttentionRouteToken,
+    derive_attention_route_token,
+)
 from dinkster_schema import MappingSource, build_node_types, build_schemas, schema_signature
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import ExecutionContext, InProcessWorker
@@ -1602,16 +1609,16 @@ def test_native_load_dual_clip_forwards_ordered_sources_and_context(
     handle = object()
     calls: list[tuple[object, ...]] = []
     torch = FakeTorch(cuda=True)
-    route_token = AttentionRouteToken(
+    capabilities = AttentionCapabilityEvidence(
         1,
-        tuple(AttentionRoute(role, "sdpa") for role in ATTENTION_ROLES),
-        (("torch", "2.13.0"),),
-        "dinkster.attention-kernel.v1",
         "cpu",
         None,
         "2.13.0",
-        "sdpa",
+        "dinkster.attention-kernel.v1",
+        ("sdpa",),
+        (("torch", "2.13.0"),),
     )
+    route_token = derive_attention_route_token(capabilities, AttentionPolicyConfig("sdpa"))
 
     def build(*args: object, **kwargs: object) -> object:
         calls.append((*args, kwargs))
@@ -1628,6 +1635,7 @@ def test_native_load_dual_clip_forwards_ordered_sources_and_context(
             vae_dtype="unloaded",
             attention_policy="sdpa",
             attention_route_token=route_token,
+            attention_capabilities=capabilities,
         )
     ):
         result = arm.NativeLoadDualClip.execute(
@@ -11620,16 +11628,16 @@ def test_build_ltxav_text_handle_composes_profile_components(
     built: list[tuple[object, str, str, object, dict[str, object]]] = []
     composed: list[tuple[tuple[object, ...], str]] = []
     result = object()
-    token = AttentionRouteToken(
+    capabilities = AttentionCapabilityEvidence(
         1,
-        tuple(AttentionRoute(role, "sdpa") for role in ATTENTION_ROLES),
-        (("torch", "2.13.0"),),
-        "dinkster.attention-kernel.v1",
         "cpu",
         None,
         "2.13.0",
-        "auto",
+        "dinkster.attention-kernel.v1",
+        ("sdpa",),
+        (("torch", "2.13.0"),),
     )
+    token = derive_attention_route_token(capabilities, AttentionPolicyConfig())
 
     def identity(
         _inference: object,
@@ -11684,6 +11692,7 @@ def test_build_ltxav_text_handle_composes_profile_components(
             text_dtype="bfloat16",
             vae_dtype="unloaded",
             attention_route_token=token,
+            attention_capabilities=capabilities,
         )
     ):
         loaded = arm._build_ltxav_text_handle(
@@ -32725,15 +32734,16 @@ def test_model_attention_backend_rematerializes_policy_and_preserves_overlay_sta
     expected_primary: str,
     expected_version: int,
 ) -> None:
-    from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
+    from dinkster_protocol import (
+        AttentionCapabilityEvidence,
+        AttentionPolicyConfig,
+        derive_attention_route_token,
+    )
 
     arm = _native_arm()
-    token = AttentionRouteToken(
-        version=4,
-        routes=tuple(
-            AttentionRoute(role, "sdpa", "bounded" if role == "vae" else None)
-            for role in ATTENTION_ROLES
-        ),
+    source_capabilities = AttentionCapabilityEvidence(
+        version=1,
+        available_policies=(("sdpa", "dinkster_kitchen_int8") if kitchen_available else ("sdpa",)),
         provider_versions=(
             (("dinkster-kitchen", "1.0"), ("torch", "2.10.0"))
             if kitchen_available
@@ -32741,10 +32751,11 @@ def test_model_attention_backend_rematerializes_policy_and_preserves_overlay_sta
         ),
         adapter_contract_revision="test",
         device_kind="cuda",
-        device_sm=90,
+        device_sm=80,
         sdpa_torch_runtime="2.10.0",
-        requested_policy="auto",
     )
+    destination_capabilities = replace(source_capabilities, device_sm=90)
+    token = derive_attention_route_token(source_capabilities, AttentionPolicyConfig())
     recipe = replace(
         _recipe(),
         knobs=replace(
@@ -32776,16 +32787,34 @@ def test_model_attention_backend_rematerializes_policy_and_preserves_overlay_sta
         sparse_attention=sparse,
     )
 
-    patched = arm.GenerationModelAttentionBackend.execute(
-        model=original,
-        attention=attention,
-    )["model"]
+    context_token = derive_attention_route_token(destination_capabilities, AttentionPolicyConfig())
+    with use_execution_context(
+        ExecutionContext(
+            "native",
+            None,
+            attention_route_token=context_token,
+            attention_capabilities=destination_capabilities,
+        )
+    ):
+        if expected_version == 3:
+            with pytest.raises(RuntimeError, match="required attention policy"):
+                arm.GenerationModelAttentionBackend.execute(
+                    model=original,
+                    attention=attention,
+                )
+            assert accepted == []
+            return
+        patched = arm.GenerationModelAttentionBackend.execute(
+            model=original,
+            attention=attention,
+        )["model"]
 
     assert len(accepted) == 1
     next_recipe = accepted[0]
     assert next_recipe.knobs.attention_policy == expected_policy
     assert next_recipe.knobs.attention_route_token.requested_policy == expected_policy
     assert next_recipe.knobs.attention_route_token.version == expected_version
+    assert next_recipe.knobs.attention_route_token.device_sm == 90
     assert {
         (route.primary, route.fallback) for route in next_recipe.knobs.attention_route_token.routes
     } == {
@@ -32796,6 +32825,64 @@ def test_model_attention_backend_rematerializes_policy_and_preserves_overlay_sta
     }
     assert patched.handle is replacement
     assert patched.sparse_attention is sparse
+
+
+def test_model_attention_backend_preserves_role_overrides_and_same_worker_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_protocol import (
+        AttentionCapabilityEvidence,
+        AttentionPolicyConfig,
+        canonical_attention_route_token_bytes,
+        derive_attention_route_token,
+    )
+
+    arm = _native_arm()
+    capabilities = AttentionCapabilityEvidence(
+        version=1,
+        available_policies=("sdpa", "dinkster_kitchen_int8"),
+        provider_versions=(("dinkster-kitchen", "1.0"), ("torch", "2.10.0")),
+        adapter_contract_revision="test",
+        device_kind="cuda",
+        device_sm=90,
+        sdpa_torch_runtime="2.10.0",
+    )
+    config = AttentionPolicyConfig("sdpa", (("flux", "dinkster_kitchen_int8"),))
+    token = derive_attention_route_token(capabilities, config)
+    recipe = replace(
+        _recipe(),
+        knobs=replace(
+            _recipe().knobs,
+            attention_policy="sdpa",
+            attention_route_token=token,
+        ),
+    )
+    runtime = _runtime()
+    runtime.runtime_identity = recipe.runtime_identity
+    handle = _handle(arm, runtime, recipe=recipe)
+    accepted: list[Any] = []
+
+    def clone_recipe(_handle, next_recipe, **_kwargs):  # noqa: ANN001, ANN202
+        accepted.append(next_recipe)
+        return handle
+
+    monkeypatch.setattr(arm.NativeRuntimeHandle, "_clone_recipe", clone_recipe)
+    with use_execution_context(
+        ExecutionContext(
+            "native",
+            None,
+            attention_policy="sdpa",
+            attention_route_token=token,
+            attention_capabilities=capabilities,
+        )
+    ):
+        assert handle.clone_with_attention_policy("sdpa") is handle
+
+    rebound = accepted[0].knobs.attention_route_token
+    assert rebound.requested_role_policies == (("flux", "dinkster_kitchen_int8"),)
+    assert canonical_attention_route_token_bytes(rebound) == canonical_attention_route_token_bytes(
+        token
+    )
 
 
 def test_cfg_override_binds_percent_range_to_model_sigmas(

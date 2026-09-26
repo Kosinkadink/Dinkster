@@ -614,10 +614,7 @@ class GenerationModelAttentionBackend(Node):
             "comfy kitchen attention": "dinkster_kitchen_int8",
             "pytorch attention": "sdpa",
         }.get(attention, "sdpa")
-        replacement = handle.clone_with_attention_policy(
-            policy,
-            handle.recipe.knobs.attention_route_token,
-        )
+        replacement = handle.clone_with_attention_policy(policy)
         return cls.outputs(
             model=_NativeModelOverlay(
                 replacement,
