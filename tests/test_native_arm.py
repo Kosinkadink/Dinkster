@@ -33007,11 +33007,14 @@ def test_h3_attention_recipe_rebinding_uses_destination_runtime_versions() -> No
     from dinkster_inference.component_catalog import default_component_registry
     from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
 
+    class TorchVersion(str):
+        pass
+
     source = WeightSourceRef("blake3:" + "1" * 64, "h3.safetensors", 123)
     token = AttentionRouteToken(
         version=1,
         routes=tuple(AttentionRoute(role, "sdpa") for role in ATTENTION_ROLES),
-        provider_versions=(),
+        provider_versions=(("torch", TorchVersion("2.13.0+cu130")),),
         adapter_contract_revision="test",
         device_kind="cuda",
         device_sm=120,
