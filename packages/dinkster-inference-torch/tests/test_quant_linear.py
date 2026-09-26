@@ -72,6 +72,27 @@ def test_int8_convrot_embedding_matches_kitchen() -> None:
     assert set(layer.state_dict()) == {"weight", "weight_scale"}
 
 
+def test_int8_embedding_bfloat16_matches_reference_rounding() -> None:
+    weight = torch.zeros((2, 256), dtype=torch.int8)
+    weight[:, :4] = torch.tensor([[1, -3, 5, -7], [11, -13, 17, -19]], dtype=torch.int8)
+    scale = torch.tensor([[0.010592243634164333], [0.02731683850288391]])
+    indices = torch.tensor([[1, 0]])
+    layer = Int8Embedding(
+        2,
+        256,
+        compute_dtype=torch.bfloat16,
+        per_channel=True,
+        convrot=False,
+        convrot_groupsize=256,
+    )
+    layer.load_state_dict({"weight": weight, "weight_scale": scale}, assign=True)
+
+    expected = (weight.float() * scale).to(torch.bfloat16)[indices]
+
+    assert torch.equal(layer(indices), expected)
+    assert not torch.equal(expected.float(), (weight.float() * scale)[indices])
+
+
 @pytest.mark.parametrize("layer_type", (Int8Linear, Int8Embedding))
 def test_int8_convrot_rejects_scalar_scale_layout(layer_type: type[torch.nn.Module]) -> None:
     with pytest.raises(ValueError, match="requires per-channel scales"):

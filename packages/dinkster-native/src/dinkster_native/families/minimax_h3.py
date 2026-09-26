@@ -968,7 +968,7 @@ class NativeMiniMaxH3AddGuide(MiniMaxH3AddGuide):
                     with torch.inference_mode():
                         video = video_runtime.encode_video(
                             frames.permute(3, 0, 1, 2).unsqueeze(0).to(video_handle.load_device)
-                        ).to(target_video)
+                        ).to(device=target_video.device)
             streams.append(("video", video))
 
         if audio is not None:

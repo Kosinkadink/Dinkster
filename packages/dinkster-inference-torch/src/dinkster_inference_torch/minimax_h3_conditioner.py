@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 import torch
 import torch.nn.functional as F
 from dinkster_inference.minimax_h3_conditioner import MINIMAX_H3_CONDITIONER_CONFIG
@@ -17,6 +18,16 @@ from .quant_linear import linear_input_act
 from .qwen_image_text import QwenImageLanguageModel, QwenImageVisionAttention
 
 _DEFAULT_ATTENTION = select_attention("qwen").kernel
+
+
+class _MiniMaxH3VisionAttention(QwenImageVisionAttention):
+    def _apply_rope(
+        self, query: torch.Tensor, key: torch.Tensor, matrix: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if query.dtype is not torch.float32:
+            return super()._apply_rope(query, key, matrix)  # pyright: ignore[reportPrivateUsage]
+        with dinkster_kitchen.use_backend("eager"):
+            return super()._apply_rope(query, key, matrix)  # pyright: ignore[reportPrivateUsage]
 
 
 class _PatchEmbed(torch.nn.Module):
@@ -55,7 +66,7 @@ class _VisionBlock(torch.nn.Module):
         super().__init__()
         self.norm1 = operations.layer_norm(hidden_size, eps=1e-6)
         self.norm2 = operations.layer_norm(hidden_size, eps=1e-6)
-        self.attn = QwenImageVisionAttention(
+        self.attn = _MiniMaxH3VisionAttention(
             hidden_size=hidden_size,
             num_heads=heads,
             operations=operations,
@@ -116,10 +127,12 @@ class MiniMaxH3VisionModel(torch.nn.Module):
         self,
         *,
         operations: Operations = INITLESS,
+        position_operations: Operations | None = None,
         attention_kernel: AttentionKernel = _DEFAULT_ATTENTION,
         _shape: _VisionShape | None = None,
     ) -> None:
         super().__init__()
+        position_operations = operations if position_operations is None else position_operations
         config = MINIMAX_H3_CONDITIONER_CONFIG
         shape = _shape or _VisionShape(
             config.vision_hidden_size,
@@ -137,7 +150,7 @@ class MiniMaxH3VisionModel(torch.nn.Module):
             raise ValueError("MiniMax H3 vision configuration is inconsistent")
         self.shape = shape
         self.patch_embed = _PatchEmbed(shape.hidden_size, shape.patch, operations)
-        self.pos_embed = operations.embedding(shape.position_embeddings, shape.hidden_size)
+        self.pos_embed = position_operations.embedding(shape.position_embeddings, shape.hidden_size)
         self.blocks = torch.nn.ModuleList(
             _VisionBlock(
                 shape.hidden_size,
@@ -180,10 +193,12 @@ class MiniMaxH3VisionModel(torch.nn.Module):
         position_embeddings: int,
         deepstack_layers: tuple[int, ...],
         operations: Operations = INITLESS,
+        position_operations: Operations | None = None,
         attention_kernel: AttentionKernel = _DEFAULT_ATTENTION,
     ) -> MiniMaxH3VisionModel:
         return cls(
             operations=operations,
+            position_operations=position_operations,
             attention_kernel=attention_kernel,
             _shape=_VisionShape(
                 hidden_size,
@@ -227,9 +242,8 @@ class MiniMaxH3VisionModel(torch.nn.Module):
         lengths: list[int] = []
         rotary_dim = (self.shape.hidden_size // self.shape.heads) // 2
         inverse = 1.0 / (
-            10_000.0
-            ** (torch.arange(0, rotary_dim, 2, device=device, dtype=torch.float32) / rotary_dim)
-        )
+            10_000.0 ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim)
+        ).to(device)
         max_side = max(max(height, width) for _, height, width in rows)
         frequency_table = torch.outer(
             torch.arange(max_side, device=device, dtype=torch.float32), inverse
@@ -238,7 +252,7 @@ class MiniMaxH3VisionModel(torch.nn.Module):
             h = torch.linspace(0, side - 1, height, device=device)
             w = torch.linspace(0, side - 1, width, device=device)
             h0, w0 = h.floor().long(), w.floor().long()
-            h1, w1 = h.ceil().long(), w.ceil().long()
+            h1, w1 = (h0 + 1).clamp(max=side - 1), (w0 + 1).clamp(max=side - 1)
             dh, dw = h - h0, w - w0
             indices = (
                 h0[:, None] * side + w0[None, :],
@@ -246,18 +260,21 @@ class MiniMaxH3VisionModel(torch.nn.Module):
                 h1[:, None] * side + w0[None, :],
                 h1[:, None] * side + w1[None, :],
             )
-            weights = (
-                (1 - dh)[:, None] * (1 - dw)[None, :],
-                (1 - dh)[:, None] * dw[None, :],
-                dh[:, None] * (1 - dw)[None, :],
-                dh[:, None] * dw[None, :],
-            )
-            position = torch.stack(
-                tuple(
-                    self.pos_embed(index.flatten()) * weight.flatten()[:, None]
-                    for index, weight in zip(indices, weights, strict=True)
+            lookups = tuple(self.pos_embed(index.flatten()) for index in indices)
+            weights = tuple(
+                weight.to(lookups[0].dtype)
+                for weight in (
+                    (1 - dh)[:, None] * (1 - dw)[None, :],
+                    (1 - dh)[:, None] * dw[None, :],
+                    dh[:, None] * (1 - dw)[None, :],
+                    dh[:, None] * dw[None, :],
                 )
-            ).sum(0)
+            )
+            corners = tuple(
+                lookup * weight.flatten()[:, None]
+                for lookup, weight in zip(lookups, weights, strict=True)
+            )
+            position = corners[0] + corners[1] + corners[2] + corners[3]
             row_ids = torch.arange(height, device=device)[:, None].expand(-1, width)
             col_ids = torch.arange(width, device=device)[None, :].expand(height, -1)
             coords = torch.stack((row_ids, col_ids), -1).reshape(-1, 2)
@@ -340,7 +357,8 @@ class MiniMaxH3ConditionerModel(torch.nn.Module):
             attention_kernel=attention_kernel,
         )
         self.visual = visual or MiniMaxH3VisionModel(
-            operations=operations, attention_kernel=attention_kernel
+            operations=operations,
+            attention_kernel=attention_kernel,
         )
 
     def forward(
@@ -377,15 +395,28 @@ class MiniMaxH3ConditionerModel(torch.nn.Module):
         attention_mask = None if attention_mask is None else attention_mask.to(device)
         position_ids = None if position_ids is None else position_ids.to(device)
         visual_mask = None if visual_mask is None else visual_mask.to(device)
-        embeds = self.model.embed(ids)
+        embeds = self.model.embed(ids).float()
         deepstack: tuple[torch.Tensor, ...] = ()
         if image_patches is not None:
             if visual_mask is None or visual_mask.shape != ids.shape:
                 raise ValueError("MiniMax H3 visual mask must match IDs")
             assert image_grid is not None
-            visual, deepstack = self.visual(
-                image_patches.to(device=embeds.device, dtype=torch.float32),
-                image_grid.to(device=embeds.device),
+            patches = image_patches.to(device=embeds.device, dtype=torch.float32)
+            grid = image_grid.to(device=embeds.device)
+            patch_counts = tuple(math.prod(int(value) for value in row) for row in grid.tolist())
+            visual_items: list[torch.Tensor] = []
+            deepstack_items: list[tuple[torch.Tensor, ...]] = []
+            start = 0
+            for index, patch_count in enumerate(patch_counts):
+                item_visual, item_deepstack = self.visual(
+                    patches[start : start + patch_count], grid[index : index + 1]
+                )
+                visual_items.append(item_visual)
+                deepstack_items.append(item_deepstack)
+                start += patch_count
+            visual = torch.cat(visual_items)
+            deepstack = tuple(
+                torch.cat(layer_items) for layer_items in zip(*deepstack_items, strict=True)
             )
             if visual.shape != (int(visual_mask.count_nonzero()), embeds.shape[-1]):
                 raise ValueError("MiniMax H3 vision output must match visual placeholders")

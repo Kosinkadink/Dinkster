@@ -643,6 +643,40 @@ def test_gemma4_rope_matches_cpu_precomputed_inverse_frequencies_on_cuda() -> No
     assert torch.equal(negative_sine, -expected_sine[..., 256:])
 
 
+def test_minimax_h3_vision_rope_matches_cpu_precomputed_inverse_frequencies_on_cuda() -> None:
+    from dinkster_inference_torch.minimax_h3_conditioner import MiniMaxH3VisionModel
+
+    device = torch.device("cuda:0")
+    model = MiniMaxH3VisionModel.reduced(
+        hidden_size=1280,
+        output_size=8,
+        intermediate_size=16,
+        heads=16,
+        layers=0,
+        patch=(2, 14, 14),
+        merge_size=2,
+        position_embeddings=16,
+        deepstack_layers=(),
+    ).to(device)
+
+    _, (actual_cosine, actual_sine), _ = model._position_values(  # pyright: ignore[reportPrivateUsage]
+        [(1, 22, 36)], device
+    )
+
+    height_ids = torch.arange(22, device=device).unsqueeze(1).expand(-1, 36)
+    height_ids = height_ids.reshape(11, 2, 18, 2).permute(0, 2, 1, 3).flatten()
+    width_ids = torch.arange(36, device=device).unsqueeze(0).expand(22, -1)
+    width_ids = width_ids.reshape(11, 2, 18, 2).permute(0, 2, 1, 3).flatten()
+    positions = torch.stack((height_ids, width_ids), dim=-1)
+    inverse = 1.0 / (10_000.0 ** (torch.arange(0, 40, 2).float() / 40))
+    frequencies = torch.outer(torch.arange(36, device=device).float(), inverse.to(device))
+    selected = frequencies[positions].flatten(1)
+    expected = torch.cat((selected, selected), dim=-1)
+
+    assert torch.equal(actual_cosine, expected.cos())
+    assert torch.equal(actual_sine, expected.sin())
+
+
 def test_int8_fused_training_forward_and_input_gradient_on_cuda() -> None:
     import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
     from dinkster_inference_torch.quant_linear import Int8Linear

@@ -667,7 +667,6 @@ def add_minimax_h3_timeline_guide(
             not video.is_floating_point()
             or video.layout != torch.strided
             or video.device != target_video.device
-            or video.dtype != target_video.dtype
         ):
             raise MiniMaxH3RuntimeError(
                 "timeline guide video must match the target tensor contract"
@@ -1056,11 +1055,7 @@ class MiniMaxH3ConditionerRuntime:
             for keyframe in request.keyframes:
                 content = _descriptor_tensor(keyframe.payload, payload_snapshot, used)
                 _check_cancelled(cancelled)
-                latent = (
-                    require_video_vae()
-                    .encode_video(_video_content(content, device))
-                    .to(target.by_role("video"))
-                )
+                latent = require_video_vae().encode_video(_video_content(content, device))
                 _check_cancelled(cancelled)
                 index = 0 if keyframe.role is MiniMaxH3KeyframeRole.FIRST else frame_count - 1
                 keyframes.append(MiniMaxH3KeyframeLatent(index, latent))
@@ -1069,11 +1064,7 @@ class MiniMaxH3ConditionerRuntime:
                 if type(reference) is MiniMaxH3ImageReference:
                     content = _descriptor_tensor(reference.payload, payload_snapshot, used)
                     _check_cancelled(cancelled)
-                    latent = (
-                        require_video_vae()
-                        .encode_video(_video_content(content, device))
-                        .to(target.by_role("video"))
-                    )
+                    latent = require_video_vae().encode_video(_video_content(content, device))
                     _check_cancelled(cancelled)
                     references.append(
                         MiniMaxH3ReferenceLatents(MiniMaxH3ReferenceKind.IMAGE, latent)
@@ -1101,11 +1092,7 @@ class MiniMaxH3ConditionerRuntime:
                         )
                     )
                     _check_cancelled(cancelled)
-                    video = (
-                        require_video_vae()
-                        .encode_video(_video_content(frames, device))
-                        .to(target.by_role("video"))
-                    )
+                    video = require_video_vae().encode_video(_video_content(frames, device))
                     _check_cancelled(cancelled)
                     audio = None
                     if video_reference.audio is not None:

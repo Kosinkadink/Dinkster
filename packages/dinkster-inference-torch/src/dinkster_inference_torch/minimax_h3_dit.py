@@ -858,19 +858,20 @@ class _MiniMaxH3FinalLayer(torch.nn.Module):
         *,
         time_dim: int,
         apply_silu: bool,
-        operations: Operations,
+        norm_operations: Operations,
+        adaln_operations: Operations,
         fp32_operations: Operations,
     ) -> None:
         super().__init__()
         patch_width = config.video_latent_channels * math.prod(config.patch)
-        self.norm = operations.rms_norm(config.hidden_width, eps=1e-5)
+        self.norm = norm_operations.rms_norm(config.hidden_width, eps=1e-5)
         self.adaln_proj = _MiniMaxH3AdaLN(
             time_dim,
             config.hidden_width,
             2,
             1,
             apply_silu=apply_silu,
-            operations=operations,
+            operations=adaln_operations,
         )
         self.video_out = fp32_operations.linear(config.hidden_width, patch_width)
         self.audio_out = fp32_operations.linear(config.hidden_width, config.audio_latent_channels)
@@ -1085,7 +1086,8 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
             config,
             time_dim=adaln_input_width,
             apply_silu=time_embedding_kind == "mlp",
-            operations=adaln_operations,
+            norm_operations=operations,
+            adaln_operations=adaln_operations,
             fp32_operations=fp32_operations,
         )
         object.__setattr__(self, "_attention_kernel", attention_kernel)
@@ -1326,12 +1328,8 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
     def _validate_condition_tensor(
         condition: torch.Tensor, target: torch.Tensor, name: str
     ) -> None:
-        if (
-            not condition.is_floating_point()
-            or condition.device != target.device
-            or condition.dtype != target.dtype
-        ):
-            raise ValueError(f"{name} must share the target device and dtype")
+        if not condition.is_floating_point() or condition.device != target.device:
+            raise ValueError(f"{name} must be floating on the target device")
 
     def _rope_table(
         self, position_ids: torch.Tensor, device: torch.device, dtype: torch.dtype
