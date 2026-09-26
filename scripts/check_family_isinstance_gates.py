@@ -309,21 +309,21 @@ def write_allowlist(
     value_type_ceiling: int,
     value_type_sites: list[ScannedSite],
 ) -> None:
-    allowlist.write_text(
-        json.dumps(
-            {
-                "ceiling": ceiling,
-                "sites": allowed,
-                "value_type_allowlist": {
-                    "ceiling": value_type_ceiling,
-                    "sites": value_type_sites,
+    with allowlist.open("w", encoding="utf-8", newline="\n") as output:
+        output.write(
+            json.dumps(
+                {
+                    "ceiling": ceiling,
+                    "sites": allowed,
+                    "value_type_allowlist": {
+                        "ceiling": value_type_ceiling,
+                        "sites": value_type_sites,
+                    },
                 },
-            },
-            indent=2,
+                indent=2,
+            )
+            + "\n"
         )
-        + "\n",
-        encoding="utf-8",
-    )
 
 
 def main() -> int:
