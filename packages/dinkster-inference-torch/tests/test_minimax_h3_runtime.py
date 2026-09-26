@@ -894,9 +894,7 @@ def test_h3_timeline_guide_adapter_accepts_mixed_floating_dtype_on_target_device
     invalid = TimelineGuide(
         0,
         1,
-        MultiStreamLatent.from_pairs(
-            (("video", torch.zeros(1, 24, 1, 2, 2, dtype=torch.int32)),)
-        ),
+        MultiStreamLatent.from_pairs((("video", torch.zeros(1, 24, 1, 2, 2, dtype=torch.int32)),)),
     )
     with pytest.raises(MiniMaxH3RuntimeError, match="tensor contract"):
         add_minimax_h3_timeline_guide(prepared, target, invalid)
