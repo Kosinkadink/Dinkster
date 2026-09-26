@@ -1374,6 +1374,7 @@ assert [node.schema().node_type for node in GENERATION_PROVIDER_NODES] == [
     "dinkster.conditioning_set_timestep_range", "dinkster.conditioning_zero_out",
     "dinkster.chroma_radiance_options", "comfy.BlockSparseAttention",
     "comfy.MiniMaxH3SigmaShift",
+    "comfy.ModelAttentionBackend",
     "dinkster.chroma_model_sampling",
     "dinkster.model_sampling_sd3",
     "dinkster.model_sampling_ltxv",
