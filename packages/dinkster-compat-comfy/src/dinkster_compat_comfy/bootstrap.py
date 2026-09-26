@@ -229,6 +229,11 @@ def ensure_prompt_server() -> object | None:
     if instance is not None:
         return instance
     try:
+        parameters = inspect.signature(prompt_server).parameters
+        if "asset_manager" in parameters:
+            asset_module = importlib.import_module("app.assets.manager")
+            default_asset_manager = asset_module.default_asset_manager
+            return prompt_server(asyncio.new_event_loop(), default_asset_manager())
         return prompt_server(asyncio.new_event_loop())
     except Exception:
         return None

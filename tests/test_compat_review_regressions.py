@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 from pathlib import Path
@@ -29,6 +30,55 @@ class GoodNode:
 
     def run(self) -> tuple[int]:
         return (1,)
+
+
+@pytest.mark.parametrize("requires_asset_manager", [False, True])
+def test_prompt_server_bootstrap_matches_upstream_constructor(
+    monkeypatch: pytest.MonkeyPatch, requires_asset_manager: bool
+) -> None:
+    loop = object()
+    asset_manager = object()
+    calls: list[tuple[object, ...]] = []
+
+    if requires_asset_manager:
+
+        class AssetPromptServer:
+            instance: object | None = None
+
+            def __init__(self, supplied_loop: object, asset_manager: object) -> None:
+                calls.append((supplied_loop, asset_manager))
+                AssetPromptServer.instance = self
+
+        prompt_server = AssetPromptServer
+
+    else:
+
+        class LegacyPromptServer:
+            instance: object | None = None
+
+            def __init__(self, supplied_loop: object) -> None:
+                calls.append((supplied_loop,))
+                LegacyPromptServer.instance = self
+
+        prompt_server = LegacyPromptServer
+
+    server = SimpleNamespace(PromptServer=prompt_server)
+    assets = SimpleNamespace(default_asset_manager=lambda: asset_manager)
+
+    def import_module(name: str) -> object:
+        if name == "server":
+            return server
+        if name == "app.assets.manager":
+            return assets
+        raise AssertionError(name)
+
+    monkeypatch.setattr(importlib, "import_module", import_module)
+    monkeypatch.setattr(asyncio, "new_event_loop", lambda: loop)
+
+    instance = bootstrap.ensure_prompt_server()
+
+    assert instance is prompt_server.instance
+    assert calls == [(loop, asset_manager) if requires_asset_manager else (loop,)]
 
 
 def test_namespaced_skips_do_not_collide_and_success_clears_stale() -> None:
