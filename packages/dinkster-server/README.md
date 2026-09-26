@@ -52,6 +52,10 @@ The main protocol routes include:
 - `POST /api/jobs`, `GET /api/jobs`, and `GET` or `DELETE /api/jobs/{client_id}/{job_id}`.
   Active same-content duplicate submissions return the existing jobRef with
   `duplicate: true`; different content under the active key returns 409.
+  Submissions may set `cacheEnabled: false` to execute every node without
+  result-cache reads, writes, or single-flight coalescing while preserving the
+  server process and loaded model consumers. Omission or `true` keeps normal
+  memory or layered result-cache behavior.
   Submissions may include `placement: {"topLevelNodeId": "workerName"}`;
   region hints cover their complete body. Placement participates in job
   idempotency but not the graph document or node input fingerprints;
