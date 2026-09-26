@@ -5060,7 +5060,7 @@ def test_memory_accounting_separates_logical_weights_vbar_surplus_and_cast_arena
     assert accounting.shared_workspace_bytes == sum(
         backend.cast_arena_size(arena) for arena in backend.arenas
     )
-    assert accounting.memory_compiler == "disabled"
+    assert accounting.memory_compiler == "unavailable"
 
 
 def test_working_set_reservation_holds_full_vbar_until_outer_release() -> None:

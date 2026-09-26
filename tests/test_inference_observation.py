@@ -60,6 +60,7 @@ def test_receipt_preserves_distinct_components_transitions_unknown_and_peak() ->
             DeviceMemorySnapshot(
                 device="cuda:3",
                 measured_bytes=112,
+                allocator_measured_bytes=112,
                 reconciliation_bound_bytes=0,
                 unknown_bytes=12,
             ),
@@ -76,6 +77,7 @@ def test_receipt_preserves_distinct_components_transitions_unknown_and_peak() ->
             DeviceMemorySnapshot(
                 device="cuda:3",
                 measured_bytes=128,
+                allocator_measured_bytes=128,
                 reconciliation_bound_bytes=0,
                 unknown_bytes=8,
             ),
@@ -110,6 +112,7 @@ def test_receipt_preserves_distinct_components_transitions_unknown_and_peak() ->
         "text.encoder",
     ]
     assert snapshots[0]["devices"][0]["unknownBytes"] == 12
+    assert snapshots[0]["devices"][0]["allocatorMeasuredBytes"] == 112
     assert record["decisions"] == [
         {
             "componentId": "text.encoder",
@@ -134,6 +137,7 @@ def test_snapshot_deduplicates_shared_storage_for_reconciliation() -> None:
             DeviceMemorySnapshot(
                 device="cuda:3",
                 measured_bytes=80,
+                allocator_measured_bytes=80,
                 reconciliation_bound_bytes=0,
                 unknown_bytes=5,
             ),
@@ -149,12 +153,12 @@ def test_snapshot_deduplicates_shared_storage_for_reconciliation() -> None:
     (
         (
             (_component("diffusion.main", resident=75),),
-            DeviceMemorySnapshot("cuda:3", 70, 0, 0),
+            DeviceMemorySnapshot("cuda:3", 70, 70, 0, 0),
             "reconciliation bound",
         ),
         (
             (_component("diffusion.main", resident=75),),
-            DeviceMemorySnapshot("cuda:3", 90, 14, 0),
+            DeviceMemorySnapshot("cuda:3", 90, 90, 14, 0),
             "reconciliation bound",
         ),
         (
@@ -162,7 +166,7 @@ def test_snapshot_deduplicates_shared_storage_for_reconciliation() -> None:
                 _component("diffusion.main", storage_id="shared", resident=75),
                 _component("control.patch", storage_id="shared", resident=80),
             ),
-            DeviceMemorySnapshot("cuda:3", 80, 5, 5),
+            DeviceMemorySnapshot("cuda:3", 80, 80, 5, 5),
             "shared storage",
         ),
     ),
@@ -187,7 +191,7 @@ def test_receipt_rejects_missing_component() -> None:
     snapshot = ExecutionMemorySnapshot(
         boundary="post-load",
         components=(_component("diffusion.main"),),
-        devices=(DeviceMemorySnapshot("cuda:3", 75, 0, 0),),
+        devices=(DeviceMemorySnapshot("cuda:3", 75, 75, 0, 0),),
         memory_compiler="disabled",
     )
 

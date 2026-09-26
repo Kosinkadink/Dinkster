@@ -103,14 +103,22 @@ class DeviceMemorySnapshot:
 
     device: str
     measured_bytes: int
+    allocator_measured_bytes: int
     reconciliation_bound_bytes: int
     unknown_bytes: int
 
     def __post_init__(self) -> None:
         if not self.device:
             raise ValueError("memory device must be nonempty")
-        for label in ("measured_bytes", "reconciliation_bound_bytes", "unknown_bytes"):
+        for label in (
+            "measured_bytes",
+            "allocator_measured_bytes",
+            "reconciliation_bound_bytes",
+            "unknown_bytes",
+        ):
             _validate_bytes(f"memory device {label}", cast(int, getattr(self, label)))
+        if self.allocator_measured_bytes > self.measured_bytes:
+            raise ValueError("memory allocator measurement cannot exceed device measurement")
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,6 +266,12 @@ class ExecutionObserverAttachment:
                 return False
             self._markers.add(marker)
             return True
+
+    def has_claimed(self, marker: str) -> bool:
+        if not marker:
+            raise ValueError("execution observer marker must be nonempty")
+        with self._lock:
+            return marker in self._markers
 
     def begin(
         self,
@@ -485,6 +499,7 @@ def _memory_snapshot_dict(snapshot: ExecutionMemorySnapshot) -> dict[str, object
             {
                 "device": device.device,
                 "measuredBytes": device.measured_bytes,
+                "allocatorMeasuredBytes": device.allocator_measured_bytes,
                 "reconciliationBoundBytes": device.reconciliation_bound_bytes,
                 "unknownBytes": device.unknown_bytes,
             }

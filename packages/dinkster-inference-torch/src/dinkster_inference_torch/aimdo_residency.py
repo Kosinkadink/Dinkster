@@ -1677,7 +1677,7 @@ class AimdoWeights:
                 allocator_weight_bytes=eager,
                 shared_workspace_id=shared_id,
                 shared_workspace_bytes=workspace,
-                memory_compiler="disabled",
+                memory_compiler="unavailable",
             )
 
     def is_loaded(self, unit: str) -> bool:

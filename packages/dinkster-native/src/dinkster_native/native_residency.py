@@ -48,6 +48,7 @@ from .memory_policy import native_memory_policy
 
 NativeStageEvent = ExecutionSpanEvent
 NativeStageObserver = ExecutionObserver
+_DEVICE_RECONCILIATION_BOUND_BYTES = 1 << 20
 
 
 @dataclass(frozen=True)
@@ -676,11 +677,30 @@ class NativeResidencyCoordinator:
                         for _mechanisms, _required, minimum in self._active_stages
                         if minimum is not None
                     ]
-                    memory_before = (
-                        handle._memory_state()  # pyright: ignore[reportPrivateUsage]
+                    observed_handles = (
+                        tuple(
+                            sorted(
+                                (
+                                    candidate
+                                    for candidate in self._handles
+                                    if isinstance(  # pyright: ignore[reportUnnecessaryIsInstance]
+                                        candidate, NativeRuntimeHandle
+                                    )
+                                ),
+                                key=lambda candidate: candidate.recipe.runtime_identity,
+                            )
+                        )
                         if observe_memory
-                        else {}
+                        else ()
                     )
+                    memory_before = {
+                        candidate: state
+                        for candidate in observed_handles
+                        if (
+                            state := candidate._memory_state()  # pyright: ignore[reportPrivateUsage]
+                        )
+                        is not None
+                    }
                     with native_execution_span(
                         observer_stage,
                         "prefetch",
@@ -707,27 +727,34 @@ class NativeResidencyCoordinator:
                             parent_span_id if prefetch_span is None else prefetch_span.span_id
                         )
                         if observe_memory:
-                            handle._record_memory_decisions(  # pyright: ignore[reportPrivateUsage]
-                                memory_before,
-                                stage=observer_stage,
-                                parent_span_id=memory_parent,
-                                reason="stage-admission",
-                                decreasing_action="evict",
-                            )
+                            for observed_handle, previous in memory_before.items():
+                                observed_handle._record_memory_decisions(  # pyright: ignore[reportPrivateUsage]
+                                    previous,
+                                    stage=observer_stage,
+                                    parent_span_id=memory_parent,
+                                    reason="stage-admission",
+                                    decreasing_action="evict",
+                                )
                         attachment = current_native_observer()
                         boundary = "post-load"
                         if (
                             observer_stage == "sample"
                             and attachment is not None
-                            and attachment.claim_once("first-sampling-seam")
+                            and not attachment.has_claimed("first-sampling-seam")
                         ):
                             boundary = "first-sampling-seam"
                         if observe_memory:
-                            handle._record_memory_snapshot(  # pyright: ignore[reportPrivateUsage]
+                            recorded = handle._record_memory_snapshot(  # pyright: ignore[reportPrivateUsage]
                                 boundary,
                                 stage=observer_stage,
                                 parent_span_id=memory_parent,
                             )
+                            if (
+                                recorded
+                                and boundary == "first-sampling-seam"
+                                and attachment is not None
+                            ):
+                                attachment.claim_once("first-sampling-seam")
                     handle.run_lifecycle("pre-run")
                     handle.run_lifecycle("inject")
                     yield
@@ -784,6 +811,9 @@ class NativeResidencyCoordinator:
                 if observe_memory
                 else {}
             )
+            if memory_before is None:
+                observe_memory = False
+                memory_before = {}
             with native_execution_span(
                 "load", "offload", device=_mechanism_device(handle.mechanisms)
             ):
@@ -836,6 +866,9 @@ class NativeResidencyCoordinator:
                 if observe_memory
                 else {}
             )
+            if memory_before is None:
+                observe_memory = False
+                memory_before = {}
             with native_execution_span(
                 observer_stage,
                 "offload",
@@ -890,6 +923,9 @@ class NativeResidencyCoordinator:
                 if observe_memory
                 else {}
             )
+            if memory_before is None:
+                observe_memory = False
+                memory_before = {}
             with native_execution_span(
                 "load", "release", device=_mechanism_device(handle.mechanisms)
             ):
@@ -1550,11 +1586,11 @@ class NativeRuntimeHandle:
         self._component_mechanisms = tuple(component_mechanisms)
         self.coordinator.enroll(self)
 
-    def _memory_state(self) -> dict[int, int]:
+    def _memory_state(self) -> dict[int, int] | None:
         try:
             return {id(mechanism): mechanism.loaded_bytes() for mechanism in self.mechanisms}
         except Exception:
-            return {}
+            return None
 
     def _record_memory_decisions(
         self,
@@ -1606,7 +1642,7 @@ class NativeRuntimeHandle:
                 stage,
                 "residency-policy",
                 ExecutionMemoryDecision(
-                    component_id=component,
+                    component_id=f"{self._recipe.runtime_identity}:{component}",
                     component_role=role,
                     device=str(mechanism.load_device),
                     source="residency-policy",
@@ -1623,16 +1659,17 @@ class NativeRuntimeHandle:
         *,
         stage: ExecutionStage,
         parent_span_id: int | None,
-    ) -> None:
+    ) -> bool:
         attachment = current_native_observer()
         if attachment is None:
-            return
+            return False
         try:
             self._emit_memory_snapshot(
                 attachment, boundary, stage=stage, parent_span_id=parent_span_id
             )
         except Exception:
-            pass
+            return False
+        return True
 
     def _emit_memory_snapshot(
         self,
@@ -1662,6 +1699,7 @@ class NativeRuntimeHandle:
         claimed_workspaces: set[str] = set()
         components: list[ComponentMemorySnapshot] = []
         allocator_weights: dict[str, int] = {}
+        allocator_workspaces: dict[str, int] = {}
         compiler_states: set[str] = set()
         accounting_by_mechanism: dict[int, tuple[dict[str, int], int, str | None]] = {}
         counted_allocator_storage: set[tuple[str, str]] = set()
@@ -1697,6 +1735,10 @@ class NativeRuntimeHandle:
                         page_classes["activation-runtime-workspace"] += (
                             accounting.shared_workspace_bytes
                         )
+                        device = str(mechanism.load_device)
+                        allocator_workspaces[device] = (
+                            allocator_workspaces.get(device, 0) + accounting.shared_workspace_bytes
+                        )
                 cached = (page_classes, allocator_weight, compiler_state)
                 accounting_by_mechanism[mechanism_id] = cached
             page_classes, allocator_weight, compiler_state = cached
@@ -1709,7 +1751,7 @@ class NativeRuntimeHandle:
                 allocator_weights[device] = allocator_weights.get(device, 0) + allocator_weight
             components.append(
                 ComponentMemorySnapshot(
-                    component_id=component,
+                    component_id=f"{self._recipe.runtime_identity}:{component}",
                     component_role=role,
                     storage_id=storage_ids[id(mechanism)],
                     device=device,
@@ -1736,8 +1778,21 @@ class NativeRuntimeHandle:
                 and callable(memory_allocated)
                 else allocator_weights.get(device, 0)
             )
-            unknown = max(0, allocator - allocator_weights.get(device, 0))
-            devices.append(DeviceMemorySnapshot(device, classified + unknown, 0, unknown))
+            known_allocator = allocator_weights.get(device, 0) + allocator_workspaces.get(device, 0)
+            if known_allocator > classified:
+                raise ValueError("known allocator pages exceed classified resident pages")
+            non_allocator = classified - known_allocator
+            measured = allocator + non_allocator
+            unknown = max(0, measured - classified)
+            devices.append(
+                DeviceMemorySnapshot(
+                    device=device,
+                    measured_bytes=measured,
+                    allocator_measured_bytes=allocator,
+                    reconciliation_bound_bytes=_DEVICE_RECONCILIATION_BOUND_BYTES,
+                    unknown_bytes=unknown,
+                )
+            )
         compiler = (
             "active"
             if "active" in compiler_states

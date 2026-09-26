@@ -53,7 +53,8 @@ weights, activation/runtime workspace, execution/result cache, other
 reclaimable, and unknown pages, plus memory-compiler state and per-device peak
 residency. Device reconciliation requires
 `abs(measured - classified - unknown) <= reconciliationBoundBytes`; producers
-must report an explicit bound rather than silently absorbing unexplained bytes.
+must report the independent device measurement with a 1 MiB sampling-drift
+bound rather than silently absorbing unexplained bytes.
 Observation is diagnostic only: observer and accounting failures cannot alter
 placement or execution.
 

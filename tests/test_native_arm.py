@@ -465,6 +465,7 @@ class FakeTorch:
         cuda_version: str | None = "13.0",
         hip_version: str | None = None,
         total_bytes: int = 24_000,
+        allocated_bytes: int | None = None,
         cuda_current_device: int = 0,
         xpu_current_device: int = 0,
     ) -> None:
@@ -474,6 +475,8 @@ class FakeTorch:
             current_device=lambda: cuda_current_device,
             mem_get_info=lambda _device: (6_000, total_bytes),
         )
+        if allocated_bytes is not None:
+            self.cuda.memory_allocated = lambda _device: allocated_bytes
         self.xpu = SimpleNamespace(
             is_available=lambda: xpu,
             current_device=lambda: xpu_current_device,
@@ -3357,10 +3360,11 @@ def test_native_stage_observer_brackets_residency_and_execution() -> None:
         "post-offload",
         "release",
     ]
+    component_prefix = f"{handle.recipe.runtime_identity}:"
     assert [component.component_id for component in snapshots[0].components] == [
-        "clip_l",
-        "diffusion",
-        "vae",
+        component_prefix + "clip_l",
+        component_prefix + "diffusion",
+        component_prefix + "vae",
     ]
     assert [component.loaded_bytes for component in snapshots[0].components] == [0, 40, 0]
     assert all(component.loaded_bytes == 0 for component in snapshots[-1].components)
@@ -3370,15 +3374,15 @@ def test_native_stage_observer_brackets_residency_and_execution() -> None:
     assert [
         (decision.component_id, decision.action, decision.reason) for decision in decisions
     ] == [
-        ("diffusion", "place", "stage-admission"),
-        ("clip_l", "retain", "stage-admission"),
-        ("vae", "retain", "stage-admission"),
-        ("diffusion", "offload", "advisory-unload"),
-        ("clip_l", "retain", "advisory-unload"),
-        ("vae", "retain", "advisory-unload"),
-        ("diffusion", "retain", "terminal-release"),
-        ("clip_l", "retain", "terminal-release"),
-        ("vae", "retain", "terminal-release"),
+        (component_prefix + "diffusion", "place", "stage-admission"),
+        (component_prefix + "clip_l", "retain", "stage-admission"),
+        (component_prefix + "vae", "retain", "stage-admission"),
+        (component_prefix + "diffusion", "offload", "advisory-unload"),
+        (component_prefix + "clip_l", "retain", "advisory-unload"),
+        (component_prefix + "vae", "retain", "advisory-unload"),
+        (component_prefix + "diffusion", "retain", "terminal-release"),
+        (component_prefix + "clip_l", "retain", "terminal-release"),
+        (component_prefix + "vae", "retain", "terminal-release"),
     ]
 
 
@@ -3439,6 +3443,45 @@ def test_native_memory_observation_preserves_manager_calls_and_marks_first_sampl
     ]
 
 
+def test_native_memory_observation_retries_first_sampling_after_accounting_failure() -> None:
+    arm = _native_arm()
+    residency = importlib.import_module("dinkster_compat_comfy.native_residency")
+    handle = _handle(arm, _runtime())
+    diffusion = handle._by_role["diffusion"][0]  # pyright: ignore[reportPrivateUsage]
+    calls = 0
+
+    def memory_accounting() -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("accounting unavailable")
+        loaded = diffusion.loaded_bytes()
+        return SimpleNamespace(
+            weights=loaded,
+            activation_runtime_workspace=0,
+            execution_result_cache=0,
+            other_reclaimable=0,
+            unknown=0,
+            allocator_weight_bytes=loaded,
+            shared_workspace_id=None,
+            shared_workspace_bytes=0,
+            memory_compiler="unavailable",
+        )
+
+    diffusion.memory_accounting = memory_accounting
+    events: list[Any] = []
+
+    with residency.observe_native_stages(events.append):
+        with handle.stage("diffusion", observer_stage="sample"):
+            pass
+        with handle.stage("diffusion", observer_stage="sample"):
+            pass
+
+    assert [
+        event.memory_snapshot.boundary for event in events if event.memory_snapshot is not None
+    ] == ["stage-end", "first-sampling-seam", "stage-end"]
+
+
 def test_native_memory_snapshot_deduplicates_shared_component_storage() -> None:
     arm = _native_arm()
     residency = importlib.import_module("dinkster_compat_comfy.native_residency")
@@ -3460,9 +3503,85 @@ def test_native_memory_snapshot_deduplicates_shared_component_storage() -> None:
 
     snapshot = next(event.memory_snapshot for event in events if event.memory_snapshot is not None)
     components = {component.component_id: component for component in snapshot.components}
-    assert components["clip_l"].storage_id == components["diffusion"].storage_id
-    assert components["clip_l"].resident_bytes == components["diffusion"].resident_bytes == 40
+    prefix = f"{handle.recipe.runtime_identity}:"
+    assert components[prefix + "clip_l"].storage_id == components[prefix + "diffusion"].storage_id
+    assert (
+        components[prefix + "clip_l"].resident_bytes
+        == components[prefix + "diffusion"].resident_bytes
+        == 40
+    )
     assert snapshot.devices[0].measured_bytes == 40
+
+
+def test_native_memory_snapshot_exposes_raw_allocator_measurement_and_bound() -> None:
+    arm = _native_arm()
+    residency = importlib.import_module("dinkster_compat_comfy.native_residency")
+    torch = FakeTorch(cuda=True, allocated_bytes=100)
+    handle = _handle(arm, _runtime(), torch=torch)
+    events: list[Any] = []
+
+    with residency.observe_native_stages(events.append):
+        with handle.stage("diffusion"):
+            pass
+
+    snapshot = next(event.memory_snapshot for event in events if event.memory_snapshot is not None)
+    device = snapshot.devices[0]
+    assert device.allocator_measured_bytes == 100
+    assert device.measured_bytes == 100
+    assert device.unknown_bytes == 60
+    assert device.reconciliation_bound_bytes == 1 << 20
+
+
+def test_native_memory_observer_records_cross_model_stage_eviction() -> None:
+    arm = _native_arm()
+    residency = importlib.import_module("dinkster_compat_comfy.native_residency")
+
+    class EvictingManager(FakeManager):
+        def load(
+            self,
+            mechanisms: object,
+            *,
+            memory_required: int = 0,
+            minimum_memory: int | None = None,
+            force_full_load: bool = False,
+        ) -> None:
+            batch = tuple(cast(Iterable[FakeMechanism], mechanisms))
+            for resident in tuple(self._registered):
+                if resident not in batch:
+                    cast(FakeMechanism, resident).unload()
+            super().load(
+                batch,
+                memory_required=memory_required,
+                minimum_memory=minimum_memory,
+                force_full_load=force_full_load,
+            )
+
+    manager = EvictingManager()
+    coordinator = _coordinator(arm, manager)
+    first = _handle(arm, _runtime(), coordinator=coordinator)
+    second_recipe = _recipe().append_overlays((_overlay("2"),))
+    second_runtime = _runtime()
+    second_runtime.runtime_identity = second_recipe.runtime_identity
+    second = _handle(arm, second_runtime, coordinator=coordinator, recipe=second_recipe)
+    with first.stage("diffusion"):
+        pass
+    events: list[Any] = []
+
+    with residency.observe_native_stages(events.append):
+        with second.stage("diffusion"):
+            pass
+
+    decisions = [event.memory_decision for event in events if event.memory_decision is not None]
+    assert (
+        f"{first.recipe.runtime_identity}:diffusion",
+        "evict",
+        "stage-admission",
+    ) in {(decision.component_id, decision.action, decision.reason) for decision in decisions}
+    assert (
+        f"{second.recipe.runtime_identity}:diffusion",
+        "place",
+        "stage-admission",
+    ) in {(decision.component_id, decision.action, decision.reason) for decision in decisions}
 
 
 @pytest.mark.parametrize(
