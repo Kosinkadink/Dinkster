@@ -2119,6 +2119,24 @@ def test_region_cache_policy_applies_to_each_occurrence_across_runs(
     asyncio.run(scenario())
 
 
+def test_execution_no_cache_overrides_nested_region_reuse() -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        engine = make_engine()
+        graph = Graph(nodes={"m": map_region(inputs={"item": [7, 7, 7]})})
+
+        warmup = await engine.run(graph, ["m"])
+        result = await engine.run(graph, ["m"], cache_enabled=False)
+
+        assert warmup.outputs["m"]["results"].resolve() == [8, 8, 8]
+        assert result.outputs["m"]["results"].resolve() == [8, 8, 8]
+        assert AddOne.ran == [7, 7, 7, 7, 7, 7]
+        assert len(result.executed) == 3
+        assert result.cached == ()
+
+    asyncio.run(scenario())
+
+
 def test_inner_reuse_overrides_outer_rerun() -> None:
     async def scenario() -> None:
         AddOne.ran.clear()

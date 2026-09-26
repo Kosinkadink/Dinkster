@@ -580,6 +580,7 @@ def job_to_wire(
         "finishedAt": job.finished_at,
         "nodeStates": dict(node_states or {}),
         "latestSeq": job.latest_seq,
+        "cacheEnabled": job.cache_enabled,
     }
     if job.execution is not None:
         wire["extensionSnapshotDigest"] = job.execution.extension_snapshot_digest
@@ -3259,6 +3260,9 @@ async def handle_submit(request: web.Request) -> web.Response:
     priority = body.get("priority", 0)
     if not isinstance(priority, int) or isinstance(priority, bool):
         raise _bad_request("'priority' must be an integer")
+    cache_enabled = body.get("cacheEnabled", True)
+    if type(cache_enabled) is not bool:
+        raise _bad_request("'cacheEnabled' must be a boolean")
     try:
         submitted_attention = (
             attention_policy_config_from_wire(body["attention"]) if "attention" in body else None
@@ -3329,6 +3333,8 @@ async def handle_submit(request: web.Request) -> web.Response:
         }
     if submitted_attention is not None and submitted_attention != state.attention_default:
         fingerprint_payload["attention"] = attention_policy_config_to_wire(submitted_attention)
+    if not cache_enabled:
+        fingerprint_payload["cacheEnabled"] = False
     fingerprint = hashlib.sha256(
         json.dumps(
             fingerprint_payload,
@@ -3523,6 +3529,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 compiled_graph=compiled_graph,
                 previews=previews,
                 attention_config=attention_config,
+                cache_enabled=cache_enabled,
             )
         except JobGraphAdmissionError as exc:
             return web.json_response(

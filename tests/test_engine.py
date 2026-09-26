@@ -110,6 +110,57 @@ def test_end_to_end_and_cache_behavior() -> None:
     asyncio.run(scenario())
 
 
+def test_no_cache_reexecutes_without_replacing_warm_cache_entries() -> None:
+    async def scenario() -> None:
+        engine = make_engine()
+        graph = image_graph(ratio=0.25)
+
+        warmup = await engine.run(graph, ["s"])
+        first = await engine.run(graph, ["s"], cache_enabled=False)
+        second = await engine.run(graph, ["s"], cache_enabled=False)
+        warm = await engine.run(graph, ["s"])
+
+        expected_nodes = {"g", "i", "b", "s"}
+        assert set(warmup.executed) == expected_nodes
+        assert set(first.executed) == expected_nodes
+        assert set(second.executed) == expected_nodes
+        assert first.cached == second.cached == ()
+        assert warm.executed == ()
+        assert set(warm.cached) == expected_nodes
+        assert [
+            result.outputs["s"]["mean"].resolve() for result in (warmup, first, second, warm)
+        ] == pytest.approx([0.5] * 4)
+
+    asyncio.run(scenario())
+
+
+def test_no_cache_disables_in_run_single_flight_coalescing() -> None:
+    async def scenario() -> None:
+        engine = make_engine()
+        graph = Graph(
+            nodes={
+                "left": GraphNode("dev.image.gradient", {"width": 8, "height": 4}),
+                "right": GraphNode("dev.image.gradient", {"width": 8, "height": 4}),
+            }
+        )
+
+        result = await engine.run(graph, ["left", "right"], cache_enabled=False)
+
+        assert set(result.executed) == {"left", "right"}
+        assert result.cached == ()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cache_enabled", (0, 1, "false", None))
+def test_engine_rejects_non_boolean_cache_control(cache_enabled: object) -> None:
+    async def scenario() -> None:
+        with pytest.raises(ValueError, match="cache_enabled"):
+            await make_engine().run(image_graph(), ["s"], cache_enabled=cast("bool", cache_enabled))
+
+    asyncio.run(scenario())
+
+
 def test_provider_resolution_reads_immutable_run_entry_snapshot() -> None:
     async def scenario() -> None:
         engine = make_engine()
