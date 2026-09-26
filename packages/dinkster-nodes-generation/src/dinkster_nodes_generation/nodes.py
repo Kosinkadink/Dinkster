@@ -1802,6 +1802,38 @@ class BlockSparseAttention(_SchemaOnlyNode):
         )
 
 
+class MiniMaxH3SigmaShift(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="comfy.MiniMaxH3SigmaShift",
+            display_name="ModelSamplingMiniMaxH3",
+            category="comfy/model/patch/minimax",
+            description="Set the video/audio flow shifts.",
+            inputs=(
+                InputSpec("model", MODEL),
+                InputSpec(
+                    "shift_video",
+                    FLOAT,
+                    required=False,
+                    default=12.0,
+                    widget=NumberWidget(min=0.01, max=100.0, step=0.01),
+                ),
+                InputSpec(
+                    "shift_audio",
+                    FLOAT,
+                    required=False,
+                    default=3.0,
+                    widget=NumberWidget(min=0.01, max=100.0, step=0.01),
+                ),
+            ),
+            outputs=(OutputSpec("MODEL", MODEL),),
+            occupies=("gpu",),
+            search_terms=("sigma shift", "minimax shift"),
+            aliases=("MiniMaxH3SigmaShift",),
+        )
+
+
 class RescaleCFG(_SchemaOnlyNode):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -5753,6 +5785,7 @@ GENERATION_NODES: tuple[type[Node], ...] = (
     ConditioningZeroOut,
     ChromaRadianceOptions,
     BlockSparseAttention,
+    MiniMaxH3SigmaShift,
     ChromaModelSampling,
     ModelSamplingSD3,
     ModelSamplingLTXV,

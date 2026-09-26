@@ -547,6 +547,56 @@ class GenerationBlockSparseAttention(Node):
         )
 
 
+class GenerationMiniMaxH3SigmaShift(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _generation_provider_schema("comfy.MiniMaxH3SigmaShift")
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        model: object,
+        shift_video: float = 12.0,
+        shift_audio: float = 3.0,
+    ) -> Mapping[str, object]:
+        model_value, applications = _application_chain_model(model, "model")
+        if applications:
+            raise ValueError("MiniMaxH3SigmaShift does not accept a model application chain")
+        for name, value in (("shift_video", shift_video), ("shift_audio", shift_audio)):
+            if type(value) not in (int, float):
+                raise ValueError(f"{name} must be a positive finite float")
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be a positive finite float")
+        handle, overlays, resolvers, control, _, transforms, windows, options = _native_model(
+            model_value, "model"
+        )
+        inference = importlib.import_module("dinkster_inference")
+        if handle.recipe.family_id != inference.MINIMAX_H3.id:
+            raise ValueError("MiniMaxH3SigmaShift requires a MiniMax H3 model")
+        sigmas = inference.MiniMaxH3Sigmas(
+            inference.FlowSigmas(shift=float(shift_video)),
+            audio_shift=float(shift_audio),
+        )
+        _sampling_space_runtime(handle.runtime, sigmas)
+        return cls.outputs(
+            MODEL=_NativeModelOverlay(
+                handle,
+                overlays,
+                resolvers,
+                control,
+                None,
+                transforms,
+                windows,
+                options,
+                sampling_cache=_native_model_sampling_cache(model_value),
+                sampling_timeline=_native_model_sampling_timeline(model_value),
+                sampling_space=sigmas,
+                sparse_attention=_native_model_sparse_attention(model_value),
+            )
+        )
+
+
 class GenerationModelSamplingFlux(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:

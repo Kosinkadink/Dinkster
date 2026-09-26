@@ -101,6 +101,7 @@ schema-only = [
     "dinkster.conditioning_zero_out",
     "dinkster.chroma_radiance_options",
     "comfy.BlockSparseAttention",
+    "comfy.MiniMaxH3SigmaShift",
     "dinkster.chroma_model_sampling",
     "dinkster.model_sampling_sd3",
     "dinkster.model_sampling_ltxv",

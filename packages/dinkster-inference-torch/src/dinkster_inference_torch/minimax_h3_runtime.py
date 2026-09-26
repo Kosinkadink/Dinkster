@@ -40,6 +40,7 @@ from dinkster_inference import (
     MiniMaxH3PresentationKind,
     MiniMaxH3REF2VARequest,
     MiniMaxH3ReferenceTokenGeometry,
+    MiniMaxH3Sigmas,
     MiniMaxH3SparseAttentionConfig,
     MiniMaxH3Task,
     MiniMaxH3TokenLayoutPlan,
@@ -1149,6 +1150,7 @@ class _H3SamplingContext:
     source: MultiStreamLatent[torch.Tensor]
     layout: LatentPackLayout
     conditioning: MiniMaxH3PreparedConditioning
+    sigmas: MiniMaxH3Sigmas
     raw_mask: torch.Tensor | None
     token_mask: torch.Tensor | None
     model_mask: MultiStreamLatent[torch.Tensor] | None
@@ -1405,7 +1407,7 @@ class _H3LatentAdapter:
                 f"{conditioning.task.name}"
             )
         _validate_av_target(latent)
-        sigmas = MINIMAX_H3_SIGMAS
+        sigmas = owner._sigmas  # pyright: ignore[reportPrivateUsage]
         sampler_latent = _h3_latent(
             latent.by_role("video").to(dtype=torch.float32),
             latent.by_role("audio").to(dtype=torch.float32) * sigmas.audio_scale,
@@ -1420,6 +1422,7 @@ class _H3LatentAdapter:
             latent,
             layout,
             conditioning,
+            sigmas,
             None,
             None,
             None,
@@ -1443,10 +1446,11 @@ class _H3LatentAdapter:
         context = cast("_H3SamplingContext", inputs.latent_context)
         if output is inputs.latent:
             return CustomSamplingResult(context.source, None)
+        sigmas = context.sigmas
         unpacked = unpack_latent_streams(output, context.layout)
         output_latent = _h3_latent(
             unpacked.by_role("video"),
-            unpacked.by_role("audio") / MINIMAX_H3_SIGMAS.audio_scale,
+            unpacked.by_role("audio") / sigmas.audio_scale,
         )
         denoised_output: MultiStreamLatent[torch.Tensor] | None = None
         if denoised is not None:
@@ -1454,7 +1458,7 @@ class _H3LatentAdapter:
                 raise TypeError("H3 denoised state must contain a MultiStreamLatent")
             denoised_output = _h3_latent(
                 denoised.by_role("video"),
-                denoised.by_role("audio") / MINIMAX_H3_SIGMAS.audio_scale,
+                denoised.by_role("audio") / sigmas.audio_scale,
             )
         return CustomSamplingResult(output_latent, denoised_output)
 
@@ -1524,6 +1528,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             runtime_identity if conditioning_identity is None else conditioning_identity
         )
         self._compute_dtype = compute_dtype
+        self._sigmas = MINIMAX_H3_SIGMAS
         self._samplers = torch_sampler_registry(sampler_registry)
         self._schedulers = (
             torch_scheduler_registry() if scheduler_registry is None else scheduler_registry
@@ -1564,8 +1569,15 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
     def receipt_identity(self) -> str | None:
         return self._receipt_identity
 
+    def with_sampling_space(self, space: SigmaSpace) -> MiniMaxH3DiTRuntime:
+        if type(space) is not MiniMaxH3Sigmas:
+            raise MiniMaxH3RuntimeError("MiniMax H3 sampling override requires MiniMaxH3Sigmas")
+        derived = copy(self)
+        derived._sigmas = space
+        return derived
+
     def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
-        return MINIMAX_H3_SIGMAS.video
+        return self._sigmas.video
 
     def adapt_multistream_latent(
         self,
@@ -1609,7 +1621,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         sparse_attention = (
             None
             if attention_binding.sparse is None
-            else MiniMaxH3SparseAttention(attention_binding.sparse)
+            else MiniMaxH3SparseAttention(attention_binding.sparse, self._sigmas)
         )
         if (
             attention_binding.sparse is not None
@@ -1638,7 +1650,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             raise MiniMaxH3RuntimeError(
                 "single-job sequence mode does not support BlockSparseAttention"
             )
-        sigmas = MINIMAX_H3_SIGMAS
+        sigmas = self._sigmas
         if requested_sequence:
             assert requested_distributed is not None
             if requested_distributed.sequence_guidance not in (1, 2):
@@ -2145,7 +2157,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 return evaluate(x, sigma, condition)
 
             scheduled_evaluator = FullLatentScheduledConditioningDenoiser(
-                space=MINIMAX_H3_SIGMAS.video,
+                space=sigmas.video,
                 model=model,
                 evaluate=evaluate_region,
                 project=project_region,
@@ -2201,9 +2213,9 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 else PackedInpaintConfiguration(
                     latent_context.token_mask,
                     layout.by_role("video").elements,
-                    MINIMAX_H3_SIGMAS.video.shift,
-                    MINIMAX_H3_SIGMAS.audio_shift,
-                    MINIMAX_H3_SIGMAS.audio_scale,
+                    sigmas.video.shift,
+                    sigmas.audio_shift,
+                    sigmas.audio_scale,
                 )
             ),
             close=close,

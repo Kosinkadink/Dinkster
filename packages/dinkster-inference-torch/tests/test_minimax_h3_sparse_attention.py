@@ -8,7 +8,7 @@ import logging
 
 import pytest
 import torch
-from dinkster_inference import MiniMaxH3SparseAttentionConfig
+from dinkster_inference import FlowSigmas, MiniMaxH3Sigmas, MiniMaxH3SparseAttentionConfig
 from dinkster_inference_torch.minimax_h3_attention import MiniMaxH3PackedSequenceFacts
 from dinkster_inference_torch.minimax_h3_sparse_attention import (
     MiniMaxH3SparseAttention,
@@ -65,6 +65,34 @@ def test_sparse_binding_honors_sigma_token_and_dense_block_gates_before_backend(
     assert sparse.bind(sigma=1.0, lane="conditional", facts=_facts())._eligible(hidden, 3) is False
     assert sparse.bind(sigma=0.5, lane="conditional", facts=_facts())._eligible(hidden, 4) is False
     assert sparse.bind(sigma=0.5, lane="conditional", facts=_facts())._eligible(hidden, 3) is False
+
+
+def test_sparse_binding_uses_the_runtime_video_shift_for_its_sigma_window(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sigmas = MiniMaxH3Sigmas(FlowSigmas(shift=9.0), audio_shift=2.5)
+    sparse = MiniMaxH3SparseAttention(
+        MiniMaxH3SparseAttentionConfig(
+            selection="vsa",
+            start_percent=0.2,
+            end_percent=0.8,
+            min_tokens=0,
+            verbose=True,
+        ),
+        sigmas,
+    )
+    hidden = torch.empty((1, 80, 128), dtype=torch.bfloat16)
+
+    with caplog.at_level(logging.INFO):
+        assert not sparse.bind(
+            sigma=0.72,
+            lane="conditional",
+            facts=_facts(),
+        )._eligible(hidden, 3)
+
+    assert caplog.messages == [
+        "BlockSparseAttention: dense: requires CUDA bfloat16, got cpu torch.bfloat16"
+    ]
 
 
 def test_sparse_binding_verbose_reports_dense_reason_once(

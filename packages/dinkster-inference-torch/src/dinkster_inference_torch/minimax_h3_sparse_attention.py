@@ -10,7 +10,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
-from dinkster_inference import MINIMAX_H3_SIGMAS, MiniMaxH3SparseAttentionConfig
+from dinkster_inference import (
+    MINIMAX_H3_SIGMAS,
+    MiniMaxH3Sigmas,
+    MiniMaxH3SparseAttentionConfig,
+)
 
 from .minimax_h3_attention import MiniMaxH3PackedSequenceFacts
 from .minimax_h3_dit import MiniMaxH3Attention
@@ -86,10 +90,17 @@ def _vsa_plan(facts: MiniMaxH3PackedSequenceFacts, device: torch.device) -> _VSA
 class MiniMaxH3SparseAttention:
     """Sampling-run state shared by every H3 block and guidance lane."""
 
-    def __init__(self, config: MiniMaxH3SparseAttentionConfig) -> None:
+    def __init__(
+        self,
+        config: MiniMaxH3SparseAttentionConfig,
+        sigmas: MiniMaxH3Sigmas = MINIMAX_H3_SIGMAS,
+    ) -> None:
         if type(config) is not MiniMaxH3SparseAttentionConfig:
             raise TypeError("config must be an exact MiniMaxH3SparseAttentionConfig")
+        if type(sigmas) is not MiniMaxH3Sigmas:
+            raise TypeError("sigmas must be an exact MiniMaxH3Sigmas")
         self.config = config
+        self.sigmas = sigmas
         self._pooled: dict[tuple[int, str, int], tuple[torch.Tensor, torch.Tensor]] = {}
         self._plans: dict[tuple[MiniMaxH3PackedSequenceFacts, torch.device], _VSAPlan] = {}
         self._logged: set[object] = set()
@@ -118,8 +129,8 @@ class _BoundMiniMaxH3SparseAttention:
 
     def _eligible(self, hidden: torch.Tensor, block_index: int) -> bool:
         config = self.owner.config
-        start = MINIMAX_H3_SIGMAS.percent_to_sigma(config.start_percent)
-        end = MINIMAX_H3_SIGMAS.percent_to_sigma(config.end_percent)
+        start = self.owner.sigmas.percent_to_sigma(config.start_percent)
+        end = self.owner.sigmas.percent_to_sigma(config.end_percent)
         if self.sigma > start or self.sigma < end:
             self.owner._log_once(
                 ("dense", "sigma", self.sigma),

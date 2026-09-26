@@ -1373,6 +1373,7 @@ assert [node.schema().node_type for node in GENERATION_PROVIDER_NODES] == [
     "dinkster.conditioning_set_area", "dinkster.conditioning_set_mask",
     "dinkster.conditioning_set_timestep_range", "dinkster.conditioning_zero_out",
     "dinkster.chroma_radiance_options", "comfy.BlockSparseAttention",
+    "comfy.MiniMaxH3SigmaShift",
     "dinkster.chroma_model_sampling",
     "dinkster.model_sampling_sd3",
     "dinkster.model_sampling_ltxv",
@@ -32657,6 +32658,47 @@ def test_block_sparse_attention_binds_official_h3_controls() -> None:
     assert config.verbose is True
     repatched = arm.GenerationDisableCFG1Optimization.execute(model=patched)["model"]
     assert repatched.sparse_attention is config
+
+
+def test_minimax_h3_sigma_shift_binds_paired_sampling_space_and_overlay_state() -> None:
+    from dinkster_inference import FlowSigmas, MiniMaxH3Sigmas
+
+    arm = _native_arm()
+    accepted: list[MiniMaxH3Sigmas] = []
+    runtime = _runtime()
+    runtime.with_sampling_space = lambda space: accepted.append(space) or runtime
+    recipe = replace(
+        _recipe(),
+        family_id="dinkster.minimax_h3",
+        component_identity=("family=dinkster.minimax_h3",),
+    )
+    runtime.family = SimpleNamespace(id="dinkster.minimax_h3")
+    runtime.runtime_identity = recipe.runtime_identity
+    handle = _handle(arm, runtime, recipe=recipe)
+    sparse = object()
+    original = arm._NativeModelOverlay(
+        handle,
+        (),
+        {},
+        sampling_shift=1.2,
+        sparse_attention=sparse,
+    )
+
+    patched = arm.GenerationMiniMaxH3SigmaShift.execute(
+        model=original,
+        shift_video=9.0,
+        shift_audio=2.5,
+    )["MODEL"]
+
+    assert accepted == [patched.sampling_space]
+    assert patched.sampling_space == MiniMaxH3Sigmas(
+        FlowSigmas(shift=9.0),
+        audio_shift=2.5,
+    )
+    assert patched.handle is handle
+    assert patched.sampling_shift is None
+    assert patched.sparse_attention is sparse
+    assert original.sampling_space is None
 
 
 def test_cfg_override_binds_percent_range_to_model_sigmas(
