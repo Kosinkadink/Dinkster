@@ -384,6 +384,47 @@ def test_queue_passes_job_attempt_to_engine_invocations(monkeypatch: pytest.Monk
     asyncio.run(scenario())
 
 
+def test_queue_passes_no_cache_to_compiled_execution() -> None:
+    async def scenario() -> None:
+        engine = make_engine()
+        runtime = engine.pin_execution()
+        compiled = CompiledGraph(
+            echo_graph(),
+            ("s",),
+            runtime.extension_snapshot_digest,
+            {},
+        )
+        queue = JobQueue(engine)
+        queue.start()
+
+        warmup = queue.submit(
+            "c1",
+            "warmup",
+            echo_graph(),
+            ["s"],
+            compiled_graph=compiled,
+        )
+        await wait_for_state(warmup, "completed")
+        no_cache = queue.submit(
+            "c1",
+            "no-cache",
+            echo_graph(),
+            ["s"],
+            compiled_graph=compiled,
+            cache_enabled=False,
+        )
+        await wait_for_state(no_cache, "completed")
+
+        assert warmup.result is not None
+        assert set(warmup.result.executed) == {"e", "s"}
+        assert no_cache.result is not None
+        assert set(no_cache.result.executed) == {"e", "s"}
+        assert no_cache.result.cached == ()
+        await queue.close()
+
+    asyncio.run(scenario())
+
+
 def test_queue_idempotent_active_submit_and_different_content_conflict() -> None:
     async def scenario() -> None:
         reset_sleeper()
