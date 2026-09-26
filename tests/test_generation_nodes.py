@@ -46,6 +46,7 @@ from dinkster_schema import (
     StringWidget,
     build_node_types,
     build_schemas,
+    claim_covers,
     elaborate,
     schema_signature,
     schema_to_wire,
@@ -161,7 +162,12 @@ def test_generation_manifest_owns_native_schema_contracts() -> None:
     scheduler_ids = tuple(item.id for item in builtin_schedulers())
 
     assert manifest.name == "dinkster-nodes-generation"
+    assert manifest.namespaces == ("dinkster", "comfy")
     assert manifest.schema_only == GENERATION_SCHEMA_NODE_IDS
+    for node_type in GENERATION_SCHEMA_NODE_IDS:
+        assert any(claim_covers(claim, node_type) for claim in manifest.namespaces), (
+            f"{node_type} is outside the manifest claims {manifest.namespaces}"
+        )
     assert [(item.id, item.version) for item in manifest.capabilities] == [
         ("dinkster.generation.schemas", "1.0.0")
     ]
