@@ -1815,12 +1815,15 @@ class Engine:
         targets: Sequence[str] | None = None,
         cache_enabled: bool = True,
         cache_scope: str | None = None,
+        run_cache_enabled: bool | None = None,
     ) -> None:
         """Ready-set scheduler over one DAG level (hazard H12): dispatch
         every node whose dependencies are satisfied; completions release
         dependents. Used for the top-level document and, recursively, for
         each region iteration - the SAME scheduler, cache, single-flight
         table, admission lanes, and pin list govern both."""
+        if run_cache_enabled is None:
+            run_cache_enabled = cache_enabled
         initial_targets = (
             list(targets)
             if targets is not None
@@ -1865,6 +1868,7 @@ class Engine:
                     _ProducedReferences(deps, initial_targets, produced),
                     cache_enabled,
                     cache_scope,
+                    run_cache_enabled,
                 )
             except BaseException:
                 produced.clear()
@@ -1910,6 +1914,7 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
+                    run_cache_enabled,
                 )
             else:
                 await self._run_node(
@@ -1966,6 +1971,7 @@ class Engine:
         references: _ProducedReferences,
         cache_enabled: bool,
         cache_scope: str | None,
+        run_cache_enabled: bool,
     ) -> None:
         """Original ready-set scheduler for graphs without deferred edges."""
         dependents: dict[str, list[str]] = {node_id: [] for node_id in deps}
@@ -1988,6 +1994,7 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
+                    run_cache_enabled,
                 )
             else:
                 await self._run_node(
@@ -2032,6 +2039,7 @@ class Engine:
         pinned: list[str],
         export_snapshot: ExportSnapshot | None,
         prefix: str = "",
+        cache_enabled: bool = True,
     ) -> None:
         """Expand one region (DESIGN 3.13): the single repetition primitive
         under the map/fold/while profiles.
@@ -2224,8 +2232,9 @@ class Engine:
                     export_snapshot,
                     prefix=f"{label}[{index}]/",
                     targets=body_targets,
-                    cache_enabled=region.cache_policy == "reuse",
+                    cache_enabled=cache_enabled and region.cache_policy == "reuse",
                     cache_scope=f"{label}[{index}]",
+                    run_cache_enabled=cache_enabled,
                 )
             except BaseException:
                 body_produced.clear()
@@ -2473,6 +2482,7 @@ class Engine:
         media_sources: Sequence[MediaSourceAuthority] = (),
         preview_policy: PreviewPolicy | None = None,
         attention_config: AttentionPolicyConfig | None = None,
+        cache_enabled: bool = True,
     ) -> RunResult:
         """Execute a raw graph, compiling once when this runtime declares compilers."""
         # Preserve legacy raw-run admission order: run-id errors precede a
@@ -2481,6 +2491,8 @@ class Engine:
             raise ValueError("run_id must be a non-empty string")
         if type(attempt_id) is not int or attempt_id < 1:
             raise ValueError("attempt_id must be a positive integer")
+        if type(cache_enabled) is not bool:
+            raise ValueError("cache_enabled must be a boolean")
         run_id = run_id if run_id is not None else uuid.uuid4().hex[:12]
         if run_id in self._run_schemas or run_id in self._compiling_run_ids:
             raise ActiveRunIdError(f"run_id {run_id!r} is already active")
@@ -2502,6 +2514,7 @@ class Engine:
                 media_sources=media_sources,
                 preview_policy=preview_policy,
                 attention_config=attention_config,
+                cache_enabled=cache_enabled,
             )
         self._compiling_run_ids.add(run_id)
         try:
@@ -2517,6 +2530,7 @@ class Engine:
             media_sources=media_sources,
             preview_policy=preview_policy,
             attention_config=attention_config,
+            cache_enabled=cache_enabled,
         )
 
     async def run_compiled(
@@ -2530,10 +2544,13 @@ class Engine:
         media_sources: Sequence[MediaSourceAuthority] = (),
         preview_policy: PreviewPolicy | None = None,
         attention_config: AttentionPolicyConfig | None = None,
+        cache_enabled: bool = True,
     ) -> RunResult:
         """Execute a validated artifact without invoking graph compilation."""
         if type(attempt_id) is not int or attempt_id < 1:
             raise ValueError("attempt_id must be a positive integer")
+        if type(cache_enabled) is not bool:
+            raise ValueError("cache_enabled must be a boolean")
         runtime = (
             self.pin_execution() if execution is None else self._normalize_execution(execution)
         )
@@ -2552,6 +2569,7 @@ class Engine:
             media_sources=media_sources,
             preview_policy=preview_policy,
             attention_config=attention_config,
+            cache_enabled=cache_enabled,
         )
 
     async def _run_graph(
@@ -2566,6 +2584,7 @@ class Engine:
         media_sources: Sequence[MediaSourceAuthority] = (),
         preview_policy: PreviewPolicy | None = None,
         attention_config: AttentionPolicyConfig | None = None,
+        cache_enabled: bool = True,
     ) -> RunResult:
         """Execute targets. run_id defaults to a fresh unique id; a caller
         that owns job identity (the server's queue) supplies its own so
@@ -2672,6 +2691,8 @@ class Engine:
                     pinned,
                     export_snapshot,
                     targets=targets,
+                    cache_enabled=cache_enabled,
+                    run_cache_enabled=cache_enabled,
                 )
                 outputs = {t: produced[t] for t in targets}
             finally:

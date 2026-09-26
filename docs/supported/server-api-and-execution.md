@@ -52,8 +52,10 @@
   was-running); nothing re-runs without explicit resubmission
 - Execution: parallel ready-set scheduling, priority queueing, configurable
   concurrency, queued/running cancellation, first-class caching with
-  cross-run single-flight coalescing, partial execution (execute up
-  to/between/from via target outputs), binary WebSocket preview frames
+  cross-run single-flight coalescing, and per-submission `cacheEnabled: false`
+  execution that recomputes every node without restarting the server or
+  releasing loaded model consumers; partial execution (execute up/between/from
+  via target outputs), binary WebSocket preview frames
 - Concurrent native model jobs run on process-isolated GPU replicas configured
   with `dinkster-serve --multi-gpu-devices INDEX,INDEX`
 - Single native sampling jobs can use fixed ordered logical CUDA ranks. The
