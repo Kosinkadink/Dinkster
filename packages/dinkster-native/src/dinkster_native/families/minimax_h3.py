@@ -932,7 +932,6 @@ class NativeMiniMaxH3AddGuide(MiniMaxH3AddGuide):
         if carrier is None:
             raise ValueError("positive conditioning must not be empty")
         target = _minimax_h3_av(latent, torch, inference, "latent")
-        target_video = target.by_role("video")
         target_audio = target.by_role("audio")
         target_frames = _minimax_h3_frame_count(target)
 
@@ -968,7 +967,7 @@ class NativeMiniMaxH3AddGuide(MiniMaxH3AddGuide):
                     with torch.inference_mode():
                         video = video_runtime.encode_video(
                             frames.permute(3, 0, 1, 2).unsqueeze(0).to(video_handle.load_device)
-                        ).to(target_video)
+                        )
             streams.append(("video", video))
 
         if audio is not None:

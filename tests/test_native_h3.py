@@ -1205,6 +1205,7 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
     )
     stage_calls: list[str] = []
     video_inputs: list[FakeTensor] = []
+    video_outputs: list[FakeTensor] = []
     audio_inputs: list[object] = []
     adapter_calls: list[tuple[object, object]] = []
     resamples: list[tuple[tuple[int, ...], int]] = []
@@ -1213,7 +1214,9 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
         def encode_video(self, value: FakeTensor) -> FakeTensor:
             video_inputs.append(value)
             temporal = 1 if value.shape[2] == 1 else 2
-            return FakeTensor((1, 24, temporal, 2, 3), value.device)
+            output = FakeTensor((1, 24, temporal, 2, 3), value.device)
+            video_outputs.append(output)
+            return output
 
     class AudioRuntime:
         def encode_audio(self, value: object) -> FakeTensor:
@@ -1281,9 +1284,11 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
     assert (first_guide.frame_index, first_guide.frame_count) == (6, 5)
     assert first_guide.latent.roles == ("video", "audio")
     assert first_guide.latent.by_role("video").shape == (1, 24, 2, 2, 3)
+    assert first_guide.latent.by_role("video") is video_outputs[0]
     assert first_guide.latent.by_role("audio").shape == (1, 32, 2, 27)
     assert (second_guide.frame_index, second_guide.frame_count) == (21, 1)
     assert second_guide.latent.roles == ("video",)
+    assert second_guide.latent.by_role("video") is video_outputs[1]
     assert [value.shape for value in video_inputs] == [
         (1, 3, 5, 32, 48),
         (1, 3, 1, 32, 48),
