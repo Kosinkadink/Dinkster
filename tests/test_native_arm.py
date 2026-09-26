@@ -4501,11 +4501,13 @@ def test_native_zero_strength_precalculate_materializes_pending_overlays(
     overlay = object()
     resolvers = {"blake3:" + "a" * 64: object()}
     timeline = SamplingTimelineSchedule("sage", 0.0, 1.0)
+    sparse_attention = object()
     pending = arm._NativeModelOverlay(
         base,
         (overlay,),
         resolvers,
         sampling_timeline=timeline,
+        sparse_attention=sparse_attention,
     )
     full_clone = object()
     model_clone = object()
@@ -4544,15 +4546,47 @@ def test_native_zero_strength_precalculate_materializes_pending_overlays(
     assert type(full["model"]) is arm._NativeModelOverlay
     assert full["model"].handle is full_clone
     assert full["model"].sampling_timeline is timeline
+    assert full["model"].sparse_attention is sparse_attention
     assert full["clip"] is full_clone
     assert type(model_only["model"]) is arm._NativeModelOverlay
     assert model_only["model"].handle is model_clone
     assert model_only["model"].sampling_timeline is timeline
+    assert model_only["model"].sparse_attention is sparse_attention
     assert calls == [((overlay,), resolvers), ((overlay,), resolvers)]
     assert pool.labels == [
         (full_clone, "test.safetensors + LoRA stack"),
         (model_clone, "test.safetensors + LoRA stack"),
     ]
+
+
+def test_native_zero_strength_precalculate_preserves_sparse_only_overlay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arm = _native_arm()
+    base = _handle(arm, _runtime())
+    lora = _asset(_safetensors(tmp_path / "unused.safetensors"))
+    overlay = object()
+    sparse_attention = object()
+    pending = arm._NativeModelOverlay(
+        base,
+        (overlay,),
+        {},
+        sparse_attention=sparse_attention,
+    )
+    clone = object()
+    monkeypatch.setattr(base, "clone", lambda *_args, **_kwargs: clone)
+    monkeypatch.setattr(arm, "default_pool", lambda: FakePool())
+
+    output = arm.NativeLoadLoraModelOnly.execute(
+        model=pending,
+        lora=lora,
+        strength_model=0.0,
+        execution_mode="precalculate",
+    )["model"]
+
+    assert type(output) is arm._NativeModelOverlay
+    assert output.handle is clone
+    assert output.sparse_attention is sparse_attention
 
 
 def test_native_model_only_lora_stacks_without_materializing_runtime(

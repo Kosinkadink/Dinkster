@@ -1027,6 +1027,7 @@ def _apply_native_lora_stack(
                 or chroma_radiance_options
                 or _native_model_sampling_cache(model) is not None
                 or _native_model_sampling_timeline(model) is not None
+                or _native_model_sparse_attention(model) is not None
             ):
                 patched_model = _NativeModelOverlay(
                     clone,
@@ -1080,6 +1081,7 @@ def _apply_native_lora_stack(
             or chroma_radiance_options
             or _native_model_sampling_cache(model) is not None
             or _native_model_sampling_timeline(model) is not None
+            or _native_model_sparse_attention(model) is not None
         ):
             patched_model = _NativeModelOverlay(
                 clone,
@@ -1146,6 +1148,7 @@ def _apply_split_flux2_lora_stack(
                 or chroma_radiance_options
                 or _native_model_sampling_cache(model) is not None
                 or _native_model_sampling_timeline(model) is not None
+                or _native_model_sparse_attention(model) is not None
             ):
                 patched_model = _NativeModelOverlay(
                     clone,
@@ -1244,6 +1247,7 @@ def _apply_split_flux2_lora_stack(
         or chroma_radiance_options
         or _native_model_sampling_cache(model) is not None
         or _native_model_sampling_timeline(model) is not None
+        or _native_model_sparse_attention(model) is not None
     ):
         patched_model = _NativeModelOverlay(
             patched_handle,
@@ -1299,6 +1303,7 @@ def _apply_native_model_lora_stack(
                 or chroma_radiance_options
                 or _native_model_sampling_cache(model) is not None
                 or _native_model_sampling_timeline(model) is not None
+                or _native_model_sparse_attention(model) is not None
             ):
                 return _NativeModelOverlay(
                     clone,
@@ -1342,6 +1347,7 @@ def _apply_native_model_lora_stack(
             or chroma_radiance_options
             or _native_model_sampling_cache(model) is not None
             or _native_model_sampling_timeline(model) is not None
+            or _native_model_sparse_attention(model) is not None
         ):
             return _NativeModelOverlay(
                 clone,

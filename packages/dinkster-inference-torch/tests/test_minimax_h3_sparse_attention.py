@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+import logging
+
+import pytest
 import torch
 from dinkster_inference import MiniMaxH3SparseAttentionConfig
 from dinkster_inference_torch.minimax_h3_attention import MiniMaxH3PackedSequenceFacts
@@ -62,3 +65,19 @@ def test_sparse_binding_honors_sigma_token_and_dense_block_gates_before_backend(
     assert sparse.bind(sigma=1.0, lane="conditional", facts=_facts())._eligible(hidden, 3) is False
     assert sparse.bind(sigma=0.5, lane="conditional", facts=_facts())._eligible(hidden, 4) is False
     assert sparse.bind(sigma=0.5, lane="conditional", facts=_facts())._eligible(hidden, 3) is False
+
+
+def test_sparse_binding_verbose_reports_dense_reason_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sparse = MiniMaxH3SparseAttention(
+        MiniMaxH3SparseAttentionConfig(selection="vsa", min_tokens=100, verbose=True)
+    )
+    bound = sparse.bind(sigma=0.5, lane="conditional", facts=_facts())
+    hidden = torch.empty((1, 80, 128), dtype=torch.bfloat16)
+
+    with caplog.at_level(logging.INFO):
+        assert bound._eligible(hidden, 3) is False
+        assert bound._eligible(hidden, 3) is False
+
+    assert caplog.messages == ["BlockSparseAttention: dense: 80 tokens < min_tokens 100"]

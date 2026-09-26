@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import Any
@@ -91,6 +92,12 @@ class MiniMaxH3SparseAttention:
         self.config = config
         self._pooled: dict[tuple[int, str, int], tuple[torch.Tensor, torch.Tensor]] = {}
         self._plans: dict[tuple[MiniMaxH3PackedSequenceFacts, torch.device], _VSAPlan] = {}
+        self._logged: set[object] = set()
+
+    def _log_once(self, key: object, message: str) -> None:
+        if self.config.verbose and key not in self._logged:
+            self._logged.add(key)
+            logging.info("BlockSparseAttention: %s", message)
 
     def bind(
         self,
@@ -114,13 +121,37 @@ class _BoundMiniMaxH3SparseAttention:
         start = MINIMAX_H3_SIGMAS.percent_to_sigma(config.start_percent)
         end = MINIMAX_H3_SIGMAS.percent_to_sigma(config.end_percent)
         if self.sigma > start or self.sigma < end:
+            self.owner._log_once(
+                ("dense", "sigma", self.sigma),
+                f"dense: sigma {self.sigma:.3g} outside the start/end window",
+            )
             return False
-        if hidden.shape[1] < config.min_tokens or block_index in config.dense_blocks:
+        if hidden.shape[1] < config.min_tokens:
+            self.owner._log_once(
+                ("dense", "tokens", hidden.shape[1]),
+                f"dense: {hidden.shape[1]} tokens < min_tokens {config.min_tokens}",
+            )
+            return False
+        if block_index in config.dense_blocks:
+            self.owner._log_once(
+                ("dense", "block", block_index),
+                f"dense: block {block_index} in dense_blocks",
+            )
             return False
         if hidden.dtype != torch.bfloat16 or hidden.device.type != "cuda":
+            self.owner._log_once(
+                ("dense", "tensor", hidden.dtype, hidden.device.type),
+                f"dense: requires CUDA bfloat16, got {hidden.device.type} {hidden.dtype}",
+            )
             return False
         kitchen = __import__("dinkster_kitchen")
-        return bool(kitchen.sol_attn_is_available(hidden.device))
+        available = bool(kitchen.sol_attn_is_available(hidden.device))
+        if not available:
+            self.owner._log_once(
+                ("dense", "kernel", hidden.device),
+                "dense: no compiled sol_attn kernel for this GPU",
+            )
+        return available
 
     def __call__(
         self,
@@ -194,6 +225,10 @@ class _BoundMiniMaxH3SparseAttention:
                 **extra,
             )
         self.owner._pooled[pool_key] = (key_mean, value_scale)
+        self.owner._log_once(
+            ("sparse", rows),
+            f"sparse producer path: {self.facts.sequence_length} tokens, {rows} kernel rows",
+        )
         output = output.view(1, rows, attention.geometry.inner_width)
         if plan is not None:
             output = output[:, plan.inverse_rows]
