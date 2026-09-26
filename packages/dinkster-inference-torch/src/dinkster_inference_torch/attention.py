@@ -1018,6 +1018,7 @@ def _load_kitchen_apis() -> None:
     global _KITCHEN_SOL_ATTENTION
     global _KITCHEN_LIST_BACKENDS
     kitchen = importlib.import_module("dinkster_kitchen")
+    _disable_kitchen_triton(kitchen)
     for name, attribute in (
         ("_KITCHEN_AVAILABLE", "int8_attention_is_available"),
         ("_KITCHEN_ATTENTION", "int8_attention"),
@@ -1028,6 +1029,13 @@ def _load_kitchen_apis() -> None:
     ):
         if globals()[name] is _KITCHEN_UNPROBED:
             globals()[name] = getattr(kitchen, attribute, None)
+
+
+def _disable_kitchen_triton(kitchen: Any) -> None:
+    """Keep Kitchen's Triton backend opt-in, matching ComfyUI startup."""
+    disable = getattr(getattr(kitchen, "registry", None), "disable", None)
+    if callable(disable):
+        disable("triton")
 
 
 def _missing_kitchen_int8_apis() -> tuple[str, ...]:
@@ -1093,7 +1101,7 @@ class _ComfyKitchenInt8Kernel:
         revision=1,
         modes=(Replicated(), UlyssesHeadScatter()),
         tensor_expectation=ContiguousShard(2),
-        supported_dtypes=(BFLOAT16,),
+        supported_dtypes=(FLOAT32, FLOAT16, BFLOAT16),
         device_kinds=("cuda",),
         provides_matching_block_normalization=False,
     )
@@ -1825,20 +1833,6 @@ def select_attention(role: AttentionRole, policy: AttentionPolicy = "sdpa") -> A
     if policy == "auto":
         evidence = discover_attention_capabilities()
         route = automatic_attention_route(role, evidence.available_policies, evidence.device_kind)
-        if route.primary == "sage":
-            selected = select_attention(role, "sage")
-            return replace(
-                selected,
-                status=replace(
-                    selected.status,
-                    requested_policy="auto",
-                    reason="auto selected supported SageAttention 2 with SDPA fallback",
-                    provider_versions=evidence.provider_versions,
-                    device_kind=evidence.device_kind,
-                    device_sm=evidence.device_sm,
-                    sdpa_torch_runtime=evidence.sdpa_torch_runtime,
-                ),
-            )
         if route.primary == "bounded":
             return AttentionSelection(
                 kernel=_BOUNDED,

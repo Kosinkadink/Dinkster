@@ -130,8 +130,8 @@ def test_composed_runtime_preserves_inner_assembly_and_shared_sampling_engine() 
     assert runtime.supports_denoise_mask is False
     replacement = Diffusion()
     replacement.assembled = original
-    rebound = runtime.with_component_sampling_runtime(replacement)
-    assert rebound.component_sampling_runtime is replacement
+    rebound = runtime.with_sampling_runtime(replacement)
+    assert rebound.sampling_runtime() is replacement
     assert rebound.sample_custom.__self__ is replacement
     assert rebound.encode_text("hello") is prepared
     assert rebound.decode_latent(rebound.encode_content(latent)).equal(latent)
@@ -344,9 +344,9 @@ def test_seedvr2_checkpoint_preserves_real_diffusion_weights_and_execution(
     )
     baseline = _load_component(part, builder, compute_dtype=torch.float32, fp8_matmul=False)
     model = runtime.assembled.diffusion
-    assert model is runtime.component_sampling_runtime.assembled.diffusion
+    assert model is cast("Any", runtime.sampling_runtime()).assembled.diffusion
     assert runtime.supports_denoised_capture
-    assert runtime.sample_custom.__self__ is runtime.component_sampling_runtime
+    assert runtime.sample_custom.__self__ is runtime.sampling_runtime()
     assert "positive_conditioning" not in model.state_dict()
     parameters = dict(baseline.named_parameters())
     for key, actual in (*model.named_parameters(), *model.named_buffers()):
@@ -677,8 +677,8 @@ def test_chroma_checkpoint_preserves_component_weights_and_execution(
     )
     baseline = _load_component(part, builder, compute_dtype=torch.float32, fp8_matmul=False)
     model = runtime.assembled.diffusion
-    assert model is runtime.component_sampling_runtime.assembled.diffusion
-    assert runtime.sample_custom.__self__ is runtime.component_sampling_runtime
+    assert model is cast("Any", runtime.sampling_runtime()).assembled.diffusion
+    assert runtime.sample_custom.__self__ is runtime.sampling_runtime()
     assert runtime.family == runtime.diffusion.family
     assert runtime.assembled.compute_dtype("diffusion") == torch.float32
     assert runtime.diffusion.attention_status["flux"].requested_policy == attention_policy
@@ -706,7 +706,7 @@ def test_chroma_checkpoint_preserves_component_weights_and_execution(
     sampling_runtime = cast("ComponentCheckpointRuntime", resolved[0])
     assert sampling_runtime is not runtime
     assert sampling_runtime.assembled is runtime.assembled
-    configured = sampling_runtime.component_sampling_runtime
+    configured = cast("Any", sampling_runtime.sampling_runtime())
     assert configured._sampling_shift == 1.73
     assert configured._option_windows == option_windows
     assert configured._samplers.get("review.custom") is sampler
@@ -718,7 +718,7 @@ def test_chroma_checkpoint_preserves_component_weights_and_execution(
         has_inpaint=False,
         has_context_windows=False,
     )
-    assert sampling_runtime.sample_custom.__self__ is sampling_runtime.component_sampling_runtime
+    assert sampling_runtime.sample_custom.__self__ is sampling_runtime.sampling_runtime()
     overlay = native_arm._NativeModelOverlay(  # pyright: ignore[reportPrivateUsage]
         cast("Any", handle),
         (),
@@ -733,7 +733,7 @@ def test_chroma_checkpoint_preserves_component_weights_and_execution(
     )
     assert isinstance(scheduler_runtime, ComponentCheckpointRuntime)
     assert scheduler_runtime.assembled is runtime.assembled
-    configured = scheduler_runtime.component_sampling_runtime
+    configured = cast("Any", scheduler_runtime.sampling_runtime())
     assert configured._sampling_shift == 2.5
     assert configured._option_windows == option_windows
     assert configured._samplers.get("review.custom") is sampler

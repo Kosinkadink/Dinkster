@@ -244,7 +244,7 @@ def default_component_registry() -> ComponentRegistry:
             ("qwen3vl-32b-conditioner",),
             ("video-vae", "audio-vae"),
             "dinkster_inference_torch.component_runtime:load_h3_component",
-            "MiniMaxH3Model",
+            "MiniMaxH3DiTRuntime",
             vae_dtypes=(FLOAT16, FLOAT32),
             role_default_dtypes=(("audio-vae", FLOAT32),),
             text_loader_hints=("minimax",),

@@ -6,10 +6,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, TypedDict
 
-from .families.minimax_h3 import (
-    NativeEmptyLTXAVLatent,
-    NativeEmptyLTXVLatent,
-)
 from .native_arm_conditioning import (
     _averaged_conditioning,
     _combined_conditioning,
@@ -432,7 +428,7 @@ class GenerationModelSamplingLTXV(Node):
             model_value, "model"
         )
         inference = importlib.import_module("dinkster_inference")
-        runtime = getattr(handle.runtime, "component_sampling_runtime", handle.runtime)
+        runtime = handle.runtime.sampling_runtime()
         if getattr(runtime.family, "sampling", None) != inference.LTX_SAMPLING:
             raise TypeError("ModelSamplingLTXV requires an LTX sampling runtime")
 
@@ -620,15 +616,3 @@ class GenerationEmptyFlux2LatentImage(Node):
         # flag, which Dinkster does not wire.
         samples = torch.zeros((batch_size, 128, height // 16, width // 16), device="cpu")
         return cls.outputs(latent={"samples": samples, "downscale_ratio_spacial": 16})
-
-
-class GenerationEmptyLTXAVLatent(NativeEmptyLTXAVLatent):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return _generation_provider_schema("dinkster.empty_ltxav_latent")
-
-
-class GenerationEmptyLTXVLatent(NativeEmptyLTXVLatent):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return _generation_provider_schema("dinkster.empty_ltxv_latent")

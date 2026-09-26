@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from .families.execution import _component_runtime_with_options
-from .families.minimax_h3 import _minimax_h3_schedule_runtime
 from .native_arm_core import (
     _ASSET,
     _BOOLEAN,
@@ -2414,7 +2413,7 @@ def _require_custom_sampling_runtime(
             descriptor = _active_inference_registries().components.get(handle.recipe.family_id)
             if descriptor is None or descriptor.execution_options is None:
                 raise TypeError("model must be a native Chroma diffusion component")
-            sampling_runtime = getattr(runtime, "component_sampling_runtime", runtime)
+            sampling_runtime = runtime.sampling_runtime()
             return (
                 _component_runtime_with_options(
                     runtime,
@@ -2486,11 +2485,8 @@ def _require_custom_sampling_runtime(
         else:
             return _ShiftedCustomSamplingRuntime(sampling_shift, runtime), None, handle.load_device
     inference = importlib.import_module("dinkster_inference")
-    handle = _native_handle(model, "model")
-    runtime = _minimax_h3_schedule_runtime(handle, inference)
-    if runtime is None:
-        handle = _require_provider_runtime(model, "model")
-        runtime = handle.runtime
+    handle = _require_provider_runtime(model, "model")
+    runtime = handle.runtime
     if not isinstance(runtime, inference.CustomSamplingRuntime):
         raise TypeError(f"model family {runtime.family.id!r} does not support custom sampling")
     return runtime, sampling_shift, handle.load_device

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
+
+import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 import pytest
 import torch
 from dinkster_inference.minimax_h3_conditioner import minimax_h3_conditioner_layout
@@ -7,6 +10,7 @@ from dinkster_inference_torch.minimax_h3_conditioner import (
     MiniMaxH3ConditionerModel,
     MiniMaxH3VisionModel,
 )
+from dinkster_inference_torch.operations import CastOperations
 from dinkster_inference_torch.qwen_image_text import (
     QwenImageLanguageModel,
     _language_rope,  # pyright: ignore[reportPrivateUsage]
@@ -53,10 +57,19 @@ def test_full_meta_state_is_the_exact_902_key_conditioner_layout() -> None:
     model.load_state_dict(state, strict=True, assign=True)
 
 
-def test_reduced_text_and_vision_execute_with_deepstack() -> None:
+def test_reduced_text_and_vision_execute_with_deepstack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     model = _reduced_model()
     assert model.model.shape.rope_theta == 5_000_000.0
     assert model.model.shape.interleaved_mrope is True
+    backends: list[str] = []
+
+    def use_backend(name: str) -> nullcontext[None]:
+        backends.append(name)
+        return nullcontext()
+
+    monkeypatch.setattr(dinkster_kitchen, "use_backend", use_backend)
     ids = torch.tensor(((1, 2, 3, 4, 5, 6),))
     visual_mask = torch.tensor(((False, True, True, True, True, False),))
     patches = torch.randn(16, 24)
@@ -68,6 +81,129 @@ def test_reduced_text_and_vision_execute_with_deepstack() -> None:
         image_grid=torch.tensor(((1, 4, 4),)),
     )
     assert output.shape == (1, 6, 16)
+    assert backends == ["eager", "eager", "eager"]
+
+
+def test_vision_position_interpolation_matches_bfloat16_reference_order() -> None:
+    model = MiniMaxH3VisionModel.reduced(
+        hidden_size=8,
+        output_size=16,
+        intermediate_size=12,
+        heads=2,
+        layers=1,
+        patch=(2, 2, 2),
+        merge_size=2,
+        position_embeddings=16,
+        deepstack_layers=(),
+        operations=CastOperations(torch.float32),
+        position_operations=CastOperations(torch.bfloat16),
+    )
+    source = torch.arange(16 * 8, dtype=torch.float32).reshape(16, 8) / 113
+    model.pos_embed.load_state_dict({"weight": source}, assign=True)
+
+    actual, _, _ = model._position_values(  # pyright: ignore[reportPrivateUsage]
+        [(1, 4, 6)], torch.device("cpu")
+    )
+
+    side = 4
+    height, width = 4, 6
+    h = torch.linspace(0, side - 1, height)
+    w = torch.linspace(0, side - 1, width)
+    h0, w0 = h.int(), w.int()
+    h1, w1 = (h0 + 1).clamp(max=side - 1), (w0 + 1).clamp(max=side - 1)
+    dh, dw = h - h0, w - w0
+    indices = (
+        h0[:, None] * side + w0[None, :],
+        h0[:, None] * side + w1[None, :],
+        h1[:, None] * side + w0[None, :],
+        h1[:, None] * side + w1[None, :],
+    )
+    weights = tuple(
+        value.to(torch.bfloat16)
+        for value in (
+            (1 - dh)[:, None] * (1 - dw)[None, :],
+            (1 - dh)[:, None] * dw[None, :],
+            dh[:, None] * (1 - dw)[None, :],
+            dh[:, None] * dw[None, :],
+        )
+    )
+    corners = tuple(
+        source.to(torch.bfloat16)[index.flatten()] * weight.flatten()[:, None]
+        for index, weight in zip(indices, weights, strict=True)
+    )
+    expected = corners[0] + corners[1] + corners[2] + corners[3]
+    expected = (
+        expected.reshape(1, height // 2, 2, width // 2, 2, -1)
+        .permute(0, 1, 3, 2, 4, 5)
+        .flatten(0, 4)
+    )
+    float32_corners = tuple(
+        source[index.flatten()] * weight.float().flatten()[:, None]
+        for index, weight in zip(indices, weights, strict=True)
+    )
+    direct_float32 = (
+        float32_corners[0] + float32_corners[1] + float32_corners[2] + float32_corners[3]
+    )
+    direct_float32 = (
+        direct_float32.reshape(1, height // 2, 2, width // 2, 2, -1)
+        .permute(0, 1, 3, 2, 4, 5)
+        .flatten(0, 4)
+    )
+
+    assert actual.dtype is torch.bfloat16
+    assert torch.equal(actual, expected)
+    assert not torch.equal(actual.float(), direct_float32)
+
+
+def test_conditioner_runs_each_visual_item_separately(monkeypatch: pytest.MonkeyPatch) -> None:
+    model = _reduced_model()
+    calls: list[tuple[int, list[list[int]]]] = []
+    seen: dict[str, object] = {}
+
+    def embed(ids: torch.Tensor) -> torch.Tensor:
+        return torch.zeros((1, ids.shape[1], 16))
+
+    def visual_forward(
+        patches: torch.Tensor, grid: torch.Tensor
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+        call = len(calls) + 1
+        calls.append((patches.shape[0], grid.tolist()))
+        merged = patches.shape[0] // 4
+        visual = torch.full((merged, 16), float(call))
+        deepstack = tuple(torch.full((merged, 16), float(10 * layer + call)) for layer in range(3))
+        return visual, deepstack
+
+    def forward_embeds(
+        embeds: torch.Tensor,
+        _attention_mask: torch.Tensor | None,
+        _position_ids: torch.Tensor,
+        **kwargs: object,
+    ) -> torch.Tensor:
+        seen["deepstack"] = kwargs["deepstack_features"]
+        return embeds
+
+    monkeypatch.setattr(model.model, "embed", embed)
+    monkeypatch.setattr(model.visual, "forward", visual_forward)
+    monkeypatch.setattr(model.model, "forward_embeds", forward_embeds)
+    visual_mask = torch.tensor(((False, True, False, True, True),))
+
+    output = model(
+        torch.tensor(((1, 2, 3, 4, 5),)),
+        position_ids=torch.zeros((3, 5), dtype=torch.long),
+        visual_mask=visual_mask,
+        image_patches=torch.zeros((12, 24)),
+        image_grid=torch.tensor(((1, 2, 2), (1, 2, 4))),
+    )
+
+    assert calls == [(4, [[1, 2, 2]]), (8, [[1, 2, 4]])]
+    assert output[0, visual_mask[0], 0].tolist() == [1.0, 2.0, 2.0]
+    deepstack = seen["deepstack"]
+    assert isinstance(deepstack, tuple)
+    assert [value[:, 0].tolist() for value in deepstack] == [
+        [1.0, 2.0, 2.0],
+        [11.0, 12.0, 12.0],
+        [21.0, 22.0, 22.0],
+    ]
 
 
 def test_conditioner_moves_language_indices_to_embedding_device(
@@ -111,6 +247,43 @@ def test_conditioner_moves_language_indices_to_embedding_device(
         "attention_mask": torch.device("meta"),
         "position_ids": torch.device("meta"),
     }
+
+
+def test_conditioner_promotes_reference_rounded_embeddings_to_float32(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _reduced_model()
+    source = torch.tensor(
+        [[[0.010592243634164333, -0.02731683850288391] + [0.0] * 14]],
+        dtype=torch.float32,
+    )
+    rounded = source.to(torch.bfloat16)
+    seen: list[torch.Tensor] = []
+
+    def embed(_ids: torch.Tensor) -> torch.Tensor:
+        return rounded
+
+    monkeypatch.setattr(model.model, "embed", embed)
+
+    def forward_embeds(
+        embeds: torch.Tensor,
+        _attention_mask: torch.Tensor | None,
+        _position_ids: torch.Tensor,
+        **_kwargs: object,
+    ) -> torch.Tensor:
+        seen.append(embeds)
+        return embeds
+
+    monkeypatch.setattr(model.model, "forward_embeds", forward_embeds)
+
+    output = model(torch.tensor(((1,),)))
+
+    expected = rounded.float()
+    assert output.dtype is torch.float32
+    assert torch.equal(output, expected)
+    assert len(seen) == 1
+    assert torch.equal(seen[0], expected)
+    assert not torch.equal(output, source)
 
 
 def test_conditioner_refuses_mismatched_visual_placeholder_count() -> None:

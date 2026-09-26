@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping
+from copy import copy
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, cast
@@ -65,6 +66,7 @@ from dinkster_inference import (
     TokenSegmentDescriptor,
     UspMesh,
     build_canonical_manifest,
+    compose_execution,
     execution_span,
     normalize_minimax_h3_conditioning,
     plan_minimax_h3_token_layout,
@@ -92,6 +94,7 @@ from .distributed import (
 )
 from .guidance import ConditioningEvaluation
 from .latent_streams import normalize_latent_mask, pack_latent_streams, unpack_latent_streams
+from .minimax_h3_assembly import AssembledMiniMaxH3Model
 from .minimax_h3_attention import (
     MiniMaxH3AttentionKernelFactory,
     MiniMaxH3PackedSegmentKind,
@@ -664,7 +667,6 @@ def add_minimax_h3_timeline_guide(
             not video.is_floating_point()
             or video.layout != torch.strided
             or video.device != target_video.device
-            or video.dtype != target_video.dtype
         ):
             raise MiniMaxH3RuntimeError(
                 "timeline guide video must match the target tensor contract"
@@ -1053,11 +1055,7 @@ class MiniMaxH3ConditionerRuntime:
             for keyframe in request.keyframes:
                 content = _descriptor_tensor(keyframe.payload, payload_snapshot, used)
                 _check_cancelled(cancelled)
-                latent = (
-                    require_video_vae()
-                    .encode_video(_video_content(content, device))
-                    .to(target.by_role("video"))
-                )
+                latent = require_video_vae().encode_video(_video_content(content, device))
                 _check_cancelled(cancelled)
                 index = 0 if keyframe.role is MiniMaxH3KeyframeRole.FIRST else frame_count - 1
                 keyframes.append(MiniMaxH3KeyframeLatent(index, latent))
@@ -1066,11 +1064,7 @@ class MiniMaxH3ConditionerRuntime:
                 if type(reference) is MiniMaxH3ImageReference:
                     content = _descriptor_tensor(reference.payload, payload_snapshot, used)
                     _check_cancelled(cancelled)
-                    latent = (
-                        require_video_vae()
-                        .encode_video(_video_content(content, device))
-                        .to(target.by_role("video"))
-                    )
+                    latent = require_video_vae().encode_video(_video_content(content, device))
                     _check_cancelled(cancelled)
                     references.append(
                         MiniMaxH3ReferenceLatents(MiniMaxH3ReferenceKind.IMAGE, latent)
@@ -1098,11 +1092,7 @@ class MiniMaxH3ConditionerRuntime:
                         )
                     )
                     _check_cancelled(cancelled)
-                    video = (
-                        require_video_vae()
-                        .encode_video(_video_content(frames, device))
-                        .to(target.by_role("video"))
-                    )
+                    video = require_video_vae().encode_video(_video_content(frames, device))
                     _check_cancelled(cancelled)
                     audio = None
                     if video_reference.audio is not None:
@@ -1157,6 +1147,7 @@ _H3EvaluationCondition = tuple[
     torch.Tensor,
     MiniMaxH3DiTConditioning,
     LatentPackLayout,
+    MultiStreamLatent[torch.Tensor] | None,
     MultiStreamLatent[torch.Tensor] | None,
 ]
 
@@ -1471,6 +1462,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         receipt_identity: str | None = None,
         conditioning_identity: str | None = None,
         compute_dtype: torch.dtype = torch.bfloat16,
+        assembled: AssembledMiniMaxH3Model | None = None,
         sampler_registry: Registry[SamplerDescriptor[torch.Tensor]] | None = None,
         scheduler_registry: Registry[SchedulerDescriptor] | None = None,
     ) -> None:
@@ -1484,8 +1476,17 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             raise ValueError("H3 DiT conditioning identity must be non-empty")
         if compute_dtype not in (torch.bfloat16, torch.float32):
             raise ValueError("H3 DiT compute dtype must be bfloat16 or float32")
+        if assembled is None:
+            assembled = AssembledMiniMaxH3Model(
+                model,
+                _component_compute_dtypes=MappingProxyType({"diffusion": compute_dtype}),
+            )
+        elif assembled.diffusion is not model:
+            raise ValueError("H3 DiT runtime assembly must own its model")
         self._model = model
+        self.assembled = assembled
         self._model_role = model_role
+        self._component_identity = runtime_identity
         self._runtime_identity = runtime_identity
         self._receipt_identity = receipt_identity
         self._conditioning_identity = (
@@ -1508,6 +1509,21 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
     @property
     def runtime_identity(self) -> str:
         return self._runtime_identity
+
+    def with_conditioner(self, conditioning_identity: str) -> MiniMaxH3DiTRuntime:
+        if type(conditioning_identity) is not str or not conditioning_identity:
+            raise ValueError("H3 DiT conditioning identity must be non-empty")
+        composition = compose_execution(
+            MINIMAX_H3_CONFIG.family_id,
+            {
+                self._model_role: self._component_identity,
+                "conditioner": conditioning_identity,
+            },
+        )
+        derived = copy(self)
+        derived._runtime_identity = composition.execution_identity
+        derived._conditioning_identity = conditioning_identity
+        return derived
 
     @property
     def conditioning_identity(self) -> str:
@@ -1586,6 +1602,11 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 )
         packed = inputs.latent
         layout = latent_context.layout
+        raw_denoise_mask = (
+            None
+            if latent_context.raw_mask is None
+            else unpack_latent_streams(latent_context.raw_mask, layout)
+        )
         model_denoise_mask = latent_context.model_mask
         distributed = ensure_process_group()
         from .distributed import synchronized_sampling_call
@@ -1640,7 +1661,14 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             text_context = model.preprocess_text_embeddings(
                 prepared.context.to(device=device, dtype=self._compute_dtype)
             )
-            return lane_identity, text_context, dit, layout, model_denoise_mask
+            return (
+                lane_identity,
+                text_context,
+                dit,
+                layout,
+                model_denoise_mask,
+                raw_denoise_mask,
+            )
 
         def prepare_conditioning(value: object, role: GuidanceRole) -> _H3EvaluationCondition:
             if type(value) is not MiniMaxH3PreparedConditioning:
@@ -1668,6 +1696,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 dit_conditioning,
                 active_layout,
                 active_model_mask,
+                active_raw_mask,
             ) = conditioning
             _check_cancelled(cancelled)
             if sigma <= 0.0:
@@ -1868,6 +1897,18 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             denoise_mask=active_model_mask,
                             attention_kernel_factory=attention_kernel_factory,
                         )
+                if active_raw_mask is not None:
+                    # H3 predicts video rows at mask * sigma; scale velocity before
+                    # the shared outer conversion applies x0 = x - sigma * velocity.
+                    video_velocity = velocity.by_role("video")
+                    velocity = _h3_latent(
+                        video_velocity
+                        * active_raw_mask.by_role("video").to(
+                            device=video_velocity.device,
+                            dtype=video_velocity.dtype,
+                        ),
+                        velocity.by_role("audio"),
+                    )
                 packed_velocity, _ = pack_latent_streams(velocity)
                 result = x - packed_velocity.float() * sigma
             _check_cancelled(cancelled)
@@ -1892,20 +1933,39 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             indices: tuple[int, ...],
             _shape: object,
         ) -> _H3EvaluationCondition:
-            lane, text_context, dit, prepared_layout, prepared_mask = prepared
+            (
+                lane,
+                text_context,
+                dit,
+                prepared_layout,
+                prepared_mask,
+                prepared_raw_mask,
+            ) = prepared
             if prepared_layout != layout:
                 raise MiniMaxH3RuntimeError("H3 window conditioning must start at the full layout")
             selection = packed_windows.select(packed, dim, indices)
-            window_mask = None
-            if prepared_mask is not None:
-                packed_mask, mask_layout = pack_latent_streams(prepared_mask)
+            window_masks: list[MultiStreamLatent[torch.Tensor] | None] = []
+            for mask in (prepared_mask, prepared_raw_mask):
+                if mask is None:
+                    window_masks.append(None)
+                    continue
+                packed_mask, mask_layout = pack_latent_streams(mask)
                 if mask_layout != layout:
                     raise MiniMaxH3RuntimeError("H3 model mask topology differs from the latent")
                 selected_mask = packed_windows.select(packed_mask, dim, indices)
                 if selected_mask.layout != selection.layout:
                     raise MiniMaxH3RuntimeError("H3 window mask topology differs from the latent")
-                window_mask = unpack_latent_streams(selected_mask.packed, selected_mask.layout)
-            return lane, text_context, dit, selection.layout, window_mask
+                window_masks.append(
+                    unpack_latent_streams(selected_mask.packed, selected_mask.layout)
+                )
+            return (
+                lane,
+                text_context,
+                dit,
+                selection.layout,
+                window_masks[0],
+                window_masks[1],
+            )
 
         realization = context.conditioning_realization
         close = None

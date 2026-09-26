@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -23,6 +22,7 @@ from .minimax_h3_assembly import (
     load_minimax_h3_component,
     load_minimax_h3_model,
 )
+from .minimax_h3_runtime import MiniMaxH3DiTRuntime
 from .trellis2_assembly import AssembledTrellis2
 from .trellis2_runtime import Trellis2DiffusionRuntime
 from .wan21_causal import Wan21CausalModel
@@ -74,9 +74,16 @@ def load_h3_component(
     return SimpleNamespace(role="diffusion", module=runtime.assembled.diffusion, runtime=runtime)
 
 
-def h3_runtime(loaded: Any, identity: str, dtype: torch.dtype) -> MiniMaxH3Model:
-    del dtype
-    return replace(loaded.runtime, runtime_identity=identity)
+def h3_runtime(loaded: Any, identity: str, dtype: torch.dtype) -> MiniMaxH3DiTRuntime:
+    model = cast("MiniMaxH3Model", loaded.runtime)
+    return MiniMaxH3DiTRuntime(
+        model.assembled.diffusion,
+        model_role=model.model_role.replace("-", "_"),
+        runtime_identity=identity,
+        receipt_identity=model.receipt_identity,
+        compute_dtype=dtype,
+        assembled=model.assembled,
+    )
 
 
 def chroma_runtime(

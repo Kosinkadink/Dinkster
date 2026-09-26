@@ -3,7 +3,7 @@
   "sites": [
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 1892,
+      "line": 1894,
       "column": 12,
       "type": "FluxAssemblyPlan",
       "classification": "boundary",
@@ -11,7 +11,7 @@
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 1968,
+      "line": 1970,
       "column": 12,
       "type": "QwenImageAssemblyPlan",
       "classification": "boundary",
@@ -19,7 +19,7 @@
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2031,
+      "line": 2033,
       "column": 12,
       "type": "SDAssemblyPlan",
       "classification": "boundary",
@@ -27,7 +27,7 @@
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2115,
+      "line": 2117,
       "column": 12,
       "type": "Wan21AssemblyPlan",
       "classification": "boundary",
@@ -35,7 +35,7 @@
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2179,
+      "line": 2181,
       "column": 12,
       "type": "ZImageAssemblyPlan",
       "classification": "boundary",
@@ -43,7 +43,7 @@
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2246,
+      "line": 2248,
       "column": 12,
       "type": "Flux2AssemblyPlan",
       "classification": "boundary",
@@ -51,7 +51,7 @@
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2315,
+      "line": 2317,
       "column": 12,
       "type": "Lumina2AssemblyPlan",
       "classification": "boundary",
@@ -67,7 +67,7 @@
     }
   ],
   "value_type_allowlist": {
-    "ceiling": 268,
-    "sha256": "1f47b4d40a0df2f80087e480a0de33dfc1183c65b84733be0820add7a036cac1"
+    "ceiling": 263,
+    "sha256": "3b12a543b964e2875c8a7cc0622bc40593774d961100cf3ec9d411fee5d560a6"
   }
 }

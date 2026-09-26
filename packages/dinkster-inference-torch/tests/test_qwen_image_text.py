@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import dinkster_inference_torch.qwen_image_text as qwen_image_text_module
+import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
 import pytest
 import torch
 from attention_spy import CallableModuleKernel, assert_kernel_is_not_model_state
@@ -231,6 +232,40 @@ def test_vision_attention_segments_windows_through_injected_kernel() -> None:
     assert [call["q_shape"] for call in spy.calls] == [(1, 2, 2, 4), (1, 2, 4, 4)]
     assert all(call["mask"] is None and not call["causal"] for call in spy.calls)
     assert_kernel_is_not_model_state(attention, spy)
+
+
+def test_vision_attention_uses_kitchen_split_half_rope(monkeypatch: pytest.MonkeyPatch) -> None:
+    attention = QwenImageVisionAttention(hidden_size=8, num_heads=2)
+    hidden = torch.randn(6, 8)
+    angles = torch.randn(6, 2)
+    cosine = torch.cat((angles.cos(), angles.cos()), dim=-1)
+    sine = torch.cat((angles.sin(), angles.sin()), dim=-1)
+    calls: list[tuple[torch.Size, torch.Size, torch.Size]] = []
+    tables: list[torch.Tensor] = []
+
+    def apply(
+        query: torch.Tensor, key: torch.Tensor, matrix: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        calls.append((query.shape, key.shape, matrix.shape))
+        tables.append(matrix.clone())
+
+        def rotate(value: torch.Tensor) -> torch.Tensor:
+            pairs = value.reshape(*value.shape[:-1], 2, -1).movedim(-2, -1).unsqueeze(-2)
+            output = matrix[..., 0] * pairs[..., 0] + matrix[..., 1] * pairs[..., 1]
+            return output.movedim(-1, -2).reshape_as(value)
+
+        return rotate(query), rotate(key)
+
+    monkeypatch.setattr(dinkster_kitchen, "apply_rope_split_half", apply)
+
+    output = attention(hidden, (cosine, sine), torch.tensor((0, 6)))
+
+    assert output.shape == hidden.shape
+    assert calls == [(torch.Size((1, 6, 2, 4)),) * 2 + (torch.Size((1, 6, 1, 2, 2, 2)),)]
+    expected = torch.stack(
+        (cosine[:, :2], -sine[:, 2:], sine[:, :2], cosine[:, 2:]), dim=-1
+    ).reshape(1, 6, 1, 2, 2, 2)
+    assert torch.equal(tables[0], expected)
 
 
 def test_reduced_vision_patches_windows_merges_and_restores_order() -> None:
