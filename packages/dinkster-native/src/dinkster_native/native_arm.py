@@ -606,6 +606,9 @@ from .native_arm_registry import (
     GenerationWanContextWindowsManual as GenerationWanContextWindowsManual,
 )
 from .native_arm_registry import (
+    NativeApplyMiniMaxH3FunControlPatch as NativeApplyMiniMaxH3FunControlPatch,
+)
+from .native_arm_registry import (
     NativeApplyZImageControlPatch as NativeApplyZImageControlPatch,
 )
 from .native_arm_registry import (

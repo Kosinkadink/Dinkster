@@ -75,7 +75,7 @@
     }
   ],
   "value_type_allowlist": {
-    "ceiling": 263,
+    "ceiling": 264,
     "sites": [
       {
         "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/_conditioning_layout.py",
@@ -658,6 +658,14 @@
         "scope": "_H3LatentAdapter.prepare",
         "subject": "conditioning",
         "type": "MiniMaxH3PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_H3LatentAdapter.prepare",
+        "subject": "control",
+        "type": "MiniMaxH3FunControlConditioning",
         "classification": "value-type",
         "occurrence": 1
       },

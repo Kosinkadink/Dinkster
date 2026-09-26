@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
+import json
 import math
 import sys
 from contextlib import nullcontext
@@ -25,6 +27,7 @@ from dinkster_compat_comfy.native import (
     INT,
     LATENT,
     MASK,
+    MODEL_PATCH,
     NATIVE_NODES,
     STRING,
     VAE,
@@ -242,6 +245,7 @@ def test_h3_schemas_use_declared_resident_graph_types() -> None:
     nodes = {node.schema().node_type: node for node in NATIVE_NODES}
     arms = {node.schema().node_type: node for node in native_arm.NATIVE_ARM_NODES}
     expected = {
+        "dinkster.apply_minimax_h3_fun_control_patch",
         "dinkster.empty_minimax_h3_av",
         "dinkster.set_latent_mask_from_frames",
         "dinkster.set_latent_mask_from_time_ranges",
@@ -261,6 +265,20 @@ def test_h3_schemas_use_declared_resident_graph_types() -> None:
     assert expected <= nodes.keys()
     assert expected <= arms.keys()
     assert "dinkster.frame_range_mask" in nodes
+    control = nodes["dinkster.apply_minimax_h3_fun_control_patch"].schema()
+    assert tuple(item.id for item in control.inputs) == (
+        "model",
+        "model_patch",
+        "vae",
+        "strength",
+        "start_percent",
+        "end_percent",
+        "control_video",
+        "mask",
+        "source_video",
+    )
+    assert control.inputs[1].type == MODEL_PATCH
+    assert control.aliases == ("MiniMaxH3FunControlNetApply",)
     empty_schema = nodes["dinkster.empty_minimax_h3_av"].schema()
     assert tuple(item.id for item in empty_schema.inputs) == ("width", "height", "frame_count")
     assert empty_schema.outputs[0].type.types == ("dinkster.latent",)
@@ -399,6 +417,196 @@ def test_deleted_h3_bundle_loader_is_an_unknown_node_type() -> None:
     assert [(item.code, item.message) for item in diagnostics] == [
         ("unknown-node-type", "unknown node type: dinkster.load_minimax_h3")
     ]
+
+
+def test_official_h3_fun_workflow_resolves_control_nodes_and_widgets() -> None:
+    fixture_root = Path(__file__).parent / "fixtures"
+    fixture = fixture_root / "video_minimax_h3_fun_controlnet_union.json"
+    source = json.loads(
+        (fixture_root / "video_minimax_h3_fun_controlnet_union.SOURCE.json").read_text()
+    )
+    payload = fixture.read_bytes()
+    assert hashlib.sha256(payload).hexdigest() == source["sha256"]
+    assert source == {
+        "comfyui_revision": "b5cc8830279eae909a59de030af1e50761c36751",
+        "path": "templates/video_minimax_h3_fun_controlnet_union.json",
+        "sha256": "ec82867872aaf4c28901fafaf4e3fed3081e0c74c1968c34e4194878c5c0c0af",
+        "workflow_templates_revision": "7c25a3c586484601f94b7e8f8b14c23b2c95a096",
+    }
+    workflow = json.loads(payload)
+    nodes = {node["type"]: node for node in workflow["nodes"]}
+    schemas = {node.schema().node_type: node.schema() for node in NATIVE_NODES}
+    aliases = {alias: schema for schema in schemas.values() for alias in schema.aliases}
+
+    subgraph = workflow["definitions"]["subgraphs"][0]
+    assert subgraph["id"] == "622cceeb-7ba3-4dd9-b0e8-00066c5222a4"
+    assert {node["id"]: node["type"] for node in subgraph["nodes"]} == {
+        671: "SDPoseKeypointExtractor",
+        672: "SDPoseDrawKeypoints",
+        673: "CheckpointLoaderSimple",
+        674: "ResizeImageMaskNode",
+        677: "UNETLoader",
+        678: "RTDETR_detect",
+        692: "GetVideoComponents",
+    }
+    assert {
+        (link["origin_id"], link["origin_slot"], link["target_id"], link["target_slot"])
+        for link in subgraph["links"]
+        if link["origin_id"] > 0 and link["target_id"] > 0
+    } == {
+        (671, 0, 672, 0),
+        (673, 0, 671, 0),
+        (673, 2, 671, 1),
+        (674, 0, 671, 2),
+        (674, 0, 678, 1),
+        (677, 0, 678, 0),
+        (678, 0, 671, 3),
+        (692, 0, 674, 0),
+    }
+    promoted = next(node for node in workflow["nodes"] if node["id"] == 700)
+    assert promoted["type"] == subgraph["id"]
+    assert promoted["widgets_values_named"] == {
+        "resize_type.longer_size": 1024,
+        "scale_method": "lanczos",
+        "draw_body": True,
+        "draw_hands": True,
+        "draw_face": True,
+        "draw_feet": True,
+        "stick_width": 4,
+        "face_point_size": 2,
+        "score_threshold": 0.51,
+        "threshold": 0.5,
+        "class_name": "person",
+        "max_detections": 2,
+        "ckpt_name": "sdpose_wholebody_fp16.safetensors",
+        "unet_name": "rt_detr_v4-x-hgnet_fp16.safetensors",
+    }
+
+    loader = aliases["ModelPatchLoader"]
+    apply = aliases["MiniMaxH3FunControlNetApply"]
+    assert loader.node_type == "dinkster.load_z_image_control_patch"
+    assert loader.dispatch_affinity == "native"
+    assert apply.node_type == "dinkster.apply_minimax_h3_fun_control_patch"
+    assert nodes["ModelPatchLoader"]["widgets_values"] == [
+        "minimax_h3_fun_controlnet_union_pruned_int8_convrot.safetensors"
+    ]
+    assert nodes["MiniMaxH3FunControlNetApply"]["widgets_values"] == [1, 0, 1]
+    assert tuple(item.id for item in apply.inputs[3:6]) == (
+        "strength",
+        "start_percent",
+        "end_percent",
+    )
+
+
+def test_h3_fun_control_noop_preserves_model_identity() -> None:
+    model = object()
+    assert (
+        native_arm.NativeApplyMiniMaxH3FunControlPatch.execute(
+            model=model,
+            model_patch=object(),
+            vae=object(),
+            strength=0.0,
+            start_percent=0.0,
+            end_percent=1.0,
+            control_video=object(),
+        )["model"]
+        is model
+    )
+
+
+def test_h3_fun_control_registers_family_neutral_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    family = importlib.import_module("dinkster_native.families.minimax_h3")
+    family_id = "dinkster.minimax_h3"
+
+    class Control:
+        pass
+
+    class ComponentHandle:
+        resource_identity = f"native:{family_id}:" + "1" * 64
+        component = Control()
+
+        @staticmethod
+        def require_active() -> None:
+            pass
+
+    class ComponentApplication:
+        def __init__(
+            self,
+            family_id: str,
+            role: str,
+            handle: object,
+            identity: str,
+            materialize: object,
+            **kwargs: object,
+        ) -> None:
+            self.family_id = family_id
+            self.role = role
+            self.handle = handle
+            self.application_identity = identity
+            self.materialize_application_kwargs = materialize
+            self.resident_dependencies = kwargs["resident_dependencies"]
+
+    class ApplicationChain:
+        def __init__(self, model: object, applications: tuple[object, ...]) -> None:
+            self.model = model
+            self.applications = applications
+
+        def append(self, application: object) -> ApplicationChain:
+            return ApplicationChain(self.model, (*self.applications, application))
+
+    inference = SimpleNamespace(
+        ApplicationChain=ApplicationChain,
+        ComponentApplication=ComponentApplication,
+        MINIMAX_H3_CONFIG=SimpleNamespace(family_id=family_id),
+        extend_runtime_identity=lambda _identity, _parts: f"native:{family_id}:" + "2" * 64,
+    )
+    inference_torch = SimpleNamespace(
+        MiniMaxH3FunControl=Control,
+        minimax_h3_fun_control_hint_digest=lambda _value: "3" * 64,
+    )
+    real_import = family.importlib.import_module
+    monkeypatch.setattr(
+        family.importlib,
+        "import_module",
+        lambda name: (
+            inference
+            if name == "dinkster_inference"
+            else inference_torch
+            if name == "dinkster_inference_torch"
+            else real_import(name)
+        ),
+    )
+    monkeypatch.setattr(family, "NativeComponentHandle", ComponentHandle)
+    monkeypatch.setattr(
+        family,
+        "_native_handle",
+        lambda _model, _name: SimpleNamespace(recipe=SimpleNamespace(family_id=family_id)),
+    )
+    vae = SimpleNamespace(resource_identity=f"native:{family_id}:" + "4" * 64)
+    monkeypatch.setattr(family, "_minimax_h3_video_vae_runtime", lambda *_args: (vae, object()))
+    monkeypatch.setattr(family, "_torch", _fake_torch)
+    base = object()
+
+    result = family.NativeApplyMiniMaxH3FunControlPatch.execute(
+        model=base,
+        model_patch=ComponentHandle(),
+        vae=object(),
+        strength=0.75,
+        start_percent=0.1,
+        end_percent=0.9,
+        control_video=FakeTensor((2, 8, 8, 3)),
+    )["model"]
+
+    assert type(result) is ApplicationChain
+    assert result.model is base
+    assert len(result.applications) == 1
+    application = cast("Any", result.applications[0])
+    assert application.family_id == family_id
+    assert application.role == "diffusion"
+    assert application.resident_dependencies == (vae,)
+    assert not hasattr(result, "minimax_h3_control")
 
 
 def test_generic_av_concat_and_separate_preserve_roles_masks_and_metadata(

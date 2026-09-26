@@ -109,6 +109,7 @@ from .minimax_h3_conditioning import (
     MiniMaxH3VisionValue,
     realize_minimax_h3_conditioner_inputs,
 )
+from .minimax_h3_control import MiniMaxH3FunControlConditioning
 from .minimax_h3_dit import (
     MiniMaxH3Attention,
     MiniMaxH3BlockAttention,
@@ -201,8 +202,10 @@ def _validate_h3_mask(mask: MultiStreamLatent[torch.Tensor]) -> None:
             raise MiniMaxH3RuntimeError("H3 denoise mask values must be within [0, 1]")
 
 
-def _dit_component_role(task: MiniMaxH3Task) -> str:
-    return "ref2va_dit" if task is MiniMaxH3Task.REF2VA else "fl2va_dit"
+def _dit_component_roles(task: MiniMaxH3Task) -> tuple[str, ...]:
+    if task is MiniMaxH3Task.T2VA:
+        return ("fl2va_dit", "ref2va_dit")
+    return ("ref2va_dit",) if task is MiniMaxH3Task.REF2VA else ("fl2va_dit",)
 
 
 def _h3_attention_backend_identity(attention: MiniMaxH3Attention) -> str:
@@ -1309,6 +1312,7 @@ class _H3LatentAdapter:
         unknown = set(context.options) - {
             "attention_kernel_factory",
             "sparse_attention",
+            "control",
             "noise_inds",
             "scheduler_label",
             "scheduled",
@@ -1316,6 +1320,11 @@ class _H3LatentAdapter:
         if unknown:
             raise MiniMaxH3RuntimeError(
                 "MiniMax H3 sampling does not accept adapter options: " + ", ".join(sorted(unknown))
+            )
+        control = context.options.get("control")
+        if control is not None and type(control) is not MiniMaxH3FunControlConditioning:
+            raise MiniMaxH3RuntimeError(
+                "MiniMax H3 control must be exact MiniMaxH3FunControlConditioning"
             )
         if type(latent) is not MultiStreamLatent:
             raise MiniMaxH3RuntimeError(
@@ -1388,8 +1397,8 @@ class _H3LatentAdapter:
                 guidance_cfg = replace(
                     cast("SamplingGuidance[object]", cfg), uncond=guidance_uncond
                 )
-        required_role = _dit_component_role(conditioning.task)
-        if owner._model_role != required_role:  # pyright: ignore[reportPrivateUsage]
+        allowed_roles = _dit_component_roles(conditioning.task)
+        if owner._model_role not in allowed_roles:  # pyright: ignore[reportPrivateUsage]
             raise MiniMaxH3RuntimeError(
                 f"MiniMax H3 {owner._model_role} component cannot sample task "  # pyright: ignore[reportPrivateUsage]
                 f"{conditioning.task.name}"
@@ -1608,6 +1617,9 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         requested_sequence = (
             requested_distributed is not None and requested_distributed.mode == "sequence"
         )
+        control = cast("MiniMaxH3FunControlConditioning | None", context.options.get("control"))
+        if requested_sequence and control is not None:
+            raise MiniMaxH3RuntimeError("MiniMax H3 control does not support sequence sharding")
         if requested_sequence and attention_kernel_factory is not None:
             raise MiniMaxH3RuntimeError(
                 "single-job sequence mode owns the attention kernel factory"
@@ -1737,6 +1749,17 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 component_role="diffusion",
                 device=str(x.device),
             ):
+                active_control = (
+                    None
+                    if control is None
+                    else control.patch_for_sigma(
+                        sigma,
+                        lambda percent: self.custom_sampling_percent_to_sigma(
+                            percent,
+                            return_actual_sigma=True,
+                        ),
+                    )
+                )
                 local_rank_zero = rank_zero_sampling_active()
                 selected_block_attention: MiniMaxH3BlockAttentionFactory | None = None
                 if sparse_attention is not None:
@@ -1913,6 +1936,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                         conditioning=dit_conditioning,
                         sigmas=sigmas,
                         sampler_sigmas=schedule,
+                        control=active_control,
                         denoise_mask=active_model_mask,
                         attention_kernel_factory=sequence_factory,
                         sequence_sharding=sharding,
@@ -1927,6 +1951,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             conditioning=dit_conditioning,
                             sigmas=sigmas,
                             sampler_sigmas=schedule,
+                            control=active_control,
                             denoise_mask=active_model_mask,
                             **(
                                 {}
@@ -1942,6 +1967,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             conditioning=dit_conditioning,
                             sigmas=sigmas,
                             sampler_sigmas=schedule,
+                            control=active_control,
                             denoise_mask=active_model_mask,
                             attention_kernel_factory=attention_kernel_factory,
                             **(

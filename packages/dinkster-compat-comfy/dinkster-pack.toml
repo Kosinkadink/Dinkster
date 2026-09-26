@@ -385,6 +385,7 @@ native = [
     "dinkster.wan_vace_to_video",
     "dinkster.wan22_image_to_video_latent",
     "dinkster.load_z_image_control_patch",
+    "dinkster.apply_minimax_h3_fun_control_patch",
     "dinkster.apply_z_image_control_patch",
     "dinkster.clip_set_last_layer",
     "dinkster.t5_tokenizer_options",

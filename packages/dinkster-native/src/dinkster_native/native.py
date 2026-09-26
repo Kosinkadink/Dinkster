@@ -1352,6 +1352,7 @@ class LoadZImageControlPatch(Node):
             outputs=(OutputSpec("model_patch", MODEL_PATCH),),
             aliases=("ModelPatchLoader",),
             search_terms=("z-image", "fun controlnet", "wan", "infinite talk", "model patch"),
+            dispatch_affinity="native",
         )
 
     @classmethod
@@ -1396,6 +1397,67 @@ class ApplyZImageControlPatch(Node):
         strength: float,
     ) -> Mapping[str, object]:
         raise RuntimeError("dinkster.apply_z_image_control_patch requires the native execution arm")
+
+
+class ApplyMiniMaxH3FunControlPatch(Node):
+    """Attach MiniMax H3 Fun ControlNet conditioning to a native model."""
+
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.apply_minimax_h3_fun_control_patch",
+            display_name="Apply MiniMax H3 Fun ControlNet",
+            category="model/patch/minimax",
+            inputs=(
+                InputSpec("model", MODEL),
+                InputSpec("model_patch", MODEL_PATCH),
+                InputSpec("vae", VAE),
+                InputSpec(
+                    "strength",
+                    FLOAT,
+                    default=1.0,
+                    widget=NumberWidget(min=0.0, max=10.0, step=0.01),
+                ),
+                InputSpec(
+                    "start_percent",
+                    FLOAT,
+                    default=0.0,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.001),
+                ),
+                InputSpec(
+                    "end_percent",
+                    FLOAT,
+                    default=1.0,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.001),
+                ),
+                InputSpec("control_video", IMAGE, required=False, default=None),
+                InputSpec("mask", MASK, required=False, default=None),
+                InputSpec("source_video", IMAGE, required=False, default=None),
+            ),
+            outputs=(OutputSpec("model", MODEL),),
+            aliases=("MiniMaxH3FunControlNetApply",),
+            search_terms=("minimax controlnet", "h3 controlnet", "video inpaint controlnet"),
+        )
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        model: object,
+        model_patch: object,
+        vae: object,
+        strength: float,
+        start_percent: float,
+        end_percent: float,
+        control_video: object = None,
+        mask: object = None,
+        source_video: object = None,
+    ) -> Mapping[str, object]:
+        del model, model_patch, vae, strength, start_percent, end_percent
+        del control_video, mask, source_video
+        raise RuntimeError(
+            "dinkster.apply_minimax_h3_fun_control_patch requires the native execution arm"
+        )
 
 
 def _drop_path_reload_factories(*objects: object) -> None:
@@ -4047,6 +4109,7 @@ NATIVE_NODES: tuple[type[Node], ...] = (
     Wan22ImageToVideoLatent,
     LoadZImageControlPatch,
     ApplyZImageControlPatch,
+    ApplyMiniMaxH3FunControlPatch,
     LoadVae,
     LoadVision,
     LoadClip,
