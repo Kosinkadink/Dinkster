@@ -317,6 +317,7 @@ class GenerationChromaRadianceOptions(Node):
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                sparse_attention=_native_model_sparse_attention(model),
             )
         )
 
@@ -358,6 +359,7 @@ class GenerationChromaModelSampling(Node):
                 radiance_options,
                 sampling_cache=_native_model_sampling_cache(model_value),
                 sampling_timeline=_native_model_sampling_timeline(model_value),
+                sparse_attention=_native_model_sparse_attention(model_value),
             )
         )
 
@@ -405,6 +407,7 @@ class GenerationModelSamplingSD3(Node):
                 radiance_options,
                 sampling_cache=_native_model_sampling_cache(model_value),
                 sampling_timeline=_native_model_sampling_timeline(model_value),
+                sparse_attention=_native_model_sparse_attention(model_value),
             )
         )
 
@@ -472,6 +475,7 @@ class GenerationModelSamplingLTXV(Node):
                 options,
                 sampling_cache=_native_model_sampling_cache(model_value),
                 sampling_timeline=_native_model_sampling_timeline(model_value),
+                sparse_attention=_native_model_sparse_attention(model_value),
             )
         )
 

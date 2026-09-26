@@ -32620,6 +32620,8 @@ def test_block_sparse_attention_binds_official_h3_controls() -> None:
     assert config.min_tokens == 4096
     assert config.sink_conditioning == "exact_kv"
     assert config.verbose is True
+    repatched = arm.GenerationDisableCFG1Optimization.execute(model=patched)["model"]
+    assert repatched.sparse_attention is config
 
 
 def test_cfg_override_binds_percent_range_to_model_sigmas(

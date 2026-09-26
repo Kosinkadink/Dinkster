@@ -63,6 +63,7 @@ from .native_arm_runtime import (
     _native_model_sampling_cache,
     _native_model_sampling_space,
     _native_model_sampling_timeline,
+    _native_model_sparse_attention,
     _NativeControlNetResource,
     _NativeModelOverlay,
     _overlay_for_components,
@@ -855,6 +856,7 @@ class NativeApplyZImageControlPatch(ApplyZImageControlPatch):
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                sparse_attention=_native_model_sparse_attention(model),
             )
         )
 
@@ -1038,6 +1040,7 @@ def _apply_native_lora_stack(
                     sampling_cache=_native_model_sampling_cache(model),
                     sampling_timeline=_native_model_sampling_timeline(model),
                     sampling_space=_native_model_sampling_space(model),
+                    sparse_attention=_native_model_sparse_attention(model),
                 )
             return patched_model, clone
         return model, clip
@@ -1090,6 +1093,7 @@ def _apply_native_lora_stack(
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                sparse_attention=_native_model_sparse_attention(model),
             )
         return patched_model, clone
     return (
@@ -1105,6 +1109,7 @@ def _apply_native_lora_stack(
             sampling_cache=_native_model_sampling_cache(model),
             sampling_timeline=_native_model_sampling_timeline(model),
             sampling_space=_native_model_sampling_space(model),
+            sparse_attention=_native_model_sparse_attention(model),
         ),
         clip_handle,
     )
@@ -1154,6 +1159,7 @@ def _apply_split_flux2_lora_stack(
                     sampling_cache=_native_model_sampling_cache(model),
                     sampling_timeline=_native_model_sampling_timeline(model),
                     sampling_space=_native_model_sampling_space(model),
+                    sparse_attention=_native_model_sparse_attention(model),
                 )
             return patched_model, text_handle
         return model, text_handle
@@ -1207,6 +1213,7 @@ def _apply_split_flux2_lora_stack(
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                sparse_attention=_native_model_sparse_attention(model),
             ),
             text_handle,
         )
@@ -1250,6 +1257,7 @@ def _apply_split_flux2_lora_stack(
             sampling_cache=_native_model_sampling_cache(model),
             sampling_timeline=_native_model_sampling_timeline(model),
             sampling_space=_native_model_sampling_space(model),
+            sparse_attention=_native_model_sparse_attention(model),
         )
     return patched_model, patched_text
 
@@ -1304,6 +1312,7 @@ def _apply_native_model_lora_stack(
                     sampling_cache=_native_model_sampling_cache(model),
                     sampling_timeline=_native_model_sampling_timeline(model),
                     sampling_space=_native_model_sampling_space(model),
+                    sparse_attention=_native_model_sparse_attention(model),
                 )
             return clone
         return model
@@ -1346,6 +1355,7 @@ def _apply_native_model_lora_stack(
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=_native_model_sampling_space(model),
+                sparse_attention=_native_model_sparse_attention(model),
             )
         return clone
     return _NativeModelOverlay(
@@ -1360,6 +1370,7 @@ def _apply_native_model_lora_stack(
         sampling_cache=_native_model_sampling_cache(model),
         sampling_timeline=_native_model_sampling_timeline(model),
         sampling_space=_native_model_sampling_space(model),
+        sparse_attention=_native_model_sparse_attention(model),
     )
 
 

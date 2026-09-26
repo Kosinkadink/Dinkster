@@ -44,6 +44,7 @@ from .native_arm_runtime import (
     _native_model_sampling_cache,
     _native_model_sampling_space,
     _native_model_sampling_timeline,
+    _native_model_sparse_attention,
     _NativeModelOverlay,
 )
 from .native_arm_scheduling import (
@@ -1150,6 +1151,7 @@ class GenerationDisableCFG1Optimization(Node):
             sampling_cache=_native_model_sampling_cache(model),
             sampling_timeline=_native_model_sampling_timeline(model),
             sampling_space=_native_model_sampling_space(model),
+            sparse_attention=_native_model_sparse_attention(model),
         )
         if applications:
             inference = importlib.import_module("dinkster_inference")
