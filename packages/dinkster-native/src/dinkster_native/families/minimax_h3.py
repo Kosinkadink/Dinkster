@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Protocol
 
 from ..family_registry import (
     load_component as _load_family_component,
@@ -14,6 +15,7 @@ from ..family_registry import (
 )
 from ..native_arm_core import (
     Any,
+    ApplyMiniMaxH3FunControlPatch,
     ConcatAVLatent,
     EmptyMiniMaxH3AV,
     EmptyMiniMaxMusic3LatentAudio,
@@ -57,6 +59,23 @@ from ..native_arm_runtime import (
 )
 from .conditioning import _prepared_multistream_carrier
 from .latent import _adapt_multistream_latent, _latent_samples, _move_multistream_latent
+
+
+class _MiniMaxH3FunControl(Protocol):
+    inpaint_post_norm: bool
+
+
+class _MultiStreamLatent(Protocol):
+    roles: tuple[str, ...]
+
+    def by_role(self, role: str) -> Any: ...
+
+
+class _ApplicationChain(Protocol):
+    model: object
+    applications: tuple[Any, ...]
+
+    def append(self, application: object) -> object: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,6 +365,185 @@ def _minimax_h3_image_batch(value: object, torch: Any, name: str) -> Any:
             raise ValueError(f"{name} must be a strided floating [batch,height,width,3] tensor")
         tensor = tensor.to(dtype=torch.float32) / float(torch.iinfo(tensor.dtype).max)
     return tensor.contiguous()
+
+
+def _materialize_minimax_h3_fun_control(
+    runtime: object,
+    control_model: object,
+    samples: object,
+    *,
+    vae_handle: NativeComponentHandle,
+    vae_runtime: object,
+    control_video: object | None,
+    mask: object | None,
+    source_video: object | None,
+    strength: float,
+    start_percent: float,
+    end_percent: float,
+) -> Mapping[str, object]:
+    del runtime
+    torch = _torch()
+    inference = importlib.import_module("dinkster_inference")
+    inference_torch = importlib.import_module("dinkster_inference_torch")
+    if type(control_model) is not inference_torch.MiniMaxH3FunControl:
+        raise TypeError("live component must be a MiniMax H3 Fun control patch")
+    if type(samples) is not inference.MultiStreamLatent:
+        raise TypeError("MiniMax H3 Fun control requires ordered video/audio latent streams")
+    control = cast("_MiniMaxH3FunControl", control_model)
+    streams = cast("_MultiStreamLatent", samples)
+    if streams.roles != ("video", "audio"):
+        raise TypeError("MiniMax H3 Fun control requires ordered video/audio latent streams")
+    video = streams.by_role("video")
+    target_shape = tuple(video.shape)
+
+    def encode(frames: Any) -> Any:
+        content = frames.permute(1, 0, 2, 3).unsqueeze(0).to(vae_handle.load_device)
+        return cast("Any", vae_runtime).encode_video(content).to(torch.float32)
+
+    with vae_handle.stage(observer_stage="encode"), torch.inference_mode():
+        hint = inference_torch.prepare_minimax_h3_fun_control_hint(
+            target_shape,
+            encode=encode,
+            control_video=control_video,
+            mask=mask,
+            source_video=source_video,
+            inpaint_post_norm=control.inpaint_post_norm,
+        )
+    hint_digest = inference_torch.minimax_h3_fun_control_hint_digest(hint)
+    return {
+        "control": inference_torch.MiniMaxH3FunControlConditioning(
+            inference.ControlApplication(
+                "minimax-h3-fun",
+                inference.PayloadReference(hint_digest),
+                strength,
+                inference.PercentRange(start_percent, end_percent),
+            ),
+            control,
+            hint,
+        )
+    }
+
+
+class NativeApplyMiniMaxH3FunControlPatch(ApplyMiniMaxH3FunControlPatch):
+    @classmethod
+    def execute(
+        cls,
+        *,
+        model: object,
+        model_patch: object,
+        vae: object,
+        strength: float,
+        start_percent: float,
+        end_percent: float,
+        control_video: object = None,
+        mask: object = None,
+        source_video: object = None,
+    ) -> Mapping[str, object]:
+        for name, value, low, high in (
+            ("strength", strength, 0.0, 10.0),
+            ("start_percent", start_percent, 0.0, 1.0),
+            ("end_percent", end_percent, 0.0, 1.0),
+        ):
+            if not math.isfinite(value) or not low <= value <= high:
+                raise ValueError(f"{name} must be finite and in [{low}, {high}], got {value}")
+        if start_percent > end_percent:
+            raise ValueError("start_percent must not exceed end_percent")
+        if strength == 0.0 or (control_video is None and mask is None):
+            return cls.outputs(model=model)
+        inference = importlib.import_module("dinkster_inference")
+        inference_torch = importlib.import_module("dinkster_inference_torch")
+        application_chain = (
+            cast("_ApplicationChain", model)
+            if isinstance(model, inference.ApplicationChain)
+            else None
+        )
+        base_model = application_chain.model if application_chain is not None else model
+        handle = _native_handle(base_model, "model")
+        if handle.recipe.family_id != inference.MINIMAX_H3_CONFIG.family_id:
+            raise TypeError("MiniMax H3 Fun ControlNet requires a native MiniMax H3 model")
+        if not isinstance(model_patch, NativeComponentHandle):
+            raise TypeError("model_patch must be a native MiniMax H3 Fun control patch")
+        model_patch.require_active()
+        if type(model_patch.component) is not inference_torch.MiniMaxH3FunControl:
+            raise TypeError("model_patch must be a native MiniMax H3 Fun control patch")
+        existing = () if application_chain is None else application_chain.applications
+        if any(
+            type(application.handle.component) is inference_torch.MiniMaxH3FunControl
+            for application in existing
+        ):
+            raise ValueError("a MiniMax H3 model can carry only one Fun ControlNet patch")
+        vae_handle, vae_runtime = _minimax_h3_video_vae_runtime(vae, "vae")
+        torch = _torch()
+
+        def frames(value: object, name: str) -> object:
+            tensor = _minimax_h3_image_batch(value, torch, name)
+            return tensor[..., :3].permute(0, 3, 1, 2).detach().to("cpu").contiguous()
+
+        control_frames = None if control_video is None else frames(control_video, "control_video")
+        source_frames = (
+            None if mask is None or source_video is None else frames(source_video, "source_video")
+        )
+        control_mask = None
+        if mask is not None:
+            if type(mask) is not torch.Tensor:
+                raise TypeError("mask must be an exact torch.Tensor")
+            control_mask = cast("Any", mask)
+            if control_mask.ndim < 2 or not control_mask.is_floating_point():
+                raise ValueError("mask must be a floating tensor with spatial dimensions")
+            control_mask = control_mask.detach().to("cpu").contiguous()
+
+        def source_identity(value: object | None) -> str:
+            return (
+                "absent"
+                if value is None
+                else inference_torch.minimax_h3_fun_control_hint_digest(cast("Any", value))
+            )
+
+        identity = inference.extend_runtime_identity(
+            model_patch.resource_identity,
+            (
+                "role=minimax_h3_fun_control",
+                f"vae={vae_handle.resource_identity}",
+                f"control_video={source_identity(control_frames)}",
+                f"mask={source_identity(control_mask)}",
+                f"source_video={source_identity(source_frames)}",
+                f"strength={float(strength).hex()}",
+                f"start={float(start_percent).hex()}",
+                f"end={float(end_percent).hex()}",
+            ),
+        )
+
+        def materialize(
+            runtime: object, control_model: object, samples: object
+        ) -> Mapping[str, object]:
+            return _materialize_minimax_h3_fun_control(
+                runtime,
+                control_model,
+                samples,
+                vae_handle=vae_handle,
+                vae_runtime=vae_runtime,
+                control_video=control_frames,
+                mask=control_mask,
+                source_video=source_frames,
+                strength=float(strength),
+                start_percent=float(start_percent),
+                end_percent=float(end_percent),
+            )
+
+        application = inference.ComponentApplication(
+            inference.MINIMAX_H3_CONFIG.family_id,
+            "diffusion",
+            model_patch,
+            identity,
+            materialize,
+            resident_dependencies=(vae_handle,),
+        )
+        chain = (
+            application_chain.append(application)
+            if application_chain is not None
+            else inference.ApplicationChain(model, (application,))
+        )
+        return cls.outputs(model=chain)
 
 
 def _nearest_32(value: float | int) -> int:
@@ -898,15 +1096,22 @@ class NativeMiniMaxH3ReferenceToVideo(MiniMaxH3ReferenceToVideo):
             )
         references.extend(_audio_reference(audio, name) for name, audio in ref_audios.items())
         latent = _empty_minimax_h3_target(width, height, length)
-        result = NativeMiniMaxH3REF2VAConditioning.execute(
-            clip=clip,
-            video_vae=vae,
-            audio_vae=audio_vae,
-            target=latent,
-            prompt=prompt,
-            references=references,
-            ref_image_size=ref_image_size,
-        )
+        if references:
+            result = NativeMiniMaxH3REF2VAConditioning.execute(
+                clip=clip,
+                video_vae=vae,
+                audio_vae=audio_vae,
+                target=latent,
+                prompt=prompt,
+                references=references,
+                ref_image_size=ref_image_size,
+            )
+        else:
+            result = NativeMiniMaxH3T2VAConditioning.execute(
+                clip=clip,
+                target=latent,
+                prompt=prompt,
+            )
         return cls.outputs(positive=result["conditioning"], latent=latent)
 
 

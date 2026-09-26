@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from importlib.metadata import version as _distribution_version
-from typing import cast
+from typing import Protocol, cast, runtime_checkable
 
 import torch
 import torch.nn.functional as F
@@ -575,6 +575,31 @@ class _PackedLayout:
         self.audio_update = torch.cat(audio_updates)
 
 
+@dataclass(frozen=True, slots=True)
+class MiniMaxH3ControlBlockContext:
+    """Per-forward facts a control patch needs alongside every base block."""
+
+    layout: _PackedLayout
+    time_embedding: torch.Tensor
+    segments: tuple[_ModulationSegment, ...]
+    rope_table: torch.Tensor
+    attention_kernel: AttentionKernel | None
+
+
+@runtime_checkable
+class MiniMaxH3ControlPatch(Protocol):
+    """Block-level control application around the base H3 block loop."""
+
+    def before_base_block(self, hidden: torch.Tensor, block_index: int) -> None: ...
+
+    def after_base_block(
+        self,
+        hidden: torch.Tensor,
+        block_index: int,
+        context: MiniMaxH3ControlBlockContext,
+    ) -> torch.Tensor: ...
+
+
 class _MiniMaxH3MLP(torch.nn.Module):
     def __init__(self, hidden: int, ffn: int, *, operations: Operations) -> None:
         super().__init__()
@@ -794,10 +819,26 @@ class _MiniMaxH3TokenRefiner(torch.nn.Module):
             close_prefetch_queue(queue)
 
 
+class MiniMaxH3BlockShapes(Protocol):
+    """Block width facts shared by base and control checkpoint shapes."""
+
+    @property
+    def hidden_width(self) -> int: ...
+
+    @property
+    def attention_heads(self) -> int: ...
+
+    @property
+    def attention_head_dim(self) -> int: ...
+
+    @property
+    def ffn_width(self) -> int: ...
+
+
 class _MiniMaxH3Block(torch.nn.Module):
     def __init__(
         self,
-        config: MiniMaxH3Config,
+        config: MiniMaxH3BlockShapes,
         attention_kernel: AttentionKernel,
         evidence: MiniMaxH3AttentionProviderEvidence,
         *,
@@ -1115,7 +1156,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
             self.config.audio_content_channels,
         ):
             raise ValueError("MiniMax H3 audio latent must be [1,32,2,t]")
-        if control is not None:
+        if control is not None and not isinstance(control, MiniMaxH3ControlPatch):
             raise ValueError("MiniMax H3 does not support generic control")
         if type(video_sigma) is not float or not 0.0 < video_sigma <= 1.0:
             raise ValueError("video_sigma must be a float within (0, 1]")
@@ -1429,6 +1470,8 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 raise TypeError("sequence_sharding must be an exact MiniMaxH3SequenceSharding")
             if attention_kernel_factory is None:
                 raise ValueError("sequence sharding requires an attention kernel factory")
+            if control is not None:
+                raise ValueError("MiniMax H3 control does not support sequence sharding")
         selected_conditioning = MiniMaxH3DiTConditioning() if conditioning is None else conditioning
         self._validate_inputs(
             value, video_sigma, context, selected_conditioning, control, denoise_mask
@@ -1449,6 +1492,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 selected_conditioning,
                 sigmas,
                 sampler_sigmas,
+                control=cast("MiniMaxH3ControlPatch | None", control),
                 denoise_mask=denoise_mask,
             )
         elif sequence_sharding is None:
@@ -1459,6 +1503,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 selected_conditioning,
                 sigmas,
                 sampler_sigmas,
+                control=cast("MiniMaxH3ControlPatch | None", control),
                 denoise_mask=denoise_mask,
                 attention_kernel_factory=attention_kernel_factory,
             )
@@ -1470,6 +1515,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 selected_conditioning,
                 sigmas,
                 sampler_sigmas,
+                control=cast("MiniMaxH3ControlPatch | None", control),
                 denoise_mask=denoise_mask,
                 attention_kernel_factory=attention_kernel_factory,
                 sequence_sharding=sequence_sharding,
@@ -1490,6 +1536,7 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         sigmas: MiniMaxH3Sigmas,
         sampler_sigmas: tuple[float, ...] | None,
         *,
+        control: MiniMaxH3ControlPatch | None = None,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
         attention_kernel_factory: MiniMaxH3AttentionKernelFactory | None = None,
         sequence_sharding: MiniMaxH3SequenceSharding | None = None,
@@ -1712,8 +1759,17 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         else:
             queue = make_prefetch_queue(self.blocks)
             try:
-                for block in self.blocks:
+                control_context = MiniMaxH3ControlBlockContext(
+                    layout,
+                    time_embedding,
+                    segments_tuple,
+                    rope_table,
+                    attention_kernel,
+                )
+                for block_index, block in enumerate(self.blocks):
                     prefetch_queue_pop(queue, block)
+                    if control is not None:
+                        control.before_base_block(hidden, block_index)
                     if attention_kernel is None:
                         hidden = block(hidden, time_embedding, segments_tuple, rope_table)
                     else:
@@ -1724,6 +1780,8 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                             rope_table,
                             attention_kernel=attention_kernel,
                         )
+                    if control is not None:
+                        hidden = control.after_base_block(hidden, block_index, control_context)
                 prefetch_queue_pop(queue, None)
             finally:
                 close_prefetch_queue(queue)

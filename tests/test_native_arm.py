@@ -6742,6 +6742,7 @@ def test_native_z_image_control_patch_loads_strict_plan_into_residency(
         plan_z_image_control=lambda value, **kwargs: events.append(("plan", value, kwargs)) or plan,
     )
     inference_torch = SimpleNamespace(
+        is_minimax_h3_fun_state_dict=lambda _value: False,
         assemble_z_image_control=lambda value, **kwargs: (
             events.append(("assemble", value, kwargs))
             or SimpleNamespace(control=control, resource_digest="resource-identity")
@@ -6793,6 +6794,93 @@ def test_native_z_image_control_patch_loads_strict_plan_into_residency(
     assert events[1] == ("plan", source, {"asset_digest": asset.digest})
     assert events[2][0:2] == ("assemble", plan)
     assert events[3][0:2] == ("enroll", control)
+
+
+def test_native_h3_control_patch_passes_checkpoint_quantization_to_loader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    arm = _native_arm()
+    asset = _asset(_safetensors(tmp_path / "h3-control.safetensors"))
+    geometry = object()
+    quant = {"control_blocks.0.after_proj": object()}
+    state = {"control_proj_in.weight": object()}
+    events: list[tuple[object, ...]] = []
+
+    class Source:
+        @staticmethod
+        def keys() -> tuple[str, ...]:
+            return ("control_proj_in.weight",)
+
+        @staticmethod
+        def entry(_key: str) -> object:
+            return SimpleNamespace(geometry=geometry)
+
+        @staticmethod
+        def metadata() -> dict[str, str]:
+            return {"minimax_h3_fun_controlnet": "adaln_basis"}
+
+        @staticmethod
+        def read_uint8_configuration(_key: str) -> bytes:
+            return b"{}"
+
+    source = Source()
+    inference = SimpleNamespace(
+        load_safetensors_header=lambda _path: source,
+        split_quantization=lambda geometries, metadata, **kwargs: (
+            events.append(("quant", geometries, metadata, kwargs)) or SimpleNamespace(layers=quant)
+        ),
+    )
+
+    class LoaderReached(RuntimeError):
+        pass
+
+    def load_control(*args: object, **kwargs: object) -> None:
+        events.append(("load", args, kwargs))
+        raise LoaderReached
+
+    inference_torch = SimpleNamespace(
+        is_minimax_h3_fun_state_dict=lambda _value: True,
+        load_minimax_h3_fun_control=load_control,
+    )
+    checkpoint = SimpleNamespace(
+        load_checkpoint_with_metadata=lambda _path: (state, source.metadata())
+    )
+    attention = SimpleNamespace(resolve_role_attention=lambda *_args: object())
+    h3_dit = SimpleNamespace(minimax_h3_attention_provider=lambda _selection: (object(), object()))
+    real_import = arm.importlib.import_module
+
+    def import_module(name: str) -> object:
+        modules = {
+            "dinkster_inference": inference,
+            "dinkster_inference_torch": inference_torch,
+            "dinkster_inference_torch.checkpoint": checkpoint,
+            "dinkster_inference_torch.attention": attention,
+            "dinkster_inference_torch.minimax_h3_dit": h3_dit,
+        }
+        return modules[name] if name in modules else real_import(name)
+
+    monkeypatch.setattr(
+        arm.importlib,
+        "import_module",
+        import_module,
+    )
+
+    with (
+        use_execution_context(ExecutionContext("native", "expected")),
+        pytest.raises(LoaderReached),
+    ):
+        arm.NativeLoadZImageControlPatch.execute(model_patch=asset)
+
+    assert events[0] == (
+        "quant",
+        {"control_proj_in.weight": geometry},
+        source.metadata(),
+        {"payload_reader": source.read_uint8_configuration},
+    )
+    load_event = cast("tuple[str, tuple[object, ...], dict[str, object]]", events[1])
+    assert load_event[0] == "load"
+    assert load_event[1][:2] == (state, source.metadata())
+    assert load_event[2]["quant"] is quant
 
 
 def test_native_model_patch_loader_dispatches_multitalk_with_bound_identity(
@@ -16037,6 +16125,7 @@ def test_sampling_supplier_nodes_use_application_chain_base_runtime(
     torch_module = FakeTorch()
     recipe = _recipe()
     percentages: list[tuple[float, bool]] = []
+    schedules: list[tuple[tuple[object, ...], dict[str, object]]] = []
     add_noise_calls: list[tuple[object, object, float]] = []
     output_samples = FakeTensor((1, 4, 2, 2), "noisy")
 
@@ -16045,7 +16134,8 @@ def test_sampling_supplier_nodes_use_application_chain_base_runtime(
         runtime_identity = recipe.runtime_identity
 
         @staticmethod
-        def custom_sampling_sigmas(*_args: object, **_kwargs: object) -> tuple[float, ...]:
+        def custom_sampling_sigmas(*args: object, **kwargs: object) -> tuple[float, ...]:
+            schedules.append((args, kwargs))
             return (1.0, 0.0)
 
         custom_sampling_beta_sigmas = custom_sampling_sigmas
@@ -16113,6 +16203,18 @@ def test_sampling_supplier_nodes_use_application_chain_base_runtime(
         ),
     )
 
+    base_schedule = arm.GenerationBasicScheduler.execute(
+        model=handle,
+        scheduler="simple",
+        steps=2,
+        denoise=0.75,
+    )["sigmas"]
+    application_schedule = arm.GenerationBasicScheduler.execute(
+        model=model,
+        scheduler="simple",
+        steps=2,
+        denoise=0.75,
+    )["sigmas"]
     sampler = arm.GenerationSamplerSASolver.execute(
         model=model,
         eta=0.5,
@@ -16132,6 +16234,9 @@ def test_sampling_supplier_nodes_use_application_chain_base_runtime(
         latent_image=latent,
     )["latent"]
 
+    assert base_schedule == application_schedule
+    assert schedules[0] == schedules[1]
+    assert len(schedules) == 2
     assert sampler.descriptor.id == "dinkster.configured_sa_solver"
     assert noisy["samples"] is output_samples
     assert percentages == [(0.2, False), (0.8, False)]

@@ -113,7 +113,10 @@ from dinkster_inference_torch.minimax_h3_assembly import (
     MiniMaxH3Model,
 )
 from dinkster_inference_torch.minimax_h3_conditioning import MiniMaxH3ConditionerInputs
-from dinkster_inference_torch.minimax_h3_dit import MiniMaxH3DiTConditioning
+from dinkster_inference_torch.minimax_h3_dit import (
+    MiniMaxH3ControlPatch,
+    MiniMaxH3DiTConditioning,
+)
 from dinkster_inference_torch.patch_providers import PatchProviderSnapshot
 from dinkster_inference_torch.sampling_execution import run_ksampler_as_custom
 from dinkster_inference_torch.scheduled_sampling import (
@@ -211,10 +214,11 @@ class FakeDiT:
         conditioning: MiniMaxH3DiTConditioning,
         sigmas: MiniMaxH3Sigmas,
         sampler_sigmas: tuple[float, ...] | None = None,
+        control: MiniMaxH3ControlPatch | None = None,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
         attention_kernel_factory: MiniMaxH3AttentionKernelFactory | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
-        del context, conditioning
+        del context, conditioning, control
         self.calls.append((sigma, sigmas))
         self.sampler_schedules.append(sampler_sigmas)
         self.denoise_masks.append(denoise_mask)
@@ -507,7 +511,7 @@ def test_h3_runtime_stays_off_the_conditioning_preparation_protocol() -> None:
         assert not hasattr(runtime_type, "prepare_conditioning")
 
 
-def test_single_dit_component_refuses_task_role_mismatches(
+def test_single_dit_component_admits_t2va_and_refuses_specialized_task_mismatches(
     runtime_fixture: RuntimeFixture,
 ) -> None:
     fl2va = MiniMaxH3DiTRuntime(
@@ -544,9 +548,8 @@ def test_single_dit_component_refuses_task_role_mismatches(
         )
     assert str(fl2va_failure.value) == ("MiniMax H3 fl2va_dit component cannot sample task REF2VA")
 
-    with pytest.raises(MiniMaxH3RuntimeError) as ref2va_failure:
-        ref2va.sample_multistream(target, conditioning=prepared, **arguments)
-    assert str(ref2va_failure.value) == ("MiniMax H3 ref2va_dit component cannot sample task T2VA")
+    sampled = ref2va.sample_multistream(target, conditioning=prepared, **arguments)
+    assert sampled.roles == ("video", "audio")
 
 
 def test_single_dit_component_exposes_runtime_identity(
@@ -1193,9 +1196,10 @@ class ContextMeanDiT(torch.nn.Module):
         conditioning: MiniMaxH3DiTConditioning,
         sigmas: MiniMaxH3Sigmas,
         sampler_sigmas: tuple[float, ...] | None = None,
+        control: MiniMaxH3ControlPatch | None = None,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
-        del sigma, sigmas, sampler_sigmas
+        del sigma, sigmas, sampler_sigmas, control
         self.conditionings.append(conditioning)
         self.denoise_masks.append(denoise_mask)
         projection_input = context.mean().reshape(1, 1).to(self.video_patch_proj.weight.dtype)

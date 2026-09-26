@@ -399,7 +399,7 @@ def test_canonical_allowlist_contains_only_semantic_site_fields() -> None:
     all_sites = raw["sites"] + raw["value_type_allowlist"]["sites"]
 
     assert raw["ceiling"] == 8
-    assert raw["value_type_allowlist"]["ceiling"] == 263
+    assert raw["value_type_allowlist"]["ceiling"] == 264
     assert len(raw["sites"]) == 8
-    assert len(raw["value_type_allowlist"]["sites"]) == 263
+    assert len(raw["value_type_allowlist"]["sites"]) == 264
     assert all("line" not in site and "column" not in site for site in all_sites)

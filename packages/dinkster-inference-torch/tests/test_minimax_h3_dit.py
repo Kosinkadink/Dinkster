@@ -71,6 +71,7 @@ from dinkster_inference_torch.minimax_h3_dit import (
     MiniMaxH3Attention,
     MiniMaxH3AttentionGeometry,
     MiniMaxH3AttentionProviderEvidence,
+    MiniMaxH3ControlPatch,
     MiniMaxH3DiT,
     MiniMaxH3DiTConditioning,
     MiniMaxH3KeyframeLatent,
@@ -2731,8 +2732,10 @@ def test_audio_carry_and_velocity_conversion_consume_exact_s2_coefficients(
         _sigmas: MiniMaxH3Sigmas,
         _sampler_sigmas: tuple[float, ...] | None,
         *,
+        control: MiniMaxH3ControlPatch | None = None,
         denoise_mask: MultiStreamLatent[torch.Tensor] | None = None,
     ) -> MultiStreamLatent[torch.Tensor]:
+        assert control is None
         assert denoise_mask is None
         seen.append(carried)
         return _h3(

@@ -24,6 +24,7 @@ from .families.ltx import (
     NativeEmptyLTXVLatent,
 )
 from .families.minimax_h3 import (
+    NativeApplyMiniMaxH3FunControlPatch,
     NativeConcatAVLatent,
     NativeEmptyMiniMaxH3AV,
     NativeEmptyMiniMaxMusic3LatentAudio,
@@ -568,6 +569,7 @@ NATIVE_ARM_NODES: tuple[type[Node], ...] = (
     NativeWanVaceToVideo,
     NativeWan22ImageToVideoLatent,
     NativeLoadZImageControlPatch,
+    NativeApplyMiniMaxH3FunControlPatch,
     NativeApplyZImageControlPatch,
     # Resident component handles carry producer-arm affinity: a consumer must
     # execute on the arm that produced its handle. dinkster.load_clip and
@@ -655,6 +657,7 @@ __all__ = [
     "NativeLoadVae",
     "NativeLoadVision",
     "NativeLoadZImageControlPatch",
+    "NativeApplyMiniMaxH3FunControlPatch",
     "NativeApplyZImageControlPatch",
     "NativeInspectLatentMask",
     "NativeLoadLora",
