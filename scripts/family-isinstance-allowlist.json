@@ -3,71 +3,2184 @@
   "sites": [
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 1894,
-      "column": 12,
+      "scope": "_load_flux",
+      "subject": "plan",
       "type": "FluxAssemblyPlan",
       "classification": "boundary",
+      "occurrence": 1,
       "reason": "Reject the wrong plan type before the Flux loader reads family-specific fields."
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 1970,
-      "column": 12,
-      "type": "QwenImageAssemblyPlan",
+      "scope": "_load_flux2",
+      "subject": "plan",
+      "type": "Flux2AssemblyPlan",
       "classification": "boundary",
+      "occurrence": 1,
       "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2033,
-      "column": 12,
+      "scope": "_load_lumina2",
+      "subject": "plan",
+      "type": "Lumina2AssemblyPlan",
+      "classification": "boundary",
+      "occurrence": 1,
+      "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
+    },
+    {
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+      "scope": "_load_qwen_image",
+      "subject": "plan",
+      "type": "QwenImageAssemblyPlan",
+      "classification": "boundary",
+      "occurrence": 1,
+      "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
+    },
+    {
+      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+      "scope": "_load_sd",
+      "subject": "plan",
       "type": "SDAssemblyPlan",
       "classification": "boundary",
+      "occurrence": 1,
       "reason": "Reject the wrong plan type before the SD loader reads family-specific fields."
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2117,
-      "column": 12,
+      "scope": "_load_wan",
+      "subject": "plan",
       "type": "Wan21AssemblyPlan",
       "classification": "boundary",
+      "occurrence": 1,
       "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
     },
     {
       "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2181,
-      "column": 12,
+      "scope": "_load_z_image",
+      "subject": "plan",
       "type": "ZImageAssemblyPlan",
       "classification": "boundary",
+      "occurrence": 1,
       "reason": "Reject the wrong plan type before the Z-Image loader reads family-specific fields."
     },
     {
-      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2248,
-      "column": 12,
-      "type": "Flux2AssemblyPlan",
-      "classification": "boundary",
-      "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
-    },
-    {
-      "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
-      "line": 2317,
-      "column": 12,
-      "type": "Lumina2AssemblyPlan",
-      "classification": "boundary",
-      "reason": "Reject the wrong plan type after the generic checkpoint conversion boundary."
-    },
-    {
       "path": "packages/dinkster-workers/src/dinkster_workers/backend_env.py",
-      "line": 901,
-      "column": 37,
+      "scope": "_residency_problems",
+      "subject": "family",
       "type": "family in",
       "classification": "family-comparison",
+      "occurrence": 1,
       "reason": "Canonical single-runtime benchmark families await catalog residency declarations."
     }
   ],
   "value_type_allowlist": {
     "ceiling": 263,
-    "sha256": "3b12a543b964e2875c8a7cc0622bc40593774d961100cf3ec9d411fee5d560a6"
+    "sites": [
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/_conditioning_layout.py",
+        "scope": "bind_flux_layout",
+        "subject": "conditioning",
+        "type": "DeclaredConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/_conditioning_layout.py",
+        "scope": "bind_sd_layout",
+        "subject": "conditioning",
+        "type": "DeclaredConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/_conditioning_layout.py",
+        "scope": "conditioning_layout",
+        "subject": "value",
+        "type": "DeclaredConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/_conditioning_layout.py",
+        "scope": "conditioning_token_transforms",
+        "subject": "value",
+        "type": "DeclaredConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/_conditioning_layout.py",
+        "scope": "declared_token_count",
+        "subject": "conditioning",
+        "type": "DeclaredConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ace15_text.py",
+        "scope": "materialize_ace15_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/anima_runtime.py",
+        "scope": "AnimaDenoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "AnimaConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/anima_runtime.py",
+        "scope": "AnimaDenoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/anima_runtime.py",
+        "scope": "AnimaDiffusionRuntime._bake_conditioning",
+        "subject": "value",
+        "type": "AnimaConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/anima_runtime.py",
+        "scope": "_AnimaLatentAdapter.prepare",
+        "subject": "value",
+        "type": "AnimaConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/anima_runtime.py",
+        "scope": "anima_conditioning_to_carrier",
+        "subject": "value",
+        "type": "AnimaConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/anima_runtime.py",
+        "scope": "materialize_anima_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/chroma_runtime.py",
+        "scope": "ChromaDenoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/conditioning_adapters.py",
+        "scope": "basic_conditioning_to_carrier",
+        "subject": "value",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/conditioning_adapters.py",
+        "scope": "materialize_basic_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/controlnet.py",
+        "scope": "SDControlConditioning.__post_init__",
+        "subject": "self.previous",
+        "type": "SDControlConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/denoise.py",
+        "scope": "FluxDenoiser.prepare_conditioning",
+        "subject": "conditioning",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/flux2_runtime.py",
+        "scope": "Flux2Denoiser.prepare_conditioning",
+        "subject": "conditioning",
+        "type": "Flux2Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/flux2_runtime.py",
+        "scope": "materialize_flux2_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/flux_window.py",
+        "scope": "bind_flux_window_layout",
+        "subject": "conditioning",
+        "type": "DeclaredConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/guidance.py",
+        "scope": "routed_conditioning_evaluation.prepare",
+        "subject": "source",
+        "type": "RoutedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/guidance.py",
+        "scope": "routed_conditioning_evaluation.prepare",
+        "subject": "source",
+        "type": "RoutedConditioning",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ideogram4_runtime.py",
+        "scope": "_Ideogram4Denoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ideogram4_runtime.py",
+        "scope": "_Ideogram4Denoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "Ideogram4Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ideogram4_runtime.py",
+        "scope": "_Ideogram4Denoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "Ideogram4Conditioning",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ideogram4_runtime.py",
+        "scope": "ideogram4_conditioning_to_carrier",
+        "subject": "value",
+        "type": "Ideogram4Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ideogram4_runtime.py",
+        "scope": "materialize_ideogram4_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ipadapter.py",
+        "scope": "SD15IPAdapterExecution.__post_init__",
+        "subject": "self.conditioning",
+        "type": "SD15IPAdapterConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/krea2_runtime.py",
+        "scope": "_Krea2Denoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/latent_assets.py",
+        "scope": "serialize_native_latent",
+        "subject": "samples",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/latent_streams.py",
+        "scope": "normalize_latent_mask",
+        "subject": "latent",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/latent_streams.py",
+        "scope": "normalize_latent_mask",
+        "subject": "mask",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/latent_streams.py",
+        "scope": "pack_latent_streams",
+        "subject": "value",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltx_media.py",
+        "scope": "_record",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltx_media.py",
+        "scope": "_video_latent",
+        "subject": "value",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltx_media.py",
+        "scope": "materialize_ltxav_reference_audio",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltx_media.py",
+        "scope": "materialize_ltxv_guides",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltx_model.py",
+        "scope": "LTXVModel.forward",
+        "subject": "guide",
+        "type": "LTXVGuideConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "scope": "_LTXAVLatentAdapter.finish",
+        "subject": "denoised",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "scope": "_LTXAVLatentAdapter.prepare",
+        "subject": "cond",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "scope": "_LTXAVLatentAdapter.prepare",
+        "subject": "conditioning",
+        "type": "LTXAVPreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "scope": "_LTXAVLatentAdapter.prepare",
+        "subject": "noise",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "scope": "_LTXAVLatentAdapter.prepare.unwrap",
+        "subject": "payload",
+        "type": "LTXAVPreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "scope": "_LTXAVLatentAdapter.prepare.unwrap",
+        "subject": "value",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "scope": "_LTXAVSamplingDenoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "LTXAVPreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "scope": "_av_streams",
+        "subject": "value",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "scope": "_materialize_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "scope": "ltxav_identity_guidance.augment",
+        "subject": "source",
+        "type": "LTXAVPreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "scope": "ltxav_modality_guidance.augment",
+        "subject": "source",
+        "type": "LTXAVPreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxav_runtime.py",
+        "scope": "ltxav_spatiotemporal_guidance.augment",
+        "subject": "source",
+        "type": "LTXAVPreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxv_runtime.py",
+        "scope": "LTXVPreparedConditioning.__post_init__",
+        "subject": "guide",
+        "type": "LTXVGuideConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxv_runtime.py",
+        "scope": "_LTXVLatentAdapter.finish",
+        "subject": "denoised",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxv_runtime.py",
+        "scope": "_LTXVLatentAdapter.prepare",
+        "subject": "cond",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxv_runtime.py",
+        "scope": "_LTXVLatentAdapter.prepare",
+        "subject": "conditioning",
+        "type": "LTXVPreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxv_runtime.py",
+        "scope": "_LTXVLatentAdapter.prepare",
+        "subject": "noise",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxv_runtime.py",
+        "scope": "_LTXVLatentAdapter.prepare.unwrap",
+        "subject": "payload",
+        "type": "LTXVPreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxv_runtime.py",
+        "scope": "_LTXVLatentAdapter.prepare.unwrap",
+        "subject": "value",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxv_runtime.py",
+        "scope": "_LTXVSamplingDenoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "LTXVPreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxv_runtime.py",
+        "scope": "_materialize_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/ltxv_runtime.py",
+        "scope": "_video_streams",
+        "subject": "value",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/lumina2_runtime.py",
+        "scope": "Lumina2Denoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_dit.py",
+        "scope": "MiniMaxH3DiT._validate_inputs",
+        "subject": "conditioning",
+        "type": "MiniMaxH3DiTConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_dit.py",
+        "scope": "MiniMaxH3DiT._validate_inputs",
+        "subject": "denoise_mask",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_dit.py",
+        "scope": "MiniMaxH3DiT._validate_inputs",
+        "subject": "keyframe",
+        "type": "MiniMaxH3KeyframeLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_dit.py",
+        "scope": "MiniMaxH3DiT._validate_inputs",
+        "subject": "value",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "MiniMaxH3DiTRuntime._sampling_denoiser.conditioning_layout",
+        "subject": "value",
+        "type": "MiniMaxH3PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "MiniMaxH3DiTRuntime._sampling_denoiser.conditioning_transforms",
+        "subject": "value",
+        "type": "MiniMaxH3PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "MiniMaxH3DiTRuntime._sampling_denoiser.evaluate_region",
+        "subject": "prepared[0]",
+        "type": "MiniMaxH3PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "MiniMaxH3DiTRuntime._sampling_denoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "MiniMaxH3PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "MiniMaxH3DiTRuntime._sampling_denoiser.project_region",
+        "subject": "prepared",
+        "type": "MiniMaxH3PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_H3LatentAdapter.finish",
+        "subject": "denoised",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_H3LatentAdapter.prepare",
+        "subject": "cond",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_H3LatentAdapter.prepare",
+        "subject": "conditioning",
+        "type": "MiniMaxH3PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_H3LatentAdapter.prepare",
+        "subject": "latent",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_H3LatentAdapter.prepare",
+        "subject": "noise",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_H3LatentAdapter.prepare",
+        "subject": "raw_conditioning",
+        "type": "PreparedConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_H3LatentAdapter.prepare",
+        "subject": "raw_uncond_payload",
+        "type": "PreparedConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_H3LatentAdapter.prepare",
+        "subject": "uncond_payload",
+        "type": "MiniMaxH3PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_H3LatentAdapter.prepare",
+        "subject": "uncond_value",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_encode_h3_conditioning",
+        "subject": "value",
+        "type": "MiniMaxH3PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_materialize_h3_conditioning",
+        "subject": "value",
+        "type": "MiniMaxH3PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "_validate_av_target",
+        "subject": "target",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "add_minimax_h3_motion_context",
+        "subject": "prepared",
+        "type": "MiniMaxH3PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_h3_runtime.py",
+        "scope": "add_minimax_h3_timeline_guide",
+        "subject": "prepared",
+        "type": "MiniMaxH3PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_music3_runtime.py",
+        "scope": "MiniMaxMusic3Denoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_music3_runtime.py",
+        "scope": "MiniMaxMusic3Denoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "MiniMaxMusic3Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/minimax_music3_runtime.py",
+        "scope": "minimax_music3_conditioning_to_carrier",
+        "subject": "value",
+        "type": "MiniMaxMusic3Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/qwen_image_control.py",
+        "scope": "snapshot_qwen_image_control_conditioning",
+        "subject": "conditioning",
+        "type": "QwenImageControlConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/qwen_image_control.py",
+        "scope": "snapshot_qwen_image_diffsynth_conditioning",
+        "subject": "conditioning",
+        "type": "QwenImageDiffSynthConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/qwen_image_runtime.py",
+        "scope": "_QwenImageDenoiser.prepare_conditioning",
+        "subject": "conditioning",
+        "type": "QwenImageConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/qwen_image_runtime.py",
+        "scope": "_QwenImageLatentAdapter.prepare",
+        "subject": "inputs.cond",
+        "type": "QwenImageConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/qwen_image_runtime.py",
+        "scope": "_qwen_image_denoiser",
+        "subject": "control",
+        "type": "QwenImageControlConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/qwen_image_runtime.py",
+        "scope": "_qwen_image_denoiser",
+        "subject": "value",
+        "type": "QwenImageDiffSynthConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/qwen_image_runtime.py",
+        "scope": "materialize_qwen_image_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/qwen_image_runtime.py",
+        "scope": "qwen_image_conditioning_to_carrier",
+        "subject": "value",
+        "type": "QwenImageConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/regional.py",
+        "scope": "MaterializedRegion.__post_init__",
+        "subject": "self.conditioning",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/regional.py",
+        "scope": "materialize_regions",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_execution.py",
+        "scope": "guided_denoiser",
+        "subject": "lane.conditioning",
+        "type": "RoutedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_execution.py",
+        "scope": "run_ksampler_as_custom",
+        "subject": "latent",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_execution.py",
+        "scope": "run_ksampler_as_custom",
+        "subject": "latent",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_execution.py",
+        "scope": "sampling_execution",
+        "subject": "cast('object', condition.conditioning)",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_runtime.py",
+        "scope": "DenseOrSparseSamplingRuntime.sample",
+        "subject": "latent",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_runtime.py",
+        "scope": "DenseOrSparseSamplingRuntime.sample",
+        "subject": "latent",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_runtime.py",
+        "scope": "DenseOrSparseSamplingRuntime.sample",
+        "subject": "result.output",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_runtime.py",
+        "scope": "DenseOrSparseSamplingRuntime.sample",
+        "subject": "result.output",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_runtime.py",
+        "scope": "MultiStreamSamplingRuntime.run_ksampler_as_custom",
+        "subject": "latent",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/sampling_runtime.py",
+        "scope": "MultiStreamSamplingRuntime.run_ksampler_as_custom",
+        "subject": "result.output",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/scheduled_sampling.py",
+        "scope": "narrow_scheduled_values",
+        "subject": "cond",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/scheduled_sampling.py",
+        "scope": "validate_unconditional_carrier",
+        "subject": "cast('object', unconditional)",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/sd_denoise.py",
+        "scope": "SDDenoiser.prepare_conditioning",
+        "subject": "conditioning",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/seedvr2_runtime.py",
+        "scope": "SeedVR2Denoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "SeedVR2Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/seedvr2_runtime.py",
+        "scope": "materialize_seedvr2_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/seedvr2_runtime.py",
+        "scope": "seedvr2_conditioning_to_carrier",
+        "subject": "value",
+        "type": "SeedVR2Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/sparse.py",
+        "scope": "unpack_sparse_latent",
+        "subject": "value",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_flow.py",
+        "scope": "Trellis2FlowModel.forward",
+        "subject": "latent",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_nodes.py",
+        "scope": "_conditioning",
+        "subject": "value",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_nodes.py",
+        "scope": "_conditioning",
+        "subject": "value",
+        "type": "ResidentConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_nodes.py",
+        "scope": "_latent",
+        "subject": "samples",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_runtime.py",
+        "scope": "_Trellis2ConditioningStorage.__init__",
+        "subject": "conditioning",
+        "type": "Trellis2Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_runtime.py",
+        "scope": "_Trellis2LatentAdapter.finish",
+        "subject": "denoised",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_runtime.py",
+        "scope": "_Trellis2LatentAdapter.prepare",
+        "subject": "cond",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_runtime.py",
+        "scope": "_Trellis2LatentAdapter.prepare",
+        "subject": "latent",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_runtime.py",
+        "scope": "_Trellis2LatentAdapter.prepare",
+        "subject": "noise",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_runtime.py",
+        "scope": "_Trellis2LatentAdapter.prepare",
+        "subject": "uncond",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_runtime.py",
+        "scope": "_Trellis2SamplingDenoiser._materialize",
+        "subject": "value",
+        "type": "Trellis2Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/trellis2_runtime.py",
+        "scope": "_Trellis2SamplingDenoiser.evaluate_conditioning",
+        "subject": "result",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "scope": "_TripoSplatLatentAdapter.finish",
+        "subject": "denoised",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "scope": "_TripoSplatLatentAdapter.prepare",
+        "subject": "cond",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "scope": "_TripoSplatLatentAdapter.prepare",
+        "subject": "conditioning",
+        "type": "TripoSplatConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "scope": "_TripoSplatLatentAdapter.prepare",
+        "subject": "denoise_mask",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "scope": "_TripoSplatLatentAdapter.prepare",
+        "subject": "latent",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "scope": "_TripoSplatLatentAdapter.prepare",
+        "subject": "noise",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "scope": "_TripoSplatLatentAdapter.prepare",
+        "subject": "uncond",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "scope": "_TripoSplatLatentAdapter.prepare",
+        "subject": "uncond.payload",
+        "type": "TripoSplatConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "scope": "_TripoSplatSamplingDenoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "TripoSplatConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "scope": "materialize_triposplat_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/triposplat_runtime.py",
+        "scope": "triposplat_conditioning_to_carrier",
+        "subject": "value",
+        "type": "TripoSplatConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "Wan21Runtime._sampling_denoiser.capture_structural_denoised",
+        "subject": "value",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "Wan21Runtime._standard_sampling_denoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "Wan21PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "Wan21Runtime.prepare_animate_conditioning",
+        "subject": "text",
+        "type": "Wan21PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "Wan21Runtime.prepare_bernini_conditioning",
+        "subject": "text",
+        "type": "Wan21PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "Wan21Runtime.prepare_camera_conditioning",
+        "subject": "text",
+        "type": "Wan21PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "Wan21Runtime.prepare_fun_conditioning",
+        "subject": "text",
+        "type": "Wan21PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "Wan21Runtime.prepare_i2v_conditioning",
+        "subject": "text",
+        "type": "Wan21PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "Wan21Runtime.prepare_phantom_conditioning",
+        "subject": "text",
+        "type": "Wan21PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "Wan21Runtime.prepare_vace_conditioning",
+        "subject": "text",
+        "type": "Wan21PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_WanLatentAdapter.finish",
+        "subject": "denoised",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_WanLatentAdapter.finish",
+        "subject": "denoised",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_WanLatentAdapter.prepare",
+        "subject": "cond",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_WanLatentAdapter.prepare",
+        "subject": "conditioning",
+        "type": "Wan21PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_WanLatentAdapter.prepare",
+        "subject": "latent",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_WanLatentAdapter.prepare",
+        "subject": "noise",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_WanLatentAdapter.prepare",
+        "subject": "noise",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_WanLatentAdapter.prepare.text_lane",
+        "subject": "value",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_WanLatentAdapter.prepare.text_lane",
+        "subject": "value",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_WanLatentAdapter.prepare.text_lane",
+        "subject": "value.payload",
+        "type": "Wan21PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_WanLatentAdapter.prepare.unwrap_lane",
+        "subject": "payload",
+        "type": "Wan21PreparedConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_WanLatentAdapter.prepare.unwrap_lane",
+        "subject": "value",
+        "type": "PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_basic_wan_text_payload",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_materialize_animate2_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_materialize_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_materialize_dancer_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_materialize_humo_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_materialize_s2v_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_materialize_scail_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "_video_streams",
+        "subject": "value",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wan21_runtime.py",
+        "scope": "compose_wan21_animate_conditioning",
+        "subject": "text",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+        "scope": "SDRuntime._ipadapter_executions",
+        "subject": "contribution",
+        "type": "SD15IPAdapterConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+        "scope": "_FluxLatentAdapter.prepare",
+        "subject": "cond",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+        "scope": "_SDLatentAdapter.prepare",
+        "subject": "cond",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+        "scope": "_flux_denoiser",
+        "subject": "context.inputs.cond",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+        "scope": "_sd_denoiser",
+        "subject": "context.inputs.cond",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+        "scope": "_sd_denoiser",
+        "subject": "contribution",
+        "type": "SD15IPAdapterConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+        "scope": "_sd_denoiser",
+        "subject": "control",
+        "type": "SDControlConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+        "scope": "_sd_denoiser",
+        "subject": "source",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/wiring.py",
+        "scope": "_sd_denoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/z_image_control.py",
+        "scope": "snapshot_z_image_control_conditioning",
+        "subject": "conditioning",
+        "type": "ZImageControlConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/z_image_runtime.py",
+        "scope": "ZImageDenoiser.prepare_conditioning",
+        "subject": "value",
+        "type": "Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference-torch/src/dinkster_inference_torch/z_image_runtime.py",
+        "scope": "_z_image_denoiser",
+        "subject": "control",
+        "type": "ZImageControlConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/codec_handle.py",
+        "scope": "RuntimeCodecAdapter._runtime",
+        "subject": "runtime",
+        "type": "_CodecRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/composition.py",
+        "scope": "bind_component_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/composition.py",
+        "scope": "split_component_conditioning",
+        "subject": "carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/conditioning_adapters.py",
+        "scope": "prepare_conditioning",
+        "subject": "prepared",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/conditioning_wire.py",
+        "scope": "_build_carrier_bytes",
+        "subject": "cast('object', carrier)",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/conditioning_wire.py",
+        "scope": "conditioning",
+        "subject": "value",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/conditioning_wire.py",
+        "scope": "register_conditioning_type.coerce",
+        "subject": "obj",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/conditioning_wire.py",
+        "scope": "register_conditioning_type.coerce",
+        "subject": "obj",
+        "type": "ResidentConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/conditioning_wire.py",
+        "scope": "register_conditioning_type.encode",
+        "subject": "obj",
+        "type": "ResidentConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/conditioning_wire.py",
+        "scope": "register_conditioning_type.fingerprint",
+        "subject": "obj",
+        "type": "ResidentConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/conditioning_wire.py",
+        "scope": "register_conditioning_type.metadata",
+        "subject": "obj",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/conditioning_wire.py",
+        "scope": "register_conditioning_type.metadata",
+        "subject": "obj",
+        "type": "ResidentConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/latents.py",
+        "scope": "MultiStreamLatent.same_topology",
+        "subject": "other",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/runtime.py",
+        "scope": "PreparedConditioningCarrier.__post_init__",
+        "subject": "self.carrier",
+        "type": "ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/runtime_handle.py",
+        "scope": "require_inference_runtime_handle",
+        "subject": "runtime",
+        "type": "CustomSamplingRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/sparse.py",
+        "scope": "SparseLatent._operand",
+        "subject": "other",
+        "type": "SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-inference/src/dinkster_inference/timeline_guides.py",
+        "scope": "TimelineGuide.__post_init__",
+        "subject": "self.latent",
+        "type": "MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_core.py",
+        "scope": "_component_bound_carrier",
+        "subject": "value",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_core.py",
+        "scope": "_split_flux_guidance",
+        "subject": "value",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_core.py",
+        "scope": "_split_ltx_frame_rate",
+        "subject": "value",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_core.py",
+        "scope": "_with_ltx_frame_rate",
+        "subject": "value",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_runtime.py",
+        "scope": "_conditioning",
+        "subject": "embeddings",
+        "type": "inference.PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_runtime.py",
+        "scope": "_conditioning",
+        "subject": "prepared",
+        "type": "inference.Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_runtime.py",
+        "scope": "_conditioning_classic_control",
+        "subject": "value",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_runtime.py",
+        "scope": "_conditioning_classic_control",
+        "subject": "value",
+        "type": "inference.ResidentConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_runtime.py",
+        "scope": "_context_windows_sampling_kwargs",
+        "subject": "runtime",
+        "type": "inference.ContextWindowsRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_runtime.py",
+        "scope": "_controlled_conditioning",
+        "subject": "payload",
+        "type": "_ControlledConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_runtime.py",
+        "scope": "_sampling_space_runtime",
+        "subject": "runtime",
+        "type": "inference.SamplingSpaceOverrideRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_runtime.py",
+        "scope": "_uses_native_scheduling",
+        "subject": "value",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/native_arm_runtime.py",
+        "scope": "_uses_native_scheduling",
+        "subject": "value",
+        "type": "inference.ResidentConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_conditioning.py",
+        "scope": "GenerationModelSamplingLTXV.execute",
+        "subject": "samples",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_custom_sampling_conditioning",
+        "subject": "runtime",
+        "type": "inference.ConditioningRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_custom_sampling_conditioning",
+        "subject": "runtime",
+        "type": "inference.MultiStreamConditioningRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_custom_sampling_has_inpaint",
+        "subject": "value",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_custom_sampling_has_inpaint",
+        "subject": "value",
+        "type": "inference.ResidentConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "empty",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "empty",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "inpaint",
+        "type": "inference.InpaintConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "latent.get('samples')",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "latent.get('samples')",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "latent.get('samples')",
+        "type": "inference.SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "middle",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "middle",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "negative",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "negative_inpaint",
+        "type": "inference.InpaintConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "noise_mask",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "noise_mask",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "positive",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "result.denoised_output",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "result.denoised_output",
+        "type": "inference.SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "result.output",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "result.output",
+        "type": "inference.SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "runtime",
+        "type": "inference.CustomSamplingRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "runtime",
+        "type": "inference.MultiStreamFamilyRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "runtime",
+        "type": "inference.MultiStreamLatentAdapterRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "samples",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "samples",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling",
+        "subject": "samples",
+        "type": "inference.SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_execute_generation_custom_sampling.scheduled_lane",
+        "subject": "value",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_prepared_multistream_sampling_carrier",
+        "subject": "carrier",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_custom_sampling.py",
+        "scope": "_prepared_multistream_sampling_carrier",
+        "subject": "prepared",
+        "type": "inference.PreparedMultiStreamConditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_generation_loaders.py",
+        "scope": "GenerationLTXAVAudioVAEDecode.execute",
+        "subject": "latent",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_provider.py",
+        "scope": "_prepare_provider_conditioning",
+        "subject": "conditioning",
+        "type": "inference.Conditioning",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_provider.py",
+        "scope": "_require_custom_sampling_runtime",
+        "subject": "runtime",
+        "type": "inference.CustomSamplingRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_provider.py",
+        "scope": "_require_custom_sampling_runtime",
+        "subject": "runtime",
+        "type": "inference.CustomSamplingRuntime",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_provider.py",
+        "scope": "_require_custom_sampling_runtime",
+        "subject": "runtime",
+        "type": "inference.CustomSamplingRuntime",
+        "classification": "value-type",
+        "occurrence": 3
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_provider.py",
+        "scope": "_require_custom_sampling_runtime",
+        "subject": "runtime",
+        "type": "inference.CustomSamplingRuntime",
+        "classification": "value-type",
+        "occurrence": 4
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "NativeKSampler.execute",
+        "subject": "active_runtime",
+        "type": "inference.ConditioningRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "NativeKSampler.execute",
+        "subject": "active_runtime",
+        "type": "inference.CustomSamplingRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "NativeKSampler.execute",
+        "subject": "active_runtime",
+        "type": "inference.MultiStreamFamilyRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "NativeKSampler.execute",
+        "subject": "active_runtime",
+        "type": "inference.MultiStreamFamilyRuntime",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "NativeKSampler.execute",
+        "subject": "active_runtime",
+        "type": "inference.MultiStreamLatentAdapterRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "NativeKSampler.execute",
+        "subject": "denoise_mask",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "NativeKSampler.execute",
+        "subject": "latent_samples",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "NativeKSampler.execute",
+        "subject": "latent_samples",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 2
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "NativeKSampler.execute",
+        "subject": "latent_samples",
+        "type": "inference.SparseLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "NativeKSampler.execute",
+        "subject": "result",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "NativeKSampler.execute",
+        "subject": "runtime",
+        "type": "inference.MultiStreamLatentAdapterRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "NativeVAEDecode.execute",
+        "subject": "latent_obj",
+        "type": "inference.MultiStreamLatent",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "_prepare_ksampler_conditioning",
+        "subject": "runtime",
+        "type": "inference.ConditioningRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "_prepare_ksampler_conditioning",
+        "subject": "runtime",
+        "type": "inference.MultiStreamConditioningRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "_prepare_ksampler_conditioning",
+        "subject": "runtime",
+        "type": "inference.MultiStreamFamilyRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "_prepare_ksampler_conditioning",
+        "subject": "value",
+        "type": "inference.ConditioningCarrier",
+        "classification": "value-type",
+        "occurrence": 1
+      },
+      {
+        "path": "packages/dinkster-native/src/dinkster_native/nodes_sampling_runtime.py",
+        "scope": "_resolve_sampling_model",
+        "subject": "runtime",
+        "type": "inference.MultiStreamConditioningRuntime",
+        "classification": "value-type",
+        "occurrence": 1
+      }
+    ]
   }
 }
