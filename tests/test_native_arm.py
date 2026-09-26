@@ -58,6 +58,7 @@ from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteTok
 from dinkster_schema import MappingSource, build_node_types, build_schemas, schema_signature
 from dinkster_values import (
     DEVICE_MEMORY_RECONCILIATION_BOUND_BYTES,
+    MEBIBYTE,
     TypeRegistry,
     register_core_types,
 )
@@ -3534,6 +3535,43 @@ def test_native_memory_snapshot_exposes_raw_allocator_measurement_and_bound() ->
     assert device.measured_bytes == 100
     assert device.unknown_bytes == 60
     assert device.reconciliation_bound_bytes == DEVICE_MEMORY_RECONCILIATION_BOUND_BYTES
+
+
+def test_native_memory_snapshot_counts_cpu_shared_workspace_in_measurement() -> None:
+    arm = _native_arm()
+    residency = importlib.import_module("dinkster_compat_comfy.native_residency")
+    handle = _handle(arm, _runtime(), torch=FakeTorch(cuda=False), load_device="cpu")
+    diffusion = handle._by_role["diffusion"][0]  # pyright: ignore[reportPrivateUsage]
+    workspace_bytes = 4 * MEBIBYTE
+
+    def memory_accounting() -> object:
+        loaded = diffusion.loaded_bytes()
+        return SimpleNamespace(
+            weights=loaded,
+            activation_runtime_workspace=0,
+            execution_result_cache=0,
+            other_reclaimable=0,
+            unknown=0,
+            allocator_weight_bytes=loaded,
+            shared_workspace_id="cpu-workspace",
+            shared_workspace_bytes=workspace_bytes,
+            memory_compiler="unavailable",
+        )
+
+    diffusion.memory_accounting = memory_accounting
+    events: list[Any] = []
+
+    with residency.observe_native_stages(events.append):
+        with handle.stage("diffusion"):
+            pass
+
+    snapshot = next(event.memory_snapshot for event in events if event.memory_snapshot is not None)
+    device = snapshot.devices[0]
+    expected = diffusion.loaded_bytes() + workspace_bytes
+    assert device.device == "cpu"
+    assert device.allocator_measured_bytes == expected
+    assert device.measured_bytes == expected
+    assert device.unknown_bytes == 0
 
 
 def test_native_memory_observer_records_cross_model_stage_eviction() -> None:

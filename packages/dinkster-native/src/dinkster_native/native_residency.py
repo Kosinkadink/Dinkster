@@ -1771,14 +1771,14 @@ class NativeRuntimeHandle:
             classified = sum(component.resident_bytes for component in owned.values())
             torch = self._torch_module
             memory_allocated = getattr(torch.cuda, "memory_allocated", None)
+            known_allocator = allocator_weights.get(device, 0) + allocator_workspaces.get(device, 0)
             allocator = (
                 cast("int", memory_allocated(torch.device(device)))
                 if device.startswith("cuda")
                 and torch.cuda.is_available()
                 and callable(memory_allocated)
-                else allocator_weights.get(device, 0)
+                else known_allocator
             )
-            known_allocator = allocator_weights.get(device, 0) + allocator_workspaces.get(device, 0)
             if known_allocator > classified:
                 raise ValueError("known allocator pages exceed classified resident pages")
             non_allocator = classified - known_allocator
