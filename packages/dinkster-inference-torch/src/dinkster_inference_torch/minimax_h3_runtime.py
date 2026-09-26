@@ -1158,6 +1158,7 @@ _H3EvaluationCondition = tuple[
     MiniMaxH3DiTConditioning,
     LatentPackLayout,
     MultiStreamLatent[torch.Tensor] | None,
+    MultiStreamLatent[torch.Tensor] | None,
 ]
 
 
@@ -1586,6 +1587,11 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 )
         packed = inputs.latent
         layout = latent_context.layout
+        raw_denoise_mask = (
+            None
+            if latent_context.raw_mask is None
+            else unpack_latent_streams(latent_context.raw_mask, layout)
+        )
         model_denoise_mask = latent_context.model_mask
         distributed = ensure_process_group()
         from .distributed import synchronized_sampling_call
@@ -1640,7 +1646,14 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             text_context = model.preprocess_text_embeddings(
                 prepared.context.to(device=device, dtype=self._compute_dtype)
             )
-            return lane_identity, text_context, dit, layout, model_denoise_mask
+            return (
+                lane_identity,
+                text_context,
+                dit,
+                layout,
+                model_denoise_mask,
+                raw_denoise_mask,
+            )
 
         def prepare_conditioning(value: object, role: GuidanceRole) -> _H3EvaluationCondition:
             if type(value) is not MiniMaxH3PreparedConditioning:
@@ -1668,6 +1681,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 dit_conditioning,
                 active_layout,
                 active_model_mask,
+                active_raw_mask,
             ) = conditioning
             _check_cancelled(cancelled)
             if sigma <= 0.0:
@@ -1868,6 +1882,18 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             denoise_mask=active_model_mask,
                             attention_kernel_factory=attention_kernel_factory,
                         )
+                if active_raw_mask is not None:
+                    # H3 predicts video rows at mask * sigma; scale velocity before
+                    # the shared outer conversion applies x0 = x - sigma * velocity.
+                    video_velocity = velocity.by_role("video")
+                    velocity = _h3_latent(
+                        video_velocity
+                        * active_raw_mask.by_role("video").to(
+                            device=video_velocity.device,
+                            dtype=video_velocity.dtype,
+                        ),
+                        velocity.by_role("audio"),
+                    )
                 packed_velocity, _ = pack_latent_streams(velocity)
                 result = x - packed_velocity.float() * sigma
             _check_cancelled(cancelled)
@@ -1892,20 +1918,39 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             indices: tuple[int, ...],
             _shape: object,
         ) -> _H3EvaluationCondition:
-            lane, text_context, dit, prepared_layout, prepared_mask = prepared
+            (
+                lane,
+                text_context,
+                dit,
+                prepared_layout,
+                prepared_mask,
+                prepared_raw_mask,
+            ) = prepared
             if prepared_layout != layout:
                 raise MiniMaxH3RuntimeError("H3 window conditioning must start at the full layout")
             selection = packed_windows.select(packed, dim, indices)
-            window_mask = None
-            if prepared_mask is not None:
-                packed_mask, mask_layout = pack_latent_streams(prepared_mask)
+            window_masks: list[MultiStreamLatent[torch.Tensor] | None] = []
+            for mask in (prepared_mask, prepared_raw_mask):
+                if mask is None:
+                    window_masks.append(None)
+                    continue
+                packed_mask, mask_layout = pack_latent_streams(mask)
                 if mask_layout != layout:
                     raise MiniMaxH3RuntimeError("H3 model mask topology differs from the latent")
                 selected_mask = packed_windows.select(packed_mask, dim, indices)
                 if selected_mask.layout != selection.layout:
                     raise MiniMaxH3RuntimeError("H3 window mask topology differs from the latent")
-                window_mask = unpack_latent_streams(selected_mask.packed, selected_mask.layout)
-            return lane, text_context, dit, selection.layout, window_mask
+                window_masks.append(
+                    unpack_latent_streams(selected_mask.packed, selected_mask.layout)
+                )
+            return (
+                lane,
+                text_context,
+                dit,
+                selection.layout,
+                window_masks[0],
+                window_masks[1],
+            )
 
         realization = context.conditioning_realization
         close = None
