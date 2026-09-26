@@ -37,6 +37,25 @@ MEMORY_PAGE_CLASSES: tuple[MemoryPageClass, ...] = (
     "other-reclaimable",
     "unknown",
 )
+_MEMORY_BOUNDARIES: tuple[MemoryBoundary, ...] = (
+    "post-load",
+    "first-sampling-seam",
+    "stage-end",
+    "peak-residency",
+    "post-offload",
+    "release",
+)
+_MEMORY_COMPILER_STATES: tuple[MemoryCompilerState, ...] = (
+    "active",
+    "disabled",
+    "unavailable",
+)
+_MEMORY_DECISION_ACTIONS: tuple[MemoryDecisionAction, ...] = (
+    "place",
+    "retain",
+    "offload",
+    "evict",
+)
 
 
 def _validate_bytes(label: str, value: int) -> None:
@@ -104,12 +123,19 @@ class ExecutionMemorySnapshot:
     memory_compiler: MemoryCompilerState
 
     def __post_init__(self) -> None:
+        if self.boundary not in _MEMORY_BOUNDARIES:
+            raise ValueError(f"unknown memory snapshot boundary {self.boundary!r}")
+        if self.memory_compiler not in _MEMORY_COMPILER_STATES:
+            raise ValueError(f"unknown memory compiler state {self.memory_compiler!r}")
         component_ids = [component.component_id for component in self.components]
         if len(component_ids) != len(set(component_ids)):
             raise ValueError("memory snapshot component identities must be distinct")
         device_ids = [device.device for device in self.devices]
         if len(device_ids) != len(set(device_ids)):
             raise ValueError("memory snapshot device identities must be distinct")
+        component_devices = {component.device for component in self.components}
+        if component_devices != set(device_ids):
+            raise ValueError("memory snapshot must account for every component device exactly once")
         for device in self.devices:
             owned: dict[str, ComponentMemorySnapshot] = {}
             for component in self.components:
@@ -152,6 +178,10 @@ class ExecutionMemoryDecision:
         for label in ("component_id", "component_role", "device", "reason"):
             if not getattr(self, label):
                 raise ValueError(f"memory decision {label} must be nonempty")
+        if self.source not in ("residency-policy", "memory-compiler"):
+            raise ValueError(f"unknown memory decision source {self.source!r}")
+        if self.action not in _MEMORY_DECISION_ACTIONS:
+            raise ValueError(f"unknown memory decision action {self.action!r}")
         _validate_bytes("memory decision byte_count", self.byte_count)
 
 
@@ -415,6 +445,8 @@ class ExecutionMemoryReceipt:
     def to_dict(self) -> dict[str, object]:
         if self._errors:
             raise ValueError("; ".join(self._errors))
+        if self.expected_components and not self._snapshots:
+            raise ValueError("execution memory receipt has no snapshots")
         peaks: dict[str, int] = {}
         for snapshot in self._snapshots:
             for device in snapshot.devices:

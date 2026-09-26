@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from dinkster_inference import (
@@ -197,6 +197,13 @@ def test_receipt_rejects_missing_component() -> None:
         receipt.to_dict()
 
 
+def test_receipt_rejects_missing_snapshots() -> None:
+    receipt = ExecutionMemoryReceipt(frozenset({"diffusion.main"}))
+
+    with pytest.raises(ValueError, match="no snapshots"):
+        receipt.to_dict()
+
+
 def test_component_requires_explicit_unknown_page_class() -> None:
     classes = _classes(weights=60)
     del classes["unknown"]
@@ -212,4 +219,34 @@ def test_component_requires_explicit_unknown_page_class() -> None:
             offloaded_bytes=40,
             resident_bytes=60,
             bytes_by_page_class=classes,
+        )
+
+
+def test_snapshot_requires_device_accounting_for_each_component() -> None:
+    with pytest.raises(ValueError, match="every component device"):
+        ExecutionMemorySnapshot(
+            boundary="post-load",
+            components=(_component("diffusion.main"),),
+            devices=(),
+            memory_compiler="unavailable",
+        )
+
+
+def test_memory_records_reject_unknown_closed_values() -> None:
+    with pytest.raises(ValueError, match="snapshot boundary"):
+        ExecutionMemorySnapshot(
+            boundary=cast("Any", "during-load"),
+            components=(),
+            devices=(),
+            memory_compiler="unavailable",
+        )
+    with pytest.raises(ValueError, match="decision action"):
+        ExecutionMemoryDecision(
+            component_id="diffusion.main",
+            component_role="diffusion",
+            device="cuda:3",
+            source="residency-policy",
+            action=cast("Any", "move"),
+            byte_count=1,
+            reason="test",
         )

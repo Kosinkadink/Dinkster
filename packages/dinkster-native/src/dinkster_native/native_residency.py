@@ -1297,6 +1297,7 @@ class NativeRuntimeHandle:
         if runtime.runtime_identity != recipe.runtime_identity:
             raise ValueError("native runtime identity does not match its reconstruction recipe")
         self._runtime: Any | None = runtime
+        self._torch_module = torch
         self._recipe = recipe
         self._residency_route_facts = residency_route_facts
         self._materializer = materializer
@@ -1726,10 +1727,13 @@ class NativeRuntimeHandle:
                 if component.device == device:
                     owned.setdefault(component.storage_id, component)
             classified = sum(component.resident_bytes for component in owned.values())
-            torch = importlib.import_module("torch")
+            torch = self._torch_module
+            memory_allocated = getattr(torch.cuda, "memory_allocated", None)
             allocator = (
-                int(torch.cuda.memory_allocated(torch.device(device)))
-                if device.startswith("cuda") and torch.cuda.is_available()
+                cast("int", memory_allocated(torch.device(device)))
+                if device.startswith("cuda")
+                and torch.cuda.is_available()
+                and callable(memory_allocated)
                 else allocator_weights.get(device, 0)
             )
             unknown = max(0, allocator - allocator_weights.get(device, 0))
