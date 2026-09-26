@@ -61,7 +61,7 @@ import threading
 from collections.abc import Callable, Generator, MutableMapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass, field
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 import torch
 from dinkster_inference import MEBIBYTE
@@ -141,6 +141,47 @@ class ResidencyUnit:
     name: str
     keys: tuple[str, ...]
     expert: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ResidencyMemoryAccounting:
+    """Read-only device-page accounting for one residency mechanism."""
+
+    weights: int
+    activation_runtime_workspace: int = 0
+    execution_result_cache: int = 0
+    other_reclaimable: int = 0
+    unknown: int = 0
+    allocator_weight_bytes: int = 0
+    shared_workspace_id: str | None = None
+    shared_workspace_bytes: int = 0
+    memory_compiler: Literal["active", "disabled", "unavailable"] = "unavailable"
+
+    def __post_init__(self) -> None:
+        for name in (
+            "weights",
+            "activation_runtime_workspace",
+            "execution_result_cache",
+            "other_reclaimable",
+            "unknown",
+            "allocator_weight_bytes",
+            "shared_workspace_bytes",
+        ):
+            value = getattr(self, name)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"residency memory {name} must be a nonnegative integer")
+        if self.shared_workspace_bytes and not self.shared_workspace_id:
+            raise ValueError("shared workspace bytes require a stable identity")
+
+    @property
+    def resident_bytes(self) -> int:
+        return (
+            self.weights
+            + self.activation_runtime_workspace
+            + self.execution_result_cache
+            + self.other_reclaimable
+            + self.unknown
+        )
 
 
 class ResidencyMechanism(Protocol):
@@ -1007,6 +1048,10 @@ class ResidentWeights:
     def offloaded_bytes(self) -> int:
         return self.total_bytes() - self.loaded_bytes()
 
+    def memory_accounting(self) -> ResidencyMemoryAccounting:
+        loaded = self.loaded_bytes()
+        return ResidencyMemoryAccounting(weights=loaded, allocator_weight_bytes=loaded)
+
     def loaded_unit_names(self) -> frozenset[str]:
         return frozenset(self._loaded)
 
@@ -1842,6 +1887,7 @@ class ResidencyManager:
 __all__ = [
     "LOWVRAM_PATCH_ESTIMATE_FACTOR",
     "ResidencyManager",
+    "ResidencyMemoryAccounting",
     "ResidencyMechanism",
     "ResidencyUnit",
     "ResidentWeights",
