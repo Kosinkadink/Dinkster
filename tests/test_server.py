@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import time
 from collections.abc import Mapping
 from dataclasses import replace
@@ -432,6 +433,32 @@ def test_queue_export_snapshot_changes_default_fingerprint_and_resubmission() ->
         )
         assert with_default_attention.fingerprint == legacy_fingerprint
         assert with_default_attention.attention_config is default_attention_config
+        with_default_cache = queue.submit(
+            "c",
+            "default-cache",
+            graph,
+            targets,
+            cache_enabled=True,
+        )
+        assert with_default_cache.fingerprint == legacy_fingerprint
+        assert with_default_cache.cache_enabled is True
+        without_cache = queue.submit(
+            "c",
+            "without-cache",
+            graph,
+            targets,
+            cache_enabled=False,
+        )
+        assert without_cache.fingerprint != legacy_fingerprint
+        assert without_cache.cache_enabled is False
+        with pytest.raises(TypeError, match="cache_enabled"):
+            queue.submit(
+                "c",
+                "bad-cache",
+                graph,
+                targets,
+                cache_enabled=0,  # type: ignore[arg-type]
+            )
         attention_config = AttentionPolicyConfig("flash")
         with_attention = queue.submit(
             "c",
@@ -3793,6 +3820,7 @@ def test_submit_validation_errors() -> None:
                 submit_body(echo_graph(), ["s"], jobId=42),
                 submit_body(echo_graph(), []),
                 submit_body(echo_graph(), ["s"], priority="high"),
+                submit_body(echo_graph(), ["s"], cacheEnabled=0),
                 {**submit_body(echo_graph(), ["s"]), "graph": {"nodes": []}},
             ]
             for body in cases:
@@ -3804,6 +3832,93 @@ def test_submit_validation_errors() -> None:
 
             assert (await client.get("/api/jobs/c1/nope")).status == 404
             assert (await client.delete("/api/jobs/c1/nope")).status == 404
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_no_cache_submission_reexecutes_with_warm_runtime_and_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        engine = app[STATE_KEY].engine
+        worker = engine._worker
+        invocations: list[tuple[int, int]] = []
+        invoke = worker.invoke
+
+        async def recording_invoke(invocation, on_event=None):
+            invocations.append((os.getpid(), id(worker)))
+            return await invoke(invocation, on_event)
+
+        monkeypatch.setattr(worker, "invoke", recording_invoke)
+        try:
+            results = []
+            for job_id, cache_enabled in (
+                ("warmup", True),
+                ("no-cache-1", False),
+                ("no-cache-2", False),
+                ("warm", True),
+            ):
+                response = await client.post(
+                    "/api/jobs",
+                    json=submit_body(
+                        echo_graph("fixed-seed-output"),
+                        ["s"],
+                        jobId=job_id,
+                        cacheEnabled=cache_enabled,
+                    ),
+                )
+                assert response.status == 202
+                submitted = await response.json()
+                assert submitted["cacheEnabled"] is cache_enabled
+                job = app[STATE_KEY].queue.get("c1", job_id)
+                assert job is not None
+                await wait_for_state(job, "completed")
+                assert job.result is not None
+                results.append(job.result)
+
+            warmup, first, second, warm = results
+            assert set(warmup.executed) == {"e", "s"}
+            assert set(first.executed) == {"e", "s"}
+            assert set(second.executed) == {"e", "s"}
+            assert first.cached == second.cached == ()
+            assert warm.executed == ()
+            assert set(warm.cached) == {"e", "s"}
+            assert [result.outputs["s"]["out"].resolve() for result in results] == [
+                "FIXED-SEED-OUTPUT"
+            ] * 4
+            assert len(invocations) == 6
+            assert {pid for pid, _worker_id in invocations} == {os.getpid()}
+            assert {worker_id for _pid, worker_id in invocations} == {id(worker)}
+            assert app[STATE_KEY].engine is engine
+            assert engine._worker is worker
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_cache_control_is_normalized_job_idempotency_content() -> None:
+    async def scenario() -> None:
+        client = await make_client()
+        try:
+            assert (await client.post("/api/queue/pause")).status == 200
+            graph = echo_graph()
+            omitted = await client.post("/api/jobs", json=submit_body(graph, ["s"]))
+            assert omitted.status == 202
+            explicit_default = await client.post(
+                "/api/jobs", json=submit_body(graph, ["s"], cacheEnabled=True)
+            )
+            assert explicit_default.status == 202
+            assert (await explicit_default.json())["duplicate"] is True
+            changed = await client.post(
+                "/api/jobs", json=submit_body(graph, ["s"], cacheEnabled=False)
+            )
+            assert changed.status == 409
         finally:
             await client.close()
 
