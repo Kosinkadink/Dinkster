@@ -63,6 +63,30 @@ class _FakeRuntime:
     def sample(self, latent: object, **kwargs: object) -> object:
         raise NotImplementedError
 
+    def custom_sampling_sigmas(
+        self, scheduler_id: str, steps: int, denoise: float
+    ) -> tuple[float, ...]:
+        raise NotImplementedError
+
+    def custom_sampling_beta_sigmas(
+        self, steps: int, alpha: float, beta: float
+    ) -> tuple[float, ...]:
+        raise NotImplementedError
+
+    def custom_sampling_sd_turbo_sigmas(self, steps: int, denoise: float) -> tuple[float, ...]:
+        raise NotImplementedError
+
+    def custom_sampling_percent_to_sigma(
+        self, percent: float, *, return_actual_sigma: bool
+    ) -> float:
+        raise NotImplementedError
+
+    def check_custom_sampling(self, request: object, **kwargs: object) -> None:
+        raise NotImplementedError
+
+    def sample_custom(self, latent: object, **kwargs: object) -> object:
+        raise NotImplementedError
+
     def decode_latent(self, latent: object) -> object:
         self.decoded.append(latent)
         return ("content", latent)
@@ -72,11 +96,9 @@ class _FakeRuntime:
         return ("latent", content)
 
 
-class _FakeMultiStreamCodecRuntime:
+class _FakeMultiStreamCodecRuntime(_FakeRuntime):
     def __init__(self, runtime_identity: str) -> None:
-        self.runtime_identity = runtime_identity
-        self.decoded: list[object] = []
-        self.encoded: list[object] = []
+        super().__init__(runtime_identity)
 
     def sample_multistream(self, latent: object, **kwargs: object) -> object:
         raise NotImplementedError
@@ -194,9 +216,9 @@ def test_runtime_handle_rejects_non_recipe() -> None:
         require_inference_runtime_handle(handle, "model")
 
 
-def test_runtime_handle_rejects_non_family_runtime() -> None:
+def test_runtime_handle_rejects_non_custom_sampling_runtime() -> None:
     handle = _FakeHandle(_recipe(), object())
-    with pytest.raises(TypeError, match="family runtime protocol"):
+    with pytest.raises(TypeError, match="custom sampling protocol"):
         require_inference_runtime_handle(handle, "model")
 
 
@@ -361,13 +383,11 @@ def test_codec_adapter_delegates_to_multistream_runtime_codec() -> None:
 def test_codec_adapter_rejects_runtime_without_codec_execution() -> None:
     recipe = _recipe()
 
-    class _SamplerOnly:
-        runtime_identity = recipe.runtime_identity
-
+    class _SamplerOnly(_FakeCustomSamplingRuntime):
         def sample_multistream(self, latent: object, **kwargs: object) -> object:
             raise NotImplementedError
 
-    handle = _FakeHandle(recipe, _SamplerOnly())
+    handle = _FakeHandle(recipe, _SamplerOnly(recipe.runtime_identity))
     adapter: RuntimeCodecAdapter[Any] = RuntimeCodecAdapter(handle, descriptor=_descriptor())
     with pytest.raises(TypeError, match="does not expose codec execution"):
         adapter.decode_latent("latent")
@@ -376,8 +396,7 @@ def test_codec_adapter_rejects_runtime_without_codec_execution() -> None:
 def test_codec_adapter_rejects_non_callable_codec_execution() -> None:
     recipe = _recipe()
 
-    class _BadCodec:
-        runtime_identity = recipe.runtime_identity
+    class _BadCodec(_FakeCustomSamplingRuntime):
         decode_latent = 1
 
         def sample_multistream(self, latent: object, **kwargs: object) -> object:
@@ -386,7 +405,7 @@ def test_codec_adapter_rejects_non_callable_codec_execution() -> None:
         def encode_content(self, content: object) -> object:
             return content
 
-    handle = _FakeHandle(recipe, _BadCodec())
+    handle = _FakeHandle(recipe, _BadCodec(recipe.runtime_identity))
     adapter: RuntimeCodecAdapter[Any] = RuntimeCodecAdapter(handle, descriptor=_descriptor())
     with pytest.raises(TypeError, match="decode_latent must be callable"):
         adapter.decode_latent("latent")

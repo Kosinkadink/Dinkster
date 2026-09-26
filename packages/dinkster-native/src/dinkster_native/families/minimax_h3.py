@@ -15,8 +15,6 @@ from ..family_registry import (
 from ..native_arm_core import (
     Any,
     ConcatAVLatent,
-    EmptyLTXAVLatent,
-    EmptyLTXVLatent,
     EmptyMiniMaxH3AV,
     EmptyMiniMaxMusic3LatentAudio,
     ExitStack,
@@ -619,142 +617,6 @@ class NativeEmptyMiniMaxMusic3LatentAudio(EmptyMiniMaxMusic3LatentAudio):
         return cls.outputs(
             latent={"samples": samples, "type": "audio", "downscale_ratio_temporal": 512}
         )
-
-
-class NativeEmptyLTXAVLatent(EmptyLTXAVLatent):
-    @classmethod
-    def execute(
-        cls,
-        *,
-        model: object,
-        width: int,
-        height: int,
-        length: int,
-        frame_rate: int,
-        batch_size: int,
-    ) -> Mapping[str, object]:
-        handle = _native_handle(model, "model")
-        for name, value in (
-            ("width", width),
-            ("height", height),
-            ("length", length),
-            ("frame_rate", frame_rate),
-            ("batch_size", batch_size),
-        ):
-            if type(value) is not int or value < 1:
-                raise ValueError(f"{name} must be a positive integer, got {value}")
-        inference = importlib.import_module("dinkster_inference")
-        runtime = handle.runtime
-        geometry = getattr(runtime, "component_sampling_runtime", runtime)
-        video_config = getattr(geometry, "video_vae_config", None)
-        audio_config = getattr(geometry, "audio_vae_config", None)
-        if video_config is None:
-            raise TypeError("model requires video_vae_config")
-        if audio_config is None:
-            raise TypeError("model requires audio_vae_config")
-        for config_name, config, fields in (
-            (
-                "video_vae_config",
-                video_config,
-                ("latent_channels", "temporal_ratio", "spatial_ratio"),
-            ),
-            ("audio_vae_config", audio_config, ("z_channels", "latent_frequency_bins")),
-        ):
-            for field in fields:
-                value = getattr(config, field, None)
-                if type(value) is not int or value <= 0:
-                    raise TypeError(f"model requires {config_name}.{field} as a positive integer")
-        rate = getattr(audio_config, "latents_per_second", None)
-        if (
-            not isinstance(rate, (int, float))
-            or isinstance(rate, bool)
-            or not math.isfinite(rate)
-            or rate <= 0
-        ):
-            raise TypeError("model requires positive finite audio_vae_config.latents_per_second")
-        audio_length = inference.ltx_audio_latents_from_frames(
-            audio_config, length, float(frame_rate)
-        )
-        if width < video_config.spatial_ratio or height < video_config.spatial_ratio:
-            raise ValueError(
-                "width and height must cover at least one video spatial downscale step"
-            )
-        if audio_length < 1:
-            raise ValueError("length and frame_rate must produce at least one audio latent frame")
-        torch = _torch()
-        video = torch.zeros(
-            (
-                batch_size,
-                video_config.latent_channels,
-                (length - 1) // video_config.temporal_ratio + 1,
-                height // video_config.spatial_ratio,
-                width // video_config.spatial_ratio,
-            ),
-            device="cpu",
-            dtype=torch.float32,
-        )
-        audio = torch.zeros(
-            (
-                batch_size,
-                audio_config.z_channels,
-                audio_length,
-                audio_config.latent_frequency_bins,
-            ),
-            device="cpu",
-            dtype=torch.float32,
-        )
-        streams = inference.MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))
-        return cls.outputs(latent={"samples": streams})
-
-
-class NativeEmptyLTXVLatent(EmptyLTXVLatent):
-    @classmethod
-    def execute(
-        cls,
-        *,
-        model: object,
-        width: int,
-        height: int,
-        length: int,
-        batch_size: int,
-    ) -> Mapping[str, object]:
-        handle = _native_handle(model, "model")
-        for name, value in (
-            ("width", width),
-            ("height", height),
-            ("length", length),
-            ("batch_size", batch_size),
-        ):
-            if type(value) is not int or value < 1:
-                raise ValueError(f"{name} must be a positive integer, got {value}")
-        inference = importlib.import_module("dinkster_inference")
-        runtime = handle.runtime
-        geometry = getattr(runtime, "component_sampling_runtime", runtime)
-        video_config = getattr(geometry, "video_vae_config", None)
-        if video_config is None:
-            raise TypeError("model requires video_vae_config")
-        for field in ("latent_channels", "temporal_ratio", "spatial_ratio"):
-            value = getattr(video_config, field, None)
-            if type(value) is not int or value <= 0:
-                raise TypeError(f"model requires video_vae_config.{field} as a positive integer")
-        if width < video_config.spatial_ratio or height < video_config.spatial_ratio:
-            raise ValueError(
-                "width and height must cover at least one video spatial downscale step"
-            )
-        torch = _torch()
-        video = torch.zeros(
-            (
-                batch_size,
-                video_config.latent_channels,
-                (length - 1) // video_config.temporal_ratio + 1,
-                height // video_config.spatial_ratio,
-                width // video_config.spatial_ratio,
-            ),
-            device="cpu",
-            dtype=torch.float32,
-        )
-        streams = inference.MultiStreamLatent.from_pairs((("video", video),))
-        return cls.outputs(latent={"samples": streams})
 
 
 class NativeMiniMaxH3T2VAConditioning(MiniMaxH3T2VAConditioning):
@@ -1832,22 +1694,16 @@ def _minimax_h3_model_handle(
         value = value.handle
     if not isinstance(value, NativeRuntimeHandle):
         return None
-    model = cast("object", value.runtime)
+    runtime = cast("object", value.runtime)
     recipe = value.recipe
-    model_type = type(model)
-    exact_type_name = (
-        model_type.__module__ == "dinkster_inference_torch.minimax_h3_assembly"
-        and model_type.__name__ == "MiniMaxH3Model"
-    )
-    if recipe.family_id != inference.MINIMAX_H3_CONFIG.family_id and not exact_type_name:
+    if recipe.family_id != inference.MINIMAX_H3_CONFIG.family_id:
         return None
     inference_torch = importlib.import_module("dinkster_inference_torch")
-    if type(model) is not inference_torch.MiniMaxH3Model:
+    if type(runtime) is not inference_torch.MiniMaxH3DiTRuntime:
         return None
     if (
-        recipe.family_id != inference.MINIMAX_H3_CONFIG.family_id
-        or tuple(binding.role for binding in recipe.sources) != ("diffusion",)
-        or recipe.runtime_identity != cast("Any", model).runtime_identity
+        tuple(binding.role for binding in recipe.sources) != ("diffusion",)
+        or recipe.runtime_identity != cast("Any", runtime).runtime_identity
     ):
         raise TypeError("MiniMax H3 sampling requires a standalone DiT component model")
     return value
@@ -1857,30 +1713,11 @@ def _minimax_h3_dit_runtime(
     handle: NativeRuntimeHandle,
     conditioner_identity: str,
     inference: Any,
-    torch: Any,
 ) -> Any:
-    inference_torch = importlib.import_module("dinkster_inference_torch")
     validated = _minimax_h3_model_handle(handle, inference)
     if validated is None:
         raise TypeError("MiniMax H3 sampling requires a standalone DiT component model")
-    model = validated.runtime
-    recipe = validated.recipe
-    model_role = model.model_role.replace("-", "_")
-    composition = inference.compose_execution(
-        inference.MINIMAX_H3_CONFIG.family_id,
-        {
-            model_role: recipe.runtime_identity,
-            "conditioner": conditioner_identity,
-        },
-    )
-    return inference_torch.MiniMaxH3DiTRuntime(
-        model.assembled.diffusion,
-        model_role=model_role,
-        runtime_identity=composition.execution_identity,
-        receipt_identity=model.receipt_identity,
-        compute_dtype=_torch_dtype(torch, recipe.knobs.diffusion_dtype),
-        conditioning_identity=conditioner_identity,
-    )
+    return validated.runtime.with_conditioner(conditioner_identity)
 
 
 def _minimax_h3_custom_sampling_runtime(
@@ -1905,7 +1742,7 @@ def _minimax_h3_custom_sampling_runtime(
             raise ValueError(
                 "negative conditioning was prepared by a different MiniMax H3 conditioner component"
             )
-    return _minimax_h3_dit_runtime(handle, carrier.runtime_identity, inference, _torch())
+    return _minimax_h3_dit_runtime(handle, carrier.runtime_identity, inference)
 
 
 def resolve_minimax_h3_component_execution(
@@ -1913,22 +1750,3 @@ def resolve_minimax_h3_component_execution(
 ) -> tuple[Any, object, object] | None:
     runtime = _minimax_h3_custom_sampling_runtime(handle, positive, negative, inference)
     return None if runtime is None else (runtime, positive, negative)
-
-
-def _minimax_h3_schedule_runtime(handle: NativeRuntimeHandle, inference: Any) -> Any | None:
-    """The H3 DiT runtime for schedule-only queries, or None for non-H3
-    handles. No conditioner is in scope, so the runtime keeps the model's
-    own identity instead of a composed execution identity."""
-    validated = _minimax_h3_model_handle(handle, inference)
-    if validated is None:
-        return None
-    inference_torch = importlib.import_module("dinkster_inference_torch")
-    model = validated.runtime
-    recipe = validated.recipe
-    return inference_torch.MiniMaxH3DiTRuntime(
-        model.assembled.diffusion,
-        model_role=model.model_role.replace("-", "_"),
-        runtime_identity=recipe.runtime_identity,
-        receipt_identity=model.receipt_identity,
-        compute_dtype=_torch_dtype(_torch(), recipe.knobs.diffusion_dtype),
-    )

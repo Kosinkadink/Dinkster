@@ -663,6 +663,7 @@ class FluxRuntime(SingleStreamSamplingRuntime):
     sampling_error = WiringError
     sampling_compute_dtype = torch.bfloat16
     supports_denoised_capture = True
+    text_encode_options = frozenset({"hidden_layer", "min_padding", "min_length"})
     sampling_execution_registration = SamplingExecutionRegistration(
         latent=_FluxLatentAdapter(_validate_flux_latent),
         denoiser=_flux_denoiser,
@@ -1527,6 +1528,7 @@ class SDRuntime(SingleStreamSamplingRuntime):
     sampling_error = WiringError
     sampling_compute_dtype = torch.float16
     supports_denoised_capture = True
+    text_encode_options = frozenset({"hidden_layer"})
     sampling_execution_registration = SamplingExecutionRegistration(
         latent=_SDLatentAdapter(_validate_sd_latent, admit_perp_neg=True),
         denoiser=_sd_denoiser,

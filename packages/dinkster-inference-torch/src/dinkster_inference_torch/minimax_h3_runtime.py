@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping
+from copy import copy
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, cast
@@ -65,6 +66,7 @@ from dinkster_inference import (
     TokenSegmentDescriptor,
     UspMesh,
     build_canonical_manifest,
+    compose_execution,
     execution_span,
     normalize_minimax_h3_conditioning,
     plan_minimax_h3_token_layout,
@@ -92,6 +94,7 @@ from .distributed import (
 )
 from .guidance import ConditioningEvaluation
 from .latent_streams import normalize_latent_mask, pack_latent_streams, unpack_latent_streams
+from .minimax_h3_assembly import AssembledMiniMaxH3Model
 from .minimax_h3_attention import (
     MiniMaxH3AttentionKernelFactory,
     MiniMaxH3PackedSegmentKind,
@@ -1472,6 +1475,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         receipt_identity: str | None = None,
         conditioning_identity: str | None = None,
         compute_dtype: torch.dtype = torch.bfloat16,
+        assembled: AssembledMiniMaxH3Model | None = None,
         sampler_registry: Registry[SamplerDescriptor[torch.Tensor]] | None = None,
         scheduler_registry: Registry[SchedulerDescriptor] | None = None,
     ) -> None:
@@ -1485,8 +1489,17 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             raise ValueError("H3 DiT conditioning identity must be non-empty")
         if compute_dtype not in (torch.bfloat16, torch.float32):
             raise ValueError("H3 DiT compute dtype must be bfloat16 or float32")
+        if assembled is None:
+            assembled = AssembledMiniMaxH3Model(
+                model,
+                _component_compute_dtypes=MappingProxyType({"diffusion": compute_dtype}),
+            )
+        elif assembled.diffusion is not model:
+            raise ValueError("H3 DiT runtime assembly must own its model")
         self._model = model
+        self.assembled = assembled
         self._model_role = model_role
+        self._component_identity = runtime_identity
         self._runtime_identity = runtime_identity
         self._receipt_identity = receipt_identity
         self._conditioning_identity = (
@@ -1509,6 +1522,21 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
     @property
     def runtime_identity(self) -> str:
         return self._runtime_identity
+
+    def with_conditioner(self, conditioning_identity: str) -> MiniMaxH3DiTRuntime:
+        if type(conditioning_identity) is not str or not conditioning_identity:
+            raise ValueError("H3 DiT conditioning identity must be non-empty")
+        composition = compose_execution(
+            MINIMAX_H3_CONFIG.family_id,
+            {
+                self._model_role: self._component_identity,
+                "conditioner": conditioning_identity,
+            },
+        )
+        derived = copy(self)
+        derived._runtime_identity = composition.execution_identity
+        derived._conditioning_identity = conditioning_identity
+        return derived
 
     @property
     def conditioning_identity(self) -> str:

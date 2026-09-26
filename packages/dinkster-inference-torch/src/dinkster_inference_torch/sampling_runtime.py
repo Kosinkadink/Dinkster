@@ -83,6 +83,10 @@ class SamplingRuntime(ABC):
     sampling_execution_registration: SamplingExecutionRegistration
     sampling_error: ClassVar[type[Exception]] = ValueError
     supports_sampling_shift: ClassVar[bool] = False
+    text_encode_options: ClassVar[frozenset[str]] = frozenset()
+
+    def sampling_runtime(self) -> SamplingRuntime:
+        return self
 
     @property
     @abstractmethod

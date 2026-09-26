@@ -15,7 +15,7 @@ from contextlib import AbstractContextManager
 from typing import Any, Protocol, runtime_checkable
 
 from .recipe import ReconstructionRecipe
-from .runtime import CustomSamplingRuntime, FamilyRuntime, MultiStreamFamilyRuntime
+from .runtime import CustomSamplingRuntime
 
 
 @runtime_checkable
@@ -28,9 +28,7 @@ class InferenceRuntimeHandle(Protocol):
     """
 
     @property
-    def runtime(
-        self,
-    ) -> FamilyRuntime[Any] | MultiStreamFamilyRuntime[Any] | CustomSamplingRuntime[Any]:
+    def runtime(self) -> CustomSamplingRuntime[Any]:
         """The live family runtime; raises after release."""
         ...
 
@@ -75,11 +73,8 @@ def require_inference_runtime_handle(value: object, input_id: str) -> InferenceR
     if not isinstance(recipe, ReconstructionRecipe):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise TypeError(f"{input_id} recipe must be a ReconstructionRecipe")
     runtime = value.runtime
-    if not isinstance(runtime, (FamilyRuntime, MultiStreamFamilyRuntime, CustomSamplingRuntime)):  # pyright: ignore[reportUnnecessaryIsInstance]
-        raise TypeError(
-            f"{input_id} runtime does not satisfy a family runtime protocol "
-            "or custom sampling protocol"
-        )
+    if not isinstance(runtime, CustomSamplingRuntime):  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise TypeError(f"{input_id} runtime does not satisfy the custom sampling protocol")
     identity = runtime.runtime_identity
     if not isinstance(identity, str) or not identity:  # pyright: ignore[reportUnnecessaryIsInstance]
         raise TypeError(f"{input_id} runtime identity must be a non-empty string")

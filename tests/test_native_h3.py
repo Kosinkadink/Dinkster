@@ -1590,8 +1590,7 @@ def test_h3_model_admission_requires_the_exact_model_and_recipe(
     inference = __import__("dinkster_inference")
     identity = "native:dinkster.minimax_h3:" + "1" * 64
 
-    class MiniMaxH3Model:
-        __module__ = "dinkster_inference_torch.minimax_h3_assembly"
+    class MiniMaxH3DiTRuntime:
         runtime_identity = identity
         model_role = "fl2va-dit"
 
@@ -1611,7 +1610,7 @@ def test_h3_model_admission_requires_the_exact_model_and_recipe(
         def require_active(self) -> None:
             pass
 
-    fake_module = SimpleNamespace(MiniMaxH3Model=MiniMaxH3Model)
+    fake_module = SimpleNamespace(MiniMaxH3DiTRuntime=MiniMaxH3DiTRuntime)
     real_import = importlib.import_module
     monkeypatch.setattr(native_arm, "NativeRuntimeHandle", Handle)
     monkeypatch.setattr(
@@ -1620,14 +1619,15 @@ def test_h3_model_admission_requires_the_exact_model_and_recipe(
         lambda name: fake_module if name == "dinkster_inference_torch" else real_import(name),
     )
 
-    exact = Handle(MiniMaxH3Model())
+    exact = Handle(MiniMaxH3DiTRuntime())
     assert native_arm._minimax_h3_model_handle(exact, inference) is exact
     assert native_arm._minimax_h3_model_handle(Handle(DuckModel()), inference) is None
-    with pytest.raises(TypeError, match="standalone DiT component model"):
+    assert (
         native_arm._minimax_h3_model_handle(
-            Handle(MiniMaxH3Model(), family_id="dinkster.other"),
-            inference,
+            Handle(MiniMaxH3DiTRuntime(), family_id="dinkster.other"), inference
         )
+        is None
+    )
 
 
 @pytest.mark.parametrize("task_name", ("T2VA", "REF2VA"))
@@ -1961,22 +1961,22 @@ def test_h3_dit_runtime_composes_execution_identity_and_preserves_receipt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     inference = __import__("dinkster_inference")
-    calls: list[dict[str, object]] = []
+    calls: list[str] = []
     dit_identity = "native:dinkster.minimax_h3:" + "1" * 64
     conditioner_identity = "native:dinkster.minimax_h3:" + "2" * 64
 
-    class Model:
+    class Runtime:
         def __init__(self) -> None:
             self.assembled = SimpleNamespace(diffusion="diffusion")
             self.model_role = "fl2va-dit"
             self.runtime_identity = dit_identity
             self.receipt_identity = "receipt"
 
-    class Runtime:
-        def __init__(self, diffusion: object, **kwargs: object) -> None:
-            calls.append({"diffusion": diffusion, **kwargs})
+        def with_conditioner(self, identity: str) -> object:
+            calls.append(identity)
+            return SimpleNamespace(base=self, conditioning_identity=identity)
 
-    fake_module = SimpleNamespace(MiniMaxH3Model=Model, MiniMaxH3DiTRuntime=Runtime)
+    fake_module = SimpleNamespace(MiniMaxH3DiTRuntime=Runtime)
     real_import = importlib.import_module
     monkeypatch.setattr(
         importlib,
@@ -1984,7 +1984,7 @@ def test_h3_dit_runtime_composes_execution_identity_and_preserves_receipt(
         lambda name: fake_module if name == "dinkster_inference_torch" else real_import(name),
     )
     handle = SimpleNamespace(
-        runtime=Model(),
+        runtime=Runtime(),
         recipe=SimpleNamespace(
             family_id="dinkster.minimax_h3",
             runtime_identity=dit_identity,
@@ -1995,36 +1995,22 @@ def test_h3_dit_runtime_composes_execution_identity_and_preserves_receipt(
     monkeypatch.setattr(
         native_arm,
         "_minimax_h3_model_handle",
-        lambda value, _inference: value if type(value.runtime) is Model else None,
+        lambda value, _inference: value if type(value.runtime) is Runtime else None,
     )
     runtime = native_arm._minimax_h3_dit_runtime(
         cast("Any", handle),
         conditioner_identity,
         inference,
-        _fake_torch(),
     )
-    composition = inference.compose_execution(
-        inference.MINIMAX_H3_CONFIG.family_id,
-        {"fl2va_dit": dit_identity, "conditioner": conditioner_identity},
-    )
-    assert type(runtime) is Runtime
-    assert calls == [
-        {
-            "diffusion": "diffusion",
-            "model_role": "fl2va_dit",
-            "runtime_identity": composition.execution_identity,
-            "receipt_identity": "receipt",
-            "compute_dtype": "bf16",
-            "conditioning_identity": conditioner_identity,
-        }
-    ]
+    assert runtime.base is handle.runtime
+    assert runtime.conditioning_identity == conditioner_identity
+    assert calls == [conditioner_identity]
     handle.runtime = object()
     with pytest.raises(TypeError, match="standalone DiT component model"):
         native_arm._minimax_h3_dit_runtime(
             cast("Any", handle),
             conditioner_identity,
             inference,
-            _fake_torch(),
         )
 
 

@@ -987,24 +987,20 @@ class GenerationClipTextEncode(NativeClipTextEncode):
                 ):
                     conditioning = encode_text(text)
                 else:
-                    inference_torch = importlib.import_module("dinkster_inference_torch")
-                    if isinstance(runtime, inference_torch.FluxRuntime):
-                        conditioning = encode_text(
-                            text,
-                            hidden_layer=options.hidden_layer,
-                            min_padding=options.t5_min_padding,
-                            min_length=options.t5_min_length,
-                        )
-                    elif isinstance(runtime, inference_torch.SDRuntime):
-                        conditioning = encode_text(text, hidden_layer=options.hidden_layer)
-                    elif isinstance(runtime, inference_torch.Wan21Runtime):
-                        conditioning = encode_text(
-                            text,
-                            min_padding=options.t5_min_padding,
-                            min_length=options.t5_min_length,
-                        )
-                    else:
-                        conditioning = encode_text(text)
+                    option_values = {
+                        "hidden_layer": options.hidden_layer,
+                        "min_padding": options.t5_min_padding,
+                        "min_length": options.t5_min_length,
+                    }
+                    supported = runtime.text_encode_options
+                    conditioning = encode_text(
+                        text,
+                        **{
+                            name: value
+                            for name, value in option_values.items()
+                            if name in supported
+                        },
+                    )
         to_carrier = getattr(runtime, "text_conditioning_carrier", None)
         if callable(to_carrier):
             return cls.outputs(conditioning=to_carrier(conditioning))
