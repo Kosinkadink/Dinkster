@@ -32703,17 +32703,27 @@ def test_minimax_h3_sigma_shift_binds_paired_sampling_space_and_overlay_state() 
 
 
 @pytest.mark.parametrize(
-    ("attention", "expected_policy"),
+    ("attention", "kitchen_available", "expected_policy", "expected_primary", "expected_version"),
     (
-        ("pytorch attention", "sdpa"),
-        ("comfy kitchen attention", "dinkster_kitchen_int8"),
-        ("unknown backend", "sdpa"),
+        ("pytorch attention", True, "sdpa", "sdpa", 1),
+        (
+            "comfy kitchen attention",
+            True,
+            "dinkster_kitchen_int8",
+            "dinkster_kitchen_int8",
+            1,
+        ),
+        ("comfy kitchen attention", False, "dinkster_kitchen_int8", "sdpa", 3),
+        ("unknown backend", True, "sdpa", "sdpa", 1),
     ),
 )
 def test_model_attention_backend_rematerializes_policy_and_preserves_overlay_state(
     monkeypatch: pytest.MonkeyPatch,
     attention: str,
+    kitchen_available: bool,
     expected_policy: str,
+    expected_primary: str,
+    expected_version: int,
 ) -> None:
     from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
 
@@ -32724,7 +32734,11 @@ def test_model_attention_backend_rematerializes_policy_and_preserves_overlay_sta
             AttentionRoute(role, "sdpa", "bounded" if role == "vae" else None)
             for role in ATTENTION_ROLES
         ),
-        provider_versions=(("dinkster-kitchen", "1.0"), ("torch", "2.10.0")),
+        provider_versions=(
+            (("dinkster-kitchen", "1.0"), ("torch", "2.10.0"))
+            if kitchen_available
+            else (("torch", "2.10.0"),)
+        ),
         adapter_contract_revision="test",
         device_kind="cuda",
         device_sm=90,
@@ -32771,12 +32785,13 @@ def test_model_attention_backend_rematerializes_policy_and_preserves_overlay_sta
     next_recipe = accepted[0]
     assert next_recipe.knobs.attention_policy == expected_policy
     assert next_recipe.knobs.attention_route_token.requested_policy == expected_policy
+    assert next_recipe.knobs.attention_route_token.version == expected_version
     assert {
         (route.primary, route.fallback) for route in next_recipe.knobs.attention_route_token.routes
     } == {
         (
-            expected_policy,
-            "sdpa" if expected_policy == "dinkster_kitchen_int8" else None,
+            expected_primary,
+            "sdpa" if expected_primary == "dinkster_kitchen_int8" else None,
         )
     }
     assert patched.handle is replacement

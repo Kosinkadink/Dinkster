@@ -1685,21 +1685,22 @@ class NativeRuntimeHandle:
         if not isinstance(attention_route_token, AttentionRouteToken):
             raise ValueError("an attention backend requires an authenticated route token")
         policy = cast("str", attention_policy)
-        if policy == "dinkster_kitchen_int8" and not any(
+        kitchen_available = any(
             name == "dinkster-kitchen" for name, _version in attention_route_token.provider_versions
-        ):
-            policy = "sdpa"
-        fallback = "sdpa" if policy == "dinkster_kitchen_int8" else None
+        )
+        portable_fallback = policy == "dinkster_kitchen_int8" and not kitchen_available
+        primary = "sdpa" if portable_fallback else policy
+        fallback = "sdpa" if primary == "dinkster_kitchen_int8" else None
         providers = tuple(
             pair
             for pair in attention_route_token.provider_versions
             if pair[0] not in {"dinkster-kitchen", "sageattention"}
-            or (pair[0] == "dinkster-kitchen" and policy == "dinkster_kitchen_int8")
+            or (pair[0] == "dinkster-kitchen" and primary == "dinkster_kitchen_int8")
         )
         token = replace(
             attention_route_token,
-            version=1,
-            routes=tuple(AttentionRoute(role, policy, fallback) for role in ATTENTION_ROLES),
+            version=3 if portable_fallback else 1,
+            routes=tuple(AttentionRoute(role, primary, fallback) for role in ATTENTION_ROLES),
             provider_versions=providers,
             requested_policy=policy,
             requested_role_policies=(),
