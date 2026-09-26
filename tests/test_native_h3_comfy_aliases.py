@@ -213,3 +213,59 @@ def test_reference_to_video_preserves_reference_order_and_video_audio_pairing(
         MiniMaxH3VideoReferenceValue("frames", MiniMaxH3AudioReferenceValue("video-wave", 32_000)),
         MiniMaxH3AudioReferenceValue("standalone-wave", 44_100),
     ]
+
+
+def test_reference_to_video_routes_only_empty_references_through_t2va(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        NativeEmptyMiniMaxH3AV,
+        "execute",
+        classmethod(lambda cls, **values: {"latent": "av"}),
+    )
+    t2va_calls: list[dict[str, object]] = []
+
+    def t2va(cls: type[object], **values: object) -> dict[str, object]:
+        t2va_calls.append(values)
+        return {"conditioning": "t2va"}
+
+    monkeypatch.setattr(
+        NativeMiniMaxH3T2VAConditioning,
+        "execute",
+        classmethod(t2va),
+    )
+    strict_ref2va = NativeMiniMaxH3REF2VAConditioning.execute
+    monkeypatch.setattr(
+        NativeMiniMaxH3REF2VAConditioning,
+        "execute",
+        classmethod(lambda cls, **values: pytest.fail("empty references must not use REF2VA")),
+    )
+
+    result = NativeMiniMaxH3ReferenceToVideo.execute(
+        clip="clip",
+        vae="video-vae",
+        audio_vae="audio-vae",
+        prompt="prompt",
+        width=1344,
+        height=768,
+        length=124,
+        ref_image_size="match",
+        ref_images={},
+        ref_videos={},
+        ref_video_audios={},
+        ref_audios={},
+    )
+
+    assert result == {"positive": "t2va", "latent": "av"}
+    assert t2va_calls == [{"clip": "clip", "target": "av", "prompt": "prompt"}]
+
+    with pytest.raises(ValueError, match="REF2VA requires at least one reference"):
+        strict_ref2va(
+            clip="clip",
+            video_vae="video-vae",
+            audio_vae="audio-vae",
+            target="av",
+            prompt="prompt",
+            references=(),
+            ref_image_size="match",
+        )

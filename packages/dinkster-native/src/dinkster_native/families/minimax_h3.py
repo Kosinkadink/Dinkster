@@ -1096,15 +1096,22 @@ class NativeMiniMaxH3ReferenceToVideo(MiniMaxH3ReferenceToVideo):
             )
         references.extend(_audio_reference(audio, name) for name, audio in ref_audios.items())
         latent = _empty_minimax_h3_target(width, height, length)
-        result = NativeMiniMaxH3REF2VAConditioning.execute(
-            clip=clip,
-            video_vae=vae,
-            audio_vae=audio_vae,
-            target=latent,
-            prompt=prompt,
-            references=references,
-            ref_image_size=ref_image_size,
-        )
+        if references:
+            result = NativeMiniMaxH3REF2VAConditioning.execute(
+                clip=clip,
+                video_vae=vae,
+                audio_vae=audio_vae,
+                target=latent,
+                prompt=prompt,
+                references=references,
+                ref_image_size=ref_image_size,
+            )
+        else:
+            result = NativeMiniMaxH3T2VAConditioning.execute(
+                clip=clip,
+                target=latent,
+                prompt=prompt,
+            )
         return cls.outputs(positive=result["conditioning"], latent=latent)
 
 
