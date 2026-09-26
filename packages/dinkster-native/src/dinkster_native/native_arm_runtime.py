@@ -1484,6 +1484,7 @@ class _NativeModelOverlay:
     sampling_cache: Any | None = None
     sampling_timeline: Any | None = None
     sampling_space: Any | None = None
+    sparse_attention: Any | None = None
 
     def __post_init__(self) -> None:
         if self.sampling_space is not None and self.sampling_shift is not None:
@@ -1703,6 +1704,10 @@ def _native_model_sampling_timeline(value: object) -> object | None:
 
 def _native_model_sampling_space(value: object) -> Any | None:
     return value.sampling_space if isinstance(value, _NativeModelOverlay) else None
+
+
+def _native_model_sparse_attention(value: object) -> Any | None:
+    return value.sparse_attention if isinstance(value, _NativeModelOverlay) else None
 
 
 def _cfg1_optimization_setting(

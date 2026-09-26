@@ -90,6 +90,7 @@ from .native_arm_core import (
 )
 from .native_residency import NativeRuntimeHandle
 from .nodes_conditioning import (
+    GenerationBlockSparseAttention,
     GenerationChromaModelSampling,
     GenerationChromaRadianceOptions,
     GenerationConditioningMerge,
@@ -386,6 +387,7 @@ GENERATION_PROVIDER_NODES: tuple[type[Node], ...] = (
     GenerationConditioningSetTimestepRange,
     GenerationConditioningZeroOut,
     GenerationChromaRadianceOptions,
+    GenerationBlockSparseAttention,
     GenerationChromaModelSampling,
     GenerationModelSamplingSD3,
     GenerationModelSamplingLTXV,
@@ -583,6 +585,7 @@ NATIVE_ARM_NODES: tuple[type[Node], ...] = (
     GenerationVAEDecodeTiled,
     GenerationVAEEncode,
     GenerationCFGOverride,
+    GenerationBlockSparseAttention,
     GenerationRescaleCfg,
     GenerationModelSamplingSD3,
     GenerationModelSamplingLTXV,

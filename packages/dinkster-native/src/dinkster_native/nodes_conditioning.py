@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Protocol, TypedDict
 
 from .native_arm_conditioning import (
@@ -35,6 +36,7 @@ from .native_arm_runtime import (
     _native_model_sampling_cache,
     _native_model_sampling_space,
     _native_model_sampling_timeline,
+    _native_model_sparse_attention,
     _NativeModelOverlay,
     _sampling_space_runtime,
 )
@@ -486,6 +488,61 @@ class _GenerationModelSamplingFluxOutput(TypedDict):
     model: _FluxModelOverlay
 
 
+def _sparse_attention_blocks(value: str) -> frozenset[int]:
+    blocks: set[int] = set()
+    for part in re.findall(r"\d+\s*-\s*\d+|\d+", value):
+        if "-" in part:
+            start, stop = (int(item) for item in part.split("-"))
+            blocks.update(range(min(start, stop), max(start, stop) + 1))
+        else:
+            blocks.add(int(part))
+    return frozenset(blocks)
+
+
+class GenerationBlockSparseAttention(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _generation_provider_schema("comfy.BlockSparseAttention")
+
+    @classmethod
+    def execute(cls, *, model: object, selection: str, **inputs: object) -> Mapping[str, object]:
+        model_value, applications = _application_chain_model(model, "model")
+        if applications:
+            raise ValueError("BlockSparseAttention does not accept a model application chain")
+        handle, overlays, resolvers, control, shift, transforms, windows, options = _native_model(
+            model_value, "model"
+        )
+        inference = importlib.import_module("dinkster_inference")
+        config = inference.MiniMaxH3SparseAttentionConfig(
+            selection=selection,
+            keep_percent=inputs.get("selection.keep_percent", 10.0),
+            tau=inputs.get("selection.tau", 1.3),
+            start_percent=inputs.get("start_percent", 0.2),
+            end_percent=inputs.get("end_percent", 1.0),
+            dense_blocks=_sparse_attention_blocks(cast("str", inputs.get("dense_blocks", ""))),
+            min_tokens=inputs.get("min_tokens", 12_288),
+            extra_tokens=inputs.get("extra_tokens", 256),
+            sink_conditioning=inputs.get("sink_conditioning", "exact_kv_and_rows"),
+            verbose=inputs.get("verbose", False),
+        )
+        return cls.outputs(
+            MODEL=_NativeModelOverlay(
+                handle,
+                overlays,
+                resolvers,
+                control,
+                shift,
+                transforms,
+                windows,
+                options,
+                sampling_cache=_native_model_sampling_cache(model_value),
+                sampling_timeline=_native_model_sampling_timeline(model_value),
+                sampling_space=_native_model_sampling_space(model_value),
+                sparse_attention=config,
+            )
+        )
+
+
 class GenerationModelSamplingFlux(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -536,6 +593,7 @@ class GenerationModelSamplingFlux(Node):
                     sampling_cache=_native_model_sampling_cache(model_value),
                     sampling_timeline=_native_model_sampling_timeline(model_value),
                     sampling_space=space,
+                    sparse_attention=_native_model_sparse_attention(model_value),
                 )
             ),
         )
