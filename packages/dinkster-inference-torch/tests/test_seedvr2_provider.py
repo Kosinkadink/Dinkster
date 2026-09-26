@@ -367,8 +367,14 @@ def test_custom_sampling_route_uses_matching_wrapped_seedvr2_runtime() -> None:
             self.runtime_identity = runtime_identity
 
     class DescriptorEquivalentWrapper:
-        def __init__(self, component_sampling_runtime: object) -> None:
-            self.component_sampling_runtime = component_sampling_runtime
+        def __init__(self, sampling_runtime: object) -> None:
+            self._sampling_runtime = sampling_runtime
+
+        def sampling_runtime(self) -> object:
+            return self._sampling_runtime
+
+        def set_sampling_runtime(self, sampling_runtime: object) -> None:
+            self._sampling_runtime = sampling_runtime
 
     runtime = DescriptorEquivalentRuntime(identity)
     wrapper = DescriptorEquivalentWrapper(runtime)
@@ -397,15 +403,13 @@ def test_custom_sampling_route_uses_matching_wrapped_seedvr2_runtime() -> None:
     assert torch.equal(materialized_positive.embeddings, positive.embeddings)
     assert torch.equal(materialized_negative.embeddings, negative.embeddings)
 
-    wrapper.component_sampling_runtime = DescriptorEquivalentRuntime(
-        "native:dinkster.seedvr2:other"
-    )
+    wrapper.set_sampling_runtime(DescriptorEquivalentRuntime("native:dinkster.seedvr2:other"))
     with pytest.raises(TypeError, match="sampling runtime identity"):
         arm.resolve_seedvr2_component_execution(
             handle, positive_carrier, negative_carrier, inference
         )
 
-    wrapper.component_sampling_runtime = runtime
+    wrapper.set_sampling_runtime(runtime)
     wrong_positive, wrong_negative = seedvr2_conditioning(
         latent, component_identity="native:dinkster.seedvr2:other"
     )

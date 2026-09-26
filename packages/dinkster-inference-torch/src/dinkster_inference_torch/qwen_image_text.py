@@ -649,11 +649,6 @@ class _VisionPatchEmbed(torch.nn.Module):
         return self.proj(patches)
 
 
-def _rotate_half(value: torch.Tensor) -> torch.Tensor:
-    first, second = value.chunk(2, dim=-1)
-    return torch.cat((-second, first), dim=-1)
-
-
 class QwenImageVisionAttention(torch.nn.Module):
     """Segmented window/full vision attention through the injected seam."""
 
@@ -675,6 +670,13 @@ class QwenImageVisionAttention(torch.nn.Module):
         object.__setattr__(self, "_attention_kernel", attention_kernel)
         self.qkv = operations.linear(hidden_size, hidden_size * 3, bias=True)
         self.proj = operations.linear(hidden_size, hidden_size, bias=True)
+
+    def _apply_rope(
+        self, query: torch.Tensor, key: torch.Tensor, matrix: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        import dinkster_kitchen  # pyright: ignore[reportMissingTypeStubs]
+
+        return dinkster_kitchen.apply_rope_split_half(query, key, matrix)
 
     def forward(
         self,
@@ -700,8 +702,13 @@ class QwenImageVisionAttention(torch.nn.Module):
             raise ValueError("Qwen Image vision RoPE must match patch and head geometry")
         cosine = cosine.unsqueeze(1).float()
         sine = sine.unsqueeze(1).float()
-        query = query * cosine + _rotate_half(query) * sine
-        key = key * cosine + _rotate_half(key) * sine
+        half = self.head_dim // 2
+        matrix = torch.stack(
+            (cosine[..., :half], -sine[..., half:], sine[..., :half], cosine[..., half:]),
+            dim=-1,
+        ).reshape(1, hidden.shape[0], 1, half, 2, 2)
+        query, key = self._apply_rope(query.unsqueeze(0), key.unsqueeze(0), matrix)
+        query, key = query.squeeze(0), key.squeeze(0)
         outputs: list[torch.Tensor] = []
         for start, end in zip(boundaries, boundaries[1:], strict=False):
             q = query[start:end].transpose(0, 1).unsqueeze(0)

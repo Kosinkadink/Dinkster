@@ -84,7 +84,11 @@ from dinkster_inference_torch.minimax_h3_dit import (
     minimax_h3_sequence_integration_facts,
 )
 from dinkster_inference_torch.module_residency import enroll_component
-from dinkster_inference_torch.operations import CastOperations, InitlessOperations
+from dinkster_inference_torch.operations import (
+    CastOperations,
+    InitlessOperations,
+    bound_compute_dtype,
+)
 from dinkster_inference_torch.sequence_parallel_attention import SequenceParallelAttentionKernel
 from gpu_test_gate import require_gpu_tests_enabled
 from manifest_token import minted_consensus_token
@@ -2030,7 +2034,8 @@ def test_mlp_final_layer_keeps_bf16_adaln_and_fp32_output_heads() -> None:
         config,
         time_dim=2688,
         apply_silu=True,
-        operations=CastOperations(torch.bfloat16),
+        norm_operations=CastOperations(torch.bfloat16),
+        adaln_operations=CastOperations(torch.bfloat16),
         fp32_operations=CastOperations(torch.float32),
     )
     with torch.no_grad():
@@ -2051,6 +2056,22 @@ def test_mlp_final_layer_keeps_bf16_adaln_and_fp32_output_heads() -> None:
     assert audio.dtype is torch.float32
     assert video.shape == (2, 96)
     assert audio.shape == (2, 32)
+
+
+def test_curve_final_layer_keeps_bf16_norm_and_fp32_adaln() -> None:
+    model = MiniMaxH3DiT(
+        cast(MiniMaxH3Config, _ReducedConfig()),
+        builtin_sdpa_kernel(),
+        _evidence(),
+        operations=CastOperations(torch.bfloat16),
+        fp32_operations=CastOperations(torch.float32),
+        time_embedding_kind="curve",
+    )
+
+    assert bound_compute_dtype(model.final_layer.norm) is torch.bfloat16
+    assert bound_compute_dtype(model.final_layer.adaln_proj.linear) is torch.float32
+    assert bound_compute_dtype(model.final_layer.video_out) is torch.float32
+    assert bound_compute_dtype(model.final_layer.audio_out) is torch.float32
 
 
 def test_pdd_final_layer_selects_and_weights_schedule_head_span() -> None:
@@ -2380,12 +2401,12 @@ def test_bf16_text_preprocessing_feeds_bf16_diffusion() -> None:
     assert output.by_role("audio").dtype is torch.bfloat16
 
 
-def test_reduced_keyframe_and_reference_forwards_pack_every_realized_condition() -> None:
+def test_reduced_keyframe_and_reference_forwards_pack_mixed_dtype_conditions() -> None:
     spy = _RecordingKernel()
     model = _reduced_model(spy)
     _fill_reduced_model(model)
     value, context = _inputs()
-    keyframe = value.by_role("video")[:, :, :1].clone()
+    keyframe = value.by_role("video")[:, :, :1].double()
     tags = torch.tensor(((1, 0, 1),))
     keyframe_output = model(
         value,
@@ -2404,12 +2425,18 @@ def test_reduced_keyframe_and_reference_forwards_pack_every_realized_condition()
     assert spy.calls[-1][0].shape[-2] == 3 + 6 + 2 * 6 + 12
 
     references = (
-        MiniMaxH3ReferenceLatents(MiniMaxH3ReferenceKind.IMAGE, video=torch.zeros(1, 24, 1, 3, 3)),
-        MiniMaxH3ReferenceLatents(MiniMaxH3ReferenceKind.AUDIO, audio=torch.zeros(1, 32, 2, 2)),
+        MiniMaxH3ReferenceLatents(
+            MiniMaxH3ReferenceKind.IMAGE,
+            video=torch.zeros(1, 24, 1, 3, 3, dtype=torch.float64),
+        ),
+        MiniMaxH3ReferenceLatents(
+            MiniMaxH3ReferenceKind.AUDIO,
+            audio=torch.zeros(1, 32, 2, 2, dtype=torch.float64),
+        ),
         MiniMaxH3ReferenceLatents(
             MiniMaxH3ReferenceKind.VIDEO,
-            video=torch.zeros(1, 24, 2, 2, 2),
-            audio=torch.zeros(1, 32, 2, 2),
+            video=torch.zeros(1, 24, 2, 2, 2, dtype=torch.float64),
+            audio=torch.zeros(1, 32, 2, 2, dtype=torch.float64),
         ),
     )
     reference_output = model(

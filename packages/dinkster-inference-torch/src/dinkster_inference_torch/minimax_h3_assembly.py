@@ -61,21 +61,28 @@ from .attention import (
     AttentionSelection,
     AttentionStatus,
     resolve_role_attention,
+    select_attention,
 )
 from .distributed import (
     guidance_receipt_identity,
 )
 from .minimax_h3_audio import MiniMaxH3AudioVAE
-from .minimax_h3_conditioner import MiniMaxH3ConditionerModel
+from .minimax_h3_conditioner import MiniMaxH3ConditionerModel, MiniMaxH3VisionModel
 from .minimax_h3_dit import (
     MiniMaxH3DiT,
     assemble_minimax_h3_dit,
     minimax_h3_guidance_integration_facts,
 )
-from .minimax_h3_video_vae import MiniMaxH3VideoVAE, MiniMaxH3VideoVAEConfig
+from .minimax_h3_video_vae import (
+    Attention as MiniMaxH3VideoVAEAttention,
+)
+from .minimax_h3_video_vae import (
+    MiniMaxH3VideoVAE,
+    MiniMaxH3VideoVAEConfig,
+)
 from .module_residency import declare_residency_materialization_ceilings
 from .operations import CastOperations, Operations, ResidencyRouted
-from .quant_linear import Fp8Linear, Int8Linear, Nvfp4Linear
+from .quant_linear import Fp8Linear, Int8Embedding, Int8Linear, Nvfp4Linear
 
 C = TypeVar("C")
 M = TypeVar("M", bound=torch.nn.Module)
@@ -558,16 +565,15 @@ _COMFYUI_MODEL_DTYPE_PROJECTION_KEYS = frozenset(
 )
 
 
-def _uses_comfyui_model_dtype(key: str, *, time_embedding_kind: str) -> bool:
+def _uses_comfyui_model_dtype(key: str) -> bool:
     return key in _COMFYUI_MODEL_DTYPE_PROJECTION_KEYS or (
-        time_embedding_kind == "mlp"
-        and key.endswith((".adaln_proj.linear.weight", ".adaln_proj.linear.bias"))
+        key.endswith((".adaln_proj.linear.weight", ".adaln_proj.linear.bias"))
         and (key.startswith("blocks.") or key.startswith("final_layer."))
     )
 
 
 def _round_h3_projection_storage(
-    module: MiniMaxH3DiT,
+    _module: MiniMaxH3DiT,
     state: dict[str, torch.Tensor],
     *,
     diffusion_dtype: torch.dtype,
@@ -576,8 +582,7 @@ def _round_h3_projection_storage(
         return state
     return {
         key: tensor.to(diffusion_dtype)
-        if tensor.is_floating_point()
-        and _uses_comfyui_model_dtype(key, time_embedding_kind=module.time_embedding_kind)
+        if tensor.is_floating_point() and _uses_comfyui_model_dtype(key)
         else tensor
         for key, tensor in state.items()
     }
@@ -609,7 +614,13 @@ def _build_conditioner(
 ) -> MiniMaxH3ConditionerModel:
     if config != MINIMAX_H3_CONDITIONER_CONFIG:
         raise MiniMaxH3SplitAssemblyError("conditioner builder requires exact H3 config")
-    return MiniMaxH3ConditionerModel(operations=operations)
+    return MiniMaxH3ConditionerModel(
+        operations=operations,
+        visual=MiniMaxH3VisionModel(
+            operations=operations,
+            position_operations=CastOperations(torch.bfloat16),
+        ),
+    )
 
 
 def _build_audio(_config: None, *, operations: Operations) -> MiniMaxH3AudioVAE:
@@ -694,12 +705,15 @@ def load_minimax_h3_component(
                 plan,
                 _build_conditioner,
                 verified,
-                # ComfyUI loads the text encoder with float16 storage by
-                # default but hardcodes float32 embeddings and execution.
+                # ComfyUI executes the Qwen decoder in float32.
                 compute_dtype=torch.float32,
             )
             for layer in module.modules():
-                if isinstance(layer, Fp8Linear | Int8Linear | Nvfp4Linear):
+                if isinstance(layer, Int8Embedding):
+                    # ComfyUI rounds the quantized embedding through bfloat16
+                    # before running the Qwen decoder in float32.
+                    layer.compute_dtype = torch.bfloat16
+                elif isinstance(layer, Fp8Linear | Int8Linear | Nvfp4Linear):
                     layer.compute_dtype = torch.float32
                     layer.full_precision_matmul = True
         elif expected_role == "video-vae":
@@ -709,6 +723,11 @@ def load_minimax_h3_component(
                 verified,
                 compute_dtype=compute_dtype,
             )
+            if plan.quant:
+                kernel = select_attention("vae", "dinkster_kitchen_int8").kernel
+                for layer in module.modules():
+                    if isinstance(layer, MiniMaxH3VideoVAEAttention):
+                        object.__setattr__(layer, "_attention_kernel", kernel)
         else:
             module = _load_verified_component(
                 plan,

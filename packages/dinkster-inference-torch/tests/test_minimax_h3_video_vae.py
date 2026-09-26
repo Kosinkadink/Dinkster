@@ -392,6 +392,26 @@ def test_causal_conv_custom_spatial_pad_matches_downsample_equation() -> None:
     torch.testing.assert_close(conv(sample, spatial_pad=(0, 1, 0, 1)), expected)
 
 
+def test_causal_conv_one_by_one_bypasses_kitchen_fp16_convolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conv = CausalConv3d(2, 3, kernel_size=1)
+    sample = torch.randn(1, 2, 2, 3, 4)
+    expected = F.conv3d(sample, conv.weight, conv.bias)
+
+    def kitchen_supported(_input: torch.Tensor) -> bool:
+        return True
+
+    monkeypatch.setattr(vae_module, "_kitchen_ndhwc", kitchen_supported)
+
+    def unexpected_kitchen(*_args: object, **_kwargs: object) -> torch.Tensor:
+        raise AssertionError("1x1 convolution must use native torch dispatch")
+
+    monkeypatch.setattr(vae_module, "_fp16_accum_conv", unexpected_kitchen)
+
+    assert torch.equal(conv(sample), expected)
+
+
 def test_temporal_group_norm_isolates_each_frame_statistics() -> None:
     norm = TemporalIsolatedGroupNorm(2, 4, affine=False)
     first = torch.arange(16, dtype=torch.float32).reshape(1, 4, 1, 2, 2)
@@ -505,6 +525,30 @@ def test_token_grid_and_split_half_rope_match_reference_layout() -> None:
     q_rot, k_rot = apply_rope_split_half(q, k, table)
     torch.testing.assert_close(q_rot, torch.tensor([[[[-10.0, 2.0, 1.0, 20.0]]]]))
     torch.testing.assert_close(k_rot, torch.tensor([[[[-11.0, 3.0, 2.0, 21.0]]]]))
+
+
+def test_rotary_table_materializes_inverse_frequencies_in_token_dtype() -> None:
+    embedding = RotaryEmbeddingND(48)
+    ids = create_token_ids((2, 3, 5), torch.device("cpu"), torch.float16)
+
+    actual = embedding(ids)
+
+    inverse = embedding.inv_freq.to(ids)
+    angles = (embedding.angle_scale * ids[..., None].float() * inverse).flatten(2, 3)
+    cosine, sine = angles.cos(), angles.sin()
+    expected = torch.stack((cosine, -sine, sine, cosine), dim=-1).reshape(
+        *angles.shape[:2], 1, angles.shape[-1], 2, 2
+    )
+    fp32_angles = (embedding.angle_scale * ids[..., None].float() * embedding.inv_freq).flatten(
+        2, 3
+    )
+    fp32_cosine, fp32_sine = fp32_angles.cos(), fp32_angles.sin()
+    fp32_table = torch.stack((fp32_cosine, -fp32_sine, fp32_sine, fp32_cosine), dim=-1).reshape(
+        *fp32_angles.shape[:2], 1, fp32_angles.shape[-1], 2, 2
+    )
+
+    assert torch.equal(actual, expected.to(ids.dtype))
+    assert not torch.equal(actual, fp32_table.to(ids.dtype))
 
 
 def test_transformer_fused_boundaries_match_unfused_equations(
@@ -624,6 +668,33 @@ def test_reduced_vit3d_decoder_preserves_exact_patch_reassembly() -> None:
     assert "transformer_blocks.0.attn.norm_k.weight" not in state
 
 
+def test_vit3d_decoder_presents_channel_major_tokens_to_patch_projection() -> None:
+    decoder = ViT3DDecoder(
+        patch_size=2,
+        patch_size_t=2,
+        in_channels=3,
+        out_channels=2,
+        num_layers=0,
+        heads=2,
+        dim_head=6,
+        rope_dim_ratio=1.0,
+        num_register_tokens=1,
+    )
+    for parameter in decoder.parameters():
+        torch.nn.init.constant_(parameter, 0.01)
+    latent = torch.randn(2, 2, 3, 4, 3).permute(0, 4, 1, 2, 3)
+    projected_inputs: list[torch.Tensor] = []
+    decoder.x_embedder.register_forward_pre_hook(
+        lambda _module, inputs: projected_inputs.append(inputs[0].detach().clone())
+    )
+
+    decoder(latent)
+
+    expected = latent.flatten(2).transpose(1, 2)
+    assert torch.equal(projected_inputs[0], expected)
+    assert projected_inputs[0].stride() == (72, 1, 24)
+
+
 class ProbeVAE(MiniMaxH3VideoVAE):
     def __init__(self, config: MiniMaxH3VideoVAEConfig | None = None) -> None:
         super().__init__(config or reduced_config())
@@ -649,6 +720,8 @@ class ProbeVAE(MiniMaxH3VideoVAE):
 
 def test_pixel_and_latent_transforms_are_pinned() -> None:
     vae = ProbeVAE()
+    assert vae.pixel_mean.dtype == torch.float16
+    assert vae.pixel_std.dtype == torch.float16
     pixels = (
         torch.tensor([-1.0, 1.0], dtype=torch.float32).reshape(1, 1, 2, 1, 1).repeat(1, 3, 1, 1, 1)
     )
@@ -659,7 +732,8 @@ def test_pixel_and_latent_transforms_are_pinned() -> None:
     raw = torch.tensor([-100.0, 0.0, 100.0], dtype=torch.float64).reshape(1, 3, 1, 1, 1)
     finalized = vae._finalize_pixels(raw)
     assert finalized.dtype == torch.float32
-    assert torch.equal(finalized, torch.tensor([0.0, 0.456, 1.0]).reshape(1, 3, 1, 1, 1))
+    expected_finalized = torch.tensor([0.0, 0.456, 1.0], dtype=torch.float16).float()
+    assert torch.equal(finalized, expected_finalized.reshape(1, 3, 1, 1, 1))
 
     mean = torch.arange(2, dtype=torch.float32).reshape(1, 2, 1, 1, 1)
     standardized = vae._normalize_latents(mean)

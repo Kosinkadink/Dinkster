@@ -4,6 +4,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from types import SimpleNamespace
 from typing import Any, cast
 
 import dinkster_inference_torch.minimax_h3_runtime as h3_runtime_module
@@ -12,6 +13,7 @@ import torch
 from dinkster_inference import (
     MINIMAX_H3,
     MINIMAX_H3_AUDIO_MASK_MAPPING,
+    MINIMAX_H3_CONFIG,
     MINIMAX_H3_SIGMAS,
     MINIMAX_H3_VIDEO_MASK_MAPPING,
     AdapterPatch,
@@ -36,6 +38,7 @@ from dinkster_inference import (
     MiniMaxH3AudioContent,
     MiniMaxH3AudioReference,
     MiniMaxH3FL2VARequest,
+    MiniMaxH3ImageReference,
     MiniMaxH3Keyframe,
     MiniMaxH3KeyframeRole,
     MiniMaxH3REF2VARequest,
@@ -62,6 +65,7 @@ from dinkster_inference import (
     TimelineGuide,
     TokenLayoutDescriptor,
     TokenSegmentDescriptor,
+    compose_execution,
     make_conditioning_carrier,
     offset_first_sigma_for_snr,
     sampling_sigmas,
@@ -95,6 +99,7 @@ from dinkster_inference_torch import (
 from dinkster_inference_torch import sampling_execution as sampling_execution_module
 from dinkster_inference_torch.attention import builtin_sdpa_kernel
 from dinkster_inference_torch.brownian import BrownianTreeNoise
+from dinkster_inference_torch.component_runtime import h3_runtime
 from dinkster_inference_torch.denoise import (
     PackedInpaintConfiguration,
     _InpaintDenoiser,  # pyright: ignore[reportPrivateUsage]
@@ -103,6 +108,10 @@ from dinkster_inference_torch.denoise import (
 )
 from dinkster_inference_torch.distributed import DistributedSamplingConfig
 from dinkster_inference_torch.guidance import ConditioningValidationPath, GuidedDenoiser
+from dinkster_inference_torch.minimax_h3_assembly import (
+    AssembledMiniMaxH3Model,
+    MiniMaxH3Model,
+)
 from dinkster_inference_torch.minimax_h3_conditioning import MiniMaxH3ConditionerInputs
 from dinkster_inference_torch.minimax_h3_dit import (
     MiniMaxH3ControlPatch,
@@ -557,6 +566,63 @@ def test_single_dit_component_exposes_runtime_identity(
 
     assert component.runtime_identity == identity
     assert component.receipt_identity == "ref2va-receipt"
+    assert component.assembled.diffusion is runtime_fixture.ref2va
+
+
+def test_h3_component_factory_preserves_loaded_assembly(
+    runtime_fixture: RuntimeFixture,
+) -> None:
+    identity = "native:dinkster.minimax_h3:" + "5" * 64
+    assembled = AssembledMiniMaxH3Model(
+        runtime_fixture.fl2va,  # type: ignore[arg-type]
+        _component_compute_dtypes={"diffusion": torch.float32},
+    )
+    loaded = SimpleNamespace(
+        runtime=MiniMaxH3Model(assembled, identity, "fl2va-dit", receipt_identity="receipt")
+    )
+
+    runtime = h3_runtime(loaded, identity, torch.float32)
+
+    assert runtime.assembled is assembled
+    assert runtime.assembled.diffusion is runtime_fixture.fl2va
+
+
+def test_single_dit_component_derives_conditioner_execution_identity(
+    runtime_fixture: RuntimeFixture,
+) -> None:
+    identity = "native:dinkster.minimax_h3:" + "5" * 64
+    conditioner_identity = "native:dinkster.minimax_h3:" + "6" * 64
+    component = MiniMaxH3DiTRuntime(
+        runtime_fixture.fl2va,  # type: ignore[arg-type]
+        model_role="fl2va_dit",
+        runtime_identity=identity,
+        receipt_identity="fl2va-receipt",
+    )
+
+    derived = component.with_conditioner(conditioner_identity)
+    composition = compose_execution(
+        MINIMAX_H3_CONFIG.family_id,
+        {"fl2va_dit": identity, "conditioner": conditioner_identity},
+    )
+
+    assert derived is not component
+    assert component.runtime_identity == identity
+    assert component.conditioning_identity == identity
+    assert derived.runtime_identity == composition.execution_identity
+    assert derived.conditioning_identity == conditioner_identity
+    assert derived.receipt_identity == "fl2va-receipt"
+    assert derived.sampling_runtime() is derived
+
+    replacement_identity = "native:dinkster.minimax_h3:" + "7" * 64
+    replacement = derived.with_conditioner(replacement_identity)
+    replacement_composition = compose_execution(
+        MINIMAX_H3_CONFIG.family_id,
+        {"fl2va_dit": identity, "conditioner": replacement_identity},
+    )
+    assert replacement.runtime_identity == replacement_composition.execution_identity
+    assert (
+        derived.with_conditioner(conditioner_identity).runtime_identity == derived.runtime_identity
+    )
 
 
 def test_empty_av_snaps_to_exact_video_audio_geometry() -> None:
@@ -799,10 +865,16 @@ def test_h3_timeline_guide_adapter_appends_guides_and_rebuilds_the_layout(
     assert second.token_layout.layout.by_identity("guide-2-audio").grid == (2, 1)
 
 
-def test_h3_timeline_guide_adapter_refuses_foreign_target_and_tensor_contracts(
+def test_h3_timeline_guide_adapter_accepts_mixed_floating_dtype_on_target_device(
     runtime_fixture: RuntimeFixture,
 ) -> None:
-    target = _target()
+    target = empty_minimax_h3_av(
+        width=32,
+        height=32,
+        frame_count=5,
+        device="cpu",
+        dtype=torch.bfloat16,
+    )
     prepared = runtime_fixture.conditioner_runtime.condition(
         MiniMaxH3T2VARequest("timeline guide validation"),
         target=target,
@@ -814,13 +886,26 @@ def test_h3_timeline_guide_adapter_refuses_foreign_target_and_tensor_contracts(
         0,
         1,
         MultiStreamLatent.from_pairs(
-            (("video", torch.zeros(1, 24, 1, 2, 2, dtype=torch.float16)),)
+            (("video", torch.zeros(1, 24, 1, 2, 2, dtype=torch.float32)),)
         ),
     )
 
+    conditioned = add_minimax_h3_timeline_guide(prepared, target, guide)
+
+    assert conditioned.dit.guides == (guide,)
+    assert conditioned.dit.guides[0].latent.by_role("video").dtype is torch.float32
+
+    invalid = TimelineGuide(
+        0,
+        1,
+        MultiStreamLatent.from_pairs((("video", torch.zeros(1, 24, 1, 2, 2, dtype=torch.int32)),)),
+    )
     with pytest.raises(MiniMaxH3RuntimeError, match="tensor contract"):
-        add_minimax_h3_timeline_guide(prepared, target, guide)
-    foreign = _h3(target.by_role("video"), torch.zeros(1, 32, 2, 9))
+        add_minimax_h3_timeline_guide(prepared, target, invalid)
+    foreign = _h3(
+        target.by_role("video"),
+        torch.zeros(1, 32, 2, 9, dtype=torch.bfloat16),
+    )
     with pytest.raises(MiniMaxH3RuntimeError, match="differs from prepared conditioning"):
         add_minimax_h3_timeline_guide(prepared, foreign, guide)
 
@@ -1716,27 +1801,42 @@ def test_runtime_forwards_the_token_mask_to_both_guidance_lanes(
         torch.testing.assert_close(actual.by_role("audio"), expected.by_role("audio"))
 
 
-def test_h3_fractional_denoise_mask_blends_at_the_declared_video_cells() -> None:
-    runtime, conditioner, _dit = _context_mean_runtime()
+def test_h3_fractional_denoise_mask_matches_velocity_scaling_before_x0_conversion() -> None:
+    runtime, conditioner, dit = _context_mean_runtime()
     target = _target()
     prepared = _condition_t2va(conditioner, target)
     positive = replace(prepared, context=torch.full_like(prepared.context, 2.0))
     video = target.by_role("video")
-    mask = torch.full_like(video, 0.25)
-    mask[..., :, 1] = 0.75
+    mask = (
+        torch.tensor(
+            ((0.0, 0.25), (0.75, 1.0)),
+            dtype=video.dtype,
+        )
+        .reshape(1, 1, 1, 2, 2)
+        .expand_as(video)
+    )
+    sigmas = (0.9, 0.35, 0.0)
 
-    result = runtime.sample_custom(
+    output = runtime.sample_custom(
         target,
         noise=target.map(torch.zeros_like),
         cond=PreparedMultiStreamConditioning(runtime.conditioning_identity, positive),
         cfg=None,
-        request=_h3_custom_request("euler", (1.0, 0.0)),
+        request=_h3_custom_request("euler", sigmas),
         denoise_mask=mask,
         compute_dtype=torch.float32,
-    ).output.by_role("video")
+    ).output
 
-    torch.testing.assert_close(result[..., :, 0], torch.full_like(result[..., :, 0], -0.5))
-    torch.testing.assert_close(result[..., :, 1], torch.full_like(result[..., :, 1], -1.5))
+    velocity = 2.0
+    token_mask = torch.ones_like(mask)
+    first = -(sigmas[0] - sigmas[1]) * mask.square() * velocity
+    expected = mask * token_mask * first - sigmas[1] * mask.square() * velocity
+    competing_first = -(sigmas[0] - sigmas[1]) * mask * velocity
+    competing = mask * token_mask * competing_first - sigmas[1] * mask * velocity
+
+    assert dit.calls == [velocity, velocity]
+    torch.testing.assert_close(output.by_role("video"), expected)
+    assert not torch.allclose(output.by_role("video"), competing)
 
 
 @pytest.mark.parametrize("bad_value", (float("nan"), -0.1, 1.1))
@@ -1824,8 +1924,12 @@ def test_cfgpp_receives_synthetic_or_real_unconditional_prediction(
     assert dit.calls == ([2.0, 5.0] * 3 if real_uncond else [2.0] * 3)
     assert len(uncond_records) == 3
     if real_uncond:
+        _, layout = pack_latent_streams(target)
+        video_elements = layout.by_role("video").elements
         for model_input, sigma, uncond in uncond_records:
-            torch.testing.assert_close(uncond, model_input - 5.0 * sigma)
+            expected = model_input - 5.0 * sigma
+            expected[..., :video_elements] = model_input[..., :video_elements] - 0.5 * 5.0 * sigma
+            torch.testing.assert_close(uncond, expected)
     assert result.roles == target.roles
 
 
@@ -2666,6 +2770,60 @@ def test_fl2va_payload_is_realized_for_conditioner_and_dit_once(
             payloads={"first": image, "foreign": image},
             cancelled=lambda: False,
         )
+
+
+def test_h3_video_condition_latents_preserve_vae_output_dtype_with_bfloat16_target(
+    runtime_fixture: RuntimeFixture,
+) -> None:
+    frame = torch.zeros((1, 32, 32, 3), dtype=torch.float32)
+    first = PayloadDescriptor(
+        PayloadReference("first"), tuple(frame.shape), "float32", "worker:minimax-h3"
+    )
+    image = PayloadDescriptor(
+        PayloadReference("image"), tuple(frame.shape), "float32", "worker:minimax-h3"
+    )
+    video = PayloadDescriptor(
+        PayloadReference("video"), tuple(frame.shape), "float32", "worker:minimax-h3"
+    )
+    target = empty_minimax_h3_av(
+        width=32,
+        height=32,
+        frame_count=5,
+        device="cpu",
+        dtype=torch.bfloat16,
+    )
+
+    keyframes = runtime_fixture.conditioner_runtime.condition(
+        MiniMaxH3FL2VARequest(
+            "keyframe",
+            (MiniMaxH3Keyframe(MiniMaxH3KeyframeRole.FIRST, first),),
+        ),
+        target=target,
+        frame_count=5,
+        payloads={"first": frame},
+        cancelled=lambda: False,
+    )
+    references = runtime_fixture.conditioner_runtime.condition(
+        MiniMaxH3REF2VARequest(
+            "references",
+            (
+                MiniMaxH3ImageReference(image),
+                MiniMaxH3VideoReference((video,), (0,), (0.0,)),
+            ),
+        ),
+        target=target,
+        frame_count=5,
+        payloads={"image": frame, "video": frame},
+        cancelled=lambda: False,
+    )
+
+    assert keyframes.dit.keyframes[0].video.dtype == torch.float16
+    assert all(reference.video is not None for reference in references.dit.references)
+    assert all(
+        reference.video.dtype == torch.float16
+        for reference in references.dit.references
+        if reference.video is not None
+    )
 
 
 def test_ref2va_audio_payload_preserves_explicit_sample_rate(

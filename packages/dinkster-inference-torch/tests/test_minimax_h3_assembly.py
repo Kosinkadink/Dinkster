@@ -54,10 +54,15 @@ from dinkster_inference_torch.minimax_h3_assembly import (
     verify_minimax_h3_artifacts,
 )
 from dinkster_inference_torch.minimax_h3_audio import MiniMaxH3AudioVAE
-from dinkster_inference_torch.minimax_h3_video_vae import MiniMaxH3VideoVAE
+from dinkster_inference_torch.minimax_h3_video_vae import (
+    Attention as MiniMaxH3VideoVAEAttention,
+)
+from dinkster_inference_torch.minimax_h3_video_vae import (
+    MiniMaxH3VideoVAE,
+)
 from dinkster_inference_torch.module_residency import ModuleStateStore
-from dinkster_inference_torch.operations import INITLESS, CastOperations
-from dinkster_inference_torch.quant_linear import Int8Linear
+from dinkster_inference_torch.operations import INITLESS, CastOperations, bound_compute_dtype
+from dinkster_inference_torch.quant_linear import Int8Embedding, Int8Linear
 
 _TEST_IDENTITIES = {
     role: ((index, "blake3:" + f"{index:x}" * 64),)
@@ -753,7 +758,18 @@ def test_h3_projection_storage_matches_comfyui_model_dtype(
         {"blocks.0.adaln_proj.linear.bias": torch.ones(2, dtype=torch.float32)},
         diffusion_dtype=torch.bfloat16,
     )
-    assert curve["blocks.0.adaln_proj.linear.bias"].dtype is torch.float32
+    assert curve["blocks.0.adaln_proj.linear.bias"].dtype is torch.bfloat16
+
+
+def test_conditioner_builder_uses_bfloat16_vision_positions() -> None:
+    with torch.device("meta"):
+        conditioner = assembly._build_conditioner(  # pyright: ignore[reportPrivateUsage]
+            minimax_h3_conditioner_layout().config,
+            operations=CastOperations(torch.float32),
+        )
+
+    assert bound_compute_dtype(conditioner.visual.pos_embed) is torch.bfloat16
+    assert bound_compute_dtype(conditioner.model.embed_tokens) is torch.float32
 
 
 def test_artifact_paths_refuse_incomplete_duplicate_and_mutable_authority(
@@ -910,7 +926,14 @@ def test_standalone_component_load_preserves_plan_identity(
             compute_dtype=dtype,
             convrot=False,
             convrot_groupsize=256,
-        )
+        ),
+        Int8Embedding(
+            16,
+            256,
+            compute_dtype=torch.float32,
+            convrot=False,
+            convrot_groupsize=256,
+        ),
     )
 
     def read_header(_handle: BinaryIO, *, path: Path) -> HeaderSource:
@@ -957,6 +980,68 @@ def test_standalone_component_load_preserves_plan_identity(
         torch.float32 if role == "qwen3vl-32b-conditioner" else dtype
     )
     assert quantized.full_precision_matmul is (role == "qwen3vl-32b-conditioner")
+    embedding = cast(torch.nn.Sequential, loaded.module)[1]
+    assert isinstance(embedding, Int8Embedding)
+    assert embedding.compute_dtype is (
+        torch.bfloat16 if role == "qwen3vl-32b-conditioner" else torch.float32
+    )
+
+
+def test_quantized_video_vae_load_selects_kitchen_int8_attention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _skip_asset_integrity(monkeypatch)
+    path = tmp_path / "video-vae.safetensors"
+    path.write_bytes(b"video-vae")
+    asset = _asset(path, digest_file(path), path.stat().st_size)
+    base = _plan(_paths(tmp_path)).video_vae
+    layer = "decoder.x_embedder"
+    plan = replace(
+        base,
+        quant={
+            layer: LayerQuant(
+                layer,
+                "int8_tensorwise",
+                layer + ".weight",
+                layer + ".weight_scale",
+            )
+        },
+    )
+    expected_identity = minimax_h3_video_vae_runtime_identity(plan)
+    attention = MiniMaxH3VideoVAEAttention(2, 4)
+
+    def read_header(_handle: BinaryIO, *, path: Path) -> HeaderSource:
+        return HeaderSource(path, {})
+
+    sentinel = object()
+
+    def retain_plan(*_args: object, **_kwargs: object) -> object:
+        return plan
+
+    def load_component(*_args: object, **_kwargs: object) -> torch.nn.Module:
+        return torch.nn.Sequential(attention)
+
+    def select_kitchen(_role: object, _policy: object) -> SimpleNamespace:
+        return SimpleNamespace(kernel=sentinel)
+
+    monkeypatch.setattr(assembly, "load_safetensors_header_from_file", read_header)
+    monkeypatch.setattr(assembly, "plan_minimax_h3_common_component", retain_plan)
+    monkeypatch.setattr(assembly, "_load_verified_component", load_component)
+    monkeypatch.setattr(
+        assembly,
+        "select_attention",
+        select_kitchen,
+    )
+
+    load_minimax_h3_component(
+        path,
+        asset=asset,
+        expected_role="video-vae",
+        expected_identity=expected_identity,
+        compute_dtype=torch.float16,
+    )
+
+    assert attention._attention_kernel is sentinel  # pyright: ignore[reportPrivateUsage]
 
 
 def test_standalone_component_load_refuses_wrong_structure(

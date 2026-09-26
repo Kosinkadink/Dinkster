@@ -1129,9 +1129,29 @@ def _overlay(digit: str = "1"):
     )
 
 
+class _CustomSamplingTestRuntime:
+    family = SimpleNamespace(id="dinkster.test")
+
+    def custom_sampling_sigmas(self, *_args: object, **_kwargs: object) -> None: ...
+
+    def custom_sampling_beta_sigmas(self, *_args: object, **_kwargs: object) -> None: ...
+
+    def custom_sampling_sd_turbo_sigmas(self, *_args: object, **_kwargs: object) -> None: ...
+
+    def custom_sampling_percent_to_sigma(self, *_args: object, **_kwargs: object) -> None: ...
+
+    def check_custom_sampling(self, _request: object, **_kwargs: object) -> None: ...
+
+    def sample_custom(self, *_args: object, **_kwargs: object) -> None: ...
+
+
 def _runtime() -> SimpleNamespace:
     recipe = _recipe()
-    return SimpleNamespace(
+
+    def custom_sampling(*_args: object, **_kwargs: object) -> None:
+        pass
+
+    runtime = SimpleNamespace(
         family=SimpleNamespace(id="dinkster.sd15"),
         assembled=SimpleNamespace(
             diffusion=FakeModule(40),
@@ -1143,7 +1163,15 @@ def _runtime() -> SimpleNamespace:
         ),
         runtime_identity=recipe.runtime_identity,
         sample_scheduled=lambda *_args, **_kwargs: None,
+        custom_sampling_sigmas=custom_sampling,
+        custom_sampling_beta_sigmas=custom_sampling,
+        custom_sampling_sd_turbo_sigmas=custom_sampling,
+        custom_sampling_percent_to_sigma=custom_sampling,
+        check_custom_sampling=custom_sampling,
+        sample_custom=custom_sampling,
     )
+    runtime.sampling_runtime = lambda: runtime
+    return runtime
 
 
 def _coordinator(arm, manager: FakeManager | None = None):  # noqa: ANN001, ANN201
@@ -1167,6 +1195,8 @@ def _handle(
         cast(Any, runtime).assembled = _runtime().assembled
     if not hasattr(runtime, "runtime_identity"):
         cast(Any, runtime).runtime_identity = resolved_recipe.runtime_identity
+    if not hasattr(runtime, "sampling_runtime"):
+        cast(Any, runtime).sampling_runtime = lambda: runtime
     return arm.NativeRuntimeHandle(
         runtime,
         resolved_torch.device(load_device),
@@ -1939,7 +1969,7 @@ def test_qwen_diffusion_model_handle_rebuilds_as_runtime_handle(
     )
     loaded_modules: list[FakeModule] = []
 
-    class Runtime:
+    class Runtime(_CustomSamplingTestRuntime):
         def __init__(
             self,
             diffusion: object,
@@ -7128,15 +7158,28 @@ def test_native_h3_model_only_peft_lora_precalculates_and_composes_identity(
         inference.BFLOAT16.name,
     )
 
-    class MiniMaxH3Model:
-        __module__ = "dinkster_inference_torch.minimax_h3_assembly"
-
+    class MiniMaxH3DiTRuntime:
         def __init__(self, runtime_identity: str) -> None:
             self.assembled = SimpleNamespace(diffusion=FakeModule())
             self.runtime_identity = runtime_identity
-            self.model_role = "fl2va-dit"
-            self.runtime_facts = ("provider=test",)
+            self.model_role = "fl2va_dit"
+            self.family = inference.MINIMAX_H3
             self.receipt_identity = "guidance-receipt"
+
+        def sampling_runtime(self) -> MiniMaxH3DiTRuntime:
+            return self
+
+        def custom_sampling_sigmas(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def custom_sampling_beta_sigmas(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def custom_sampling_sd_turbo_sigmas(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def custom_sampling_percent_to_sigma(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def check_custom_sampling(self, *_args: object, **_kwargs: object) -> None: ...
+
+        def sample_custom(self, *_args: object, **_kwargs: object) -> None: ...
 
     torch = FakeTorch()
     patch_set = object()
@@ -7167,7 +7210,7 @@ def test_native_h3_model_only_peft_lora_precalculates_and_composes_identity(
         materialized.append((next_recipe, next_resolvers))
         recipe = cast("Any", next_recipe)
         return arm.NativeRuntimeHandle(
-            MiniMaxH3Model(recipe.runtime_identity),
+            MiniMaxH3DiTRuntime(recipe.runtime_identity),
             torch.device("cuda:0"),
             recipe=recipe,
             patch_sets={"diffusion": patch_set},
@@ -7179,7 +7222,7 @@ def test_native_h3_model_only_peft_lora_precalculates_and_composes_identity(
         )
 
     base = arm.NativeRuntimeHandle(
-        MiniMaxH3Model(base_recipe.runtime_identity),
+        MiniMaxH3DiTRuntime(base_recipe.runtime_identity),
         torch.device("cuda:0"),
         recipe=base_recipe,
         materializer=materializer,
@@ -7240,7 +7283,7 @@ def test_native_h3_model_only_peft_lora_precalculates_and_composes_identity(
     assert patched_composition.execution_identity != base_composition.execution_identity
 
     real_import = arm.importlib.import_module
-    fake_torch_module = SimpleNamespace(MiniMaxH3Model=MiniMaxH3Model)
+    fake_torch_module = SimpleNamespace(MiniMaxH3DiTRuntime=MiniMaxH3DiTRuntime)
     monkeypatch.setattr(
         arm.importlib,
         "import_module",
@@ -7346,59 +7389,32 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         inference.BFLOAT16.name,
     )
 
-    class MiniMaxH3Model:
-        __module__ = "dinkster_inference_torch.minimax_h3_assembly"
-
-        def __init__(self, runtime_identity: str) -> None:
-            self.assembled = SimpleNamespace(diffusion=FakeModule())
-            self.runtime_identity = runtime_identity
-            self.family = inference.MINIMAX_H3
-            self.model_role = "fl2va-dit"
-            self.runtime_facts = ("provider=test",)
-            self.receipt_identity = "h3-receipt"
-
-        def custom_sampling_sigmas(self, *_args: object, **_kwargs: object) -> tuple[float, ...]:
-            return (1.0, 0.5, 0.0)
-
-        def custom_sampling_beta_sigmas(
-            self, *_args: object, **_kwargs: object
-        ) -> tuple[float, ...]:
-            return (1.0, 0.5, 0.0)
-
-        def custom_sampling_sd_turbo_sigmas(
-            self, *_args: object, **_kwargs: object
-        ) -> tuple[float, ...]:
-            return (1.0, 0.5, 0.0)
-
-        def custom_sampling_percent_to_sigma(self, percent: float, **_kwargs: object) -> float:
-            return percent
-
-        def check_custom_sampling(self, *_args: object, **_kwargs: object) -> None:
-            return None
-
-        def sample_custom(self, latent: object, **_kwargs: object) -> object:
-            return inference.CustomSamplingResult(cast("Any", latent), None)
-
     class MiniMaxH3DiTRuntime:
         sample_calls: ClassVar[list[dict[str, object]]] = []
 
-        def __init__(
-            self,
-            diffusion: object,
-            *,
-            model_role: str,
-            runtime_identity: str,
-            receipt_identity: str,
-            compute_dtype: object,
-            conditioning_identity: str | None = None,
-        ) -> None:
-            self.diffusion = diffusion
-            self.model_role = model_role
+        def __init__(self, runtime_identity: str) -> None:
+            self.assembled = SimpleNamespace(diffusion=FakeModule())
+            self.diffusion = self.assembled.diffusion
+            self.model_role = "fl2va_dit"
             self.runtime_identity = runtime_identity
-            self.receipt_identity = receipt_identity
-            self.compute_dtype = compute_dtype
-            self.conditioning_identity = conditioning_identity
-            self.family = importlib.import_module("dinkster_inference").MINIMAX_H3
+            self.receipt_identity = "h3-receipt"
+            self.compute_dtype = "bfloat16"
+            self.conditioning_identity = runtime_identity
+            self.family = inference.MINIMAX_H3
+
+        def sampling_runtime(self) -> MiniMaxH3DiTRuntime:
+            return self
+
+        def with_conditioner(self, conditioning_identity: str) -> MiniMaxH3DiTRuntime:
+            composition = inference.compose_execution(
+                inference.MINIMAX_H3_CONFIG.family_id,
+                {self.model_role: self.runtime_identity, "conditioner": conditioning_identity},
+            )
+            derived = MiniMaxH3DiTRuntime(composition.execution_identity)
+            derived.assembled = self.assembled
+            derived.diffusion = self.diffusion
+            derived.conditioning_identity = conditioning_identity
+            return derived
 
         def custom_sampling_sigmas(
             self,
@@ -7435,7 +7451,6 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             return inference.CustomSamplingResult(cast("Any", latent), None)
 
     fake_module = SimpleNamespace(
-        MiniMaxH3Model=MiniMaxH3Model,
         MiniMaxH3DiTRuntime=MiniMaxH3DiTRuntime,
         add_minimax_h3_timeline_guide=lambda prepared, _target, _guide: prepared,
         prepare_multistream_noise=MiniMaxH3DiTRuntime.prepare_custom_sampling_noise,
@@ -7453,7 +7468,7 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     def materialize(next_recipe: object, next_resolvers: object) -> object:
         resolved = cast("Any", next_recipe)
         return arm.NativeRuntimeHandle(
-            MiniMaxH3Model(resolved.runtime_identity),
+            MiniMaxH3DiTRuntime(resolved.runtime_identity),
             torch.device("cuda:0"),
             recipe=resolved,
             materializer=materialize,
@@ -7464,7 +7479,7 @@ def _h3_decomposed_handle(arm, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         )
 
     handle = arm.NativeRuntimeHandle(
-        MiniMaxH3Model(recipe.runtime_identity),
+        MiniMaxH3DiTRuntime(recipe.runtime_identity),
         torch.device("cuda:0"),
         recipe=recipe,
         materializer=materialize,
@@ -7515,10 +7530,6 @@ def test_native_h3_decomposed_sampling_resolves_dit_runtime(
     assert registered_runtime.diffusion is handle.runtime.assembled.diffusion
     assert registered_positive is positive
     assert registered_negative is matching_negative
-
-    schedule_runtime = arm._minimax_h3_schedule_runtime(handle, inference)
-    assert type(schedule_runtime) is dit_type
-    assert schedule_runtime.runtime_identity == recipe.runtime_identity
 
     sigmas = arm.GenerationBasicScheduler.execute(
         model=handle,
@@ -8016,7 +8027,6 @@ def test_native_h3_decomposed_sampling_refusals_and_non_h3_passthrough(
 
     other = _handle(arm, _runtime())
     assert arm._minimax_h3_custom_sampling_runtime(other, positive, [], inference) is None
-    assert arm._minimax_h3_schedule_runtime(other, inference) is None
 
 
 def test_h3_model_materializer_applies_only_diffusion_patch_sets(
@@ -9399,7 +9409,7 @@ def test_native_sampler_materializes_ordered_component_applications_after_stagin
     events: list[object] = []
     active: set[str] = set()
 
-    class Runtime:
+    class Runtime(_CustomSamplingTestRuntime):
         family = SimpleNamespace(id="dinkster.sd15")
 
         def encode_text(self, _text: str) -> object:
@@ -10072,10 +10082,12 @@ def test_wan_clip_and_sampler_use_plain_5d_video_latent(
     negative = Conditioning(FakeTensor((1, 16, 4096), "negative"), None)
     sampled = FakeTensor((1, 16, 3, 8, 12), "sampled")
 
-    class Runtime(_PlainVideoLatentAdapter):
+    class Runtime(_PlainVideoLatentAdapter, _CustomSamplingTestRuntime):
         family = SimpleNamespace(id="dinkster.wan21")
         conditioning_identity = "dinkster.wan.conditioning:test:t2v"
-        check_custom_sampling = staticmethod(_accept_custom_sampling)
+
+        def check_custom_sampling(self, request: object, **kwargs: object) -> None:
+            _accept_custom_sampling(request, **kwargs)
 
         def __init__(self) -> None:
             self.sample_input: object | None = None
@@ -10175,7 +10187,7 @@ def test_wan_sampler_materializes_standalone_application_before_diffusion_stage(
         component_identity=("family=dinkster.wan21",),
     )
 
-    class Runtime(_PlainVideoLatentAdapter):
+    class Runtime(_PlainVideoLatentAdapter, _CustomSamplingTestRuntime):
         family = SimpleNamespace(id="dinkster.wan21")
         conditioning_identity = "dinkster.wan.conditioning:test:application"
 
@@ -10728,7 +10740,7 @@ def test_ltxav_clip_text_encode_feeds_multistream_sampler(
     negative = Conditioning(FakeTensor((1, 16, 7680), "negative"), None)
     sampled_video = FakeTensor((1, 128, 13, 16, 24), "sampled-video")
 
-    class Runtime:
+    class Runtime(_CustomSamplingTestRuntime):
         family = SimpleNamespace(id="dinkster.ltxav")
         conditioning_identity = "dinkster.ltxav.conditioning:test"
 
@@ -10790,7 +10802,7 @@ def test_multistream_sampler_routes_ltxv_family_with_cfg_guidance(
 ) -> None:
     from dinkster_inference import MultiStreamLatent, SamplingGuidance
 
-    class Runtime:
+    class Runtime(_CustomSamplingTestRuntime):
         family = SimpleNamespace(id="dinkster.ltxv")
         conditioning_identity = "dinkster.ltxv.conditioning:test"
 
@@ -10991,7 +11003,7 @@ def test_ltxv_clip_text_encode_wraps_prepared_multistream_conditioning(
     torch = FakeTorch()
     embeddings = Conditioning(FakeTensor((1, 16, 4096), "positive"), None)
 
-    class Runtime:
+    class Runtime(_CustomSamplingTestRuntime):
         family = SimpleNamespace(id="dinkster.ltxv")
         conditioning_identity = "dinkster.ltxv.conditioning:test"
 
@@ -11067,13 +11079,13 @@ def _ltx_component_recipe(role: str, family_id: str = "dinkster.ltxav") -> Any:
 def _ltxav_geometry_handle(family_id: str = "dinkster.ltxav") -> SimpleNamespace:
     video_config = SimpleNamespace(latent_channels=128, spatial_ratio=32, temporal_ratio=8)
     audio_config = SimpleNamespace(z_channels=8, latent_frequency_bins=16, latents_per_second=25.0)
-    return SimpleNamespace(
-        runtime=SimpleNamespace(
-            family=SimpleNamespace(id=family_id),
-            video_vae_config=video_config,
-            audio_vae_config=audio_config,
-        )
+    runtime = SimpleNamespace(
+        family=SimpleNamespace(id=family_id),
+        video_vae_config=video_config,
+        audio_vae_config=audio_config,
     )
+    runtime.sampling_runtime = lambda: runtime
+    return SimpleNamespace(runtime=runtime)
 
 
 def test_empty_ltxav_latent_builds_model_derived_streams(
@@ -11151,13 +11163,13 @@ def test_empty_ltxav_latent_refuses_non_positive_geometry(
 
 def _ltxv_geometry_handle(family_id: str = "dinkster.ltxv") -> SimpleNamespace:
     video_config = SimpleNamespace(latent_channels=128, spatial_ratio=32, temporal_ratio=8)
-    return SimpleNamespace(
-        runtime=SimpleNamespace(
-            family=SimpleNamespace(id=family_id),
-            video_vae_config=video_config,
-            assembled=SimpleNamespace(vae=SimpleNamespace(config=video_config)),
-        )
+    runtime = SimpleNamespace(
+        family=SimpleNamespace(id=family_id),
+        video_vae_config=video_config,
+        assembled=SimpleNamespace(vae=SimpleNamespace(config=video_config)),
     )
+    runtime.sampling_runtime = lambda: runtime
+    return SimpleNamespace(runtime=runtime)
 
 
 def test_empty_ltxv_latent_builds_model_derived_video_stream(
@@ -11189,7 +11201,8 @@ def test_empty_ltxv_latent_accepts_alternate_checkpoint_wrapper(
 ) -> None:
     arm = _native_arm()
     handle = _ltxv_geometry_handle("example.video")
-    handle.runtime = SimpleNamespace(component_sampling_runtime=handle.runtime)
+    diffusion = handle.runtime
+    handle.runtime = SimpleNamespace(sampling_runtime=lambda: diffusion)
     monkeypatch.setattr(arm, "_native_handle", lambda _value, _name: handle)
     monkeypatch.setattr(arm, "_torch", FakeTorch)
 
@@ -15386,7 +15399,7 @@ def test_generation_codec_handle_supports_multistream_runtime_and_tiled_fallback
 
     codec = Codec()
 
-    class Runtime:
+    class Runtime(_CustomSamplingTestRuntime):
         def __init__(self) -> None:
             self.codec = codec
 
@@ -15477,7 +15490,7 @@ def test_codec_handle_tiled_retry_runs_outside_the_exception_handler(
             active_exceptions.append(sys.exc_info()[1])
             return tiled
 
-    class Runtime:
+    class Runtime(_CustomSamplingTestRuntime):
         def __init__(self) -> None:
             self.codec = Codec()
 
@@ -15502,9 +15515,8 @@ def test_codec_handle_tiled_retry_runs_outside_the_exception_handler(
     assert active_exceptions == [None, None]
 
 
-@pytest.mark.parametrize("custom_sampling", [False, True])
 def test_generation_sampler_keeps_basic_single_stream_materialization(
-    monkeypatch: pytest.MonkeyPatch, custom_sampling: bool
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster_inference import CustomSamplingRuntime
 
@@ -15527,14 +15539,13 @@ def test_generation_sampler_keeps_basic_single_stream_materialization(
     runtime.sample = sample
     runtime.decode_latent = decode_latent
     runtime.encode_content = encode_content
-    if custom_sampling:
-        runtime.custom_sampling_sigmas = sample
-        runtime.custom_sampling_beta_sigmas = sample
-        runtime.custom_sampling_sd_turbo_sigmas = sample
-        runtime.custom_sampling_percent_to_sigma = sample
-        runtime.check_custom_sampling = sample
-        runtime.sample_custom = sample
-    assert isinstance(runtime, CustomSamplingRuntime) is custom_sampling
+    runtime.custom_sampling_sigmas = sample
+    runtime.custom_sampling_beta_sigmas = sample
+    runtime.custom_sampling_sd_turbo_sigmas = sample
+    runtime.custom_sampling_percent_to_sigma = sample
+    runtime.check_custom_sampling = sample
+    runtime.sample_custom = sample
+    assert isinstance(runtime, CustomSamplingRuntime)
     handle = _handle(arm, runtime)
     identity = handle.recipe.runtime_identity
 
@@ -17823,7 +17834,7 @@ def test_native_sampler_executes_composed_qwen_components_and_application(
     samples: list[tuple[str, dict[str, object]]] = []
     application_leased = [False]
 
-    class Runtime:
+    class Runtime(_CustomSamplingTestRuntime):
         conditioning_identity = "qwen-conditioning"
 
         def __init__(
@@ -18667,21 +18678,22 @@ def test_generation_clip_options_chain_without_mutating_sources() -> None:
         arm.GenerationT5TokenizerOptions.execute(clip=source, min_padding=-1, min_length=0)
 
 
-def test_generation_clip_options_forward_to_flux_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generation_clip_options_follow_runtime_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     arm = _native_arm()
     calls: list[tuple[str, dict[str, int | None]]] = []
     carrier = object()
 
-    class FluxRuntime:
+    class CapabilityRuntime:
+        text_encode_options = frozenset({"hidden_layer", "min_padding", "min_length"})
+
         def encode_text(self, text: str, **options: int | None) -> object:
             calls.append((text, options))
             return object()
 
-    class OtherRuntime:
-        pass
-
     class Handle:
-        runtime = FluxRuntime()
+        runtime = CapabilityRuntime()
 
         @contextmanager
         def stage(self, role: str):  # noqa: ANN201
@@ -18689,9 +18701,6 @@ def test_generation_clip_options_forward_to_flux_runtime(monkeypatch: pytest.Mon
             yield
 
     fake_inference_torch = SimpleNamespace(
-        FluxRuntime=FluxRuntime,
-        SDRuntime=OtherRuntime,
-        Wan21Runtime=OtherRuntime,
         basic_conditioning_to_carrier=lambda _value: carrier,
     )
     real_import = arm.importlib.import_module
@@ -20077,6 +20086,9 @@ class _FakeLTXGuidanceRuntime:
     video_vae_config = _ltxav_geometry_handle().runtime.video_vae_config
     audio_vae_config = _ltxav_geometry_handle().runtime.audio_vae_config
 
+    def sampling_runtime(self) -> _FakeLTXGuidanceRuntime:
+        return self
+
     def custom_sampling_percent_to_sigma(
         self, percent: float, *, return_actual_sigma: bool
     ) -> float:
@@ -20176,7 +20188,7 @@ def test_ltxav_guidance_accepts_alternate_wrapper_and_checks_contract(
     diffusion = _FakeLTXGuidanceRuntime()
     runtime = SimpleNamespace(
         runtime_identity=recipe.runtime_identity,
-        component_sampling_runtime=diffusion,
+        sampling_runtime=lambda: diffusion,
         custom_sampling_percent_to_sigma=diffusion.custom_sampling_percent_to_sigma,
         sample_custom=diffusion.sample_custom,
         check_custom_sampling=diffusion.check_custom_sampling,
@@ -20193,7 +20205,7 @@ def test_ltxav_guidance_accepts_alternate_wrapper_and_checks_contract(
     )
     accepted, _, count = arm._ltxav_guidance_runtime(handle)
     assert accepted is handle and count == 2
-    assert runtime.component_sampling_runtime is diffusion
+    assert runtime.sampling_runtime() is diffusion
     runtime.check_custom_sampling = None
     with pytest.raises(TypeError, match="callable check_custom_sampling"):
         arm._ltxav_guidance_runtime(handle)
@@ -31802,6 +31814,9 @@ def test_chroma_execution_unloads_text_after_materializing_all_conditioning(
             self.sampling_shift = sampling_shift
             self.option_windows = option_windows
             self.attention_status = attention_status
+
+        def sampling_runtime(self) -> DiffusionRuntime:
+            return self
 
         @staticmethod
         def prepare_single_stream_conditioning(carrier: object) -> object:

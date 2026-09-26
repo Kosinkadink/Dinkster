@@ -182,7 +182,7 @@ class CausalConv3d(ResidencyRouted, torch.nn.Conv3d):
                 self.dilation,
                 self.groups,
             )
-        elif ndhwc:
+        elif ndhwc and self.kernel_size != (1, 1, 1):
             weight = weight.contiguous(memory_format=torch.channels_last_3d)
             fused_conv = _fp16_accum_conv(
                 x, weight, bias, residual, cast(tuple[int, int, int], self.stride)
@@ -479,7 +479,7 @@ class RotaryEmbeddingND(torch.nn.Module):
         angles = (
             self.angle_scale
             * image_ids[:, :, :, None].float()
-            * self.inv_freq.to(image_ids.device)[None, None, None, :]
+            * self.inv_freq.to(image_ids)[None, None, None, :]
         ).flatten(2, 3)
         cosine, sine = torch.cos(angles), torch.sin(angles)
         table = torch.stack((cosine, -sine, sine, cosine), dim=-1).reshape(
@@ -711,7 +711,9 @@ class ViT3DDecoder(ResidencyRouted, torch.nn.Module):
 
     def _forward_owned(self, x: torch.Tensor, register_tokens: torch.Tensor) -> torch.Tensor:
         batch, _, frames, height, width = x.shape
-        hidden = self.x_embedder(x.flatten(2).transpose(1, 2))
+        tokens = x.flatten(2).transpose(1, 2)
+        tokens = tokens.transpose(1, 2).contiguous().transpose(1, 2)
+        hidden = self.x_embedder(tokens)
         patches = hidden.shape[1]
         suffix = 1 + self.num_register_tokens
         hidden = torch.cat(
@@ -824,10 +826,14 @@ class MiniMaxH3VideoVAE(ResidencyRouted, torch.nn.Module):
         self.register_buffer("latents_mean", torch.tensor(LATENTS_MEAN[: config.embed_dim]))
         self.register_buffer("latents_std", torch.tensor(LATENTS_STD[: config.embed_dim]))
         self.register_buffer(
-            "pixel_mean", torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1, 1), persistent=False
+            "pixel_mean",
+            torch.tensor(IMAGENET_MEAN, dtype=torch.float16).view(1, 3, 1, 1, 1),
+            persistent=False,
         )
         self.register_buffer(
-            "pixel_std", torch.tensor(IMAGENET_STD).view(1, 3, 1, 1, 1), persistent=False
+            "pixel_std",
+            torch.tensor(IMAGENET_STD, dtype=torch.float16).view(1, 3, 1, 1, 1),
+            persistent=False,
         )
 
     def _prefetch_dtype(self, stored: torch.Tensor) -> torch.dtype:
