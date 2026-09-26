@@ -157,6 +157,19 @@ def test_untied_resident_move_preserves_plain_move_result(
     assert store["weight"] is moved
 
 
+def test_resident_weights_reports_only_loaded_allocator_weights() -> None:
+    resident = ResidentWeights(make_store(("a", 2), ("b", 3)), load_device=CPU, offload_device=CPU)
+
+    assert resident.memory_accounting().weights == 0
+    resident.partially_load(None)
+    accounting = resident.memory_accounting()
+    assert accounting.weights == resident.loaded_bytes() == 52
+    assert accounting.allocator_weight_bytes == 52
+    assert accounting.activation_runtime_workspace == 0
+    assert accounting.other_reclaimable == 0
+    assert accounting.memory_compiler == "unavailable"
+
+
 @pytest.mark.parametrize("fully_loaded", [False, True])
 def test_discard_orders_streams_releases_source_pins_and_preserves_store(
     monkeypatch: pytest.MonkeyPatch, fully_loaded: bool
