@@ -32701,6 +32701,87 @@ def test_minimax_h3_sigma_shift_binds_paired_sampling_space_and_overlay_state() 
     assert original.sampling_space is None
 
 
+@pytest.mark.parametrize(
+    ("attention", "expected_policy"),
+    (
+        ("pytorch attention", "sdpa"),
+        ("comfy kitchen attention", "dinkster_kitchen_int8"),
+        ("unknown backend", "sdpa"),
+    ),
+)
+def test_model_attention_backend_rematerializes_policy_and_preserves_overlay_state(
+    monkeypatch: pytest.MonkeyPatch,
+    attention: str,
+    expected_policy: str,
+) -> None:
+    from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
+
+    arm = _native_arm()
+    token = AttentionRouteToken(
+        version=4,
+        routes=tuple(
+            AttentionRoute(role, "sdpa", "bounded" if role == "vae" else None)
+            for role in ATTENTION_ROLES
+        ),
+        provider_versions=(("dinkster-kitchen", "1.0"), ("torch", "2.10.0")),
+        adapter_contract_revision="test",
+        device_kind="cuda",
+        device_sm=90,
+        sdpa_torch_runtime="2.10.0",
+        requested_policy="auto",
+    )
+    recipe = replace(
+        _recipe(),
+        knobs=replace(
+            _recipe().knobs,
+            attention_policy="auto",
+            attention_route_token=token,
+        ),
+    )
+    runtime = _runtime()
+    runtime.runtime_identity = recipe.runtime_identity
+    handle = _handle(arm, runtime, recipe=recipe)
+    replacement = _handle(arm, _runtime())
+    accepted: list[Any] = []
+
+    def clone_recipe(_handle, next_recipe, **_kwargs):  # noqa: ANN001, ANN202
+        accepted.append(next_recipe)
+        return replacement
+
+    monkeypatch.setattr(
+        arm.NativeRuntimeHandle,
+        "_clone_recipe",
+        clone_recipe,
+    )
+    sparse = object()
+    original = arm._NativeModelOverlay(
+        handle,
+        (),
+        {},
+        sparse_attention=sparse,
+    )
+
+    patched = arm.GenerationModelAttentionBackend.execute(
+        model=original,
+        attention=attention,
+    )["model"]
+
+    assert len(accepted) == 1
+    next_recipe = accepted[0]
+    assert next_recipe.knobs.attention_policy == expected_policy
+    assert next_recipe.knobs.attention_route_token.requested_policy == expected_policy
+    assert {
+        (route.primary, route.fallback) for route in next_recipe.knobs.attention_route_token.routes
+    } == {
+        (
+            expected_policy,
+            "sdpa" if expected_policy == "dinkster_kitchen_int8" else None,
+        )
+    }
+    assert patched.handle is replacement
+    assert patched.sparse_attention is sparse
+
+
 def test_cfg_override_binds_percent_range_to_model_sigmas(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

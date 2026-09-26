@@ -22,7 +22,7 @@ import weakref
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol, cast
 
 from dinkster_inference import (
@@ -37,6 +37,7 @@ from dinkster_inference import (
     PatchOverlay,
     ReconstructionRecipe,
 )
+from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
 from dinkster_workers import KNOWN_ACCELERATORS, AcceleratorError, current_execution_context
 from dinkster_workers.accelerator import ACCELERATOR_ENV
 
@@ -1670,10 +1671,56 @@ class NativeRuntimeHandle:
         state and patched stores are always newly materialized because the
         residency mechanisms mutate loaded storage while retaining backups.
         """
+        return self._clone_recipe(
+            self._recipe.append_overlays(overlays_delta),
+            source_resolvers=source_resolvers,
+        )
+
+    def clone_with_attention_policy(
+        self,
+        attention_policy: object,
+        attention_route_token: object | None,
+    ) -> NativeRuntimeHandle:
+        """Rematerialize this runtime with one explicit attention route."""
+        if not isinstance(attention_route_token, AttentionRouteToken):
+            raise ValueError("an attention backend requires an authenticated route token")
+        policy = cast("str", attention_policy)
+        if policy == "dinkster_kitchen_int8" and not any(
+            name == "dinkster-kitchen" for name, _version in attention_route_token.provider_versions
+        ):
+            policy = "sdpa"
+        fallback = "sdpa" if policy == "dinkster_kitchen_int8" else None
+        providers = tuple(
+            pair
+            for pair in attention_route_token.provider_versions
+            if pair[0] not in {"dinkster-kitchen", "sageattention"}
+            or (pair[0] == "dinkster-kitchen" and policy == "dinkster_kitchen_int8")
+        )
+        token = replace(
+            attention_route_token,
+            version=1,
+            routes=tuple(AttentionRoute(role, policy, fallback) for role in ATTENTION_ROLES),
+            provider_versions=providers,
+            requested_policy=policy,
+            requested_role_policies=(),
+        )
+        knobs = replace(
+            self._recipe.knobs,
+            attention_policy=policy,
+            attention_route_token=token,
+        )
+        return self._clone_recipe(replace(self._recipe, knobs=knobs))
+
+    def _clone_recipe(
+        self,
+        recipe: ReconstructionRecipe,
+        *,
+        source_resolvers: Mapping[str, object] | None = None,
+    ) -> NativeRuntimeHandle:
         self.require_active()
         attachments = self._attachments_for_clone()
         clone = self._materialize_recipe(
-            self._recipe.append_overlays(overlays_delta),
+            recipe,
             attachments=attachments,
             source_resolvers=source_resolvers,
         )

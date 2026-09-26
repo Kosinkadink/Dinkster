@@ -298,6 +298,7 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
             "dinkster.chroma_radiance_options",
             "comfy.BlockSparseAttention",
             "comfy.MiniMaxH3SigmaShift",
+            "comfy.ModelAttentionBackend",
             "dinkster.chroma_model_sampling",
             "dinkster.model_sampling_sd3",
             "dinkster.model_sampling_ltxv",
@@ -490,6 +491,7 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
         "dinkster.chroma_radiance_options": "Chroma Radiance Options",
         "comfy.BlockSparseAttention": "Model Sparse Attention",
         "comfy.MiniMaxH3SigmaShift": "ModelSamplingMiniMaxH3",
+        "comfy.ModelAttentionBackend": "Model Attention Backend",
         "dinkster.chroma_model_sampling": "Chroma Model Sampling",
         "dinkster.model_sampling_sd3": "Model Sampling SD3",
         "dinkster.model_sampling_ltxv": "ModelSamplingLTXV",
@@ -1496,6 +1498,13 @@ def test_generation_schemas_use_native_boundary_types_only() -> None:
                 "shift_audio": ("core.float",),
             },
             {"MODEL": ("dinkster.model",)},
+        ),
+        "comfy.ModelAttentionBackend": (
+            {
+                "model": ("dinkster.model",),
+                "attention": ("core.combo",),
+            },
+            {"model": ("dinkster.model",)},
         ),
         "dinkster.chroma_model_sampling": (
             {"model": ("dinkster.model",), "shift": ("core.float",)},

@@ -1213,6 +1213,25 @@ def _generation_provider_schema(node_type: str) -> NodeSchema:
             ),
             outputs=(OutputSpec("MODEL", _DINKSTER_MODEL),),
         )
+    if node_type == "comfy.ModelAttentionBackend":
+        return NodeSchema(
+            node_type=node_type,
+            display_name="Model Attention Backend",
+            category="comfy/model/patch",
+            inputs=(
+                InputSpec("model", _DINKSTER_MODEL),
+                InputSpec(
+                    "attention",
+                    _COMBO,
+                    required=False,
+                    default="pytorch attention",
+                    widget=ComboWidget(options=("pytorch attention", "comfy kitchen attention")),
+                ),
+            ),
+            outputs=(OutputSpec("model", _DINKSTER_MODEL),),
+            occupies=("gpu",),
+            aliases=("ModelAttentionBackend",),
+        )
     if node_type == "dinkster.empty_latent_image":
         return NodeSchema(
             node_type=node_type,

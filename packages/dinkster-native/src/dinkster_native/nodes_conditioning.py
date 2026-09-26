@@ -597,6 +597,45 @@ class GenerationMiniMaxH3SigmaShift(Node):
         )
 
 
+class GenerationModelAttentionBackend(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _generation_provider_schema("comfy.ModelAttentionBackend")
+
+    @classmethod
+    def execute(cls, *, model: object, attention: str) -> Mapping[str, object]:
+        model_value, applications = _application_chain_model(model, "model")
+        if applications:
+            raise ValueError("ModelAttentionBackend does not accept a model application chain")
+        handle, overlays, resolvers, control, shift, transforms, windows, options = _native_model(
+            model_value, "model"
+        )
+        policy = {
+            "comfy kitchen attention": "dinkster_kitchen_int8",
+            "pytorch attention": "sdpa",
+        }.get(attention, "sdpa")
+        replacement = handle.clone_with_attention_policy(
+            policy,
+            handle.recipe.knobs.attention_route_token,
+        )
+        return cls.outputs(
+            model=_NativeModelOverlay(
+                replacement,
+                overlays,
+                resolvers,
+                control,
+                shift,
+                transforms,
+                windows,
+                options,
+                sampling_cache=_native_model_sampling_cache(model_value),
+                sampling_timeline=_native_model_sampling_timeline(model_value),
+                sampling_space=_native_model_sampling_space(model_value),
+                sparse_attention=_native_model_sparse_attention(model_value),
+            )
+        )
+
+
 class GenerationModelSamplingFlux(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:

@@ -1834,6 +1834,29 @@ class MiniMaxH3SigmaShift(_SchemaOnlyNode):
         )
 
 
+class ModelAttentionBackend(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="comfy.ModelAttentionBackend",
+            display_name="Model Attention Backend",
+            category="comfy/model/patch",
+            inputs=(
+                InputSpec("model", MODEL),
+                InputSpec(
+                    "attention",
+                    COMBO,
+                    required=False,
+                    default="pytorch attention",
+                    widget=ComboWidget(options=("pytorch attention", "comfy kitchen attention")),
+                ),
+            ),
+            outputs=(OutputSpec("model", MODEL),),
+            occupies=("gpu",),
+            aliases=("ModelAttentionBackend",),
+        )
+
+
 class RescaleCFG(_SchemaOnlyNode):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -5786,6 +5809,7 @@ GENERATION_NODES: tuple[type[Node], ...] = (
     ChromaRadianceOptions,
     BlockSparseAttention,
     MiniMaxH3SigmaShift,
+    ModelAttentionBackend,
     ChromaModelSampling,
     ModelSamplingSD3,
     ModelSamplingLTXV,
