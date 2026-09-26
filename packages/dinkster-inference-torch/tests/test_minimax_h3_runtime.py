@@ -511,7 +511,7 @@ def test_h3_runtime_stays_off_the_conditioning_preparation_protocol() -> None:
         assert not hasattr(runtime_type, "prepare_conditioning")
 
 
-def test_single_dit_component_refuses_task_role_mismatches(
+def test_single_dit_component_admits_t2va_and_refuses_specialized_task_mismatches(
     runtime_fixture: RuntimeFixture,
 ) -> None:
     fl2va = MiniMaxH3DiTRuntime(
@@ -548,9 +548,8 @@ def test_single_dit_component_refuses_task_role_mismatches(
         )
     assert str(fl2va_failure.value) == ("MiniMax H3 fl2va_dit component cannot sample task REF2VA")
 
-    with pytest.raises(MiniMaxH3RuntimeError) as ref2va_failure:
-        ref2va.sample_multistream(target, conditioning=prepared, **arguments)
-    assert str(ref2va_failure.value) == ("MiniMax H3 ref2va_dit component cannot sample task T2VA")
+    sampled = ref2va.sample_multistream(target, conditioning=prepared, **arguments)
+    assert sampled.roles == ("video", "audio")
 
 
 def test_single_dit_component_exposes_runtime_identity(

@@ -235,10 +235,16 @@ def test_reference_to_video_routes_only_empty_references_through_t2va(
         classmethod(t2va),
     )
     strict_ref2va = NativeMiniMaxH3REF2VAConditioning.execute
+    ref2va_calls: list[dict[str, object]] = []
+
+    def ref2va(cls: type[object], **values: object) -> dict[str, object]:
+        ref2va_calls.append(values)
+        return {"conditioning": "ref2va"}
+
     monkeypatch.setattr(
         NativeMiniMaxH3REF2VAConditioning,
         "execute",
-        classmethod(lambda cls, **values: pytest.fail("empty references must not use REF2VA")),
+        classmethod(ref2va),
     )
 
     result = NativeMiniMaxH3ReferenceToVideo.execute(
@@ -258,6 +264,37 @@ def test_reference_to_video_routes_only_empty_references_through_t2va(
 
     assert result == {"positive": "t2va", "latent": "av"}
     assert t2va_calls == [{"clip": "clip", "target": "av", "prompt": "prompt"}]
+    assert ref2va_calls == []
+
+    image = object()
+    result = NativeMiniMaxH3ReferenceToVideo.execute(
+        clip="clip",
+        vae="video-vae",
+        audio_vae="audio-vae",
+        prompt="prompt",
+        width=1344,
+        height=768,
+        length=124,
+        ref_image_size="match",
+        ref_images={"ref_image_1": image},
+        ref_videos={},
+        ref_video_audios={},
+        ref_audios={},
+    )
+
+    assert result == {"positive": "ref2va", "latent": "av"}
+    assert ref2va_calls == [
+        {
+            "clip": "clip",
+            "video_vae": "video-vae",
+            "audio_vae": "audio-vae",
+            "target": "av",
+            "prompt": "prompt",
+            "references": [MiniMaxH3ImageReferenceValue(image)],
+            "ref_image_size": "match",
+        }
+    ]
+    assert len(t2va_calls) == 1
 
     with pytest.raises(ValueError, match="REF2VA requires at least one reference"):
         strict_ref2va(

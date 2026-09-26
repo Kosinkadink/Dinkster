@@ -198,8 +198,10 @@ def _validate_h3_mask(mask: MultiStreamLatent[torch.Tensor]) -> None:
             raise MiniMaxH3RuntimeError("H3 denoise mask values must be within [0, 1]")
 
 
-def _dit_component_role(task: MiniMaxH3Task) -> str:
-    return "ref2va_dit" if task is MiniMaxH3Task.REF2VA else "fl2va_dit"
+def _dit_component_roles(task: MiniMaxH3Task) -> tuple[str, ...]:
+    if task is MiniMaxH3Task.T2VA:
+        return ("fl2va_dit", "ref2va_dit")
+    return ("ref2va_dit",) if task is MiniMaxH3Task.REF2VA else ("fl2va_dit",)
 
 
 def _h3_attention_backend_identity(attention: MiniMaxH3Attention) -> str:
@@ -1374,8 +1376,8 @@ class _H3LatentAdapter:
                 guidance_cfg = replace(
                     cast("SamplingGuidance[object]", cfg), uncond=guidance_uncond
                 )
-        required_role = _dit_component_role(conditioning.task)
-        if owner._model_role != required_role:  # pyright: ignore[reportPrivateUsage]
+        allowed_roles = _dit_component_roles(conditioning.task)
+        if owner._model_role not in allowed_roles:  # pyright: ignore[reportPrivateUsage]
             raise MiniMaxH3RuntimeError(
                 f"MiniMax H3 {owner._model_role} component cannot sample task "  # pyright: ignore[reportPrivateUsage]
                 f"{conditioning.task.name}"
