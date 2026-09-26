@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+from scripts.check_family_isinstance_gates import write_allowlist as write_canonical_allowlist
+
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/check_family_isinstance_gates.py"
 SOURCE_PATH = "packages/dinkster-inference/src/dinkster_inference/runtime.py"
 
@@ -180,6 +182,33 @@ def test_write_discovers_the_repository_outside_its_working_directory(tmp_path: 
 
     assert result.returncode == 0, result.stderr
     assert generated.read_bytes() == canonical.read_bytes()
+
+
+def test_canonical_writer_requests_lf_newlines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    allowlist = tmp_path / "allowlist.json"
+    original_open = Path.open
+    newlines: list[object] = []
+
+    def recording_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        mode = args[0] if args else kwargs.get("mode")
+        if self == allowlist and mode == "w":
+            newlines.append(kwargs.get("newline"))
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", recording_open)
+
+    write_canonical_allowlist(
+        allowlist,
+        ceiling=0,
+        allowed=[],
+        value_type_ceiling=0,
+        value_type_sites=[],
+    )
+
+    assert newlines == ["\n"]
+    assert b"\r\n" not in allowlist.read_bytes()
 
 
 @pytest.mark.parametrize(
