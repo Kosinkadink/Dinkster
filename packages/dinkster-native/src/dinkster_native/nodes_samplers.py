@@ -507,7 +507,9 @@ class GenerationBasicScheduler(Node):
             raise ValueError(f"steps must be in [1, {KSampler.MAX_STEPS}], got {steps}")
         if not 0.0 <= denoise <= 1.0:
             raise ValueError(f"denoise must be in [0.0, 1.0], got {denoise}")
-        runtime, sampling_shift, device = _require_custom_sampling_runtime(model, "BasicScheduler")
+        runtime, sampling_shift, device = _require_base_custom_sampling_runtime(
+            model, "BasicScheduler"
+        )
         inference = importlib.import_module("dinkster_inference")
         scheduler_id = _catalog_id(
             _inference_registries(inference).schedulers, scheduler, "scheduler"

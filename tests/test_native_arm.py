@@ -16125,6 +16125,7 @@ def test_sampling_supplier_nodes_use_application_chain_base_runtime(
     torch_module = FakeTorch()
     recipe = _recipe()
     percentages: list[tuple[float, bool]] = []
+    schedules: list[tuple[tuple[object, ...], dict[str, object]]] = []
     add_noise_calls: list[tuple[object, object, float]] = []
     output_samples = FakeTensor((1, 4, 2, 2), "noisy")
 
@@ -16133,7 +16134,8 @@ def test_sampling_supplier_nodes_use_application_chain_base_runtime(
         runtime_identity = recipe.runtime_identity
 
         @staticmethod
-        def custom_sampling_sigmas(*_args: object, **_kwargs: object) -> tuple[float, ...]:
+        def custom_sampling_sigmas(*args: object, **kwargs: object) -> tuple[float, ...]:
+            schedules.append((args, kwargs))
             return (1.0, 0.0)
 
         custom_sampling_beta_sigmas = custom_sampling_sigmas
@@ -16201,6 +16203,18 @@ def test_sampling_supplier_nodes_use_application_chain_base_runtime(
         ),
     )
 
+    base_schedule = arm.GenerationBasicScheduler.execute(
+        model=handle,
+        scheduler="simple",
+        steps=2,
+        denoise=0.75,
+    )["sigmas"]
+    application_schedule = arm.GenerationBasicScheduler.execute(
+        model=model,
+        scheduler="simple",
+        steps=2,
+        denoise=0.75,
+    )["sigmas"]
     sampler = arm.GenerationSamplerSASolver.execute(
         model=model,
         eta=0.5,
@@ -16220,6 +16234,9 @@ def test_sampling_supplier_nodes_use_application_chain_base_runtime(
         latent_image=latent,
     )["latent"]
 
+    assert base_schedule == application_schedule
+    assert schedules[0] == schedules[1]
+    assert len(schedules) == 2
     assert sampler.descriptor.id == "dinkster.configured_sa_solver"
     assert noisy["samples"] is output_samples
     assert percentages == [(0.2, False), (0.8, False)]
