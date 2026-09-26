@@ -861,10 +861,16 @@ def test_h3_timeline_guide_adapter_appends_guides_and_rebuilds_the_layout(
     assert second.token_layout.layout.by_identity("guide-2-audio").grid == (2, 1)
 
 
-def test_h3_timeline_guide_adapter_refuses_foreign_target_and_tensor_contracts(
+def test_h3_timeline_guide_adapter_accepts_mixed_floating_dtype_on_target_device(
     runtime_fixture: RuntimeFixture,
 ) -> None:
-    target = _target()
+    target = empty_minimax_h3_av(
+        width=32,
+        height=32,
+        frame_count=5,
+        device="cpu",
+        dtype=torch.bfloat16,
+    )
     prepared = runtime_fixture.conditioner_runtime.condition(
         MiniMaxH3T2VARequest("timeline guide validation"),
         target=target,
@@ -876,13 +882,28 @@ def test_h3_timeline_guide_adapter_refuses_foreign_target_and_tensor_contracts(
         0,
         1,
         MultiStreamLatent.from_pairs(
-            (("video", torch.zeros(1, 24, 1, 2, 2, dtype=torch.float16)),)
+            (("video", torch.zeros(1, 24, 1, 2, 2, dtype=torch.float32)),)
         ),
     )
 
+    conditioned = add_minimax_h3_timeline_guide(prepared, target, guide)
+
+    assert conditioned.dit.guides == (guide,)
+    assert conditioned.dit.guides[0].latent.by_role("video").dtype is torch.float32
+
+    invalid = TimelineGuide(
+        0,
+        1,
+        MultiStreamLatent.from_pairs(
+            (("video", torch.zeros(1, 24, 1, 2, 2, dtype=torch.int32)),)
+        ),
+    )
     with pytest.raises(MiniMaxH3RuntimeError, match="tensor contract"):
-        add_minimax_h3_timeline_guide(prepared, target, guide)
-    foreign = _h3(target.by_role("video"), torch.zeros(1, 32, 2, 9))
+        add_minimax_h3_timeline_guide(prepared, target, invalid)
+    foreign = _h3(
+        target.by_role("video"),
+        torch.zeros(1, 32, 2, 9, dtype=torch.bfloat16),
+    )
     with pytest.raises(MiniMaxH3RuntimeError, match="differs from prepared conditioning"):
         add_minimax_h3_timeline_guide(prepared, foreign, guide)
 

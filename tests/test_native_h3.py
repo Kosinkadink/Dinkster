@@ -1284,11 +1284,13 @@ def test_add_guide_trims_resamples_crops_and_chains_positive_conditioning(
     assert (first_guide.frame_index, first_guide.frame_count) == (6, 5)
     assert first_guide.latent.roles == ("video", "audio")
     assert first_guide.latent.by_role("video").shape == (1, 24, 2, 2, 3)
-    assert first_guide.latent.by_role("video") is video_outputs[0]
+    assert first_guide.latent.by_role("video").device == target.by_role("video").device
+    assert first_guide.latent.by_role("video").dtype == video_outputs[0].dtype
     assert first_guide.latent.by_role("audio").shape == (1, 32, 2, 27)
     assert (second_guide.frame_index, second_guide.frame_count) == (21, 1)
     assert second_guide.latent.roles == ("video",)
-    assert second_guide.latent.by_role("video") is video_outputs[1]
+    assert second_guide.latent.by_role("video").device == target.by_role("video").device
+    assert second_guide.latent.by_role("video").dtype == video_outputs[1].dtype
     assert [value.shape for value in video_inputs] == [
         (1, 3, 5, 32, 48),
         (1, 3, 1, 32, 48),

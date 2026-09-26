@@ -667,7 +667,6 @@ def add_minimax_h3_timeline_guide(
             not video.is_floating_point()
             or video.layout != torch.strided
             or video.device != target_video.device
-            or video.dtype != target_video.dtype
         ):
             raise MiniMaxH3RuntimeError(
                 "timeline guide video must match the target tensor contract"
