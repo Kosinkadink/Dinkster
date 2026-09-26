@@ -438,6 +438,50 @@ def test_official_h3_fun_workflow_resolves_control_nodes_and_widgets() -> None:
     schemas = {node.schema().node_type: node.schema() for node in NATIVE_NODES}
     aliases = {alias: schema for schema in schemas.values() for alias in schema.aliases}
 
+    subgraph = workflow["definitions"]["subgraphs"][0]
+    assert subgraph["id"] == "622cceeb-7ba3-4dd9-b0e8-00066c5222a4"
+    assert {node["id"]: node["type"] for node in subgraph["nodes"]} == {
+        671: "SDPoseKeypointExtractor",
+        672: "SDPoseDrawKeypoints",
+        673: "CheckpointLoaderSimple",
+        674: "ResizeImageMaskNode",
+        677: "UNETLoader",
+        678: "RTDETR_detect",
+        692: "GetVideoComponents",
+    }
+    assert {
+        (link["origin_id"], link["origin_slot"], link["target_id"], link["target_slot"])
+        for link in subgraph["links"]
+        if link["origin_id"] > 0 and link["target_id"] > 0
+    } == {
+        (671, 0, 672, 0),
+        (673, 0, 671, 0),
+        (673, 2, 671, 1),
+        (674, 0, 671, 2),
+        (674, 0, 678, 1),
+        (677, 0, 678, 0),
+        (678, 0, 671, 3),
+        (692, 0, 674, 0),
+    }
+    promoted = next(node for node in workflow["nodes"] if node["id"] == 700)
+    assert promoted["type"] == subgraph["id"]
+    assert promoted["widgets_values_named"] == {
+        "resize_type.longer_size": 1024,
+        "scale_method": "lanczos",
+        "draw_body": True,
+        "draw_hands": True,
+        "draw_face": True,
+        "draw_feet": True,
+        "stick_width": 4,
+        "face_point_size": 2,
+        "score_threshold": 0.51,
+        "threshold": 0.5,
+        "class_name": "person",
+        "max_detections": 2,
+        "ckpt_name": "sdpose_wholebody_fp16.safetensors",
+        "unet_name": "rt_detr_v4-x-hgnet_fp16.safetensors",
+    }
+
     loader = aliases["ModelPatchLoader"]
     apply = aliases["MiniMaxH3FunControlNetApply"]
     assert loader.node_type == "dinkster.load_z_image_control_patch"
