@@ -94,6 +94,7 @@ from .distributed import (
 )
 from .guidance import ConditioningEvaluation
 from .latent_streams import normalize_latent_mask, pack_latent_streams, unpack_latent_streams
+from .minimax_h3_assembly import AssembledMiniMaxH3Model
 from .minimax_h3_attention import (
     MiniMaxH3AttentionKernelFactory,
     MiniMaxH3PackedSegmentKind,
@@ -1474,6 +1475,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         receipt_identity: str | None = None,
         conditioning_identity: str | None = None,
         compute_dtype: torch.dtype = torch.bfloat16,
+        assembled: AssembledMiniMaxH3Model | None = None,
         sampler_registry: Registry[SamplerDescriptor[torch.Tensor]] | None = None,
         scheduler_registry: Registry[SchedulerDescriptor] | None = None,
     ) -> None:
@@ -1487,7 +1489,15 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             raise ValueError("H3 DiT conditioning identity must be non-empty")
         if compute_dtype not in (torch.bfloat16, torch.float32):
             raise ValueError("H3 DiT compute dtype must be bfloat16 or float32")
+        if assembled is None:
+            assembled = AssembledMiniMaxH3Model(
+                model,
+                _component_compute_dtypes=MappingProxyType({"diffusion": compute_dtype}),
+            )
+        elif assembled.diffusion is not model:
+            raise ValueError("H3 DiT runtime assembly must own its model")
         self._model = model
+        self.assembled = assembled
         self._model_role = model_role
         self._component_identity = runtime_identity
         self._runtime_identity = runtime_identity

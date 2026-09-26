@@ -82,6 +82,7 @@ def h3_runtime(loaded: Any, identity: str, dtype: torch.dtype) -> MiniMaxH3DiTRu
         runtime_identity=identity,
         receipt_identity=model.receipt_identity,
         compute_dtype=dtype,
+        assembled=model.assembled,
     )
 
 

@@ -4,6 +4,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from types import SimpleNamespace
 from typing import Any, cast
 
 import dinkster_inference_torch.minimax_h3_runtime as h3_runtime_module
@@ -97,6 +98,7 @@ from dinkster_inference_torch import (
 from dinkster_inference_torch import sampling_execution as sampling_execution_module
 from dinkster_inference_torch.attention import builtin_sdpa_kernel
 from dinkster_inference_torch.brownian import BrownianTreeNoise
+from dinkster_inference_torch.component_runtime import h3_runtime
 from dinkster_inference_torch.denoise import (
     PackedInpaintConfiguration,
     _InpaintDenoiser,  # pyright: ignore[reportPrivateUsage]
@@ -105,6 +107,10 @@ from dinkster_inference_torch.denoise import (
 )
 from dinkster_inference_torch.distributed import DistributedSamplingConfig
 from dinkster_inference_torch.guidance import ConditioningValidationPath, GuidedDenoiser
+from dinkster_inference_torch.minimax_h3_assembly import (
+    AssembledMiniMaxH3Model,
+    MiniMaxH3Model,
+)
 from dinkster_inference_torch.minimax_h3_conditioning import MiniMaxH3ConditionerInputs
 from dinkster_inference_torch.minimax_h3_dit import MiniMaxH3DiTConditioning
 from dinkster_inference_torch.patch_providers import PatchProviderSnapshot
@@ -555,6 +561,25 @@ def test_single_dit_component_exposes_runtime_identity(
 
     assert component.runtime_identity == identity
     assert component.receipt_identity == "ref2va-receipt"
+    assert component.assembled.diffusion is runtime_fixture.ref2va
+
+
+def test_h3_component_factory_preserves_loaded_assembly(
+    runtime_fixture: RuntimeFixture,
+) -> None:
+    identity = "native:dinkster.minimax_h3:" + "5" * 64
+    assembled = AssembledMiniMaxH3Model(
+        runtime_fixture.fl2va,  # type: ignore[arg-type]
+        _component_compute_dtypes={"diffusion": torch.float32},
+    )
+    loaded = SimpleNamespace(
+        runtime=MiniMaxH3Model(assembled, identity, "fl2va-dit", receipt_identity="receipt")
+    )
+
+    runtime = h3_runtime(loaded, identity, torch.float32)
+
+    assert runtime.assembled is assembled
+    assert runtime.assembled.diffusion is runtime_fixture.fl2va
 
 
 def test_single_dit_component_derives_conditioner_execution_identity(
