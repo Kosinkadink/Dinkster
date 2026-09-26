@@ -1868,15 +1868,33 @@ def test_minimax_h3_component_builder_enrolls_through_aimdo(
     assert coordinator_calls == [{"free_memory": dynamic_free_memory}]
     assert "mechanism_factory" in enrollment_calls[0]
 
-    rebound: list[object] = []
+    rebound: list[tuple[object, object]] = []
 
-    def rebind(_descriptor: object, next_recipe: object) -> object:
-        rebound.append(next_recipe)
+    def rebind(_descriptor: object, next_recipe: object, runtime_versions: object) -> object:
+        rebound.append((next_recipe, runtime_versions))
         return next_recipe
 
     monkeypatch.setattr(type(descriptor), "rebind_attention_recipe", rebind)
-    handle.materializer(recipe, handle.source_resolvers)
-    assert rebound == [recipe]
+    capabilities = AttentionCapabilityEvidence(
+        version=1,
+        device_kind="cuda",
+        device_sm=120,
+        sdpa_torch_runtime="2.13.0",
+        adapter_contract_revision="test",
+        available_policies=("sdpa",),
+        provider_versions=(("torch", "2.13.0+cu130"),),
+    )
+    token = derive_attention_route_token(capabilities, AttentionPolicyConfig())
+    with use_execution_context(
+        ExecutionContext(
+            "native",
+            None,
+            attention_route_token=token,
+            attention_capabilities=capabilities,
+        )
+    ):
+        handle.materializer(recipe, handle.source_resolvers)
+    assert rebound == [(recipe, {"torch": "2.13.0+cu130"})]
 
 
 def test_native_generic_qwen_loaders_publish_components_and_a_diffusion_runtime(
@@ -32974,6 +32992,67 @@ def test_h3_attention_recipe_rebinding_refreshes_provider_identity_facts(
         attention_policy="sdpa",
         attention_route_token=token,
         runtime_facts=expected_facts,
+    )
+
+
+def test_h3_attention_recipe_rebinding_uses_destination_runtime_versions() -> None:
+    from dinkster_inference import (
+        ReconstructionRecipe,
+        RuntimeKnobs,
+        WeightSourceBinding,
+        WeightSourceRef,
+        minimax_h3_dit_component_identity,
+        minimax_h3_dit_provider_facts,
+    )
+    from dinkster_inference.component_catalog import default_component_registry
+    from dinkster_protocol import ATTENTION_ROLES, AttentionRoute, AttentionRouteToken
+
+    source = WeightSourceRef("blake3:" + "1" * 64, "h3.safetensors", 123)
+    token = AttentionRouteToken(
+        version=1,
+        routes=tuple(AttentionRoute(role, "sdpa") for role in ATTENTION_ROLES),
+        provider_versions=(),
+        adapter_contract_revision="test",
+        device_kind="cuda",
+        device_sm=120,
+        sdpa_torch_runtime="2.13.0",
+        requested_policy="sdpa",
+    )
+    recipe = ReconstructionRecipe(
+        sources=(WeightSourceBinding("diffusion", source),),
+        family_id="dinkster.minimax_h3",
+        component_identity=minimax_h3_dit_component_identity(
+            source.digest, source.size, "fl2va-dit"
+        ),
+        knobs=RuntimeKnobs(
+            diffusion_dtype="bfloat16",
+            text_dtype="unloaded",
+            vae_dtype="unloaded",
+            fp8_matmul=False,
+            runtime_facts=minimax_h3_dit_provider_facts(
+                "fl2va-dit",
+                quantized=True,
+                torch_version="2.12.0+cu129",
+                dinkster_kitchen_version="0.2.30",
+            ),
+            attention_policy="sdpa",
+            attention_route_token=token,
+        ),
+    )
+
+    descriptor = default_component_registry().get("dinkster.minimax_h3")
+    assert descriptor is not None
+    rebound = descriptor.rebind_attention_recipe(
+        recipe,
+        {"torch": "2.13.0+cu130", "dinkster-kitchen": "0.2.31"},
+    )
+
+    assert rebound.knobs.runtime_facts == minimax_h3_dit_provider_facts(
+        "fl2va-dit",
+        quantized=True,
+        torch_version="2.13.0+cu130",
+        dinkster_kitchen_version="0.2.31",
+        attention_policy="sdpa",
     )
 
 

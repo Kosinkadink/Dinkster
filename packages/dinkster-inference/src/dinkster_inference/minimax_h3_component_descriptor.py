@@ -86,7 +86,11 @@ def detect_h3_components(
 
 
 class H3ComponentDescriptor(ComponentDescriptor):
-    def rebind_attention_recipe(self, recipe: ReconstructionRecipe) -> ReconstructionRecipe:
+    def rebind_attention_recipe(
+        self,
+        recipe: ReconstructionRecipe,
+        runtime_versions: Mapping[str, str] | None = None,
+    ) -> ReconstructionRecipe:
         token = recipe.knobs.attention_route_token
         if token is None or recipe.family_id != self.id:
             return recipe
@@ -103,7 +107,7 @@ class H3ComponentDescriptor(ComponentDescriptor):
                 if fact.startswith("artifact_role=")
             ),
         )
-        providers = dict(token.provider_versions)
+        providers = dict(token.provider_versions if runtime_versions is None else runtime_versions)
         effective_policy = cast(
             "AttentionPolicy",
             next(route.primary for route in token.routes if route.role == "flux"),
