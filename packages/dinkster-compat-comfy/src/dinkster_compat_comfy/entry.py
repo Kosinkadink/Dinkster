@@ -54,10 +54,12 @@ _TRANSLATION = (
 if _NATIVE_ONLY:
     _TRANSLATION.opaque_types.update(core_schema_snapshot()["opaqueTypes"])
 
-# Native scheduling schemas replace their translated source schemas. Their
-# aliases preserve source prompt lowering while their canonical IDs keep the
-# source namespace out of executable catalogs.
+# Native providers replace translated source schemas that share their node
+# types. Scheduling aliases preserve source prompt lowering while their
+# canonical IDs keep the source namespace out of executable catalogs.
 _scheduling_source_types = {f"comfy.{name}" for name in _ARM_SOURCE_NODES}
+_generation_provider_types = {node.schema().node_type for node in GENERATION_PROVIDER_NODES}
+_translated_replacement_types = _scheduling_source_types | _generation_provider_types
 _comfy_execution_by_type = {
     node.schema().node_type: node for node in (*COMFY_MODEL3D_NODES, *COMFY_SAMPLING_NODES)
 }
@@ -71,7 +73,7 @@ _default_nodes = (
     *(
         node
         for node in _with_comfy_execution(merge_native_nodes(_TRANSLATION.node_classes))
-        if node.schema().node_type not in _scheduling_source_types
+        if node.schema().node_type not in _translated_replacement_types
     ),
     *NATIVE_SCHEDULING_NODES,
     *_with_comfy_execution(GENERATION_PROVIDER_NODES),

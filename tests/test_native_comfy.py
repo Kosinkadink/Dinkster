@@ -152,6 +152,46 @@ print(json.dumps(sorted(nodes)))
     assert "dinkster.clip_text_encode" in json.loads(result.stdout)
 
 
+def test_compat_entry_replaces_translated_generation_providers(tmp_path: Path) -> None:
+    script = """
+import importlib
+import os
+import sys
+from dinkster_compat_comfy import bootstrap
+from dinkster_compat_comfy.translate import CompatTranslation
+from dinkster_native.nodes_conditioning import GenerationBlockSparseAttention
+from dinkster_nodes_generation.nodes import BlockSparseAttention
+from dinkster_schema import build_node_types
+
+class TranslatedBlockSparseAttention(GenerationBlockSparseAttention):
+    pass
+
+translation = CompatTranslation()
+translation.node_classes.append(TranslatedBlockSparseAttention)
+bootstrap.load_comfyui_nodes = lambda *, required=(): translation
+sys.modules.pop('dinkster_compat_comfy.entry', None)
+entry = importlib.import_module('dinkster_compat_comfy.entry')
+nodes = [
+    node
+    for node in entry.COMFY_NODES
+    if node.schema().node_type == 'comfy.BlockSparseAttention'
+]
+assert nodes == [GenerationBlockSparseAttention]
+assert nodes[0].schema() == BlockSparseAttention.schema()
+build_node_types(entry.COMFY_NODES)
+"""
+    env = {key: value for key, value in os.environ.items() if key != "DINKSTER_COMFY_NATIVE_ONLY"}
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize(
     "module_name",
     (
