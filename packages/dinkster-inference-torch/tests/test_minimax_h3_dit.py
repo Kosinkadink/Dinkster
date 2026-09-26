@@ -1964,19 +1964,19 @@ def test_full_profile_state_layout_exactly_matches_all_532_planned_keys() -> Non
     assert model.audio_patch_proj.in_features == 32
 
 
-def test_full_profile_vsa_layout_instantiates_only_selected_gate_blocks() -> None:
-    gate_blocks = (2, 11)
+def test_full_profile_vsa_layout_instantiates_every_gate_block() -> None:
     with torch.device("meta"):
         model = assemble_minimax_h3_dit(
             attention_selection=select_attention("flux", "sdpa"),
-            gate_compress_blocks=gate_blocks,
+            gate_compress=True,
         )
     actual = {key: tuple(value.shape) for key, value in model.state_dict().items()}
 
-    assert actual == dict(minimax_h3_dit_layout(gate_compress_blocks=gate_blocks).keys)
+    assert actual == dict(minimax_h3_dit_layout(gate_compress=True).keys)
+    assert model.gate_compress is True
+    assert model.blocks[0].attn.to_gate_compress is not None
     assert model.blocks[2].attn.to_gate_compress is not None
-    assert model.blocks[11].attn.to_gate_compress is not None
-    assert model.blocks[1].attn.to_gate_compress is None
+    assert model.blocks[49].attn.to_gate_compress is not None
 
 
 def test_full_profile_mlp_time_embedding_matches_official_535_key_layout() -> None:

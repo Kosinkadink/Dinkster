@@ -505,10 +505,9 @@ def test_split_plan_refuses_missing_foreign_geometry_and_path(
             )
 
 
-def test_diffusion_plan_preserves_per_block_vsa_gate_geometry(tmp_path: Path) -> None:
+def test_diffusion_plan_derives_global_vsa_gate_geometry_from_block_zero(tmp_path: Path) -> None:
     path = tmp_path / "fl2va.safetensors"
-    gate_blocks = (1, 7)
-    layout = minimax_h3_dit_layout(gate_compress_blocks=gate_blocks)
+    layout = minimax_h3_dit_layout(gate_compress=True)
     source = HeaderSource(
         path,
         {key: TensorGeometry(shape, BFLOAT16) for key, shape in layout.keys.items()},
@@ -520,17 +519,34 @@ def test_diffusion_plan_preserves_per_block_vsa_gate_geometry(tmp_path: Path) ->
         path=path,
     ).diffusion
 
-    assert plan.config.gate_compress_blocks == gate_blocks
-    assert plan.config.keys["blocks.1.attn.to_gate_compress.weight"] == (
+    assert plan.config.gate_compress is True
+    assert plan.config.keys["blocks.49.attn.to_gate_compress.weight"] == (
         56 * 128,
         5376,
     )
-    assert "blocks.0.attn.to_gate_compress.weight" not in plan.config.keys
+    assert "blocks.0.attn.to_gate_compress.weight" in plan.config.keys
+
+
+def test_diffusion_plan_requires_every_vsa_gate_when_block_zero_has_one(tmp_path: Path) -> None:
+    path = tmp_path / "fl2va.safetensors"
+    layout = minimax_h3_dit_layout(gate_compress=True)
+    geometries = {key: TensorGeometry(shape, BFLOAT16) for key, shape in layout.keys.items()}
+    del geometries["blocks.49.attn.to_gate_compress.weight"]
+
+    with pytest.raises(
+        MiniMaxH3SplitAssemblyError,
+        match=r"missing keys: blocks\.49\.attn\.to_gate_compress\.weight",
+    ):
+        plan_minimax_h3_model_assembly(
+            HeaderSource(path, geometries),
+            role="fl2va-dit",
+            path=path,
+        )
 
 
 def test_diffusion_plan_reports_malformed_vsa_gate_shape(tmp_path: Path) -> None:
     path = tmp_path / "fl2va.safetensors"
-    layout = minimax_h3_dit_layout(gate_compress_blocks=(3,))
+    layout = minimax_h3_dit_layout(gate_compress=True)
     geometries = {key: TensorGeometry(shape, BFLOAT16) for key, shape in layout.keys.items()}
     geometries["blocks.3.attn.to_gate_compress.weight"] = TensorGeometry((56 * 128, 5375), BFLOAT16)
 
@@ -695,13 +711,13 @@ def test_diffusion_builder_binds_reference_split_precision_operations(
         text_operations: object,
         time_embedding_kind: str,
         attention_selection: object,
-        gate_compress_blocks: tuple[int, ...],
+        gate_compress: bool,
     ) -> object:
         nonlocal selected
         selected = operations, fp32_operations, text_operations
         assert time_embedding_kind == "curve"
         assert attention_selection is selected_attention
-        assert gate_compress_blocks == ()
+        assert gate_compress is False
         return torch.nn.Identity()
 
     monkeypatch.setattr(assembly, "assemble_minimax_h3_dit", capture)

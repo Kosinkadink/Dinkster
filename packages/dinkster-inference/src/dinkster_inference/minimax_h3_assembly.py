@@ -270,21 +270,9 @@ def plan_minimax_h3_diffusion_component(
             f"MiniMax H3 {role} source path differs from artifact selection"
         )
     diffusion_keys = tuple(diffusion.keys())
-    gate_compress_blocks = tuple(
-        sorted(
-            {
-                int(parts[1])
-                for key in diffusion_keys
-                if len(parts := key.split(".")) >= 5
-                and parts[0] == "blocks"
-                and parts[1].isdigit()
-                and parts[2:4] == ["attn", "to_gate_compress"]
-            }
-        )
-    )
     diffusion_layout = minimax_h3_dit_layout(
         time_embedding_kind="curve" if "adaln_t_table" in diffusion_keys else "mlp",
-        gate_compress_blocks=gate_compress_blocks,
+        gate_compress="blocks.0.attn.to_gate_compress.weight" in diffusion_keys,
     )
     storage, quantized, claims = _extract_quantized_source(
         diffusion,

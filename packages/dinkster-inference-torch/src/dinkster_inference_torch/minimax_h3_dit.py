@@ -1045,21 +1045,18 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
         fp32_operations: Operations | None = None,
         text_operations: Operations | None = None,
         time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve",
-        gate_compress_blocks: tuple[int, ...] = (),
+        gate_compress: bool = False,
     ) -> None:
         super().__init__()
         fp32_operations = operations if fp32_operations is None else fp32_operations
         text_operations = operations if text_operations is None else text_operations
         if time_embedding_kind not in ("curve", "mlp"):
             raise ValueError("time_embedding_kind must be curve or mlp")
-        if gate_compress_blocks != tuple(sorted(set(gate_compress_blocks))) or any(
-            type(index) is not int or index < 0 or index >= config.depth
-            for index in gate_compress_blocks
-        ):
-            raise ValueError("gate_compress_blocks must contain sorted unique block indices")
+        if type(gate_compress) is not bool:
+            raise TypeError("gate_compress must be a bool")
         self.config = config
         self.time_embedding_kind = time_embedding_kind
-        self.gate_compress_blocks = gate_compress_blocks
+        self.gate_compress = gate_compress
         rotary_dim = min(96, config.attention_head_dim // 6 * 6)
         if rotary_dim < 6:
             raise ValueError("MiniMax H3 attention head dimension must support three RoPE axes")
@@ -1099,9 +1096,9 @@ class MiniMaxH3DiT(ResidencyRouted, torch.nn.Module):
                 rotary_dim=rotary_dim,
                 time_dim=adaln_input_width,
                 apply_silu=time_embedding_kind == "mlp",
-                gate_compress=index in gate_compress_blocks,
+                gate_compress=gate_compress,
             )
-            for index in range(config.depth)
+            for _ in range(config.depth)
         )
         self.final_layer = _MiniMaxH3FinalLayer(
             config,
@@ -1799,7 +1796,7 @@ def assemble_minimax_h3_dit(
     text_operations: Operations | None = None,
     time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve",
     attention_selection: AttentionSelection,
-    gate_compress_blocks: tuple[int, ...] = (),
+    gate_compress: bool = False,
 ) -> MiniMaxH3DiT:
     """Construct the exact unregistered production H3 DiT source."""
     kernel, evidence = minimax_h3_attention_provider(attention_selection)
@@ -1811,7 +1808,7 @@ def assemble_minimax_h3_dit(
         fp32_operations=fp32_operations,
         text_operations=text_operations,
         time_embedding_kind=time_embedding_kind,
-        gate_compress_blocks=gate_compress_blocks,
+        gate_compress=gate_compress,
     )
 
 

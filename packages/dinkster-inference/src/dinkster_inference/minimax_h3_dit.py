@@ -212,7 +212,7 @@ MiniMaxH3TimeEmbeddingKind = Literal["curve", "mlp"]
 def _minimax_h3_dit_keys(
     config: MiniMaxH3Config,
     time_embedding_kind: MiniMaxH3TimeEmbeddingKind,
-    gate_compress_blocks: tuple[int, ...] = (),
+    gate_compress: bool = False,
 ) -> dict[str, tuple[int, ...]]:
     keys: dict[str, tuple[int, ...]] = {}
     video_patch_width = (
@@ -272,7 +272,7 @@ def _minimax_h3_dit_keys(
             keys,
             f"{root}.attn",
             config,
-            gate_compress=index in gate_compress_blocks,
+            gate_compress=gate_compress,
         )
         _mlp(keys, f"{root}.mlp", config)
         _linear(
@@ -350,7 +350,7 @@ class MiniMaxH3DiTLayout:
     keys: Mapping[str, tuple[int, ...]] = field(repr=False)
     fp32_storage_keys: frozenset[str] = field(repr=False)
     time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve"
-    gate_compress_blocks: tuple[int, ...] = ()
+    gate_compress: bool = False
     depth: int = field(default=50, init=False)
     hidden_width: int = field(default=5376, init=False)
     attention_heads: int = field(default=56, init=False)
@@ -379,15 +379,10 @@ class MiniMaxH3DiTLayout:
         frozen = dict(cast("Mapping[str, tuple[int, ...]]", keys_obj))
         if self.time_embedding_kind not in ("curve", "mlp"):
             raise ValueError("time_embedding_kind must be curve or mlp")
-        if any(
-            type(index) is not int or index < 0 or index >= self.config.depth
-            for index in self.gate_compress_blocks
-        ):
-            raise ValueError("gate_compress_blocks must contain valid H3 block indices")
-        if self.gate_compress_blocks != tuple(sorted(set(self.gate_compress_blocks))):
-            raise ValueError("gate_compress_blocks must be sorted and unique")
+        if type(self.gate_compress) is not bool:
+            raise TypeError("gate_compress must be a bool")
         expected = _minimax_h3_dit_keys(
-            MINIMAX_H3_CONFIG, self.time_embedding_kind, self.gate_compress_blocks
+            MINIMAX_H3_CONFIG, self.time_embedding_kind, self.gate_compress
         )
         if frozen != expected:
             raise ValueError("keys must equal the exact H3 DiT layout")
@@ -408,7 +403,7 @@ def minimax_h3_dit_layout(
     config: MiniMaxH3Config = MINIMAX_H3_CONFIG,
     *,
     time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve",
-    gate_compress_blocks: tuple[int, ...] = (),
+    gate_compress: bool = False,
 ) -> MiniMaxH3DiTLayout:
     """Return one exact H3 DiT state layout."""
     if not isinstance(cast("object", config), MiniMaxH3Config):
@@ -419,10 +414,10 @@ def minimax_h3_dit_layout(
         raise ValueError("time_embedding_kind must be curve or mlp")
     return MiniMaxH3DiTLayout(
         config,
-        _minimax_h3_dit_keys(config, time_embedding_kind, gate_compress_blocks),
+        _minimax_h3_dit_keys(config, time_embedding_kind, gate_compress),
         _minimax_h3_fp32_storage_keys(config, time_embedding_kind),
         time_embedding_kind,
-        gate_compress_blocks,
+        gate_compress,
     )
 
 
@@ -444,7 +439,7 @@ class MiniMaxH3DiTAssemblyPlan:
     def __post_init__(self) -> None:
         if self.layout != minimax_h3_dit_layout(
             time_embedding_kind=self.layout.time_embedding_kind,
-            gate_compress_blocks=self.layout.gate_compress_blocks,
+            gate_compress=self.layout.gate_compress,
         ):
             raise ValueError("assembly plan must use an exact H3 DiT layout")
         if self.source_prefix not in _PREFIXES:
@@ -515,21 +510,12 @@ def plan_minimax_h3_dit_assembly(
     source_keys = tuple(source.keys())
     if len(source_keys) != len(set(source_keys)):
         raise MiniMaxH3DiTAssemblyError("duplicate H3 DiT source keys")
-    bare_keys = tuple(key.removeprefix("model.diffusion_model.") for key in source_keys)
-    gate_compress_blocks = tuple(
-        sorted(
-            int(parts[1])
-            for key in bare_keys
-            if len(parts := key.split(".")) == 5
-            and parts[0] == "blocks"
-            and parts[2:] == ["attn", "to_gate_compress", "weight"]
-            and parts[1].isdigit()
-        )
-    )
+    bare_keys = frozenset(key.removeprefix("model.diffusion_model.") for key in source_keys)
+    gate_compress = "blocks.0.attn.to_gate_compress.weight" in bare_keys
     layouts = tuple(
         minimax_h3_dit_layout(
             time_embedding_kind=kind,
-            gate_compress_blocks=gate_compress_blocks,
+            gate_compress=gate_compress,
         )
         for kind in ("curve", "mlp")
     )
