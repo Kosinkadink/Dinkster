@@ -7,6 +7,7 @@ import importlib
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any, cast
 
 from dinkster_api.v1 import CORE_INT, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 
@@ -224,7 +225,7 @@ class AimdoNativeProof(Node):
             del handle, runtime, output
             gc.collect()
             torch.cuda.empty_cache()
-            return demand_paged, embeddings, pooled, telemetry
+            return demand_paged, cast("Any", embeddings), cast("Any", pooled), telemetry
 
         if os.environ.get("DINKSTER_AIMDO_ARM") != "on":
             raise RuntimeError("native aimdo proof worker was not armed by host argv")
@@ -246,11 +247,13 @@ class AimdoNativeProof(Node):
             on_demand_paged=sum(on_flags),
             off_mechanisms=len(off_flags),
             off_demand_paged=sum(off_flags),
-            embeddings_equal=int(torch.equal(on_embeddings, off_embeddings)),
+            embeddings_equal=int(
+                torch.equal(cast("Any", on_embeddings), cast("Any", off_embeddings))
+            ),
             pooled_equal=int(
                 on_pooled is not None
                 and off_pooled is not None
-                and torch.equal(on_pooled, off_pooled)
+                and torch.equal(cast("Any", on_pooled), cast("Any", off_pooled))
             ),
             telemetry_free=telemetry_free,
             telemetry_total=telemetry_total,

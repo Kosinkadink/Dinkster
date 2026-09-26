@@ -5044,6 +5044,25 @@ def test_accounting_priority_partial_unload_and_idempotent_unload() -> None:
     assert backend.deprioritize_calls == 2
 
 
+def test_memory_accounting_separates_logical_weights_vbar_surplus_and_cast_arena() -> None:
+    mechanism, backend = _aimdo({"weight": torch.ones(5000)})
+    with mechanism.lease("weight") as lease:
+        lease.get("weight", dtype=torch.float32)
+    demand_bytes = mechanism.total_bytes()
+    backend.reported_loaded_size = demand_bytes + 4096
+
+    accounting = mechanism.memory_accounting()
+
+    assert accounting.weights == demand_bytes
+    assert accounting.other_reclaimable == 4096
+    assert accounting.allocator_weight_bytes == 0
+    assert accounting.shared_workspace_id is not None
+    assert accounting.shared_workspace_bytes == sum(
+        backend.cast_arena_size(arena) for arena in backend.arenas
+    )
+    assert accounting.memory_compiler == "unavailable"
+
+
 def test_working_set_reservation_holds_full_vbar_until_outer_release() -> None:
     mechanism, backend = _aimdo({"weight": torch.ones(5000)})
     reservation = mechanism._reservation_bytes  # pyright: ignore[reportPrivateUsage]
