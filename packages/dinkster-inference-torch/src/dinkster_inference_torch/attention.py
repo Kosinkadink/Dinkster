@@ -2148,9 +2148,10 @@ def discover_attention_capabilities(
     SDPA is always available on a supported torch worker, so every role can
     truthfully advertise it without a device-specific probe.
     """
-    version = getattr(torch_module, "__version__", None)
-    if not isinstance(version, str) or not version:
+    raw_version = getattr(torch_module, "__version__", None)
+    if not isinstance(raw_version, str) or not raw_version:
         raise AttentionSelectionError("torch runtime has no version")
+    version = str(raw_version)
     hip_version = _hip_runtime_version(torch_module)
     if device_kind is None:
         cuda = cast("Any", getattr(torch_module, "cuda", None))

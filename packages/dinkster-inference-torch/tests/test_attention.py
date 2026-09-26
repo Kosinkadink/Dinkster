@@ -2458,6 +2458,29 @@ def test_discovery_with_sage_policy_binds_routes_and_provider(
     assert auto.provider_versions == (("torch", "2.13.0+cu130"),)
 
 
+def test_discovery_canonicalizes_torch_version_subclasses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class TorchVersion(str):
+        pass
+
+    monkeypatch.setattr(attention_module, "sage2_attention_available", lambda: False)
+    monkeypatch.setattr(attention_module, "_KITCHEN_SOL_ATTENTION", None)
+    monkeypatch.setattr(attention_module, "_KITCHEN_AVAILABLE", lambda: False)
+    capabilities = attention_module.discover_attention_capabilities(
+        torch_module=SimpleNamespace(
+            __version__=TorchVersion("2.13.0+cu130"),
+            version=SimpleNamespace(hip=None),
+        ),
+        device_kind="cuda",
+        device_sm=120,
+    )
+
+    torch_version = dict(capabilities.provider_versions)["torch"]
+    assert type(torch_version) is str
+    assert torch_version == "2.13.0+cu130"
+
+
 def test_resolve_role_attention_carries_authenticated_sage_evidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
