@@ -266,9 +266,11 @@ class GenerationVAEDecode(VAEDecode):
 
         if type(latent) is MultiStreamLatent:
             latent = cast("MultiStreamLatent[Any]", latent).by_role("video")
-        image = cast("Any", vae).decode(latent)
-        if len(image.shape) == 5:
-            image = image.reshape(-1, image.shape[-3], image.shape[-2], image.shape[-1])
+        torch = cast("Any", importlib.import_module("torch"))
+        with torch.inference_mode():
+            image = cast("Any", vae).decode(latent)
+            if len(image.shape) == 5:
+                image = image.reshape(-1, image.shape[-3], image.shape[-2], image.shape[-1])
         return cls.outputs(image=image)
 
 

@@ -286,10 +286,12 @@ def test_fork_sd15_adapters_preserve_conditioning_latent_and_decode(
     class VAE:
         def decode(self, value: object) -> object:
             assert value is samples
+            assert _FakeTorch.inference_mode_enabled
             return _FakeTorch.zeros((1, 2, 3, 4, 5))
 
     image = fork_nodes.GenerationVAEDecode.execute(samples=latent, vae=VAE())["image"]
     assert tuple(cast("Any", image).shape) == (2, 3, 4, 5)
+    assert not _FakeTorch.inference_mode_enabled
 
 
 def test_fork_h3_adapters_preserve_stream_roles_and_media(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -352,10 +354,12 @@ def test_fork_h3_adapters_preserve_stream_roles_and_media(monkeypatch: pytest.Mo
     class VideoVAE:
         def decode(self, value: object) -> object:
             assert value is video
+            assert _FakeTorch.inference_mode_enabled
             return _FakeTorch.zeros((1, 2, 3, 4, 5))
 
     decoded_video = fork_nodes.GenerationVAEDecode.execute(samples=target, vae=VideoVAE())["image"]
     assert tuple(cast("Any", decoded_video).shape) == (2, 3, 4, 5)
+    assert not _FakeTorch.inference_mode_enabled
 
     class AudioVAE:
         audio_sample_rate_output = 24_000
