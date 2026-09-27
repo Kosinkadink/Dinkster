@@ -141,7 +141,6 @@ from .comfy_compose import (
     RETIRED_EXECUTION_PYTHON_FLAG_MESSAGE,
     comfy_compat_specs,
     comfy_model_roots,
-    execution_python,
 )
 from .compat_api import add_comfy_compat_routes
 from .compose import (
@@ -161,7 +160,6 @@ from .generation_api import GenerationModel, GenerationService, add_generation_r
 from .guess_api import add_guess_routes
 from .installer import Installer
 from .mounts_api import MountService, add_mount_routes
-from .native_policy import NativeDispatchPolicy, NativePolicyDiagnostic
 from .p2p_plugin import load_p2p_plugin
 from .reload_api import add_reload_routes, apply_reload
 from .remote_reconnect import RemoteReconnectSupervisor
@@ -617,15 +615,6 @@ async def _schedule_legacy_checkpoint_conversion(
                 if outcome is not None:
                     return cast("tuple[str, str | None]", outcome)
         return "transport-failure", None
-
-
-def _log_native_policy_diagnostic(diagnostic: NativePolicyDiagnostic) -> None:
-    core_logger("serve.native").info(
-        "native checkpoint %s for %s: %s",
-        diagnostic.kind,
-        diagnostic.digest,
-        "; ".join(diagnostic.reasons),
-    )
 
 
 def parse_memory_budget(entry: str) -> tuple[str, int]:
@@ -1544,11 +1533,6 @@ def main(argv: list[str] | None = None) -> None:
         if args.single_job_multi_gpu_devices
         else None
     )
-    # Same lane-selection precedence as worker launch: replica lanes win
-    # over single-job ranks, and both index into CUDA_VISIBLE_DEVICES.
-    executing_cuda_indices: tuple[int, ...] = tuple(args.multi_gpu_devices or ()) or (
-        single_job_multi_gpu.cuda_indices if single_job_multi_gpu is not None else ()
-    )
 
     persisted_jobs = persisted_settings.get("jobs", {"maxRunningJobs": 1})
     max_running_jobs = int(dict(persisted_jobs)["maxRunningJobs"])  # type: ignore[arg-type]
@@ -1849,32 +1833,10 @@ def main(argv: list[str] | None = None) -> None:
             telemetry_devices=reported.devices,
         )
         vault: AssetVault | None = None
-        native_policy: NativeDispatchPolicy | None = None
-        composer_ref: list[ServingComposer] = []
         if args.library_root:
             root = Path(args.library_root)
             vault = AssetVault(root / "vault")
             assert mount_service is not None
-            native_policy = NativeDispatchPolicy(
-                _native_asset_locator(vault, mount_service.table),
-                _log_native_policy_diagnostic,
-                fp8_matmul=lambda: runtime_settings.fp8_matmul,
-                dtype_policy=lambda: runtime_settings.dtype_policy,
-                compute_dtypes=lambda: detect_native_compute_dtypes(executing_cuda_indices),
-                schedule_conversion=lambda path, logical_name: (
-                    _schedule_legacy_checkpoint_conversion(composer_ref[0], path, logical_name)
-                ),
-                minimax_h3_runtime_versions=(
-                    lambda: detect_native_runtime_versions(
-                        execution_python(Path(args.comfy_root), args.execution_python or None)
-                        if args.comfy_root
-                        else args.execution_python
-                        or os.environ.get("DINKSTER_EXECUTION_PYTHON")
-                        or sys.executable
-                    )
-                ),
-                schemas=lambda: composer_ref[0].composition.schemas,
-            )
         sandbox_policy: SandboxPolicy | None = None
         sandbox_writable_mounts: list[str] = []
         if args.sandbox_packs:
@@ -1933,7 +1895,6 @@ def main(argv: list[str] | None = None) -> None:
             governor=governor,
             reservations=GovernorReservationService(governor),
             telemetry=reported,
-            native_policy=native_policy,
             runtime_worker_settings=lambda: (
                 runtime_settings.aimdo_policy,
                 runtime_settings.memory_headroom,
@@ -1961,7 +1922,6 @@ def main(argv: list[str] | None = None) -> None:
         specs[:resolved_default_pack_count] = list(
             _order_default_pack_specs(composer, specs, resolved_default_pack_count)
         )
-        composer_ref.append(composer)
         composer.validate_specs(specs)
         if args.prepare_stale_catalogs:
             _prepare_stale_catalogs(

@@ -87,12 +87,12 @@ class _FixedResolver:
 
 def _run_worker(checkpoint: Path) -> dict[str, object]:
     from dinkster_assets import AssetRef, digest_file
-    from dinkster_native.families.seedvr2 import GenerationVAEDecode
-    from dinkster_native.nodes_generation_loaders import (
+    from dinkster_native.fork_nodes import (
         GenerationClipTextEncode,
+        GenerationKSampler,
         GenerationLoadCheckpoint,
+        GenerationVAEDecode,
     )
-    from dinkster_native.nodes_samplers import GenerationKSampler
 
     torch = cast("Any", importlib.import_module("torch"))
     sd = importlib.import_module("dinkster_comfy.sd")

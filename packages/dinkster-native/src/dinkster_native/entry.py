@@ -7,28 +7,49 @@ from collections.abc import Mapping, Sequence
 from dinkster_schema import Node
 from dinkster_values import TypeRegistry
 
-from .native import NATIVE_NODES as BASE_NATIVE_NODES
+from .fork_nodes import FORK_NODES
 from .native import register_native_types
-from .native_arm import GENERATION_PROVIDER_NODES, NATIVE_ARM_NODES, NATIVE_SCHEDULING_NODES
-from .native_catalog import COMFY_RUNTIME_NODE_IDS
-
-_default_nodes = (*BASE_NATIVE_NODES, *NATIVE_SCHEDULING_NODES, *GENERATION_PROVIDER_NODES)
-NATIVE_NODES: tuple[type[Node], ...] = tuple(
-    {
-        node.schema().node_type: node
-        for node in (*_default_nodes, *NATIVE_ARM_NODES)
-        if node.schema().node_type not in COMFY_RUNTIME_NODE_IDS
-    }.values()
+from .nodes_model3d import (
+    GenerationApplyTextureToMesh,
+    GenerationBakeAmbientOcclusion,
+    GenerationBakeNormalMapFromMesh,
+    GenerationBakeTextureFromVoxel,
+    GenerationDecimateMesh,
+    GenerationGetMeshInfo,
+    GenerationImageCropToMask,
+    GenerationMeshToModel3D,
+    GenerationPaintMesh,
+    GenerationPreviewMask,
+    GenerationRemeshMesh,
+    GenerationRenderUVAtlas,
+    GenerationSmoothMeshNormals,
+    GenerationUnwrapMesh,
+    GenerationVoxelToMesh,
 )
-ARM_NODES = {
-    "native": tuple(
-        node for node in NATIVE_ARM_NODES if node.schema().node_type not in COMFY_RUNTIME_NODE_IDS
-    )
-}
+
+_MESH_NODES: tuple[type[Node], ...] = (
+    GenerationImageCropToMask,
+    GenerationPreviewMask,
+    GenerationVoxelToMesh,
+    GenerationGetMeshInfo,
+    GenerationRemeshMesh,
+    GenerationDecimateMesh,
+    GenerationSmoothMeshNormals,
+    GenerationUnwrapMesh,
+    GenerationPaintMesh,
+    GenerationBakeTextureFromVoxel,
+    GenerationBakeNormalMapFromMesh,
+    GenerationBakeAmbientOcclusion,
+    GenerationRenderUVAtlas,
+    GenerationApplyTextureToMesh,
+    GenerationMeshToModel3D,
+)
+NATIVE_NODES: tuple[type[Node], ...] = (*FORK_NODES, *_MESH_NODES)
+ARM_NODES = {"native": NATIVE_NODES}
 
 
 def combo_choices() -> Mapping[str, Sequence[str]]:
-    from .native import SAMPLER_CHOICES, SCHEDULER_CHOICES
+    from dinkster_nodes_generation.nodes import SAMPLER_CHOICES, SCHEDULER_CHOICES
 
     return {"comfy.samplers": SAMPLER_CHOICES, "comfy.schedulers": SCHEDULER_CHOICES}
 

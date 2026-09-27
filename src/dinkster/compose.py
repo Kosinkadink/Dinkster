@@ -109,7 +109,6 @@ from dinkster_memory import (
     use_model_tenant_registry,
 )
 from dinkster_native.memory import plan_reservations
-from dinkster_native.native_residency import NativeComponentPublisher
 from dinkster_native.pool import default_pool
 from dinkster_protocol import (
     GRAPH_COMPILERS_SURFACE,
@@ -1527,7 +1526,6 @@ class Composition:
     """Canonical pack-set provenance. It never participates in native numerical identity."""
     _isolated: list[Any] = field(default_factory=list)
     _tenant_registries: list[Any] = field(default_factory=list)
-    _component_publishers: list[NativeComponentPublisher] = field(default_factory=list)
     choices: dict[str, tuple[str, ...]] = field(default_factory=dict)
     """Combo choice lists across the composed surface (choice-list id ->
     values), for create_app's /api/choices routes."""
@@ -1604,10 +1602,8 @@ class Composition:
 
     async def _close(self) -> None:
         registries = tuple(self._tenant_registries)
-        publishers = tuple(self._component_publishers)
         workers = tuple(self._isolated)
         self._tenant_registries.clear()
-        self._component_publishers.clear()
         self._isolated.clear()
         lazy_results = await asyncio.gather(
             *(worker.close() for worker in workers if isinstance(worker, LazyWorker)),
@@ -1616,14 +1612,6 @@ class Composition:
         registry_results = await asyncio.gather(
             *(registry.close() for registry in registries), return_exceptions=True
         )
-        publisher_results: list[BaseException | None] = []
-        for publisher in publishers:
-            try:
-                publisher.close()
-            except BaseException as exc:
-                publisher_results.append(exc)
-            else:
-                publisher_results.append(None)
         worker_results = await asyncio.gather(
             *(worker.close() for worker in workers if not isinstance(worker, LazyWorker)),
             return_exceptions=True,
@@ -1633,7 +1621,7 @@ class Composition:
         self._cleanup_paths.clear()
         errors = [
             result
-            for result in (*lazy_results, *publisher_results, *registry_results, *worker_results)
+            for result in (*lazy_results, *registry_results, *worker_results)
             if isinstance(result, BaseException)
         ]
         if errors:
@@ -1939,8 +1927,6 @@ class _PackRecord:
     extension_contributions: tuple[tuple[ExtensionScope, ContributionSurfaceDescriptor], ...] = ()
     tenant_registrations: _PackTenantRegistry | None = None
     owns_tenant_registrations: bool = True
-    component_publisher: NativeComponentPublisher | None = None
-    owns_component_publisher: bool = True
 
 
 PackContractInput = tuple[PackManifest, PackSpec]
@@ -3222,13 +3208,6 @@ class ServingComposer:
             and (current := self._records.get(name)) is not None
             and current.tenant_registrations is staged_record.tenant_registrations
         }
-        transferred_publishers = {
-            staged_record.component_publisher
-            for name, staged_record in staged._records.items()
-            if staged_record.component_publisher is not None
-            and (current := self._records.get(name)) is not None
-            and current.component_publisher is staged_record.component_publisher
-        }
         staged._runtime_seat = seat
         staged._mutate = mutate
         staged._publication = publication
@@ -3240,16 +3219,9 @@ class ServingComposer:
                 old._tenant_registries.remove(tenant)
             if tenant not in self.composition._tenant_registries:
                 self.composition._tenant_registries.append(tenant)
-        for publisher in transferred_publishers:
-            if publisher in old._component_publishers:
-                old._component_publishers.remove(publisher)
-            if publisher not in self.composition._component_publishers:
-                self.composition._component_publishers.append(publisher)
         for name, record in tuple(self._records.items()):
             if record.tenant_registrations in transferred_tenants:
                 record = replace(record, owns_tenant_registrations=True)
-            if record.component_publisher in transferred_publishers:
-                record = replace(record, owns_component_publisher=True)
             self._records[name] = record
         if old_catalog_root is not None:
             old._cleanup_paths.append(old_catalog_root)
@@ -5547,8 +5519,6 @@ class ServingComposer:
             self._contract_inputs(replacing=(manifest, spec))
         )
         tenant_proxy: _PackTenantRegistry | None = None
-        component_publisher: NativeComponentPublisher | None = None
-        new_component_publisher: NativeComponentPublisher | None = None
         if spec.in_process:
             if self._private_staging:
                 reused_in_process = self._reusable_in_process.get(canonical)
@@ -5597,13 +5567,6 @@ class ServingComposer:
                         f"in-process runtime drift for {manifest.name!r}: expected "
                         f"{dict(spec.runtime_pins)!r}, installed {actual_versions!r}"
                     )
-                component_publisher = (
-                    reused_in_process.component_publisher
-                    if reused_in_process is not None
-                    else NativeComponentPublisher()
-                )
-                if reused_in_process is None:
-                    new_component_publisher = component_publisher
             if self._tenant_registry is not None and reused_in_process is None:
                 tenant_proxy = _PackTenantRegistry(manifest.name, self._tenant_registry)
         group_owner: GroupIsolatedWorker | None = None
@@ -5693,11 +5656,6 @@ class ServingComposer:
             def pack_context() -> Generator[None, None, None]:
                 with contextlib.ExitStack() as contexts:
                     contexts.enter_context(use_model_tenant_registry(pack_tenant_registry))
-                    if component_publisher is not None:
-                        inference_torch = importlib.import_module("dinkster_inference_torch")
-                        contexts.enter_context(
-                            inference_torch.use_component_publisher(component_publisher)
-                        )
                     yield
 
             loaded: list[Any] = []
@@ -5736,8 +5694,6 @@ class ServingComposer:
             except BaseException:
                 if tenant_proxy is not None:
                     await tenant_proxy.close()
-                if new_component_publisher is not None:
-                    new_component_publisher.close()
                 raise
         elif spec.worker_group is None:
             worker = self._isolated_worker(spec, manifest, composition._registry)
@@ -5870,8 +5826,6 @@ class ServingComposer:
                 await cast("Any", worker).close()
             if tenant_proxy is not None:
                 await tenant_proxy.close()
-            if new_component_publisher is not None:
-                new_component_publisher.close()
             raise
         delta = PackDelta(
             pack=manifest.name,
@@ -5920,8 +5874,6 @@ class ServingComposer:
                 else tenant_proxy
             ),
             owns_tenant_registrations=reused_in_process is None,
-            component_publisher=component_publisher,
-            owns_component_publisher=reused_in_process is None,
         )
         staged_records = {**self._records, manifest.name: record}
         snapshot: ExtensionSnapshot | None = None
@@ -5956,8 +5908,6 @@ class ServingComposer:
                 await cast("Any", worker).close()
             if tenant_proxy is not None:
                 await tenant_proxy.close()
-            if new_component_publisher is not None:
-                new_component_publisher.close()
             raise
         old_derived_choices = self._current_derived_choices()
         # Publish validated declarations and routes atomically.
@@ -6011,8 +5961,6 @@ class ServingComposer:
             self._in_process_domain = domain
         if tenant_proxy is not None:
             composition._tenant_registries.append(tenant_proxy)
-        if new_component_publisher is not None:
-            composition._component_publishers.append(new_component_publisher)
         if group_new:
             assert group_owner is not None and spec.worker_group is not None
             self._group_owners[spec.worker_group] = group_owner
@@ -7715,10 +7663,6 @@ class ServingComposer:
                 await record.tenant_registrations.close()
                 if record.tenant_registrations in composition._tenant_registries:
                     composition._tenant_registries.remove(record.tenant_registrations)
-            if record.component_publisher is not None and record.owns_component_publisher:
-                record.component_publisher.close()
-                if record.component_publisher in composition._component_publishers:
-                    composition._component_publishers.remove(record.component_publisher)
             if record.spec.in_process:
                 pass
             elif group_name is None:

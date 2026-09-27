@@ -136,20 +136,21 @@ class _Resolver:
 
 def _run_worker(paths: dict[str, Path]) -> dict[str, object]:
     from dinkster_assets import AssetRef, digest_file
-    from dinkster_native.families.minimax_h3 import NativeMiniMaxH3ImageToVideo
-    from dinkster_native.families.seedvr2 import GenerationVAEDecode, NativeVAEDecodeAudio
-    from dinkster_native.nodes_loaders import (
+    from dinkster_native.fork_nodes import (
+        GenerationKSampler,
+        GenerationLoadDiffusionModel,
+        GenerationVAEDecode,
         NativeLoadClip,
-        NativeLoadDiffusionModel,
         NativeLoadVae,
+        NativeMiniMaxH3ImageToVideo,
+        NativeVAEDecodeAudio,
     )
-    from dinkster_native.nodes_samplers import GenerationKSampler
 
     def asset(path: Path) -> AssetRef:
         return AssetRef(digest_file(path), path.name, path.stat().st_size, resolver=_Resolver(path))
 
     torch = cast("Any", importlib.import_module("torch"))
-    model = NativeLoadDiffusionModel.execute(
+    model = GenerationLoadDiffusionModel.execute(
         diffusion_model=asset(paths["diffusion"]), weight_dtype="default"
     )["model"]
     clip = NativeLoadClip.execute(
