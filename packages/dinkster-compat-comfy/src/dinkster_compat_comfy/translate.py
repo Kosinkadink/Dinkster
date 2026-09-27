@@ -726,6 +726,7 @@ class CompatError(Exception):
 
 
 MULTI_STREAM_ROLES_KEY = "dinkster.multi_stream_roles@1"
+_NESTED_TENSOR_MODULES = frozenset({"comfy.nested_tensor", "dinkster_comfy.nested_tensor"})
 _MULTI_STREAM_INPUTS: Mapping[str, frozenset[str]] = {
     "KSampler": frozenset({"latent_image"}),
     "LTXVConcatAVLatent": frozenset({"video_latent", "audio_latent"}),
@@ -751,6 +752,14 @@ def _contains_multistream(value: object) -> bool:
     if isinstance(value, (list, tuple)):
         return any(_contains_multistream(item) for item in cast("Sequence[object]", value))
     return False
+
+
+def _is_comfy_nested_tensor(value: object) -> bool:
+    module_name = type(value).__module__
+    if module_name not in _NESTED_TENSOR_MODULES:
+        return False
+    module = cast("Any", importlib.import_module(module_name))
+    return type(value) is module.NestedTensor
 
 
 def to_comfy_multistream(value: object) -> object:
@@ -792,10 +801,7 @@ def from_comfy_multistream(value: object) -> object:
         return value
     latent = cast("Mapping[object, object]", value)
     samples = latent.get("samples")
-    if type(samples).__name__ != "NestedTensor":
-        return cast("object", value)
-    nested_type = importlib.import_module("dinkster_comfy.nested_tensor").NestedTensor
-    if type(samples) is not nested_type:
+    if not _is_comfy_nested_tensor(samples):
         return cast("object", value)
     sidecar = latent.get(MULTI_STREAM_ROLES_KEY)
     if not isinstance(sidecar, Mapping):
@@ -814,7 +820,7 @@ def from_comfy_multistream(value: object) -> object:
     output = dict(latent)
     output["samples"] = multi_stream.from_pairs(zip(role_tuple, payloads, strict=True))
     mask = output.get("noise_mask")
-    if type(mask) is nested_type:
+    if _is_comfy_nested_tensor(mask):
         mask_payloads = tuple(cast("Any", mask).unbind())
         if len(mask_payloads) != len(role_tuple):
             raise CompatError("NestedTensor LATENT mask count does not match its streams")

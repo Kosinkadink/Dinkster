@@ -14,6 +14,7 @@ from decimal import Decimal
 from fractions import Fraction
 from typing import cast
 
+import numpy as np
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_compat_comfy import (
@@ -170,15 +171,27 @@ class V1Changed:
 def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class NestedTensor:
+    class NestedTensorBase:
         def __init__(self, streams: tuple[object, ...]) -> None:
             self.streams = streams
 
         def unbind(self) -> tuple[object, ...]:
             return self.streams
 
+    dinkster_nested = type(
+        "NestedTensor",
+        (NestedTensorBase,),
+        {"__module__": "dinkster_comfy.nested_tensor"},
+    )
+    comfy_nested = type(
+        "NestedTensor",
+        (NestedTensorBase,),
+        {"__module__": "comfy.nested_tensor"},
+    )
+
     class SamplerCustomAdvanced:
-        RETURN_TYPES = ("LATENT",)
+        RETURN_TYPES = ("LATENT", "LATENT")
+        RETURN_NAMES = ("output", "denoised_output")
         FUNCTION = "sample"
 
         @classmethod
@@ -186,32 +199,45 @@ def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
             return {"required": {"latent_image": ("LATENT",)}}
 
         def sample(self, latent_image):  # noqa: ANN001, ANN201
-            assert type(latent_image["samples"]) is NestedTensor
+            assert type(latent_image["samples"]) is dinkster_nested
             assert latent_image["dinkster.multi_stream_roles@1"] == {
                 "version": 1,
                 "roles": ("video", "audio"),
             }
-            return (latent_image,)
+            denoised = dict(latent_image)
+            denoised["samples"] = comfy_nested(tuple(latent_image["samples"].unbind()))
+            return (latent_image, denoised)
 
     original_import = importlib.import_module
-    nested_module = type("NestedModule", (), {"NestedTensor": NestedTensor})
+    nested_modules = {
+        "dinkster_comfy.nested_tensor": type(
+            "DinksterNestedModule", (), {"NestedTensor": dinkster_nested}
+        ),
+        "comfy.nested_tensor": type("ComfyNestedModule", (), {"NestedTensor": comfy_nested}),
+    }
     monkeypatch.setattr(
         importlib,
         "import_module",
-        lambda name: (
-            nested_module if name == "dinkster_comfy.nested_tensor" else original_import(name)
-        ),
+        lambda name: nested_modules.get(name) or original_import(name),
     )
-    video, audio = object(), object()
+    video = np.zeros((1, 2, 3), dtype=np.float32)
+    audio = np.zeros((1, 4), dtype=np.float32)
     latent = {"samples": MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))}
 
-    node = translate_node("SamplerCustomAdvanced", SamplerCustomAdvanced, CompatTranslation())
+    translation = CompatTranslation()
+    node = translate_node("SamplerCustomAdvanced", SamplerCustomAdvanced, translation)
     result = cast("Mapping[str, object]", node.execute(latent_image=latent))
-    output = cast("Mapping[str, MultiStreamLatent[object]]", result["latent"])["samples"]
-
-    assert output.roles == ("video", "audio")
-    assert output.by_role("video") is video
-    assert output.by_role("audio") is audio
+    registry = TypeRegistry()
+    translation.register_types(registry)
+    latent_spec = registry.spec("comfy.LATENT")
+    assert latent_spec.validate_encoded is not None
+    for output_id in ("output", "denoised_output"):
+        output = cast("Mapping[str, MultiStreamLatent[object]]", result[output_id])["samples"]
+        assert output.roles == ("video", "audio")
+        assert output.by_role("video") is video
+        assert output.by_role("audio") is audio
+        encoded = latent_spec.encode(result[output_id])
+        latent_spec.validate_encoded(encoded, {})
 
 
 # --- translation: schema shape ------------------------------------------
