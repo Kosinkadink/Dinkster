@@ -30,13 +30,8 @@ makes, and these rules keep it that way as the codebase grows.
   extension scope in its disposable probe. The parameterized doctor test is
   keyed by the shared scope vocabulary, so accepting another scope without
   entry-resolution coverage fails the suite.
-- **Builtin inference vocabularies have explicit consumers.** The fast CI
-  scanner pins every zero-argument registry factory, assembly-registry builder,
-  and descriptor-catalog read to an exact source location and separate
-  non-increasing ceilings. The committed ceilings are 9 registry factories,
-  1 assembly builder, and 17 descriptor-catalog reads. New and stale sites fail
-  the check. The shared-engine family-gate scanner also runs in fast CI with its
-  current zero-site ceiling.
+- **Extension factories have explicit consumers.** The fast CI scanner checks
+  extension contribution factories against the committed source baseline.
 
 ## Platform golden evidence
 
@@ -63,16 +58,11 @@ resolution (not model weights or coverage inputs), it runs
 `bash scripts/ci-fast.sh`: Ruff format, Ruff lint, Pyright, and this fixed
 path-based unit subset:
 
-- `tests/test_extension_contract_pack.py`: a real CPU server composed with only
-  the ordinary extension fixture pack, proving two custom nodes linked through
-  a pack value type, a typed route and event, the frontend snapshot module, and
-  execution end to end.
 - `tests/test_extension_factory_guard.py`: exact registry-factory,
-  assembly-builder, and descriptor-catalog sites with separate non-increasing
-  ceilings.
-- `tests/test_family_registration_gates.py`: zero literal family gates in
-  shared engine code and registered-property coverage.
+  contribution-kind and factory baseline checks.
+- `tests/test_release_install.py`: release wheel and install surface checks.
 - `tests/test_schema.py`: schema construction and type validation.
+- `tests/test_schema_current_contracts.py`: generated current schema contracts.
 - `tests/test_values.py`: codecs, fingerprints, inline values and renditions.
 - `tests/test_graph.py`: graph validation and execution planning.
 - `tests/test_graph_wire.py`: wire round trips and malformed-input rejection.

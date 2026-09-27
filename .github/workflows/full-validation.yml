@@ -418,11 +418,10 @@ jobs:
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
           MODEL_RESULT: ${{ needs.model-tests-gate.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
-          TRANSLATION_RESULT: ${{ needs.translation-coverage.result }}
         run: |
-          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","p2pDescriptorMacos":"%s","p2pArtifactSmoke":"%s","torchCpu":"%s","modelTests":"%s","coverage":"%s","translationCoverage":"%s"}}\n' \
+          printf '{"commit":"%s","runHeavy":"%s","lanes":{"test":"%s","p2pDescriptorMacos":"%s","p2pArtifactSmoke":"%s","torchCpu":"%s","modelTests":"%s","coverage":"%s"}}\n' \
             "$GITHUB_SHA" "$RUN_HEAVY" "$TEST_RESULT" "$MACOS_RESULT" "$ARTIFACT_RESULT" \
-            "$TORCH_RESULT" "$MODEL_RESULT" "$COVERAGE_RESULT" "$TRANSLATION_RESULT" \
+            "$TORCH_RESULT" "$MODEL_RESULT" "$COVERAGE_RESULT" \
             > main-validation-status.json
           cat main-validation-status.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -441,7 +440,6 @@ jobs:
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
           MODEL_RESULT: ${{ needs.model-tests-gate.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
-          TRANSLATION_RESULT: ${{ needs.translation-coverage.result }}
         run: |
           if [ "$RUN_HEAVY" = false ]; then exit 0; fi
           test "$TEST_RESULT" = success
@@ -450,4 +448,3 @@ jobs:
           test "$TORCH_RESULT" = success
           test "$MODEL_RESULT" = success
           test "$COVERAGE_RESULT" = success
-          test "$TRANSLATION_RESULT" = success

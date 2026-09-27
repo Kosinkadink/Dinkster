@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 from collections.abc import Mapping
 from pathlib import Path
@@ -12,7 +13,28 @@ from dinkster_assets import AssetRef, digest_file
 from dinkster_inference import MultiStreamLatent, ResidentConditioningCarrier
 from dinkster_native import fork_nodes
 from dinkster_native.native import register_native_types
-from dinkster_values import TypeRegistry
+from dinkster_protocol import Invocation
+from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_values import TypeRegistry, register_core_types
+from dinkster_workers import InProcessWorker
+
+CONDITIONING = TypeExpr.concrete("dinkster.conditioning")
+INT = TypeExpr.concrete("core.int")
+
+
+class _ConditioningConsumer(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.conditioning-consumer",
+            inputs=(InputSpec("conditioning", CONDITIONING),),
+            outputs=(OutputSpec("count", INT),),
+        )
+
+    @classmethod
+    def execute(cls, *, conditioning: object) -> Mapping[str, object]:
+        values = list(cast("Any", conditioning))
+        return cls.outputs(count=len(values))
 
 
 class _Resolver:
@@ -97,6 +119,37 @@ def test_native_types_preserve_resident_conditioning_codec() -> None:
     spec = registry.spec("dinkster.conditioning")
     assert spec.decode(spec.encode(carrier)) is carrier
     assert registry.input_object("dinkster.conditioning", carrier) == "native-conditioning"
+
+
+def test_worker_unwraps_resident_conditioning_for_node_consumers() -> None:
+    class ResidentPayload:
+        _dinkster_resident_fingerprint = "test-worker-conditioning"
+        _dinkster_input_value = (("embedding", {"pooled_output": "pooled"}),)
+
+    registry = TypeRegistry()
+    register_core_types(registry)
+    register_native_types(registry)
+    value = registry.wrap(
+        "dinkster.conditioning",
+        ResidentConditioningCarrier(ResidentPayload()),
+    )
+    schema = _ConditioningConsumer.schema()
+    worker = InProcessWorker({schema.node_type: _ConditioningConsumer}, registry)
+    result = asyncio.run(
+        worker.invoke(
+            Invocation(
+                "invocation",
+                "basic-guider",
+                schema.node_type,
+                {"conditioning": value},
+                schema,
+            )
+        )
+    )
+
+    assert result.error is None, result.error
+    assert result.outputs is not None
+    assert result.outputs["count"].resolve() == 1
 
 
 def test_fork_loaders_call_dinkster_comfy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
