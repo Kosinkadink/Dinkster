@@ -123,8 +123,6 @@ def register_native_types(registry: TypeRegistry) -> None:
 
     if "dinkster.latent" not in registry:
         register_latent_type(registry, "dinkster.latent")
-    if "dinkster.conditioning" not in registry:
-        registry.register("dinkster.conditioning")
 
     for type_id in ("dinkster.sampler", "dinkster.sigmas", "dinkster.noise"):
         register_sampling_type(registry, type_id)

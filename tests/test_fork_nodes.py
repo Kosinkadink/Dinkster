@@ -6,7 +6,22 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from dinkster_inference import ResidentConditioningCarrier
 from dinkster_native import fork_nodes
+from dinkster_native.native import register_native_types
+from dinkster_values import TypeRegistry
+
+
+def test_native_types_preserve_resident_conditioning_codec() -> None:
+    class ResidentPayload:
+        _dinkster_resident_fingerprint = "test-resident-conditioning"
+
+    registry = TypeRegistry()
+    register_native_types(registry)
+    carrier = ResidentConditioningCarrier(ResidentPayload())
+
+    spec = registry.spec("dinkster.conditioning")
+    assert spec.decode(spec.encode(carrier)) is carrier
 
 
 def test_generation_ksampler_normalizes_residency_before_sampling(
