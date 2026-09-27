@@ -6,9 +6,9 @@ import pytest
 from dinkster_workers import SingleJobMultiGpuConfig
 
 
-@pytest.mark.parametrize("mode", ("auto", "guidance", "sequence", "window"))
+@pytest.mark.parametrize("mode", ("auto", "sequence"))
 def test_fixed_configuration_preserves_order_and_mode(
-    mode: Literal["auto", "guidance", "sequence", "window"],
+    mode: Literal["auto", "sequence"],
 ) -> None:
     config = SingleJobMultiGpuConfig((3, 1, 2), mode)
     assert config.cuda_indices == (3, 1, 2)
@@ -26,3 +26,9 @@ def test_config_requires_two_or_more_unique_non_negative_logical_indices(
 def test_config_rejects_removed_model_mode() -> None:
     with pytest.raises(ValueError, match="mode is invalid"):
         SingleJobMultiGpuConfig((0, 1), "model")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("mode", ("guidance", "window"))
+def test_config_rejects_parked_modes(mode: str) -> None:
+    with pytest.raises(ValueError, match="mode is invalid"):
+        SingleJobMultiGpuConfig((0, 1), mode)  # type: ignore[arg-type]

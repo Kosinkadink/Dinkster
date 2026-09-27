@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any, cast
 
 import pytest
-import torch
-from dinkster_native import attention
-from dinkster_native.workgroup import SingleJobWorkGroupHandler
-from dinkster_protocol import (
+
+torch = cast("Any", pytest.importorskip("torch"))
+
+from dinkster_native import attention  # noqa: E402
+from dinkster_native.workgroup import SingleJobWorkGroupHandler  # noqa: E402
+from dinkster_protocol import (  # noqa: E402
     BeginWorkGroup,
     CommitWorkGroup,
     DeviceResourceId,
@@ -48,21 +51,21 @@ def test_distributed_attention_partitions_heads_and_gathers_in_order(
     q = torch.arange(1 * 4 * 3 * 2, dtype=torch.float32).reshape(1, 4, 3, 2)
     k = q + 100
     v = q + 200
-    calls: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor, int]] = []
+    calls: list[tuple[Any, Any, Any, int]] = []
 
     def selected(
-        local_q: torch.Tensor,
-        local_k: torch.Tensor,
-        local_v: torch.Tensor,
+        local_q: Any,
+        local_k: Any,
+        local_v: Any,
         heads: int,
         **_kwargs: object,
-    ) -> torch.Tensor:
+    ) -> Any:
         calls.append((local_q, local_k, local_v, heads))
         if skip_output_reshape:
             return local_v
         return local_v.transpose(1, 2).reshape(1, 3, -1)
 
-    def all_gather(outputs: list[torch.Tensor], value: torch.Tensor) -> None:
+    def all_gather(outputs: list[Any], value: Any) -> None:
         if value.dtype == torch.int64:
             for output in outputs:
                 output.copy_(value)

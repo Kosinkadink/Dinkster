@@ -13,7 +13,6 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
-import torch
 from dinkster_protocol import (
     ATTENTION_POLICIES,
     AttentionCapabilityEvidence,
@@ -21,6 +20,8 @@ from dinkster_protocol import (
     AttentionRouteToken,
     derive_attention_route_token,
 )
+
+torch = cast("Any", importlib.import_module("torch"))
 
 _ADAPTER_CONTRACT = "dinkster.attention-kernel.v1"
 _POLICY_FUNCTIONS = {
@@ -213,12 +214,12 @@ def _ensure_process_group() -> _DistributedConfig:
 
 
 def _slice_output(
-    output: torch.Tensor,
+    output: Any,
     heads: int,
     start: int,
     stop: int,
     skip_output_reshape: bool,
-) -> torch.Tensor:
+) -> Any:
     if skip_output_reshape:
         if output.ndim != 4 or output.shape[1] != heads:
             raise RuntimeError("attention provider returned malformed unflattened heads")
@@ -229,7 +230,7 @@ def _slice_output(
     return output[..., start * width : stop * width]
 
 
-def _fence_call(config: _DistributedConfig, q: torch.Tensor, heads: int) -> None:
+def _fence_call(config: _DistributedConfig, q: Any, heads: int) -> None:
     global _attention_call_index
     control = torch.tensor(
         (_attention_call_index, heads, q.ndim, *q.shape),
@@ -253,16 +254,16 @@ class _DistributedAttention:
 
     def __call__(
         self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        v: torch.Tensor,
+        q: Any,
+        k: Any,
+        v: Any,
         heads: int,
-        mask: torch.Tensor | None = None,
-        attn_precision: torch.dtype | None = None,
+        mask: Any | None = None,
+        attn_precision: Any | None = None,
         skip_reshape: bool = False,
         skip_output_reshape: bool = False,
         **kwargs: Any,
-    ) -> torch.Tensor:
+    ) -> Any:
         config = _ensure_process_group()
         if kwargs.get("enable_gqa", False):
             raise RuntimeError("distributed attention does not support grouped-query attention")
@@ -273,7 +274,7 @@ class _DistributedAttention:
         start = config.rank * local_heads
         stop = start + local_heads
         failure: BaseException | None = None
-        local_output: torch.Tensor | None = None
+        local_output: Any | None = None
         try:
             output = self.selected(
                 q,

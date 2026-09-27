@@ -690,6 +690,17 @@ def test_host_requires_exact_optional_attention_evidence_before_reservation_plan
     asyncio.run(scenario())
 
 
+def test_attention_discovery_is_disabled_when_torch_is_unavailable() -> None:
+    def missing_torch(_name: str) -> object:
+        raise ModuleNotFoundError("No module named 'torch'", name="torch")
+
+    assert host_module._discover_attention_runtime(missing_torch) == (  # pyright: ignore[reportPrivateUsage]
+        None,
+        None,
+        None,
+    )
+
+
 def test_aimdo_bootstrap_disabled_does_not_import_or_log(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

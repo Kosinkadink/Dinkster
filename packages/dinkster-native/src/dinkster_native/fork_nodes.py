@@ -55,6 +55,17 @@ def _resident_conditioning(conditioning: object, owner: object) -> object:
     return ResidentConditioningCarrier(_ForkConditioning(conditioning, owner, fingerprint))
 
 
+def model_for_attention_route(model: object) -> object:
+    """Clone a model patcher and attach this invocation's attention route."""
+    context = current_execution_context()
+    if context is None or context.attention_route_token is None:
+        return model
+    runtime = cast("Any", context.attention_runtime)
+    sampling_model = cast("Any", model).clone()
+    sampling_model.set_model_optimized_attention(runtime.for_model(context.attention_route_token))
+    return sampling_model
+
+
 def _unwrap_conditioning(value: object) -> object:
     payload = getattr(value, "_dinkster_resident_payload", None)
     return payload.conditioning if type(payload) is _ForkConditioning else value
@@ -221,14 +232,7 @@ class GenerationKSampler(KSampler):
             raise TypeError("latent_image must be a mapping")
         sample = cast("Any", importlib.import_module("dinkster_comfy.sample"))
         model_management = cast("Any", importlib.import_module("dinkster_comfy.model_management"))
-        context = current_execution_context()
-        sampling_model = model
-        if context is not None and context.attention_route_token is not None:
-            runtime = cast("Any", context.attention_runtime)
-            sampling_model = cast("Any", model).clone()
-            sampling_model.set_model_optimized_attention(
-                runtime.for_model(context.attention_route_token)
-            )
+        sampling_model = model_for_attention_route(model)
         source = dict(cast("Mapping[object, object]", latent_image))
         latent, roles = _fork_samples(source["samples"])
         model_management.unload_model_and_clones(sampling_model)

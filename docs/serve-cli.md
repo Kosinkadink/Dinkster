@@ -460,33 +460,15 @@ ordered logical CUDA ranks for each single-job workgroup. Indices are relative
 to `CUDA_VISIBLE_DEVICES`; Dinkster does not discover or add devices. It is
 mutually exclusive with `--multi-gpu-devices`.
 
-The mode is `auto`, `guidance`, `sequence`, or `window` (default `auto`).
-These modes distribute one sampling job; they are not whole-job replicas and
-do not guarantee lower latency:
+The mode is `auto` or `sequence` (default `auto`). Both use every selected
+rank through the worker-owned attention route and require the model's attention
+head count to divide evenly across the rank count. The selected attention
+backend keeps its ordinary one-GPU call shape so the distributed result retains
+the stock ComfyUI numerical contract. This is a correctness and process-isolation
+capability; it does not claim lower latency.
 
-- `guidance` assigns model-evaluated guidance lanes to separate full-model
-  ranks and gathers each denoiser evaluation. It requires at least conditional
-  and unconditional model lanes.
-- `sequence` uses every selected rank for pure Ulysses sequence parallelism
-  (`U=rank count`, `R=1`, guidance degree 1). It admits only an exact registered
-  sequence receipt and is never selected by `auto`.
-- `window` scatters a windowed Flux plan's per-step window evaluations across
-  full-model ranks with a bit-exact merge. It refuses when the plan has fewer
-  than two joint windows or no registered window receipt, and never falls back
-  to another topology.
-- `auto` uses receipted guidance for H3 and SD1.5, or window scattering for
-  eligible Flux windowed plans. It never selects sequence parallelism. It
-  fails before sampling when none is eligible rather than running
-  duplicate single-device work on every rank.
-
-Guidance mode currently supports SD1.5 FP16 and registered MiniMax H3 BF16 and
-INT8 ConvRot FL2VA plans on two SM 8.9 Ada or two SM 12.0 Blackwell GPUs with
-builtin samplers and schedulers. Other model, dtype, rank-count, and architecture combinations
-refuse until they have their own receipt. Sequence mode currently supports
-MiniMax H3 FL2VA BF16 with built-in SDPA under torch 2.13.0+cu130 on two
-SM 12.0 Blackwell GPUs. Separate receipts also admit explicitly selected
-comfy-kitchen 0.2.31 and 0.2.32 INT8 attention under that torch runtime.
-Other provider versions and runtimes refuse.
+The former `guidance` and `window` modes are not exposed. They fail at argument
+validation rather than running another topology under those names.
 
 Every rank is a separate process with one selected GPU and its own model
 residency. Rank 0 owns progress and the final result. A rank failure or

@@ -114,6 +114,7 @@ from dinkster_assets import (
     resolver_from_env,
     verified_local_path,
 )
+from dinkster_native.fork_nodes import model_for_attention_route
 from dinkster_schema import (
     AssetWidget,
     BooleanWidget,
@@ -3168,6 +3169,8 @@ def translate_node(
                     f"{sorted(structural_inputs)!r}"
                 )
         restored = {name: to_comfy_multistream(value) for name, value in native_inputs.items()}
+        if v1_name == "BasicGuider":
+            restored["model"] = model_for_attention_route(restored["model"])
         prepare_v3 = getattr(v1_class, "PREPARE_CLASS_CLONE", None)
         if callable(prepare_v3):
             hidden_inputs: dict[str, object] = {}

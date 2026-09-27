@@ -262,6 +262,37 @@ def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
         latent_spec.validate_encoded(encoded, {})
 
 
+def test_basic_guider_attaches_the_worker_attention_route_to_a_model_clone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = object()
+    clone = object()
+    received: list[object] = []
+
+    class BasicGuider:
+        RETURN_TYPES = ("GUIDER",)
+        FUNCTION = "get_guider"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"model": ("MODEL",), "conditioning": ("CONDITIONING",)}}
+
+        def get_guider(self, model: object, conditioning: object) -> tuple[object]:
+            del conditioning
+            received.append(model)
+            return (object(),)
+
+    monkeypatch.setattr(
+        "dinkster_compat_comfy.translate.model_for_attention_route",
+        lambda actual: clone if actual is model else actual,
+    )
+    node = translate_node("BasicGuider", BasicGuider, CompatTranslation())
+
+    node.execute(model=model, conditioning=object())
+
+    assert received == [clone]
+
+
 # --- translation: schema shape ------------------------------------------
 
 

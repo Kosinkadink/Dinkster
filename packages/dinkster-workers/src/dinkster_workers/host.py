@@ -227,7 +227,7 @@ class AttentionRouteDiscoveryError(RuntimeError):
 
 def _discover_attention_runtime(
     import_module: Callable[[str], object] = importlib.import_module,
-) -> tuple[object, AttentionCapabilityEvidence, AttentionRouteToken]:
+) -> tuple[object | None, AttentionCapabilityEvidence | None, AttentionRouteToken | None]:
     try:
         module = import_module("dinkster_native.attention")
         factory = getattr(module, "create_attention_runtime", None)
@@ -236,6 +236,10 @@ def _discover_attention_runtime(
         runtime = factory()
         capabilities = getattr(runtime, "capabilities", None)
         token = getattr(runtime, "route_token", None)
+    except ModuleNotFoundError as exc:
+        if exc.name == "torch":
+            return None, None, None
+        raise AttentionRouteDiscoveryError("native attention discovery failed") from exc
     except AttentionRouteDiscoveryError:
         raise
     except Exception as exc:

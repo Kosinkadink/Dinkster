@@ -2172,10 +2172,11 @@ def test_pack_spec_validates_single_job_mode(tmp_path: Path) -> None:
     from dinkster.compose import PackSpec
 
     manifest = write_iso_manifest(tmp_path)
-    for mode in ("auto", "guidance", "sequence", "window"):
+    for mode in ("auto", "sequence"):
         assert PackSpec(manifest, single_job_mode=mode).single_job_mode == mode
-    with pytest.raises(ValueError, match="single_job_mode is invalid"):
-        PackSpec(manifest, single_job_mode="model")
+    for mode in ("model", "guidance", "window"):
+        with pytest.raises(ValueError, match="single_job_mode is invalid"):
+            PackSpec(manifest, single_job_mode=mode)
 
 
 def test_pack_spec_comfy_args_are_frozen_validated_and_allow_unknowns(
