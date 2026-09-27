@@ -29890,8 +29890,11 @@ def test_native_generic_wan21_loaders_publish_split_components(
 def test_vae_decode_uses_dinkster_comfy_vae_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from dinkster_inference import MultiStreamLatent
+
     arm = _native_arm()
     latent = SimpleNamespace(is_nested=False)
+    samples = MultiStreamLatent.from_pairs((("video", latent), ("audio", object())))
     image = SimpleNamespace(shape=(1, 16, 16, 3))
 
     class VAE:
@@ -29910,7 +29913,7 @@ def test_vae_decode_uses_dinkster_comfy_vae_contract(
             soft_empty_cache=lambda: None,
         ),
     )
-    result = arm.NativeVAEDecode.execute(samples={"samples": latent}, vae=VAE())
+    result = arm.NativeVAEDecode.execute(samples={"samples": samples}, vae=VAE())
 
     assert result["image"] is image
 

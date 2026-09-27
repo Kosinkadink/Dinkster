@@ -202,7 +202,7 @@ executes = [
 # The inference library belongs to this isolated GPU worker environment, not
 # Dinkster's torch-free engine environment. Pin the reviewed fork commit.
 requires = [
-    "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@e56e120814cee954b85b578c869ac112f4feaf55",
+    "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@743a71de8ca4731e71fe294f0e019de2385b7518",
 ]
 
 [pack.sandbox]
