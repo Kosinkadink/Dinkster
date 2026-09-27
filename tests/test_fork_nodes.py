@@ -622,3 +622,144 @@ def test_generation_ksampler_attaches_attention_to_a_model_clone(
     assert ("unload", clone) in events
     assert ("fix", clone) in events
     assert ("sample", clone) in events
+
+
+def test_generation_ksampler_attaches_compiled_window_plan_to_a_clone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = object()
+    sampled = object()
+    latent = object()
+    events: list[tuple[object, ...]] = []
+
+    class Model:
+        load_device = "cuda"
+
+        def __init__(self) -> None:
+            self.model_options: dict[str, object] = {"existing": True}
+
+        def clone(self) -> Model:
+            events.append(("clone", self))
+            return clone
+
+    model = Model()
+    clone = Model()
+    monkeypatch.setattr(
+        fork_nodes,
+        "_compile_window_executor",
+        lambda plan, latent, roles, options: (
+            events.append(("compile", plan, latent, roles, options)),
+            executor,
+        )[1],
+    )
+    modules = {
+        "dinkster_comfy.sample": SimpleNamespace(
+            fix_empty_latent_channels=lambda _model, latent, *_args: latent,
+            prepare_noise=lambda *_args: object(),
+            sample=lambda actual, *_args, **_kwargs: (
+                events.append(("sample", actual, actual.model_options)),
+                sampled,
+            )[1],
+        ),
+        "dinkster_comfy.model_management": SimpleNamespace(
+            unload_model_and_clones=lambda _model: None
+        ),
+    }
+    real_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: modules.get(name) or real_import(name),
+    )
+    plan = {"layers": [{"mode": "explicit"}]}
+
+    result = fork_nodes.GenerationKSampler.execute(
+        model=model,
+        seed=459,
+        steps=1,
+        cfg=1.0,
+        sampler_name="dinkster.euler",
+        scheduler="dinkster.normal",
+        positive=object(),
+        negative=object(),
+        latent_image={"samples": latent},
+        denoise=1.0,
+        window_plan=plan,
+    )
+
+    assert events[0] == ("clone", model)
+    assert events[1][0:4] == ("compile", plan, latent, None)
+    assert cast("Mapping[str, object]", result["latent"])["samples"] is sampled
+    assert clone.model_options == {"existing": True, "window_plan": executor}
+    assert events[-1] == ("sample", clone, clone.model_options)
+
+
+def test_generation_ksampler_routes_res4lyf_substep_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[object, ...]] = []
+
+    class Output:
+        def to(self, *, device: object, dtype: object) -> Output:
+            events.append(("to", device, dtype))
+            return self
+
+    model = SimpleNamespace(load_device="cuda", model_options={})
+    configured = SimpleNamespace(sigmas=(3.0, 1.0, 0.0))
+    selection = BuiltinSamplerSelection(
+        "res4lyf.rk_beta",
+        (("rk_type", "res_3s"), ("eta", 0.25), ("eta_substep", 0.75)),
+    )
+    samplers = SimpleNamespace(
+        KSampler=lambda *args, **kwargs: (
+            events.append(("configure", args, kwargs)),
+            configured,
+        )[1],
+        sampler_object=lambda name, options: (
+            events.append(("assemble", name, options)),
+            "assembled",
+        )[1],
+        sample=lambda *args, **kwargs: (
+            events.append(("sample", args, kwargs)),
+            Output(),
+        )[1],
+    )
+    modules = {
+        "dinkster_comfy.sample": SimpleNamespace(
+            fix_empty_latent_channels=lambda _model, latent, *_args: latent,
+            prepare_noise=lambda *_args: "noise",
+        ),
+        "dinkster_comfy.samplers": samplers,
+        "dinkster_comfy.model_management": SimpleNamespace(
+            unload_model_and_clones=lambda _model: None,
+            intermediate_device=lambda: "cpu",
+            intermediate_dtype=lambda: "float32",
+        ),
+    }
+    real_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: modules.get(name) or real_import(name),
+    )
+
+    fork_nodes.GenerationKSampler.execute(
+        model=model,
+        seed=459,
+        steps=5,
+        cfg=7.0,
+        sampler_name="dinkster.euler",
+        scheduler="dinkster.normal",
+        positive=object(),
+        negative=object(),
+        latent_image={"samples": object()},
+        denoise=1.0,
+        sampler=selection,
+    )
+
+    assert ("assemble", "res4lyf.rk_beta", dict(selection.options)) in events
+    sample_event = next(event for event in events if event[0] == "sample")
+    sample_args = cast("tuple[object, ...]", sample_event[1])
+    assert sample_args[6] == "assembled"
+    assert sample_args[7] == configured.sigmas
+    assert events[-1] == ("to", "cpu", "float32")
