@@ -1042,8 +1042,9 @@ class NativeVAEDecode(VAEDecode):
                 raise TypeError("samples must be a latent mapping")
             direct_samples = dict(cast("Mapping[object, object]", samples))
             latent = direct_samples.get("samples")
-            inference = importlib.import_module("dinkster_inference")
-            if type(latent) is inference.MultiStreamLatent:
+            if _is_exact_imported_type(
+                latent, "dinkster_inference.latents", "MultiStreamLatent"
+            ):
                 streams = cast("Any", latent)
                 if "video" not in streams.roles:
                     raise TypeError("samples['samples'] must contain a video stream")
