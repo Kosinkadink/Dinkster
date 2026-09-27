@@ -25,11 +25,45 @@ from .image import (
     register_image_type_equivalences,
 )
 from .latent import register_latent_type
+from .nodes_model3d import (
+    GenerationApplyTextureToMesh,
+    GenerationBakeAmbientOcclusion,
+    GenerationBakeNormalMapFromMesh,
+    GenerationBakeTextureFromVoxel,
+    GenerationDecimateMesh,
+    GenerationGetMeshInfo,
+    GenerationImageCropToMask,
+    GenerationMeshToModel3D,
+    GenerationPaintMesh,
+    GenerationPreviewMask,
+    GenerationRemeshMesh,
+    GenerationRenderUVAtlas,
+    GenerationSmoothMeshNormals,
+    GenerationUnwrapMesh,
+    GenerationVoxelToMesh,
+)
 from .pool import default_pool
 from .resident import register_resident_type
 from .video import register_video_type
 
-NATIVE_NODES = FORK_NODES
+NATIVE_NODES: tuple[type[Node], ...] = (
+    *FORK_NODES,
+    GenerationImageCropToMask,
+    GenerationPreviewMask,
+    GenerationVoxelToMesh,
+    GenerationGetMeshInfo,
+    GenerationRemeshMesh,
+    GenerationDecimateMesh,
+    GenerationSmoothMeshNormals,
+    GenerationUnwrapMesh,
+    GenerationPaintMesh,
+    GenerationBakeTextureFromVoxel,
+    GenerationBakeNormalMapFromMesh,
+    GenerationBakeAmbientOcclusion,
+    GenerationRenderUVAtlas,
+    GenerationApplyTextureToMesh,
+    GenerationMeshToModel3D,
+)
 
 
 def merge_native_nodes(translated: Iterable[type[Node]]) -> tuple[type[Node], ...]:

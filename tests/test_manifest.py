@@ -81,7 +81,7 @@ def write_group_registry(path: Path) -> None:
     path.write_text(json.dumps(comfy_group_registry_to_wire(registry())), encoding="utf-8")
 
 
-def test_compat_manifest_claims_only_fork_backed_generation_schemas() -> None:
+def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
     manifest = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-pack.toml"))
 
     fork_backed = (
@@ -99,14 +99,32 @@ def test_compat_manifest_claims_only_fork_backed_generation_schemas() -> None:
         "dinkster.separate_av_latent",
         "dinkster.vae_decode_audio",
     )
-    assert manifest.executes == fork_backed
+    mesh = (
+        "dinkster.image_crop_to_mask",
+        "dinkster.preview_mask",
+        "dinkster.voxel_to_mesh",
+        "dinkster.get_mesh_info",
+        "dinkster.remesh_mesh",
+        "dinkster.decimate_mesh",
+        "dinkster.smooth_mesh_normals",
+        "dinkster.unwrap_mesh",
+        "dinkster.paint_mesh",
+        "dinkster.bake_texture_from_voxel",
+        "dinkster.bake_normal_map_from_mesh",
+        "dinkster.bake_ambient_occlusion",
+        "dinkster.render_uv_atlas",
+        "dinkster.apply_texture_to_mesh",
+        "dinkster.mesh_to_model3d",
+    )
+    assert manifest.executes == (*fork_backed, *mesh)
     assert manifest.arms == ()
     assert manifest.assets == ()
     assert manifest.workgroup_handler_entry is None
 
     native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
-    assert set(fork_backed) <= set(native.executes)
-    assert set(fork_backed) <= set(dict(native.arms)["native"])
+    retained = set((*fork_backed, *mesh))
+    assert set(native.executes) == retained
+    assert set(dict(native.arms)["native"]) == retained
     assert {node.schema().node_type for node in FORK_NODES} == set(fork_backed)
 
 
