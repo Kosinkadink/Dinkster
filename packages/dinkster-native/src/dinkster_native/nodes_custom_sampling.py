@@ -6,7 +6,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from .families.conditioning import _prepared_multistream_carrier
+from .families.conditioning import (
+    _prepared_multistream_carrier,
+    _unwrap_comfy_resident_conditioning,
+)
 from .families.latent import (
     _adapt_multistream_latent,
     _move_multistream_latent,
@@ -34,6 +37,7 @@ from .native_arm_core import (
     _DualModelGuiderValue,
     _effective_flux_guidance,
     _inference_registries,
+    _is_exact_imported_type,
     _LTXAVDualGuiderValue,
     _not_cancelled,
     _PerpNegGuiderValue,
@@ -84,9 +88,7 @@ from .nodes_provider import (
     _require_custom_sampling_runtime,
     _runtime_sampling_shift,
 )
-from .nodes_samplers import (
-    _custom_sampler_value,
-)
+from .nodes_samplers import _custom_sampler_value
 from .nodes_sampling_runtime import (
     _batch_index_noise_inds,
     _materialize_z_image_control,
@@ -1192,6 +1194,33 @@ class GenerationSamplerCustomAdvanced(Node):
         if type(guider) is not _CustomGuiderValue:
             raise TypeError("guider must come from a Dinkster guider node")
         typed_guider = guider
+        if _is_exact_imported_type(
+            typed_guider.model, "dinkster_comfy.model_patcher", "ModelPatcher"
+        ):
+            if type(noise) is not _CustomNoiseValue:
+                raise TypeError("noise must come from RandomNoise or DisableNoise")
+            if type(sampler) is not _CustomSamplerValue:
+                raise TypeError("sampler must come from a Dinkster sampler node")
+            if type(sigmas) is not _CustomSigmasValue:
+                raise TypeError("sigmas must come from a Dinkster sigma-schedule node")
+            descriptor = cast("Any", sampler).descriptor
+            output, denoised_output = importlib.import_module(
+                "dinkster_compat_comfy.sampling"
+            ).sample_custom(
+                model=typed_guider.model,
+                seed=noise.seed,
+                conditioning=_unwrap_comfy_resident_conditioning(typed_guider.positive),
+                negative=(
+                    None
+                    if typed_guider.negative is None
+                    else _unwrap_comfy_resident_conditioning(typed_guider.negative)
+                ),
+                cfg=typed_guider.cfg,
+                sampler_name=descriptor.id,
+                sigmas=sigmas.values,
+                latent=latent_image,
+            )
+            return cls.outputs(output=output, denoised_output=denoised_output)
         output, denoised_output = _execute_generation_custom_sampling(
             model=typed_guider.model,
             noise=cast("_CustomNoiseValue", noise),

@@ -523,6 +523,16 @@ class GenerationBasicScheduler(Node):
             raise ValueError(f"steps must be in [1, {KSampler.MAX_STEPS}], got {steps}")
         if not 0.0 <= denoise <= 1.0:
             raise ValueError(f"denoise must be in [0.0, 1.0], got {denoise}")
+        if _is_exact_imported_type(model, "dinkster_comfy.model_patcher", "ModelPatcher"):
+            values = importlib.import_module("dinkster_compat_comfy.sampling").calculate_sigmas(
+                model, scheduler, steps, denoise
+            )
+            return cls.outputs(
+                sigmas=_CustomSigmasValue(
+                    values,
+                    source_scheduler_id=scheduler,
+                )
+            )
         runtime, sampling_shift, device = _require_base_custom_sampling_runtime(
             model, "BasicScheduler"
         )

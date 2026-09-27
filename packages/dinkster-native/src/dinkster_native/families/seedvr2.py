@@ -165,9 +165,9 @@ def _decode_minimax_music3_audio(
                 if tile_size is not None
                 else direct_vae.decode(latent)
             ).movedim(-1, 1)
-        std = torch.std(audio, dim=(1, 2), keepdim=True) * 5.0
-        std[std < 1.0] = 1.0
-        audio /= std
+            std = torch.std(audio, dim=(1, 2), keepdim=True) * 5.0
+            std[std < 1.0] = 1.0
+            audio /= std
         sample_rate = cast("Mapping[object, object]", samples).get(
             "sample_rate",
             getattr(

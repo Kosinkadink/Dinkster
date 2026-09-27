@@ -16104,6 +16104,71 @@ def test_generation_sampler_routes_dinkster_comfy_model_patcher(
     assert forwarded["negative"] is negative
 
 
+def test_generation_custom_sampler_routes_dinkster_comfy_model_patcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_compat_comfy import sampling
+
+    arm = _native_arm()
+
+    class ModelPatcher:
+        pass
+
+    ModelPatcher.__module__ = "dinkster_comfy.model_patcher"
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_comfy.model_patcher",
+        SimpleNamespace(ModelPatcher=ModelPatcher),
+    )
+    model = ModelPatcher()
+    monkeypatch.setattr(
+        sampling,
+        "calculate_sigmas",
+        lambda actual_model, scheduler, steps, denoise: (
+            (1.0, 0.5, 0.0)
+            if (actual_model, scheduler, steps, denoise) == (model, "simple", 2, 1.0)
+            else pytest.fail("unexpected scheduler inputs")
+        ),
+    )
+    sigmas = arm.GenerationBasicScheduler.execute(
+        model=model,
+        scheduler="simple",
+        steps=2,
+        denoise=1.0,
+    )["sigmas"]
+    forwarded: dict[str, object] = {}
+
+    def sample_custom(**kwargs: object) -> tuple[dict[str, str], dict[str, str]]:
+        forwarded.update(kwargs)
+        return {"samples": "sampled"}, {"samples": "denoised"}
+
+    monkeypatch.setattr(sampling, "sample_custom", sample_custom)
+    conditioning = object()
+    latent = {"samples": object()}
+    result = arm.GenerationSamplerCustomAdvanced.execute(
+        noise=arm.GenerationRandomNoise.execute(noise_seed=7)["noise"],
+        guider=arm.GenerationBasicGuider.execute(model=model, conditioning=conditioning)["guider"],
+        sampler=arm.GenerationKSamplerSelect.execute(sampler_name="res_multistep")["sampler"],
+        sigmas=sigmas,
+        latent_image=latent,
+    )
+
+    assert result == {
+        "output": {"samples": "sampled"},
+        "denoised_output": {"samples": "denoised"},
+    }
+    assert forwarded == {
+        "model": model,
+        "seed": 7,
+        "conditioning": conditioning,
+        "negative": None,
+        "cfg": 1.0,
+        "sampler_name": "dinkster.res_multistep",
+        "sigmas": (1.0, 0.5, 0.0),
+        "latent": latent,
+    }
+
+
 def test_generation_sampler_routes_conditioning_through_single_stream_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
