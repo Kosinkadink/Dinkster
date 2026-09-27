@@ -91,6 +91,7 @@ def register_types(registry: TypeRegistry) -> None:
 NODES = [Doubler, Tagger]
 """
 
+
 def write_pack(root: Path, manifest: str, module_name: str, source: str) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     manifest_path = root / "dinkster-pack.toml"

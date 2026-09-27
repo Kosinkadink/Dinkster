@@ -20,6 +20,7 @@ class ArithTensor(Protocol):
 
     def __mul__(self, other: Self | float) -> Self: ...
 
+
 T = TypeVar("T", bound=SizedTensor, covariant=True)
 
 

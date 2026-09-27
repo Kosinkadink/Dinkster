@@ -1472,6 +1472,7 @@ NODES = [ArmedEcho]
 ARM_NODES = {"native": [NativeEcho]}
 '''
 
+
 def write_armed_manifest(root: Path) -> Path:
     """Write a pack whose manifest declares a native body arm."""
     root.mkdir()

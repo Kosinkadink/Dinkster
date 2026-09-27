@@ -278,9 +278,7 @@ class GenerationKSampler(KSampler):
         if not isinstance(latent_image, Mapping):
             raise TypeError("latent_image must be a mapping")
         sample = cast("Any", importlib.import_module("dinkster_comfy.sample"))
-        model_management = cast(
-            "Any", importlib.import_module("dinkster_comfy.model_management")
-        )
+        model_management = cast("Any", importlib.import_module("dinkster_comfy.model_management"))
         source = dict(cast("Mapping[object, object]", latent_image))
         latent, roles = _fork_samples(source["samples"])
         model_management.unload_model_and_clones(model)
