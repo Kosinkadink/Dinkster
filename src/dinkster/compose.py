@@ -2903,14 +2903,6 @@ class ServingComposer:
                 "DINKSTER_SINGLE_JOB_RENDEZVOUS": f"file://{rendezvous_path}",
                 "DINKSTER_SINGLE_JOB_TOKEN": uuid.uuid4().hex,
             }
-            if spec.single_job_mode == "sequence":
-                rank_environment.update(
-                    {
-                        "DINKSTER_SINGLE_JOB_SEQUENCE_ULYSSES": str(len(selected_cuda_indices)),
-                        "DINKSTER_SINGLE_JOB_SEQUENCE_RING": "1",
-                        "DINKSTER_SINGLE_JOB_SEQUENCE_GUIDANCE": "1",
-                    }
-                )
 
         worker_env = self._worker_environment(spec, (manifest,))
 

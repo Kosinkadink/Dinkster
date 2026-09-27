@@ -2571,7 +2571,7 @@ def test_serving_composer_starts_ordered_cuda_replica_workers(
 
 
 @pytest.mark.usefixtures("unrestricted_cuda_devices")
-def test_serving_composer_sets_pure_ulysses_sequence_geometry(tmp_path: Path) -> None:
+def test_serving_composer_sets_sequence_attention_environment(tmp_path: Path) -> None:
     from dinkster_values import TypeRegistry
 
     from dinkster.compose import PackSpec, ServingComposer, _SingleJobWorkerPool
@@ -2593,9 +2593,7 @@ def test_serving_composer_sets_pure_ulysses_sequence_geometry(tmp_path: Path) ->
         assert environment["DINKSTER_SINGLE_JOB_RANK"] == str(rank)
         assert environment["DINKSTER_SINGLE_JOB_WORLD_SIZE"] == "2"
         assert environment["DINKSTER_SINGLE_JOB_MULTI_GPU_MODE"] == "sequence"
-        assert environment["DINKSTER_SINGLE_JOB_SEQUENCE_ULYSSES"] == "2"
-        assert environment["DINKSTER_SINGLE_JOB_SEQUENCE_RING"] == "1"
-        assert environment["DINKSTER_SINGLE_JOB_SEQUENCE_GUIDANCE"] == "1"
+        assert not any(key.startswith("DINKSTER_SINGLE_JOB_SEQUENCE_") for key in environment)
     asyncio.run(pool.close())
 
 
