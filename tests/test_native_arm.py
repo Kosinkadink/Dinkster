@@ -16108,6 +16108,7 @@ def test_generation_custom_sampler_routes_dinkster_comfy_model_patcher(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster_compat_comfy import sampling
+    from dinkster_native.native_arm_core import sampler_wire_value
 
     arm = _native_arm()
 
@@ -16148,7 +16149,9 @@ def test_generation_custom_sampler_routes_dinkster_comfy_model_patcher(
     result = arm.GenerationSamplerCustomAdvanced.execute(
         noise=arm.GenerationRandomNoise.execute(noise_seed=7)["noise"],
         guider=arm.GenerationBasicGuider.execute(model=model, conditioning=conditioning)["guider"],
-        sampler=arm.GenerationKSamplerSelect.execute(sampler_name="res_multistep")["sampler"],
+        sampler=sampler_wire_value(
+            arm.GenerationKSamplerSelect.execute(sampler_name="res_multistep")["sampler"]
+        ),
         sigmas=sigmas,
         latent_image=latent,
     )

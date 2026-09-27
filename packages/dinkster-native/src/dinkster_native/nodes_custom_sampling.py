@@ -1199,11 +1199,18 @@ class GenerationSamplerCustomAdvanced(Node):
         ):
             if type(noise) is not _CustomNoiseValue:
                 raise TypeError("noise must come from RandomNoise or DisableNoise")
-            if type(sampler) is not _CustomSamplerValue:
+            if type(sampler) is _CustomSamplerValue:
+                sampler_name = cast("Any", sampler.descriptor).id
+                sampler_options = sampler.options
+            elif type(sampler) is SamplerSelection:
+                sampler_name = sampler.sampler_id
+                sampler_options = sampler.options
+            else:
                 raise TypeError("sampler must come from a Dinkster sampler node")
+            if sampler_options:
+                raise ValueError("configured sampler options are not supported by dinkster-comfy")
             if type(sigmas) is not _CustomSigmasValue:
                 raise TypeError("sigmas must come from a Dinkster sigma-schedule node")
-            descriptor = cast("Any", sampler).descriptor
             output, denoised_output = importlib.import_module(
                 "dinkster_compat_comfy.sampling"
             ).sample_custom(
@@ -1216,7 +1223,7 @@ class GenerationSamplerCustomAdvanced(Node):
                     else _unwrap_comfy_resident_conditioning(typed_guider.negative)
                 ),
                 cfg=typed_guider.cfg,
-                sampler_name=descriptor.id,
+                sampler_name=sampler_name,
                 sigmas=sigmas.values,
                 latent=latent_image,
             )
