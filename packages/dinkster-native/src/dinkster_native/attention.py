@@ -212,25 +212,21 @@ def _ensure_process_group() -> _DistributedConfig:
     return config
 
 
-def _slice_heads(tensor: torch.Tensor, heads: int, start: int, stop: int) -> torch.Tensor:
-    if tensor.ndim == 4:
-        if tensor.shape[1] != heads:
-            raise RuntimeError("distributed attention requires equal query, key, and value heads")
-        return tensor[:, start:stop]
-    if tensor.ndim != 3 or tensor.shape[-1] % heads:
-        raise RuntimeError("distributed attention received malformed flattened heads")
-    width = tensor.shape[-1] // heads
-    return tensor[..., start * width : stop * width]
-
-
-def _slice_mask(
-    mask: torch.Tensor | None, heads: int, start: int, stop: int
-) -> torch.Tensor | None:
-    if mask is None or mask.ndim < 4 or mask.shape[1] == 1:
-        return mask
-    if mask.shape[1] != heads:
-        raise RuntimeError("distributed attention mask has incompatible heads")
-    return mask[:, start:stop]
+def _slice_output(
+    output: torch.Tensor,
+    heads: int,
+    start: int,
+    stop: int,
+    skip_output_reshape: bool,
+) -> torch.Tensor:
+    if skip_output_reshape:
+        if output.ndim != 4 or output.shape[1] != heads:
+            raise RuntimeError("attention provider returned malformed unflattened heads")
+        return output[:, start:stop]
+    if output.ndim != 3 or output.shape[-1] % heads:
+        raise RuntimeError("attention provider returned malformed flattened heads")
+    width = output.shape[-1] // heads
+    return output[..., start * width : stop * width]
 
 
 def _fence_call(config: _DistributedConfig, q: torch.Tensor, heads: int) -> None:
@@ -276,24 +272,23 @@ class _DistributedAttention:
         local_heads = heads // config.world_size
         start = config.rank * local_heads
         stop = start + local_heads
-        local_q = _slice_heads(q, heads, start, stop)
-        local_k = _slice_heads(k, heads, start, stop)
-        local_v = _slice_heads(v, heads, start, stop)
-        local_mask = _slice_mask(mask, heads, start, stop)
         failure: BaseException | None = None
         local_output: torch.Tensor | None = None
         try:
-            local_output = self.selected(
-                local_q,
-                local_k,
-                local_v,
-                local_heads,
-                mask=local_mask,
+            output = self.selected(
+                q,
+                k,
+                v,
+                heads,
+                mask=mask,
                 attn_precision=attn_precision,
                 skip_reshape=skip_reshape,
                 skip_output_reshape=skip_output_reshape,
                 **kwargs,
             )
+            if not isinstance(output, torch.Tensor):
+                raise RuntimeError("attention provider returned a non-tensor output")
+            local_output = _slice_output(output, heads, start, stop, skip_output_reshape)
         except BaseException as exc:
             failure = exc
         failed = torch.tensor(int(failure is not None), dtype=torch.int32, device=q.device)
@@ -302,8 +297,7 @@ class _DistributedAttention:
             raise failure
         if bool(failed.item()):
             raise RuntimeError("peer distributed attention rank failed")
-        if not isinstance(local_output, torch.Tensor):
-            raise RuntimeError("attention provider returned a non-tensor output")
+        assert local_output is not None
         outputs = [torch.empty_like(local_output) for _ in range(config.world_size)]
         torch.distributed.all_gather(outputs, local_output.contiguous())
         dimension = 1 if skip_output_reshape else -1

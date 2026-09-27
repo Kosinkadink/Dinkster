@@ -88,11 +88,11 @@ def test_distributed_attention_partitions_heads_and_gathers_in_order(
 
     expected = v if skip_output_reshape else v.transpose(1, 2).reshape(1, 3, -1)
     torch.testing.assert_close(output, expected)
-    local_q, local_k, local_v, local_heads = calls[0]
-    assert local_heads == 2
-    torch.testing.assert_close(local_q, q[:, 2:])
-    torch.testing.assert_close(local_k, k[:, 2:])
-    torch.testing.assert_close(local_v, v[:, 2:])
+    actual_q, actual_k, actual_v, actual_heads = calls[0]
+    assert actual_heads == 4
+    torch.testing.assert_close(actual_q, q)
+    torch.testing.assert_close(actual_k, k)
+    torch.testing.assert_close(actual_v, v)
 
 
 def test_workgroup_attempt_gates_one_invocation_and_releases_attention(
