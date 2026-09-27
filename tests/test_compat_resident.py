@@ -1105,7 +1105,7 @@ def test_native_checkpoint_loader_drops_path_reload_factories(
     from dinkster_compat_comfy import LoadCheckpoint
 
     ref = _vault_ref(tmp_path, "sd15.safetensors", b"checkpoint bytes")
-    comfy_sd = types.ModuleType("comfy.sd")
+    comfy_sd = types.ModuleType("dinkster_comfy.sd")
 
     class FakeModel:
         def __init__(self, path: str) -> None:
@@ -1127,12 +1127,7 @@ def test_native_checkpoint_loader_drops_path_reload_factories(
     setattr(  # noqa: B010
         comfy_sd, "load_checkpoint_guess_config", load_checkpoint_guess_config
     )
-    folder_paths = types.ModuleType("folder_paths")
-    setattr(  # noqa: B010
-        folder_paths, "get_folder_paths", lambda name: [f"/models/{name}"]
-    )
-    monkeypatch.setitem(sys.modules, "comfy.sd", comfy_sd)
-    monkeypatch.setitem(sys.modules, "folder_paths", folder_paths)
+    monkeypatch.setitem(sys.modules, "dinkster_comfy.sd", comfy_sd)
 
     result = LoadCheckpoint.execute(checkpoint=ref)
     assert cast("FakeModel", result["model"]).cached_patcher_init is None
@@ -1597,6 +1592,7 @@ def test_translated_ksampler_preserves_empty_sigma_tensor(monkeypatch: pytest.Mo
             return self
 
     captured: list[Tensor] = []
+    unloaded: list[object] = []
 
     class ComfyKSampler:
         def __init__(self, _model: object, **kwargs: object) -> None:
@@ -1612,23 +1608,24 @@ def test_translated_ksampler_preserves_empty_sigma_tensor(monkeypatch: pytest.Mo
         return latent
 
     modules = {
-        "comfy.sample": types.SimpleNamespace(
+        "dinkster_comfy.sample": types.SimpleNamespace(
             fix_empty_latent_channels=lambda _model, value, *_ratios: value,
             prepare_empty_noise=lambda value: value,
             prepare_noise=lambda value, _seed, _indices: value,
         ),
-        "comfy.samplers": types.SimpleNamespace(
+        "dinkster_comfy.samplers": types.SimpleNamespace(
             KSampler=ComfyKSampler,
             sampler_object=lambda _name: types.SimpleNamespace(
                 sampler_function=lambda *_args, **_kwargs: latent
             ),
             sample=capture_sample,
         ),
-        "comfy.model_management": types.SimpleNamespace(
+        "dinkster_comfy.model_management": types.SimpleNamespace(
+            unload_model_and_clones=unloaded.append,
             intermediate_device=lambda: "cpu",
             intermediate_dtype=lambda: "float32",
         ),
-        "comfy.utils": types.SimpleNamespace(PROGRESS_BAR_ENABLED=True),
+        "dinkster_comfy.utils": types.SimpleNamespace(PROGRESS_BAR_ENABLED=True),
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, cast("Any", module))
@@ -1649,6 +1646,7 @@ def test_translated_ksampler_preserves_empty_sigma_tensor(monkeypatch: pytest.Mo
     )
 
     assert result == {"samples": latent}
+    assert unloaded == [model]
     assert len(captured) == 1
     assert isinstance(captured[0], Tensor)
     assert captured[0].shape == (0,)
@@ -1979,24 +1977,25 @@ def test_compat_ksampler_maps_owned_multistream_callback_state(
 
     shared_sampler = types.SimpleNamespace(sampler_function=sampler_function)
     modules = {
-        "comfy.sample": types.SimpleNamespace(
+        "dinkster_comfy.sample": types.SimpleNamespace(
             fix_empty_latent_channels=lambda _model, value, *_ratios: value,
             prepare_noise=lambda value, _seed, _indices: value,
         ),
-        "comfy.samplers": types.SimpleNamespace(
+        "dinkster_comfy.samplers": types.SimpleNamespace(
             KSampler=ComfyKSampler,
             sampler_object=lambda _name: shared_sampler,
             sample=sample,
         ),
-        "comfy.model_management": types.SimpleNamespace(
+        "dinkster_comfy.model_management": types.SimpleNamespace(
+            unload_model_and_clones=lambda _model: None,
             intermediate_device=lambda: "cpu",
             intermediate_dtype=lambda: "float32",
         ),
-        "comfy.utils": types.SimpleNamespace(
+        "dinkster_comfy.utils": types.SimpleNamespace(
             PROGRESS_BAR_ENABLED=True,
             unpack_latents=lambda value, _shapes: value.parts,
         ),
-        "comfy.nested_tensor": types.SimpleNamespace(NestedTensor=NestedTensor),
+        "dinkster_comfy.nested_tensor": types.SimpleNamespace(NestedTensor=NestedTensor),
         "torch": types.SimpleNamespace(Tensor=Tensor),
     }
     for name, module in modules.items():
@@ -2193,12 +2192,12 @@ def test_compat_ksampler_materializes_native_scheduled_hooks(
             ]
         )
 
-    comfy_hooks = types.ModuleType("comfy.hooks")
+    comfy_hooks = types.ModuleType("dinkster_comfy.hooks")
     comfy_hooks.HookGroup = HookGroup  # type: ignore[attr-defined]
     comfy_hooks.HookKeyframe = HookKeyframe  # type: ignore[attr-defined]
     comfy_hooks.HookKeyframeGroup = HookKeyframeGroup  # type: ignore[attr-defined]
     comfy_hooks.create_hook_lora = create_hook_lora  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "comfy.hooks", comfy_hooks)
+    monkeypatch.setitem(sys.modules, "dinkster_comfy.hooks", comfy_hooks)
     monkeypatch.setattr(native_module, "_load_lora_file", lambda _ref: ("lora-state", {}))
 
     calls: list[tuple[Any, ...]] = []

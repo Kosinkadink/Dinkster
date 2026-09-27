@@ -18,6 +18,7 @@ from ..native_arm_core import (
     VAEDecodeAudio,
     VAEDecodeAudioTiled,
     _is_accelerator_oom,
+    _is_exact_imported_type,
     _torch,
     cast,
     importlib,
@@ -152,6 +153,30 @@ def _decode_minimax_music3_audio(
         if "audio" not in streams.roles:
             raise TypeError("samples['samples'] must contain an audio stream")
         latent = streams.by_role("audio")
+    if _is_exact_imported_type(vae, "dinkster_comfy.sd", "VAE"):
+        direct_vae = cast("Any", vae)
+        if getattr(latent, "is_nested", False):
+            latent = cast("Any", latent).unbind()[-1]
+        if not isinstance(latent, torch.Tensor):
+            raise TypeError("samples['samples'] must be a torch.Tensor")
+        with torch.inference_mode():
+            audio = (
+                direct_vae.decode_tiled(latent, tile_x=tile_size, tile_y=tile_size, overlap=overlap)
+                if tile_size is not None
+                else direct_vae.decode(latent)
+            ).movedim(-1, 1)
+            std = torch.std(audio, dim=(1, 2), keepdim=True) * 5.0
+            std[std < 1.0] = 1.0
+            audio /= std
+        sample_rate = cast("Mapping[object, object]", samples).get(
+            "sample_rate",
+            getattr(
+                direct_vae,
+                "audio_sample_rate_output",
+                getattr(direct_vae, "audio_sample_rate", 44100),
+            ),
+        )
+        return {"waveform": audio, "sample_rate": sample_rate}
     if not isinstance(latent, torch.Tensor):
         raise TypeError("samples['samples'] must be a torch.Tensor")
     latent = cast("Any", latent)
@@ -238,6 +263,8 @@ class GenerationVAEDecode(NativeVAEDecode):
 
     @classmethod
     def execute(cls, *, samples: object, vae: object) -> Mapping[str, object]:
+        if _is_exact_imported_type(vae, "dinkster_comfy.sd", "VAE"):
+            return NativeVAEDecode.execute(samples=samples, vae=vae)
         inference = importlib.import_module("dinkster_inference")
         component_codec = isinstance(vae, NativeComponentHandle)
         codec = (

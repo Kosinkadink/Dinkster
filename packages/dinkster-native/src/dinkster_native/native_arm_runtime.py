@@ -35,6 +35,7 @@ from .native_arm_core import (
     _freeze_embedding_resource,
     _GuidedRows,
     _inference_registries,
+    _is_exact_imported_type,
     _NativeHooks,
     _NativeLoraHook,
     _run_direct_vae,
@@ -1753,6 +1754,8 @@ def _bind_model_sampling_options(
     @wraps(execute)
     def wrapped(*args: _ExecuteP.args, **kwargs: _ExecuteP.kwargs) -> Mapping[str, object]:
         model = cast("Mapping[str, object]", kwargs).get("model")
+        if _is_exact_imported_type(model, "dinkster_comfy.model_patcher", "ModelPatcher"):
+            return execute(*args, **kwargs)
         inference = importlib.import_module("dinkster_inference")
         if isinstance(model, inference.ApplicationChain):
             model = cast("Any", model).model

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .families.conditioning import _unwrap_comfy_resident_conditioning
 from .native_arm_core import (
     _DISABLE_CFG1_OPTIMIZATION,
     ALIGN_YOUR_STEPS_NOISE_LEVELS,
@@ -24,6 +25,7 @@ from .native_arm_core import (
     _DualCFGGuiderValue,
     _DualModelGuiderValue,
     _inference_registries,
+    _is_exact_imported_type,
     _PerpNegGuiderValue,
     _sampler_registry,
     _torch,
@@ -89,6 +91,23 @@ class GenerationKSampler(NativeKSampler):
         conditioning_batching: object = "auto",
         max_fused_lanes: int = 2,
     ) -> Mapping[str, object]:
+        if _is_exact_imported_type(model, "dinkster_comfy.model_patcher", "ModelPatcher"):
+            compat_sampler = importlib.import_module("dinkster_compat_comfy.sampling").KSampler
+            return compat_sampler.execute(
+                model=model,
+                seed=seed,
+                steps=steps,
+                cfg=cfg,
+                sampler_name=sampler_name,
+                scheduler=scheduler,
+                positive=_unwrap_comfy_resident_conditioning(positive),
+                negative=_unwrap_comfy_resident_conditioning(negative),
+                latent_image=latent_image,
+                denoise=denoise,
+                segment=segment,
+                conditioning_batching=conditioning_batching,
+                max_fused_lanes=max_fused_lanes,
+            )
         return NativeKSampler.execute(
             model=model,
             seed=seed,
@@ -504,6 +523,16 @@ class GenerationBasicScheduler(Node):
             raise ValueError(f"steps must be in [1, {KSampler.MAX_STEPS}], got {steps}")
         if not 0.0 <= denoise <= 1.0:
             raise ValueError(f"denoise must be in [0.0, 1.0], got {denoise}")
+        if _is_exact_imported_type(model, "dinkster_comfy.model_patcher", "ModelPatcher"):
+            values = importlib.import_module("dinkster_compat_comfy.sampling").calculate_sigmas(
+                model, scheduler, steps, denoise
+            )
+            return cls.outputs(
+                sigmas=_CustomSigmasValue(
+                    values,
+                    source_scheduler_id=scheduler,
+                )
+            )
         runtime, sampling_shift, device = _require_base_custom_sampling_runtime(
             model, "BasicScheduler"
         )

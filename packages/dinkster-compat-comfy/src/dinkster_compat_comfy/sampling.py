@@ -14,6 +14,7 @@ from dinkster_native.native_arm import GenerationKSamplerAdvanced as _Generation
 from dinkster_native.native_residency import NativeRuntimeHandle
 
 from . import comfy_execution
+from .translate import from_comfy_multistream, to_comfy_multistream
 
 
 def _comfy_sampling_choice(value: str) -> str:
@@ -31,6 +32,94 @@ def _require_default_conditioning_batching(
             "Comfy-backed sampling only supports conditioning_batching='auto' "
             "with max_fused_lanes=2"
         )
+
+
+def calculate_sigmas(
+    model: object, scheduler: str, steps: int, denoise: float
+) -> tuple[float, ...]:
+    torch = cast("Any", importlib.import_module("torch"))
+    samplers = cast("Any", importlib.import_module("dinkster_comfy.samplers"))
+    if denoise <= 0.0:
+        return ()
+    total_steps = steps if denoise >= 1.0 else int(steps / denoise)
+    sigmas = samplers.calculate_sigmas(
+        cast("Any", model).get_model_object("model_sampling"),
+        _comfy_sampling_choice(scheduler),
+        total_steps,
+    ).cpu()
+    sigmas = sigmas[-(steps + 1) :]
+    if not isinstance(sigmas, torch.Tensor):
+        raise TypeError("dinkster-comfy scheduler must return a torch.Tensor")
+    return tuple(float(value) for value in sigmas)
+
+
+def sample_custom(
+    *,
+    model: object,
+    seed: int | None,
+    conditioning: object,
+    negative: object | None,
+    cfg: float,
+    sampler_name: str,
+    sigmas: tuple[float, ...],
+    latent: object,
+) -> tuple[dict[object, object], dict[object, object]]:
+    torch = cast("Any", importlib.import_module("torch"))
+    sample = cast("Any", importlib.import_module("dinkster_comfy.sample"))
+    samplers = cast("Any", importlib.import_module("dinkster_comfy.samplers"))
+    model_management = cast("Any", importlib.import_module("dinkster_comfy.model_management"))
+    if not isinstance(latent, Mapping):
+        raise TypeError("latent_image must be a mapping containing 'samples'")
+    compat_value = to_comfy_multistream(cast("Mapping[object, object]", latent))
+    if not isinstance(compat_value, Mapping):
+        raise TypeError("translated latent must remain a mapping")
+    compat_latent = dict(cast("Mapping[object, object]", compat_value))
+    latent_image = compat_latent["samples"]
+    latent_image = sample.fix_empty_latent_channels(
+        model,
+        latent_image,
+        compat_latent.get("downscale_ratio_spacial"),
+        compat_latent.get("downscale_ratio_temporal"),
+    )
+    compat_latent["samples"] = latent_image
+    batch_inds = compat_latent.get("batch_index")
+    noise = (
+        sample.prepare_empty_noise(latent_image)
+        if seed is None
+        else sample.prepare_noise(latent_image, seed, batch_inds)
+    )
+    guider = samplers.CFGGuider(model)
+    positive = _compat_conditioning_hooks(conditioning, "positive")
+    if negative is None:
+        guider.inner_set_conds({"positive": positive})
+    else:
+        guider.set_conds(positive, _compat_conditioning_hooks(negative, "negative"))
+    guider.set_cfg(cfg)
+    x0_output: dict[str, object] = {}
+
+    def callback(_step: int, x0: object, _x: object, _total_steps: int) -> None:
+        x0_output["x0"] = x0
+
+    samples = guider.sample(
+        noise,
+        latent_image,
+        samplers.sampler_object(_comfy_sampling_choice(sampler_name)),
+        torch.tensor(sigmas, dtype=torch.float32),
+        denoise_mask=compat_latent.get("noise_mask"),
+        callback=callback,
+        disable_pbar=True,
+        seed=0 if seed is None else seed,
+    ).to(model_management.intermediate_device())
+    output = dict(compat_latent)
+    output.pop("downscale_ratio_spacial", None)
+    output.pop("downscale_ratio_temporal", None)
+    output["samples"] = samples
+    denoised = dict(output)
+    denoised["samples"] = x0_output.get("x0", samples)
+    return (
+        cast("dict[object, object]", from_comfy_multistream(output)),
+        cast("dict[object, object]", from_comfy_multistream(denoised)),
+    )
 
 
 def _compat_conditioning_hooks(value: object, input_id: str) -> object:
@@ -53,7 +142,7 @@ def _compat_conditioning_hooks(value: object, input_id: str) -> object:
                 )
             if not isinstance(declarations, ScheduledHooks):
                 raise TypeError(f"{input_id} scheduled hooks are malformed")
-            comfy_hooks = cast("Any", importlib.import_module("comfy.hooks"))
+            comfy_hooks = cast("Any", importlib.import_module("dinkster_comfy.hooks"))
             hooks = comfy_hooks.HookGroup()
             load_lora_file = native_implementation.__dict__["_load_lora_file"]
             for declaration in declarations.loras:

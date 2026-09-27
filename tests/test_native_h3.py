@@ -761,7 +761,7 @@ def test_compat_multistream_role_sidecar_round_trips_samples_and_masks(
             return self.tensors
 
     monkeypatch.setitem(
-        sys.modules, "comfy.nested_tensor", SimpleNamespace(NestedTensor=NestedTensor)
+        sys.modules, "dinkster_comfy.nested_tensor", SimpleNamespace(NestedTensor=NestedTensor)
     )
     samples = _streams()
     masks = MultiStreamLatent.from_pairs(
@@ -802,6 +802,59 @@ def test_compat_multistream_role_sidecar_round_trips_samples_and_masks(
         ),
     )
     assert "dinkster.multi_stream_roles@1" not in legacy_split
+
+
+def test_h3_image_to_video_uses_dinkster_comfy_clip_and_wire_latent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_native.families import minimax_h3
+
+    conditioning = object()
+
+    class CLIP:
+        def tokenize(self, prompt: str, *, images: list[object]) -> object:
+            assert prompt == "a lighthouse"
+            assert images == []
+            return "tokens"
+
+        def encode_from_tokens_scheduled(self, tokens: object) -> object:
+            assert tokens == "tokens"
+            return conditioning
+
+    CLIP.__module__ = "dinkster_comfy.sd"
+    monkeypatch.setitem(sys.modules, "dinkster_comfy.sd", SimpleNamespace(CLIP=CLIP))
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_comfy.model_management",
+        SimpleNamespace(intermediate_device=lambda: "cpu"),
+    )
+    monkeypatch.setattr(
+        minimax_h3,
+        "_torch",
+        lambda: SimpleNamespace(zeros=lambda shape, *, device: FakeTensor(tuple(shape), device)),
+    )
+
+    result = minimax_h3.NativeMiniMaxH3ImageToVideo.execute(
+        clip=CLIP(),
+        vae=object(),
+        prompt="a lighthouse",
+        width=64,
+        height=32,
+        length=5,
+    )
+
+    carrier = cast("Any", result["positive"])
+    assert carrier._dinkster_resident_payload.conditioning is conditioning
+    registry = TypeRegistry()
+    spec = register_conditioning_type(registry, resident_table=ResidencyTable())
+    assert spec.coerce is not None
+    wrapped = registry.wrap(CONDITIONING_TYPE_ID, spec.coerce(carrier))
+    assert spec.decode(spec.encode(wrapped.resolve())) is carrier
+    latent = cast("dict[str, Any]", result["latent"])
+    streams = cast("MultiStreamLatent[FakeTensor]", latent["samples"])
+    assert streams.roles == ("video", "audio")
+    assert streams.by_role("video").shape == (1, 24, 2, 2, 4)
+    assert streams.by_role("audio").shape == (1, 32, 2, 8)
 
 
 def test_h3_candidate_path_does_not_hash_or_open_asset(

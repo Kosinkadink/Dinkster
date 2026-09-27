@@ -75,11 +75,15 @@ def common_ksampler(
     compat_latent = cast("Mapping[object, object]", to_comfy_multistream(latent))
     roles = _compat_stream_roles(compat_latent)
     latent_image = compat_latent["samples"]
-    sample_module = cast("Any", importlib.import_module("comfy.sample"))
-    samplers = cast("Any", importlib.import_module("comfy.samplers"))
-    model_management = cast("Any", importlib.import_module("comfy.model_management"))
-    utils = cast("Any", importlib.import_module("comfy.utils"))
+    sample_module = cast("Any", importlib.import_module("dinkster_comfy.sample"))
+    samplers = cast("Any", importlib.import_module("dinkster_comfy.samplers"))
+    model_management = cast("Any", importlib.import_module("dinkster_comfy.model_management"))
+    utils = cast("Any", importlib.import_module("dinkster_comfy.utils"))
 
+    # A prior VAE residency transition can make the next load take a
+    # numerically different path. Normalize to the complete offload state so
+    # cold, warm, and fresh-process runs agree.
+    model_management.unload_model_and_clones(model)
     latent_image = sample_module.fix_empty_latent_channels(
         model,
         latent_image,
@@ -88,7 +92,7 @@ def common_ksampler(
     )
     stream_shapes: tuple[tuple[int, ...], ...] = ()
     if roles:
-        nested_type = importlib.import_module("comfy.nested_tensor").NestedTensor
+        nested_type = importlib.import_module("dinkster_comfy.nested_tensor").NestedTensor
         if type(latent_image) is not nested_type:
             raise TypeError("multi-stream LATENT samples must be an exact NestedTensor")
         streams = tuple(latent_image.unbind())
@@ -242,7 +246,7 @@ def model_unload(obj: object) -> None:
     "nothing to evict here", never an error.
     """
     try:
-        mm = cast("Any", importlib.import_module("comfy.model_management"))
+        mm = cast("Any", importlib.import_module("dinkster_comfy.model_management"))
     except Exception:  # noqa: BLE001 - not a comfy child
         return
     patcher = getattr(obj, "patcher", obj)  # CLIP/VAE carry one at .patcher

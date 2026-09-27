@@ -45,6 +45,7 @@ from ..native_arm_core import (
     Sequence,
     SetLatentMaskFromFrames,
     SetLatentMaskFromTimeRanges,
+    _is_exact_imported_type,
     _not_cancelled,
     _torch,
     cast,
@@ -63,7 +64,7 @@ from ..native_arm_runtime import (
     _torch_dtype,
 )
 from ..nodes_provider import _generation_provider_schema
-from .conditioning import _prepared_multistream_carrier
+from .conditioning import _comfy_resident_conditioning, _prepared_multistream_carrier
 from .latent import _adapt_multistream_latent, _latent_samples, _move_multistream_latent
 
 
@@ -1164,6 +1165,26 @@ def _empty_minimax_h3_target(width: int, height: int, length: int) -> object:
     return result["latent"]
 
 
+def _empty_dinkster_comfy_h3_target(width: int, height: int, length: int) -> object:
+    frame_count = max(5, length)
+    while frame_count % 17 != 5:
+        frame_count += 1
+    latent_frames = 2 if frame_count <= 5 else ((frame_count - 5) // 17) * 5 + 2
+    audio_frames = round(frame_count / 24 * 40)
+    torch = _torch()
+    device = importlib.import_module("dinkster_comfy.model_management").intermediate_device()
+    samples = importlib.import_module("dinkster_inference").MultiStreamLatent.from_pairs(
+        (
+            (
+                "video",
+                torch.zeros((1, 24, latent_frames, height // 16, width // 16), device=device),
+            ),
+            ("audio", torch.zeros((1, 32, 2, audio_frames), device=device)),
+        )
+    )
+    return {"samples": samples}
+
+
 class NativeMiniMaxH3ImageToVideo(MiniMaxH3ImageToVideo):
     @classmethod
     def execute(
@@ -1178,6 +1199,31 @@ class NativeMiniMaxH3ImageToVideo(MiniMaxH3ImageToVideo):
         first_frame: object = None,
         last_frame: object = None,
     ) -> Mapping[str, object]:
+        if (
+            _is_exact_imported_type(clip, "dinkster_comfy.sd", "CLIP")
+            and first_frame is None
+            and last_frame is None
+        ):
+            direct_clip = cast("Any", clip)
+            latent = _empty_dinkster_comfy_h3_target(width, height, length)
+            conditioning = direct_clip.encode_from_tokens_scheduled(
+                direct_clip.tokenize(prompt, images=[])
+            )
+            return cls.outputs(
+                positive=_comfy_resident_conditioning(
+                    conditioning,
+                    clip,
+                    (
+                        "dinkster.minimax_h3_image_to_video",
+                        prompt,
+                        str(width),
+                        str(height),
+                        str(length),
+                        str(id(clip)),
+                    ),
+                ),
+                latent=latent,
+            )
         latent = _empty_minimax_h3_target(width, height, length)
         if first_frame is None and last_frame is None:
             result = NativeMiniMaxH3T2VAConditioning.execute(

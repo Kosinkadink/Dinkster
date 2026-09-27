@@ -4,7 +4,47 @@
 
 from __future__ import annotations
 
+import hashlib
+from dataclasses import dataclass
 from typing import Any, cast
+
+
+@dataclass(frozen=True, slots=True)
+class _ComfyResidentConditioning:
+    conditioning: object
+    owner: object
+    fingerprint: str
+
+    @property
+    def _dinkster_resident_owner(self) -> object:
+        return self.owner
+
+    @property
+    def _dinkster_resident_fingerprint(self) -> str:
+        return self.fingerprint
+
+
+def _comfy_resident_conditioning(
+    conditioning: object,
+    owner: object,
+    producer_facts: tuple[str, ...],
+) -> object:
+    import dinkster_inference as inference
+
+    fingerprint = (
+        "comfy-conditioning:"
+        + hashlib.sha256("\n".join(producer_facts).encode("utf-8")).hexdigest()
+    )
+    return inference.ResidentConditioningCarrier(
+        _ComfyResidentConditioning(conditioning, owner, fingerprint)
+    )
+
+
+def _unwrap_comfy_resident_conditioning(value: object) -> object:
+    payload = getattr(value, "_dinkster_resident_payload", None)
+    if type(payload) is _ComfyResidentConditioning:
+        return payload.conditioning
+    return value
 
 
 def _resident_payload(value: object, inference: Any, name: str) -> Any:

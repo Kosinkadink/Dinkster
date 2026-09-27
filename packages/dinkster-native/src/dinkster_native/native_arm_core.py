@@ -927,6 +927,14 @@ def _torch() -> Any:
     return importlib.import_module("torch")
 
 
+def _is_exact_imported_type(value: object, module: str, name: str) -> bool:
+    value_type = type(value)
+    if value_type.__module__ != module or value_type.__name__ != name:
+        return False
+    expected = getattr(importlib.import_module(module), name)
+    return value_type is expected
+
+
 def _embedding_resource(
     inference_torch: Any,
     *,

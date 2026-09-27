@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from .families.conditioning import _comfy_resident_conditioning
 from .families.ltx import _ltxav_audio_codec
 from .families.wan21 import (
     NativeClipTextEncode,
@@ -18,11 +19,13 @@ from .native_arm_core import (
     _CONTROLNET_TEXT_METADATA_KEY,
     Any,
     AssetRef,
+    LoadCheckpoint,
     Mapping,
     MiniMaxMusic3TextEncode,
     NativeComponentHandle,
     Node,
     NodeSchema,
+    _is_exact_imported_type,
     _native_clip_options,
     _not_cancelled,
     _torch,
@@ -83,15 +86,11 @@ class GenerationLoadCheckpoint(NativeLoadCheckpoint):
 
     @classmethod
     def execute(cls, *, checkpoint: object) -> Mapping[str, object]:
-        loaded = NativeLoadCheckpoint.execute(checkpoint=checkpoint)
-        handle = _require_provider_runtime(loaded["model"], "model")
-        inference = importlib.import_module("dinkster_inference")
-        codec = _NativeCodecHandle(handle)
-        inference.require_inference_codec_handle(codec, "vae")
+        loaded = LoadCheckpoint.execute(checkpoint=checkpoint)
         return cls.outputs(
-            model=handle,
+            model=loaded["model"],
             clip=loaded["clip"],
-            vae=codec,
+            vae=loaded["vae"],
         )
 
 
@@ -922,6 +921,16 @@ class GenerationClipTextEncode(NativeClipTextEncode):
 
     @classmethod
     def execute(cls, *, text: str, clip: object) -> Mapping[str, object]:
+        if _is_exact_imported_type(clip, "dinkster_comfy.sd", "CLIP"):
+            direct_clip = cast("Any", clip)
+            conditioning = direct_clip.encode_from_tokens_scheduled(direct_clip.tokenize(text))
+            return cls.outputs(
+                conditioning=_comfy_resident_conditioning(
+                    conditioning,
+                    clip,
+                    ("dinkster.clip_text_encode", text, str(id(clip))),
+                )
+            )
         options = _native_clip_options(clip)
         clip = options.source
         if type(clip) is _LTXAVTextHandle:

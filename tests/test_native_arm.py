@@ -1512,7 +1512,7 @@ def test_serialized_legacy_scheduling_graph_validates_and_executes() -> None:
     assert "comfy.CreateHookKeyframe" not in schemas
 
 
-def test_native_generic_h3_component_loaders_publish_single_component_handles(
+def test_native_generic_h3_vae_and_model_loaders_publish_single_component_handles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     arm = _native_arm()
@@ -1547,20 +1547,6 @@ def test_native_generic_h3_component_loaders_publish_single_component_handles(
     with use_execution_context(
         ExecutionContext(
             "native",
-            "clip-identity",
-            diffusion_dtype="unloaded",
-            text_dtype="bfloat16",
-            vae_dtype="unloaded",
-        )
-    ):
-        clip = arm.NativeLoadClip.execute(
-            text_encoder=asset,
-            type="minimax",
-            device="default",
-        )["clip"]
-    with use_execution_context(
-        ExecutionContext(
-            "native",
             "vae-identity",
             diffusion_dtype="unloaded",
             text_dtype="unloaded",
@@ -1582,15 +1568,8 @@ def test_native_generic_h3_component_loaders_publish_single_component_handles(
             weight_dtype="default",
         )["model"]
 
-    assert clip is vae is model is handle
+    assert vae is model is handle
     assert calls == [
-        (
-            asset,
-            "qwen3vl-32b-conditioner",
-            "clip-identity",
-            torch,
-            {"compute_dtype": "bfloat16", "load_device": None},
-        ),
         (asset, "video-vae", "vae-identity", torch, {"compute_dtype": "float16"}),
         (
             asset,
@@ -12459,6 +12438,88 @@ def test_load_diffusion_routes_standalone_classic_ltxv_model(
     ]
 
 
+def test_minimax_h3_loaders_return_dinkster_comfy_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arm = _native_arm()
+    paths = tuple(
+        tmp_path / name
+        for name in (
+            "minimax_h3_dit.safetensors",
+            "minimax_h3_text.safetensors",
+            "minimax_h3_video_vae.safetensors",
+        )
+    )
+    for path in paths:
+        path.write_bytes(b"weights")
+    diffusion, text, vae = (_asset(path) for path in paths)
+    model = object()
+    clip = object()
+    state_dict = object()
+    metadata = object()
+
+    class VAE:
+        def __init__(self, *, sd: object, metadata: object) -> None:
+            assert sd is state_dict
+            assert metadata is globals_metadata
+
+        @staticmethod
+        def throw_exception_if_invalid() -> None:
+            pass
+
+    globals_metadata = metadata
+    clip_type = SimpleNamespace(MINIMAX=object())
+
+    def load_clip(**kwargs: object) -> object:
+        assert kwargs == {
+            "ckpt_paths": [str(text.local_path())],
+            "embedding_directory": [],
+            "clip_type": clip_type.MINIMAX,
+            "model_options": {},
+        }
+        return clip
+
+    def load_diffusion_model(path: str, *, model_options: object) -> object:
+        assert path == str(diffusion.local_path())
+        assert model_options == {}
+        return model
+
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_comfy.sd",
+        SimpleNamespace(
+            CLIPType=clip_type,
+            VAE=VAE,
+            load_clip=load_clip,
+            load_diffusion_model=load_diffusion_model,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_comfy.utils",
+        SimpleNamespace(
+            load_torch_file=lambda path, *, return_metadata: (
+                (state_dict, metadata)
+                if path == str(vae.local_path()) and return_metadata
+                else pytest.fail("unexpected VAE load")
+            )
+        ),
+    )
+
+    assert (
+        arm.NativeLoadClip.execute(text_encoder=text, type="minimax", device="default")["clip"]
+        is clip
+    )
+    assert arm.NativeLoadVae.execute(vae=vae)["vae"].__class__ is VAE
+    assert (
+        arm.NativeLoadDiffusionModel.execute(diffusion_model=diffusion, weight_dtype="default")[
+            "model"
+        ]
+        is model
+    )
+
+
 def test_generation_load_checkpoint_schema_takes_only_checkpoint() -> None:
     arm = _native_arm()
 
@@ -12469,74 +12530,23 @@ def test_generation_load_checkpoint_schema_takes_only_checkpoint() -> None:
     assert specs["checkpoint"].required is True
 
 
-def test_generation_load_checkpoint_preserves_runtime_codec_capabilities(
+def test_generation_load_checkpoint_returns_dinkster_comfy_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dinkster_inference import SEEDVR2_CODEC
-
     arm = _native_arm()
-    torch = FakeTorch()
-    calls: list[tuple[str, tuple[int, ...]]] = []
-
-    def encode_content(content: FakeTensor) -> FakeTensor:
-        calls.append(("encode", content.shape))
-        if len(content.shape) == 4:
-            return FakeTensor((content.shape[0], 16, 2, 2), "image-latent")
-        return FakeTensor((content.shape[0], 16, content.shape[2], 2, 2), "video-latent")
-
-    def decode_latent(latent: FakeTensor) -> FakeTensor:
-        calls.append(("decode", latent.shape))
-        return FakeTensor((latent.shape[0], 3, 16, 16), "decoded")
-
-    runtime = _runtime()
-    runtime.codec = SimpleNamespace(
-        descriptor=SEEDVR2_CODEC,
-        accepts_batched_video=True,
-        accepts_image_batch_latent=True,
-        manages_input_device=True,
-    )
-    runtime.encode_text = lambda _text: object()
-    runtime.sample = lambda *_args, **_kwargs: object()
-    runtime.encode_content = encode_content
-    runtime.decode_latent = decode_latent
-    handle = _handle(arm, runtime, torch)
+    model = object()
     clip = object()
-    monkeypatch.setattr(arm, "_torch", lambda: torch)
+    vae = object()
     monkeypatch.setattr(
-        arm.NativeLoadCheckpoint,
+        arm.LoadCheckpoint,
         "execute",
-        classmethod(lambda _cls, **_kwargs: {"model": handle, "clip": clip, "vae": object()}),
+        classmethod(lambda _cls, **_kwargs: {"model": model, "clip": clip, "vae": vae}),
     )
 
     loaded = arm.GenerationLoadCheckpoint.execute(checkpoint=object())
-    vae = loaded["vae"]
-    assert loaded["model"] is handle
+    assert loaded["model"] is model
     assert loaded["clip"] is clip
-    assert vae.accepts_batched_video is True
-    assert vae.accepts_image_batch_latent is True
-    assert vae.manages_input_device is True
-
-    encoded_image = arm.GenerationVAEEncode.execute(
-        pixels=FakeTensor((2, 16, 16, 3), "images"),
-        vae=vae,
-    )
-    encoded_video = arm.GenerationVAEEncode.execute(
-        pixels=FakeTensor((1, 2, 16, 16, 3), "video"),
-        vae=vae,
-    )
-    decoded = arm.GenerationVAEDecode.execute(
-        samples={"samples": encoded_image["latent"]["samples"]},
-        vae=vae,
-    )
-
-    assert encoded_image["latent"]["samples"].shape == (2, 16, 2, 2)
-    assert encoded_video["latent"]["samples"].shape == (1, 16, 2, 2, 2)
-    assert decoded["image"].shape == (2, 16, 16, 3)
-    assert calls == [
-        ("encode", (2, 3, 16, 16)),
-        ("encode", (1, 3, 2, 16, 16)),
-        ("decode", (2, 16, 2, 2)),
-    ]
+    assert loaded["vae"] is vae
 
 
 def test_bernini_schema_declares_optional_media_and_reference_autogrow() -> None:
@@ -16048,6 +16058,120 @@ def test_generation_sampler_keeps_basic_single_stream_materialization(
     assert forwarded["model"] is chain
 
 
+def test_generation_sampler_routes_dinkster_comfy_model_patcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_compat_comfy import sampling
+    from dinkster_native.families.conditioning import _comfy_resident_conditioning
+
+    arm = _native_arm()
+
+    class ModelPatcher:
+        pass
+
+    ModelPatcher.__module__ = "dinkster_comfy.model_patcher"
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_comfy.model_patcher",
+        SimpleNamespace(ModelPatcher=ModelPatcher),
+    )
+    forwarded: dict[str, object] = {}
+
+    def execute(**kwargs: object) -> Mapping[str, object]:
+        forwarded.update(kwargs)
+        return {"latent": "compat-sampled"}
+
+    monkeypatch.setattr(sampling.KSampler, "execute", staticmethod(execute))
+    model = ModelPatcher()
+    positive = [["positive", {}]]
+    negative = [["negative", {}]]
+    result = arm.GenerationKSampler.execute(
+        model=model,
+        seed=7,
+        steps=2,
+        cfg=5.0,
+        sampler_name="euler",
+        scheduler="normal",
+        positive=_comfy_resident_conditioning(positive, model, ("positive",)),
+        negative=_comfy_resident_conditioning(negative, model, ("negative",)),
+        latent_image={"samples": object()},
+        denoise=1.0,
+    )
+
+    assert result == {"latent": "compat-sampled"}
+    assert forwarded["model"] is model
+    assert forwarded["positive"] is positive
+    assert forwarded["negative"] is negative
+
+
+def test_generation_custom_sampler_routes_dinkster_comfy_model_patcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_compat_comfy import sampling
+    from dinkster_native.native_arm_core import sampler_wire_value
+
+    arm = _native_arm()
+
+    class ModelPatcher:
+        pass
+
+    ModelPatcher.__module__ = "dinkster_comfy.model_patcher"
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_comfy.model_patcher",
+        SimpleNamespace(ModelPatcher=ModelPatcher),
+    )
+    model = ModelPatcher()
+    monkeypatch.setattr(
+        sampling,
+        "calculate_sigmas",
+        lambda actual_model, scheduler, steps, denoise: (
+            (1.0, 0.5, 0.0)
+            if (actual_model, scheduler, steps, denoise) == (model, "simple", 2, 1.0)
+            else pytest.fail("unexpected scheduler inputs")
+        ),
+    )
+    sigmas = arm.GenerationBasicScheduler.execute(
+        model=model,
+        scheduler="simple",
+        steps=2,
+        denoise=1.0,
+    )["sigmas"]
+    forwarded: dict[str, object] = {}
+
+    def sample_custom(**kwargs: object) -> tuple[dict[str, str], dict[str, str]]:
+        forwarded.update(kwargs)
+        return {"samples": "sampled"}, {"samples": "denoised"}
+
+    monkeypatch.setattr(sampling, "sample_custom", sample_custom)
+    conditioning = object()
+    latent = {"samples": object()}
+    result = arm.GenerationSamplerCustomAdvanced.execute(
+        noise=arm.GenerationRandomNoise.execute(noise_seed=7)["noise"],
+        guider=arm.GenerationBasicGuider.execute(model=model, conditioning=conditioning)["guider"],
+        sampler=sampler_wire_value(
+            arm.GenerationKSamplerSelect.execute(sampler_name="res_multistep")["sampler"]
+        ),
+        sigmas=sigmas,
+        latent_image=latent,
+    )
+
+    assert result == {
+        "output": {"samples": "sampled"},
+        "denoised_output": {"samples": "denoised"},
+    }
+    assert forwarded == {
+        "model": model,
+        "seed": 7,
+        "conditioning": conditioning,
+        "negative": None,
+        "cfg": 1.0,
+        "sampler_name": "dinkster.res_multistep",
+        "sigmas": (1.0, 0.5, 0.0),
+        "latent": latent,
+    }
+
+
 def test_generation_sampler_routes_conditioning_through_single_stream_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -19040,6 +19164,51 @@ def test_generation_clip_text_encode_binds_qwen_component_identity(
     assert binding.identity == identity
     assert stripped.conditioning == carrier.conditioning
     assert events == ["stage", "encode"]
+
+
+def test_generation_clip_text_encode_uses_dinkster_comfy_clip_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arm = _native_arm()
+    conditioning = object()
+
+    class CLIP:
+        @staticmethod
+        def tokenize(text: str) -> object:
+            assert text == "a lighthouse"
+            return "tokens"
+
+        @staticmethod
+        def encode_from_tokens_scheduled(tokens: object) -> object:
+            assert tokens == "tokens"
+            return conditioning
+
+    CLIP.__module__ = "dinkster_comfy.sd"
+    monkeypatch.setitem(sys.modules, "dinkster_comfy.sd", SimpleNamespace(CLIP=CLIP))
+    result = arm.GenerationClipTextEncode.execute(text="a lighthouse", clip=CLIP())
+
+    carrier = cast("Any", result["conditioning"])
+    assert carrier._dinkster_resident_payload.conditioning is conditioning
+
+    from dinkster_inference import CONDITIONING_TYPE_ID, register_conditioning_type
+    from dinkster_values import ResidencyTable, TypeRegistry
+
+    registry = TypeRegistry()
+    spec = register_conditioning_type(registry, resident_table=ResidencyTable())
+    assert spec.coerce is not None
+    wrapped = registry.wrap(CONDITIONING_TYPE_ID, spec.coerce(carrier))
+    assert spec.decode(spec.encode(wrapped.resolve())) is carrier
+
+
+def test_generation_clip_text_encode_rejects_callable_lookalike() -> None:
+    arm = _native_arm()
+
+    class ClipLookalike:
+        tokenize = staticmethod(lambda _text: "tokens")
+        encode_from_tokens_scheduled = staticmethod(lambda _tokens: object())
+
+    with pytest.raises(TypeError):
+        arm.GenerationClipTextEncode.execute(text="a lighthouse", clip=ClipLookalike())
 
 
 def test_generation_clip_text_encode_uses_runtime_text_carrier_when_available(
@@ -29784,6 +29953,60 @@ def test_native_generic_wan21_loaders_publish_split_components(
             {"compute_dtype": "bfloat16"},
         ),
     ]
+
+
+def test_vae_decode_uses_dinkster_comfy_vae_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_inference import MultiStreamLatent
+    from dinkster_native import nodes_sampling_runtime
+
+    arm = _native_arm()
+    events: list[str] = []
+    latent = SimpleNamespace(is_nested=False)
+    samples = MultiStreamLatent.from_pairs((("video", latent), ("audio", object())))
+    image = SimpleNamespace(shape=(1, 16, 16, 3))
+
+    class VAE:
+        @staticmethod
+        def decode(value: object) -> object:
+            assert value is latent
+            return image
+
+    VAE.__module__ = "dinkster_comfy.sd"
+    monkeypatch.setitem(sys.modules, "dinkster_comfy.sd", SimpleNamespace(VAE=VAE))
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_comfy.model_management",
+        SimpleNamespace(
+            unload_all_models=lambda: None,
+            soft_empty_cache=lambda: None,
+        ),
+    )
+    monkeypatch.setattr(
+        nodes_sampling_runtime,
+        "_torch",
+        lambda: SimpleNamespace(
+            inference_mode=lambda: events.append("inference_mode") or nullcontext()
+        ),
+    )
+    result = arm.NativeVAEDecode.execute(samples={"samples": samples}, vae=VAE())
+
+    assert result["image"] is image
+    assert events == ["inference_mode"]
+
+
+def test_vae_decode_rejects_decode_lookalike() -> None:
+    arm = _native_arm()
+
+    class ClipLookalike:
+        decode = staticmethod(lambda _latent: object())
+
+    with pytest.raises(TypeError):
+        arm.NativeVAEDecode.execute(
+            samples={"samples": SimpleNamespace(is_nested=False)},
+            vae=ClipLookalike(),
+        )
 
 
 def test_vae_decode_cuda_oom_retries_tiled_with_default_geometry(

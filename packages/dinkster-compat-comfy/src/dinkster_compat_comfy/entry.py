@@ -124,7 +124,7 @@ def combo_choices() -> Mapping[str, Sequence[str]]:
     item, not this seam."""
     if _NATIVE_ONLY:
         return {"comfy.samplers": SAMPLER_CHOICES, "comfy.schedulers": SCHEDULER_CHOICES}
-    samplers = cast("Any", importlib.import_module("comfy.samplers"))
+    samplers = cast("Any", importlib.import_module("dinkster_comfy.samplers"))
     ksampler = getattr(samplers, "KSampler", None)
     sampler_names = getattr(ksampler, "SAMPLERS", None)
     scheduler_names = getattr(ksampler, "SCHEDULERS", None)

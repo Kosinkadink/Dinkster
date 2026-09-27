@@ -70,7 +70,9 @@ def test_compat_unload_preserves_manager_and_pool_accounting(
     )
     loaded = [other, target]
     monkeypatch.setitem(
-        sys.modules, "comfy.model_management", SimpleNamespace(current_loaded_models=loaded)
+        sys.modules,
+        "dinkster_comfy.model_management",
+        SimpleNamespace(current_loaded_models=loaded),
     )
     pool = make_pool(unload=resident_advisory_unload)
     rid = pool.rid_for(resident)
@@ -87,7 +89,7 @@ def test_compat_unload_preserves_manager_and_pool_accounting(
 def test_compat_unload_without_comfy_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     from dinkster_compat_comfy.pool import resident_advisory_unload
 
-    monkeypatch.setitem(sys.modules, "comfy.model_management", None)
+    monkeypatch.setitem(sys.modules, "dinkster_comfy.model_management", None)
     resident_advisory_unload(FakePatcher("cuda:0", 1000))
 
 
