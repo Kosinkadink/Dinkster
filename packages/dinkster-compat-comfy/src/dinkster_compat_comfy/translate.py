@@ -822,6 +822,9 @@ def from_comfy_multistream(value: object) -> object:
         return [from_comfy_multistream(item) for item in cast("list[object]", value)]
     if isinstance(value, tuple):
         return tuple(from_comfy_multistream(item) for item in cast("tuple[object, ...]", value))
+    multi_stream = importlib.import_module("dinkster_inference").MultiStreamLatent
+    if type(value) is multi_stream:
+        return cast("Any", value).map(from_comfy_multistream)
     detached = _detach_comfy_tensor(value)
     if detached is not value:
         return detached
@@ -844,7 +847,6 @@ def from_comfy_multistream(value: object) -> object:
         type(role) is not str or not role for role in role_tuple
     ):
         raise CompatError("NestedTensor LATENT output role count does not match its streams")
-    multi_stream = importlib.import_module("dinkster_inference").MultiStreamLatent
     output = dict(latent)
     output["samples"] = multi_stream.from_pairs(zip(role_tuple, payloads, strict=True))
     mask = output.get("noise_mask")

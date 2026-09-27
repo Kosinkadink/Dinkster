@@ -203,7 +203,19 @@ def test_comfy_output_tensors_are_detached(monkeypatch: pytest.MonkeyPatch) -> N
         lambda name: torch if name == "torch" else original_import(name),
     )
 
-    assert from_comfy_multistream({"samples": Tensor()}) == {"samples": detached}
+    result = cast(
+        "Mapping[str, object]",
+        from_comfy_multistream(
+            {
+                "samples": Tensor(),
+                "streams": MultiStreamLatent.from_pairs((("audio", Tensor()),)),
+            }
+        ),
+    )
+
+    assert result["samples"] is detached
+    streams = cast("MultiStreamLatent[object]", result["streams"])
+    assert streams.by_role("audio") is detached
 
 
 def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
