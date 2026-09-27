@@ -923,9 +923,7 @@ class GenerationClipTextEncode(NativeClipTextEncode):
         if _is_exact_imported_type(clip, "dinkster_comfy.sd", "CLIP"):
             direct_clip = cast("Any", clip)
             return cls.outputs(
-                conditioning=direct_clip.encode_from_tokens_scheduled(
-                    direct_clip.tokenize(text)
-                )
+                conditioning=direct_clip.encode_from_tokens_scheduled(direct_clip.tokenize(text))
             )
         options = _native_clip_options(clip)
         clip = options.source

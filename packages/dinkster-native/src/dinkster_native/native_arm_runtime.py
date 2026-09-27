@@ -1754,9 +1754,7 @@ def _bind_model_sampling_options(
     @wraps(execute)
     def wrapped(*args: _ExecuteP.args, **kwargs: _ExecuteP.kwargs) -> Mapping[str, object]:
         model = cast("Mapping[str, object]", kwargs).get("model")
-        if _is_exact_imported_type(
-            model, "dinkster_comfy.model_patcher", "ModelPatcher"
-        ):
+        if _is_exact_imported_type(model, "dinkster_comfy.model_patcher", "ModelPatcher"):
             return execute(*args, **kwargs)
         inference = importlib.import_module("dinkster_inference")
         if isinstance(model, inference.ApplicationChain):

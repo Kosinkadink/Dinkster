@@ -12507,13 +12507,17 @@ def test_minimax_h3_loaders_return_dinkster_comfy_values(
         ),
     )
 
-    assert arm.NativeLoadClip.execute(
-        text_encoder=text, type="minimax", device="default"
-    )["clip"] is clip
+    assert (
+        arm.NativeLoadClip.execute(text_encoder=text, type="minimax", device="default")["clip"]
+        is clip
+    )
     assert arm.NativeLoadVae.execute(vae=vae)["vae"].__class__ is VAE
-    assert arm.NativeLoadDiffusionModel.execute(
-        diffusion_model=diffusion, weight_dtype="default"
-    )["model"] is model
+    assert (
+        arm.NativeLoadDiffusionModel.execute(diffusion_model=diffusion, weight_dtype="default")[
+            "model"
+        ]
+        is model
+    )
 
 
 def test_generation_load_checkpoint_schema_takes_only_checkpoint() -> None:

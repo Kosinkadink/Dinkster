@@ -90,9 +90,7 @@ class GenerationKSampler(NativeKSampler):
         conditioning_batching: object = "auto",
         max_fused_lanes: int = 2,
     ) -> Mapping[str, object]:
-        if _is_exact_imported_type(
-            model, "dinkster_comfy.model_patcher", "ModelPatcher"
-        ):
+        if _is_exact_imported_type(model, "dinkster_comfy.model_patcher", "ModelPatcher"):
             compat_sampler = importlib.import_module("dinkster_compat_comfy.sampling").KSampler
             return compat_sampler.execute(
                 model=model,

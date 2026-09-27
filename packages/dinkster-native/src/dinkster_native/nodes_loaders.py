@@ -104,9 +104,7 @@ class NativeLoadClip(LoadClip):
             model_options = {}
             if device == "cpu":
                 torch = _torch()
-                model_options["load_device"] = model_options["offload_device"] = torch.device(
-                    "cpu"
-                )
+                model_options["load_device"] = model_options["offload_device"] = torch.device("cpu")
             clip = comfy_sd.load_clip(
                 ckpt_paths=[str(text_encoder.local_path())],
                 embedding_directory=[],

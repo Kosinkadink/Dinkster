@@ -190,9 +190,7 @@ def _run_child(command: str, checkpoint: Path, stock_root: Path | None) -> dict[
 def _compare(checkpoint: Path, stock_root: Path) -> None:
     revision = _git_revision(stock_root)
     if revision != COMFYUI_REVISION:
-        raise SystemExit(
-            f"stock root is {revision}, expected pinned ComfyUI {COMFYUI_REVISION}"
-        )
+        raise SystemExit(f"stock root is {revision}, expected pinned ComfyUI {COMFYUI_REVISION}")
     stock = _run_child("stock", checkpoint, stock_root)
     worker = _run_child("worker", checkpoint, None)
     fresh_worker = _run_child("worker", checkpoint, None)

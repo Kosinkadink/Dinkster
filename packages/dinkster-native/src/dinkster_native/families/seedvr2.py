@@ -160,9 +160,7 @@ def _decode_minimax_music3_audio(
         if not isinstance(latent, torch.Tensor):
             raise TypeError("samples['samples'] must be a torch.Tensor")
         audio = (
-            direct_vae.decode_tiled(
-                latent, tile_x=tile_size, tile_y=tile_size, overlap=overlap
-            )
+            direct_vae.decode_tiled(latent, tile_x=tile_size, tile_y=tile_size, overlap=overlap)
             if tile_size is not None
             else direct_vae.decode(latent)
         ).movedim(-1, 1)
