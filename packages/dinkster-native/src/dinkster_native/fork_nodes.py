@@ -11,35 +11,19 @@ from dinkster_assets import AssetRef
 from dinkster_nodes_generation.nodes import (
     CLIPTextEncode,
     EmptyLatentImage,
+    EmptyMiniMaxH3AV,
     KSampler,
     LoadCheckpoint,
+    LoadClip,
     LoadDiffusionModel,
+    LoadVAE,
+    MiniMaxH3ImageToVideo,
+    MiniMaxH3T2VAConditioning,
+    SeparateAVLatent,
     VAEDecode,
+    VAEDecodeAudio,
 )
-from dinkster_schema import (
-    AssetWidget,
-    ComboWidget,
-    InputSpec,
-    Node,
-    NodeSchema,
-    NumberWidget,
-    OutputSpec,
-    StringWidget,
-    TypeExpr,
-)
-
-MODEL = TypeExpr.concrete("dinkster.model")
-CLIP = TypeExpr.concrete("dinkster.clip")
-VAE = TypeExpr.concrete("dinkster.vae")
-LATENT = TypeExpr.concrete("dinkster.latent")
-CONDITIONING = TypeExpr.concrete("dinkster.conditioning")
-IMAGE = TypeExpr.concrete("dinkster.image")
-AUDIO = TypeExpr.concrete("comfy.AUDIO")
-ASSET = TypeExpr.concrete("dinkster.asset")
-INT = TypeExpr.concrete("core.int")
-STRING = TypeExpr.concrete("core.string")
-BOOLEAN = TypeExpr.concrete("core.boolean")
-COMBO = TypeExpr.concrete("core.combo")
+from dinkster_schema import Node
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,40 +116,9 @@ class GenerationLoadDiffusionModel(LoadDiffusionModel):
         return cls.outputs(model=model)
 
 
-class NativeLoadClip(Node):
+class NativeLoadClip(LoadClip):
     @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="dinkster.load_clip",
-            display_name="Load CLIP",
-            category="model/loaders",
-            inputs=(
-                InputSpec(
-                    "text_encoder",
-                    ASSET,
-                    widget=AssetWidget(
-                        accept=("application/octet-stream",), kind="model/text-encoder"
-                    ),
-                ),
-                InputSpec(
-                    "type",
-                    COMBO,
-                    default="minimax",
-                    widget=ComboWidget(options=("stable_diffusion", "minimax")),
-                ),
-                InputSpec(
-                    "device",
-                    COMBO,
-                    default="default",
-                    widget=ComboWidget(options=("default", "cpu")),
-                ),
-            ),
-            outputs=(OutputSpec("clip", CLIP),),
-            aliases=("CLIPLoader",),
-        )
-
-    @classmethod
-    def execute(
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
         cls,
         *,
         text_encoder: object,
@@ -192,27 +145,11 @@ class NativeLoadClip(Node):
         return cls.outputs(clip=clip)
 
 
-class NativeLoadVae(Node):
+class NativeLoadVae(LoadVAE):
     @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="dinkster.load_vae",
-            display_name="Load VAE",
-            category="model/loaders",
-            inputs=(
-                InputSpec(
-                    "vae",
-                    ASSET,
-                    widget=AssetWidget(accept=("application/octet-stream",), kind="model/vae"),
-                ),
-                InputSpec("pixel_space", BOOLEAN, required=False, default=False, advanced=True),
-            ),
-            outputs=(OutputSpec("vae", VAE),),
-            aliases=("VAELoader",),
-        )
-
-    @classmethod
-    def execute(cls, *, vae: object, pixel_space: bool = False) -> Mapping[str, object]:
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, vae: object, pixel_space: bool = False
+    ) -> Mapping[str, object]:
         if pixel_space:
             raise ValueError("pixel-space codecs are not supported")
         if not isinstance(vae, AssetRef):
@@ -351,97 +288,28 @@ def _h3_shape(width: int, height: int, frame_count: int) -> object:
     )
 
 
-class NativeEmptyMiniMaxH3AV(Node):
+class NativeEmptyMiniMaxH3AV(EmptyMiniMaxH3AV):
     @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="dinkster.empty_minimax_h3_av",
-            display_name="Empty MiniMax H3 AV Latent",
-            category="minimax h3",
-            inputs=(
-                InputSpec(
-                    "width",
-                    INT,
-                    default=1344,
-                    widget=NumberWidget(min=32, max=16384, step=32),
-                ),
-                InputSpec(
-                    "height",
-                    INT,
-                    default=768,
-                    widget=NumberWidget(min=32, max=16384, step=32),
-                ),
-                InputSpec(
-                    "frame_count",
-                    INT,
-                    default=124,
-                    widget=NumberWidget(min=5, max=3600, step=17),
-                ),
-            ),
-            outputs=(OutputSpec("latent", LATENT),),
-            aliases=("EmptyMiniMaxH3LatentAV",),
-            dispatch_affinity="native",
-        )
-
-    @classmethod
-    def execute(cls, *, width: int, height: int, frame_count: int) -> Mapping[str, object]:
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, width: int, height: int, frame_count: int
+    ) -> Mapping[str, object]:
         return cls.outputs(latent={"samples": _h3_shape(width, height, frame_count)})
 
 
-class NativeMiniMaxH3T2VAConditioning(Node):
+class NativeMiniMaxH3T2VAConditioning(MiniMaxH3T2VAConditioning):
     @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="dinkster.minimax_h3_t2va_conditioning",
-            display_name="MiniMax H3 T2VA Conditioning",
-            category="minimax h3/conditioning",
-            inputs=(
-                InputSpec("clip", CLIP),
-                InputSpec("target", LATENT),
-                InputSpec("prompt", STRING, widget=StringWidget(multiline=True)),
-            ),
-            outputs=(OutputSpec("conditioning", CONDITIONING),),
-            dispatch_affinity="native",
-        )
-
-    @classmethod
-    def execute(cls, *, clip: object, target: object, prompt: str) -> Mapping[str, object]:
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, clip: object, target: object, prompt: str
+    ) -> Mapping[str, object]:
         del target
         direct = cast("Any", clip)
         conditioning = direct.encode_from_tokens_scheduled(direct.tokenize(prompt, images=[]))
         return cls.outputs(conditioning=_resident_conditioning(conditioning, clip))
 
 
-class NativeMiniMaxH3ImageToVideo(Node):
+class NativeMiniMaxH3ImageToVideo(MiniMaxH3ImageToVideo):
     @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="dinkster.minimax_h3_image_to_video",
-            display_name="MiniMax H3 Image to Video",
-            category="minimax h3/conditioning",
-            inputs=(
-                InputSpec("clip", CLIP),
-                InputSpec("vae", VAE),
-                InputSpec("prompt", STRING, widget=StringWidget(multiline=True)),
-                InputSpec(
-                    "width", INT, default=1344, widget=NumberWidget(min=32, max=16384, step=32)
-                ),
-                InputSpec(
-                    "height", INT, default=768, widget=NumberWidget(min=32, max=16384, step=32)
-                ),
-                InputSpec(
-                    "length", INT, default=124, widget=NumberWidget(min=5, max=3600, step=17)
-                ),
-                InputSpec("first_frame", IMAGE, required=False, default=None),
-                InputSpec("last_frame", IMAGE, required=False, default=None),
-            ),
-            outputs=(OutputSpec("positive", CONDITIONING), OutputSpec("latent", LATENT)),
-            aliases=("MiniMaxH3ImageToVideo",),
-            dispatch_affinity="native",
-        )
-
-    @classmethod
-    def execute(
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
         cls,
         *,
         clip: object,
@@ -463,19 +331,11 @@ class NativeMiniMaxH3ImageToVideo(Node):
         return {"positive": conditioned["conditioning"], "latent": latent}
 
 
-class NativeSeparateAVLatent(Node):
+class NativeSeparateAVLatent(SeparateAVLatent):
     @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="dinkster.separate_av_latent",
-            display_name="Separate Audio/Video Latent",
-            category="latent/multi-stream",
-            inputs=(InputSpec("latent", LATENT),),
-            outputs=(OutputSpec("video_latent", LATENT), OutputSpec("audio_latent", LATENT)),
-        )
-
-    @classmethod
-    def execute(cls, *, latent: object) -> Mapping[str, object]:
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, latent: object
+    ) -> Mapping[str, object]:
         if not isinstance(latent, Mapping):
             raise TypeError("latent must be a mapping")
         source = dict(cast("Mapping[object, object]", latent))
@@ -487,21 +347,11 @@ class NativeSeparateAVLatent(Node):
         return cls.outputs(video_latent=video, audio_latent=audio)
 
 
-class NativeVAEDecodeAudio(Node):
+class NativeVAEDecodeAudio(VAEDecodeAudio):
     @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            node_type="dinkster.vae_decode_audio",
-            display_name="VAE Decode Audio",
-            category="model/latent",
-            inputs=(InputSpec("samples", LATENT), InputSpec("vae", VAE)),
-            outputs=(OutputSpec("audio", AUDIO),),
-            aliases=("VAEDecodeAudio",),
-            dispatch_affinity="native",
-        )
-
-    @classmethod
-    def execute(cls, *, samples: object, vae: object) -> Mapping[str, object]:
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, samples: object, vae: object
+    ) -> Mapping[str, object]:
         if not isinstance(samples, Mapping):
             raise TypeError("samples must be a latent mapping")
         latent = cast("Mapping[object, object]", samples)["samples"]

@@ -646,6 +646,173 @@ class LoadDiffusionModel(_SchemaOnlyNode):
         )
 
 
+class LoadClip(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.load_clip",
+            display_name="Load CLIP",
+            category="model/loaders",
+            inputs=(
+                InputSpec(
+                    "text_encoder",
+                    ASSET,
+                    widget=AssetWidget(
+                        accept=("application/octet-stream",), kind="model/text-encoder"
+                    ),
+                ),
+                InputSpec(
+                    "type",
+                    COMBO,
+                    default="minimax",
+                    widget=ComboWidget(options=("stable_diffusion", "minimax")),
+                ),
+                InputSpec(
+                    "device",
+                    COMBO,
+                    default="default",
+                    widget=ComboWidget(options=("default", "cpu")),
+                ),
+            ),
+            outputs=(OutputSpec("clip", CLIP),),
+            aliases=("CLIPLoader",),
+        )
+
+
+class LoadVAE(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.load_vae",
+            display_name="Load VAE",
+            category="model/loaders",
+            inputs=(
+                InputSpec(
+                    "vae",
+                    ASSET,
+                    widget=AssetWidget(accept=("application/octet-stream",), kind="model/vae"),
+                ),
+                InputSpec("pixel_space", BOOLEAN, required=False, default=False, advanced=True),
+            ),
+            outputs=(OutputSpec("vae", VAE),),
+            aliases=("VAELoader",),
+        )
+
+
+class EmptyMiniMaxH3AV(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.empty_minimax_h3_av",
+            display_name="Empty MiniMax H3 AV Latent",
+            category="minimax h3",
+            inputs=(
+                InputSpec(
+                    "width",
+                    INT,
+                    default=1344,
+                    widget=NumberWidget(min=32, max=16384, step=32),
+                ),
+                InputSpec(
+                    "height",
+                    INT,
+                    default=768,
+                    widget=NumberWidget(min=32, max=16384, step=32),
+                ),
+                InputSpec(
+                    "frame_count",
+                    INT,
+                    default=124,
+                    widget=NumberWidget(min=5, max=3600, step=17),
+                ),
+            ),
+            outputs=(OutputSpec("latent", LATENT),),
+            aliases=("EmptyMiniMaxH3LatentAV",),
+            dispatch_affinity="native",
+        )
+
+
+class MiniMaxH3T2VAConditioning(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.minimax_h3_t2va_conditioning",
+            display_name="MiniMax H3 T2VA Conditioning",
+            category="minimax h3/conditioning",
+            inputs=(
+                InputSpec("clip", CLIP),
+                InputSpec("target", LATENT),
+                InputSpec("prompt", STRING, widget=StringWidget(multiline=True)),
+            ),
+            outputs=(OutputSpec("conditioning", CONDITIONING),),
+            dispatch_affinity="native",
+        )
+
+
+class MiniMaxH3ImageToVideo(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.minimax_h3_image_to_video",
+            display_name="MiniMax H3 Image to Video",
+            category="minimax h3/conditioning",
+            inputs=(
+                InputSpec("clip", CLIP),
+                InputSpec("vae", VAE),
+                InputSpec("prompt", STRING, widget=StringWidget(multiline=True)),
+                InputSpec(
+                    "width",
+                    INT,
+                    default=1344,
+                    widget=NumberWidget(min=32, max=16384, step=32),
+                ),
+                InputSpec(
+                    "height",
+                    INT,
+                    default=768,
+                    widget=NumberWidget(min=32, max=16384, step=32),
+                ),
+                InputSpec(
+                    "length",
+                    INT,
+                    default=124,
+                    widget=NumberWidget(min=5, max=3600, step=17),
+                ),
+                InputSpec("first_frame", IMAGE, required=False, default=None),
+                InputSpec("last_frame", IMAGE, required=False, default=None),
+            ),
+            outputs=(OutputSpec("positive", CONDITIONING), OutputSpec("latent", LATENT)),
+            aliases=("MiniMaxH3ImageToVideo",),
+            dispatch_affinity="native",
+        )
+
+
+class SeparateAVLatent(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.separate_av_latent",
+            display_name="Separate Audio/Video Latent",
+            category="latent/multi-stream",
+            inputs=(InputSpec("latent", LATENT),),
+            outputs=(OutputSpec("video_latent", LATENT), OutputSpec("audio_latent", LATENT)),
+        )
+
+
+class VAEDecodeAudio(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.vae_decode_audio",
+            display_name="VAE Decode Audio",
+            category="model/latent",
+            inputs=(InputSpec("samples", LATENT), InputSpec("vae", VAE)),
+            outputs=(OutputSpec("audio", AUDIO),),
+            aliases=("VAEDecodeAudio",),
+            dispatch_affinity="native",
+        )
+
+
 class LoadDiffusionComponents(_SchemaOnlyNode):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -5749,6 +5916,13 @@ GENERATION_NODES: tuple[type[Node], ...] = (
     SetControlNetUnionType,
     LoadCheckpointStack,
     LoadDiffusionModel,
+    LoadClip,
+    LoadVAE,
+    EmptyMiniMaxH3AV,
+    MiniMaxH3T2VAConditioning,
+    MiniMaxH3ImageToVideo,
+    SeparateAVLatent,
+    VAEDecodeAudio,
     LoadDiffusionComponents,
     LoadLTXAVTextEncoder,
     LoadLTXAVAudioVAE,
@@ -5912,6 +6086,13 @@ _SUPPORTED_SCHEMA_NODE_IDS = frozenset(
     {
         "dinkster.load_checkpoint",
         "dinkster.load_diffusion_model",
+        "dinkster.load_clip",
+        "dinkster.load_vae",
+        "dinkster.empty_minimax_h3_av",
+        "dinkster.minimax_h3_t2va_conditioning",
+        "dinkster.minimax_h3_image_to_video",
+        "dinkster.separate_av_latent",
+        "dinkster.vae_decode_audio",
         "dinkster.clip_text_encode",
         "dinkster.empty_latent_image",
         "dinkster.ksampler",
