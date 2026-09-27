@@ -730,6 +730,7 @@ _MULTI_STREAM_INPUTS: Mapping[str, frozenset[str]] = {
     "KSampler": frozenset({"latent_image"}),
     "LTXVConcatAVLatent": frozenset({"video_latent", "audio_latent"}),
     "LTXVSeparateAVLatent": frozenset({"av_latent"}),
+    "SamplerCustomAdvanced": frozenset({"latent_image"}),
 }
 _FIXED_AV_PRODUCERS = frozenset(
     {

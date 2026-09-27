@@ -28,6 +28,7 @@ from dinkster_compat_comfy import (
 )
 from dinkster_engine import Engine, EngineEvent, ExecutionError
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, validate
+from dinkster_inference import MultiStreamLatent
 from dinkster_protocol import ExportSnapshot, LazyStatusInvocation
 from dinkster_schema import (
     BooleanWidget,
@@ -164,6 +165,53 @@ class V1Changed:
     def roll(self, seed):  # noqa: ANN001, ANN201
         type(self).rolls += 1
         return (seed + 1,)
+
+
+def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NestedTensor:
+        def __init__(self, streams: tuple[object, ...]) -> None:
+            self.streams = streams
+
+        def unbind(self) -> tuple[object, ...]:
+            return self.streams
+
+    class SamplerCustomAdvanced:
+        RETURN_TYPES = ("LATENT",)
+        FUNCTION = "sample"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"latent_image": ("LATENT",)}}
+
+        def sample(self, latent_image):  # noqa: ANN001, ANN201
+            assert type(latent_image["samples"]) is NestedTensor
+            assert latent_image["dinkster.multi_stream_roles@1"] == {
+                "version": 1,
+                "roles": ("video", "audio"),
+            }
+            return (latent_image,)
+
+    original_import = importlib.import_module
+    nested_module = type("NestedModule", (), {"NestedTensor": NestedTensor})
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: (
+            nested_module if name == "dinkster_comfy.nested_tensor" else original_import(name)
+        ),
+    )
+    video, audio = object(), object()
+    latent = {"samples": MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))}
+
+    node = translate_node("SamplerCustomAdvanced", SamplerCustomAdvanced, CompatTranslation())
+    result = cast("Mapping[str, object]", node.execute(latent_image=latent))
+    output = cast("Mapping[str, MultiStreamLatent[object]]", result["latent"])["samples"]
+
+    assert output.roles == ("video", "audio")
+    assert output.by_role("video") is video
+    assert output.by_role("audio") is audio
 
 
 # --- translation: schema shape ------------------------------------------
