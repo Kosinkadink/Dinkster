@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from .families.conditioning import _comfy_resident_conditioning
 from .families.ltx import _ltxav_audio_codec
 from .families.wan21 import (
     NativeClipTextEncode,
@@ -922,8 +923,13 @@ class GenerationClipTextEncode(NativeClipTextEncode):
     def execute(cls, *, text: str, clip: object) -> Mapping[str, object]:
         if _is_exact_imported_type(clip, "dinkster_comfy.sd", "CLIP"):
             direct_clip = cast("Any", clip)
+            conditioning = direct_clip.encode_from_tokens_scheduled(direct_clip.tokenize(text))
             return cls.outputs(
-                conditioning=direct_clip.encode_from_tokens_scheduled(direct_clip.tokenize(text))
+                conditioning=_comfy_resident_conditioning(
+                    conditioning,
+                    clip,
+                    ("dinkster.clip_text_encode", text, str(id(clip))),
+                )
             )
         options = _native_clip_options(clip)
         clip = options.source

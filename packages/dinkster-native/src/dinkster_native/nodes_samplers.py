@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .families.conditioning import _unwrap_comfy_resident_conditioning
 from .native_arm_core import (
     _DISABLE_CFG1_OPTIMIZATION,
     ALIGN_YOUR_STEPS_NOISE_LEVELS,
@@ -99,8 +100,8 @@ class GenerationKSampler(NativeKSampler):
                 cfg=cfg,
                 sampler_name=sampler_name,
                 scheduler=scheduler,
-                positive=positive,
-                negative=negative,
+                positive=_unwrap_comfy_resident_conditioning(positive),
+                negative=_unwrap_comfy_resident_conditioning(negative),
                 latent_image=latent_image,
                 denoise=denoise,
                 segment=segment,

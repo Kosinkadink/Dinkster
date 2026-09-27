@@ -852,7 +852,13 @@ def test_h3_image_to_video_uses_dinkster_comfy_clip_and_nested_latent(
         length=5,
     )
 
-    assert result["positive"] is conditioning
+    carrier = cast("Any", result["positive"])
+    assert carrier._dinkster_resident_payload.conditioning is conditioning
+    registry = TypeRegistry()
+    spec = register_conditioning_type(registry, resident_table=ResidencyTable())
+    assert spec.coerce is not None
+    wrapped = registry.wrap(CONDITIONING_TYPE_ID, spec.coerce(carrier))
+    assert spec.decode(spec.encode(wrapped.resolve())) is carrier
     latent = cast("dict[str, Any]", result["latent"])
     nested = cast("NestedTensor", latent["samples"])
     assert cast("FakeTensor", nested.tensors[0]).shape == (1, 24, 2, 2, 4)

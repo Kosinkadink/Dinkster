@@ -64,7 +64,7 @@ from ..native_arm_runtime import (
     _torch_dtype,
 )
 from ..nodes_provider import _generation_provider_schema
-from .conditioning import _prepared_multistream_carrier
+from .conditioning import _comfy_resident_conditioning, _prepared_multistream_carrier
 from .latent import _adapt_multistream_latent, _latent_samples, _move_multistream_latent
 
 
@@ -1210,7 +1210,21 @@ class NativeMiniMaxH3ImageToVideo(MiniMaxH3ImageToVideo):
             conditioning = direct_clip.encode_from_tokens_scheduled(
                 direct_clip.tokenize(prompt, images=[])
             )
-            return cls.outputs(positive=conditioning, latent=latent)
+            return cls.outputs(
+                positive=_comfy_resident_conditioning(
+                    conditioning,
+                    clip,
+                    (
+                        "dinkster.minimax_h3_image_to_video",
+                        prompt,
+                        str(width),
+                        str(height),
+                        str(length),
+                        str(id(clip)),
+                    ),
+                ),
+                latent=latent,
+            )
         latent = _empty_minimax_h3_target(width, height, length)
         if first_frame is None and last_frame is None:
             result = NativeMiniMaxH3T2VAConditioning.execute(

@@ -16062,6 +16062,7 @@ def test_generation_sampler_routes_dinkster_comfy_model_patcher(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster_compat_comfy import sampling
+    from dinkster_native.families.conditioning import _comfy_resident_conditioning
 
     arm = _native_arm()
 
@@ -16082,6 +16083,8 @@ def test_generation_sampler_routes_dinkster_comfy_model_patcher(
 
     monkeypatch.setattr(sampling.KSampler, "execute", staticmethod(execute))
     model = ModelPatcher()
+    positive = [["positive", {}]]
+    negative = [["negative", {}]]
     result = arm.GenerationKSampler.execute(
         model=model,
         seed=7,
@@ -16089,14 +16092,16 @@ def test_generation_sampler_routes_dinkster_comfy_model_patcher(
         cfg=5.0,
         sampler_name="euler",
         scheduler="normal",
-        positive=[],
-        negative=[],
+        positive=_comfy_resident_conditioning(positive, model, ("positive",)),
+        negative=_comfy_resident_conditioning(negative, model, ("negative",)),
         latent_image={"samples": object()},
         denoise=1.0,
     )
 
     assert result == {"latent": "compat-sampled"}
     assert forwarded["model"] is model
+    assert forwarded["positive"] is positive
+    assert forwarded["negative"] is negative
 
 
 def test_generation_sampler_routes_conditioning_through_single_stream_runtime(
@@ -19114,7 +19119,17 @@ def test_generation_clip_text_encode_uses_dinkster_comfy_clip_contract(
     monkeypatch.setitem(sys.modules, "dinkster_comfy.sd", SimpleNamespace(CLIP=CLIP))
     result = arm.GenerationClipTextEncode.execute(text="a lighthouse", clip=CLIP())
 
-    assert result["conditioning"] is conditioning
+    carrier = cast("Any", result["conditioning"])
+    assert carrier._dinkster_resident_payload.conditioning is conditioning
+
+    from dinkster_inference import CONDITIONING_TYPE_ID, register_conditioning_type
+    from dinkster_values import ResidencyTable, TypeRegistry
+
+    registry = TypeRegistry()
+    spec = register_conditioning_type(registry, resident_table=ResidencyTable())
+    assert spec.coerce is not None
+    wrapped = registry.wrap(CONDITIONING_TYPE_ID, spec.coerce(carrier))
+    assert spec.decode(spec.encode(wrapped.resolve())) is carrier
 
 
 def test_generation_clip_text_encode_rejects_callable_lookalike() -> None:
