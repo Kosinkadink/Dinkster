@@ -6,6 +6,7 @@ import importlib
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
+from dinkster_native.fork_nodes import FORK_NODES
 from dinkster_native.native import merge_native_nodes, register_native_types
 from dinkster_schema import Node
 from dinkster_values import TypeRegistry
@@ -17,6 +18,7 @@ from .pool import default_pool
 
 _TRANSLATION = load_comfyui_nodes()
 COMFY_NODES: tuple[type[Node], ...] = merge_native_nodes(_TRANSLATION.node_classes)
+ARM_NODES = {"native": FORK_NODES}
 
 
 def translation_skips() -> Mapping[str, CompatGateDiagnostic]:
