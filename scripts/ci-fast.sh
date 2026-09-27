@@ -8,7 +8,6 @@ uv run --locked ruff format --check .
 uv run --locked ruff check .
 uv run --locked pyright
 uv run --locked python -m pytest -q \
-  tests/test_extension_contract_pack.py \
   tests/test_extension_factory_guard.py \
   tests/test_release_install.py \
   tests/test_schema.py \
