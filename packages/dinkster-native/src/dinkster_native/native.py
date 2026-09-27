@@ -65,10 +65,32 @@ NATIVE_NODES: tuple[type[Node], ...] = (
     GenerationMeshToModel3D,
 )
 
+# These schema packs are composed in the host process, while the compatibility
+# worker translates ComfyUI application nodes in isolation. Keep their legacy
+# names here so the translated twins do not create ambiguous prompt aliases.
+FOUNDATION_CLAIMED_V1_NAMES: tuple[str, ...] = (
+    "PrimitiveInt",
+    "PrimitiveFloat",
+    "PrimitiveString",
+    "PrimitiveStringMultiline",
+    "PrimitiveBoolean",
+    "CreateList",
+    "ComfyMathExpression",
+    "ComfySwitchNode",
+)
+MEDIA_IO_CLAIMED_V1_NAMES: tuple[str, ...] = (
+    "LoadImage",
+    "SaveImage",
+    "CreateVideo",
+    "SaveVideo",
+)
+
 
 def merge_native_nodes(translated: Iterable[type[Node]]) -> tuple[type[Node], ...]:
     """Replace translated nodes claimed by the fork-backed native nodes."""
-    claimed: set[str] = set()
+    claimed = {
+        f"comfy.{name}" for name in (*FOUNDATION_CLAIMED_V1_NAMES, *MEDIA_IO_CLAIMED_V1_NAMES)
+    }
     for node in NATIVE_NODES:
         schema = node.schema()
         claimed.add(schema.node_type)

@@ -157,6 +157,18 @@ def test_scalar_or_list_match_inputs_share_the_unconstrained_t_contract() -> Non
         assert item.type == TypeExpr.variable("T"), name
 
 
+def test_compat_translation_claims_match_always_composed_schema_aliases() -> None:
+    from dinkster_compat_comfy.native import (
+        FOUNDATION_CLAIMED_V1_NAMES,
+        MEDIA_IO_CLAIMED_V1_NAMES,
+    )
+
+    foundation = {alias for node in FOUNDATION_NODES for alias in node.schema().aliases}
+    media = {alias for node in MEDIA_IO_NODES for alias in node.schema().aliases}
+    assert set(FOUNDATION_CLAIMED_V1_NAMES) == foundation
+    assert set(MEDIA_IO_CLAIMED_V1_NAMES) == media
+
+
 def test_primitive_wire_presentation() -> None:
     """Each primitive's single input is optional-with-default and carries
     its presentation contract: int gets the control-after-generate controller,
