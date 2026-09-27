@@ -10,6 +10,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 from dinkster_assets import AssetRef, digest_file
+from dinkster_compat_comfy.translate import CompatTranslation
 from dinkster_inference import MultiStreamLatent, ResidentConditioningCarrier
 from dinkster_native import fork_nodes
 from dinkster_native.native import register_native_types
@@ -150,6 +151,19 @@ def test_worker_unwraps_resident_conditioning_for_node_consumers() -> None:
     assert result.error is None, result.error
     assert result.outputs is not None
     assert result.outputs["count"].resolve() == 1
+
+
+def test_compat_sampler_boundary_values_remain_process_resident() -> None:
+    type_ids = ("comfy.GUIDER", "comfy.NOISE", "comfy.SAMPLER", "comfy.SIGMAS")
+    translation = CompatTranslation()
+    translation.opaque_types.update(type_ids)
+    registry = TypeRegistry()
+    translation.register_types(registry)
+
+    for type_id in type_ids:
+        value = object()
+        spec = registry.spec(type_id)
+        assert spec.decode(spec.encode(value)) is value
 
 
 def test_fork_loaders_call_dinkster_comfy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -28,9 +28,13 @@ DEFAULT_RESIDENT_V1_TYPES = frozenset(
         "PHOTOMAKER",
         "MOGE_MODEL",
         "BACKGROUND_REMOVAL",
+        "GUIDER",
+        "NOISE",
+        "SAMPLER",
+        "SIGMAS",
     }
 )
-"""v1 types whose values are loaded hardware state, not data."""
+"""v1 types whose values are process-bound runtime state, not portable data."""
 
 
 __all__ = [
