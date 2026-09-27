@@ -58,6 +58,8 @@ from dinkster_memory import (
 )
 from dinkster_protocol import (
     WORKGROUP_CAPABILITY,
+    AttentionCapabilityEvidence,
+    AttentionRouteToken,
     BeginWorkGroup,
     CommitWorkGroup,
     CompatGateDiagnostic,
@@ -219,6 +221,34 @@ PackLoad: TypeAlias = tuple[
 ]
 
 
+class AttentionRouteDiscoveryError(RuntimeError):
+    """The installed native runtime could not produce valid route evidence."""
+
+
+def _discover_attention_runtime(
+    import_module: Callable[[str], object] = importlib.import_module,
+) -> tuple[object, AttentionCapabilityEvidence, AttentionRouteToken]:
+    try:
+        module = import_module("dinkster_native.attention")
+        factory = getattr(module, "create_attention_runtime", None)
+        if not callable(factory):
+            raise AttentionRouteDiscoveryError("native attention runtime has no factory")
+        runtime = factory()
+        capabilities = getattr(runtime, "capabilities", None)
+        token = getattr(runtime, "route_token", None)
+    except AttentionRouteDiscoveryError:
+        raise
+    except Exception as exc:
+        raise AttentionRouteDiscoveryError("native attention discovery failed") from exc
+    if not isinstance(capabilities, AttentionCapabilityEvidence):
+        raise AttentionRouteDiscoveryError("native attention returned malformed capabilities")
+    if not isinstance(token, AttentionRouteToken):
+        raise AttentionRouteDiscoveryError("native attention returned a malformed route token")
+    if not attention_route_token_matches_capabilities(capabilities, token):
+        raise AttentionRouteDiscoveryError("native attention route does not match capabilities")
+    return runtime, capabilities, token
+
+
 def _bootstrap_aimdo(enabled: bool, *, simple_vram_headroom: int | None = None) -> bool:
     """Bootstrap Aimdo and retain the headroom state used by worker controls."""
     global _aimdo_bootstrap_headroom_base, _aimdo_headroom_extra_bytes
@@ -320,8 +350,10 @@ def load_pack(
     list[type[Node]],
     dict[str, InProcessWorker],
 ]:
-    attention_capabilities = None
-    attention_route_token = None
+    has_native_arm = any(arm == "native" for arm, _node_types in manifest.arms)
+    attention_runtime, attention_capabilities, attention_route_token = (
+        _discover_attention_runtime() if has_native_arm else (None, None, None)
+    )
     # Declared assets install BEFORE any pack entry runs, so schema-time
     # and execute-time code both reach the pack's own [[pack.assets]]
     # through dinkster_api.v1.declared_asset. The active context keeps tables
@@ -402,6 +434,7 @@ def load_pack(
             pack_context=worker_context,
             attention_capabilities=attention_capabilities,
             attention_route_token=attention_route_token,
+            attention_runtime=attention_runtime,
             combo_choices=choices.static,
             lazy_choices=choices.lazy,
             memory_consumers=consumers,
@@ -469,6 +502,7 @@ def load_pack(
                     pack_context=worker_context,
                     attention_capabilities=attention_capabilities,
                     attention_route_token=attention_route_token,
+                    attention_runtime=attention_runtime,
                 )
     return worker, registry, node_classes, arm_workers
 
@@ -1400,6 +1434,11 @@ async def serve_connection(
                     attention_route_token=invocation.attention_route_token,
                     attention_capabilities=(
                         selected_worker.attention_capabilities
+                        if invocation.attention_route_token is not None
+                        else None
+                    ),
+                    attention_runtime=(
+                        selected_worker.attention_runtime
                         if invocation.attention_route_token is not None
                         else None
                     ),

@@ -70,6 +70,7 @@ class ExecutionContext:
     attention_policy: AttentionPolicy = "auto"
     attention_route_token: AttentionRouteToken | None = None
     attention_capabilities: AttentionCapabilityEvidence | None = None
+    attention_runtime: object | None = None
     extension_snapshot_digest: str | None = None
     preview_mode: PreviewMode = "off"
     preview_animation: PreviewAnimation = "ring"

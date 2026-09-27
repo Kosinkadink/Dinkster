@@ -24,6 +24,7 @@ from dinkster_nodes_generation.nodes import (
     VAEDecodeAudio,
 )
 from dinkster_schema import Node
+from dinkster_workers import current_execution_context
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,18 +221,26 @@ class GenerationKSampler(KSampler):
             raise TypeError("latent_image must be a mapping")
         sample = cast("Any", importlib.import_module("dinkster_comfy.sample"))
         model_management = cast("Any", importlib.import_module("dinkster_comfy.model_management"))
+        context = current_execution_context()
+        sampling_model = model
+        if context is not None and context.attention_route_token is not None:
+            runtime = cast("Any", context.attention_runtime)
+            sampling_model = cast("Any", model).clone()
+            sampling_model.set_model_optimized_attention(
+                runtime.for_model(context.attention_route_token)
+            )
         source = dict(cast("Mapping[object, object]", latent_image))
         latent, roles = _fork_samples(source["samples"])
-        model_management.unload_model_and_clones(model)
+        model_management.unload_model_and_clones(sampling_model)
         latent = sample.fix_empty_latent_channels(
-            model,
+            sampling_model,
             latent,
             source.get("downscale_ratio_spacial"),
             source.get("downscale_ratio_temporal"),
         )
         noise = sample.prepare_noise(latent, seed, source.get("batch_index"))
         output = sample.sample(
-            model,
+            sampling_model,
             noise,
             steps,
             cfg,

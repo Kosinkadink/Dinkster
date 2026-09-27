@@ -497,3 +497,69 @@ def test_generation_ksampler_normalizes_residency_before_sampling(
     assert events[1] == ("fix", model, latent, 8, 4)
     assert events[2][1:] == (normalized, 459, (3,))
     assert cast("Mapping[str, object]", result["latent"])["samples"] is sampled
+
+
+def test_generation_ksampler_attaches_attention_to_a_model_clone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected = object()
+    token = object()
+    events: list[tuple[object, ...]] = []
+
+    class Model:
+        def clone(self) -> Model:
+            events.append(("clone", self))
+            return clone
+
+        def set_model_optimized_attention(self, function: object) -> None:
+            events.append(("attach", self, function))
+
+    model = Model()
+    clone = Model()
+    runtime = SimpleNamespace(for_model=lambda actual: selected if actual is token else None)
+    monkeypatch.setattr(
+        fork_nodes,
+        "current_execution_context",
+        lambda: SimpleNamespace(attention_route_token=token, attention_runtime=runtime),
+    )
+    modules = {
+        "dinkster_comfy.sample": SimpleNamespace(
+            fix_empty_latent_channels=lambda actual, latent, *_args: (
+                events.append(("fix", actual)),
+                latent,
+            )[1],
+            prepare_noise=lambda *_args: object(),
+            sample=lambda actual, *_args, **_kwargs: (
+                events.append(("sample", actual)),
+                object(),
+            )[1],
+        ),
+        "dinkster_comfy.model_management": SimpleNamespace(
+            unload_model_and_clones=lambda actual: events.append(("unload", actual))
+        ),
+    }
+    real_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: modules.get(name) or real_import(name),
+    )
+
+    fork_nodes.GenerationKSampler.execute(
+        model=model,
+        seed=459,
+        steps=1,
+        cfg=1.0,
+        sampler_name="euler",
+        scheduler="normal",
+        positive=object(),
+        negative=object(),
+        latent_image={"samples": object()},
+        denoise=1.0,
+    )
+
+    assert events[:2] == [("clone", model), ("attach", clone, selected)]
+    assert ("attach", model, selected) not in events
+    assert ("unload", clone) in events
+    assert ("fix", clone) in events
+    assert ("sample", clone) in events

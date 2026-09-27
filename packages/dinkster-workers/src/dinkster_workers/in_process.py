@@ -179,6 +179,7 @@ class InProcessWorker:
         pack_context: Callable[[], contextlib.AbstractContextManager[None]] | None = None,
         attention_capabilities: AttentionCapabilityEvidence | None = None,
         attention_route_token: AttentionRouteToken | None = None,
+        attention_runtime: object | None = None,
         combo_choices: Mapping[str, tuple[str, ...]] | None = None,
         lazy_choices: Mapping[str, Callable[[], Sequence[str]]] | None = None,
         memory_consumers: Mapping[str, Shedder] | None = None,
@@ -202,6 +203,7 @@ class InProcessWorker:
             raise ValueError("attention capabilities do not match route token")
         self._attention_capabilities = attention_capabilities
         self._attention_route_token = attention_route_token
+        self._attention_runtime = attention_runtime
         self._combo_choices = dict(combo_choices or {})
         self._lazy_choices = dict(lazy_choices or {})
         self._memory_consumers = dict(memory_consumers or {})
@@ -269,6 +271,10 @@ class InProcessWorker:
     @property
     def attention_capabilities(self) -> AttentionCapabilityEvidence | None:
         return self._attention_capabilities
+
+    @property
+    def attention_runtime(self) -> object | None:
+        return self._attention_runtime
 
     def bind_registry(self, registry: TypeRegistry) -> None:
         """Bind a staged worker to the host registry before publication."""
@@ -409,6 +415,9 @@ class InProcessWorker:
                 if invocation.attention_route_token is not None
                 else None
             ),
+            attention_runtime=(
+                self._attention_runtime if invocation.attention_route_token is not None else None
+            ),
             extension_snapshot_digest=invocation.extension_snapshot_digest,
             node_id=invocation.node_id,
             cancelled=(outer_context.cancelled if outer_context is not None else lambda: False),
@@ -526,6 +535,11 @@ class InProcessWorker:
                         if invocation.attention_route_token is not None
                         else None
                     ),
+                    attention_runtime=(
+                        self._attention_runtime
+                        if invocation.attention_route_token is not None
+                        else None
+                    ),
                     preview_mode=invocation.preview_mode,
                     preview_animation=invocation.preview_animation,
                     node_id=invocation.node_id,
@@ -546,6 +560,11 @@ class InProcessWorker:
                     attention_route_token=invocation.attention_route_token,
                     attention_capabilities=(
                         self._attention_capabilities
+                        if invocation.attention_route_token is not None
+                        else None
+                    ),
+                    attention_runtime=(
+                        self._attention_runtime
                         if invocation.attention_route_token is not None
                         else None
                     ),
