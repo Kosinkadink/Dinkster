@@ -23,7 +23,6 @@ INFERENCE_TORCH_PROJECT = REPO_ROOT / "packages" / "dinkster-inference-torch"
 MINIMAX_MUSIC3_COMPONENT = "minimax_music3_component"
 GPU_MODEL_PACKS = {
     "packages/dinkster-model-triposplat": "dinkster_model_triposplat",
-    "packages/dinkster-model-wan": "dinkster_model_wan",
 }
 
 

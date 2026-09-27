@@ -17,11 +17,6 @@ TARGETS = {
         ROOT / "packages/dinkster-nodes-generation",
         "dinkster_nodes_generation",
     ),
-    "qwen-image": (
-        ROOT / "packages/dinkster-model-qwen-image",
-        "dinkster_model_qwen_image",
-    ),
-    "wan": (ROOT / "packages/dinkster-model-wan", "dinkster_model_wan"),
     "triposplat": (
         ROOT / "packages/dinkster-model-triposplat",
         "dinkster_model_triposplat",
@@ -29,11 +24,10 @@ TARGETS = {
 }
 
 OWNER_BY_SLUG = {
-    "qwen-image": "qwen-image",
-    "wan21": "wan",
-    "wan22": "wan",
     "triposplat": "triposplat",
 }
+
+SUPPORTED_STARTER_SLUGS = frozenset({"sd15", "minimax-h3"})
 
 FAMILIES = (
     (
@@ -820,7 +814,21 @@ def _h3_video(graph: Graph, slug: str, models: tuple[str, ...]) -> None:
     )
     graph.node("video_vae", "dinkster.load_vae", {"vae": models[2]}, column=0, row=2)
     graph.node("audio_vae", "dinkster.load_vae", {"vae": models[3]}, column=0, row=3)
-    _text_conditioning(graph, "clip", column=1)
+    graph.node(
+        "positive",
+        "dinkster.minimax_h3_t2va_conditioning",
+        {"prompt": "a cinematic landscape, detailed lighting"},
+        column=1,
+    )
+    graph.node(
+        "negative",
+        "dinkster.minimax_h3_t2va_conditioning",
+        {"prompt": "blurry, low quality"},
+        column=1,
+        row=1,
+    )
+    graph.link("clip", "clip", "positive", "clip")
+    graph.link("clip", "clip", "negative", "clip")
     graph.node(
         "latent",
         "dinkster.empty_minimax_h3_av",
@@ -847,6 +855,8 @@ def _h3_video(graph: Graph, slug: str, models: tuple[str, ...]) -> None:
         column=4,
         audio_node="audio_decode",
     )
+    graph.link("latent", "latent", "positive", "target")
+    graph.link("latent", "latent", "negative", "target")
 
 
 def _music_audio(graph: Graph, slug: str, models: tuple[str, ...]) -> None:
@@ -1096,6 +1106,8 @@ def main() -> None:
         owner: [] for owner in TARGETS
     }
     for index, (slug, family, name, models, graph_kind) in enumerate(FAMILIES):
+        if slug not in SUPPORTED_STARTER_SLUGS:
+            continue
         owner = OWNER_BY_SLUG.get(slug, "generation")
         grouped[owner].append((slug, family, name, models, graph_kind))
         package, module = TARGETS[owner]

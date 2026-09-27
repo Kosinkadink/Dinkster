@@ -64,8 +64,6 @@ $CpuEditablePackages = @(
     "packages/dinkster-inference-torch",
     "packages/dinkster-nodes-generation",
     "packages/dinkster-compat-comfy",
-    "packages/dinkster-model-ipadapter",
-    "packages/dinkster-model-qwen-image",
     "packages/dinkster-model-triposplat",
     "packages/dinkster-nodes-vision",
     "packages/dinkster-workers"
@@ -87,9 +85,7 @@ $GpuEditablePackages = @(
     "packages/dinkster-workers",
     "packages/dinkster-nodes-generation",
     "packages/dinkster-compat-comfy",
-    "packages/dinkster-model-ipadapter",
-    "packages/dinkster-model-triposplat",
-    "packages/dinkster-model-wan"
+    "packages/dinkster-model-triposplat"
 )
 $KitchenCpuWheel = "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
 $PreviousProject = [Environment]::GetEnvironmentVariable("UV_PROJECT", "Process")

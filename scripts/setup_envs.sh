@@ -98,8 +98,6 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     -e packages/dinkster-inference-torch \
     -e packages/dinkster-nodes-generation \
     -e packages/dinkster-compat-comfy \
-    -e packages/dinkster-model-ipadapter \
-    -e packages/dinkster-model-qwen-image \
     -e packages/dinkster-model-triposplat \
     -e packages/dinkster-nodes-vision \
     -e packages/dinkster-workers
@@ -197,9 +195,7 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         -e packages/dinkster-workers \
         -e packages/dinkster-nodes-generation \
         -e packages/dinkster-compat-comfy \
-        -e packages/dinkster-model-ipadapter \
-        -e packages/dinkster-model-triposplat \
-        -e packages/dinkster-model-wan
+        -e packages/dinkster-model-triposplat
     if [ "$install_acceptance" = 1 ]; then
         uv pip install --python .venv-gpu/bin/python --no-deps --no-sources \
             -e "$acceptance_package"

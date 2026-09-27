@@ -24,10 +24,7 @@ members = [
     "dinkster-inference",
     "dinkster-inference-torch",
     "dinkster-memory",
-    "dinkster-model-ipadapter",
-    "dinkster-model-qwen-image",
     "dinkster-model-triposplat",
-    "dinkster-model-wan",
     "dinkster-native",
     "dinkster-nodes-dev",
     "dinkster-nodes-foundation",
@@ -682,10 +679,7 @@ dependencies = [
     { name = "dinkster-image-document" },
     { name = "dinkster-inference" },
     { name = "dinkster-memory" },
-    { name = "dinkster-model-ipadapter" },
-    { name = "dinkster-model-qwen-image" },
     { name = "dinkster-model-triposplat" },
-    { name = "dinkster-model-wan" },
     { name = "dinkster-native" },
     { name = "dinkster-nodes-dev" },
     { name = "dinkster-nodes-generation" },
@@ -749,10 +743,7 @@ requires-dist = [
     { name = "dinkster-image-document", editable = "packages/dinkster-image-document" },
     { name = "dinkster-inference", editable = "packages/dinkster-inference" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
-    { name = "dinkster-model-ipadapter", editable = "packages/dinkster-model-ipadapter" },
-    { name = "dinkster-model-qwen-image", editable = "packages/dinkster-model-qwen-image" },
     { name = "dinkster-model-triposplat", editable = "packages/dinkster-model-triposplat" },
-    { name = "dinkster-model-wan", editable = "packages/dinkster-model-wan" },
     { name = "dinkster-native", editable = "packages/dinkster-native" },
     { name = "dinkster-nodes-dev", editable = "packages/dinkster-nodes-dev" },
     { name = "dinkster-nodes-generation", editable = "packages/dinkster-nodes-generation" },
@@ -1066,44 +1057,6 @@ requires-dist = [
 ]
 
 [[package]]
-name = "dinkster-model-ipadapter"
-version = "0.0.1"
-source = { editable = "packages/dinkster-model-ipadapter" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "dinkster-inference-torch" },
-    { name = "numpy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", editable = "packages/dinkster-inference" },
-    { name = "dinkster-inference-torch", editable = "packages/dinkster-inference-torch" },
-    { name = "numpy", specifier = ">=1.26" },
-]
-
-[[package]]
-name = "dinkster-model-qwen-image"
-version = "0.0.1"
-source = { editable = "packages/dinkster-model-qwen-image" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "dinkster-inference-torch" },
-    { name = "numpy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", editable = "packages/dinkster-inference" },
-    { name = "dinkster-inference-torch", editable = "packages/dinkster-inference-torch" },
-    { name = "numpy", specifier = ">=1.26" },
-]
-
-[[package]]
 name = "dinkster-model-triposplat"
 version = "0.0.1"
 source = { editable = "packages/dinkster-model-triposplat" }
@@ -1122,27 +1075,6 @@ requires-dist = [
     { name = "dinkster-inference-torch", editable = "packages/dinkster-inference-torch" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pillow", specifier = ">=10" },
-]
-
-[[package]]
-name = "dinkster-model-wan"
-version = "0.0.1"
-source = { editable = "packages/dinkster-model-wan" }
-dependencies = [
-    { name = "dinkster-api" },
-    { name = "dinkster-inference" },
-    { name = "dinkster-inference-torch" },
-    { name = "numpy" },
-    { name = "scipy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "dinkster-api", editable = "packages/dinkster-api" },
-    { name = "dinkster-inference", editable = "packages/dinkster-inference" },
-    { name = "dinkster-inference-torch", editable = "packages/dinkster-inference-torch" },
-    { name = "numpy", specifier = ">=1.26" },
-    { name = "scipy", specifier = ">=1.11" },
 ]
 
 [[package]]

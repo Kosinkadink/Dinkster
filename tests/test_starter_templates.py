@@ -15,38 +15,12 @@ from dinkster.compose import compose_serving
 ROOT = Path(__file__).resolve().parents[1]
 MANIFESTS = {
     "dinkster-nodes-generation": ROOT / "packages/dinkster-nodes-generation/dinkster-pack.toml",
-    "dinkster-model-qwen-image": ROOT / "packages/dinkster-model-qwen-image/dinkster-pack.toml",
-    "dinkster-model-wan": ROOT / "packages/dinkster-model-wan/dinkster-pack.toml",
     "dinkster-model-triposplat": ROOT / "packages/dinkster-model-triposplat/dinkster-pack.toml",
 }
 
 EXPECTED_FAMILIES = {
     "dinkster.sd15",
-    "dinkster.sdxl",
-    "dinkster.sdxl_refiner",
-    "dinkster.chroma",
-    "dinkster.chroma_radiance",
-    "dinkster.flux_dev",
-    "dinkster.flux_schnell",
-    "dinkster.flux2_dev",
-    "dinkster.flux2_klein_9b",
-    "dinkster.flux2_klein_4b",
-    "dinkster.wan21",
-    "dinkster.wan22",
-    "dinkster.ltxv",
-    "dinkster.ltxav",
-    "dinkster.qwen_image",
-    "dinkster.z_image",
-    "dinkster.z_image_pixel_space",
     "dinkster.minimax_h3",
-    "dinkster.minimax_music3",
-    "dinkster.krea2",
-    "dinkster.ideogram4",
-    "dinkster.seedvr2",
-    "dinkster.anima",
-    "dinkster.lumina2",
-    "dinkster.triposplat",
-    "dinkster.trellis2",
 }
 
 
@@ -57,12 +31,7 @@ def test_generation_pack_has_one_complete_starter_per_supported_family() -> None
     templates = tuple(template for values in by_pack.values() for template in values)
     assert len(templates) == len(EXPECTED_FAMILIES)
     assert {template.family for template in templates} == EXPECTED_FAMILIES
-    assert [template.id for template in by_pack["dinkster-model-qwen-image"]] == ["qwen-image"]
-    assert [template.id for template in by_pack["dinkster-model-wan"]] == [
-        "wan21",
-        "wan22",
-    ]
-    assert [template.id for template in by_pack["dinkster-model-triposplat"]] == ["triposplat"]
+    assert by_pack["dinkster-model-triposplat"] == ()
     assert all(
         template.description and template.models and template.thumbnail for template in templates
     )
@@ -80,7 +49,7 @@ def test_generation_pack_has_one_complete_starter_per_supported_family() -> None
         )
         assert all(model in serialized_values for model in template.models), template.id
         node_type_sets.add(frozenset(cast("str", node["type"]) for node in nodes.values()))
-    assert len(node_type_sets) >= 8
+    assert len(node_type_sets) == 2
 
 
 def test_minimax_h3_starter_uses_one_conditioning_node_per_prompt() -> None:
