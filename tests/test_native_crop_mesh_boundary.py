@@ -46,11 +46,11 @@ class Forbidden(importlib.abc.MetaPathFinder):
                                      'nodes', 'folder_paths', 'server'}:
             raise AssertionError(fullname)
 sys.meta_path.insert(0, Forbidden())
-from dinkster_compat_comfy.entry import COMFY_NODES, ARM_NODES
-from dinkster_compat_comfy.native_arm import (
+from dinkster_native.entry import ARM_NODES, NATIVE_NODES
+from dinkster_native.nodes_model3d import (
     GenerationImageCropToMask, GenerationGetMeshInfo, GenerationMeshToModel3D,
 )
-nodes = {node.schema().node_type: node for node in COMFY_NODES}
+nodes = {node.schema().node_type: node for node in NATIVE_NODES}
 for node in (GenerationImageCropToMask, GenerationGetMeshInfo, GenerationMeshToModel3D):
     assert nodes[node.schema().node_type] is node
     assert node in ARM_NODES['native']

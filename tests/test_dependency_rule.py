@@ -33,7 +33,6 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_engine",
         "dinkster_graph",
         "dinkster_inference",
-        "dinkster_inference_torch",
         "dinkster_schema",
         "dinkster_values",
         "dinkster_workers",
@@ -49,17 +48,6 @@ ALLOWED: dict[str, set[str]] = {
     # The conditioning carrier uses the bottom-layer dinkster_values package.
     # Nothing else (and never torch) belongs here.
     "dinkster_inference": {"dinkster_schema", "dinkster_protocol", "dinkster_values"},
-    # The torch half provides adapter tensor math, weight materialization,
-    # and PatchSet application. It consumes torch-free contracts from
-    # dinkster_inference and the asset system's concrete verified-open boundary;
-    # accepting structural lookalikes would let low-level loaders bypass
-    # content verification. Both dependencies point downward.
-    "dinkster_inference_torch": {
-        "dinkster_schema",
-        "dinkster_inference",
-        "dinkster_assets",
-        "dinkster_memory",
-    },
     # The execution boundary itself (hazard H3): Worker/CacheStore protocols
     # plus the frozen data they exchange. A leaf on purpose - both the engine
     # (consumer) and workers/caches (implementations) depend on it, so a
@@ -111,7 +99,6 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_memory",
         "dinkster_graph",
         "dinkster_inference",
-        "dinkster_inference_torch",
         "dinkster_protocol",
         "dinkster_nodes_generation",
         "dinkster_workers",
@@ -130,8 +117,7 @@ ALLOWED: dict[str, set[str]] = {
     # stays acyclic and the engine still never learns v1 existed.
     # The built-in compat pack also consumes native inference contracts and
     # dinkster_workers' invocation-local execution context so a same-session arm
-    # can assert and execute the host's expected runtime identity. The torch
-    # executor edge stays lazy so importing pack schemas remains torch-free.
+    # can assert and execute the host's expected runtime identity.
     # These are body-wiring edges, not scheduler access; third-party packs
     # still author through dinkster_api below.
     "dinkster_compat_comfy": {
@@ -143,7 +129,6 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_memory",
         "dinkster_graph",
         "dinkster_inference",
-        "dinkster_inference_torch",
         "dinkster_native",
         "dinkster_protocol",
         "dinkster_nodes_generation",
@@ -169,13 +154,9 @@ ALLOWED: dict[str, set[str]] = {
     "dinkster_nodes_image": {"dinkster_api", "dinkster_image_document"},
     "dinkster_nodes_remote": {"dinkster_api", "dinkster_workers"},
     "dinkster_nodes_generation": {"dinkster_api"},
-    "dinkster_model_wan": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
-    "dinkster_model_qwen_image": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
-    "dinkster_model_triposplat": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
-    "dinkster_model_ipadapter": {"dinkster_api", "dinkster_inference", "dinkster_inference_torch"},
     # Model-backed vision providers execute stable owner schemas through the
     # pack-author door and stay independent of the host scheduler.
-    "dinkster_nodes_vision": {"dinkster_api", "dinkster_inference_torch"},
+    "dinkster_nodes_vision": {"dinkster_api"},
     # Dev scaffolding is a pack like any other: the same door, nothing more.
     "dinkster_nodes_dev": {"dinkster_api"},
     # The pure registry model (DESIGN M8): shares only the closed name
@@ -365,7 +346,7 @@ def test_locked_pyav_satisfies_pinned_comfyui_requirement() -> None:
     assert Version(packages["av"]["version"]) in requirement.specifier
 
 
-def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:
+def test_umbrella_optional_packages_are_locked() -> None:
     root_project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())["project"]
     inference_project = tomllib.loads(
         (REPO_ROOT / "packages/dinkster-inference/pyproject.toml").read_text()
@@ -385,13 +366,12 @@ def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:
     assert all(
         not dependency.startswith("gguf") for dependency in inference_project["dependencies"]
     )
-    assert inference_project["optional-dependencies"] == {"gguf": ["gguf==0.19.0"]}
+    assert "optional-dependencies" not in inference_project
 
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
     packages = {package["name"]: package for package in locked["package"]}
     root_locked = packages["dinkster"]
     inference_locked = packages["dinkster-inference"]
-    gguf_locked = packages["gguf"]
     assert "gguf" not in {dependency["name"] for dependency in root_locked["dependencies"]}
     assert root_locked["optional-dependencies"] == {
         "default": [
@@ -402,61 +382,8 @@ def test_umbrella_optional_packages_and_gguf_extra_are_locked() -> None:
         "supervisor": [{"name": "dinkster-supervisor"}],
     }
     assert "gguf" not in {dependency["name"] for dependency in inference_locked["dependencies"]}
-    assert inference_locked["optional-dependencies"] == {"gguf": [{"name": "gguf"}]}
-    assert gguf_locked["version"] == "0.19.0"
-    assert gguf_locked["source"] == {"registry": "https://pypi.org/simple"}
-    assert gguf_locked["wheels"] == [
-        {
-            "url": "https://files.pythonhosted.org/packages/b3/bb/d71d6da82763528c2c2ed6b59a9d6142c6595545a4c448e2085d155e88c2/gguf-0.19.0-py3-none-any.whl",
-            "hash": "sha256:70bcd10edfe697fb2dad6e40af2234b9d8ece9a41a99761405121ebda1c3c1cd",
-            "size": 118475,
-            "upload-time": "2026-05-06T13:04:02.588Z",
-        }
-    ]
-
-
-def test_torch_runtime_backends_are_constrained_behind_torch_extra() -> None:
-    project = tomllib.loads(
-        (REPO_ROOT / "packages/dinkster-inference-torch/pyproject.toml").read_text()
-    )["project"]
-    assert project["optional-dependencies"]["torch"] == [
-        "torch>=2.5",
-        "torchvision>=0.20",
-        "packaging",
-        "numpy>=1.26",
-        "scipy>=1.11",
-        "pillow>=10",
-        "tqdm>=4.66",
-        "dinkster-kitchen==0.2.35.post1",
-        "dinkster-aimdo==0.5.5.post2",
-        "sentencepiece==0.2.1",
-        "tokenizers==0.23.1",
-    ]
-
-    locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
-    packages = {package["name"]: package for package in locked["package"]}
-    torch_runtime = packages["dinkster-inference-torch"]
-    assert torch_runtime["optional-dependencies"]["torch"] == [
-        {"name": "dinkster-aimdo"},
-        {"name": "dinkster-kitchen"},
-        {"name": "numpy"},
-        {"name": "packaging"},
-        {"name": "pillow"},
-        {"name": "scipy"},
-        {"name": "sentencepiece"},
-        {"name": "tokenizers"},
-        {"name": "torch"},
-        {"name": "torchvision"},
-        {"name": "tqdm"},
-    ]
-    assert packages["dinkster-kitchen"]["version"] == "0.2.35.post1"
-    assert packages["dinkster-aimdo"]["version"] == "0.5.5.post2"
-    assert packages["sentencepiece"]["version"] == "0.2.1"
-    assert packages["tokenizers"]["version"] == "0.23.1"
-    assert packages["dinkster-kitchen"]["source"] == {"registry": "https://pypi.org/simple"}
-    assert packages["dinkster-aimdo"]["source"] == {"registry": "https://pypi.org/simple"}
-    assert packages["sentencepiece"]["source"] == {"registry": "https://pypi.org/simple"}
-    assert packages["tokenizers"]["source"] == {"registry": "https://pypi.org/simple"}
+    assert "optional-dependencies" not in inference_locked
+    assert "gguf" not in packages
 
 
 def test_windows_ci_installs_published_engine_dependencies_without_torch() -> None:

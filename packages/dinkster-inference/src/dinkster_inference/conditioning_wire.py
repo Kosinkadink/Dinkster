@@ -26,6 +26,7 @@ from .conditioning import (
     ConditioningChannel,
     ConditioningRecord,
     ConditioningSet,
+    ConditionScaleVector,
     ExtensionInputValue,
     ExtensionValue,
     MaskDescriptor,
@@ -36,7 +37,6 @@ from .conditioning import (
     TokenSegmentDescriptor,
     canonical_conditioning_set,
 )
-from .guidance import ConditionScaleVector
 
 CONDITIONING_TYPE_ID = "dinkster.conditioning"
 CONDITIONING_CARRIER_FORMAT = "dinkster-conditioning-carrier-v1"

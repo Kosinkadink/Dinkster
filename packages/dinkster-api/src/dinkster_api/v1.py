@@ -314,140 +314,13 @@ from dinkster_video import (
     save_video_stream,
 )
 
-if TYPE_CHECKING:
-    from dinkster_inference import (
-        FLOAT32,
-        AssemblyRegistration,
-        CancellationToken,
-        CompilerEmission,
-        ComponentDescriptor,
-        ComponentWiring,
-        ConditioningAdapter,
-        ConditionScaleVector,
-        ContextDenoiser,
-        ContextSolverFn,
-        ControlApplication,
-        DetectionEvidence,
-        EngineProperties,
-        GraphCompilerDescriptor,
-        GuidanceCondition,
-        GuidanceContribution,
-        GuidanceEvaluationPlan,
-        GuidanceEvaluationRequest,
-        GuidanceEvaluationWrapperDescriptor,
-        GuidancePlanContext,
-        GuidancePostCFGContext,
-        GuidancePostCFGDescriptor,
-        GuidancePreCFGContext,
-        GuidancePreCFGDescriptor,
-        GuidancePrediction,
-        GuidancePredictions,
-        GuidancePredictionSource,
-        GuidanceReduceContext,
-        GuidanceResult,
-        GuidanceRole,
-        GuidanceScaleDescriptor,
-        GuidanceStrategyDescriptor,
-        InferenceContribution,
-        InputRewrite,
-        LatentDescriptor,
-        ModelEvaluation,
-        ModelFamily,
-        NoiseKind,
-        NoiseSampler,
-        OptionKind,
-        OptionSpec,
-        OptionValue,
-        Parameterization,
-        ProgressScope,
-        SamplerContribution,
-        SamplerDescriptor,
-        SamplerInfo,
-        SamplingCancelled,
-        SamplingDescriptor,
-        SamplingExecutionContext,
-        SchedulerDescriptor,
-        SolverFn,
-        StepCallback,
-        StepEvent,
-    )
-
-# Node-only packs do not need to initialize the inference package.
-_INFERENCE_EXPORTS = frozenset(
-    {
-        "AssemblyRegistration",
-        "CancellationToken",
-        "CompilerEmission",
-        "ConditionScaleVector",
-        "ComponentDescriptor",
-        "ComponentWiring",
-        "ConditioningAdapter",
-        "ContextDenoiser",
-        "ContextSolverFn",
-        "ControlApplication",
-        "DetectionEvidence",
-        "EngineProperties",
-        "FLOAT32",
-        "GraphCompilerDescriptor",
-        "GuidanceCondition",
-        "GuidanceContribution",
-        "GuidanceEvaluationPlan",
-        "GuidanceEvaluationRequest",
-        "GuidanceEvaluationWrapperDescriptor",
-        "GuidancePlanContext",
-        "GuidancePostCFGContext",
-        "GuidancePostCFGDescriptor",
-        "GuidancePreCFGContext",
-        "GuidancePreCFGDescriptor",
-        "GuidancePrediction",
-        "GuidancePredictions",
-        "GuidancePredictionSource",
-        "GuidanceReduceContext",
-        "GuidanceResult",
-        "GuidanceRole",
-        "GuidanceScaleDescriptor",
-        "GuidanceStrategyDescriptor",
-        "InferenceContribution",
-        "InputRewrite",
-        "ModelEvaluation",
-        "ModelFamily",
-        "NoiseKind",
-        "NoiseSampler",
-        "OptionKind",
-        "OptionSpec",
-        "OptionValue",
-        "Parameterization",
-        "ProgressScope",
-        "SamplerContribution",
-        "SamplerDescriptor",
-        "SamplerInfo",
-        "SchedulerDescriptor",
-        "SamplingCancelled",
-        "SamplingExecutionContext",
-        "SamplingDescriptor",
-        "LatentDescriptor",
-        "SolverFn",
-        "StepCallback",
-        "StepEvent",
-    }
-)
-
-# Reloaded modules must resolve current authoritative objects on the next access.
-for _name in _INFERENCE_EXPORTS:
-    globals().pop(_name, None)
-
-
 _VIDEO_MODULE_EXPORTS = frozenset(
     {"image_math", "timeline_document", "timeline_render", "timeline_runtime"}
 )
 
 
 def __getattr__(name: str) -> object:
-    if name in _INFERENCE_EXPORTS:
-        import dinkster_inference
-
-        value = getattr(dinkster_inference, name)
-    elif name in _VIDEO_MODULE_EXPORTS:
+    if name in _VIDEO_MODULE_EXPORTS:
         import dinkster_video
 
         value = getattr(dinkster_video, name)
@@ -458,7 +331,7 @@ def __getattr__(name: str) -> object:
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | _INFERENCE_EXPORTS | _VIDEO_MODULE_EXPORTS)
+    return sorted(set(globals()) | _VIDEO_MODULE_EXPORTS)
 
 
 if TYPE_CHECKING:
@@ -513,61 +386,6 @@ __all__ = [
     "extension_behavior_hash",
     # -- training session boundary values (dinkster-protocol)
     "TrainingSessionHandle",
-    # -- sampling extension authoring (dinkster-inference)
-    "CancellationToken",
-    "AssemblyRegistration",
-    "CompilerEmission",
-    "ConditionScaleVector",
-    "ComponentDescriptor",
-    "ComponentWiring",
-    "ConditioningAdapter",
-    "ControlApplication",
-    "DetectionEvidence",
-    "EngineProperties",
-    "FLOAT32",
-    "GuidanceCondition",
-    "GuidanceContribution",
-    "GuidanceEvaluationPlan",
-    "GuidanceEvaluationRequest",
-    "GuidanceEvaluationWrapperDescriptor",
-    "GuidancePlanContext",
-    "GuidancePostCFGContext",
-    "GuidancePostCFGDescriptor",
-    "GuidancePreCFGContext",
-    "GuidancePreCFGDescriptor",
-    "GuidancePrediction",
-    "GuidancePredictionSource",
-    "GuidancePredictions",
-    "GuidanceReduceContext",
-    "GuidanceResult",
-    "GuidanceRole",
-    "GuidanceScaleDescriptor",
-    "GuidanceStrategyDescriptor",
-    "GraphCompilerDescriptor",
-    "InferenceContribution",
-    "InputRewrite",
-    "ContextDenoiser",
-    "ContextSolverFn",
-    "ModelEvaluation",
-    "ModelFamily",
-    "NoiseKind",
-    "NoiseSampler",
-    "OptionKind",
-    "OptionSpec",
-    "OptionValue",
-    "Parameterization",
-    "ProgressScope",
-    "SamplerContribution",
-    "SamplerDescriptor",
-    "SamplerInfo",
-    "SchedulerDescriptor",
-    "SamplingCancelled",
-    "SamplingExecutionContext",
-    "SamplingDescriptor",
-    "LatentDescriptor",
-    "SolverFn",
-    "StepCallback",
-    "StepEvent",
     # -- node authoring (dinkster-schema)
     "ABSENT",
     "AbsentOutput",

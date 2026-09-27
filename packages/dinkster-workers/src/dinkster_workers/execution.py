@@ -71,7 +71,6 @@ class ExecutionContext:
     attention_route_token: AttentionRouteToken | None = None
     attention_capabilities: AttentionCapabilityEvidence | None = None
     extension_snapshot_digest: str | None = None
-    inference_registries: object | None = None
     preview_mode: PreviewMode = "off"
     preview_animation: PreviewAnimation = "ring"
     cancelled: Callable[[], bool] = _not_cancelled

@@ -212,7 +212,6 @@ writable-mounts = true
 [pack.contracts]
 host = "dinkster-pack-host/1"
 api = "dinkster-api/v1"
-inference = "dinkster-inference/1"
 
 [pack.dependencies]
 dinkster-nodes-generation = ">=0.0.1,<1"
@@ -220,86 +219,6 @@ dinkster-nodes-media-io = ">=0.0.1,<1"
 
 [pack.requirements.capabilities]
 "dinkster.generation.schemas" = ">=1.0.0,<2"
-
-[pack.requirements.registry]
-"dinkster.samplers" = [
-    "dinkster.ar_video",
-    "dinkster.euler",
-    "dinkster.euler_cfg_pp",
-    "dinkster.euler_ancestral",
-    "dinkster.euler_ancestral_cfg_pp",
-    "dinkster.heun",
-    "dinkster.heunpp2",
-    "dinkster.exp_heun_2_x0",
-    "dinkster.exp_heun_2_x0_sde",
-    "dinkster.dpm_2",
-    "dinkster.dpm_2_ancestral",
-    "dinkster.lms",
-    "dinkster.dpm_fast",
-    "dinkster.dpm_adaptive",
-    "dinkster.dpmpp_2s_ancestral",
-    "dinkster.dpmpp_2s_ancestral_cfg_pp",
-    "dinkster.dpmpp_sde",
-    "dinkster.dpmpp_sde_gpu",
-    "dinkster.dpmpp_2m",
-    "dinkster.dpmpp_2m_cfg_pp",
-    "dinkster.dpmpp_2m_sde",
-    "dinkster.dpmpp_2m_sde_gpu",
-    "dinkster.dpmpp_2m_sde_heun",
-    "dinkster.dpmpp_2m_sde_heun_gpu",
-    "dinkster.dpmpp_3m_sde",
-    "dinkster.dpmpp_3m_sde_gpu",
-    "dinkster.ddpm",
-    "dinkster.lcm",
-    "dinkster.ipndm",
-    "dinkster.ipndm_v",
-    "dinkster.deis",
-    "dinkster.res_multistep",
-    "dinkster.res_multistep_cfg_pp",
-    "dinkster.res_multistep_ancestral",
-    "dinkster.res_multistep_ancestral_cfg_pp",
-    "dinkster.gradient_estimation",
-    "dinkster.gradient_estimation_cfg_pp",
-    "dinkster.er_sde",
-    "dinkster.seeds_2",
-    "dinkster.seeds_3",
-    "dinkster.sa_solver",
-    "dinkster.sa_solver_pece",
-    "dinkster.configured_sa_solver",
-    "dinkster.ddim",
-    "dinkster.uni_pc",
-    "dinkster.uni_pc_bh2",
-    "res4lyf.res_2m",
-    "res4lyf.res_3m",
-    "res4lyf.res_2s",
-    "res4lyf.res_3s",
-    "res4lyf.res_5s",
-    "res4lyf.res_6s",
-    "res4lyf.res_2m_ode",
-    "res4lyf.res_3m_ode",
-    "res4lyf.res_2s_ode",
-    "res4lyf.res_3s_ode",
-    "res4lyf.res_5s_ode",
-    "res4lyf.res_6s_ode",
-    "res4lyf.deis_2m",
-    "res4lyf.deis_3m",
-    "res4lyf.deis_2m_ode",
-    "res4lyf.deis_3m_ode",
-    "res4lyf.rk_beta",
-]
-"dinkster.schedulers" = [
-    "dinkster.simple",
-    "dinkster.sgm_uniform",
-    "dinkster.karras",
-    "dinkster.exponential",
-    "dinkster.ddim_uniform",
-    "dinkster.beta",
-    "dinkster.normal",
-    "dinkster.linear_quadratic",
-    "dinkster.kl_optimal",
-    "res4lyf.bong_tangent",
-    "res4lyf.beta57",
-]
 
 [pack.arms]
 native = [

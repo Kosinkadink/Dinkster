@@ -1,12 +1,9 @@
 [project]
 name = "dinkster-inference"
 version = "0.0.1"
-description = "Dinkster native inference, torch-free half: typed contracts, checkpoint inspection and family detection, sampling math and solver catalog, tile/codec planning, KL detection, CLIP tokenization"
+description = "Torch-free inference value and wire contracts for Dinkster"
 requires-python = ">=3.12"
-dependencies = ["aiohttp>=3.10", "dinkster-schema", "dinkster-protocol", "dinkster-values"]
-
-[project.optional-dependencies]
-gguf = ["gguf==0.19.0"]
+dependencies = ["aiohttp>=3.10", "dinkster-schema", "dinkster-values"]
 
 [build-system]
 requires = ["hatchling"]
@@ -17,5 +14,4 @@ packages = ["src/dinkster_inference"]
 
 [tool.uv.sources]
 dinkster-schema = { workspace = true }
-dinkster-protocol = { workspace = true }
 dinkster-values = { workspace = true }

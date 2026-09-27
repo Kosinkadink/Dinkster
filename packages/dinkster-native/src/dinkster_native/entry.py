@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-
 from dinkster_schema import Node
 from dinkster_values import TypeRegistry
 
@@ -45,13 +43,20 @@ _MESH_NODES: tuple[type[Node], ...] = (
     GenerationMeshToModel3D,
 )
 NATIVE_NODES: tuple[type[Node], ...] = (*FORK_NODES, *_MESH_NODES)
-ARM_NODES = {"native": NATIVE_NODES}
-
-
-def combo_choices() -> Mapping[str, Sequence[str]]:
-    from dinkster_nodes_generation.nodes import SAMPLER_CHOICES, SCHEDULER_CHOICES
-
-    return {"comfy.samplers": SAMPLER_CHOICES, "comfy.schedulers": SCHEDULER_CHOICES}
+_SCHEMA_PROVIDER_IDS = {
+    "dinkster.load_checkpoint",
+    "dinkster.load_diffusion_model",
+    "dinkster.clip_text_encode",
+    "dinkster.empty_latent_image",
+    "dinkster.ksampler",
+    "dinkster.vae_decode",
+    *(node.schema().node_type for node in _MESH_NODES),
+}
+ARM_NODES = {
+    "native": tuple(
+        node for node in NATIVE_NODES if node.schema().node_type in _SCHEMA_PROVIDER_IDS
+    )
+}
 
 
 def register_types(registry: TypeRegistry) -> None:

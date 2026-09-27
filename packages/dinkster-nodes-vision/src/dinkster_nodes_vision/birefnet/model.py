@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from dinkster_api.v1 import declared_asset
-from dinkster_inference_torch.birefnet import BiRefNet
+from dinkster_comfy.background_removal.birefnet import BiRefNet
 from safetensors.torch import load_file
 
 MODEL_INPUT_SIZE = 1024

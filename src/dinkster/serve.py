@@ -68,7 +68,6 @@ from dinkster_caches import DEFAULT_DISK_CACHE_BYTES, BudgetedDiskCAS
 from dinkster_inference import (
     OpenAICompatibility,
     OpenAIGenerationProvider,
-    load_model_output_profile,
 )
 from dinkster_inference.devices import nvidia_compute_dtypes
 from dinkster_memory import (
@@ -1974,14 +1973,6 @@ def main(argv: list[str] | None = None) -> None:
                 # surface. Same object for the process lifetime - the
                 # catalog swaps its CONTENTS, never its identity.
                 pack_assets=composition.asset_catalog,
-                model_output_profile=lambda path, handle, digest, size: (
-                    load_model_output_profile(
-                        path,
-                        asset_digest=digest,
-                        asset_size=size,
-                        handle=handle,
-                    ).document
-                ),
             )
             if p2p_plugin is not None:
                 manager = p2p_plugin.controller(

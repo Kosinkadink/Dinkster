@@ -42,24 +42,11 @@ state), and doc drift. Fix findings before freezing or file an issue for
 deliberate deferrals. Record the outcome in the pull request body
 ("Reviewed: ..." or "no findings").
 
-## One sampling engine (user directives, 2026-08)
+## One sampling engine
 
-There is exactly one sampling execution engine: the decomposed
-custom-sampling seam (noise / guider / sampler / sigmas / latent, the
-CustomSamplingRuntime contract in dinkster_inference/runtime.py). Every model
-family implements ONLY that seam. KSampler and every other sampler node are
-sugar - thin compositions of the seam (see the runtime entry points in
-dinkster_inference_torch/sampling_runtime.py and the shared composition helper
-in dinkster_inference_torch/sampling_execution.py) - never a second execution
-path. The adapter boundary and migration rules are in
-docs/sampling-execution.md. Do not add bespoke per-family assembly branches,
-KSampler-only sampling code, or family gates that make the decomposed path
-reject what the KSampler path accepts. Cross-cutting sampling behavior
-(distributed admission, previews, cancellation, masks) is a property of the
-engine, so it applies identically to every sampler node; wiring it into one
-node or one path is a defect. Refusing a capability on the decomposed path
-that the KSampler path supports is acceptable only as a brief migration
-intermediate with an open issue, never as an end state. Reviews gate on this.
+There is exactly one sampling execution engine: the sampler provided by
+`dinkster_comfy`. Dinkster nodes may compose that engine, but must not add a
+second sampler implementation or model-family execution path.
 
 ## Performance parity discipline
 
@@ -120,31 +107,9 @@ when the issue names a numerical, performance or GPU criterion.
 
 Ruff and pyright must be clean at every frozen head; the root pytest run
 must be clean at a frozen head whenever the issue requires it or the diff
-touches a package outside the fast lane's unit subset. When
-`packages/dinkster-inference-torch` (or anything
-it consumes) changes, two extra gates apply - the root venv is deliberately
-torch-free, so that package has its own environment (`.venv-torch`, see its
-README for setup) and pyright project:
-
-```
-.venv/bin/pyright -p packages/dinkster-inference-torch
-CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \
-  .venv-torch/bin/python -m pytest -q packages/dinkster-inference-torch/tests
-```
-
-When the machine has CUDA GPUs, the capability-gated GPU suite
-(`packages/dinkster-inference-torch/tests/test_gpu.py`) must also run - under
-`.venv-torch` it silently skips, which proves nothing. Use the dedicated
-CUDA venv per the package README "GPU validation" section (on this host:
-`.venv-gpu`, torch 2.13.0+cu130, with the CPATH headers from
-`.venv-gpu-extras/pyheaders`). Do NOT defer GPU validation on a GPU machine
-(user directive, 2026-07).
-
-Torch testing policy (user directive, 2026-07-26): test/validation
-environments run torch >= 2.10. The `torch>=2.5` package floor is a
-backwards-compatibility promise for consumers, pinned to upstream ComfyUI's
-published minimum - track upstream if it rises, and do not validate against
-pre-2.10 torch as if it were the primary target.
+touches a package outside the fast lane's unit subset. Sampling-runtime GPU
+validation belongs to the `dinkster-comfy` repository; Dinkster validates its
+worker integration with the issue-specific production oracles.
 
 Stale wheel cache after rebase: when a pull or rebase changes a node pack or
 its committed lockfile, a plain `uv sync --all-packages --frozen` can re-link

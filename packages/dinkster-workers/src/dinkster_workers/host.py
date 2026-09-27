@@ -57,14 +57,7 @@ from dinkster_memory import (
     Shedder,
 )
 from dinkster_protocol import (
-    GRAPH_COMPILE_CANCEL_TYPE,
-    GRAPH_COMPILE_ERROR_COMPILER_FAILURE,
-    GRAPH_COMPILE_REQUEST_TYPE,
-    GRAPH_COMPILE_RESULT_TYPE,
     WORKGROUP_CAPABILITY,
-    AttentionCapabilityEvidence,
-    AttentionPolicyConfig,
-    AttentionRouteToken,
     BeginWorkGroup,
     CommitWorkGroup,
     CompatGateDiagnostic,
@@ -84,8 +77,6 @@ from dinkster_protocol import (
     WorkUnitFailed,
     attention_capability_evidence_to_wire,
     attention_route_token_to_wire,
-    canonical_attention_route_token_bytes,
-    derive_attention_route_token,
 )
 from dinkster_protocol.pack_surfaces import (
     PACK_EVENTS_SURFACE,
@@ -228,65 +219,6 @@ PackLoad: TypeAlias = tuple[
 ]
 
 
-class AttentionRouteDiscoveryError(RuntimeError):
-    """The installed inference runtime could not produce valid route evidence."""
-
-
-def _discover_attention_routing(
-    import_module: Callable[[str], object] = importlib.import_module,
-) -> tuple[AttentionCapabilityEvidence | None, AttentionRouteToken | None]:
-    """Probe capability evidence and its automatic compatibility route together."""
-    try:
-        module = import_module("dinkster_inference_torch")
-    except ModuleNotFoundError as exc:
-        if exc.name == "dinkster_inference_torch":
-            return None, None
-        raise AttentionRouteDiscoveryError("attention runtime nested import failed") from exc
-    except Exception as exc:
-        raise AttentionRouteDiscoveryError("attention runtime import failed") from exc
-    capability_probe = getattr(module, "discover_attention_capabilities", None)
-    route_probe = getattr(module, "discover_attention_route_token", None)
-    configure_amd = getattr(module, "configure_amd_miopen", None)
-    if not callable(capability_probe):
-        raise AttentionRouteDiscoveryError("attention runtime has no capability discovery export")
-    if not callable(route_probe):
-        raise AttentionRouteDiscoveryError("attention runtime has no route discovery export")
-    try:
-        if callable(configure_amd):
-            configure_amd()
-        capabilities = capability_probe()
-        token = route_probe("auto")
-    except Exception as exc:
-        raise AttentionRouteDiscoveryError("attention routing discovery failed") from exc
-    if not isinstance(capabilities, AttentionCapabilityEvidence):
-        raise AttentionRouteDiscoveryError(
-            "attention capability discovery returned malformed evidence"
-        )
-    if not isinstance(token, AttentionRouteToken):
-        raise AttentionRouteDiscoveryError("attention route discovery returned malformed token")
-    try:
-        derived = derive_attention_route_token(capabilities, AttentionPolicyConfig())
-    except (TypeError, ValueError) as exc:
-        raise AttentionRouteDiscoveryError(
-            "attention route token cannot be derived from discovered capabilities"
-        ) from exc
-
-    if canonical_attention_route_token_bytes(token) != canonical_attention_route_token_bytes(
-        derived
-    ):
-        raise AttentionRouteDiscoveryError(
-            "attention route discovery does not match discovered capabilities"
-        )
-    return capabilities, token
-
-
-def discover_attention_route_token(
-    import_module: Callable[[str], object] = importlib.import_module,
-) -> AttentionRouteToken | None:
-    """Return the automatic compatibility route after capability cross-checking."""
-    return _discover_attention_routing(import_module)[1]
-
-
 def _bootstrap_aimdo(enabled: bool, *, simple_vram_headroom: int | None = None) -> bool:
     """Bootstrap Aimdo and retain the headroom state used by worker controls."""
     global _aimdo_bootstrap_headroom_base, _aimdo_headroom_extra_bytes
@@ -296,25 +228,6 @@ def _bootstrap_aimdo(enabled: bool, *, simple_vram_headroom: int | None = None) 
         simple_vram_headroom=simple_vram_headroom,
     )
     return succeeded
-
-
-def _prepare_accelerator_runtime(
-    enabled: bool,
-    import_module: Callable[[str], object] = importlib.import_module,
-) -> bool:
-    """Resolve accelerator kernels at worker startup instead of first execution."""
-    if not enabled:
-        return False
-    try:
-        runtime = import_module("dinkster_inference_torch")
-        prepare = cast(Any, runtime).prepare_fp8_matmul_runtime
-        if not callable(prepare):
-            raise TypeError("prepare_fp8_matmul_runtime is not callable")
-        prepare()
-    except Exception:  # noqa: BLE001 - optional accelerator runtime remains best-effort
-        log.warning("accelerator runtime preparation failed; worker continues", exc_info=True)
-        return False
-    return True
 
 
 def _handle_aimdo_headroom(extra_bytes: object, base_bytes: object = _MISSING) -> None:
@@ -355,14 +268,6 @@ def _handle_aimdo_headroom(extra_bytes: object, base_bytes: object = _MISSING) -
     ).minimum_free_bytes
     target = _aimdo_bootstrap_headroom_base + _aimdo_headroom_extra_bytes
     os.environ[_AIMDO_HEADROOM_TARGET_ENV] = str(target)
-    try:
-        inference_torch = importlib.import_module("dinkster_inference_torch")
-        applied = inference_torch.set_simple_vram_headroom(target)  # type: ignore[attr-defined]
-    except Exception:  # noqa: BLE001 - runtime headroom is best-effort control
-        log.warning("aimdo runtime headroom setter raised", exc_info=True)
-        return
-    if applied is True:
-        os.environ.pop(_AIMDO_HEADROOM_TARGET_ENV, None)
 
 
 def _parse_vram_budget(entry: str) -> tuple[int, int]:
@@ -415,14 +320,8 @@ def load_pack(
     list[type[Node]],
     dict[str, InProcessWorker],
 ]:
-    has_native_arm = any(arm == "native" for arm, _node_types in manifest.arms)
-    attention_capabilities, attention_route_token = (
-        _discover_attention_routing() if has_native_arm else (None, None)
-    )
-    if has_native_arm and (attention_capabilities is None or attention_route_token is None):
-        raise AttentionRouteDiscoveryError(
-            "native arm requires authenticated attention route evidence"
-        )
+    attention_capabilities = None
+    attention_route_token = None
     # Declared assets install BEFORE any pack entry runs, so schema-time
     # and execute-time code both reach the pack's own [[pack.assets]]
     # through dinkster_api.v1.declared_asset. The active context keeps tables
@@ -1019,7 +918,6 @@ async def serve_connection(
     sent_segments: dict[str, SharedMemory] = {}
     tasks: dict[str, asyncio.Task[None]] = {}
     cancellation_events: dict[str, threading.Event] = {}
-    compile_tasks: dict[str, tuple[asyncio.Task[None], threading.Event]] = {}
     # In-flight stageAssets requests: requestId -> (task, abort event). The
     # event reaches into the fetch thread (checked between chunks), so a
     # cancelStage stops the download at the next chunk boundary and the
@@ -1489,18 +1387,11 @@ async def serve_connection(
                     return
             started = time.perf_counter()
             workgroup_cancelled = getattr(workgroup_handler, "invocation_cancelled", None)
-            inference_registries = None
-            if invocation.extension_snapshot_digest is not None:
-                inference = importlib.import_module("dinkster_inference")
-                inference_registries = inference.materialize_inference_generation(
-                    invocation.extension_snapshot_digest
-                ).registries
             with use_execution_context(
                 ExecutionContext(
                     arm=invocation.arm,
                     expected_execution_identity=invocation.expected_execution_identity,
                     extension_snapshot_digest=invocation.extension_snapshot_digest,
-                    inference_registries=inference_registries,
                     fp8_matmul=invocation.fp8_matmul,
                     diffusion_dtype=invocation.diffusion_dtype,
                     text_dtype=invocation.text_dtype,
@@ -1797,90 +1688,6 @@ async def serve_connection(
                     with contextlib.suppress(Exception):
                         await writer.wait_closed()
             tasks.pop(request_id, None)
-
-    async def run_sampler_materialization(header: dict[str, Any]) -> None:
-        request_id = str(header.get("requestId", ""))
-        key = str(header.get("catalogKey", ""))
-        reply: dict[str, object] = {
-            "type": "samplerRegistryResult",
-            "requestId": request_id,
-        }
-        try:
-            inference = importlib.import_module("dinkster_inference")
-            materialized = await run_sync_resource(inference.materialize_inference_generation, key)
-            reply["extensions"] = [
-                {
-                    "id": extension_id,
-                    "contributions": [
-                        {
-                            "surfaceId": sampler.surface_id,
-                            "id": sampler.id,
-                            "aliases": list(sampler.aliases),
-                            "behaviorMetadata": [list(item) for item in sampler.behavior_metadata],
-                        }
-                        for sampler in samplers
-                    ],
-                }
-                for extension_id, samplers in materialized.extensions
-            ]
-        except Exception as exc:  # noqa: BLE001 - staging needs the worker's refusal
-            reply["error"] = f"{type(exc).__name__}: {exc}"
-        with contextlib.suppress(Exception):
-            await send(reply)
-
-    async def run_inference_release(header: dict[str, Any]) -> None:
-        request_id = str(header.get("requestId", ""))
-        key = str(header.get("catalogKey", ""))
-        reply: dict[str, object] = {
-            "type": "inferenceReleaseResult",
-            "requestId": request_id,
-        }
-        try:
-            inference = importlib.import_module("dinkster_inference")
-            await run_sync_resource(inference.release_inference_generation, key)
-        except Exception as exc:  # noqa: BLE001 - release refusal must reach the parent
-            reply["error"] = f"{type(exc).__name__}: {exc}"
-        with contextlib.suppress(Exception):
-            await send(reply)
-
-    async def run_graph_compile(header: dict[str, Any], cancel_event: threading.Event) -> None:
-        request_id = str(header.get("requestId", ""))
-        reply: dict[str, object]
-        try:
-            try:
-                inference = importlib.import_module("dinkster_inference")
-                result = await run_sync_resource(
-                    inference.compile_inference_graph,
-                    header.get("generationKey"),
-                    header.get("graph"),
-                    header.get("targets"),
-                    cancelled=cancel_event.is_set,
-                )
-                if not isinstance(result, Mapping):
-                    raise TypeError("graph compiler returned a non-Mapping result")
-                reply = dict(cast("Mapping[str, object]", result))
-                reply["type"] = GRAPH_COMPILE_RESULT_TYPE
-                reply["requestId"] = request_id
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - compiler failures cross as data
-                error_name = getattr(exc, "error_name", None)
-                reply = {
-                    "type": GRAPH_COMPILE_RESULT_TYPE,
-                    "requestId": request_id,
-                    "errorName": (
-                        error_name
-                        if isinstance(error_name, str) and error_name
-                        else GRAPH_COMPILE_ERROR_COMPILER_FAILURE
-                    ),
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-            await send(reply)
-        finally:
-            current = asyncio.current_task()
-            entry = compile_tasks.get(request_id)
-            if entry is not None and entry[0] is current:
-                compile_tasks.pop(request_id, None)
 
     async def run_asset_query(header: dict[str, Any]) -> None:
         request_id = str(header.get("requestId", ""))
@@ -2657,25 +2464,6 @@ async def serve_connection(
                     }
                 )
                 continue
-            if maintenance_active and kind == GRAPH_COMPILE_REQUEST_TYPE:
-                await send(
-                    {
-                        "type": GRAPH_COMPILE_RESULT_TYPE,
-                        "requestId": str(header.get("requestId", "")),
-                        "errorName": GRAPH_COMPILE_ERROR_COMPILER_FAILURE,
-                        "error": "worker memory maintenance is active",
-                    }
-                )
-                continue
-            if maintenance_active and kind == "materializeSamplerRegistry":
-                await send(
-                    {
-                        "type": "samplerRegistryResult",
-                        "requestId": str(header.get("requestId", "")),
-                        "error": "worker memory maintenance is active",
-                    }
-                )
-                continue
             if maintenance_active and kind == "convertLegacyCheckpoint":
                 await send(
                     {
@@ -2788,34 +2576,11 @@ async def serve_connection(
                 task = tasks.get(request_id)
                 if task is not None:
                     task.cancel()
-            elif kind == "materializeSamplerRegistry":
-                sampler_task = asyncio.create_task(run_sampler_materialization(header))
-                track_resource_task(sampler_task)
-                shed_tasks.add(sampler_task)
-                sampler_task.add_done_callback(shed_tasks.discard)
-            elif kind == "releaseInferenceGeneration":
-                release_task = asyncio.create_task(run_inference_release(header))
-                shed_tasks.add(release_task)
-                release_task.add_done_callback(shed_tasks.discard)
             elif kind == "convertLegacyCheckpoint":
                 conversion_task = asyncio.create_task(run_legacy_checkpoint_conversion(header))
                 track_resource_task(conversion_task)
                 shed_tasks.add(conversion_task)
                 conversion_task.add_done_callback(shed_tasks.discard)
-            elif kind == GRAPH_COMPILE_REQUEST_TYPE:
-                request_id = str(header.get("requestId", ""))
-                cancel_event = threading.Event()
-                compile_task = asyncio.create_task(run_graph_compile(header, cancel_event))
-                track_resource_task(compile_task)
-                compile_tasks[request_id] = (compile_task, cancel_event)
-            elif kind == GRAPH_COMPILE_CANCEL_TYPE:
-                request_id = str(header.get("requestId", ""))
-                compile_entry = compile_tasks.get(request_id)
-                if compile_entry is not None:
-                    compile_entry[1].set()
-                    compile_tasks.pop(request_id, None)
-                    compile_entry[0].cancel()
-                    await asyncio.gather(compile_entry[0], return_exceptions=True)
             elif kind == "assetQuery":
                 if asset_staging is None:
                     raise BoundaryError("assetQuery received without negotiated asset staging")
@@ -2991,13 +2756,10 @@ async def serve_connection(
             + list(workgroup_tasks)
             + list(route_tasks.values())
             + list(rendition_tasks.values())
-            + [task for task, _ in compile_tasks.values()]
             + [task for task, _ in stage_tasks.values()]
             + ([schema_reload_task] if schema_reload_task is not None else [])
         )
         for cancellation in cancellation_events.values():
-            cancellation.set()
-        for _, cancellation in compile_tasks.values():
             cancellation.set()
         for _, stage_abort in stage_tasks.values():
             stage_abort.set()
@@ -3016,7 +2778,6 @@ async def serve_connection(
         for operation_id in tuple(full_release_operations - full_release_commits):
             full_release_operations.discard(operation_id)
             maintenance_operations.discard((connection_token, operation_id))
-        compile_tasks.clear()
         stage_tasks.clear()
         if blob_transfer is not None:
             blob_transfer.close()
@@ -3096,7 +2857,6 @@ def main() -> None:
         args.aimdo_init or aimdo_armed,
         simple_vram_headroom=simple_vram_headroom,
     )
-    _prepare_accelerator_runtime(args.aimdo_init or aimdo_armed)
     os.environ.pop(_ACCELERATOR_BUDGETS_ENV, None)
     if vram_budgets:
         os.environ[_ACCELERATOR_BUDGETS_ENV] = ",".join(

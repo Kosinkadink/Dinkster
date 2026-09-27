@@ -293,13 +293,6 @@ with aliases, validators (extension/magic-byte), role metadata, recursive
 enumeration, duplicate policy, safe path handles (no raw path-table mutation),
 and state-dict loading that accepts already-loaded data.
 
-Packs register families, components, and assemblies together through
-`InferenceContribution`. The worker merges them with built-ins before detection
-or loading, and composition requires the `model-family-registration` capability.
-Pack authors follow the [new model-family checklist](new-model-family.md).
-Current capability status is listed in
-[Pack routes, events, and frontend modules](supported/pack-routes-events-and-frontend-modules.md#extension-capability-status).
-
 ### 3.10 ControlNet pipeline contract (core)
 Not just a `control-apply` wrapper (report-01): immutable/cloneable ordered
 control chain; hint preparation; per-run lifecycle (configure hint, pre-run

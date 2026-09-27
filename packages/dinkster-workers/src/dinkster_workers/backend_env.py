@@ -5,31 +5,25 @@ one frozen recipe: an isolated venv name, a pinned torch build, the vendor
 wheel index that serves it, and the workspace packages the backend smoke
 and test lanes import. The torch build is the pinned fact; support
 packages float, like the CUDA validation lane's. The recipes are the
-single source of truth for the executable setup scripts
-(scripts/setup_env_rocm.* and scripts/setup_env_xpu.*); a test compares
-the scripts' executable commands against :func:`setup_commands` so they
-cannot drift silently.
+single source of truth for callers that construct isolated environments.
 
 The ROCm and XPU torch packages are different builds of the same ``torch``
 distribution and cannot coexist in one environment, so every cell gets its
 own venv and its own worker process - even on a host with both GPUs.
 
 A backend claims nothing until its smoke report passes on real hardware.
-:func:`validate_smoke_report` checks that a report produced by
-scripts/rocm_smoke.py or scripts/xpu_smoke.py records the identity evidence
-a support cell requires: host OS build or kernel, driver, torch and backend
-runtime versions, device name and architecture, and the baseline capability
-probes. Validation proves the report is complete, not that the backend
-works; only the recorded probe results say that.
+:func:`validate_smoke_report` checks that a report records the identity
+evidence a support cell requires: host OS build or kernel, driver, torch and
+backend runtime versions, device name and architecture, and the baseline
+capability probes. Validation proves the report is complete, not that the
+backend works; only the recorded probe results say that.
 
-Model-family validation runs one level above the smoke lane:
-scripts/family_validation.py executes one real inference workload per cell
-(family, execution mode) and emits a report that
-:func:`validate_family_report` checks for the same identity evidence plus
-the workload, input artifact digests, memory telemetry, and per-check
-outcomes. Compile-mode reports must reference a passing eager report for
-the cell: eager execution is the support contract, and torch.compile
-claims exist only relative to proven eager behavior.
+Model-family validation runs one level above the smoke lane.
+:func:`validate_family_report` checks the same identity evidence plus the
+workload, input artifact digests, memory telemetry, and per-check outcomes.
+Compile-mode reports must reference a passing eager report for the cell:
+eager execution is the support contract, and torch.compile claims exist
+only relative to proven eager behavior.
 
 This module stays torch-free: the torch-free root environment inspects
 recipes and parses reports, while torch itself exists only inside the
@@ -158,7 +152,7 @@ def setup_commands(recipe: BackendEnvRecipe) -> tuple[tuple[str, ...], ...]:
             recipe.torch_requirement,
         ),
         ("uv", "pip", "install", "--python", python, *recipe.support_packages, *editable_args),
-        (python, "-c", "import dinkster_compat_comfy.native_arm"),
+        (python, "-c", "import dinkster_comfy"),
     )
 
 

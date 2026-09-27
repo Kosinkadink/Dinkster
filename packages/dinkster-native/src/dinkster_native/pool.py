@@ -580,7 +580,7 @@ class ResidentPool(ResidencyTable):
 
     def details(self) -> list[ConsumerItem]:
         with self._coordination_lock:
-            rows: list[tuple[str, str, dict[str, int], object | None]] = []
+            rows: list[tuple[str, str, dict[str, int]]] = []
             for rid, entry in sorted(self._entries.items(), key=lambda kv: -kv[1].last_used):
                 if entry.loaded:
                     nbytes = dict(entry.cost)
@@ -597,7 +597,6 @@ class ResidentPool(ResidencyTable):
                         rid,
                         entry.display_name or f"resident {rid[:12]}",
                         nbytes,
-                        self._objects.get(rid),
                     )
                 )
         # Mechanism operations reconcile the pool while holding their own locks.
@@ -610,7 +609,7 @@ class ResidentPool(ResidencyTable):
                 bytes_by_residency=nbytes,
                 pages=None,
             )
-            for rid, display_name, nbytes, obj in rows
+            for rid, display_name, nbytes in rows
         ]
 
     def __len__(self) -> int:

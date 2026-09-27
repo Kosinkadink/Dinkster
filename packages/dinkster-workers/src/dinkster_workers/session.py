@@ -39,9 +39,6 @@ from dinkster_memory import (
     Shedder,
 )
 from dinkster_protocol import (
-    GRAPH_COMPILE_CANCEL_TYPE,
-    GRAPH_COMPILE_REQUEST_TYPE,
-    GRAPH_COMPILE_RESULT_TYPE,
     AttentionCapabilityEvidence,
     AttentionPolicyConfig,
     AttentionRouteToken,
@@ -52,7 +49,6 @@ from dinkster_protocol import (
     Invocation,
     InvocationEvent,
     InvocationResult,
-    KeyedContribution,
     LazyStatusInvocation,
     LazyStatusResult,
     NodeError,
@@ -465,12 +461,8 @@ class BoundarySession:
         self._lease_decisions: dict[str, dict[str, object]] = {}
         self._pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
         self._lazy_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
-        self._sampler_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
-        self._sampler_request_index = 0
         self._conversion_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._conversion_request_index = 0
-        self._graph_compile_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
-        self._graph_compile_request_index = 0
         self._route_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._route_request_index = 0
         self._rendition_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
@@ -1119,12 +1111,6 @@ class BoundarySession:
         if missing:
             raise KeyError(f"worker has no implementation for: {', '.join(missing)}")
 
-    async def materialize_sampler_registry(
-        self, key: str
-    ) -> tuple[tuple[str, tuple[KeyedContribution, ...]], ...]:
-        """Compatibility alias for materialize_inference_generation."""
-        return await self.materialize_inference_generation(key)
-
     async def convert_legacy_checkpoint(
         self, path: Path, logical_name: str
     ) -> tuple[str, str | None] | None:
@@ -1159,96 +1145,6 @@ class BoundarySession:
         if status == "error" and isinstance(error, str) and error:
             raise RuntimeError(error)
         raise RuntimeError("legacy checkpoint conversion result is malformed")
-
-    async def materialize_inference_generation(
-        self, key: str
-    ) -> tuple[tuple[str, tuple[KeyedContribution, ...]], ...]:
-        """Ask this worker to import and validate every inference surface."""
-        if not self._alive:
-            raise WorkerDied()
-        request_id = f"sampler-{self._sampler_request_index}"
-        self._sampler_request_index += 1
-        future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
-        self._sampler_pending[request_id] = future
-        try:
-            await self.send(
-                {
-                    "type": "materializeSamplerRegistry",
-                    "requestId": request_id,
-                    "catalogKey": key,
-                },
-                [],
-            )
-            reply = await future
-        finally:
-            self._sampler_pending.pop(request_id, None)
-        error = reply.get("error")
-        if isinstance(error, str) and error:
-            raise RuntimeError(error)
-        raw_extensions = reply.get("extensions")
-        if not isinstance(raw_extensions, list):
-            raise RuntimeError("sampler registry result has malformed extensions")
-        extensions: list[tuple[str, tuple[KeyedContribution, ...]]] = []
-        for raw_extension in cast("list[object]", raw_extensions):
-            if not isinstance(raw_extension, Mapping):
-                raise RuntimeError("sampler registry result has malformed extension")
-            extension = cast("Mapping[str, object]", raw_extension)
-            extension_id = extension.get("id")
-            raw_samplers = extension.get("contributions", extension.get("samplers"))
-            if not isinstance(extension_id, str) or not isinstance(raw_samplers, list):
-                raise RuntimeError("sampler registry result has malformed extension fields")
-            samplers: list[KeyedContribution] = []
-            for raw_sampler in cast("list[object]", raw_samplers):
-                if not isinstance(raw_sampler, Mapping):
-                    raise RuntimeError("sampler registry result has malformed sampler")
-                sampler = cast("Mapping[str, object]", raw_sampler)
-                aliases = sampler.get("aliases")
-                metadata = sampler.get("behaviorMetadata")
-                if not isinstance(aliases, list) or not isinstance(metadata, list):
-                    raise RuntimeError("sampler registry result has malformed declaration")
-                metadata_pairs: list[tuple[str, str | int | bool | None]] = []
-                for raw_pair in cast("list[object]", metadata):
-                    if not isinstance(raw_pair, list):
-                        raise RuntimeError("sampler registry result has malformed metadata")
-                    pair = cast("list[object]", raw_pair)
-                    if len(pair) != 2 or not isinstance(pair[0], str):
-                        raise RuntimeError("sampler registry result has malformed metadata")
-                    value = pair[1]
-                    if value is not None and type(value) not in (str, int, bool):
-                        raise RuntimeError("sampler registry result metadata is not RPC-clean")
-                    metadata_pairs.append((pair[0], cast("str | int | bool | None", value)))
-                samplers.append(
-                    KeyedContribution(
-                        surface_id=str(sampler.get("surfaceId", "")),
-                        id=str(sampler.get("id", "")),
-                        aliases=tuple(str(alias) for alias in cast("list[object]", aliases)),
-                        behavior_metadata=tuple(metadata_pairs),
-                    )
-                )
-            extensions.append((extension_id, tuple(samplers)))
-        return tuple(extensions)
-
-    async def release_inference_generation(self, key: str) -> None:
-        """Explicitly release an unpinned worker-local generation."""
-        request_id = f"sampler-{self._sampler_request_index}"
-        self._sampler_request_index += 1
-        future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
-        self._sampler_pending[request_id] = future
-        try:
-            await self.send(
-                {
-                    "type": "releaseInferenceGeneration",
-                    "requestId": request_id,
-                    "catalogKey": key,
-                },
-                [],
-            )
-            reply = await future
-        finally:
-            self._sampler_pending.pop(request_id, None)
-        error = reply.get("error")
-        if isinstance(error, str) and error:
-            raise RuntimeError(error)
 
     async def call_pack_route(
         self, route: PackRoute, data: Mapping[str, object]
@@ -1389,41 +1285,6 @@ class BoundarySession:
             raise RenditionUnavailable(message)
         if error:
             raise RuntimeError(message)
-
-    async def compile_graph(
-        self,
-        generation_key: str,
-        graph: Mapping[str, Any],
-        targets: Sequence[str],
-    ) -> dict[str, Any]:
-        """Send one generation-keyed graph compile request to the peer."""
-        if not self._alive:
-            raise WorkerDied()
-        request_id = f"compile-{self._graph_compile_request_index}"
-        self._graph_compile_request_index += 1
-        future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
-        self._graph_compile_pending[request_id] = future
-        try:
-            await self.send(
-                {
-                    "type": GRAPH_COMPILE_REQUEST_TYPE,
-                    "requestId": request_id,
-                    "generationKey": generation_key,
-                    "graph": graph,
-                    "targets": list(targets),
-                },
-                [],
-            )
-            return await future
-        except asyncio.CancelledError:
-            if request_id in self._graph_compile_pending:
-                with contextlib.suppress(Exception):
-                    await self.send(
-                        {"type": GRAPH_COMPILE_CANCEL_TYPE, "requestId": request_id}, []
-                    )
-            raise
-        finally:
-            self._graph_compile_pending.pop(request_id, None)
 
     async def query_assets(self, digests: Sequence[str]) -> dict[str, Any]:
         """Ask the peer which digests its asset store already resolves.
@@ -1868,18 +1729,10 @@ class BoundarySession:
             if not future.done():
                 future.set_exception(WorkerDied())
         self._lazy_pending.clear()
-        for future in self._sampler_pending.values():
-            if not future.done():
-                future.set_exception(WorkerDied())
-        self._sampler_pending.clear()
         for future in self._conversion_pending.values():
             if not future.done():
                 future.set_exception(WorkerDied())
         self._conversion_pending.clear()
-        for future in self._graph_compile_pending.values():
-            if not future.done():
-                future.set_exception(WorkerDied())
-        self._graph_compile_pending.clear()
         for future in self._route_pending.values():
             if not future.done():
                 future.set_exception(WorkerDied())
@@ -2175,10 +2028,6 @@ class BoundarySession:
                     if self._on_schema_reload is not None and self._instance_token is not None:
                         with contextlib.suppress(Exception):
                             self._on_schema_reload(self._pack, self._instance_token)
-                elif kind in ("samplerRegistryResult", "inferenceReleaseResult"):
-                    future = self._sampler_pending.pop(str(header.get("requestId")), None)
-                    if future is not None and not future.done():
-                        future.set_result(header)
                 elif kind == "legacyCheckpointConversionResult":
                     future = self._conversion_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
@@ -2191,10 +2040,6 @@ class BoundarySession:
                     future = self._rendition_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
                         future.set_result((header, blobs))
-                elif kind == GRAPH_COMPILE_RESULT_TYPE:
-                    future = self._graph_compile_pending.pop(str(header.get("requestId")), None)
-                    if future is not None and not future.done():
-                        future.set_result(header)
                 elif kind in ("assetQueryResult", "stageAssetsResult"):
                     future = self._staging_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
@@ -2336,9 +2181,7 @@ class BoundarySession:
             self._keepalive_task = None
         for pending in (
             self._lazy_pending,
-            self._sampler_pending,
             self._conversion_pending,
-            self._graph_compile_pending,
             self._route_pending,
             self._rendition_pending,
             self._staging_pending,

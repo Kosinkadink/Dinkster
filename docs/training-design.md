@@ -66,14 +66,14 @@ named in that row; only execution policy and state differ.
 
 | Subsystem | Boundary | Dinkster integration point | Evidence and reason |
 |---|---|---|---|
-| Family detection and registration | **SHARED** | Extend `ModelFamily`/`FamilyRegistry`; detection is evidence-ranked and ambiguity is loud (`packages/dinkster-inference/src/dinkster_inference/families.py:1-13,69-89,108-151`). | Training and previews need one family identity. All three analyses converge on shared family definitions (`/home/kosin/node-analysis/dives/report-t2-kohya.md:145-155`; `/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:270-275`). |
-| Architecture, component plans, and canonical parameter identities | **SHARED definition, DUAL-PATH binding** | `ComponentPlan` already normalizes model keys, source keys, dtypes, transforms, and quant metadata (`packages/dinkster-inference/src/dinkster_inference/assembly.py:122-175`); native constructors receive an `Operations` factory (`packages/dinkster-inference-torch/src/dinkster_inference_torch/operations.py:1-18,64-115`). | Kohya needs stable trainable parameter names and local model control (`/home/kosin/node-analysis/dives/report-t2-kohya.md:43-52,149-150`); ai-toolkit likewise separates common model metadata from runtime mode (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:84-116`). |
-| Weight inspection, storage layout, quant metadata, and source identity | **SHARED** | Keep header-first `WeightSource` and assembly mappings authoritative (`packages/dinkster-inference/src/dinkster_inference/weights.py:1-7,110-138`; `packages/dinkster-inference/src/dinkster_inference/assembly.py:122-149`). | Storage dtype is not execution dtype, and training should not create a second checkpoint naming universe (`/home/kosin/node-analysis/dives/report-t2-kohya.md:149-150`; `/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:270-272`). |
-| Prediction parameterization, sigma/timestep conversion, latent and conditioning meaning | **SHARED primitives, DUAL-PATH orchestration** | Reuse torch parameterization math and backend-agnostic family latent/sampling descriptors (`packages/dinkster-inference-torch/src/dinkster_inference_torch/parameterizations.py:1-17,27-94`; `packages/dinkster-inference/src/dinkster_inference/families.py:69-88`). Training bindings add target construction, not competing math. | Kohya separates shared scheduler/model conventions from training density/target and inference solver orchestration (`/home/kosin/node-analysis/dives/report-t2-kohya.md:164-166`). ai-toolkit family support also requires train scheduler, target, latent, cache, and preview conventions (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:100-116`). |
-| Grad/no-grad, train/eval state, and nested preview mode | **DUAL-PATH** | Bind an explicit execution mode through the typed operation/runtime seam; do not hide mode reads in `forward` (`packages/dinkster-inference-torch/src/dinkster_inference_torch/operations.py:12-18`). Current native VAE code deliberately contains no blanket no-grad guard (`packages/dinkster-inference-torch/src/dinkster_inference_torch/autoencoder_kl.py:34-43`). | ComfyUI has to puncture executor-wide `inference_mode` (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:322-348`); kohya preview must preserve mode, RNG, and placement (`/home/kosin/node-analysis/dives/report-t2-kohya.md:176-193`). |
-| Effective-weight computation and kernel dispatch | **DUAL-PATH** | Add training-capability implementations behind `Operations`; current fp8 fused matmul explicitly refuses autograd (`packages/dinkster-inference-torch/src/dinkster_inference_torch/quant_linear.py:190-210`). | Quantized inference capability does not prove backward capability. ComfyUI has separate effective-weight and bypass paths (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:348-419`); ai-toolkit distinguishes frozen-base input gradients from QAT masters (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:169-177`). |
+| Family detection and registration | **SHARED identity, DUAL-PATH binding** | Training bindings use the same stable family IDs exposed by `dinkster_comfy`, but training does not reimplement its inference registry. | Training and previews need one family identity. All three analyses converge on shared family definitions (`/home/kosin/node-analysis/dives/report-t2-kohya.md:145-155`; `/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:270-275`). |
+| Architecture, component plans, and canonical parameter identities | **SHARED definition, DUAL-PATH binding** | Training bindings declare stable component and parameter identities compatible with the `dinkster_comfy` inference boundary; trainable construction remains training-owned. | Kohya needs stable trainable parameter names and local model control (`/home/kosin/node-analysis/dives/report-t2-kohya.md:43-52,149-150`); ai-toolkit likewise separates common model metadata from runtime mode (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:84-116`). |
+| Weight inspection, storage layout, quant metadata, and source identity | **SHARED identity, DUAL-PATH loading** | Asset identity and declared source mappings are shared; training owns differentiable materialization and must not create a second checkpoint naming universe. | Storage dtype is not execution dtype (`/home/kosin/node-analysis/dives/report-t2-kohya.md:149-150`; `/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:270-272`). |
+| Prediction parameterization, sigma/timestep conversion, latent and conditioning meaning | **SHARED contracts, DUAL-PATH orchestration** | Training bindings add objective and target construction while validation sampling delegates to `dinkster_comfy`. | Kohya separates shared scheduler/model conventions from training density/target and inference solver orchestration (`/home/kosin/node-analysis/dives/report-t2-kohya.md:164-166`). ai-toolkit family support also requires train scheduler, target, latent, cache, and preview conventions (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:100-116`). |
+| Grad/no-grad, train/eval state, and nested preview mode | **DUAL-PATH** | Training uses an immutable execution policy selected before `forward`; validation enters `dinkster_comfy` as an inference boundary rather than changing process-global mode. | ComfyUI has to puncture executor-wide `inference_mode` (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:322-348`); kohya preview must preserve mode, RNG, and placement (`/home/kosin/node-analysis/dives/report-t2-kohya.md:176-193`). |
+| Effective-weight computation and kernel dispatch | **DUAL-PATH** | Training kernels must declare their gradient capabilities; inference-only `dinkster_comfy` kernels are not assumed differentiable. | Quantized inference capability does not prove backward capability. ComfyUI has separate effective-weight and bypass paths (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:348-419`); ai-toolkit distinguishes frozen-base input gradients from QAT masters (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:169-177`). |
 | Static inference patches versus trainable adapters | **SHARED codecs/math, DUAL-PATH attachment** | Reuse typed patch algebra and LoRA dialect normalization, but do not make immutable `PatchSet` values optimizer state (`packages/dinkster-inference/src/dinkster_inference/patches.py:1-25,52-82`; `packages/dinkster-inference/src/dinkster_inference/lora.py:1-18,58-111`). | A trainable adapter has live parameters, dropout, optimizer groups, and mutable lifecycle, unlike an inference overlay (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:701-724`; `/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:306-318`). |
-| Weight residency and graph lifetime | **DUAL-PATH under SHARED governor** | Current `WeightLease` is valid for one module forward and leased values may not escape (`packages/dinkster-inference-torch/src/dinkster_inference_torch/residency.py:152-186`). Training needs backward rematerialization or an explicitly budgeted graph lease. | ai-toolkit proves forward staging plus backward restaging for frozen weights (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:179-191,279-304`). ComfyUI's inference-shaped offload is unmanaged at training lifetimes (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:528-577`). |
+| Weight residency and graph lifetime | **DUAL-PATH under SHARED governor** | Training needs backward rematerialization or an explicitly budgeted graph lease; `dinkster_comfy` inference residency is not reused as optimizer state. | ai-toolkit proves forward staging plus backward restaging for frozen weights (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:179-191,279-304`). ComfyUI's inference-shaped offload is unmanaged at training lifetimes (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:528-577`). |
 | Global memory admission, device inventory, and shedding | **SHARED service, DUAL-PATH plans** | Extend `MemoryGovernor`, reservation requests, and worker-boundary admission, preserving reservation-before-allocation and one shedding authority (`packages/dinkster-memory/src/dinkster_memory/governor.py:1-23,93-108,120-170`; `packages/dinkster-memory/src/dinkster_memory/reservations.py:1-10,25-40,69-107`; `packages/dinkster-workers/src/dinkster_workers/governed.py:1-13,56-83`). | Training has activations, gradients, optimizer, EMA, and backward temporaries absent from weight-only planning (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:543-577`; `/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:320-338`). |
 | Asset identity, cache bytes, and provenance | **SHARED substrate, TRAINER-ONLY cache policy** | Use `AssetRef` digest identity/materialization and `DiskCAS` atomic content-addressed bytes; add training-specific manifest schemas above them (`packages/dinkster-assets/src/dinkster_assets/model.py:1-8,30-50,70-103`; `packages/dinkster-caches/src/dinkster_caches/cas.py:1-18,37-98`). | Kohya validates latent/text cache compatibility with augmentations and trainable encoders (`/home/kosin/node-analysis/dives/report-t2-kohya.md:109-114`); ai-toolkit also caches several modalities but disables incompatible caches (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:195-200,213-215`). |
 | Dataset ingestion, captions, transforms, bucketing, prior preservation, video clip sampling, and cursor | **TRAINER-ONLY** | Training extensions consume shared assets/codecs; none of this belongs in the inference model handle. | Kohya's dataset schemas and aspect buckets are substantial trainer policy (`/home/kosin/node-analysis/dives/report-t2-kohya.md:105-114`). ComfyUI has basic resident buckets but no streaming cursor, epoch, or cache fingerprint (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:197-251`). |
@@ -309,8 +309,7 @@ optimizer step happened.
 
 Every executable model view is created from a shared `ModelDefinition` plus an
 immutable `ExecutionPolicy`. Construction or binding selects operations before
-`forward`, preserving Dinkster's compile discipline
-(`packages/dinkster-inference-torch/src/dinkster_inference_torch/operations.py:12-18`).
+`forward`, preserving Dinkster's compile discipline.
 The minimum modes are:
 
 | Mode | Gradients | Base storage | Allowed operations |
@@ -392,9 +391,7 @@ runs without ordinary grad recording:
    computes grad-input, releases it, and returns no base-weight gradient. The
    separate adapter branch receives its normal autograd gradients.
 
-This extends, rather than violates, the current forward-only lease contract
-(`packages/dinkster-inference-torch/src/dinkster_inference_torch/residency.py:152-186`).
-It matches the proven ai-toolkit forward/backward restaging pattern
+This matches the proven ai-toolkit forward/backward restaging pattern
 (`/home/kosin/node-analysis/dives/report-t3-ai-toolkit.md:185-191,292-304`) and
 ComfyUI's `QuantLinearFunc` result that a frozen packed base can still carry
 input gradients (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:445-485`).
@@ -404,13 +401,11 @@ pin-counted, version-stable, and fully reserved through backward. It must not
 be the first implementation because it prevents useful shedding and makes a
 forward-scoped API deceptively unsafe.
 
-Dinkster's current fp8 fused route correctly refuses grad-enabled inputs
-(`packages/dinkster-inference-torch/src/dinkster_inference_torch/quant_linear.py:190-210`).
-Its input quantization means `grad_output @ dequant(weight)` would be an STE,
+An fp8 fused route must refuse grad-enabled inputs unless it declares an
+appropriate backward. Input quantization means `grad_output @ dequant(weight)` would be an STE,
 not an exact derivative of the fused forward. Dinkster already specifies that
-gradient work stays on the dequant route
-(`packages/dinkster-inference-torch/src/dinkster_inference_torch/quant_linear.py:296-303`),
-so Slice 2 defaults to a dequantized frozen-base matmul for exact,
+gradient work stays on a declared training route, so the default is a
+dequantized frozen-base matmul for exact,
 forward-consistent grad-input. A fused-fp8-forward/STE-backward option may be
 added only as a separately named, quality-characterized policy. Because a
 custom autograd `forward` disables ordinary grad recording, the fused route's
@@ -491,9 +486,8 @@ fresh materialization, device replication, safe eviction, and cold recovery all
 use the same host mechanism.
 
 No attachment may replace arbitrary `module.forward`, install mutable global
-hooks, or live solely in a side manager. Native architecture construction
-already has the correct typed operation seam
-(`packages/dinkster-inference-torch/src/dinkster_inference_torch/operations.py:1-18`).
+hooks, or live solely in a side manager. Training architecture construction
+must expose a typed operation seam.
 
 ### 4.2 Stable targets and ecosystem codecs
 
@@ -528,9 +522,7 @@ optimizer grouping, and merge/export form one ecosystem contract
 
 Default trainable masters are float32. Execution may cast adapter computation
 to bf16 under policy, while optimizer masters and state stay explicitly typed.
-Base packed tensors always have `requires_grad=False`; Dinkster already freezes
-stored parameters when installing module state
-(`packages/dinkster-inference-torch/src/dinkster_inference_torch/module_residency.py:122-148`).
+Base packed tensors always have `requires_grad=False`.
 
 Each session owns named, checkpointed RNG streams at minimum for:
 
@@ -1151,9 +1143,7 @@ alternative.
    (`packages/dinkster-protocol/src/dinkster_protocol/extensions.py`).
 2. **Backward rematerialization or graph-long weight leases?** Recommendation:
    custom-autograd rematerialization first for frozen packed bases. Permit
-   graph-long leases later only when explicitly pinned and measured. Current
-   leases forbid post-forward use
-   (`packages/dinkster-inference-torch/src/dinkster_inference_torch/residency.py:152-186`).
+   graph-long leases later only when explicitly pinned and measured.
 3. **Canonical adapter target identity?** Recommendation: stable Dinkster
    family/component/module/role identity internally; kohya and other keys only
    at codecs. Never make an external spelling the runtime ABI.
@@ -1266,7 +1256,7 @@ alternative.
 | Global `inference_mode` or process-global training boolean | ComfyUI punches through executor inference mode and uses global mode (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:49-55,322-348`). | Training has a dedicated isolated process plus immutable per-session execution policy; inference workers are never switched. |
 | Live worker/tensor identity in a graph state port | Worker instance tokens are process-lifetime liveness facts (`packages/dinkster-workers/src/dinkster_workers/session.py:274-280`). | The canonical handle contains only session/checkpoint/config/snapshot/journal values; affinity is advisory and validated cold rebuild is the canonical recovery path. |
 | Pure-cache declaration for mutating advance | Current `idempotent=True` is ordinary caching and false is never cached (`packages/dinkster-schema/src/dinkster_schema/model.py:975-1000`; `packages/dinkster-engine/src/dinkster_engine/engine.py:570-607`). | Advance is an explicitly effectful idempotent command with a durable operation ledger; cache is an acceleration after commit, never the transaction log. |
-| Saving a forward-leased tensor for backward | Dinkster's lease explicitly expires after module forward (`packages/dinkster-inference-torch/src/dinkster_inference_torch/residency.py:152-186`). | Custom autograd saves mechanism identity and rematerializes, or uses an explicit graph lease. |
+| Saving a forward-leased tensor for backward | Forward-scoped residency cannot guarantee a tensor remains valid through backward. | Custom autograd saves mechanism identity and rematerializes, or uses an explicit graph lease. |
 | Weight-only memory accounting or `free-and-hope` | ComfyUI misses activations, gradients, optimizer, scaler, and EMA (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:543-577`). | Governor ledger accounts every training resource and admits before allocation. |
 | Adapter-tensor-only resume called resume | ComfyUI creates a new optimizer and omits continuity state (`/home/kosin/node-analysis/dives/report-t1-comfyui-training.md:267-308`). | Versioned complete session manifest; tensor-only load is initialization. |
 | One procedural full trainer per family | Kohya duplicates full-model orchestration by family (`/home/kosin/node-analysis/dives/report-t2-kohya.md:30-40,212-215`). | Common trainer state machine plus keyed family training bindings. |

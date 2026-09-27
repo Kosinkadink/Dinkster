@@ -77,9 +77,8 @@ when launching:
 | Linux/macOS CPU or macOS Apple Silicon MPS | `$PWD/.venv-torch/bin/python` |
 | Windows CPU | `$PWD\.venv-torch\Scripts\python.exe` |
 
-The [torch package README](../packages/dinkster-inference-torch/README.md)
-contains contributor test and validation details; it is not required for the
-first-image setup.
+The selected execution environment installs Dinkster's pinned `dinkster_comfy`
+runtime when the native or compatibility worker is provisioned.
 
 ## Model folders
 

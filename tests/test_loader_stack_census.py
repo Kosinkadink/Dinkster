@@ -10,7 +10,10 @@ CENSUS_PATH = (
     Path(__file__).parent.parent / "tools" / "data" / "loader_stack_census_2026-08-28.json"
 )
 ALIAS_PATH = (
-    Path(__file__).parent.parent / "packages" / "dinkster-nodes-generation" / "comfy-aliases.json"
+    Path(__file__).parent.parent
+    / "packages"
+    / "dinkster-nodes-generation"
+    / "comfy-aliases.inactive.json"
 )
 
 
@@ -86,7 +89,7 @@ def test_loader_stack_census_has_a_closed_disposition_for_every_record() -> None
     }
 
 
-def test_loader_stack_census_admitted_records_have_generated_aliases() -> None:
+def test_loader_stack_census_admitted_records_remain_in_retired_alias_evidence() -> None:
     repository_to_pack = {
         "kijai/ComfyUI-KJNodes": "comfyui-kjnodes",
         "rgthree/rgthree-comfy": "rgthree-comfy",

@@ -119,9 +119,7 @@ pack to its per-pack (or H1/H2 grouped) isolated placement.
 
 Narrow protocol, defined backend-side in a neutral module
 (packages/dinkster-memory alongside MemoryGovernor), implemented by the
-engine (inference-owned packages/dinkster-inference-torch /
-dinkster-compat-comfy surfaces: ResidencyManager,
-NativeResidencyCoordinator):
+engine-facing model runtime:
 
     class ModelTenantHandle(Protocol):
         pack: str                 # attribution
@@ -200,26 +198,9 @@ implementation in H3.2):
 
 ## H3.2 engine registry (adjudicated plan, 2026-07-30)
 
-Joint adjudication record: backend strawman reviewed by the
-inference thread with rulings D1-D4, finding R1, and question Q1;
-all rulings folded below verbatim. Approved for H3.2a delegation
-with no further full review round. Amended 2026-07-30 (post-
-delegation): the H3.2a delegate proved rulings D2 and "no
-ResidencyManager changes" contradictory at the manager layer
-(ResidencyMechanism.unload() has no refusal channel; free()
-unconditionally detaches an unsatisfied candidate at
-residency.py:661-676; load() nests free() with no pass seam at
-:585-598). The backend proposal resolving the contradiction at the
-coordinator layer was CONFIRMED by the inference thread with
-clarifications C1 and C2; see "D2 amendment" below. residency.py
-remains untouched. Source anchors at 236e3f2:
-packages/dinkster-memory/src/dinkster_memory/tenants.py (neutral
-protocol), packages/dinkster-inference-torch/src/dinkster_inference_torch/
-residency.py (ResidencyManager fleet policy),
-packages/dinkster-compat-comfy/src/dinkster_compat_comfy/
-native_residency.py (coordinator lock discipline),
-src/dinkster/compose.py ServingComposer(tenant_registry=...) +
-_PackTenantRegistry (H3.1 seam).
+The neutral tenant protocol lives in
+`packages/dinkster-memory/src/dinkster_memory/tenants.py`; composition is owned
+by `ServingComposer` and `_PackTenantRegistry` in `src/dinkster/compose.py`.
 
 ### Module and shape
 
@@ -415,17 +396,9 @@ pass ordering the pager's next placement decision.
 ### H3.2 slice contents
 
 - H3.2a (backend delegate): tenant_registry.py, the notify_resident
-  protocol addition, the ADDITIVE pass-epoch hook in
-  NativeResidencyCoordinator (backend-owned native_residency.py;
-  per the D2 amendment - residency.py stays untouched), torch-free
-  unit tests (fake manager / coordinator / handles mirroring every
-  amendment contract), one .venv-torch integration test driving a
-  REAL ResidencyManager with
-  tenant mechanisms under synthetic pressure (offload-then-evict
-  ordering, pass-budget skip, poisoning) as a new additive file
-  under packages/dinkster-inference-torch/tests/ (placement sanctioned
-  by the joint plan approval; no edits to existing inference-owned
-  files), and doc/ledger rows. Narrow adjudicated exception:
+  protocol addition, torch-free unit tests for tenant mechanisms under
+  synthetic pressure (offload-then-evict ordering, pass-budget skip, and
+  poisoning), and doc/ledger rows. Narrow adjudicated exception:
   _PackTenantRegistry adds only the ownership-checking
   notify_resident forwarder in compose.py; this is not serve wiring.
   No serve wiring, no GPU work.

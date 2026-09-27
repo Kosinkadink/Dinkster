@@ -76,7 +76,7 @@ def _fork_samples(samples: object) -> tuple[object, tuple[str, ...] | None]:
 
     if type(samples) is not MultiStreamLatent:
         return samples, None
-    streams = cast("MultiStreamLatent", samples)
+    streams = cast("MultiStreamLatent[Any]", samples)
     nested = importlib.import_module("dinkster_comfy.nested_tensor").NestedTensor(
         tuple(streams.by_role(role) for role in streams.roles)
     )
@@ -88,14 +88,16 @@ def _dinkster_samples(samples: object, roles: tuple[str, ...] | None) -> object:
         return samples
     from dinkster_inference import MultiStreamLatent
 
-    return MultiStreamLatent.from_pairs(
+    return MultiStreamLatent[Any].from_pairs(
         tuple(zip(roles, cast("Any", samples).unbind(), strict=True))
     )
 
 
 class GenerationLoadCheckpoint(LoadCheckpoint):
     @classmethod
-    def execute(cls, *, checkpoint: object) -> Mapping[str, object]:
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, checkpoint: object
+    ) -> Mapping[str, object]:
         if not isinstance(checkpoint, AssetRef):
             raise TypeError("checkpoint must be an AssetRef")
         model, clip, vae, _ = importlib.import_module(
@@ -111,7 +113,9 @@ class GenerationLoadCheckpoint(LoadCheckpoint):
 
 class GenerationLoadDiffusionModel(LoadDiffusionModel):
     @classmethod
-    def execute(cls, *, diffusion_model: object, weight_dtype: str) -> Mapping[str, object]:
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, diffusion_model: object, weight_dtype: str
+    ) -> Mapping[str, object]:
         if not isinstance(diffusion_model, AssetRef):
             raise TypeError("diffusion_model must be an AssetRef")
         torch = cast("Any", importlib.import_module("torch"))
@@ -223,7 +227,9 @@ class NativeLoadVae(Node):
 
 class GenerationClipTextEncode(CLIPTextEncode):
     @classmethod
-    def execute(cls, *, text: str, clip: object) -> Mapping[str, object]:
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, text: str, clip: object
+    ) -> Mapping[str, object]:
         direct = cast("Any", clip)
         conditioning = direct.encode_from_tokens_scheduled(direct.tokenize(text))
         return cls.outputs(conditioning=_resident_conditioning(conditioning, clip))
@@ -231,7 +237,9 @@ class GenerationClipTextEncode(CLIPTextEncode):
 
 class GenerationEmptyLatentImage(EmptyLatentImage):
     @classmethod
-    def execute(cls, *, width: int, height: int, batch_size: int) -> Mapping[str, object]:
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, width: int, height: int, batch_size: int
+    ) -> Mapping[str, object]:
         if width % 8 or height % 8:
             raise ValueError("width and height must be divisible by 8")
         torch = cast("Any", importlib.import_module("torch"))
@@ -246,7 +254,7 @@ class GenerationKSampler(KSampler):
     MAX_CFG = 100.0
 
     @classmethod
-    def execute(
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
         cls,
         *,
         model: object,
@@ -299,14 +307,16 @@ class GenerationKSampler(KSampler):
 
 class GenerationVAEDecode(VAEDecode):
     @classmethod
-    def execute(cls, *, samples: object, vae: object) -> Mapping[str, object]:
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, samples: object, vae: object
+    ) -> Mapping[str, object]:
         if not isinstance(samples, Mapping):
             raise TypeError("samples must be a latent mapping")
         latent = cast("Mapping[object, object]", samples)["samples"]
         from dinkster_inference import MultiStreamLatent
 
         if type(latent) is MultiStreamLatent:
-            latent = cast("MultiStreamLatent", latent).by_role("video")
+            latent = cast("MultiStreamLatent[Any]", latent).by_role("video")
         image = cast("Any", vae).decode(latent)
         if len(image.shape) == 5:
             image = image.reshape(-1, image.shape[-3], image.shape[-2], image.shape[-1])
@@ -322,7 +332,7 @@ def _h3_shape(width: int, height: int, frame_count: int) -> object:
     video_frames = 2 if frame_count <= 5 else ((frame_count - 5) // 17) * 5 + 2
     audio_frames = round(frame_count / 24 * 40)
     device = importlib.import_module("dinkster_comfy.model_management").intermediate_device()
-    return MultiStreamLatent.from_pairs(
+    return MultiStreamLatent[Any].from_pairs(
         (
             (
                 "video",
@@ -463,7 +473,7 @@ class NativeVAEDecodeAudio(Node):
         from dinkster_inference import MultiStreamLatent
 
         if type(latent) is MultiStreamLatent:
-            latent = cast("MultiStreamLatent", latent).by_role("audio")
+            latent = cast("MultiStreamLatent[Any]", latent).by_role("audio")
         audio = cast("Any", vae).decode(latent).movedim(-1, 1)
         torch = cast("Any", importlib.import_module("torch"))
         std = torch.std(audio, dim=(1, 2), keepdim=True) * 5.0

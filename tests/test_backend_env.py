@@ -1,21 +1,19 @@
 """Backend environment recipes and smoke-report validation.
 
 CPU-side proof for the ROCm/XPU environment groundwork: the recipes pin the
-ruled backend floors, the setup scripts embed the same pins, command
-construction is exact, and smoke-report validation demands every identity
-field a support cell requires. None of this claims hardware support.
+ruled backend floors, command construction is exact, and smoke-report
+validation demands every identity field a support cell requires. None of
+this claims hardware support.
 """
 
 from __future__ import annotations
 
 import json
-import shlex
 import tomllib
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from dinkster_inference import MINIMAX_H3
 from dinkster_workers.backend_env import (
     BACKEND_ENV_RECIPES,
     BENCHMARK_ANIMA_FALLBACK_VARIANT,
@@ -42,13 +40,6 @@ from packaging.requirements import Requirement
 
 REPO_ROOT = Path(__file__).parents[1]
 
-SETUP_SCRIPTS = {
-    "windows-rocm": "scripts/setup_env_rocm.ps1",
-    "linux-rocm": "scripts/setup_env_rocm.sh",
-    "windows-xpu": "scripts/setup_env_xpu.ps1",
-    "linux-xpu": "scripts/setup_env_xpu.sh",
-}
-
 HUMO_COMFYUI_COMMIT = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
 HUMO_ARTIFACT_DIGESTS = {
     "diffusion": "222ddeac4dea6b78363cb5be78c47660c92963a69386026cd6dc0de4d3094f66",
@@ -61,8 +52,8 @@ HUMO_ARTIFACT_DIGESTS = {
 }
 
 H3_RESIDENCY_REQUIREMENTS = {
-    "residency_route_roles": MINIMAX_H3.engine.residency_route_roles,
-    "requires_accelerator_residency": MINIMAX_H3.engine.requires_accelerator_residency,
+    "residency_route_roles": ("diffusion", "conditioner", "video_vae", "audio_vae"),
+    "requires_accelerator_residency": True,
 }
 ANIMA_ARTIFACT_DIGESTS = {
     "diffusion": "bd43b7cffe1ed1153d9c41e7beb2f18cb1273eafbaa3af3edd6a173dc90a006e",
@@ -208,23 +199,6 @@ class TestRecipes:
             assert recipe.index_url == "https://download.pytorch.org/whl/xpu"
             assert recipe.venv == ".venv-xpu"
 
-    def test_cells_pin_the_pure_python_kitchen_wheel(self) -> None:
-        # PyPI's platform wheels for win_amd64 and linux x86_64 are CUDA
-        # builds; ROCm and XPU cells need the pure-Python eager backend,
-        # hash-pinned so uv verifies the download.
-        for recipe in BACKEND_ENV_RECIPES.values():
-            kitchen = [
-                package
-                for package in recipe.support_packages
-                if package.startswith("dinkster-kitchen@")
-            ]
-            assert kitchen == [
-                "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/"
-                "84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/"
-                "dinkster_kitchen-0.2.35.post1-py3-none-any.whl"
-                "#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
-            ]
-
     def test_backends_never_share_a_venv(self) -> None:
         venvs = {recipe.accelerator: recipe.venv for recipe in BACKEND_ENV_RECIPES.values()}
         assert venvs["rocm"] != venvs["xpu"]
@@ -260,7 +234,7 @@ class TestSetupCommands:
             assert benchmark_import == (
                 venv_python(recipe),
                 "-c",
-                "import dinkster_compat_comfy.native_arm",
+                "import dinkster_comfy",
             )
 
     def test_workspace_packages_install_editable(self) -> None:
@@ -298,41 +272,6 @@ class TestSetupCommands:
                         assert dependency[0] in installed, (
                             f"{package_path} requires workspace package {dependency[0]}"
                         )
-
-
-def executable_commands(script: Path) -> list[list[str]]:
-    """Every command a setup script executes, as unquoted token lists."""
-    text = script.read_text()
-    # Join PowerShell backtick and POSIX backslash line continuations.
-    text = text.replace("`\n", " ").replace("\\\n", " ")
-    commands: list[list[str]] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line in ('$ErrorActionPreference = "Stop"', "set -euo pipefail"):
-            continue
-        if line.startswith("if ($LASTEXITCODE"):
-            continue
-        commands.append([token.strip('"') for token in shlex.split(line, posix=False)])
-    return commands
-
-
-class TestSetupScriptSync:
-    @pytest.mark.parametrize("cell", sorted(SETUP_SCRIPTS))
-    def test_script_commands_match_the_recipe_exactly(self, cell: str) -> None:
-        # Full-command equality: the scripts run the recipe's setup commands
-        # and then the backend smoke, nothing more, nothing reordered.
-        recipe = BACKEND_ENV_RECIPES[cell]
-        separator = "\\" if recipe.os_family == "windows" else "/"
-        smoke = [
-            venv_python(recipe),
-            f"scripts{separator}{recipe.accelerator}_smoke.py",
-            "--json",
-            f"{recipe.accelerator}-report.json",
-        ]
-        expected = [list(command) for command in setup_commands(recipe)] + [smoke]
-        assert executable_commands(REPO_ROOT / SETUP_SCRIPTS[cell]) == expected
 
 
 class TestSmokeReportValidation:

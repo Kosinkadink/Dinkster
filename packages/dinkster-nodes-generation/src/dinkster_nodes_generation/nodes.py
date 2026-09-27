@@ -5908,8 +5908,35 @@ GENERATION_NODE_IDS = tuple(node.schema().node_type for node in GENERATION_NODES
 GENERATION_COMPAT_CARRIER_NODE_IDS = tuple(
     node.schema().node_type for node in GENERATION_COMPAT_CARRIER_NODES
 )
-GENERATION_SCHEMA_NODES = (*GENERATION_NODES, *GENERATION_COMPAT_CARRIER_NODES)
-GENERATION_SCHEMA_NODE_IDS = (*GENERATION_NODE_IDS, *GENERATION_COMPAT_CARRIER_NODE_IDS)
+_SUPPORTED_SCHEMA_NODE_IDS = frozenset(
+    {
+        "dinkster.load_checkpoint",
+        "dinkster.load_diffusion_model",
+        "dinkster.clip_text_encode",
+        "dinkster.empty_latent_image",
+        "dinkster.ksampler",
+        "dinkster.vae_decode",
+        "dinkster.image_crop_to_mask",
+        "dinkster.preview_mask",
+        "dinkster.voxel_to_mesh",
+        "dinkster.get_mesh_info",
+        "dinkster.remesh_mesh",
+        "dinkster.decimate_mesh",
+        "dinkster.smooth_mesh_normals",
+        "dinkster.unwrap_mesh",
+        "dinkster.paint_mesh",
+        "dinkster.bake_texture_from_voxel",
+        "dinkster.bake_normal_map_from_mesh",
+        "dinkster.bake_ambient_occlusion",
+        "dinkster.render_uv_atlas",
+        "dinkster.apply_texture_to_mesh",
+        "dinkster.mesh_to_model3d",
+    }
+)
+GENERATION_SCHEMA_NODES = tuple(
+    node for node in GENERATION_NODES if node.schema().node_type in _SUPPORTED_SCHEMA_NODE_IDS
+)
+GENERATION_SCHEMA_NODE_IDS = tuple(node.schema().node_type for node in GENERATION_SCHEMA_NODES)
 
 __all__ = [
     "GENERATION_COMPAT_CARRIER_NODE_IDS",

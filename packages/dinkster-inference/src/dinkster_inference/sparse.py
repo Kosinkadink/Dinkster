@@ -5,10 +5,20 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, ClassVar, Generic, Protocol, TypeVar, cast
+from typing import Any, ClassVar, Generic, Protocol, Self, TypeVar, cast
 
-from .patches import SizedTensor
-from .sampling import ArithTensor
+
+class SizedTensor(Protocol):
+    @property
+    def shape(self) -> tuple[int, ...]: ...
+
+
+class ArithTensor(Protocol):
+    def __add__(self, other: Self | float) -> Self: ...
+
+    def __sub__(self, other: Self | float) -> Self: ...
+
+    def __mul__(self, other: Self | float) -> Self: ...
 
 T = TypeVar("T", bound=SizedTensor, covariant=True)
 

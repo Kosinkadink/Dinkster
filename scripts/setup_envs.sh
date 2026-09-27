@@ -20,8 +20,6 @@
 # instead: torch's mac build ships MPS support in the one default wheel,
 # and dinkster-kitchen's mac-compatible distribution is its pure-Python
 # PyPI wheel (eager/triton backends - the CPU flavor this env wants).
-# The setup finishes with scripts/mps_smoke.py, which reports what the
-# machine's MPS device can actually do.
 
 set -euo pipefail
 
@@ -200,14 +198,6 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
 else
     echo "==> no NVIDIA GPU detected - skipping .venv-gpu (the GPU gate"
     echo "    applies only on GPU machines, AGENTS.md 'Validation gate')"
-fi
-
-# Apple Silicon only: on such machines a missing MPS device means a broken
-# torch install, so the smoke report's failure should fail the setup. Intel
-# macs have no MPS to probe and skip it.
-if [ "$os" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
-    echo "==> MPS smoke report (scripts/mps_smoke.py)"
-    .venv-torch/bin/python scripts/mps_smoke.py
 fi
 
 echo "==> done. Gates:"

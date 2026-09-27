@@ -6,11 +6,30 @@ import json
 import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, TypeAlias, cast
 
 from dinkster_values import TypeRegistry, TypeSpec, stable_hash
 
-from .sampling import BuiltinSamplerSelection, OptionValue
+OptionValue: TypeAlias = float | int | bool | str | None
+
+
+@dataclass(frozen=True, slots=True)
+class BuiltinSamplerSelection:
+    sampler_id: str
+    options: tuple[tuple[str, OptionValue], ...]
+
+    def __post_init__(self) -> None:
+        if type(self.sampler_id) is not str or not self.sampler_id:
+            raise ValueError("built-in sampler selection requires a sampler id")
+        if type(self.options) is not tuple:
+            raise TypeError("built-in sampler options must be a tuple")
+        names: list[str] = []
+        for item in self.options:
+            if type(item) is not tuple or len(item) != 2 or type(item[0]) is not str:
+                raise TypeError("built-in sampler options must be (name, value) tuples")
+            names.append(item[0])
+        if len(names) != len(set(names)):
+            raise ValueError("built-in sampler option names must be unique")
 
 
 @dataclass(frozen=True, slots=True)
