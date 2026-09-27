@@ -14,9 +14,9 @@ def test_utility_execution_targets_are_native() -> None:
     source_dir = ROOT / "packages/dinkster-native/src/dinkster_native"
     paths = tuple(source_dir.glob("native_arm*.py")) + tuple(source_dir.glob("nodes_*.py"))
     targets = {
-        "GenerationImageCropToMask": "dinkster_inference_torch.image_crop",
-        "GenerationGetMeshInfo": "dinkster_inference_torch.mesh",
-        "GenerationMeshToModel3D": "dinkster_inference_torch.mesh",
+        "GenerationImageCropToMask": "dinkster_native.model3d.image_crop",
+        "GenerationGetMeshInfo": "dinkster_native.model3d.mesh",
+        "GenerationMeshToModel3D": "dinkster_native.model3d.mesh",
     }
     for path in paths:
         for node in ast.parse(path.read_text()).body:

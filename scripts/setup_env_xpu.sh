@@ -27,7 +27,6 @@ uv pip install --python .venv-xpu/bin/python \
     -e packages/dinkster-memory \
     -e packages/dinkster-workers \
     -e packages/dinkster-inference \
-    -e packages/dinkster-inference-torch \
     -e packages/dinkster-image-document \
     -e packages/dinkster-video \
     -e packages/dinkster-api \

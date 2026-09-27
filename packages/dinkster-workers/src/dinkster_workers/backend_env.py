@@ -52,18 +52,6 @@ _ROCM_TORCH_REQUIREMENT = "torch[device-all]==2.12.0+rocm7.14.0"
 _XPU_INDEX_URL = "https://download.pytorch.org/whl/xpu"
 _XPU_TORCH_REQUIREMENT = "torch==2.13.0+xpu"
 
-# dinkster_inference_torch imports dinkster_kitchen unconditionally, so every
-# backend cell needs it. The pin must be the pure-Python wheel: PyPI's
-# platform wheels for win_amd64 and linux x86_64 carry CUDA-only compiled
-# kernels, while the pure wheel provides the device-agnostic eager backend
-# that ROCm and XPU cells run on. uv enforces the sha256 fragment.
-_KITCHEN_REQUIREMENT = (
-    "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/"
-    "84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/"
-    "dinkster_kitchen-0.2.35.post1-py3-none-any.whl"
-    "#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
-)
-
 _SUPPORT_PACKAGES = (
     "pytest",
     "numpy",
@@ -73,7 +61,6 @@ _SUPPORT_PACKAGES = (
     "pillow",
     "packaging",
     "tokenizers==0.23.1",
-    _KITCHEN_REQUIREMENT,
 )
 
 _EDITABLE_PACKAGES = (
@@ -86,7 +73,6 @@ _EDITABLE_PACKAGES = (
     "packages/dinkster-memory",
     "packages/dinkster-workers",
     "packages/dinkster-inference",
-    "packages/dinkster-inference-torch",
     "packages/dinkster-image-document",
     "packages/dinkster-video",
     "packages/dinkster-api",

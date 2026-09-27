@@ -361,7 +361,7 @@ def _triangle_mesh_batch(value: object) -> object:
 def _native_mesh_operation(
     operation: str, *, offload_models: bool = False, **inputs: object
 ) -> object:
-    mesh_operations = importlib.import_module("dinkster_inference_torch.mesh_operations")
+    mesh_operations = importlib.import_module("dinkster_native.model3d.mesh_operations")
     residency = default_native_residency()
     with residency.placement_pass():
         if offload_models:
@@ -428,7 +428,7 @@ def _run_geometry_model(
         raise ValueError("fov_x_degrees must be in [0.0, 170.0]")
     if not 1 <= batch_size <= 64:
         raise ValueError("batch_size must be in [1, 64]")
-    geometry = importlib.import_module("dinkster_inference_torch.moge_geometry")
+    geometry = importlib.import_module("dinkster_native.model3d.moge_geometry")
     tensor = cast("Any", image)[..., :3]
     bchw = tensor.movedim(-1, -3).contiguous()
     chunks: list[Mapping[str, Any]] = []
@@ -681,7 +681,7 @@ class GenerationImageCropToMask(Node):
         grow_mask: int = 0,
         background: str = "#000000",
     ) -> Mapping[str, object]:
-        image_crop = importlib.import_module("dinkster_inference_torch.image_crop")
+        image_crop = importlib.import_module("dinkster_native.model3d.image_crop")
         result = image_crop.crop_images_to_masks(
             images=images,
             masks=masks,
@@ -726,7 +726,7 @@ class GenerationGetMeshInfo(Node):
 
     @classmethod
     def execute(cls, *, mesh: object) -> Mapping[str, object]:
-        mesh_ops = importlib.import_module("dinkster_inference_torch.mesh")
+        mesh_ops = importlib.import_module("dinkster_native.model3d.mesh")
         return cls.outputs(mesh=_triangle_mesh_batch(mesh), info=mesh_ops.mesh_info(mesh))
 
 
@@ -982,7 +982,7 @@ class GenerationMeshToModel3D(Node):
 
     @classmethod
     def execute(cls, *, mesh: object) -> Mapping[str, object]:
-        mesh_ops = importlib.import_module("dinkster_inference_torch.mesh")
+        mesh_ops = importlib.import_module("dinkster_native.model3d.mesh")
         glb = mesh_ops.mesh_item_to_glb_bytes(mesh, 0)
         if glb is None:
             raise ValueError("mesh is empty")

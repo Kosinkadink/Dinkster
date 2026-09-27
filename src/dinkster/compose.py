@@ -315,7 +315,6 @@ _FIRST_PARTY_PACK_MODULES = MappingProxyType(
         "dinkster-nodes-image": "dinkster_nodes_image",
         "dinkster-nodes-remote": "dinkster_nodes_remote",
         "dinkster-nodes-generation": "dinkster_nodes_generation",
-        "dinkster-model-triposplat": "dinkster_model_triposplat",
         "dinkster-vision-birefnet": "dinkster_nodes_vision.birefnet",
         "dinkster-vision-depth-anything-v2": "dinkster_nodes_vision.depth_anything_v2",
         "dinkster-vision-depth-anything-v3": "dinkster_nodes_vision.depth_anything_v3",
@@ -340,7 +339,7 @@ _ISOLATED_FIRST_PARTY_PACKS = frozenset(
 _PACK_ARTIFACT_SIDECARS = ("comfy-aliases.json", "comfy-groups.json")
 _DEFAULT_SUITE_DISTRIBUTION = "dinkster-nodes-std"
 _DEFAULT_SUITE_LOCK = "dinkster_nodes_std_suite/dinkster.lock"
-_MODEL_PACK_IDS = ("dinkster-model-triposplat",)
+_MODEL_PACK_IDS: tuple[str, ...] = ()
 SAMPLING_WORKER_NAME = "dinkster.ksampler"
 """Native worker whose arm materializes every inference extension surface."""
 INFERENCE_UNAVAILABLE_REASON = (

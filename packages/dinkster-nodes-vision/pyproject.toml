@@ -14,7 +14,6 @@ license-files = [
 ]
 dependencies = [
     "dinkster-api",
-    "dinkster-inference-torch",
     "numpy>=1.26",
     "opencv-python-headless>=4.10",
     "pillow>=10",
@@ -49,7 +48,6 @@ packages = ["src/dinkster_nodes_vision"]
 
 [tool.uv.sources]
 dinkster-api = { workspace = true }
-dinkster-inference-torch = { workspace = true }
 
 [tool.pyright]
 pythonVersion = "3.12"

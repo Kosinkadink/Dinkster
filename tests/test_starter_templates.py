@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import cast
 
-from dinkster_model_triposplat import TRIPOSPLAT_MODEL_NODES
 from dinkster_native.native import NATIVE_NODES
 from dinkster_nodes_generation import GENERATION_SCHEMA_NODES
 from dinkster_workers import load_pack_templates
@@ -15,7 +14,6 @@ from dinkster.compose import compose_serving
 ROOT = Path(__file__).resolve().parents[1]
 MANIFESTS = {
     "dinkster-nodes-generation": ROOT / "packages/dinkster-nodes-generation/dinkster-pack.toml",
-    "dinkster-model-triposplat": ROOT / "packages/dinkster-model-triposplat/dinkster-pack.toml",
 }
 
 EXPECTED_FAMILIES = {
@@ -31,7 +29,6 @@ def test_generation_pack_has_one_complete_starter_per_supported_family() -> None
     templates = tuple(template for values in by_pack.values() for template in values)
     assert len(templates) == len(EXPECTED_FAMILIES)
     assert {template.family for template in templates} == EXPECTED_FAMILIES
-    assert by_pack["dinkster-model-triposplat"] == ()
     assert all(
         template.description and template.models and template.thumbnail for template in templates
     )
@@ -99,7 +96,6 @@ def test_every_starter_resolves_against_current_schemas() -> None:
                 **composition.schemas,
                 **{node.schema().node_type: node.schema() for node in NATIVE_NODES},
                 **{node.schema().node_type: node.schema() for node in GENERATION_SCHEMA_NODES},
-                **{node.schema().node_type: node.schema() for node in TRIPOSPLAT_MODEL_NODES},
             }
             for pack, manifest in MANIFESTS.items():
                 for template in load_pack_templates(manifest, pack=pack):

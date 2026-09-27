@@ -17,15 +17,9 @@ TARGETS = {
         ROOT / "packages/dinkster-nodes-generation",
         "dinkster_nodes_generation",
     ),
-    "triposplat": (
-        ROOT / "packages/dinkster-model-triposplat",
-        "dinkster_model_triposplat",
-    ),
 }
 
-OWNER_BY_SLUG = {
-    "triposplat": "triposplat",
-}
+OWNER_BY_SLUG: dict[str, str] = {}
 
 SUPPORTED_STARTER_SLUGS = frozenset({"sd15", "minimax-h3"})
 

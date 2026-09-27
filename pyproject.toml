@@ -25,7 +25,6 @@ dependencies = [
     "dinkster-nodes-remote",
     "dinkster-nodes-generation",
     "dinkster-nodes-image",
-    "dinkster-model-triposplat",
     "dinkster-nodes-dev",
     "dinkster-server",
     "dinkster-collab",
@@ -98,7 +97,6 @@ dinkster-nodes-std = { workspace = true }
 dinkster-nodes-remote = { workspace = true }
 dinkster-nodes-generation = { workspace = true }
 dinkster-nodes-image = { workspace = true }
-dinkster-model-triposplat = { workspace = true }
 dinkster-nodes-dev = { workspace = true }
 dinkster-server = { workspace = true }
 dinkster-collab = { workspace = true }
@@ -143,10 +141,7 @@ include = ["packages", "src", "tests"]
 extraPaths = ["src", "../dinkster-evidence", ".evidence-source"]
 # Torch execution packages are checked in their isolated worker environment.
 exclude = [
-    "packages/dinkster-inference-torch",
     "packages/dinkster-nodes-vision",
-    "packages/dinkster-model-triposplat/src/dinkster_model_triposplat/provider.py",
-    "packages/dinkster-model-triposplat/tests",
 ]
 # The packages are the load-bearing code: strict there. Tests and the demo
 # CLI stay on standard - useful checking without annotation ceremony.

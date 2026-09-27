@@ -21,9 +21,7 @@ GPU_SETUP_DOC = REPO_ROOT / "packages" / "dinkster-inference-torch" / "README.md
 GPU_TEST = REPO_ROOT / "packages" / "dinkster-inference-torch" / "tests" / "test_gpu.py"
 INFERENCE_TORCH_PROJECT = REPO_ROOT / "packages" / "dinkster-inference-torch"
 MINIMAX_MUSIC3_COMPONENT = "minimax_music3_component"
-GPU_MODEL_PACKS = {
-    "packages/dinkster-model-triposplat": "dinkster_model_triposplat",
-}
+GPU_MODEL_PACKS: dict[str, str] = {}
 
 
 def _powershell_package_array(source: str, name: str) -> list[str]:
