@@ -84,6 +84,7 @@ $GpuEditablePackages = @(
     "packages/dinkster-compat-comfy"
 )
 $KitchenCpuWheel = "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
+$DinksterComfyRequirement = "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@21c85fa1aa9a6c5b42e4c599ae0a1ce717fbc401"
 $PreviousProject = [Environment]::GetEnvironmentVariable("UV_PROJECT", "Process")
 $PreviousProjectEnvironment = [Environment]::GetEnvironmentVariable(
     "UV_PROJECT_ENVIRONMENT", "Process"
@@ -126,6 +127,7 @@ try {
         "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
         "transformers==5.16.1",
         $KitchenCpuWheel,
+        $DinksterComfyRequirement,
         "dinkster-aimdo==0.5.5.post2"
     ) + (Get-EditableArguments $CpuEditablePackages)
     Invoke-Native "uv" (@("pip", "install", "--python", $TorchPython) + $CpuDependencies)
@@ -170,6 +172,7 @@ try {
             "pytest", "numpy", "scipy", "torchsde", "tqdm", "pillow", "packaging",
             "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
             "dinkster-kitchen==0.2.35.post1", "dinkster-aimdo==0.5.5.post2",
+            $DinksterComfyRequirement,
             "triton-windows==3.7.1.post27"
         ) + (Get-EditableArguments $GpuEditablePackages)
         Invoke-Native "uv" (@("pip", "install", "--python", $GpuPython) + $GpuDependencies)

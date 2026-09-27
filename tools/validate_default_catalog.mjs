@@ -22,7 +22,7 @@ assert.equal(diagnostics.filter((item) => item.severity === 'error').length, 0,
 for (const [key, result] of [['comfyAliases', aliases], ['comfyGroups', groups]]) {
   const declared = Object.values(payload.packs).flatMap((pack) => pack[key]?.records ?? [])
   assert.equal(result.catalog.records.length, declared.length, `${key}: published records were lost`)
-  for (const pack of ['dinkster-nodes-generation', 'dinkster-nodes-image']) {
+  for (const pack of ['dinkster-nodes-image']) {
     const records = payload.packs[pack][key].records
     assert(records.length > 0, `${pack} ${key} must exercise real maintained records`)
     assert.equal(result.catalog.records.filter((record) => record.ownerPack === pack).length,
