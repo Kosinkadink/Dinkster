@@ -118,7 +118,8 @@
   windows through the same sampling engine. Model Sparse Attention supports
   Sol-Attn, SLA, and FastH3 VSA controls on eligible CUDA execution. VSA uses
   optional checkpoint `to_gate_compress` layers when present and otherwise
-  runs its fine stage without the learned coarse branch.
+  runs its fine stage without the learned coarse branch. Managed SageAttention
+  installation and execution are unsupported.
 <!-- capability:dinkster.minimax_music3 -->
 - MiniMax Music 3 text-to-music generation through the official split-component
   workflow. Diffusion supports the FP16, FP32, and INT8 ConvRot artifacts; the

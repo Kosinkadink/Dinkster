@@ -272,16 +272,7 @@ Training capabilities are delivered by separately versioned packages.
   kernel, or hardware support is unavailable. Authenticated routes preserve
   the requested policy and record the actual SDPA execution, including
   per-role overrides and isolated or remote workers.
-- SageAttention 2 INT8 attention executes through the `sage` attention policy
-  (server default `DINKSTER_ATTENTION_POLICY=sage` or per-job/per-role override)
-  when the managed `dinkster-kitchen` distribution is installed on a CUDA worker
-  whose SM has an upstream kernel arm (80, 86, 89, 90, or 120). Prebuilt
-  Python 3.12 wheels support CUDA 13.0 on Windows and Linux x86_64 without a
-  compiler; private-repository users can fetch and install the matching pinned
-  wheel automatically with GitHub authentication. Built-in SDPA serves masked,
-  non-fp16/bf16, wider-than-128-head-dim, and causal cross-length invocations
-  the quantized kernels cannot execute. Automatic routing remains on SDPA even
-  when SageAttention support is authenticated.
+- Managed SageAttention installation and execution are unsupported.
 - Approximate, training-free Sol sparse attention executes through the opt-in
   `sol` policy (server default `DINKSTER_ATTENTION_POLICY=sol` or per-job/per-role
   override) with dinkster-kitchen 0.2.35.post1 on NVIDIA SM80+ workers. It serves

@@ -26,10 +26,9 @@ from .native_arm_latent_utils import _check_bounds
 from .native_arm_runtime import (
     _native_model,
     _native_model_sampling_cache,
-    _native_model_sampling_space,
     _native_model_sampling_timeline,
-    _native_model_sparse_attention,
     _NativeModelOverlay,
+    _replace_native_model,
 )
 from .nodes_provider import (
     _bind_sampling_shift,
@@ -112,23 +111,12 @@ class GenerationReferenceLatent(Node):
 def _model_with_guidance_transform(
     model: object, node_type: str, contribution: object
 ) -> _NativeModelOverlay:
-    handle, overlays, resolvers, control, shift, transforms, windows, chroma_options = (
-        _native_model(model, "model")
-    )
+    transforms = _native_model(model, "model")[5]
     owner_id = f"{node_type}:{len(transforms)}"
-    return _NativeModelOverlay(
-        handle,
-        overlays,
-        resolvers,
-        control,
-        shift,
-        (*transforms, (owner_id, contribution)),
-        windows,
-        chroma_options,
-        sampling_cache=_native_model_sampling_cache(model),
-        sampling_timeline=_native_model_sampling_timeline(model),
-        sampling_space=_native_model_sampling_space(model),
-        sparse_attention=_native_model_sparse_attention(model),
+    return _replace_native_model(
+        model,
+        "model",
+        guidance_transforms=(*transforms, (owner_id, contribution)),
     )
 
 
@@ -225,16 +213,7 @@ class GenerationLazyCache(Node):
         start_percent: float,
         end_percent: float,
     ) -> Mapping[str, object]:
-        (
-            handle,
-            overlays,
-            resolvers,
-            control,
-            shift,
-            transforms,
-            windows,
-            chroma_options,
-        ) = _native_model(model, "model")
+        _native_model(model, "model")
         if _native_model_sampling_cache(model) is not None:
             raise ValueError("a model can carry only one sampling cache")
         inference_torch = importlib.import_module("dinkster_inference_torch")
@@ -244,19 +223,10 @@ class GenerationLazyCache(Node):
             float(end_percent),
         )
         return cls.outputs(
-            model=_NativeModelOverlay(
-                handle,
-                overlays,
-                resolvers,
-                control,
-                shift,
-                transforms,
-                windows,
-                chroma_options,
+            model=_replace_native_model(
+                model,
+                "model",
                 sampling_cache=cache,
-                sampling_timeline=_native_model_sampling_timeline(model),
-                sampling_space=_native_model_sampling_space(model),
-                sparse_attention=_native_model_sparse_attention(model),
             )
         )
 
@@ -275,16 +245,7 @@ class GenerationEasyCache(Node):
         start_percent: float,
         end_percent: float,
     ) -> Mapping[str, object]:
-        (
-            handle,
-            overlays,
-            resolvers,
-            control,
-            shift,
-            transforms,
-            windows,
-            chroma_options,
-        ) = _native_model(model, "model")
+        _native_model(model, "model")
         if _native_model_sampling_cache(model) is not None:
             raise ValueError("a model can carry only one sampling cache")
         inference_torch = importlib.import_module("dinkster_inference_torch")
@@ -294,19 +255,10 @@ class GenerationEasyCache(Node):
             float(end_percent),
         )
         return cls.outputs(
-            model=_NativeModelOverlay(
-                handle,
-                overlays,
-                resolvers,
-                control,
-                shift,
-                transforms,
-                windows,
-                chroma_options,
+            model=_replace_native_model(
+                model,
+                "model",
                 sampling_cache=cache,
-                sampling_timeline=_native_model_sampling_timeline(model),
-                sampling_space=_native_model_sampling_space(model),
-                sparse_attention=_native_model_sparse_attention(model),
             )
         )
 
@@ -345,16 +297,7 @@ class GenerationAttentionSchedule(Node):
         conditioning_sink: str = "off",
         sol_tau: object = None,
     ) -> Mapping[str, object]:
-        (
-            handle,
-            overlays,
-            resolvers,
-            control,
-            shift,
-            transforms,
-            windows,
-            chroma_options,
-        ) = _native_model(model, "model")
+        handle = _native_model(model, "model")[0]
         if _native_model_sampling_timeline(model) is not None:
             raise ValueError("a model can carry only one sampling timeline")
         raw_statuses = getattr(getattr(handle.runtime, "assembled", None), "attention_status", None)
@@ -399,50 +342,19 @@ class GenerationAttentionSchedule(Node):
             ),
         )
         return cls.outputs(
-            model=_NativeModelOverlay(
-                handle,
-                overlays,
-                resolvers,
-                control,
-                shift,
-                transforms,
-                windows,
-                chroma_options,
-                sampling_cache=_native_model_sampling_cache(model),
+            model=_replace_native_model(
+                model,
+                "model",
                 sampling_timeline=schedule,
-                sampling_space=_native_model_sampling_space(model),
-                sparse_attention=_native_model_sparse_attention(model),
             )
         )
 
 
 def _model_with_context_windows(model: object, spec: ContextWindowsSpec) -> _NativeModelOverlay:
-    (
-        handle,
-        overlays,
-        resolvers,
-        control,
-        shift,
-        transforms,
-        existing,
-        chroma_options,
-    ) = _native_model(model, "model")
+    existing = _native_model(model, "model")[6]
     if existing is not None:
         raise ValueError("a model can carry only one context-windows configuration")
-    return _NativeModelOverlay(
-        handle,
-        overlays,
-        resolvers,
-        control,
-        shift,
-        transforms,
-        spec,
-        chroma_options,
-        sampling_cache=_native_model_sampling_cache(model),
-        sampling_timeline=_native_model_sampling_timeline(model),
-        sampling_space=_native_model_sampling_space(model),
-        sparse_attention=_native_model_sparse_attention(model),
-    )
+    return _replace_native_model(model, "model", context_windows=spec)
 
 
 def _context_windows_spec(

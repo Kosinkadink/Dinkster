@@ -56,8 +56,6 @@ def test_extension_factory_guard_tracks_each_descriptor_catalog(tmp_path: Path) 
                 "kind": "descriptorCatalog",
                 "call": call,
                 "path": "src/runtime.py",
-                "line": 1,
-                "column": 11,
                 "issue": 120,
             }
         ]
@@ -80,8 +78,6 @@ def test_extension_factory_guard_write_refuses_to_raise_ceiling(tmp_path: Path) 
                 "kind": "registryFactory",
                 "call": "builtin_family_registry",
                 "path": "src/runtime.py",
-                "line": 1,
-                "column": 12,
                 "issue": 120,
             }
         ],
@@ -108,8 +104,6 @@ def test_extension_factory_guard_write_refuses_to_raise_ceiling(tmp_path: Path) 
             "kind": "registryFactory",
             "call": "builtin_preview_registry",
             "path": "src/runtime.py",
-            "line": 2,
-            "column": 9,
             "issue": 120,
         }
     )
@@ -138,29 +132,30 @@ def test_extension_factory_guard_rejects_site_and_ceiling_drift(tmp_path: Path) 
                 "kind": "assemblyBuilder",
                 "call": "build_builtin_assembly_registry",
                 "path": "packages/example/src/example/runtime.py",
-                "line": 3,
-                "column": 14,
                 "issue": 120,
             },
             {
                 "kind": "descriptorCatalog",
                 "call": "builtin_families",
                 "path": "packages/example/src/example/runtime.py",
-                "line": 2,
-                "column": 12,
                 "issue": 120,
             },
             {
                 "kind": "registryFactory",
                 "call": "builtin_family_registry",
                 "path": "packages/example/src/example/runtime.py",
-                "line": 1,
-                "column": 12,
                 "issue": 120,
             },
         ],
     )
     assert run_guard(tmp_path, allowlist, "--write").returncode == 0
+    assert run_guard(tmp_path, allowlist).returncode == 0
+
+    module.write_text(
+        "\n\nregistry = builtin_family_registry()\nfamilies = builtin_families()\n"
+        "assemblies = build_builtin_assembly_registry(registry)\n",
+        encoding="utf-8",
+    )
     assert run_guard(tmp_path, allowlist).returncode == 0
 
     module.write_text(
@@ -208,6 +203,31 @@ def test_extension_factory_guard_rejects_site_and_ceiling_drift(tmp_path: Path) 
     assert "registryFactory: current=0, allowlisted=1, ceiling=2" in raised.stderr
 
 
+def test_extension_factory_guard_rejects_changed_site_identity(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    module = source / "runtime.py"
+    module.write_text("registry = builtin_family_registry()\n", encoding="utf-8")
+    allowlist = tmp_path / "allowlist.json"
+    site = {
+        "kind": "registryFactory",
+        "call": "builtin_family_registry",
+        "path": "src/runtime.py",
+        "issue": 120,
+    }
+
+    for key, value in (
+        ("kind", "descriptorCatalog"),
+        ("call", "builtin_preview_registry"),
+        ("path", "src/other.py"),
+    ):
+        changed = {**site, key: value}
+        write_allowlist(allowlist, [changed])
+        result = run_guard(tmp_path, allowlist)
+        assert result.returncode == 1
+        assert "unlisted" in result.stderr
+
+
 def test_extension_factory_guard_ratchets_against_baseline(tmp_path: Path) -> None:
     source = tmp_path / "src"
     source.mkdir()
@@ -218,8 +238,6 @@ def test_extension_factory_guard_ratchets_against_baseline(tmp_path: Path) -> No
         "kind": "registryFactory",
         "call": "builtin_family_registry",
         "path": "src/runtime.py",
-        "line": 1,
-        "column": 12,
         "issue": 120,
     }
     module.write_text("registry = builtin_family_registry()\n", encoding="utf-8")
@@ -230,8 +248,6 @@ def test_extension_factory_guard_ratchets_against_baseline(tmp_path: Path) -> No
         "kind": "registryFactory",
         "call": "builtin_preview_registry",
         "path": "src/runtime.py",
-        "line": 2,
-        "column": 9,
         "issue": 305,
     }
     module.write_text(

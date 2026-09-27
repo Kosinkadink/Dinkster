@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Protocol, TypedDict
 
 from .native_arm_conditioning import (
@@ -33,11 +32,7 @@ from .native_arm_latent_utils import _check_bounds
 from .native_arm_runtime import (
     _application_chain_model,
     _native_model,
-    _native_model_sampling_cache,
-    _native_model_sampling_space,
-    _native_model_sampling_timeline,
-    _native_model_sparse_attention,
-    _NativeModelOverlay,
+    _replace_native_model,
     _sampling_space_runtime,
 )
 from .nodes_provider import (
@@ -281,16 +276,9 @@ class GenerationChromaRadianceOptions(Node):
         if nerf_tile_size < 0 and not force_sequential_txt_ids:
             return cls.outputs(model=model)
 
-        (
-            handle,
-            overlays,
-            resolvers,
-            control,
-            shift,
-            transforms,
-            context_windows,
-            existing_options,
-        ) = _native_model(model, "model")
+        native_model = _native_model(model, "model")
+        handle = native_model[0]
+        existing_options = native_model[7]
         inference = importlib.import_module("dinkster_inference")
         if handle.recipe.family_id != inference.CHROMA_RADIANCE.id:
             raise ValueError("Chroma Radiance Options requires a Chroma Radiance model")
@@ -305,19 +293,10 @@ class GenerationChromaRadianceOptions(Node):
         )
         options = (*existing_options, window) if preserve_wrapper else (window,)
         return cls.outputs(
-            model=_NativeModelOverlay(
-                handle,
-                overlays,
-                resolvers,
-                control,
-                shift,
-                transforms,
-                context_windows,
-                options,
-                sampling_cache=_native_model_sampling_cache(model),
-                sampling_timeline=_native_model_sampling_timeline(model),
-                sampling_space=_native_model_sampling_space(model),
-                sparse_attention=_native_model_sparse_attention(model),
+            model=_replace_native_model(
+                model,
+                "model",
+                chroma_radiance_options=options,
             )
         )
 
@@ -332,34 +311,18 @@ class GenerationChromaModelSampling(Node):
         model_value, applications = _application_chain_model(model, "model")
         if applications:
             raise ValueError("Chroma Model Sampling does not accept a model application chain")
-        (
-            handle,
-            overlays,
-            resolvers,
-            control,
-            _,
-            transforms,
-            context_windows,
-            radiance_options,
-        ) = _native_model(model_value, "model")
+        handle = _native_model(model_value, "model")[0]
         inference = importlib.import_module("dinkster_inference")
         if handle.recipe.family_id not in (inference.CHROMA.id, inference.CHROMA_RADIANCE.id):
             raise ValueError("Chroma Model Sampling requires a Chroma family model")
         if type(shift) is not float or not math.isfinite(shift) or shift <= 0.0:
             raise ValueError("Chroma Model Sampling shift must be a positive finite float")
         return cls.outputs(
-            model=_NativeModelOverlay(
-                handle,
-                overlays,
-                resolvers,
-                control,
-                shift,
-                transforms,
-                context_windows,
-                radiance_options,
-                sampling_cache=_native_model_sampling_cache(model_value),
-                sampling_timeline=_native_model_sampling_timeline(model_value),
-                sparse_attention=_native_model_sparse_attention(model_value),
+            model=_replace_native_model(
+                model_value,
+                "model",
+                sampling_shift=shift,
+                sampling_space=None,
             )
         )
 
@@ -374,16 +337,7 @@ class GenerationModelSamplingSD3(Node):
         model_value, applications = _application_chain_model(model, "model")
         if applications:
             raise ValueError("Model Sampling SD3 does not accept a model application chain")
-        (
-            handle,
-            overlays,
-            resolvers,
-            control,
-            _,
-            transforms,
-            context_windows,
-            radiance_options,
-        ) = _native_model(model_value, "model")
+        handle = _native_model(model_value, "model")[0]
         inference = importlib.import_module("dinkster_inference")
         family = next(
             item for item in inference.builtin_families() if item.id == handle.recipe.family_id
@@ -396,18 +350,11 @@ class GenerationModelSamplingSD3(Node):
         if not math.isfinite(shift) or shift <= 0.0:
             raise ValueError("Model Sampling SD3 shift must be a positive finite float")
         return cls.outputs(
-            model=_NativeModelOverlay(
-                handle,
-                overlays,
-                resolvers,
-                control,
-                shift,
-                transforms,
-                context_windows,
-                radiance_options,
-                sampling_cache=_native_model_sampling_cache(model_value),
-                sampling_timeline=_native_model_sampling_timeline(model_value),
-                sparse_attention=_native_model_sparse_attention(model_value),
+            model=_replace_native_model(
+                model_value,
+                "model",
+                sampling_shift=shift,
+                sampling_space=None,
             )
         )
 
@@ -429,9 +376,7 @@ class GenerationModelSamplingLTXV(Node):
         model_value, applications = _application_chain_model(model, "model")
         if applications:
             raise ValueError("ModelSamplingLTXV does not accept a model application chain")
-        handle, overlays, resolvers, control, _, transforms, windows, options = _native_model(
-            model_value, "model"
-        )
+        handle = _native_model(model_value, "model")[0]
         inference = importlib.import_module("dinkster_inference")
         runtime = handle.runtime.sampling_runtime()
         if getattr(runtime.family, "sampling", None) != inference.LTX_SAMPLING:
@@ -464,18 +409,11 @@ class GenerationModelSamplingLTXV(Node):
             raise ValueError("ModelSamplingLTXV computed shift must be positive and finite")
         _runtime_sampling_shift(runtime, shift)
         return cls.outputs(
-            model=_NativeModelOverlay(
-                handle,
-                overlays,
-                resolvers,
-                control,
-                shift,
-                transforms,
-                windows,
-                options,
-                sampling_cache=_native_model_sampling_cache(model_value),
-                sampling_timeline=_native_model_sampling_timeline(model_value),
-                sparse_attention=_native_model_sparse_attention(model_value),
+            model=_replace_native_model(
+                model_value,
+                "model",
+                sampling_shift=shift,
+                sampling_space=None,
             )
         )
 
@@ -492,111 +430,6 @@ class _GenerationModelSamplingFluxOutput(TypedDict):
     model: _FluxModelOverlay
 
 
-def _sparse_attention_blocks(value: str) -> frozenset[int]:
-    blocks: set[int] = set()
-    for part in re.findall(r"\d+\s*-\s*\d+|\d+", value):
-        if "-" in part:
-            start, stop = (int(item) for item in part.split("-"))
-            blocks.update(range(min(start, stop), max(start, stop) + 1))
-        else:
-            blocks.add(int(part))
-    return frozenset(blocks)
-
-
-class GenerationBlockSparseAttention(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return _generation_provider_schema("comfy.BlockSparseAttention")
-
-    @classmethod
-    def execute(cls, *, model: object, selection: str, **inputs: object) -> Mapping[str, object]:
-        model_value, applications = _application_chain_model(model, "model")
-        if applications:
-            raise ValueError("BlockSparseAttention does not accept a model application chain")
-        handle, overlays, resolvers, control, shift, transforms, windows, options = _native_model(
-            model_value, "model"
-        )
-        inference = importlib.import_module("dinkster_inference")
-        config = inference.MiniMaxH3SparseAttentionConfig(
-            selection=selection,
-            keep_percent=inputs.get("selection.keep_percent", 10.0),
-            tau=inputs.get("selection.tau", 1.3),
-            start_percent=inputs.get("start_percent", 0.2),
-            end_percent=inputs.get("end_percent", 1.0),
-            dense_blocks=_sparse_attention_blocks(cast("str", inputs.get("dense_blocks", ""))),
-            min_tokens=inputs.get("min_tokens", 12_288),
-            extra_tokens=inputs.get("extra_tokens", 256),
-            sink_conditioning=inputs.get("sink_conditioning", "exact_kv_and_rows"),
-            verbose=inputs.get("verbose", False),
-        )
-        return cls.outputs(
-            MODEL=_NativeModelOverlay(
-                handle,
-                overlays,
-                resolvers,
-                control,
-                shift,
-                transforms,
-                windows,
-                options,
-                sampling_cache=_native_model_sampling_cache(model_value),
-                sampling_timeline=_native_model_sampling_timeline(model_value),
-                sampling_space=_native_model_sampling_space(model_value),
-                sparse_attention=config,
-            )
-        )
-
-
-class GenerationMiniMaxH3SigmaShift(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return _generation_provider_schema("comfy.MiniMaxH3SigmaShift")
-
-    @classmethod
-    def execute(
-        cls,
-        *,
-        model: object,
-        shift_video: float = 12.0,
-        shift_audio: float = 3.0,
-    ) -> Mapping[str, object]:
-        model_value, applications = _application_chain_model(model, "model")
-        if applications:
-            raise ValueError("MiniMaxH3SigmaShift does not accept a model application chain")
-        for name, value in (("shift_video", shift_video), ("shift_audio", shift_audio)):
-            if type(value) not in (int, float):
-                raise ValueError(f"{name} must be a positive finite float")
-            if not math.isfinite(value) or value <= 0.0:
-                raise ValueError(f"{name} must be a positive finite float")
-        handle, overlays, resolvers, control, _, transforms, windows, options = _native_model(
-            model_value, "model"
-        )
-        inference = importlib.import_module("dinkster_inference")
-        if handle.recipe.family_id != inference.MINIMAX_H3.id:
-            raise ValueError("MiniMaxH3SigmaShift requires a MiniMax H3 model")
-        sigmas = inference.MiniMaxH3Sigmas(
-            inference.FlowSigmas(shift=float(shift_video)),
-            audio_shift=float(shift_audio),
-        )
-        _sampling_space_runtime(handle.runtime, sigmas)
-        return cls.outputs(
-            MODEL=_NativeModelOverlay(
-                handle,
-                overlays,
-                resolvers,
-                control,
-                None,
-                transforms,
-                windows,
-                options,
-                sampling_cache=_native_model_sampling_cache(model_value),
-                sampling_timeline=_native_model_sampling_timeline(model_value),
-                sampling_space=sigmas,
-                sparse_attention=_native_model_sparse_attention(model_value),
-            )
-        )
-
-
 class GenerationModelAttentionBackend(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -607,28 +440,17 @@ class GenerationModelAttentionBackend(Node):
         model_value, applications = _application_chain_model(model, "model")
         if applications:
             raise ValueError("ModelAttentionBackend does not accept a model application chain")
-        handle, overlays, resolvers, control, shift, transforms, windows, options = _native_model(
-            model_value, "model"
-        )
+        handle = _native_model(model_value, "model")[0]
         policy = {
             "comfy kitchen attention": "dinkster_kitchen_int8",
             "pytorch attention": "sdpa",
         }.get(attention, "sdpa")
         replacement = handle.clone_with_attention_policy(policy)
         return cls.outputs(
-            model=_NativeModelOverlay(
-                replacement,
-                overlays,
-                resolvers,
-                control,
-                shift,
-                transforms,
-                windows,
-                options,
-                sampling_cache=_native_model_sampling_cache(model_value),
-                sampling_timeline=_native_model_sampling_timeline(model_value),
-                sampling_space=_native_model_sampling_space(model_value),
-                sparse_attention=_native_model_sparse_attention(model_value),
+            model=_replace_native_model(
+                model_value,
+                "model",
+                handle=replacement,
             )
         )
 
@@ -659,9 +481,7 @@ class GenerationModelSamplingFlux(Node):
         model_value, applications = _application_chain_model(model, "model")
         if applications:
             raise ValueError("ModelSamplingFlux does not accept a model application chain")
-        handle, overlays, resolvers, control, _, transforms, windows, options = _native_model(
-            model_value, "model"
-        )
+        handle = _native_model(model_value, "model")[0]
         inference = importlib.import_module("dinkster_inference")
         slope = (max_shift - base_shift) / (4096 - 256)
         intercept = base_shift - slope * 256
@@ -671,19 +491,11 @@ class GenerationModelSamplingFlux(Node):
         return cast(
             "_GenerationModelSamplingFluxOutput",
             cls.outputs(
-                model=_NativeModelOverlay(
-                    handle,
-                    overlays,
-                    resolvers,
-                    control,
-                    None,
-                    transforms,
-                    windows,
-                    options,
-                    sampling_cache=_native_model_sampling_cache(model_value),
-                    sampling_timeline=_native_model_sampling_timeline(model_value),
+                model=_replace_native_model(
+                    model_value,
+                    "model",
+                    sampling_shift=None,
                     sampling_space=space,
-                    sparse_attention=_native_model_sparse_attention(model_value),
                 )
             ),
         )

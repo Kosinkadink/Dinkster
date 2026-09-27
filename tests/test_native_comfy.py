@@ -160,7 +160,7 @@ import sys
 from dinkster_compat_comfy import bootstrap
 from dinkster_compat_comfy.translate import CompatTranslation
 from dinkster_compat_comfy.prompt import build_alias_index
-from dinkster_native.nodes_conditioning import GenerationBlockSparseAttention
+from dinkster_native.families.minimax_h3 import GenerationBlockSparseAttention
 from dinkster_nodes_generation.nodes import BlockSparseAttention
 from dinkster_schema import build_node_types, build_schemas
 

@@ -26,8 +26,6 @@ class ScannedSite(TypedDict):
     kind: str
     call: str
     path: str
-    line: int
-    column: int
 
 
 class Site(ScannedSite):
@@ -80,13 +78,11 @@ def scan(root: Path) -> list[ScannedSite]:
                     "kind": kind,
                     "call": call,
                     "path": path.relative_to(root).as_posix(),
-                    "line": node.lineno,
-                    "column": node.col_offset + 1,
                 }
             )
     return sorted(
         sites,
-        key=lambda site: (site["kind"], site["path"], site["line"], site["column"]),
+        key=lambda site: (site["kind"], site["path"], site["call"]),
     )
 
 
@@ -166,31 +162,18 @@ def attach_owning_issues(
 ) -> tuple[list[Site], list[ScannedSite]]:
     remaining = list(allowed)
     resolved: list[Site | None] = [None] * len(scanned)
-
-    def assign(exact: bool) -> None:
-        for index, site in enumerate(scanned):
-            if resolved[index] is not None:
-                continue
-            for allowed_index, candidate in enumerate(remaining):
-                same_site = (
-                    candidate.get("kind") == site["kind"]
-                    and candidate.get("call") == site["call"]
-                    and candidate.get("path") == site["path"]
-                )
-                if exact:
-                    same_site = (
-                        same_site
-                        and candidate.get("line") == site["line"]
-                        and candidate.get("column") == site["column"]
-                    )
-                issue = candidate.get("issue")
-                if same_site and isinstance(issue, int) and issue > 0:
-                    resolved[index] = {**site, "issue": issue}
-                    remaining.pop(allowed_index)
-                    break
-
-    assign(exact=True)
-    assign(exact=False)
+    for index, site in enumerate(scanned):
+        for allowed_index, candidate in enumerate(remaining):
+            same_site = (
+                candidate.get("kind") == site["kind"]
+                and candidate.get("call") == site["call"]
+                and candidate.get("path") == site["path"]
+            )
+            issue = candidate.get("issue")
+            if same_site and isinstance(issue, int) and issue > 0:
+                resolved[index] = {**site, "issue": issue}
+                remaining.pop(allowed_index)
+                break
     return (
         [site for site in resolved if site is not None],
         [site for index, site in enumerate(scanned) if resolved[index] is None],

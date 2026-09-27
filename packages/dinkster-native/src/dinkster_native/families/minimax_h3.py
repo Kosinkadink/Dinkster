@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Protocol
 
 from ..family_registry import (
@@ -37,6 +38,7 @@ from ..native_arm_core import (
     NativeComponentHandle,
     NativeRuntimeHandle,
     Node,
+    NodeSchema,
     PreviewLatentAudio,
     PreviewLatentVisual,
     SeparateAVLatent,
@@ -53,10 +55,14 @@ from ..native_arm_core import (
     native_execution_span,
 )
 from ..native_arm_runtime import (
+    _application_chain_model,
     _native_handle,
     _NativeModelOverlay,
+    _replace_native_model,
+    _sampling_space_runtime,
     _torch_dtype,
 )
+from ..nodes_provider import _generation_provider_schema
 from .conditioning import _prepared_multistream_carrier
 from .latent import _adapt_multistream_latent, _latent_samples, _move_multistream_latent
 
@@ -76,6 +82,147 @@ class _ApplicationChain(Protocol):
     applications: tuple[Any, ...]
 
     def append(self, application: object) -> object: ...
+
+
+def load_model_patch(
+    asset: Any,
+    source: Any,
+    context: Any,
+) -> tuple[Any, str] | None:
+    inference = importlib.import_module("dinkster_inference")
+    inference_torch = importlib.import_module("dinkster_inference_torch")
+    keys = source.keys()
+    if not inference_torch.is_minimax_h3_fun_state_dict(dict.fromkeys(keys)):
+        return None
+    quant = inference.split_quantization(
+        {key: source.entry(key).geometry for key in keys},
+        source.metadata(),
+        payload_reader=source.read_uint8_configuration,
+    ).layers
+    checkpoint = importlib.import_module("dinkster_inference_torch.checkpoint")
+    state_dict, metadata = checkpoint.load_checkpoint_with_metadata(asset.local_path())
+    if not isinstance(state_dict, Mapping):
+        raise TypeError("MiniMax H3 Fun control checkpoint must contain a state dict")
+    attention = importlib.import_module("dinkster_inference_torch.attention")
+    selection = attention.resolve_role_attention(
+        "flux", context.attention_policy, context.attention_route_token
+    )
+    h3_dit = importlib.import_module("dinkster_inference_torch.minimax_h3_dit")
+    kernel, evidence = h3_dit.minimax_h3_attention_provider(selection)
+    time_embedding_kind = (
+        "curve"
+        if metadata is not None and metadata.get("minimax_h3_fun_controlnet") == "adaln_basis"
+        else "mlp"
+    )
+    module = inference_torch.load_minimax_h3_fun_control(
+        state_dict,
+        metadata,
+        attention_kernel=kernel,
+        evidence=evidence,
+        time_embedding_kind=time_embedding_kind,
+        quant=quant,
+    )
+    family_id = inference.MINIMAX_H3_CONFIG.family_id
+    resource_identity = inference.build_runtime_identity_from_facts(
+        family_id,
+        (
+            f"family={family_id}",
+            "component=minimax-h3-fun-control",
+            f"asset={asset.digest}",
+            f"time_embedding_kind={time_embedding_kind}",
+        ),
+        diffusion_dtype=inference.BFLOAT16.name,
+        text_dtype="unloaded",
+        vae_dtype="unloaded",
+        fp8_matmul=False,
+        attention_policy=context.attention_policy,
+        attention_route_token=context.attention_route_token,
+    )
+    return module, resource_identity
+
+
+def _sparse_attention_blocks(value: str) -> frozenset[int]:
+    blocks: set[int] = set()
+    for part in re.findall(r"\d+\s*-\s*\d+|\d+", value):
+        if "-" in part:
+            start, stop = (int(item) for item in part.split("-"))
+            blocks.update(range(min(start, stop), max(start, stop) + 1))
+        else:
+            blocks.add(int(part))
+    return frozenset(blocks)
+
+
+class GenerationBlockSparseAttention(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _generation_provider_schema("comfy.BlockSparseAttention")
+
+    @classmethod
+    def execute(cls, *, model: object, selection: str, **inputs: object) -> Mapping[str, object]:
+        model_value, applications = _application_chain_model(model, "model")
+        if applications:
+            raise ValueError("BlockSparseAttention does not accept a model application chain")
+        _native_handle(model_value, "model")
+        inference = importlib.import_module("dinkster_inference")
+        config = inference.MiniMaxH3SparseAttentionConfig(
+            selection=selection,
+            keep_percent=inputs.get("selection.keep_percent", 10.0),
+            tau=inputs.get("selection.tau", 1.3),
+            start_percent=inputs.get("start_percent", 0.2),
+            end_percent=inputs.get("end_percent", 1.0),
+            dense_blocks=_sparse_attention_blocks(cast("str", inputs.get("dense_blocks", ""))),
+            min_tokens=inputs.get("min_tokens", 12_288),
+            extra_tokens=inputs.get("extra_tokens", 256),
+            sink_conditioning=inputs.get("sink_conditioning", "exact_kv_and_rows"),
+            verbose=inputs.get("verbose", False),
+        )
+        return cls.outputs(
+            MODEL=_replace_native_model(
+                model_value,
+                "model",
+                sparse_attention=config,
+            )
+        )
+
+
+class GenerationMiniMaxH3SigmaShift(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return _generation_provider_schema("comfy.MiniMaxH3SigmaShift")
+
+    @classmethod
+    def execute(
+        cls,
+        *,
+        model: object,
+        shift_video: float = 12.0,
+        shift_audio: float = 3.0,
+    ) -> Mapping[str, object]:
+        model_value, applications = _application_chain_model(model, "model")
+        if applications:
+            raise ValueError("MiniMaxH3SigmaShift does not accept a model application chain")
+        for name, value in (("shift_video", shift_video), ("shift_audio", shift_audio)):
+            if type(value) not in (int, float):
+                raise ValueError(f"{name} must be a positive finite float")
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be a positive finite float")
+        handle = _native_handle(model_value, "model")
+        inference = importlib.import_module("dinkster_inference")
+        if handle.recipe.family_id != inference.MINIMAX_H3.id:
+            raise ValueError("MiniMaxH3SigmaShift requires a MiniMax H3 model")
+        sigmas = inference.MiniMaxH3Sigmas(
+            inference.FlowSigmas(shift=float(shift_video)),
+            audio_shift=float(shift_audio),
+        )
+        _sampling_space_runtime(handle.runtime, sigmas)
+        return cls.outputs(
+            MODEL=_replace_native_model(
+                model_value,
+                "model",
+                sampling_shift=None,
+                sampling_space=sigmas,
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
