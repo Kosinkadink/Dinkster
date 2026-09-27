@@ -43,7 +43,6 @@ from typing import Any
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from dinkster_inference import BUILTIN_FAMILIES_BY_ID
 from dinkster_workers.backend_env import BENCHMARK_ACCELERATORS, validate_benchmark_report
 
 _COLD_PHASES = ("load_s", "encode_s", "sample_s", "decode_s", "total_s")
@@ -102,16 +101,15 @@ def gate_problems(report: dict[str, Any], label: str) -> tuple[str, ...]:
     if accelerator not in BENCHMARK_ACCELERATORS:
         return (f"{label}: accelerator is not one of {BENCHMARK_ACCELERATORS}",)
     family_id = report.get("family_id")
-    registered = BUILTIN_FAMILIES_BY_ID.get(family_id) if isinstance(family_id, str) else None
-    engine = None if registered is None else registered.engine
+    h3 = family_id == "dinkster.minimax_h3"
     problems = validate_benchmark_report(
         report,
         accelerator=accelerator,
         canonical_evidence=True,
-        residency_route_roles=() if engine is None else engine.residency_route_roles,
-        requires_accelerator_residency=(
-            False if engine is None else engine.requires_accelerator_residency
+        residency_route_roles=(
+            ("diffusion", "conditioner", "video_vae", "audio_vae") if h3 else ()
         ),
+        requires_accelerator_residency=h3,
     )
     return tuple(f"{label}: {problem}" for problem in problems)
 

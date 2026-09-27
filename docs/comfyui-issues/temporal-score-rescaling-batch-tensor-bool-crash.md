@@ -1,7 +1,6 @@
 # TemporalScoreRescaling crashes on batch > 1 (tensor truth test on sigma)
 
-Status: found 2026-08-27; not reported upstream; Dinkster's port is
-immune (per-request sigma is a scalar in the guidance contract).
+Status: found 2026-08-27; not reported upstream.
 
 Baseline: ComfyUI b78cec879b9460d5cb25228a83a942fb78d2cd24.
 
@@ -47,9 +46,5 @@ batched sigma.
 
 ## Dinkster handling
 
-`temporal_score_rescaling` in
-`dinkster_inference_torch/guidance_transforms.py` collapses the request
-sigma to a scalar (uniform per-request sigma is the guidance contract),
-so its guards and broadcasts are scalar and any batch size works.
-Goldens cover batch 1 only because the reference cannot execute larger
-batches to mint against.
+Dinkster delegates TemporalScoreRescaling execution to `dinkster_comfy`, whose
+current behavior matches the upstream behavior described above.

@@ -25,10 +25,6 @@ dependencies = [
     "dinkster-nodes-remote",
     "dinkster-nodes-generation",
     "dinkster-nodes-image",
-    "dinkster-model-wan",
-    "dinkster-model-qwen-image",
-    "dinkster-model-ipadapter",
-    "dinkster-model-triposplat",
     "dinkster-nodes-dev",
     "dinkster-server",
     "dinkster-collab",
@@ -69,6 +65,7 @@ dev = [
     "hypothesis>=6",
     "pytest>=8",
     "pytest-cov>=6",
+    "pyyaml>=6",
     "ruff>=0.8",
     "pyright>=1.1.390",
     "scipy-stubs>=1.18.1.0",
@@ -101,10 +98,6 @@ dinkster-nodes-std = { workspace = true }
 dinkster-nodes-remote = { workspace = true }
 dinkster-nodes-generation = { workspace = true }
 dinkster-nodes-image = { workspace = true }
-dinkster-model-wan = { workspace = true }
-dinkster-model-qwen-image = { workspace = true }
-dinkster-model-ipadapter = { workspace = true }
-dinkster-model-triposplat = { workspace = true }
 dinkster-nodes-dev = { workspace = true }
 dinkster-server = { workspace = true }
 dinkster-collab = { workspace = true }
@@ -147,23 +140,10 @@ venvPath = "."
 venv = ".venv"
 include = ["packages", "src", "tests"]
 extraPaths = ["src", "../dinkster-evidence", ".evidence-source"]
-# Torch execution packages import torch, absent from the torch-free root
-# venv; each has its own [tool.pyright] gate against .venv-torch:
-#   .venv/bin/pyright -p packages/dinkster-inference-torch
-# The vision provider package imports execution dependencies absent from the
-# root environment, so its gate also resolves against .venv-torch.
-# Hosted CI enforces every .venv-torch pyright project in the torch-cpu
-# suite (#981).
+# Torch execution modules are checked in their isolated worker environment.
 exclude = [
-    "packages/dinkster-inference-torch",
+    "packages/dinkster-native/src/dinkster_native/model3d",
     "packages/dinkster-nodes-vision",
-    "packages/dinkster-model-wan/src/dinkster_model_wan/provider.py",
-    "packages/dinkster-model-qwen-image/src/dinkster_model_qwen_image/provider.py",
-    "packages/dinkster-model-qwen-image/tests",
-    "packages/dinkster-model-ipadapter/src/dinkster_model_ipadapter/provider.py",
-    "packages/dinkster-model-ipadapter/tests",
-    "packages/dinkster-model-triposplat/src/dinkster_model_triposplat/provider.py",
-    "packages/dinkster-model-triposplat/tests",
 ]
 # The packages are the load-bearing code: strict there. Tests and the demo
 # CLI stay on standard - useful checking without annotation ceremony.

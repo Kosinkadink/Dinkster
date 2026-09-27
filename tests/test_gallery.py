@@ -251,8 +251,6 @@ def test_gallery_explicit_pack_surface() -> None:
         plain = await compose_serving()
         try:
             assert not any(t.startswith("dev.") for t in plain.schemas)
-            # Core native inference vocabulary is on every composition
-            # (stage 3b); no dev.* choice lists leak.
             assert set(plain.choices) == {
                 "dinkster.detection.detect.providers",
                 "dinkster.detection.segment.providers",
@@ -268,8 +266,6 @@ def test_gallery_explicit_pack_surface() -> None:
                 "dinkster.preprocess.anyline.providers",
                 "dinkster.preprocess.teed.providers",
                 "dinkster.preprocess.mlsd.providers",
-                "dinkster.samplers",
-                "dinkster.schedulers",
             }
             assert set(plain.packs) == {
                 "dinkster-nodes-foundation",

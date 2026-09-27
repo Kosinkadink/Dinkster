@@ -71,17 +71,5 @@ torch.einsum("b i j, b j ...-> b i ...", bi, inp)  # RuntimeError: expected Floa
 
 ## Dinkster handling
 
-FIXED in Dinkster (2026-07): `BOFTAdapter.calculate` interpolates
-partial strength with an identity in `bi`'s dtype (mirroring
-oft.py's `eye_w`), so fp16 + partial strength applies correctly;
-float32 behavior is numerically unchanged (goldens still pass).
-Since no upstream oracle golden can exist while ComfyUI is broken,
-correctness is verified independently -
-`test_boft_fp16_partial_strength_fixed_beyond_reference` in
-`packages/dinkster-inference-torch/tests/test_adapters.py` cross-checks
-the fp16 result against the same inputs run at float32 (a
-golden-covered path) within fp16 tolerance. Ledgered in ROADMAP
-"Upstream-broken adapter paths: oracle cross-check pending". When
-upstream fixes this, regenerate `tools/gen_adapter_goldens.py`
-goldens including this case (fp16 + partial strength) and
-cross-check Dinkster against the fixed reference.
+Dinkster delegates BOFT execution to `dinkster_comfy`. The fork currently
+matches the upstream behavior described above.

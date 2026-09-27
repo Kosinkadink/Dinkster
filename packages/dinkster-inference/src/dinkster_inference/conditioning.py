@@ -20,12 +20,17 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 from types import MappingProxyType
-from typing import TypeAlias, cast
+from typing import Generic, TypeAlias, TypeVar, cast
 
-from .guidance import ConditionScaleVector
 from .spaces import SigmaSpace
 
 CONDITIONING_RECORD_BOUNDARY = "dinkster-conditioning-carrier-v1"
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class ConditionScaleVector(Generic[T]):
+    values: T
 
 
 def _has_type(value: object, expected: type[object] | tuple[type[object], ...]) -> bool:

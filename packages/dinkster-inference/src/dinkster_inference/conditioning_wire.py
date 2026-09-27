@@ -26,6 +26,7 @@ from .conditioning import (
     ConditioningChannel,
     ConditioningRecord,
     ConditioningSet,
+    ConditionScaleVector,
     ExtensionInputValue,
     ExtensionValue,
     MaskDescriptor,
@@ -36,7 +37,6 @@ from .conditioning import (
     TokenSegmentDescriptor,
     canonical_conditioning_set,
 )
-from .guidance import ConditionScaleVector
 
 CONDITIONING_TYPE_ID = "dinkster.conditioning"
 CONDITIONING_CARRIER_FORMAT = "dinkster-conditioning-carrier-v1"
@@ -1048,6 +1048,12 @@ def register_conditioning_type(
             }
         return {"format": CONDITIONING_CARRIER_FORMAT}
 
+    def input_convert(obj: object) -> object:
+        if type(obj) is ResidentConditioningCarrier:
+            payload = obj.payload
+            return getattr(payload, "_dinkster_input_value", payload)
+        return obj
+
     return registry.register(
         CONDITIONING_TYPE_ID,
         encode=encode,
@@ -1055,5 +1061,6 @@ def register_conditioning_type(
         fingerprint=fingerprint,
         meta=metadata,
         coerce=coerce,
+        input_convert=input_convert,
         validate_encoded=validate_encoded,
     )

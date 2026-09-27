@@ -12,8 +12,9 @@ import sys
 from collections.abc import Mapping
 from decimal import Decimal
 from fractions import Fraction
-from typing import cast
+from typing import Any, cast
 
+import numpy as np
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_compat_comfy import (
@@ -28,6 +29,7 @@ from dinkster_compat_comfy import (
 )
 from dinkster_engine import Engine, EngineEvent, ExecutionError
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, validate
+from dinkster_inference import MultiStreamLatent
 from dinkster_protocol import ExportSnapshot, LazyStatusInvocation
 from dinkster_schema import (
     BooleanWidget,
@@ -164,6 +166,100 @@ class V1Changed:
     def roll(self, seed):  # noqa: ANN001, ANN201
         type(self).rolls += 1
         return (seed + 1,)
+
+
+class _InferenceModeProbe:
+    def __init__(self) -> None:
+        self.depth = 0
+        self.inference_mode = self._inference_mode
+
+    def _inference_mode(self) -> _InferenceModeProbe:
+        return self
+
+    def __enter__(self) -> None:
+        self.depth += 1
+
+    def __exit__(self, *args: object) -> None:
+        self.depth -= 1
+
+    def is_inference_mode_enabled(self) -> bool:
+        return self.depth > 0
+
+
+def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NestedTensorBase:
+        def __init__(self, streams: tuple[object, ...]) -> None:
+            self.streams = streams
+
+        def unbind(self) -> tuple[object, ...]:
+            return self.streams
+
+    dinkster_nested = type(
+        "NestedTensor",
+        (NestedTensorBase,),
+        {"__module__": "dinkster_comfy.nested_tensor"},
+    )
+    comfy_nested = type(
+        "NestedTensor",
+        (NestedTensorBase,),
+        {"__module__": "comfy.nested_tensor"},
+    )
+
+    class SamplerCustomAdvanced:
+        RETURN_TYPES = ("LATENT", "LATENT")
+        RETURN_NAMES = ("output", "denoised_output")
+        FUNCTION = "sample"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"latent_image": ("LATENT",)}}
+
+        def sample(self, latent_image):  # noqa: ANN001, ANN201
+            torch = cast("Any", importlib.import_module("torch"))
+            assert torch.is_inference_mode_enabled()
+            assert type(latent_image["samples"]) is dinkster_nested
+            assert latent_image["dinkster.multi_stream_roles@1"] == {
+                "version": 1,
+                "roles": ("video", "audio"),
+            }
+            denoised = dict(latent_image)
+            denoised["samples"] = comfy_nested(tuple(latent_image["samples"].unbind()))
+            return (latent_image, denoised)
+
+    original_import = importlib.import_module
+    torch = _InferenceModeProbe()
+    nested_modules = {
+        "torch": torch,
+        "dinkster_comfy.nested_tensor": type(
+            "DinksterNestedModule", (), {"NestedTensor": dinkster_nested}
+        ),
+        "comfy.nested_tensor": type("ComfyNestedModule", (), {"NestedTensor": comfy_nested}),
+    }
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: nested_modules.get(name) or original_import(name),
+    )
+    video = np.zeros((1, 2, 3), dtype=np.float32)
+    audio = np.zeros((1, 4), dtype=np.float32)
+    latent = {"samples": MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))}
+
+    translation = CompatTranslation()
+    node = translate_node("SamplerCustomAdvanced", SamplerCustomAdvanced, translation)
+    result = cast("Mapping[str, object]", node.execute(latent_image=latent))
+    registry = TypeRegistry()
+    translation.register_types(registry)
+    latent_spec = registry.spec("comfy.LATENT")
+    assert latent_spec.validate_encoded is not None
+    for output_id in ("output", "denoised_output"):
+        output = cast("Mapping[str, MultiStreamLatent[object]]", result[output_id])["samples"]
+        assert output.roles == ("video", "audio")
+        assert output.by_role("video") is video
+        assert output.by_role("audio") is audio
+        encoded = latent_spec.encode(result[output_id])
+        latent_spec.validate_encoded(encoded, {})
 
 
 # --- translation: schema shape ------------------------------------------
@@ -2969,8 +3065,18 @@ def test_v3_output_count_mismatch_still_raises() -> None:
         node.execute(n=1)
 
 
-def test_async_v3_node_executes_and_unwraps_after_await() -> None:
+def test_async_v3_node_executes_and_unwraps_after_await(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """FUNCTION = EXECUTE_NORMALIZED_ASYNC follows the ordinary worker loop."""
+
+    torch = _InferenceModeProbe()
+    original_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: torch if name == "torch" else original_import(name),
+    )
 
     class V3Async:
         RETURN_TYPES = ("INT",)
@@ -2983,6 +3089,8 @@ def test_async_v3_node_executes_and_unwraps_after_await() -> None:
         @classmethod
         async def EXECUTE_NORMALIZED_ASYNC(cls, n):  # noqa: ANN001, ANN206
             await asyncio.sleep(0)
+            torch = cast("Any", importlib.import_module("torch"))
+            assert torch.is_inference_mode_enabled()
             return FakeNodeOutput(n + 1)
 
     async def scenario() -> None:

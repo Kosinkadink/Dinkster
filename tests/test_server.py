@@ -6424,10 +6424,11 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         ASSET_TYPE,
         SAVE_TARGET_TYPE,
         AssetError,
+        AssetWriter,
+        MountSnapshotWriter,
         SaveTarget,
         digest_bytes,
     )
-    from dinkster_compat_comfy.native import mount_writer
     from dinkster_nodes_foundation import StringPrimitive
     from dinkster_nodes_media_io import SetSaveTargetPrefix, register_media_types
 
@@ -6478,7 +6479,7 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         async def execute(cls, *, target: SaveTarget) -> Mapping[str, object]:
             if not isinstance(target, SaveTarget):
                 raise AssetError("save target input must be a SaveTarget")
-            receipt = mount_writer().save_bytes(
+            receipt = AssetWriter(MountSnapshotWriter(snapshot)).save_bytes(
                 target,
                 f"saved:{target.prefix}".encode(),
                 suffix=".bin",

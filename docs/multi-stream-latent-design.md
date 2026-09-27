@@ -77,8 +77,8 @@ its origin or copying model policy into data.
 
 The container exposes only structural operations needed by sampling and compat
 adapters: enumerate/unbind, map, topology comparison, and replacement by role.
-Torch packing, allocation, interpolation, and device movement remain in
-`dinkster-inference-torch`.
+Tensor packing, allocation, interpolation, and device movement remain behind
+the `dinkster_comfy` execution boundary.
 
 ### Pack layout
 

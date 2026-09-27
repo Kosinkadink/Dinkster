@@ -14,9 +14,9 @@ def test_utility_execution_targets_are_native() -> None:
     source_dir = ROOT / "packages/dinkster-native/src/dinkster_native"
     paths = tuple(source_dir.glob("native_arm*.py")) + tuple(source_dir.glob("nodes_*.py"))
     targets = {
-        "GenerationImageCropToMask": "dinkster_inference_torch.image_crop",
-        "GenerationGetMeshInfo": "dinkster_inference_torch.mesh",
-        "GenerationMeshToModel3D": "dinkster_inference_torch.mesh",
+        "GenerationImageCropToMask": "dinkster_native.model3d.image_crop",
+        "GenerationGetMeshInfo": "dinkster_native.model3d.mesh",
+        "GenerationMeshToModel3D": "dinkster_native.model3d.mesh",
     }
     for path in paths:
         for node in ast.parse(path.read_text()).body:
@@ -46,11 +46,11 @@ class Forbidden(importlib.abc.MetaPathFinder):
                                      'nodes', 'folder_paths', 'server'}:
             raise AssertionError(fullname)
 sys.meta_path.insert(0, Forbidden())
-from dinkster_compat_comfy.entry import COMFY_NODES, ARM_NODES
-from dinkster_compat_comfy.native_arm import (
+from dinkster_native.entry import ARM_NODES, NATIVE_NODES
+from dinkster_native.nodes_model3d import (
     GenerationImageCropToMask, GenerationGetMeshInfo, GenerationMeshToModel3D,
 )
-nodes = {node.schema().node_type: node for node in COMFY_NODES}
+nodes = {node.schema().node_type: node for node in NATIVE_NODES}
 for node in (GenerationImageCropToMask, GenerationGetMeshInfo, GenerationMeshToModel3D):
     assert nodes[node.schema().node_type] is node
     assert node in ARM_NODES['native']

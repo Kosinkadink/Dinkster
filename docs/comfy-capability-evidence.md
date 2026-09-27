@@ -1,6 +1,11 @@
-# ComfyUI capability evidence
+# Historical ComfyUI capability evidence
 
-Canonical data: [comfy-capability-evidence.json](comfy-capability-evidence.json).
+Historical source data:
+[`tools/data/comfy_capability_evidence.inactive.json`](../tools/data/comfy_capability_evidence.inactive.json).
+This snapshot predates retirement of Dinkster's re-typed inference stack. Its
+selectors and support states are preserved as evidence only and make no claim
+about current availability. Current support is documented under
+[`docs/supported/`](supported/).
 
 Workflow templates: `d3b4a9e89573162b005961865164c18c8ae2206b`. ComfyUI source: `15eb748b3ec5f8a0a2d470b7fb280e2d7579f916` (896 statically registered node IDs).
 
@@ -16,7 +21,7 @@ Workflow templates: `d3b4a9e89573162b005961865164c18c8ae2206b`. ComfyUI source: 
 
 T0 and T1 are translation evidence only and never establish support. Missing evidence remains `absent`, `refused`, or `unverified`; the census does not infer support from a translated schema.
 
-## Current ledger
+## Historical ledger
 
 935 capabilities: proven 345, unverified 0, absent 587, refused 3. Supported capability claims: 18.
 

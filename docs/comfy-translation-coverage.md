@@ -1,6 +1,6 @@
 # ComfyUI translation coverage baseline
 
-Pinned workflow templates: `d3b4a9e89573162b005961865164c18c8ae2206b`. Canonical per-workflow translation data: [comfy-translation-coverage.json](comfy-translation-coverage.json). Canonical capability evidence: [comfy-capability-evidence.json](comfy-capability-evidence.json).
+Pinned workflow templates: `d3b4a9e89573162b005961865164c18c8ae2206b`. Canonical per-workflow translation data: [comfy-translation-coverage.json](comfy-translation-coverage.json). Historical pre-retirement capability evidence: [`tools/data/comfy_capability_evidence.inactive.json`](../tools/data/comfy_capability_evidence.inactive.json).
 The previous 580-workflow denominator remains in [the historical baseline](research/comfy-translation-coverage-aa3661d9.md).
 
 ## Corpus

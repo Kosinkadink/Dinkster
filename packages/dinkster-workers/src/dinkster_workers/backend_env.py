@@ -5,31 +5,25 @@ one frozen recipe: an isolated venv name, a pinned torch build, the vendor
 wheel index that serves it, and the workspace packages the backend smoke
 and test lanes import. The torch build is the pinned fact; support
 packages float, like the CUDA validation lane's. The recipes are the
-single source of truth for the executable setup scripts
-(scripts/setup_env_rocm.* and scripts/setup_env_xpu.*); a test compares
-the scripts' executable commands against :func:`setup_commands` so they
-cannot drift silently.
+single source of truth for callers that construct isolated environments.
 
 The ROCm and XPU torch packages are different builds of the same ``torch``
 distribution and cannot coexist in one environment, so every cell gets its
 own venv and its own worker process - even on a host with both GPUs.
 
 A backend claims nothing until its smoke report passes on real hardware.
-:func:`validate_smoke_report` checks that a report produced by
-scripts/rocm_smoke.py or scripts/xpu_smoke.py records the identity evidence
-a support cell requires: host OS build or kernel, driver, torch and backend
-runtime versions, device name and architecture, and the baseline capability
-probes. Validation proves the report is complete, not that the backend
-works; only the recorded probe results say that.
+:func:`validate_smoke_report` checks that a report records the identity
+evidence a support cell requires: host OS build or kernel, driver, torch and
+backend runtime versions, device name and architecture, and the baseline
+capability probes. Validation proves the report is complete, not that the
+backend works; only the recorded probe results say that.
 
-Model-family validation runs one level above the smoke lane:
-scripts/family_validation.py executes one real inference workload per cell
-(family, execution mode) and emits a report that
-:func:`validate_family_report` checks for the same identity evidence plus
-the workload, input artifact digests, memory telemetry, and per-check
-outcomes. Compile-mode reports must reference a passing eager report for
-the cell: eager execution is the support contract, and torch.compile
-claims exist only relative to proven eager behavior.
+Model-family validation runs one level above the smoke lane.
+:func:`validate_family_report` checks the same identity evidence plus the
+workload, input artifact digests, memory telemetry, and per-check outcomes.
+Compile-mode reports must reference a passing eager report for the cell:
+eager execution is the support contract, and torch.compile claims exist
+only relative to proven eager behavior.
 
 This module stays torch-free: the torch-free root environment inspects
 recipes and parses reports, while torch itself exists only inside the
@@ -52,18 +46,6 @@ _ROCM_TORCH_REQUIREMENT = "torch[device-all]==2.12.0+rocm7.14.0"
 _XPU_INDEX_URL = "https://download.pytorch.org/whl/xpu"
 _XPU_TORCH_REQUIREMENT = "torch==2.13.0+xpu"
 
-# dinkster_inference_torch imports dinkster_kitchen unconditionally, so every
-# backend cell needs it. The pin must be the pure-Python wheel: PyPI's
-# platform wheels for win_amd64 and linux x86_64 carry CUDA-only compiled
-# kernels, while the pure wheel provides the device-agnostic eager backend
-# that ROCm and XPU cells run on. uv enforces the sha256 fragment.
-_KITCHEN_REQUIREMENT = (
-    "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/"
-    "84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/"
-    "dinkster_kitchen-0.2.35.post1-py3-none-any.whl"
-    "#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
-)
-
 _SUPPORT_PACKAGES = (
     "pytest",
     "numpy",
@@ -73,7 +55,6 @@ _SUPPORT_PACKAGES = (
     "pillow",
     "packaging",
     "tokenizers==0.23.1",
-    _KITCHEN_REQUIREMENT,
 )
 
 _EDITABLE_PACKAGES = (
@@ -86,7 +67,6 @@ _EDITABLE_PACKAGES = (
     "packages/dinkster-memory",
     "packages/dinkster-workers",
     "packages/dinkster-inference",
-    "packages/dinkster-inference-torch",
     "packages/dinkster-image-document",
     "packages/dinkster-video",
     "packages/dinkster-api",
@@ -172,7 +152,7 @@ def setup_commands(recipe: BackendEnvRecipe) -> tuple[tuple[str, ...], ...]:
             recipe.torch_requirement,
         ),
         ("uv", "pip", "install", "--python", python, *recipe.support_packages, *editable_args),
-        (python, "-c", "import dinkster_compat_comfy.native_arm"),
+        (python, "-c", "import dinkster_comfy"),
     )
 
 

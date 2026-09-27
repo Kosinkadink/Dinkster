@@ -86,12 +86,6 @@ def comfy_resident_meta(obj: object) -> Mapping[str, object]:
     devices = _device_strings(patcher)
     nbytes = _model_nbytes(patcher)
     if not devices:
-        # Native CPU execution still owns the assembled weight bytes for the
-        # resident's lifetime. Preserve the historical empty metadata for
-        # ordinary CPU Comfy patchers; this marker belongs only to the native
-        # checkpoint bundle.
-        if getattr(patcher, "_dinkster_native_residency", False) and nbytes > 0:
-            return {COST_META_KEY: {"ram": nbytes}}
         return {}
     meta: dict[str, object] = {
         RESOURCES_META_KEY: {"gpu": devices[0] if len(devices) == 1 else devices}
@@ -141,34 +135,6 @@ def torch_vram_telemetry(device: str) -> MeasuredMemory | None:
         return None
 
 
-def _structured_cuda_measurement(device: object) -> MeasuredMemory:
-    inference_torch = cast("Any", importlib.import_module("dinkster_inference_torch"))
-    memory = inference_torch.dynamic_cuda_memory_snapshot(device)
-    return MeasuredMemory(
-        free_bytes=int(memory.free_bytes),
-        total_bytes=int(memory.total_bytes),
-        driver_free_bytes=int(memory.driver_free_bytes),
-        allocator_reclaimable_bytes=int(memory.allocator_reclaimable_bytes),
-        dynamic_evictable_bytes=int(memory.dynamic_evictable_bytes),
-        dynamic_pinned_bytes=int(memory.dynamic_pinned_bytes),
-    )
-
-
-def _structured_xpu_measurement(device: object) -> MeasuredMemory:
-    inference_torch = cast("Any", importlib.import_module("dinkster_inference_torch"))
-    memory = inference_torch.xpu_memory_snapshot(device)
-    if not memory.driver_reported:
-        # Allocator-derived free cannot see other processes' usage;
-        # measured telemetry must come from the driver's own report.
-        raise RuntimeError("XPU snapshot free bytes were not driver-reported")
-    return MeasuredMemory(
-        free_bytes=int(memory.free_bytes),
-        total_bytes=int(memory.total_bytes),
-        driver_free_bytes=int(memory.driver_free_bytes),
-        allocator_reclaimable_bytes=int(memory.allocator_reclaimable_bytes),
-    )
-
-
 def _family_telemetry_snapshot(torch: Any, family: str) -> dict[str, MeasuredMemory]:
     try:
         namespace = getattr(torch, family, None)
@@ -177,14 +143,9 @@ def _family_telemetry_snapshot(torch: Any, family: str) -> dict[str, MeasuredMem
         count = int(namespace.device_count())
     except Exception:  # noqa: BLE001 - a failing probe is an absent probe
         return {}
-    structured = _structured_cuda_measurement if family == "cuda" else _structured_xpu_measurement
     snapshot: dict[str, MeasuredMemory] = {}
     for index in range(count):
-        measured: MeasuredMemory | None = None
-        try:
-            measured = structured(torch.device(family, index))
-        except Exception:  # noqa: BLE001 - a failing structured probe falls back to the driver
-            measured = torch_vram_telemetry(f"vram:{family}:{index}")
+        measured = torch_vram_telemetry(f"vram:{family}:{index}")
         if measured is not None:
             snapshot[f"vram:{family}:{index}"] = measured
     return snapshot
@@ -193,13 +154,6 @@ def _family_telemetry_snapshot(torch: Any, family: str) -> dict[str, MeasuredMem
 def vram_telemetry_snapshot() -> Mapping[str, MeasuredMemory]:
     """Measured accelerator capacity and attribution for every visible
     CUDA and XPU device.
-
-    Structured CUDA snapshots add torch allocator reserve and only
-    unpinned, evictable Dinkster VBAR pages to driver free, capped at
-    physical total. Pinned pages remain visible as attribution and never
-    become free. Structured XPU snapshots carry driver free and allocator
-    reserve attribution. This probe is the only derivation point; parent
-    telemetry passes it through without changing admission.
 
     ROCm devices appear under ``vram:cuda:N`` because the ROCm torch
     build exposes AMD GPUs through the CUDA namespace; their family

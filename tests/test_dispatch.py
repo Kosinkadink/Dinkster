@@ -7,7 +7,6 @@ owner provenance is producer-stamped and relay-preserved, and manifest
 from __future__ import annotations
 
 import asyncio
-import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from multiprocessing.shared_memory import SharedMemory
@@ -58,7 +57,7 @@ from dinkster_workers.boundary import (
     encode_invocation,
     release_segment,
 )
-from dinkster_workers.host import AttentionRouteDiscoveryError, load_pack
+from dinkster_workers.host import load_pack
 from dinkster_workers.manifest import ManifestError, load_manifest
 
 STRING = TypeExpr.concrete("core.string")
@@ -955,49 +954,3 @@ arm_nodes = "{module}:ARM_NODES"
     monkeypatch.syspath_prepend(str(tmp_path))
     with pytest.raises(ManifestError):
         load_pack(load_manifest(manifest_path))
-
-
-def test_native_provider_pack_keeps_attention_discovery_failure_fatal(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manifest_path = tmp_path / "dinkster-pack.toml"
-    manifest_path.write_text(
-        """[pack]
-name = "provider"
-[pack.arms]
-native = ["provider.node"]
-[pack.entry]
-nodes = "provider_nodes:NODES"
-arm_nodes = "provider_nodes:ARM_NODES"
-""",
-        encoding="utf-8",
-    )
-
-    def broken_provider() -> None:
-        raise AttentionRouteDiscoveryError("attention runtime nested import failed")
-
-    monkeypatch.setattr("dinkster_workers.host._discover_attention_routing", broken_provider)
-    with pytest.raises(AttentionRouteDiscoveryError, match="nested import"):
-        load_pack(load_manifest(manifest_path))
-
-
-def test_native_provider_pack_refuses_absent_evidence_before_entry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manifest_path = tmp_path / "dinkster-pack.toml"
-    manifest_path.write_text(
-        """[pack]
-name = "provider"
-[pack.arms]
-native = ["provider.node"]
-[pack.entry]
-nodes = "entry_must_not_import:NODES"
-arm_nodes = "entry_must_not_import:ARM_NODES"
-""",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr("dinkster_workers.host._discover_attention_routing", lambda: (None, None))
-
-    with pytest.raises(AttentionRouteDiscoveryError, match="requires authenticated"):
-        load_pack(load_manifest(manifest_path))
-    assert "entry_must_not_import" not in sys.modules

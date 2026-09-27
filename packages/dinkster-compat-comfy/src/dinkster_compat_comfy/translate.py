@@ -100,6 +100,7 @@ import os
 import sys
 import textwrap
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import nullcontext
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple, cast
@@ -726,10 +727,12 @@ class CompatError(Exception):
 
 
 MULTI_STREAM_ROLES_KEY = "dinkster.multi_stream_roles@1"
+_NESTED_TENSOR_MODULES = frozenset({"comfy.nested_tensor", "dinkster_comfy.nested_tensor"})
 _MULTI_STREAM_INPUTS: Mapping[str, frozenset[str]] = {
     "KSampler": frozenset({"latent_image"}),
     "LTXVConcatAVLatent": frozenset({"video_latent", "audio_latent"}),
     "LTXVSeparateAVLatent": frozenset({"av_latent"}),
+    "SamplerCustomAdvanced": frozenset({"latent_image"}),
 }
 _FIXED_AV_PRODUCERS = frozenset(
     {
@@ -750,6 +753,25 @@ def _contains_multistream(value: object) -> bool:
     if isinstance(value, (list, tuple)):
         return any(_contains_multistream(item) for item in cast("Sequence[object]", value))
     return False
+
+
+def _is_comfy_nested_tensor(value: object) -> bool:
+    module_name = type(value).__module__
+    if module_name not in _NESTED_TENSOR_MODULES:
+        return False
+    module = cast("Any", importlib.import_module(module_name))
+    return type(value) is module.NestedTensor
+
+
+def _comfy_inference_mode() -> Any:
+    try:
+        torch = cast("Any", importlib.import_module("torch"))
+    except ModuleNotFoundError as exc:
+        if exc.name != "torch":
+            raise
+        return nullcontext()
+    inference_mode = cast("dict[str, object]", vars(torch)).get("inference_mode")
+    return inference_mode() if callable(inference_mode) else nullcontext()
 
 
 def to_comfy_multistream(value: object) -> object:
@@ -791,10 +813,7 @@ def from_comfy_multistream(value: object) -> object:
         return value
     latent = cast("Mapping[object, object]", value)
     samples = latent.get("samples")
-    if type(samples).__name__ != "NestedTensor":
-        return cast("object", value)
-    nested_type = importlib.import_module("dinkster_comfy.nested_tensor").NestedTensor
-    if type(samples) is not nested_type:
+    if not _is_comfy_nested_tensor(samples):
         return cast("object", value)
     sidecar = latent.get(MULTI_STREAM_ROLES_KEY)
     if not isinstance(sidecar, Mapping):
@@ -804,7 +823,7 @@ def from_comfy_multistream(value: object) -> object:
     if sidecar_map.get("version") != 1 or not isinstance(roles, (list, tuple)):
         raise CompatError("NestedTensor LATENT output has an invalid role sidecar")
     role_tuple = tuple(cast("Sequence[object]", roles))
-    payloads = tuple(cast("Any", samples).unbind())
+    payloads = tuple(from_comfy_multistream(item) for item in cast("Any", samples).unbind())
     if len(role_tuple) != len(payloads) or any(
         type(role) is not str or not role for role in role_tuple
     ):
@@ -813,8 +832,8 @@ def from_comfy_multistream(value: object) -> object:
     output = dict(latent)
     output["samples"] = multi_stream.from_pairs(zip(role_tuple, payloads, strict=True))
     mask = output.get("noise_mask")
-    if type(mask) is nested_type:
-        mask_payloads = tuple(cast("Any", mask).unbind())
+    if _is_comfy_nested_tensor(mask):
+        mask_payloads = tuple(from_comfy_multistream(item) for item in cast("Any", mask).unbind())
         if len(mask_payloads) != len(role_tuple):
             raise CompatError("NestedTensor LATENT mask count does not match its streams")
         output["noise_mask"] = multi_stream.from_pairs(zip(role_tuple, mask_payloads, strict=True))
@@ -3128,7 +3147,8 @@ def translate_node(
         return dict(zip(output_ids, values, strict=True))
 
     async def await_result(result: Awaitable[object]) -> Mapping[str, object]:
-        return normalize_result(await result)
+        with _comfy_inference_mode():
+            return normalize_result(await result)
 
     def invoke(inputs: Mapping[str, object]) -> object:
         custom_combo_options = (
@@ -3175,8 +3195,10 @@ def translate_node(
             assert custom_combo_options is not None
             choice = restored.pop("choice")
             index = restored.pop("index", 0)
-            return fn(choice=choice, index=index, options=custom_combo_options)
-        return fn(**restored)
+            with _comfy_inference_mode():
+                return fn(choice=choice, index=index, options=custom_combo_options)
+        with _comfy_inference_mode():
+            return fn(**restored)
 
     async def execute_async(cls: type[Node], **inputs: object) -> Mapping[str, object]:
         del cls

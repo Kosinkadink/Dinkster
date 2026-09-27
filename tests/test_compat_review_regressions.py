@@ -283,35 +283,3 @@ def test_comfy_cli_args_rejection_names_supplied_argument(
     finally:
         for name in ("comfy.cli_args", "comfy.options", "comfy"):
             sys.modules.pop(name, None)
-
-
-def test_missing_sampler_vocabulary_serves_empty_choices_and_warns(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    # entry has child-only import side effects, so neutralize its bootstrap.
-    monkeypatch.setattr(
-        bootstrap,
-        "load_comfyui_nodes",
-        lambda *, required=(): CompatTranslation(),
-    )
-    sys.modules.pop("dinkster_compat_comfy.entry", None)
-    entry = importlib.import_module("dinkster_compat_comfy.entry")
-    real_import = entry.importlib.import_module
-    monkeypatch.setattr(
-        entry.importlib,
-        "import_module",
-        lambda name: (
-            SimpleNamespace(KSampler=object())
-            if name == "dinkster_comfy.samplers"
-            else SimpleNamespace(get_filename_list=lambda category: ())
-            if name == "folder_paths"
-            else real_import(name)
-        ),
-    )
-    assert entry.combo_choices() == {
-        "comfy.samplers": (),
-        "comfy.schedulers": (),
-        "comfy.files.embeddings": (),
-        "comfy.files.loras": (),
-    }
-    assert "DINKSTER_COMPAT_SAMPLER_CHOICES_UNAVAILABLE" in caplog.text

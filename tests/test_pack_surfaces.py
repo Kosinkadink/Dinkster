@@ -461,9 +461,9 @@ def test_route_rpc_cancellation_and_worker_death_clear_pending(
 ) -> None:
     from dinkster_workers.session import WorkerDied
 
-    from tests.test_isolated import graph_compile_session
+    from tests.test_isolated import negotiated_session
 
-    session = graph_compile_session()
+    session = negotiated_session()
     sent: list[dict[str, object]] = []
 
     async def send(header, blobs):

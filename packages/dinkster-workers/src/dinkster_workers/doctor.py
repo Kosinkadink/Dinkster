@@ -54,7 +54,6 @@ from .manifest import (
     ManifestError,
     PackManifest,
     load_manifest,
-    unmatched_registry_providers,
     validate_pack_asset,
     validate_pack_blueprint,
     validate_pack_icon,
@@ -931,79 +930,6 @@ def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Find
             )
         )
         return findings
-    catalog = report.get("catalog")
-    contributions: list[tuple[str, str]] = []
-    if isinstance(catalog, dict):
-        raw_contributions = cast("dict[str, object]", catalog).get("inferenceContributions", [])
-        if isinstance(raw_contributions, list):
-            for raw in cast("list[object]", raw_contributions):
-                if not isinstance(raw, dict):
-                    continue
-                declaration = cast("dict[str, object]", raw)
-                surface_id = declaration.get("surface_id")
-                descriptor_id = declaration.get("id")
-                if isinstance(surface_id, str) and isinstance(descriptor_id, str):
-                    contributions.append((surface_id, descriptor_id))
-    family_surfaces = {
-        "inference.families",
-        "inference.components",
-        "inference.assemblies",
-    }
-    capabilities = set(manifest.extension.capabilities)
-    if any(surface in family_surfaces for surface, _descriptor_id in contributions) and (
-        "model-family-registration" not in capabilities
-    ):
-        findings.append(
-            Finding(
-                severity="error",
-                code="extension.capability-required",
-                message=f"pack {manifest.name!r} contributes model family registrations "
-                "without the model-family-registration capability",
-                fix="declare model-family-registration in [pack.extension] capabilities",
-            )
-        )
-    if "model-family-registration" in capabilities and not any(
-        surface == "inference.families" for surface, _descriptor_id in contributions
-    ):
-        findings.append(
-            Finding(
-                severity="error",
-                code="extension.capability-unused",
-                message=f"pack {manifest.name!r} declares model-family-registration "
-                "but contributes no model family",
-                fix="return a family registration or remove the capability",
-            )
-        )
-    if manifest.extension.entries.inference is not None:
-        # Doctor sees one pack in isolation, so it cannot know whether the host it
-        # runs on composes a sampling worker. It can name the requirement, which is
-        # the explanation an author needs when the pack's samplers are absent from
-        # a host that loaded the native inference pack's worker differently.
-        findings.append(
-            Finding(
-                severity="info",
-                code="inference.worker-required",
-                message=f"pack {manifest.name!r} declares an inference surface "
-                f"({manifest.extension.entries.inference}); its samplers, schedulers, "
-                "graph compilers and guidance strategies need a host that composes a "
-                "live native dinkster.ksampler worker",
-                fix="install the native inference pack on the serving host; without it "
-                "the pack still composes its nodes, routes and events and reports its "
-                "inference surface unavailable",
-            )
-        )
-    for provider in unmatched_registry_providers(manifest.provides, contributions):
-        findings.append(
-            Finding(
-                severity="error",
-                code="registry.provider-unregistered",
-                message=f"pack {manifest.name!r} declares registry provider "
-                f"{provider.registry}:{provider.id}, but its inference contribution "
-                "does not register it",
-                fix="return the declared descriptor from [pack.extension] inference, "
-                "or remove the provider declaration",
-            )
-        )
     for scope, problem in sorted(report["extension_entry_errors"].items()):
         findings.append(
             Finding(

@@ -6,12 +6,7 @@
   `stochastic_rounding_fp8` (observed at 0.2.22). The comfy-kitchen
   compiled CUDA kernel is NOT affected - which means upstream's two
   backends disagree bitwise for the same registry operation.
-- **Status:** still present in comfy-kitchen 0.2.31; fixed in Dinkster
-  (frexp exponent in
-  `packages/dinkster-inference-torch/src/dinkster_inference_torch/rounding.py`,
-  a documented deliberate divergence); canary test pins the upstream
-  eager-vs-CUDA divergence
-  (`test_gpu.py::test_kitchen_eager_log2_boundary_divergence_canary`)
+- **Status:** still present in comfy-kitchen 0.2.31
 
 ## Symptom
 
@@ -79,19 +74,5 @@ comfy-kitchen eager) or the kitchen eager/CUDA parity stays broken.
 
 ## Dinkster handling
 
-`rounding.py::_manual_stochastic_round_to_float8` uses the frexp
-exponent (documented deliberate divergence at the code site). All
-non-boundary inputs still round bit-identically to the reference -
-the executed-reference goldens in `test_patches.py` stay green on the
-golden torch build - and boundary inputs now stay on the adjacent
-grid, proven by
-`test_patches.py::test_rounding_boundary_values_stay_on_grid` (which
-the reference algorithm fails). The kitchen-accelerated path is
-unaffected (the CUDA kernel was already correct); kitchen's eager
-backend is upstream's code and stays defective until fixed there,
-pinned by the canary test.
-
-When upstream fixes this, verify bit agreement of the fixed reference
-against Dinkster's implementation on boundary values, then fold boundary
-inputs into the seeded kernel-vs-eager bitwise test and retire the
-canary.
+Dinkster delegates stochastic rounding to `dinkster_comfy`, whose manual and
+Kitchen paths currently match the upstream behavior described above.

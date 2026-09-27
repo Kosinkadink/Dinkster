@@ -48,7 +48,6 @@ from dinkster_schema import (
 from dinkster_workers import CompatGateDiagnostic
 
 from .listmap import lower_implicit_list_maps
-from .usdu import lower_ultimate_sd_upscale
 
 __all__ = [
     "InputAdapter",
@@ -465,15 +464,7 @@ def translate_prompt(
         raise PromptTranslationError(
             [PromptProblem(p.code, p.message, p.node_id, p.input_id) for p in lowered.problems]
         )
-    usdu = lower_ultimate_sd_upscale(lowered.graph, schemas)
-    if usdu.problems:
-        raise PromptTranslationError(
-            [
-                PromptProblem(problem.code, problem.message, problem.node_id, problem.input_id)
-                for problem in usdu.problems
-            ]
-        )
-    list_mapped = lower_implicit_list_maps(usdu.graph, schemas)
+    list_mapped = lower_implicit_list_maps(lowered.graph, schemas)
     if list_mapped.problems:
         raise PromptTranslationError(
             [

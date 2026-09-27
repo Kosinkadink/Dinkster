@@ -22,7 +22,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_compat_comfy import ResidentPool
 from dinkster_engine import Engine, EventListener
 from dinkster_memory import FullReleaseResult
-from dinkster_protocol import CompatGateDiagnostic, KeyedContribution, SamplerRegistrySnapshot
+from dinkster_protocol import CompatGateDiagnostic
 from dinkster_schema import ComboWidget, InputSpec, NodeSchema, TypeExpr
 from dinkster_server import STATE_KEY, ChoiceOwnerGone, PackInfo, create_app
 from dinkster_values import TypeRegistry
@@ -349,20 +349,6 @@ def test_combo_choices_from_hello_rejects_unbounded_or_noncanonical_values(
         )
 
 
-def test_derived_sampler_choices_are_bounded_before_publication() -> None:
-    composer = ServingComposer()
-    before = dict(composer.composition.choices)
-    oversized = SamplerRegistrySnapshot(
-        tuple(
-            KeyedContribution(surface_id="sampling.sampler", id=f"cp.sampler-{index}")
-            for index in range(10_001)
-        )
-    )
-    with pytest.raises(CompositionError, match="maximum is 10000"):
-        composer._validated_sampler_choices(oversized)
-    assert composer.composition.choices == before
-
-
 def test_compat_skips_from_hello() -> None:
     assert _compat_skips_from_hello({}, role="pack", pack="p") == {}
     expected = diagnostic("OpaqueNode", "reason")
@@ -405,33 +391,6 @@ def test_compat_gate_diagnostic_is_frozen_strict_and_code_extensible() -> None:
 # -- composition ---------------------------------------------------------------
 
 
-def test_core_native_inference_choices() -> None:
-    """The native sampler/scheduler registries are core vocabulary on
-    every composition surface (stage 3b): dinkster.samplers and
-    dinkster.schedulers serve the ported catalog ids with no packs added,
-    and the development pack merges its lists instead of replacing them."""
-    from dinkster_inference import builtin_samplers, builtin_schedulers
-
-    async def scenario() -> None:
-        for dev in (False, True):
-            composer = ServingComposer(dev=dev, worker_env=WORKER_ENV)
-            try:
-                if dev:
-                    await composer.add_pack(DEV_PACK_MANIFEST)
-                choices = composer.composition.choices
-                assert choices["dinkster.samplers"] == tuple(d.id for d in builtin_samplers())
-                assert choices["dinkster.schedulers"] == tuple(d.id for d in builtin_schedulers())
-                assert "dinkster.euler" in choices["dinkster.samplers"]
-                assert "dinkster.karras" in choices["dinkster.schedulers"]
-                if dev:
-                    # Pack lists merge on top, leaving core lists intact.
-                    assert any(cid.startswith("dev.") for cid in choices)
-            finally:
-                await composer.composition.close()
-
-    asyncio.run(scenario())
-
-
 def test_compose_surfaces_choices(tmp_path: Path) -> None:
     """The end-to-end happy path: worker enumerates, hello announces, the
     composer validates and merges, PackDelta carries the lists, and the
@@ -447,15 +406,7 @@ def test_compose_surfaces_choices(tmp_path: Path) -> None:
                 "cp.empty": (),
             }
             composition = composer.composition
-            # Pack choices merge on top of the always-present core native
-            # inference vocabulary (stage 3b).
-            assert composition.choices == {
-                **{
-                    cid: composition.choices[cid]
-                    for cid in ("dinkster.samplers", "dinkster.schedulers")
-                },
-                **delta.choices,
-            }
+            assert composition.choices == delta.choices
 
             def make_engine(on_event: EventListener) -> Engine:
                 return composition.make_engine(on_event)
@@ -473,14 +424,6 @@ def test_compose_surfaces_choices(tmp_path: Path) -> None:
                 resp = await client.get("/api/choices/cp.samplers")
                 assert resp.status == 200
                 assert await resp.json() == ["euler", "ddim", "heun"]
-                # Core native inference vocabulary served over HTTP too
-                # (stage 3b): namespaced descriptor ids, always present.
-                resp = await client.get("/api/choices/dinkster.samplers")
-                assert resp.status == 200
-                assert "dinkster.euler" in await resp.json()
-                resp = await client.get("/api/choices/dinkster.schedulers")
-                assert resp.status == 200
-                assert "dinkster.karras" in await resp.json()
                 resp = await client.get("/api/choices/cp.empty")
                 assert await resp.json() == []
                 resp = await client.get("/api/choices/cp.unknown")
@@ -489,10 +432,7 @@ def test_compose_surfaces_choices(tmp_path: Path) -> None:
                 state = app[STATE_KEY]
                 result = await apply_remove(state, composer, "choicepack")
                 assert result["pack"] == "choicepack"
-                assert set(composition.choices) == {
-                    "dinkster.samplers",
-                    "dinkster.schedulers",
-                }
+                assert composition.choices == {}
                 resp = await client.get("/api/choices/cp.samplers")
                 assert resp.status == 404
             finally:
@@ -806,10 +746,7 @@ def test_compose_rejects_uncovered_choice_id(tmp_path: Path) -> None:
                         choices="choicepack_nodes:choices_outside_namespace",
                     )
                 )
-            assert set(composer.composition.choices) == {
-                "dinkster.samplers",
-                "dinkster.schedulers",
-            }
+            assert composer.composition.choices == {}
         finally:
             await composer.composition.close()
 
@@ -867,8 +804,6 @@ def test_compose_rejects_choice_collision(tmp_path: Path) -> None:
                 )
             assert set(composer.composition.choices) == {
                 "comfy.samplers",
-                "dinkster.samplers",
-                "dinkster.schedulers",
             }
             assert composer.composition.lazy_choices == {}
             assert set(composer.composition.schemas) >= {"cp.reserved-pick"}
