@@ -36,7 +36,7 @@ else
     echo "==> dinkster-evidence not found - skipping optional dinkster-acceptance"
 fi
 
-dinkster_comfy_requirement="dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@aef06c9225f689be4fe0a573f4af436e7ae7f8e8"
+dinkster_comfy_requirement="dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@b80df3e7507a406ae168b468fcb2593c409372bc"
 
 FORCE=0
 for arg in "$@"; do

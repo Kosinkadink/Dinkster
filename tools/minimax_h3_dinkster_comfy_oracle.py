@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
-COMFYUI_REVISION = "b5cc8830279eae909a59de030af1e50761c36751"
+COMFYUI_REVISION = "4ef23c34d950eecc37040a21ee1741a49d2e44b1"
 PROMPT = "A lighthouse flashes across a calm sea."
 SEED = 459
 STEPS = 1
