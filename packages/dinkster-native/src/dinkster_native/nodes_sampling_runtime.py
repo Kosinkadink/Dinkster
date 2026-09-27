@@ -30,6 +30,7 @@ from .native_arm_core import (
     _diffusion_unload_roles,
     _effective_flux_guidance,
     _inference_registries,
+    _is_exact_dinkster_comfy_type,
     _not_cancelled,
     _run_direct_vae,
     _sampler_registry,
@@ -1036,7 +1037,7 @@ class NativeVAEDecode(VAEDecode):
 
     @classmethod
     def execute(cls, *, samples: object, vae: object) -> Mapping[str, object]:
-        if callable(getattr(vae, "decode", None)):
+        if _is_exact_dinkster_comfy_type(vae, "dinkster_comfy.sd", "VAE"):
             return VAEDecode.execute(samples=samples, vae=vae)
         handle = _native_handle(vae, "vae")
         torch = _torch()

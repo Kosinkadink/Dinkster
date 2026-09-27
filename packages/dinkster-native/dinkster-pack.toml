@@ -200,8 +200,11 @@ executes = [
     "dinkster.latent.generate_noise",
     "dinkster.latent.inject_noise",
 ]
-# Python requirements are supplied by the dinkster-native package environment.
-requires = []
+# The inference library belongs to this isolated GPU worker environment, not
+# Dinkster's torch-free engine environment. Pin the reviewed fork commit.
+requires = [
+    "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@e56e120814cee954b85b578c869ac112f4feaf55",
+]
 
 [pack.sandbox]
 gpu = true

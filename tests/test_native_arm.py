@@ -15997,6 +15997,47 @@ def test_generation_sampler_keeps_basic_single_stream_materialization(
     assert forwarded["model"] is chain
 
 
+def test_generation_sampler_routes_dinkster_comfy_model_patcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_compat_comfy import sampling
+
+    arm = _native_arm()
+
+    class ModelPatcher:
+        pass
+
+    ModelPatcher.__module__ = "dinkster_comfy.model_patcher"
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_comfy.model_patcher",
+        SimpleNamespace(ModelPatcher=ModelPatcher),
+    )
+    forwarded: dict[str, object] = {}
+
+    def execute(**kwargs: object) -> Mapping[str, object]:
+        forwarded.update(kwargs)
+        return {"latent": "compat-sampled"}
+
+    monkeypatch.setattr(sampling.KSampler, "execute", staticmethod(execute))
+    model = ModelPatcher()
+    result = arm.GenerationKSampler.execute(
+        model=model,
+        seed=7,
+        steps=2,
+        cfg=5.0,
+        sampler_name="euler",
+        scheduler="normal",
+        positive=[],
+        negative=[],
+        latent_image={"samples": object()},
+        denoise=1.0,
+    )
+
+    assert result == {"latent": "compat-sampled"}
+    assert forwarded["model"] is model
+
+
 def test_generation_sampler_routes_conditioning_through_single_stream_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -18991,11 +19032,13 @@ def test_generation_clip_text_encode_binds_qwen_component_identity(
     assert events == ["stage", "encode"]
 
 
-def test_generation_clip_text_encode_uses_dinkster_comfy_clip_contract() -> None:
+def test_generation_clip_text_encode_uses_dinkster_comfy_clip_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     arm = _native_arm()
     conditioning = object()
 
-    class Clip:
+    class CLIP:
         @staticmethod
         def tokenize(text: str) -> object:
             assert text == "a lighthouse"
@@ -19006,9 +19049,22 @@ def test_generation_clip_text_encode_uses_dinkster_comfy_clip_contract() -> None
             assert tokens == "tokens"
             return conditioning
 
-    result = arm.GenerationClipTextEncode.execute(text="a lighthouse", clip=Clip())
+    CLIP.__module__ = "dinkster_comfy.sd"
+    monkeypatch.setitem(sys.modules, "dinkster_comfy.sd", SimpleNamespace(CLIP=CLIP))
+    result = arm.GenerationClipTextEncode.execute(text="a lighthouse", clip=CLIP())
 
     assert result["conditioning"] is conditioning
+
+
+def test_generation_clip_text_encode_rejects_callable_lookalike() -> None:
+    arm = _native_arm()
+
+    class ClipLookalike:
+        tokenize = staticmethod(lambda _text: "tokens")
+        encode_from_tokens_scheduled = staticmethod(lambda _tokens: object())
+
+    with pytest.raises(TypeError):
+        arm.GenerationClipTextEncode.execute(text="a lighthouse", clip=ClipLookalike())
 
 
 def test_generation_clip_text_encode_uses_runtime_text_carrier_when_available(
@@ -29755,7 +29811,9 @@ def test_native_generic_wan21_loaders_publish_split_components(
     ]
 
 
-def test_vae_decode_uses_dinkster_comfy_vae_contract() -> None:
+def test_vae_decode_uses_dinkster_comfy_vae_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     arm = _native_arm()
     latent = SimpleNamespace(is_nested=False)
     image = SimpleNamespace(shape=(1, 16, 16, 3))
@@ -29766,9 +29824,24 @@ def test_vae_decode_uses_dinkster_comfy_vae_contract() -> None:
             assert value is latent
             return image
 
+    VAE.__module__ = "dinkster_comfy.sd"
+    monkeypatch.setitem(sys.modules, "dinkster_comfy.sd", SimpleNamespace(VAE=VAE))
     result = arm.NativeVAEDecode.execute(samples={"samples": latent}, vae=VAE())
 
     assert result["image"] is image
+
+
+def test_vae_decode_rejects_decode_lookalike() -> None:
+    arm = _native_arm()
+
+    class ClipLookalike:
+        decode = staticmethod(lambda _latent: object())
+
+    with pytest.raises(TypeError):
+        arm.NativeVAEDecode.execute(
+            samples={"samples": SimpleNamespace(is_nested=False)},
+            vae=ClipLookalike(),
+        )
 
 
 def test_vae_decode_cuda_oom_retries_tiled_with_default_geometry(

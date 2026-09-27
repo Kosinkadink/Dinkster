@@ -87,12 +87,12 @@ class _FixedResolver:
 
 def _run_worker(checkpoint: Path) -> dict[str, object]:
     from dinkster_assets import AssetRef, digest_file
-    from dinkster_compat_comfy.sampling import KSampler
+    from dinkster_native.families.seedvr2 import GenerationVAEDecode
     from dinkster_native.nodes_generation_loaders import (
         GenerationClipTextEncode,
         GenerationLoadCheckpoint,
     )
-    from dinkster_native.nodes_sampling_runtime import NativeVAEDecode
+    from dinkster_native.nodes_samplers import GenerationKSampler
 
     torch = cast("Any", importlib.import_module("torch"))
     sd = importlib.import_module("dinkster_comfy.sd")
@@ -112,7 +112,7 @@ def _run_worker(checkpoint: Path) -> dict[str, object]:
     for _ in range(2):
         sampled = cast(
             "dict[str, Any]",
-            KSampler.execute(
+            GenerationKSampler.execute(
                 model=model,
                 seed=SEED,
                 steps=STEPS,
@@ -125,7 +125,7 @@ def _run_worker(checkpoint: Path) -> dict[str, object]:
                 denoise=1.0,
             )["latent"],
         )
-        image = NativeVAEDecode.execute(samples=sampled, vae=vae)["image"]
+        image = GenerationVAEDecode.execute(samples=sampled, vae=vae)["image"]
         records.append(
             {
                 "latent": _sha256_tensor(sampled["samples"]),

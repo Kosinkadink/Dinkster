@@ -18,6 +18,7 @@ from ..native_arm_core import (
     VAEDecodeAudio,
     VAEDecodeAudioTiled,
     _is_accelerator_oom,
+    _is_exact_dinkster_comfy_type,
     _torch,
     cast,
     importlib,
@@ -238,6 +239,8 @@ class GenerationVAEDecode(NativeVAEDecode):
 
     @classmethod
     def execute(cls, *, samples: object, vae: object) -> Mapping[str, object]:
+        if _is_exact_dinkster_comfy_type(vae, "dinkster_comfy.sd", "VAE"):
+            return NativeVAEDecode.execute(samples=samples, vae=vae)
         inference = importlib.import_module("dinkster_inference")
         component_codec = isinstance(vae, NativeComponentHandle)
         codec = (

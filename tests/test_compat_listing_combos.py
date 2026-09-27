@@ -1073,7 +1073,7 @@ def test_combo_choices_serves_listing_snapshots(
         "import_module",
         lambda name: (
             SimpleNamespace(KSampler=SimpleNamespace(SAMPLERS=["euler"], SCHEDULERS=["normal"]))
-            if name == "comfy.samplers"
+            if name == "dinkster_comfy.samplers"
             else folder_paths
             if name == "folder_paths"
             else real_import(name)
@@ -1122,7 +1122,7 @@ def test_prompt_inventory_choices_compose_without_matching_schemas(
         "import_module",
         lambda name: (
             SimpleNamespace(KSampler=SimpleNamespace(SAMPLERS=(), SCHEDULERS=()))
-            if name == "comfy.samplers"
+            if name == "dinkster_comfy.samplers"
             else SimpleNamespace(get_filename_list=lambda category: listings[category])
             if name == "folder_paths"
             else real_import(name)
@@ -1183,7 +1183,7 @@ def test_prompt_inventory_choices_use_shared_validation(
         "import_module",
         lambda name: (
             SimpleNamespace(KSampler=SimpleNamespace(SAMPLERS=(), SCHEDULERS=()))
-            if name == "comfy.samplers"
+            if name == "dinkster_comfy.samplers"
             else SimpleNamespace(
                 get_filename_list=lambda category: values if category == "embeddings" else ()
             )

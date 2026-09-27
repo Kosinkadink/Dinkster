@@ -24,6 +24,7 @@ from .native_arm_core import (
     _DualCFGGuiderValue,
     _DualModelGuiderValue,
     _inference_registries,
+    _is_exact_dinkster_comfy_type,
     _PerpNegGuiderValue,
     _sampler_registry,
     _torch,
@@ -89,6 +90,25 @@ class GenerationKSampler(NativeKSampler):
         conditioning_batching: object = "auto",
         max_fused_lanes: int = 2,
     ) -> Mapping[str, object]:
+        if _is_exact_dinkster_comfy_type(
+            model, "dinkster_comfy.model_patcher", "ModelPatcher"
+        ):
+            compat_sampler = importlib.import_module("dinkster_compat_comfy.sampling").KSampler
+            return compat_sampler.execute(
+                model=model,
+                seed=seed,
+                steps=steps,
+                cfg=cfg,
+                sampler_name=sampler_name,
+                scheduler=scheduler,
+                positive=positive,
+                negative=negative,
+                latent_image=latent_image,
+                denoise=denoise,
+                segment=segment,
+                conditioning_batching=conditioning_batching,
+                max_fused_lanes=max_fused_lanes,
+            )
         return NativeKSampler.execute(
             model=model,
             seed=seed,

@@ -302,7 +302,7 @@ def test_missing_sampler_vocabulary_serves_empty_choices_and_warns(
         "import_module",
         lambda name: (
             SimpleNamespace(KSampler=object())
-            if name == "comfy.samplers"
+            if name == "dinkster_comfy.samplers"
             else SimpleNamespace(get_filename_list=lambda category: ())
             if name == "folder_paths"
             else real_import(name)

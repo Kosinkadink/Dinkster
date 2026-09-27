@@ -761,7 +761,7 @@ def test_compat_multistream_role_sidecar_round_trips_samples_and_masks(
             return self.tensors
 
     monkeypatch.setitem(
-        sys.modules, "comfy.nested_tensor", SimpleNamespace(NestedTensor=NestedTensor)
+        sys.modules, "dinkster_comfy.nested_tensor", SimpleNamespace(NestedTensor=NestedTensor)
     )
     samples = _streams()
     masks = MultiStreamLatent.from_pairs(

@@ -24,6 +24,7 @@ from .native_arm_core import (
     NativeComponentHandle,
     Node,
     NodeSchema,
+    _is_exact_dinkster_comfy_type,
     _native_clip_options,
     _not_cancelled,
     _torch,
@@ -919,10 +920,13 @@ class GenerationClipTextEncode(NativeClipTextEncode):
 
     @classmethod
     def execute(cls, *, text: str, clip: object) -> Mapping[str, object]:
-        tokenize = getattr(clip, "tokenize", None)
-        encode = getattr(clip, "encode_from_tokens_scheduled", None)
-        if callable(tokenize) and callable(encode):
-            return cls.outputs(conditioning=encode(tokenize(text)))
+        if _is_exact_dinkster_comfy_type(clip, "dinkster_comfy.sd", "CLIP"):
+            direct_clip = cast("Any", clip)
+            return cls.outputs(
+                conditioning=direct_clip.encode_from_tokens_scheduled(
+                    direct_clip.tokenize(text)
+                )
+            )
         options = _native_clip_options(clip)
         clip = options.source
         if type(clip) is _LTXAVTextHandle:
