@@ -19,6 +19,7 @@ behavior, then keep the file for provenance.
 
 | Issue | Area | Status |
 | --- | --- | --- |
+| [sd15-post-vae-residency-drift.md](sd15-post-vae-residency-drift.md) | comfy/model_management.py + comfy/model_patcher.py | verified at b5cc8830; Dinkster normalizes residency before sampling |
 | [t5-positive-end-layer-index.md](t5-positive-end-layer-index.md) | comfy/sd1_clip.py + comfy/text_encoders/t5.py | verified in pinned source; Dinkster rejects the invalid index |
 | [load-image-small-animated-gif.md](load-image-small-animated-gif.md) | LoadImage / video alignment filter | found locally; native Pillow loading succeeds |
 | [lokr-tucker-kron-noncontiguous.md](lokr-tucker-kron-noncontiguous.md) | comfy/weight_adapter/lokr.py | found 2026-07; fixed in Dinkster |

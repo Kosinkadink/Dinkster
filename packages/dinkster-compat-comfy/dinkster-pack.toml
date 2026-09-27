@@ -199,10 +199,11 @@ executes = [
     "dinkster.latent.generate_noise",
     "dinkster.latent.inject_noise",
 ]
-# No interpreter requirements: this pack runs on the ComfyUI install's own
-# interpreter, which already has torch and every v1 dependency. Dinkster's
-# pure-stdlib packages ride in via PYTHONPATH.
-requires = []
+# The inference library belongs to this isolated GPU worker environment, not
+# Dinkster's torch-free engine environment. Pin the reviewed fork commit.
+requires = [
+    "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@e56e120814cee954b85b578c869ac112f4feaf55",
+]
 
 [pack.sandbox]
 gpu = true

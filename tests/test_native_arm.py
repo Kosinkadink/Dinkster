@@ -12469,74 +12469,23 @@ def test_generation_load_checkpoint_schema_takes_only_checkpoint() -> None:
     assert specs["checkpoint"].required is True
 
 
-def test_generation_load_checkpoint_preserves_runtime_codec_capabilities(
+def test_generation_load_checkpoint_returns_dinkster_comfy_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dinkster_inference import SEEDVR2_CODEC
-
     arm = _native_arm()
-    torch = FakeTorch()
-    calls: list[tuple[str, tuple[int, ...]]] = []
-
-    def encode_content(content: FakeTensor) -> FakeTensor:
-        calls.append(("encode", content.shape))
-        if len(content.shape) == 4:
-            return FakeTensor((content.shape[0], 16, 2, 2), "image-latent")
-        return FakeTensor((content.shape[0], 16, content.shape[2], 2, 2), "video-latent")
-
-    def decode_latent(latent: FakeTensor) -> FakeTensor:
-        calls.append(("decode", latent.shape))
-        return FakeTensor((latent.shape[0], 3, 16, 16), "decoded")
-
-    runtime = _runtime()
-    runtime.codec = SimpleNamespace(
-        descriptor=SEEDVR2_CODEC,
-        accepts_batched_video=True,
-        accepts_image_batch_latent=True,
-        manages_input_device=True,
-    )
-    runtime.encode_text = lambda _text: object()
-    runtime.sample = lambda *_args, **_kwargs: object()
-    runtime.encode_content = encode_content
-    runtime.decode_latent = decode_latent
-    handle = _handle(arm, runtime, torch)
+    model = object()
     clip = object()
-    monkeypatch.setattr(arm, "_torch", lambda: torch)
+    vae = object()
     monkeypatch.setattr(
-        arm.NativeLoadCheckpoint,
+        arm.LoadCheckpoint,
         "execute",
-        classmethod(lambda _cls, **_kwargs: {"model": handle, "clip": clip, "vae": object()}),
+        classmethod(lambda _cls, **_kwargs: {"model": model, "clip": clip, "vae": vae}),
     )
 
     loaded = arm.GenerationLoadCheckpoint.execute(checkpoint=object())
-    vae = loaded["vae"]
-    assert loaded["model"] is handle
+    assert loaded["model"] is model
     assert loaded["clip"] is clip
-    assert vae.accepts_batched_video is True
-    assert vae.accepts_image_batch_latent is True
-    assert vae.manages_input_device is True
-
-    encoded_image = arm.GenerationVAEEncode.execute(
-        pixels=FakeTensor((2, 16, 16, 3), "images"),
-        vae=vae,
-    )
-    encoded_video = arm.GenerationVAEEncode.execute(
-        pixels=FakeTensor((1, 2, 16, 16, 3), "video"),
-        vae=vae,
-    )
-    decoded = arm.GenerationVAEDecode.execute(
-        samples={"samples": encoded_image["latent"]["samples"]},
-        vae=vae,
-    )
-
-    assert encoded_image["latent"]["samples"].shape == (2, 16, 2, 2)
-    assert encoded_video["latent"]["samples"].shape == (1, 16, 2, 2, 2)
-    assert decoded["image"].shape == (2, 16, 16, 3)
-    assert calls == [
-        ("encode", (2, 3, 16, 16)),
-        ("encode", (1, 3, 2, 16, 16)),
-        ("decode", (2, 16, 2, 2)),
-    ]
+    assert loaded["vae"] is vae
 
 
 def test_bernini_schema_declares_optional_media_and_reference_autogrow() -> None:
@@ -19040,6 +18989,26 @@ def test_generation_clip_text_encode_binds_qwen_component_identity(
     assert binding.identity == identity
     assert stripped.conditioning == carrier.conditioning
     assert events == ["stage", "encode"]
+
+
+def test_generation_clip_text_encode_uses_dinkster_comfy_clip_contract() -> None:
+    arm = _native_arm()
+    conditioning = object()
+
+    class Clip:
+        @staticmethod
+        def tokenize(text: str) -> object:
+            assert text == "a lighthouse"
+            return "tokens"
+
+        @staticmethod
+        def encode_from_tokens_scheduled(tokens: object) -> object:
+            assert tokens == "tokens"
+            return conditioning
+
+    result = arm.GenerationClipTextEncode.execute(text="a lighthouse", clip=Clip())
+
+    assert result["conditioning"] is conditioning
 
 
 def test_generation_clip_text_encode_uses_runtime_text_carrier_when_available(
@@ -29784,6 +29753,22 @@ def test_native_generic_wan21_loaders_publish_split_components(
             {"compute_dtype": "bfloat16"},
         ),
     ]
+
+
+def test_vae_decode_uses_dinkster_comfy_vae_contract() -> None:
+    arm = _native_arm()
+    latent = SimpleNamespace(is_nested=False)
+    image = SimpleNamespace(shape=(1, 16, 16, 3))
+
+    class VAE:
+        @staticmethod
+        def decode(value: object) -> object:
+            assert value is latent
+            return image
+
+    result = arm.NativeVAEDecode.execute(samples={"samples": latent}, vae=VAE())
+
+    assert result["image"] is image
 
 
 def test_vae_decode_cuda_oom_retries_tiled_with_default_geometry(

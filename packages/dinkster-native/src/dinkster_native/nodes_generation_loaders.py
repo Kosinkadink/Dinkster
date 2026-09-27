@@ -18,6 +18,7 @@ from .native_arm_core import (
     _CONTROLNET_TEXT_METADATA_KEY,
     Any,
     AssetRef,
+    LoadCheckpoint,
     Mapping,
     MiniMaxMusic3TextEncode,
     NativeComponentHandle,
@@ -83,15 +84,11 @@ class GenerationLoadCheckpoint(NativeLoadCheckpoint):
 
     @classmethod
     def execute(cls, *, checkpoint: object) -> Mapping[str, object]:
-        loaded = NativeLoadCheckpoint.execute(checkpoint=checkpoint)
-        handle = _require_provider_runtime(loaded["model"], "model")
-        inference = importlib.import_module("dinkster_inference")
-        codec = _NativeCodecHandle(handle)
-        inference.require_inference_codec_handle(codec, "vae")
+        loaded = LoadCheckpoint.execute(checkpoint=checkpoint)
         return cls.outputs(
-            model=handle,
+            model=loaded["model"],
             clip=loaded["clip"],
-            vae=codec,
+            vae=loaded["vae"],
         )
 
 
@@ -922,6 +919,10 @@ class GenerationClipTextEncode(NativeClipTextEncode):
 
     @classmethod
     def execute(cls, *, text: str, clip: object) -> Mapping[str, object]:
+        tokenize = getattr(clip, "tokenize", None)
+        encode = getattr(clip, "encode_from_tokens_scheduled", None)
+        if callable(tokenize) and callable(encode):
+            return cls.outputs(conditioning=encode(tokenize(text)))
         options = _native_clip_options(clip)
         clip = options.source
         if type(clip) is _LTXAVTextHandle:

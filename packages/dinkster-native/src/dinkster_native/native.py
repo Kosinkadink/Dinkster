@@ -262,13 +262,12 @@ class LoadCheckpoint(Node):
                 latent_space = detection.best.family_id
         except Exception:  # noqa: BLE001 - optional provenance never gates loading
             pass
-        comfy_sd = cast("Any", importlib.import_module("comfy.sd"))
-        folder_paths = cast("Any", importlib.import_module("folder_paths"))
+        comfy_sd = cast("Any", importlib.import_module("dinkster_comfy.sd"))
         model, clip, vae, _clip_vision = comfy_sd.load_checkpoint_guess_config(
             str(path),
             output_vae=True,
             output_clip=True,
-            embedding_directory=folder_paths.get_folder_paths("embeddings"),
+            embedding_directory=[],
         )
         # v1 installs path-backed multigpu reload factories on all three
         # residents; a retained mount path bypasses digest verification

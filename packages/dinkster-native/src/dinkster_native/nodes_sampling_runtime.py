@@ -1036,6 +1036,8 @@ class NativeVAEDecode(VAEDecode):
 
     @classmethod
     def execute(cls, *, samples: object, vae: object) -> Mapping[str, object]:
+        if callable(getattr(vae, "decode", None)):
+            return VAEDecode.execute(samples=samples, vae=vae)
         handle = _native_handle(vae, "vae")
         torch = _torch()
         if not isinstance(samples, Mapping):

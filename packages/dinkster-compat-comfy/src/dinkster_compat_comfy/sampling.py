@@ -53,7 +53,7 @@ def _compat_conditioning_hooks(value: object, input_id: str) -> object:
                 )
             if not isinstance(declarations, ScheduledHooks):
                 raise TypeError(f"{input_id} scheduled hooks are malformed")
-            comfy_hooks = cast("Any", importlib.import_module("comfy.hooks"))
+            comfy_hooks = cast("Any", importlib.import_module("dinkster_comfy.hooks"))
             hooks = comfy_hooks.HookGroup()
             load_lora_file = native_implementation.__dict__["_load_lora_file"]
             for declaration in declarations.loras:
