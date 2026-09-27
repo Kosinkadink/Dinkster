@@ -86,6 +86,19 @@ class _FakeTensor:
 
 
 class _FakeTorch:
+    inference_mode_enabled = False
+
+    class _InferenceMode:
+        def __enter__(self) -> None:
+            _FakeTorch.inference_mode_enabled = True
+
+        def __exit__(self, *args: object) -> None:
+            _FakeTorch.inference_mode_enabled = False
+
+    @staticmethod
+    def inference_mode() -> _FakeTorch._InferenceMode:
+        return _FakeTorch._InferenceMode()
+
     @staticmethod
     def zeros(shape: tuple[int, ...], device: object = None) -> _FakeTensor:
         del device
@@ -349,6 +362,7 @@ def test_fork_h3_adapters_preserve_stream_roles_and_media(monkeypatch: pytest.Mo
 
         def decode(self, value: object) -> object:
             assert value is audio
+            assert _FakeTorch.inference_mode_enabled
             return _FakeTorch.ones((1, 4, 2)) * 10
 
     decoded_audio = cast(
@@ -358,6 +372,7 @@ def test_fork_h3_adapters_preserve_stream_roles_and_media(monkeypatch: pytest.Mo
     assert decoded_audio["sample_rate"] == 24_000
     assert tuple(cast("Any", decoded_audio["waveform"]).shape) == (1, 2, 4)
     assert _FakeTorch.isfinite(cast("_FakeTensor", decoded_audio["waveform"])).all()
+    assert not _FakeTorch.inference_mode_enabled
 
 
 def test_generation_ksampler_preserves_h3_stream_roles(monkeypatch: pytest.MonkeyPatch) -> None:

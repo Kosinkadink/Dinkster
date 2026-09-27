@@ -363,11 +363,12 @@ class NativeVAEDecodeAudio(VAEDecodeAudio):
 
         if type(latent) is MultiStreamLatent:
             latent = cast("MultiStreamLatent[Any]", latent).by_role("audio")
-        audio = cast("Any", vae).decode(latent).movedim(-1, 1)
         torch = cast("Any", importlib.import_module("torch"))
-        std = torch.std(audio, dim=(1, 2), keepdim=True) * 5.0
-        std[std < 1.0] = 1.0
-        audio /= std
+        with torch.inference_mode():
+            audio = cast("Any", vae).decode(latent).movedim(-1, 1)
+            std = torch.std(audio, dim=(1, 2), keepdim=True) * 5.0
+            std[std < 1.0] = 1.0
+            audio /= std
         sample_rate = getattr(
             vae,
             "audio_sample_rate_output",
