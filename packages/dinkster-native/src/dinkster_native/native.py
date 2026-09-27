@@ -126,6 +126,8 @@ def register_native_types(registry: TypeRegistry) -> None:
 
     for type_id in ("dinkster.sampler", "dinkster.sigmas", "dinkster.noise"):
         register_sampling_type(registry, type_id)
+    if "dinkster.window-plan" not in registry:
+        registry.register("dinkster.window-plan")
 
     register_inference_types(registry)
     register_curve_type(registry)

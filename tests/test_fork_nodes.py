@@ -11,7 +11,11 @@ import numpy as np
 import pytest
 from dinkster_assets import AssetRef, digest_file
 from dinkster_compat_comfy.translate import CompatTranslation
-from dinkster_inference import MultiStreamLatent, ResidentConditioningCarrier
+from dinkster_inference import (
+    BuiltinSamplerSelection,
+    MultiStreamLatent,
+    ResidentConditioningCarrier,
+)
 from dinkster_native import fork_nodes
 from dinkster_native.native import register_native_types
 from dinkster_protocol import Invocation
@@ -133,6 +137,61 @@ def test_native_types_preserve_resident_conditioning_codec() -> None:
     spec = registry.spec("dinkster.conditioning")
     assert spec.decode(spec.encode(carrier)) is carrier
     assert registry.input_object("dinkster.conditioning", carrier) == "native-conditioning"
+
+
+def test_native_types_register_portable_window_plans() -> None:
+    registry = TypeRegistry()
+    register_native_types(registry)
+    plan = fork_nodes.GenerationExplicitWindowPlan.execute(
+        axis="temporal",
+        windows="0,2,0; 1,3",
+        wrap=True,
+        fuse_method="flat",
+    )["plan"]
+
+    spec = registry.spec("dinkster.window-plan")
+
+    assert spec.decode(spec.encode(plan)) == plan
+
+
+def test_window_plan_nodes_stack_semantic_axes_without_tensor_dimensions() -> None:
+    temporal = fork_nodes.GenerationTemporalWindowPlan.execute(
+        context_length=4,
+        context_overlap=1,
+        context_schedule="standard_static",
+        context_stride=1,
+        closed_loop=False,
+        fuse_method="pyramid",
+    )["plan"]
+    stacked = fork_nodes.GenerationSpatialTilePlan.execute(
+        plan=temporal,
+        tile_height=32,
+        tile_width=48,
+        overlap_height=8,
+        overlap_width=12,
+        fuse_method="overlap-linear",
+    )["plan"]
+
+    layers = cast("Mapping[str, list[Mapping[str, object]]]", stacked)["layers"]
+    assert [layer.get("axis", "temporal") for layer in layers] == [
+        "temporal",
+        "height",
+        "width",
+    ]
+    assert all("dimension" not in layer and "dim" not in layer for layer in layers)
+
+
+def test_res4lyf_sampler_node_preserves_independent_substep_options() -> None:
+    sampler = fork_nodes.GenerationRES4LYFRKBetaSampler.execute(
+        rk_type="res_3s",
+        eta=0.25,
+        eta_substep=0.75,
+    )["sampler"]
+
+    assert sampler == BuiltinSamplerSelection(
+        "res4lyf.rk_beta",
+        (("rk_type", "res_3s"), ("eta", 0.25), ("eta_substep", 0.75)),
+    )
 
 
 def test_worker_unwraps_resident_conditioning_for_node_consumers() -> None:

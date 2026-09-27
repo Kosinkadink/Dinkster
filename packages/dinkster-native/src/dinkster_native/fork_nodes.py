@@ -12,6 +12,7 @@ from dinkster_nodes_generation.nodes import (
     CLIPTextEncode,
     EmptyLatentImage,
     EmptyMiniMaxH3AV,
+    ExplicitWindowPlan,
     KSampler,
     LoadCheckpoint,
     LoadClip,
@@ -19,7 +20,10 @@ from dinkster_nodes_generation.nodes import (
     LoadVAE,
     MiniMaxH3ImageToVideo,
     MiniMaxH3T2VAConditioning,
+    RES4LYFRKBetaSampler,
     SeparateAVLatent,
+    SpatialTilePlan,
+    TemporalWindowPlan,
     VAEDecode,
     VAEDecodeAudio,
 )
@@ -91,6 +95,288 @@ def _dinkster_samples(samples: object, roles: tuple[str, ...] | None) -> object:
     return MultiStreamLatent[Any].from_pairs(
         tuple(zip(roles, cast("Any", samples).unbind(), strict=True))
     )
+
+
+def _window_layers(plan: object) -> list[dict[str, object]]:
+    if plan is None:
+        return []
+    if not isinstance(plan, Mapping):
+        raise TypeError("window plan must be a mapping")
+    mapping = cast("Mapping[str, object]", plan)
+    if set(mapping) != {"layers"}:
+        raise TypeError("window plan must contain only a layers list")
+    layers = mapping["layers"]
+    if not isinstance(layers, list):
+        raise TypeError("window plan layers must be objects")
+    values = cast("list[object]", layers)
+    if any(not isinstance(layer, dict) for layer in values):
+        raise TypeError("window plan layers must be objects")
+    return [dict(cast("dict[str, object]", layer)) for layer in values]
+
+
+def _append_window_layers(plan: object, *layers: dict[str, object]) -> dict[str, object]:
+    return {"layers": [*_window_layers(plan), *layers]}
+
+
+class GenerationTemporalWindowPlan(TemporalWindowPlan):
+    @classmethod
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls,
+        *,
+        context_length: int,
+        context_overlap: int,
+        context_schedule: str,
+        context_stride: int,
+        closed_loop: bool,
+        fuse_method: str,
+        plan: object = None,
+    ) -> Mapping[str, object]:
+        layer: dict[str, object] = {
+            "mode": "stock-temporal",
+            "context_length": context_length,
+            "context_overlap": context_overlap,
+            "context_schedule": context_schedule,
+            "context_stride": context_stride,
+            "closed_loop": closed_loop,
+            "fuse_method": fuse_method,
+        }
+        return cls.outputs(plan=_append_window_layers(plan, layer))
+
+
+class GenerationSpatialTilePlan(SpatialTilePlan):
+    @classmethod
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls,
+        *,
+        tile_height: int,
+        tile_width: int,
+        overlap_height: int,
+        overlap_width: int,
+        fuse_method: str,
+        plan: object = None,
+    ) -> Mapping[str, object]:
+        height: dict[str, object] = {
+            "mode": "regular",
+            "axis": "height",
+            "length": tile_height,
+            "overlap": overlap_height,
+            "fuse_method": fuse_method,
+        }
+        width: dict[str, object] = {
+            "mode": "regular",
+            "axis": "width",
+            "length": tile_width,
+            "overlap": overlap_width,
+            "fuse_method": fuse_method,
+        }
+        return cls.outputs(plan=_append_window_layers(plan, height, width))
+
+
+class GenerationExplicitWindowPlan(ExplicitWindowPlan):
+    @classmethod
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls,
+        *,
+        axis: str,
+        windows: str,
+        wrap: bool,
+        fuse_method: str,
+        plan: object = None,
+    ) -> Mapping[str, object]:
+        try:
+            index_lists = [
+                [int(value.strip()) for value in window.split(",")]
+                for window in windows.split(";")
+            ]
+        except ValueError:
+            raise ValueError("window indices must be comma-separated integers") from None
+        if not index_lists or any(not indices for indices in index_lists):
+            raise ValueError("every explicit window must contain at least one index")
+        layer: dict[str, object] = {
+            "mode": "explicit",
+            "axis": axis,
+            "windows": index_lists,
+            "wrap": wrap,
+            "fuse_method": fuse_method,
+        }
+        return cls.outputs(plan=_append_window_layers(plan, layer))
+
+
+class GenerationRES4LYFRKBetaSampler(RES4LYFRKBetaSampler):
+    @classmethod
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, rk_type: str, eta: float, eta_substep: float
+    ) -> Mapping[str, object]:
+        from dinkster_inference import BuiltinSamplerSelection
+
+        return cls.outputs(
+            sampler=BuiltinSamplerSelection(
+                "res4lyf.rk_beta",
+                (("rk_type", rk_type), ("eta", eta), ("eta_substep", eta_substep)),
+            )
+        )
+
+
+def _weight_profile(window_plan: Any, fuse_method: object, overlap: int) -> object:
+    kinds: dict[object, Any] = {
+        "flat": window_plan.WindowWeightKind.FLAT,
+        "pyramid": window_plan.WindowWeightKind.PYRAMID,
+        "overlap-linear": window_plan.WindowWeightKind.OVERLAP_LINEAR,
+    }
+    try:
+        kind = kinds[fuse_method]
+    except KeyError:
+        raise ValueError(f"unknown window fuse method {fuse_method!r}") from None
+    return window_plan.WindowWeightProfile(
+        kind,
+        overlap if kind is window_plan.WindowWeightKind.OVERLAP_LINEAR else 0,
+    )
+
+
+def _regular_indices(extent: int, length: int, overlap: int) -> tuple[tuple[int, ...], ...]:
+    if length < 1 or overlap < 0 or overlap >= length:
+        raise ValueError("window length must be positive and overlap must be smaller than length")
+    if length >= extent:
+        return (tuple(range(extent)),)
+    final_start = extent - length
+    starts = list(range(0, final_start + 1, length - overlap))
+    if starts[-1] != final_start:
+        starts.append(final_start)
+    return tuple(tuple(range(start, start + length)) for start in starts)
+
+
+def _latent_media_layouts(latent: object, roles: tuple[str, ...] | None):
+    window_plan = cast("Any", importlib.import_module("dinkster_comfy.window_plan"))
+    window_execution = cast("Any", importlib.import_module("dinkster_comfy.window_execution"))
+    tensors: tuple[Any, ...] = (
+        (cast("Any", latent),)
+        if roles is None
+        else tuple(cast("Any", latent).unbind())
+    )
+    names = ("latent",) if roles is None else roles
+    primary = tensors[0]
+    if primary.ndim == 5:
+        primary_dimensions = {"temporal": 2, "height": 3, "width": 4}
+    elif primary.ndim == 4:
+        primary_dimensions = {"height": 2, "width": 3}
+    else:
+        raise ValueError("window plans require a four- or five-dimensional primary latent")
+    extents = {
+        axis: int(primary.shape[dimension])
+        for axis, dimension in primary_dimensions.items()
+    }
+    return window_plan, window_execution, tensors, names, primary_dimensions, extents
+
+
+def _compile_window_executor(
+    plan: object,
+    latent: object,
+    roles: tuple[str, ...] | None,
+    model_options: dict[str, object],
+):
+    window_plan, window_execution, tensors, names, primary_dimensions, extents = (
+        _latent_media_layouts(latent, roles)
+    )
+    layers: list[Any] = []
+    claimed_axes: set[str] = set()
+    wrappable_axes: set[str] = set()
+    context_windows = cast("Any", importlib.import_module("dinkster_comfy.context_windows"))
+    for declaration in _window_layers(plan):
+        mode = declaration.get("mode")
+        axis = "temporal" if mode == "stock-temporal" else declaration.get("axis")
+        if type(axis) is not str or axis not in extents:
+            raise ValueError(f"window axis {axis!r} is absent from the primary latent")
+        if axis in claimed_axes:
+            raise ValueError(f"more than one graph layer claims media axis {axis!r}")
+        claimed_axes.add(axis)
+        if mode == "stock-temporal":
+            if declaration["context_schedule"] != "standard_static":
+                raise ValueError("layered temporal plans currently require standard_static")
+            temporal = context_windows.TemporalWindowPlan(
+                context_windows.get_matching_context_schedule(declaration["context_schedule"]),
+                context_windows.get_matching_fuse_method(declaration["fuse_method"]),
+                context_length=declaration["context_length"],
+                context_overlap=declaration["context_overlap"],
+                context_stride=declaration["context_stride"],
+                closed_loop=declaration["closed_loop"],
+            )
+            layer = temporal.layer(extents[axis], model_options)
+        else:
+            if mode == "regular":
+                index_lists = _regular_indices(
+                    extents[axis],
+                    cast("int", declaration["length"]),
+                    cast("int", declaration["overlap"]),
+                )
+                modular = False
+                overlap = cast("int", declaration["overlap"])
+            elif mode == "explicit":
+                index_lists = tuple(
+                    tuple(indices)
+                    for indices in cast("list[list[int]]", declaration["windows"])
+                )
+                modular = declaration.get("wrap") is True
+                overlap = 0
+                if modular:
+                    wrappable_axes.add(axis)
+            else:
+                raise ValueError(f"unknown window layer mode {mode!r}")
+            layer = window_plan.WindowPlanLayer(
+                (axis,),
+                tuple(
+                    window_plan.LayerWindow((window_plan.WindowIndexList(indices, modular),))
+                    for indices in index_lists
+                ),
+                (_weight_profile(window_plan, declaration.get("fuse_method"), overlap),),
+                window_plan.MergeDeclaration(),
+            )
+        layers.append(layer)
+
+    axes = tuple(
+        window_plan.MediaAxis(axis, extents[axis], wrappable=axis in wrappable_axes)
+        for axis in sorted(claimed_axes)
+    )
+    kinds: list[Any] = []
+    layouts: list[Any] = []
+    for name, tensor in zip(names, tensors, strict=True):
+        if name == names[0]:
+            dimensions = {axis: primary_dimensions[axis] for axis in claimed_axes}
+            mappings = tuple(
+                window_plan.KindAxisMap(
+                    axis,
+                    int(tensor.shape[dimensions[axis]]),
+                    window_plan.IntegerAffineIndexMap(1),
+                )
+                for axis in sorted(dimensions)
+            )
+            invariant = ()
+        elif "temporal" in claimed_axes and tensor.ndim == 4:
+            dimensions = {"temporal": 3}
+            mappings = (
+                window_plan.KindAxisMap(
+                    "temporal",
+                    int(tensor.shape[3]),
+                    window_plan.ProportionalRangeIndexMap(),
+                ),
+            )
+            invariant = tuple(sorted(claimed_axes - {"temporal"}))
+        else:
+            dimensions = {}
+            mappings = ()
+            invariant = tuple(sorted(claimed_axes))
+        kinds.append(window_plan.WindowKind(name, mappings, invariant))
+        layouts.append(
+            window_execution.WindowTensorLayout(
+                name, tuple(sorted(dimensions.items()))
+            )
+        )
+    compiled = window_plan.compile_window_plan(
+        axes=axes,
+        kinds=tuple(kinds),
+        layers=tuple(layers),
+    )
+    latent_layout = layouts[0] if len(layouts) == 1 else tuple(layouts)
+    return window_execution.WindowPlanExecutor(compiled, latent_layout)
 
 
 class GenerationLoadCheckpoint(LoadCheckpoint):
@@ -223,6 +509,8 @@ class GenerationKSampler(KSampler):
         conditioning_batching: object = "auto",
         max_fused_lanes: int = 2,
         segment: object = None,
+        window_plan: object = None,
+        sampler: object = None,
     ) -> Mapping[str, object]:
         if conditioning_batching != "auto" or max_fused_lanes != 2:
             raise ValueError("fork sampling only supports default conditioning batching")
@@ -242,27 +530,74 @@ class GenerationKSampler(KSampler):
             source.get("downscale_ratio_spacial"),
             source.get("downscale_ratio_temporal"),
         )
+        if window_plan is not None:
+            if sampling_model is model:
+                sampling_model = cast("Any", sampling_model).clone()
+            model_options = dict(cast("Any", sampling_model).model_options)
+            model_options["window_plan"] = _compile_window_executor(
+                window_plan,
+                latent,
+                roles,
+                model_options,
+            )
+            cast("Any", sampling_model).model_options = model_options
         noise = sample.prepare_noise(latent, seed, source.get("batch_index"))
-        output = sample.sample(
-            sampling_model,
-            noise,
-            steps,
-            cfg,
-            sampler_name.removeprefix("dinkster."),
-            scheduler.removeprefix("dinkster."),
-            _unwrap_conditioning(positive),
-            _unwrap_conditioning(negative),
-            latent,
-            denoise=denoise,
-            disable_noise=False,
-            start_step=None,
-            last_step=None,
-            force_full_denoise=False,
-            noise_mask=source.get("noise_mask"),
-            callback=None,
-            disable_pbar=True,
-            seed=seed,
-        )
+        if sampler is None:
+            output = sample.sample(
+                sampling_model,
+                noise,
+                steps,
+                cfg,
+                sampler_name.removeprefix("dinkster."),
+                scheduler.removeprefix("dinkster."),
+                _unwrap_conditioning(positive),
+                _unwrap_conditioning(negative),
+                latent,
+                denoise=denoise,
+                disable_noise=False,
+                start_step=None,
+                last_step=None,
+                force_full_denoise=False,
+                noise_mask=source.get("noise_mask"),
+                callback=None,
+                disable_pbar=True,
+                seed=seed,
+            )
+        else:
+            from dinkster_inference import BuiltinSamplerSelection
+
+            if type(sampler) is not BuiltinSamplerSelection:
+                raise TypeError("sampler must be a built-in sampler selection")
+            samplers = cast("Any", importlib.import_module("dinkster_comfy.samplers"))
+            configured = samplers.KSampler(
+                sampling_model,
+                steps=steps,
+                device=cast("Any", sampling_model).load_device,
+                sampler=sampler.sampler_id,
+                scheduler=scheduler.removeprefix("dinkster."),
+                denoise=denoise,
+                model_options=cast("Any", sampling_model).model_options,
+            )
+            output = samplers.sample(
+                sampling_model,
+                noise,
+                _unwrap_conditioning(positive),
+                _unwrap_conditioning(negative),
+                cfg,
+                cast("Any", sampling_model).load_device,
+                samplers.sampler_object(sampler.sampler_id, dict(sampler.options)),
+                configured.sigmas,
+                cast("Any", sampling_model).model_options,
+                latent_image=latent,
+                denoise_mask=source.get("noise_mask"),
+                callback=None,
+                disable_pbar=True,
+                seed=seed,
+            )
+            output = output.to(
+                device=model_management.intermediate_device(),
+                dtype=model_management.intermediate_dtype(),
+            )
         source["samples"] = _dinkster_samples(output, roles)
         return cls.outputs(latent=source)
 
@@ -399,6 +734,10 @@ FORK_NODES: tuple[type[Node], ...] = (
     NativeLoadVae,
     GenerationClipTextEncode,
     GenerationEmptyLatentImage,
+    GenerationTemporalWindowPlan,
+    GenerationSpatialTilePlan,
+    GenerationExplicitWindowPlan,
+    GenerationRES4LYFRKBetaSampler,
     GenerationKSampler,
     GenerationVAEDecode,
     NativeEmptyMiniMaxH3AV,

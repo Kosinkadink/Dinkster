@@ -60,6 +60,7 @@ IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)
 INPAINT_CONDITIONING = TypeExpr.concrete("dinkster.inpaint-conditioning")
 CONTEXT_WINDOWS = TypeExpr.concrete("dinkster.context-windows")
+WINDOW_PLAN = TypeExpr.concrete("dinkster.window-plan")
 SAMPLER = TypeExpr.concrete(SAMPLER_TYPE)
 SIGMAS = TypeExpr.concrete(SIGMAS_TYPE)
 GUIDER = TypeExpr.concrete(GUIDER_TYPE)
@@ -187,6 +188,7 @@ LORA_EXECUTION_MODES = ("auto", "precalculate")
 LATENT_RESIZE_METHODS = ("nearest-exact", "bilinear", "area", "bicubic", "bislerp")
 CONTEXT_SCHEDULE_CHOICES = ("standard_static", "standard_uniform", "looped_uniform", "batched")
 CONTEXT_FUSE_CHOICES = ("flat", "pyramid", "overlap-linear")
+WINDOW_AXIS_CHOICES = ("temporal", "height", "width")
 GENERATION_PROVIDER_CHOICE_ID = "dinkster.generation.providers"
 CONTROL_NET_UNION_TYPES = (
     "auto",
@@ -1691,7 +1693,7 @@ class ContextWindowsManual(_SchemaOnlyNode):
                     "context_schedule",
                     COMBO,
                     default="standard_static",
-                    widget=ComboWidget(options=CONTEXT_SCHEDULE_CHOICES),
+                    widget=ComboWidget(options=("standard_static",)),
                 ),
                 InputSpec(
                     "context_stride",
@@ -3291,12 +3293,188 @@ class KSampler(_SchemaOnlyNode):
                     default=1.0,
                     widget=NumberWidget(min=0.0, max=1.0, step=0.01),
                 ),
+                InputSpec("window_plan", WINDOW_PLAN, required=False),
+                InputSpec("sampler", SAMPLER, required=False),
                 *_conditioning_batching_inputs(),
             ),
             outputs=(OutputSpec("latent", LATENT),),
             aliases=("KSampler",),
             search_terms=("sample", "denoise", "generate"),
             emits_previews=True,
+        )
+
+
+class TemporalWindowPlan(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.temporal_window_plan",
+            display_name="Temporal Window Plan",
+            category="model/sampling/windows",
+            description="Adds stock ComfyUI temporal context windows to a media-axis plan.",
+            inputs=(
+                InputSpec("plan", WINDOW_PLAN, required=False),
+                InputSpec(
+                    "context_length",
+                    INT,
+                    default=16,
+                    widget=NumberWidget(min=1, max=16384, step=1),
+                ),
+                InputSpec(
+                    "context_overlap",
+                    INT,
+                    default=4,
+                    widget=NumberWidget(min=0, max=16384, step=1),
+                ),
+                InputSpec(
+                    "context_schedule",
+                    COMBO,
+                    default="standard_static",
+                    widget=ComboWidget(options=CONTEXT_SCHEDULE_CHOICES),
+                ),
+                InputSpec(
+                    "context_stride",
+                    INT,
+                    default=1,
+                    widget=NumberWidget(min=1, max=32, step=1),
+                ),
+                InputSpec("closed_loop", BOOLEAN, default=False),
+                InputSpec(
+                    "fuse_method",
+                    COMBO,
+                    default="pyramid",
+                    widget=ComboWidget(options=CONTEXT_FUSE_CHOICES),
+                ),
+            ),
+            outputs=(OutputSpec("plan", WINDOW_PLAN),),
+            search_terms=("context", "window", "temporal", "video"),
+        )
+
+
+class SpatialTilePlan(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.spatial_tile_plan",
+            display_name="Spatial Tile Plan",
+            category="model/sampling/windows",
+            description="Adds height and width tiles to a media-axis window plan.",
+            inputs=(
+                InputSpec("plan", WINDOW_PLAN, required=False),
+                InputSpec(
+                    "tile_height",
+                    INT,
+                    default=64,
+                    widget=NumberWidget(min=1, max=16384, step=1),
+                ),
+                InputSpec(
+                    "tile_width",
+                    INT,
+                    default=64,
+                    widget=NumberWidget(min=1, max=16384, step=1),
+                ),
+                InputSpec(
+                    "overlap_height",
+                    INT,
+                    default=8,
+                    widget=NumberWidget(min=0, max=16384, step=1),
+                ),
+                InputSpec(
+                    "overlap_width",
+                    INT,
+                    default=8,
+                    widget=NumberWidget(min=0, max=16384, step=1),
+                ),
+                InputSpec(
+                    "fuse_method",
+                    COMBO,
+                    default="overlap-linear",
+                    widget=ComboWidget(options=CONTEXT_FUSE_CHOICES),
+                ),
+            ),
+            outputs=(OutputSpec("plan", WINDOW_PLAN),),
+            search_terms=("tile", "window", "multidiffusion", "spatial"),
+        )
+
+
+class ExplicitWindowPlan(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.explicit_window_plan",
+            display_name="Explicit Window Plan",
+            category="model/sampling/windows",
+            description=(
+                "Adds ordered index lists for one media axis. Separate windows with semicolons."
+            ),
+            inputs=(
+                InputSpec("plan", WINDOW_PLAN, required=False),
+                InputSpec(
+                    "axis",
+                    COMBO,
+                    default="temporal",
+                    widget=ComboWidget(options=WINDOW_AXIS_CHOICES),
+                ),
+                InputSpec(
+                    "windows",
+                    STRING,
+                    default="0,1,2,3",
+                    widget=StringWidget(multiline=True),
+                ),
+                InputSpec("wrap", BOOLEAN, default=False),
+                InputSpec(
+                    "fuse_method",
+                    COMBO,
+                    default="flat",
+                    widget=ComboWidget(options=CONTEXT_FUSE_CHOICES),
+                ),
+            ),
+            outputs=(OutputSpec("plan", WINDOW_PLAN),),
+            search_terms=("window", "indices", "loop", "schedule"),
+        )
+
+
+class RES4LYFRKBetaSampler(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.res4lyf_rk_beta_sampler",
+            display_name="RES4LYF RK Beta Sampler",
+            category="model/sampling/samplers",
+            description="Assembles RK Beta with independent outer-step and substep noise.",
+            inputs=(
+                InputSpec(
+                    "rk_type",
+                    COMBO,
+                    default="res_2m",
+                    widget=ComboWidget(
+                        options=(
+                            "res_2m",
+                            "res_3m",
+                            "res_2s",
+                            "res_3s",
+                            "res_5s",
+                            "res_6s",
+                            "deis_2m",
+                            "deis_3m",
+                        )
+                    ),
+                ),
+                InputSpec(
+                    "eta",
+                    FLOAT,
+                    default=0.5,
+                    widget=NumberWidget(min=0.0, max=0.99, step=0.01),
+                ),
+                InputSpec(
+                    "eta_substep",
+                    FLOAT,
+                    default=0.5,
+                    widget=NumberWidget(min=0.0, max=0.99, step=0.01),
+                ),
+            ),
+            outputs=(OutputSpec("sampler", SAMPLER),),
+            search_terms=("res4lyf", "runge kutta", "substep", "sampler"),
         )
 
 
@@ -5995,6 +6173,10 @@ GENERATION_NODES: tuple[type[Node], ...] = (
     EmptyLTXAVLatent,
     EmptyLTXVLatent,
     KSampler,
+    TemporalWindowPlan,
+    SpatialTilePlan,
+    ExplicitWindowPlan,
+    RES4LYFRKBetaSampler,
     KSamplerAdvanced,
     KSamplerSelect,
     SamplerDPMPP3MSDE,
@@ -6096,6 +6278,10 @@ _SUPPORTED_SCHEMA_NODE_IDS = frozenset(
         "dinkster.clip_text_encode",
         "dinkster.empty_latent_image",
         "dinkster.ksampler",
+        "dinkster.temporal_window_plan",
+        "dinkster.spatial_tile_plan",
+        "dinkster.explicit_window_plan",
+        "dinkster.res4lyf_rk_beta_sampler",
         "dinkster.vae_decode",
         "dinkster.image_crop_to_mask",
         "dinkster.preview_mask",

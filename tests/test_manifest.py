@@ -127,9 +127,15 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
 
     native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
     retained = set((*fork_backed, *mesh))
-    assert set(native.executes) == retained
-    assert set(dict(native.arms)["native"]) == retained
-    assert {node.schema().node_type for node in FORK_NODES} == set(fork_backed)
+    native_sampling = {
+        "dinkster.temporal_window_plan",
+        "dinkster.spatial_tile_plan",
+        "dinkster.explicit_window_plan",
+        "dinkster.res4lyf_rk_beta_sampler",
+    }
+    assert set(native.executes) == retained | native_sampling
+    assert set(dict(native.arms)["native"]) == retained | native_sampling
+    assert {node.schema().node_type for node in FORK_NODES} == set(fork_backed) | native_sampling
 
 
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(
