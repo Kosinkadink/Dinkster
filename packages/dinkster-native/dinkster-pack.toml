@@ -32,7 +32,7 @@ executes = [
     "dinkster.mesh_to_model3d",
 ]
 requires = [
-    "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@831cf8c8a1b05df0178596e10fa88fb9f2d458b5",
+    "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@21c85fa1aa9a6c5b42e4c599ae0a1ce717fbc401",
 ]
 
 [pack.sandbox]
