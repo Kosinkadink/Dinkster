@@ -770,7 +770,21 @@ def _comfy_inference_mode() -> Any:
         if exc.name != "torch":
             raise
         return nullcontext()
-    return torch.inference_mode()
+    inference_mode = cast("dict[str, object]", vars(torch)).get("inference_mode")
+    return inference_mode() if callable(inference_mode) else nullcontext()
+
+
+def _detach_comfy_tensor(value: object) -> object:
+    try:
+        torch = cast("Any", importlib.import_module("torch"))
+    except ModuleNotFoundError as exc:
+        if exc.name != "torch":
+            raise
+        return value
+    tensor_type = cast("dict[str, object]", vars(torch)).get("Tensor")
+    if isinstance(tensor_type, type) and isinstance(value, tensor_type):
+        return cast("object", cast("Any", value).detach())
+    return value
 
 
 def to_comfy_multistream(value: object) -> object:
@@ -808,12 +822,15 @@ def from_comfy_multistream(value: object) -> object:
         return [from_comfy_multistream(item) for item in cast("list[object]", value)]
     if isinstance(value, tuple):
         return tuple(from_comfy_multistream(item) for item in cast("tuple[object, ...]", value))
+    detached = _detach_comfy_tensor(value)
+    if detached is not value:
+        return detached
     if not isinstance(value, Mapping):
         return value
     latent = cast("Mapping[object, object]", value)
     samples = latent.get("samples")
     if not _is_comfy_nested_tensor(samples):
-        return cast("object", value)
+        return {key: from_comfy_multistream(item) for key, item in latent.items()}
     sidecar = latent.get(MULTI_STREAM_ROLES_KEY)
     if not isinstance(sidecar, Mapping):
         raise CompatError("NestedTensor LATENT output lost its multi-stream role sidecar")
@@ -822,7 +839,7 @@ def from_comfy_multistream(value: object) -> object:
     if sidecar_map.get("version") != 1 or not isinstance(roles, (list, tuple)):
         raise CompatError("NestedTensor LATENT output has an invalid role sidecar")
     role_tuple = tuple(cast("Sequence[object]", roles))
-    payloads = tuple(cast("Any", samples).unbind())
+    payloads = tuple(from_comfy_multistream(item) for item in cast("Any", samples).unbind())
     if len(role_tuple) != len(payloads) or any(
         type(role) is not str or not role for role in role_tuple
     ):
@@ -832,7 +849,7 @@ def from_comfy_multistream(value: object) -> object:
     output["samples"] = multi_stream.from_pairs(zip(role_tuple, payloads, strict=True))
     mask = output.get("noise_mask")
     if _is_comfy_nested_tensor(mask):
-        mask_payloads = tuple(cast("Any", mask).unbind())
+        mask_payloads = tuple(from_comfy_multistream(item) for item in cast("Any", mask).unbind())
         if len(mask_payloads) != len(role_tuple):
             raise CompatError("NestedTensor LATENT mask count does not match its streams")
         output["noise_mask"] = multi_stream.from_pairs(zip(role_tuple, mask_payloads, strict=True))
