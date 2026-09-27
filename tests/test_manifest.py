@@ -117,9 +117,13 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
         "dinkster.mesh_to_model3d",
     )
     assert manifest.executes == (*fork_backed, *mesh)
-    assert manifest.arms == ()
+    assert dict(manifest.arms) == {"native": fork_backed}
+    assert manifest.arm_nodes_entry == "dinkster_compat_comfy.entry:ARM_NODES"
     assert manifest.assets == ()
-    assert manifest.workgroup_handler_entry is None
+    assert (
+        manifest.workgroup_handler_entry
+        == "dinkster_native.workgroup:create_single_job_workgroup_handler"
+    )
 
     native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
     retained = set((*fork_backed, *mesh))

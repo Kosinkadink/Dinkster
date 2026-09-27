@@ -32,7 +32,7 @@ executes = [
     "dinkster.mesh_to_model3d",
 ]
 requires = [
-    "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@21c85fa1aa9a6c5b42e4c599ae0a1ce717fbc401",
+    "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@aef06c9225f689be4fe0a573f4af436e7ae7f8e8",
 ]
 
 [pack.sandbox]
@@ -50,8 +50,26 @@ dinkster-nodes-media-io = ">=0.0.1,<1"
 [pack.requirements.capabilities]
 "dinkster.generation.schemas" = ">=1.0.0,<2"
 
+[pack.arms]
+native = [
+    "dinkster.load_checkpoint",
+    "dinkster.load_diffusion_model",
+    "dinkster.clip_text_encode",
+    "dinkster.empty_latent_image",
+    "dinkster.ksampler",
+    "dinkster.vae_decode",
+    "dinkster.load_clip",
+    "dinkster.load_vae",
+    "dinkster.empty_minimax_h3_av",
+    "dinkster.minimax_h3_t2va_conditioning",
+    "dinkster.minimax_h3_image_to_video",
+    "dinkster.separate_av_latent",
+    "dinkster.vae_decode_audio",
+]
+
 [pack.entry]
 nodes = "dinkster_compat_comfy.entry:COMFY_NODES"
+arm_nodes = "dinkster_compat_comfy.entry:ARM_NODES"
 types = "dinkster_compat_comfy.entry:register_types"
 reservations = "dinkster_compat_comfy.memory:plan_reservations"
 consumers = "dinkster_compat_comfy.pool:memory_consumers"
@@ -59,3 +77,4 @@ telemetry = "dinkster_compat_comfy.devices:vram_telemetry_snapshot"
 choices = "dinkster_compat_comfy.entry:combo_choices"
 skips = "dinkster_compat_comfy.entry:translation_skips"
 source_staging = "dinkster_compat_comfy.source_staging:source_staging_provider"
+workgroup_handler = "dinkster_native.workgroup:create_single_job_workgroup_handler"

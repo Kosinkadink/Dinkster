@@ -8,7 +8,10 @@
 - Pinned core ComfyUI schemas are advertised as import metadata, including
   KSampler and CLIPTextEncode. They are not additional executable node IDs.
   Unsupported or ambiguous imports refuse with node-specific diagnostics.
-- Single-job multi-GPU device selection does not require ComfyUI.
+- Two-rank same-host NVIDIA single-job execution is supported for SD1.5 FP16
+  with the fork's SDPA route under torch 2.14.0+cu130. It preserves the stock
+  ComfyUI decoded output but does not claim a latency improvement. Whole-job
+  replicas remain the multi-GPU throughput option.
 - Unmodified legacy custom packs still require a ComfyUI installation and
   run in the compatibility quarantine.
 - Native 3D operations execute without a ComfyUI checkout: geometry estimation,

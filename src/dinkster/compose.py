@@ -1094,7 +1094,7 @@ class PackSpec:
             raise ValueError("replica and single-job CUDA indices are mutually exclusive")
         if self.in_process and self.asset_vault_write:
             raise ValueError("an in-process PackSpec cannot request asset vault write access")
-        if self.single_job_mode not in ("auto", "guidance", "sequence", "window"):
+        if self.single_job_mode not in ("auto", "sequence"):
             raise ValueError("PackSpec single_job_mode is invalid")
         budgets: dict[str, int] = {}
         for residency, nbytes in self.vram_budgets.items():
@@ -2903,14 +2903,6 @@ class ServingComposer:
                 "DINKSTER_SINGLE_JOB_RENDEZVOUS": f"file://{rendezvous_path}",
                 "DINKSTER_SINGLE_JOB_TOKEN": uuid.uuid4().hex,
             }
-            if spec.single_job_mode == "sequence":
-                rank_environment.update(
-                    {
-                        "DINKSTER_SINGLE_JOB_SEQUENCE_ULYSSES": str(len(selected_cuda_indices)),
-                        "DINKSTER_SINGLE_JOB_SEQUENCE_RING": "1",
-                        "DINKSTER_SINGLE_JOB_SEQUENCE_GUIDANCE": "1",
-                    }
-                )
 
         worker_env = self._worker_environment(spec, (manifest,))
 
