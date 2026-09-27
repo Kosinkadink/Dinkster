@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -42,6 +43,7 @@ class MiniMaxH3PackedSequenceFacts(PackedSequenceFacts):
     """Immutable boundaries for one packed MiniMax H3 DiT sequence."""
 
     segments: tuple[tuple[int, int, MiniMaxH3PackedSegmentKind], ...]
+    video_grid: tuple[int, int, int] | None = None
     layout_identity: str = field(default=MINIMAX_H3_PACKED_SEQUENCE_LAYOUT, init=False)
 
     def __post_init__(self) -> None:
@@ -49,6 +51,14 @@ class MiniMaxH3PackedSequenceFacts(PackedSequenceFacts):
         for _start, _stop, kind in self.segments:
             if kind not in _SEGMENT_KINDS:
                 raise ValueError(f"unknown segment kind {kind!r}")
+        if self.video_grid is not None:
+            if any(type(size) is not int or size < 1 for size in self.video_grid):
+                raise ValueError("video_grid must contain three positive integers")
+            video_rows = tuple(
+                stop - start for start, stop, kind in self.segments if kind == "video"
+            )
+            if video_rows != (math.prod(self.video_grid),):
+                raise ValueError("video_grid must match the target video segment")
 
     @property
     def conditioning_prefix_length(self) -> int | None:

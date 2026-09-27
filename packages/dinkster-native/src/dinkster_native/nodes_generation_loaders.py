@@ -43,6 +43,7 @@ from .native_arm_runtime import (
     _native_model,
     _native_model_sampling_cache,
     _native_model_sampling_timeline,
+    _native_model_sparse_attention,
     _NativeCodecHandle,
     _NativeControlNetResource,
     _NativeModelOverlay,
@@ -1056,6 +1057,7 @@ class GenerationModelSamplingAuraFlow(Node):
                 sampling_cache=_native_model_sampling_cache(model),
                 sampling_timeline=_native_model_sampling_timeline(model),
                 sampling_space=space,
+                sparse_attention=_native_model_sparse_attention(model),
             )
         )
 

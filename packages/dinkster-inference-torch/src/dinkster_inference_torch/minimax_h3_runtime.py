@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable, Mapping
 from copy import copy
@@ -39,6 +40,8 @@ from dinkster_inference import (
     MiniMaxH3PresentationKind,
     MiniMaxH3REF2VARequest,
     MiniMaxH3ReferenceTokenGeometry,
+    MiniMaxH3Sigmas,
+    MiniMaxH3SparseAttentionConfig,
     MiniMaxH3Task,
     MiniMaxH3TokenLayoutPlan,
     MiniMaxH3VideoLatentGeometry,
@@ -111,12 +114,15 @@ from .minimax_h3_conditioning import (
 from .minimax_h3_control import MiniMaxH3FunControlConditioning
 from .minimax_h3_dit import (
     MiniMaxH3Attention,
+    MiniMaxH3BlockAttention,
+    MiniMaxH3BlockAttentionFactory,
     MiniMaxH3DiT,
     MiniMaxH3DiTConditioning,
     MiniMaxH3KeyframeLatent,
     MiniMaxH3ReferenceKind,
     MiniMaxH3ReferenceLatents,
 )
+from .minimax_h3_sparse_attention import MiniMaxH3SparseAttention
 from .minimax_h3_video_vae import MiniMaxH3VideoVAE
 from .operations import bound_compute_device
 from .regional import MaterializedRegion, full_region_multiplier, materialize_regions
@@ -324,6 +330,7 @@ def _packed_sequence_facts(
     patch: tuple[int, int, int],
 ) -> MiniMaxH3PackedSequenceFacts:
     segments: list[tuple[int, int, MiniMaxH3PackedSegmentKind]] = []
+    video_grid: tuple[int, int, int] | None = None
     offset = 0
     for _identity, kind, grid in _materialized_h3_segments(value, context, conditioning, patch):
         rows = 1
@@ -331,7 +338,10 @@ def _packed_sequence_facts(
             rows *= size
         segments.append((offset, offset + rows, kind))
         offset += rows
-    return MiniMaxH3PackedSequenceFacts(offset, tuple(segments))
+        if kind == "video":
+            video_grid = cast("tuple[int, int, int]", grid)
+    assert video_grid is not None
+    return MiniMaxH3PackedSequenceFacts(offset, tuple(segments), video_grid)
 
 
 def _validate_h3_model_token_layout(
@@ -1140,6 +1150,7 @@ class _H3SamplingContext:
     source: MultiStreamLatent[torch.Tensor]
     layout: LatentPackLayout
     conditioning: MiniMaxH3PreparedConditioning
+    sigmas: MiniMaxH3Sigmas
     raw_mask: torch.Tensor | None
     token_mask: torch.Tensor | None
     model_mask: MultiStreamLatent[torch.Tensor] | None
@@ -1251,9 +1262,21 @@ def _h3_packed_context_windows(
     )
 
 
-def _bind_h3_attention(runtime: object, context: SamplingAdapterContext) -> object | None:
+@dataclass(frozen=True, slots=True)
+class _H3AttentionBinding:
+    kernel_factory: MiniMaxH3AttentionKernelFactory | None
+    sparse: MiniMaxH3SparseAttentionConfig | None
+
+
+def _bind_h3_attention(runtime: object, context: SamplingAdapterContext) -> _H3AttentionBinding:
     del runtime
-    return context.options.get("attention_kernel_factory")
+    factory = context.options.get("attention_kernel_factory")
+    sparse = context.options.get("sparse_attention")
+    if factory is not None and not callable(factory):
+        raise TypeError("attention_kernel_factory must be callable")
+    if sparse is not None and type(sparse) is not MiniMaxH3SparseAttentionConfig:
+        raise TypeError("sparse_attention must be an exact MiniMaxH3SparseAttentionConfig")
+    return _H3AttentionBinding(cast("MiniMaxH3AttentionKernelFactory | None", factory), sparse)
 
 
 def _encode_h3_conditioning(value: object, reference_prefix: str) -> ConditioningCarrier:
@@ -1291,6 +1314,7 @@ class _H3LatentAdapter:
         owner = cast("MiniMaxH3DiTRuntime", runtime)
         unknown = set(context.options) - {
             "attention_kernel_factory",
+            "sparse_attention",
             "control",
             "noise_inds",
             "scheduler_label",
@@ -1383,7 +1407,7 @@ class _H3LatentAdapter:
                 f"{conditioning.task.name}"
             )
         _validate_av_target(latent)
-        sigmas = MINIMAX_H3_SIGMAS
+        sigmas = owner._sigmas  # pyright: ignore[reportPrivateUsage]
         sampler_latent = _h3_latent(
             latent.by_role("video").to(dtype=torch.float32),
             latent.by_role("audio").to(dtype=torch.float32) * sigmas.audio_scale,
@@ -1398,6 +1422,7 @@ class _H3LatentAdapter:
             latent,
             layout,
             conditioning,
+            sigmas,
             None,
             None,
             None,
@@ -1421,10 +1446,11 @@ class _H3LatentAdapter:
         context = cast("_H3SamplingContext", inputs.latent_context)
         if output is inputs.latent:
             return CustomSamplingResult(context.source, None)
+        sigmas = context.sigmas
         unpacked = unpack_latent_streams(output, context.layout)
         output_latent = _h3_latent(
             unpacked.by_role("video"),
-            unpacked.by_role("audio") / MINIMAX_H3_SIGMAS.audio_scale,
+            unpacked.by_role("audio") / sigmas.audio_scale,
         )
         denoised_output: MultiStreamLatent[torch.Tensor] | None = None
         if denoised is not None:
@@ -1432,7 +1458,7 @@ class _H3LatentAdapter:
                 raise TypeError("H3 denoised state must contain a MultiStreamLatent")
             denoised_output = _h3_latent(
                 denoised.by_role("video"),
-                denoised.by_role("audio") / MINIMAX_H3_SIGMAS.audio_scale,
+                denoised.by_role("audio") / sigmas.audio_scale,
             )
         return CustomSamplingResult(output_latent, denoised_output)
 
@@ -1502,6 +1528,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             runtime_identity if conditioning_identity is None else conditioning_identity
         )
         self._compute_dtype = compute_dtype
+        self._sigmas = MINIMAX_H3_SIGMAS
         self._samplers = torch_sampler_registry(sampler_registry)
         self._schedulers = (
             torch_scheduler_registry() if scheduler_registry is None else scheduler_registry
@@ -1542,8 +1569,15 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
     def receipt_identity(self) -> str | None:
         return self._receipt_identity
 
+    def with_sampling_space(self, space: SigmaSpace) -> MiniMaxH3DiTRuntime:
+        if type(space) is not MiniMaxH3Sigmas:
+            raise MiniMaxH3RuntimeError("MiniMax H3 sampling override requires MiniMaxH3Sigmas")
+        derived = copy(self)
+        derived._sigmas = space
+        return derived
+
     def _sampling_sigma_space(self, sampling_shift: float | None) -> SigmaSpace:
-        return MINIMAX_H3_SIGMAS.video
+        return self._sigmas.video
 
     def adapt_multistream_latent(
         self,
@@ -1582,10 +1616,22 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
         observer = cast("ExecutionObserverAttachment | None", context.observer)
         parent_span_id = context.parent_span_id
         device = torch.device(context.device)
-        attention_kernel_factory = cast(
-            "MiniMaxH3AttentionKernelFactory | None",
-            context.attention_binding,
+        attention_binding = cast("_H3AttentionBinding", context.attention_binding)
+        attention_kernel_factory = attention_binding.kernel_factory
+        sparse_attention = (
+            None
+            if attention_binding.sparse is None
+            else MiniMaxH3SparseAttention(attention_binding.sparse, self._sigmas)
         )
+        if (
+            attention_binding.sparse is not None
+            and attention_binding.sparse.selection == "vsa"
+            and not self._model.gate_compress
+        ):
+            logging.warning(
+                "VSA: the model has no to_gate_compress layers; "
+                "running the fine stage without the coarse branch"
+            )
         scheduler_label = request.source_scheduler_id or "custom"
         model_role = self._model_role
         model = self._model
@@ -1600,7 +1646,11 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             raise MiniMaxH3RuntimeError(
                 "single-job sequence mode owns the attention kernel factory"
             )
-        sigmas = MINIMAX_H3_SIGMAS
+        if requested_sequence and sparse_attention is not None:
+            raise MiniMaxH3RuntimeError(
+                "single-job sequence mode does not support BlockSparseAttention"
+            )
+        sigmas = self._sigmas
         if requested_sequence:
             assert requested_distributed is not None
             if requested_distributed.sequence_guidance not in (1, 2):
@@ -1703,7 +1753,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
             conditioning: _H3EvaluationCondition,
         ) -> torch.Tensor:
             (
-                _lane_identity,
+                lane_identity,
                 text_context,
                 dit_conditioning,
                 active_layout,
@@ -1733,6 +1783,21 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                     )
                 )
                 local_rank_zero = rank_zero_sampling_active()
+                selected_block_attention: MiniMaxH3BlockAttentionFactory | None = None
+                if sparse_attention is not None:
+                    active_sparse_attention = sparse_attention
+
+                    def bind_block_attention(
+                        facts: MiniMaxH3PackedSequenceFacts,
+                    ) -> MiniMaxH3BlockAttention:
+                        return active_sparse_attention.bind(
+                            sigma=sigma,
+                            lane=lane_identity,
+                            facts=facts,
+                        )
+
+                    selected_block_attention = bind_block_attention
+
                 if use_sequence and not local_rank_zero:
                     assert distributed is not None
                     preflight_error: BaseException | None = None
@@ -1910,6 +1975,11 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             sampler_sigmas=schedule,
                             control=active_control,
                             denoise_mask=active_model_mask,
+                            **(
+                                {}
+                                if selected_block_attention is None
+                                else {"block_attention_factory": selected_block_attention}
+                            ),
                         )
                     else:
                         velocity = model(
@@ -1922,6 +1992,11 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                             control=active_control,
                             denoise_mask=active_model_mask,
                             attention_kernel_factory=attention_kernel_factory,
+                            **(
+                                {}
+                                if selected_block_attention is None
+                                else {"block_attention_factory": selected_block_attention}
+                            ),
                         )
                 if active_raw_mask is not None:
                     # H3 predicts video rows at mask * sigma; scale velocity before
@@ -2082,7 +2157,7 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 return evaluate(x, sigma, condition)
 
             scheduled_evaluator = FullLatentScheduledConditioningDenoiser(
-                space=MINIMAX_H3_SIGMAS.video,
+                space=sigmas.video,
                 model=model,
                 evaluate=evaluate_region,
                 project=project_region,
@@ -2138,9 +2213,9 @@ class MiniMaxH3DiTRuntime(MultiStreamSamplingRuntime):
                 else PackedInpaintConfiguration(
                     latent_context.token_mask,
                     layout.by_role("video").elements,
-                    MINIMAX_H3_SIGMAS.video.shift,
-                    MINIMAX_H3_SIGMAS.audio_shift,
-                    MINIMAX_H3_SIGMAS.audio_scale,
+                    sigmas.video.shift,
+                    sigmas.audio_shift,
+                    sigmas.audio_scale,
                 )
             ),
             close=close,

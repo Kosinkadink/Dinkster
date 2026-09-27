@@ -100,6 +100,15 @@ class ComponentDescriptor:
             return self.plan_family(component_plans(planned)[0]).id
         return getattr(planned, "family_id", self.id)
 
+    def rebind_attention_recipe(
+        self,
+        recipe: ReconstructionRecipe,
+        runtime_versions: Mapping[str, str] | None = None,
+    ) -> ReconstructionRecipe:
+        """Refresh family-owned identity facts after an attention route change."""
+        del runtime_versions
+        return recipe
+
     def knobs(
         self,
         role: str,

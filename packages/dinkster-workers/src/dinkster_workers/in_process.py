@@ -404,6 +404,11 @@ class InProcessWorker:
             vae_dtype=invocation.vae_dtype,
             attention_policy=invocation.attention_policy,
             attention_route_token=invocation.attention_route_token,
+            attention_capabilities=(
+                self._attention_capabilities
+                if invocation.attention_route_token is not None
+                else None
+            ),
             extension_snapshot_digest=invocation.extension_snapshot_digest,
             inference_registries=(
                 outer_context.inference_registries if outer_context is not None else None
@@ -520,6 +525,11 @@ class InProcessWorker:
                     vae_dtype=invocation.vae_dtype,
                     attention_policy=invocation.attention_policy,
                     attention_route_token=invocation.attention_route_token,
+                    attention_capabilities=(
+                        self._attention_capabilities
+                        if invocation.attention_route_token is not None
+                        else None
+                    ),
                     preview_mode=invocation.preview_mode,
                     preview_animation=invocation.preview_animation,
                     node_id=invocation.node_id,
@@ -539,6 +549,11 @@ class InProcessWorker:
                     vae_dtype=invocation.vae_dtype,
                     attention_policy=invocation.attention_policy,
                     attention_route_token=invocation.attention_route_token,
+                    attention_capabilities=(
+                        self._attention_capabilities
+                        if invocation.attention_route_token is not None
+                        else None
+                    ),
                     preview_mode=invocation.preview_mode,
                     preview_animation=invocation.preview_animation,
                     node_id=invocation.node_id,

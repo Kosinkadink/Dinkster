@@ -64,6 +64,7 @@ from .native_arm_runtime import (
     _native_model_sampling_cache,
     _native_model_sampling_space,
     _native_model_sampling_timeline,
+    _native_model_sparse_attention,
     _require_classic_control_keyword,
     _sampling_space_runtime,
     _select_classic_control_binding,
@@ -974,6 +975,11 @@ def _execute_generation_custom_sampling(
             ),
             **latent_kwargs,
             **control_kwargs,
+            **(
+                {}
+                if _native_model_sparse_attention(model) is None
+                else {"sparse_attention": _native_model_sparse_attention(model)}
+            ),
             **application_kwargs,
         )
         if type(result) is not inference.CustomSamplingResult:

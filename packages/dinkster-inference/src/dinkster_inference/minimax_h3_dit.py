@@ -185,12 +185,20 @@ def _linear(
         keys[f"{name}.bias"] = (out_features,)
 
 
-def _attention(keys: dict[str, tuple[int, ...]], name: str, config: MiniMaxH3Config) -> None:
+def _attention(
+    keys: dict[str, tuple[int, ...]],
+    name: str,
+    config: MiniMaxH3Config,
+    *,
+    gate_compress: bool = False,
+) -> None:
     inner = config.attention_heads * config.attention_head_dim
     _linear(keys, f"{name}.qkv_proj", inner * 3, config.hidden_width, bias=False)
     keys[f"{name}.q_norm.weight"] = (config.attention_head_dim,)
     keys[f"{name}.k_norm.weight"] = (config.attention_head_dim,)
     _linear(keys, f"{name}.out_proj", config.hidden_width, inner, bias=False)
+    if gate_compress:
+        _linear(keys, f"{name}.to_gate_compress", inner, config.hidden_width, bias=False)
 
 
 def _mlp(keys: dict[str, tuple[int, ...]], name: str, config: MiniMaxH3Config) -> None:
@@ -202,7 +210,9 @@ MiniMaxH3TimeEmbeddingKind = Literal["curve", "mlp"]
 
 
 def _minimax_h3_dit_keys(
-    config: MiniMaxH3Config, time_embedding_kind: MiniMaxH3TimeEmbeddingKind
+    config: MiniMaxH3Config,
+    time_embedding_kind: MiniMaxH3TimeEmbeddingKind,
+    gate_compress: bool = False,
 ) -> dict[str, tuple[int, ...]]:
     keys: dict[str, tuple[int, ...]] = {}
     video_patch_width = (
@@ -258,7 +268,12 @@ def _minimax_h3_dit_keys(
         root = f"blocks.{index}"
         keys[f"{root}.norm1.weight"] = (config.hidden_width,)
         keys[f"{root}.norm2.weight"] = (config.hidden_width,)
-        _attention(keys, f"{root}.attn", config)
+        _attention(
+            keys,
+            f"{root}.attn",
+            config,
+            gate_compress=gate_compress,
+        )
         _mlp(keys, f"{root}.mlp", config)
         _linear(
             keys,
@@ -335,6 +350,7 @@ class MiniMaxH3DiTLayout:
     keys: Mapping[str, tuple[int, ...]] = field(repr=False)
     fp32_storage_keys: frozenset[str] = field(repr=False)
     time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve"
+    gate_compress: bool = False
     depth: int = field(default=50, init=False)
     hidden_width: int = field(default=5376, init=False)
     attention_heads: int = field(default=56, init=False)
@@ -363,7 +379,11 @@ class MiniMaxH3DiTLayout:
         frozen = dict(cast("Mapping[str, tuple[int, ...]]", keys_obj))
         if self.time_embedding_kind not in ("curve", "mlp"):
             raise ValueError("time_embedding_kind must be curve or mlp")
-        expected = _minimax_h3_dit_keys(MINIMAX_H3_CONFIG, self.time_embedding_kind)
+        if type(self.gate_compress) is not bool:
+            raise TypeError("gate_compress must be a bool")
+        expected = _minimax_h3_dit_keys(
+            MINIMAX_H3_CONFIG, self.time_embedding_kind, self.gate_compress
+        )
         if frozen != expected:
             raise ValueError("keys must equal the exact H3 DiT layout")
         fp32_keys_obj = cast("object", self.fp32_storage_keys)
@@ -383,6 +403,7 @@ def minimax_h3_dit_layout(
     config: MiniMaxH3Config = MINIMAX_H3_CONFIG,
     *,
     time_embedding_kind: MiniMaxH3TimeEmbeddingKind = "curve",
+    gate_compress: bool = False,
 ) -> MiniMaxH3DiTLayout:
     """Return one exact H3 DiT state layout."""
     if not isinstance(cast("object", config), MiniMaxH3Config):
@@ -393,9 +414,10 @@ def minimax_h3_dit_layout(
         raise ValueError("time_embedding_kind must be curve or mlp")
     return MiniMaxH3DiTLayout(
         config,
-        _minimax_h3_dit_keys(config, time_embedding_kind),
+        _minimax_h3_dit_keys(config, time_embedding_kind, gate_compress),
         _minimax_h3_fp32_storage_keys(config, time_embedding_kind),
         time_embedding_kind,
+        gate_compress,
     )
 
 
@@ -416,7 +438,8 @@ class MiniMaxH3DiTAssemblyPlan:
 
     def __post_init__(self) -> None:
         if self.layout != minimax_h3_dit_layout(
-            time_embedding_kind=self.layout.time_embedding_kind
+            time_embedding_kind=self.layout.time_embedding_kind,
+            gate_compress=self.layout.gate_compress,
         ):
             raise ValueError("assembly plan must use an exact H3 DiT layout")
         if self.source_prefix not in _PREFIXES:
@@ -487,7 +510,15 @@ def plan_minimax_h3_dit_assembly(
     source_keys = tuple(source.keys())
     if len(source_keys) != len(set(source_keys)):
         raise MiniMaxH3DiTAssemblyError("duplicate H3 DiT source keys")
-    layouts = tuple(minimax_h3_dit_layout(time_embedding_kind=kind) for kind in ("curve", "mlp"))
+    bare_keys = frozenset(key.removeprefix("model.diffusion_model.") for key in source_keys)
+    gate_compress = "blocks.0.attn.to_gate_compress.weight" in bare_keys
+    layouts = tuple(
+        minimax_h3_dit_layout(
+            time_embedding_kind=kind,
+            gate_compress=gate_compress,
+        )
+        for kind in ("curve", "mlp")
+    )
     for layout in layouts:
         actual = set(source_keys)
         if actual in (

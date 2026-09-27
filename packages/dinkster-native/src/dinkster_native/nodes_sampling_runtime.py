@@ -59,6 +59,7 @@ from .native_arm_runtime import (
     _native_handle,
     _native_model,
     _native_model_sampling_space,
+    _native_model_sparse_attention,
     _require_classic_control_keyword,
     _sampling_space_runtime,
     _scheduled_inpaint,
@@ -854,6 +855,15 @@ class NativeKSampler(KSampler):
                                     **control_kwargs,
                                     **(
                                         {}
+                                        if _native_model_sparse_attention(model) is None
+                                        else {
+                                            "sparse_attention": _native_model_sparse_attention(
+                                                model
+                                            )
+                                        }
+                                    ),
+                                    **(
+                                        {}
                                         if runtime_sampling_shift is None
                                         else {"sampling_shift": runtime_sampling_shift}
                                     ),
@@ -891,6 +901,11 @@ class NativeKSampler(KSampler):
                             "segment": segment,
                             "schedule_device": handle.load_device,
                             **control_kwargs,
+                            **(
+                                {}
+                                if _native_model_sparse_attention(model) is None
+                                else {"sparse_attention": _native_model_sparse_attention(model)}
+                            ),
                         }
                         # Only a non-None value is forwarded: runtimes
                         # without the parameter keep working on the

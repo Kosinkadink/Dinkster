@@ -90,6 +90,9 @@ from .native_arm_registry import (
     GenerationBetaSamplingScheduler as GenerationBetaSamplingScheduler,
 )
 from .native_arm_registry import (
+    GenerationBlockSparseAttention as GenerationBlockSparseAttention,
+)
+from .native_arm_registry import (
     GenerationCFGGuider as GenerationCFGGuider,
 )
 from .native_arm_registry import (

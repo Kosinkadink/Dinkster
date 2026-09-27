@@ -34,6 +34,7 @@ from dinkster_protocol import (
     resolve_attention_runtime_status,
     resolve_role_policy,
 )
+from dinkster_workers import ExecutionContext
 from dinkster_workers.host import AttentionRouteDiscoveryError, discover_attention_route_token
 
 
@@ -165,6 +166,63 @@ def test_capability_evidence_is_frozen_canonical_and_strictly_round_trips() -> N
             evidence,
             provider_versions=(("torch", "2.14.0"),),
             available_policies=("sdpa",),
+        )
+
+
+def test_execution_context_rejects_cross_worker_route_token_replay() -> None:
+    sm80 = replace(capability_evidence(device_kind="cuda"), device_sm=80)
+    sm90 = replace(sm80, device_sm=90)
+    sm80_token = derive_attention_route_token(sm80, AttentionPolicyConfig())
+    sm90_token = derive_attention_route_token(sm90, AttentionPolicyConfig())
+
+    ExecutionContext(
+        "native",
+        None,
+        attention_route_token=sm80_token,
+        attention_capabilities=sm80,
+    )
+    assert canonical_attention_route_token_bytes(
+        sm80_token
+    ) == canonical_attention_route_token_bytes(
+        derive_attention_route_token(sm80, AttentionPolicyConfig())
+    )
+    with pytest.raises(ValueError, match="does not match worker capabilities"):
+        ExecutionContext(
+            "native",
+            None,
+            attention_route_token=sm80_token,
+            attention_capabilities=sm90,
+        )
+    with pytest.raises(ValueError, match="does not match worker capabilities"):
+        ExecutionContext(
+            "native",
+            None,
+            attention_route_token=sm90_token,
+            attention_capabilities=sm80,
+        )
+
+
+def test_execution_context_capabilities_require_a_route_token() -> None:
+    evidence = capability_evidence()
+
+    with pytest.raises(ValueError, match="require an attention route token"):
+        ExecutionContext("native", None, attention_capabilities=evidence)
+
+
+def test_execution_context_rejects_tampered_provider_evidence() -> None:
+    evidence = capability_evidence()
+    token = derive_attention_route_token(evidence, AttentionPolicyConfig())
+    tampered = replace(
+        token,
+        provider_versions=(("extension", "forged"), *token.provider_versions),
+    )
+
+    with pytest.raises(ValueError, match="does not match worker capabilities"):
+        ExecutionContext(
+            "native",
+            None,
+            attention_route_token=tampered,
+            attention_capabilities=evidence,
         )
 
 
