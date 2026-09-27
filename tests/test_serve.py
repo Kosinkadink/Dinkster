@@ -2019,9 +2019,7 @@ def test_serve_rejects_removed_single_job_model_mode(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.parametrize("mode", ("guidance", "window"))
-def test_serve_rejects_parked_single_job_modes(
-    monkeypatch: pytest.MonkeyPatch, mode: str
-) -> None:
+def test_serve_rejects_parked_single_job_modes(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     from dinkster import serve
 
     monkeypatch.setattr(
