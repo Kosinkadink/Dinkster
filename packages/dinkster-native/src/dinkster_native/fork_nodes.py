@@ -40,6 +40,10 @@ class _ForkConditioning:
     def _dinkster_resident_fingerprint(self) -> str:
         return self.fingerprint
 
+    @property
+    def _dinkster_input_value(self) -> object:
+        return self.conditioning
+
 
 def _resident_conditioning(conditioning: object, owner: object) -> object:
     import hashlib

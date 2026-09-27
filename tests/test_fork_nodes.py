@@ -88,6 +88,7 @@ class _FakeTorch:
 def test_native_types_preserve_resident_conditioning_codec() -> None:
     class ResidentPayload:
         _dinkster_resident_fingerprint = "test-resident-conditioning"
+        _dinkster_input_value = "native-conditioning"
 
     registry = TypeRegistry()
     register_native_types(registry)
@@ -95,6 +96,7 @@ def test_native_types_preserve_resident_conditioning_codec() -> None:
 
     spec = registry.spec("dinkster.conditioning")
     assert spec.decode(spec.encode(carrier)) is carrier
+    assert registry.input_object("dinkster.conditioning", carrier) == "native-conditioning"
 
 
 def test_fork_loaders_call_dinkster_comfy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -184,6 +186,12 @@ def test_fork_sd15_adapters_preserve_conditioning_latent_and_decode(
     encoded = fork_nodes.GenerationClipTextEncode.execute(text="hello", clip=clip)["conditioning"]
     assert isinstance(encoded, ResidentConditioningCarrier)
     assert cast("Any", encoded._dinkster_resident_payload).conditioning == (
+        "conditioning",
+        ("tokens", "hello"),
+    )
+    registry = TypeRegistry()
+    register_native_types(registry)
+    assert registry.input_object("dinkster.conditioning", encoded) == (
         "conditioning",
         ("tokens", "hello"),
     )
