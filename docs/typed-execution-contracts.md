@@ -40,8 +40,7 @@ An intervention enters the system as an immutable
   vocabulary. Initial kinds:
   - `WeightOverlay`: an ordered weight-overlay stack entry, named by
     content-addressed patch identity. The payload is the portable
-    projection of the existing patch algebra in
-    `packages/dinkster-inference/src/dinkster_inference/patches.py`: the
+    projection of the patch-program algebra in `DESIGN.md` section 3.14: the
     structural data (patch kinds, content-addressed tensor leaves,
     strengths, offsets, nesting) travels as declared values, while
     every behavioral leaf in that algebra (a `WeightAdapter`
@@ -156,9 +155,8 @@ run-scoped, lane-keyed storage. The engine owns the lifecycle:
 allocated at plan execution start, keyed by (plan, guidance lane),
 dropped at run end. Contributions never stash state in module
 attributes, globals, or closures. Lane keying follows the guidance
-vocabulary in `packages/dinkster-inference/src/dinkster_inference/guidance.py`;
-interventions consume lane semantics from that layer and never
-redefine them.
+vocabulary declared by the sampling engine; interventions consume
+those lane semantics and never redefine them.
 
 Continuation state that must survive a run (solver state, RNG
 streams, chained-generation context) is a typed, serializable value
@@ -203,9 +201,7 @@ Site declarations may be parameterized by declared selectors:
 component role, block index or block range, attention kind,
 modality, and guidance lane. The attention-kind selector vocabulary
 is versioned and carries `self`, `cross`, `joint`, `causal`, and an
-any-kind selector (joint attention already exists in declared
-geometry: `packages/dinkster-inference/src/dinkster_inference/qwen_image_layout.py`);
-new kinds extend it by revision. Selectors are part of the
+any-kind selector; new kinds extend it by revision. Selectors are part of the
 declaration, validated at plan compilation against the owner's
 declared geometry; a selector value the owner did not declare is a
 compile-time refusal, never a silent no-op.
@@ -326,8 +322,7 @@ gather.
 Under sequence partitioning (chapter 5), dense `TokenRowTable` rows
 slice by the same shard `[start, stop)` spans as hidden states and
 RoPE; `TokenRowSpan` values localize by half-open intersection and
-offset translation (`translate_segments` in
-`packages/dinkster-inference/src/dinkster_inference/sequence_partition.py`).
+offset translation as specified by the partition plan.
 
 ## 3. Activation timeline algebra
 
@@ -584,11 +579,8 @@ Each distributed invocation has exactly one canonical manifest.
 Subsystems contribute compiled-plan slots (the USP slot, the
 intervention-plan slot, the cache-policy slot, the
 windowed-evaluation slot of chapter 9); no subsystem mints a
-parallel identity scheme. Identity construction follows the existing
-fact-based conventions in
-`packages/dinkster-inference/src/dinkster_inference/identity.py`
-(`build_runtime_identity_from_facts`, sha256 digests over canonical
-serialized facts).
+parallel identity scheme. Identity construction uses sha256 digests over
+canonical serialized facts.
 
 Ordering is strict:
 

@@ -80,6 +80,21 @@ def write_group_registry(path: Path) -> None:
     path.write_text(json.dumps(comfy_group_registry_to_wire(registry())), encoding="utf-8")
 
 
+def test_compat_manifest_claims_only_fork_backed_generation_schemas() -> None:
+    manifest = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-pack.toml"))
+
+    assert manifest.executes == (
+        "dinkster.load_checkpoint",
+        "dinkster.load_diffusion_model",
+        "dinkster.clip_text_encode",
+        "dinkster.empty_latent_image",
+        "dinkster.ksampler",
+        "dinkster.vae_decode",
+    )
+    assert manifest.arms == ()
+    assert manifest.assets == ()
+
+
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(
     tmp_path: Path,
 ) -> None:

@@ -76,9 +76,9 @@ green suite whose tolerances quietly absorbed a real defect.
   fine for value math, NOT for brownian-tree noise streams, which
   decorrelate on one-ulp sigma differences (the harness measured 3.4e-2
   end-to-end from a ~1e-7 karras delta). Any schedule or SigmaSpace kind
-  that can feed an SDE sampler must be ported onto reference kernels in
-  dinkster_inference_torch/schedules.py WITH executed SDE golden coverage
-  before that pairing ships. No evidence, no port, no wiring.
+  that can feed an SDE sampler must use the executed `dinkster_comfy`
+  reference kernels with oracle-backed SDE coverage before that pairing
+  ships. No evidence, no wiring.
 - Goldens are generated ONLY on the generating tool's own pinned ComfyUI
   commit (its BASELINE/REFERENCE_COMMIT constant, which the tool enforces)
   with the generator's documented interpreter, and must be proven bit-stable

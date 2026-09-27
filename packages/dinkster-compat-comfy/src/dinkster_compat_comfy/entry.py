@@ -17,7 +17,6 @@ from .pool import default_pool
 
 _TRANSLATION = load_comfyui_nodes()
 COMFY_NODES: tuple[type[Node], ...] = merge_native_nodes(_TRANSLATION.node_classes)
-ARM_NODES: Mapping[str, tuple[type[Node], ...]] = {}
 
 
 def translation_skips() -> Mapping[str, CompatGateDiagnostic]:
