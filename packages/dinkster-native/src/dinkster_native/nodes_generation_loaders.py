@@ -24,7 +24,7 @@ from .native_arm_core import (
     NativeComponentHandle,
     Node,
     NodeSchema,
-    _is_exact_dinkster_comfy_type,
+    _is_exact_imported_type,
     _native_clip_options,
     _not_cancelled,
     _torch,
@@ -920,7 +920,7 @@ class GenerationClipTextEncode(NativeClipTextEncode):
 
     @classmethod
     def execute(cls, *, text: str, clip: object) -> Mapping[str, object]:
-        if _is_exact_dinkster_comfy_type(clip, "dinkster_comfy.sd", "CLIP"):
+        if _is_exact_imported_type(clip, "dinkster_comfy.sd", "CLIP"):
             direct_clip = cast("Any", clip)
             return cls.outputs(
                 conditioning=direct_clip.encode_from_tokens_scheduled(

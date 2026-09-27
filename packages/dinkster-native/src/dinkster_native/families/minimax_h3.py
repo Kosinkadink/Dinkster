@@ -45,7 +45,7 @@ from ..native_arm_core import (
     Sequence,
     SetLatentMaskFromFrames,
     SetLatentMaskFromTimeRanges,
-    _is_exact_dinkster_comfy_type,
+    _is_exact_imported_type,
     _not_cancelled,
     _torch,
     cast,
@@ -1201,7 +1201,7 @@ class NativeMiniMaxH3ImageToVideo(MiniMaxH3ImageToVideo):
         last_frame: object = None,
     ) -> Mapping[str, object]:
         if (
-            _is_exact_dinkster_comfy_type(clip, "dinkster_comfy.sd", "CLIP")
+            _is_exact_imported_type(clip, "dinkster_comfy.sd", "CLIP")
             and first_frame is None
             and last_frame is None
         ):

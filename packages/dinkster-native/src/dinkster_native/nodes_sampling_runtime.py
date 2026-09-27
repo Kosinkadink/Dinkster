@@ -30,7 +30,7 @@ from .native_arm_core import (
     _diffusion_unload_roles,
     _effective_flux_guidance,
     _inference_registries,
-    _is_exact_dinkster_comfy_type,
+    _is_exact_imported_type,
     _not_cancelled,
     _run_direct_vae,
     _sampler_registry,
@@ -1037,13 +1037,13 @@ class NativeVAEDecode(VAEDecode):
 
     @classmethod
     def execute(cls, *, samples: object, vae: object) -> Mapping[str, object]:
-        if _is_exact_dinkster_comfy_type(vae, "dinkster_comfy.sd", "VAE"):
+        if _is_exact_imported_type(vae, "dinkster_comfy.sd", "VAE"):
             if not isinstance(samples, Mapping):
                 raise TypeError("samples must be a latent mapping")
             direct_samples = dict(cast("Mapping[object, object]", samples))
             latent = direct_samples.get("samples")
             inference = importlib.import_module("dinkster_inference")
-            if type(latent) is inference.MultiStreamLatent:
+            if _is_exact_imported_type(latent, "dinkster_inference", "MultiStreamLatent"):
                 streams = cast("Any", latent)
                 if "video" not in streams.roles:
                     raise TypeError("samples['samples'] must contain a video stream")

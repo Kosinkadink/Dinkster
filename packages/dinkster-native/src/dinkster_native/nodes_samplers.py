@@ -24,7 +24,7 @@ from .native_arm_core import (
     _DualCFGGuiderValue,
     _DualModelGuiderValue,
     _inference_registries,
-    _is_exact_dinkster_comfy_type,
+    _is_exact_imported_type,
     _PerpNegGuiderValue,
     _sampler_registry,
     _torch,
@@ -90,7 +90,7 @@ class GenerationKSampler(NativeKSampler):
         conditioning_batching: object = "auto",
         max_fused_lanes: int = 2,
     ) -> Mapping[str, object]:
-        if _is_exact_dinkster_comfy_type(
+        if _is_exact_imported_type(
             model, "dinkster_comfy.model_patcher", "ModelPatcher"
         ):
             compat_sampler = importlib.import_module("dinkster_compat_comfy.sampling").KSampler

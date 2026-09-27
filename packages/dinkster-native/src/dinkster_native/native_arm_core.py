@@ -927,7 +927,7 @@ def _torch() -> Any:
     return importlib.import_module("torch")
 
 
-def _is_exact_dinkster_comfy_type(value: object, module: str, name: str) -> bool:
+def _is_exact_imported_type(value: object, module: str, name: str) -> bool:
     value_type = type(value)
     if value_type.__module__ != module or value_type.__name__ != name:
         return False

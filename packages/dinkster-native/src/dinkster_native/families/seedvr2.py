@@ -18,7 +18,7 @@ from ..native_arm_core import (
     VAEDecodeAudio,
     VAEDecodeAudioTiled,
     _is_accelerator_oom,
-    _is_exact_dinkster_comfy_type,
+    _is_exact_imported_type,
     _torch,
     cast,
     importlib,
@@ -153,7 +153,7 @@ def _decode_minimax_music3_audio(
         if "audio" not in streams.roles:
             raise TypeError("samples['samples'] must contain an audio stream")
         latent = streams.by_role("audio")
-    if _is_exact_dinkster_comfy_type(vae, "dinkster_comfy.sd", "VAE"):
+    if _is_exact_imported_type(vae, "dinkster_comfy.sd", "VAE"):
         direct_vae = cast("Any", vae)
         if getattr(latent, "is_nested", False):
             latent = cast("Any", latent).unbind()[-1]
@@ -264,7 +264,7 @@ class GenerationVAEDecode(NativeVAEDecode):
 
     @classmethod
     def execute(cls, *, samples: object, vae: object) -> Mapping[str, object]:
-        if _is_exact_dinkster_comfy_type(vae, "dinkster_comfy.sd", "VAE"):
+        if _is_exact_imported_type(vae, "dinkster_comfy.sd", "VAE"):
             return NativeVAEDecode.execute(samples=samples, vae=vae)
         inference = importlib.import_module("dinkster_inference")
         component_codec = isinstance(vae, NativeComponentHandle)

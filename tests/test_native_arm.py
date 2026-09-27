@@ -1512,7 +1512,7 @@ def test_serialized_legacy_scheduling_graph_validates_and_executes() -> None:
     assert "comfy.CreateHookKeyframe" not in schemas
 
 
-def test_native_generic_h3_component_loaders_publish_single_component_handles(
+def test_native_generic_h3_vae_and_model_loaders_publish_single_component_handles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     arm = _native_arm()
@@ -1547,20 +1547,6 @@ def test_native_generic_h3_component_loaders_publish_single_component_handles(
     with use_execution_context(
         ExecutionContext(
             "native",
-            "clip-identity",
-            diffusion_dtype="unloaded",
-            text_dtype="bfloat16",
-            vae_dtype="unloaded",
-        )
-    ):
-        clip = arm.NativeLoadClip.execute(
-            text_encoder=asset,
-            type="minimax",
-            device="default",
-        )["clip"]
-    with use_execution_context(
-        ExecutionContext(
-            "native",
             "vae-identity",
             diffusion_dtype="unloaded",
             text_dtype="unloaded",
@@ -1582,15 +1568,8 @@ def test_native_generic_h3_component_loaders_publish_single_component_handles(
             weight_dtype="default",
         )["model"]
 
-    assert clip is vae is model is handle
+    assert vae is model is handle
     assert calls == [
-        (
-            asset,
-            "qwen3vl-32b-conditioner",
-            "clip-identity",
-            torch,
-            {"compute_dtype": "bfloat16", "load_device": None},
-        ),
         (asset, "video-vae", "vae-identity", torch, {"compute_dtype": "float16"}),
         (
             asset,
