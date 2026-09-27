@@ -13,6 +13,8 @@
   `comfy-aliases.inactive.json` evidence and are unavailable until their
   capability is re-expressed against the fork and its acceptance receipt passes.
 - The 602-workflow translation census, source-parity baseline, registry source
-  snapshot, and capability evidence remain committed as historical evidence.
+  snapshot, and pre-retirement capability evidence remain committed as
+  historical evidence. The old capability selectors are inactive and make no
+  current support claim.
 - V3-only (`comfy_entrypoint`) packs, pack HTTP routes, web assets, and executor
   hooks are diagnosed rather than emulated.
