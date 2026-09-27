@@ -414,6 +414,33 @@ class NativeMiniMaxH3T2VAConditioning(Node):
 
 class NativeMiniMaxH3ImageToVideo(Node):
     @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.minimax_h3_image_to_video",
+            display_name="MiniMax H3 Image to Video",
+            category="minimax h3/conditioning",
+            inputs=(
+                InputSpec("clip", CLIP),
+                InputSpec("vae", VAE),
+                InputSpec("prompt", STRING, widget=StringWidget(multiline=True)),
+                InputSpec(
+                    "width", INT, default=1344, widget=NumberWidget(min=32, max=16384, step=32)
+                ),
+                InputSpec(
+                    "height", INT, default=768, widget=NumberWidget(min=32, max=16384, step=32)
+                ),
+                InputSpec(
+                    "length", INT, default=124, widget=NumberWidget(min=5, max=3600, step=17)
+                ),
+                InputSpec("first_frame", IMAGE, required=False, default=None),
+                InputSpec("last_frame", IMAGE, required=False, default=None),
+            ),
+            outputs=(OutputSpec("positive", CONDITIONING), OutputSpec("latent", LATENT)),
+            aliases=("MiniMaxH3ImageToVideo",),
+            dispatch_affinity="native",
+        )
+
+    @classmethod
     def execute(
         cls,
         *,
@@ -506,6 +533,7 @@ FORK_NODES: tuple[type[Node], ...] = (
     GenerationVAEDecode,
     NativeEmptyMiniMaxH3AV,
     NativeMiniMaxH3T2VAConditioning,
+    NativeMiniMaxH3ImageToVideo,
     NativeSeparateAVLatent,
     NativeVAEDecodeAudio,
 )

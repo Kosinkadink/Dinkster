@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from dinkster_native.fork_nodes import FORK_NODES
 from dinkster_schema import (
     SCHEMA_WIRE_VERSION,
     ComfyAliasConfidence,
@@ -83,16 +84,30 @@ def write_group_registry(path: Path) -> None:
 def test_compat_manifest_claims_only_fork_backed_generation_schemas() -> None:
     manifest = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-pack.toml"))
 
-    assert manifest.executes == (
+    fork_backed = (
         "dinkster.load_checkpoint",
         "dinkster.load_diffusion_model",
         "dinkster.clip_text_encode",
         "dinkster.empty_latent_image",
         "dinkster.ksampler",
         "dinkster.vae_decode",
+        "dinkster.load_clip",
+        "dinkster.load_vae",
+        "dinkster.empty_minimax_h3_av",
+        "dinkster.minimax_h3_t2va_conditioning",
+        "dinkster.minimax_h3_image_to_video",
+        "dinkster.separate_av_latent",
+        "dinkster.vae_decode_audio",
     )
+    assert manifest.executes == fork_backed
     assert manifest.arms == ()
     assert manifest.assets == ()
+    assert manifest.workgroup_handler_entry is None
+
+    native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
+    assert set(fork_backed) <= set(native.executes)
+    assert set(fork_backed) <= set(dict(native.arms)["native"])
+    assert {node.schema().node_type for node in FORK_NODES} == set(fork_backed)
 
 
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(

@@ -50,6 +50,13 @@ _SCHEMA_PROVIDER_IDS = {
     "dinkster.empty_latent_image",
     "dinkster.ksampler",
     "dinkster.vae_decode",
+    "dinkster.load_clip",
+    "dinkster.load_vae",
+    "dinkster.empty_minimax_h3_av",
+    "dinkster.minimax_h3_t2va_conditioning",
+    "dinkster.minimax_h3_image_to_video",
+    "dinkster.separate_av_latent",
+    "dinkster.vae_decode_audio",
     *(node.schema().node_type for node in _MESH_NODES),
 }
 ARM_NODES = {

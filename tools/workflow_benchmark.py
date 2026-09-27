@@ -138,36 +138,6 @@ def authenticate_artifacts(manifest: Path) -> list[dict[str, Any]]:
     return result
 
 
-def family_observations(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    from dinkster_inference import load_safetensors_header
-    from dinkster_inference.runtime import probe_native
-
-    observations = []
-    for artifact in artifacts:
-        path = Path(artifact["path"])
-        if path.suffix != ".safetensors":
-            continue
-        try:
-            capability = probe_native(load_safetensors_header(path))
-            observations.append(
-                {
-                    "name": artifact["name"],
-                    "family": capability.family_id,
-                    "native": capability.native,
-                    "diagnostics": list(capability.reasons),
-                }
-            )
-        except (OSError, ValueError) as error:
-            observations.append(
-                {
-                    "name": artifact["name"],
-                    "family": None,
-                    "diagnostics": [f"{type(error).__name__}: {error}"],
-                }
-            )
-    return observations
-
-
 def server_command(args: argparse.Namespace, artifacts: list[dict[str, Any]]) -> list[str]:
     output = args.output
     for name in (
@@ -786,10 +756,6 @@ def main(system: str, argv: Sequence[str] | None = None) -> int:
         }
         validate_workload(report["workload"])
         report["artifacts"] = authenticate_artifacts(args.artifacts)
-        report["family_observations"] = family_observations(report["artifacts"])
-        report["diagnostics"] = [
-            "Family hints and unknown labels are not used for admission or routing."
-        ]
         command = server_command(args, report["artifacts"])
         report["command"] = command
         report["device"] = {"kind": "cpu"} if args.cpu else {"kind": "cuda", "uuid": args.gpu_uuid}
