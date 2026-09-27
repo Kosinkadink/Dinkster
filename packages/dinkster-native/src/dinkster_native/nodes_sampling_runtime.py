@@ -1050,7 +1050,8 @@ class NativeVAEDecode(VAEDecode):
             model_management = importlib.import_module("dinkster_comfy.model_management")
             model_management.unload_all_models()
             model_management.soft_empty_cache()
-            return VAEDecode.execute(samples=direct_samples, vae=vae)
+            with _torch().inference_mode():
+                return VAEDecode.execute(samples=direct_samples, vae=vae)
         handle = _native_handle(vae, "vae")
         torch = _torch()
         if not isinstance(samples, Mapping):

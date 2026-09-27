@@ -804,7 +804,7 @@ def test_compat_multistream_role_sidecar_round_trips_samples_and_masks(
     assert "dinkster.multi_stream_roles@1" not in legacy_split
 
 
-def test_h3_image_to_video_uses_dinkster_comfy_clip_and_nested_latent(
+def test_h3_image_to_video_uses_dinkster_comfy_clip_and_wire_latent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster_native.families import minimax_h3
@@ -821,21 +821,12 @@ def test_h3_image_to_video_uses_dinkster_comfy_clip_and_nested_latent(
             assert tokens == "tokens"
             return conditioning
 
-    class NestedTensor:
-        def __init__(self, tensors: tuple[object, ...]) -> None:
-            self.tensors = tensors
-
     CLIP.__module__ = "dinkster_comfy.sd"
     monkeypatch.setitem(sys.modules, "dinkster_comfy.sd", SimpleNamespace(CLIP=CLIP))
     monkeypatch.setitem(
         sys.modules,
         "dinkster_comfy.model_management",
         SimpleNamespace(intermediate_device=lambda: "cpu"),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "dinkster_comfy.nested_tensor",
-        SimpleNamespace(NestedTensor=NestedTensor),
     )
     monkeypatch.setattr(
         minimax_h3,
@@ -860,13 +851,10 @@ def test_h3_image_to_video_uses_dinkster_comfy_clip_and_nested_latent(
     wrapped = registry.wrap(CONDITIONING_TYPE_ID, spec.coerce(carrier))
     assert spec.decode(spec.encode(wrapped.resolve())) is carrier
     latent = cast("dict[str, Any]", result["latent"])
-    nested = cast("NestedTensor", latent["samples"])
-    assert cast("FakeTensor", nested.tensors[0]).shape == (1, 24, 2, 2, 4)
-    assert cast("FakeTensor", nested.tensors[1]).shape == (1, 32, 2, 8)
-    assert latent["dinkster.multi_stream_roles@1"] == {
-        "version": 1,
-        "roles": ("video", "audio"),
-    }
+    streams = cast("MultiStreamLatent[FakeTensor]", latent["samples"])
+    assert streams.roles == ("video", "audio")
+    assert streams.by_role("video").shape == (1, 24, 2, 2, 4)
+    assert streams.by_role("audio").shape == (1, 32, 2, 8)
 
 
 def test_h3_candidate_path_does_not_hash_or_open_asset(

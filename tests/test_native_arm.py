@@ -29891,8 +29891,10 @@ def test_vae_decode_uses_dinkster_comfy_vae_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from dinkster_inference import MultiStreamLatent
+    from dinkster_native import nodes_sampling_runtime
 
     arm = _native_arm()
+    events: list[str] = []
     latent = SimpleNamespace(is_nested=False)
     samples = MultiStreamLatent.from_pairs((("video", latent), ("audio", object())))
     image = SimpleNamespace(shape=(1, 16, 16, 3))
@@ -29913,9 +29915,17 @@ def test_vae_decode_uses_dinkster_comfy_vae_contract(
             soft_empty_cache=lambda: None,
         ),
     )
+    monkeypatch.setattr(
+        nodes_sampling_runtime,
+        "_torch",
+        lambda: SimpleNamespace(
+            inference_mode=lambda: events.append("inference_mode") or nullcontext()
+        ),
+    )
     result = arm.NativeVAEDecode.execute(samples={"samples": samples}, vae=VAE())
 
     assert result["image"] is image
+    assert events == ["inference_mode"]
 
 
 def test_vae_decode_rejects_decode_lookalike() -> None:

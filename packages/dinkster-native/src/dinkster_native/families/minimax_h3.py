@@ -1173,17 +1173,16 @@ def _empty_dinkster_comfy_h3_target(width: int, height: int, length: int) -> obj
     audio_frames = round(frame_count / 24 * 40)
     torch = _torch()
     device = importlib.import_module("dinkster_comfy.model_management").intermediate_device()
-    nested_type = importlib.import_module("dinkster_comfy.nested_tensor").NestedTensor
-    samples = nested_type(
+    samples = importlib.import_module("dinkster_inference").MultiStreamLatent.from_pairs(
         (
-            torch.zeros((1, 24, latent_frames, height // 16, width // 16), device=device),
-            torch.zeros((1, 32, 2, audio_frames), device=device),
+            (
+                "video",
+                torch.zeros((1, 24, latent_frames, height // 16, width // 16), device=device),
+            ),
+            ("audio", torch.zeros((1, 32, 2, audio_frames), device=device)),
         )
     )
-    return {
-        "samples": samples,
-        "dinkster.multi_stream_roles@1": {"version": 1, "roles": ("video", "audio")},
-    }
+    return {"samples": samples}
 
 
 class NativeMiniMaxH3ImageToVideo(MiniMaxH3ImageToVideo):
