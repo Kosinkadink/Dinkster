@@ -774,19 +774,6 @@ def _comfy_inference_mode() -> Any:
     return inference_mode() if callable(inference_mode) else nullcontext()
 
 
-def _detach_comfy_tensor(value: object) -> object:
-    try:
-        torch = cast("Any", importlib.import_module("torch"))
-    except ModuleNotFoundError as exc:
-        if exc.name != "torch":
-            raise
-        return value
-    tensor_type = cast("dict[str, object]", vars(torch)).get("Tensor")
-    if isinstance(tensor_type, type) and isinstance(value, tensor_type):
-        return cast("object", cast("Any", value).detach())
-    return value
-
-
 def to_comfy_multistream(value: object) -> object:
     if isinstance(value, list):
         return [to_comfy_multistream(item) for item in cast("list[object]", value)]
@@ -822,18 +809,12 @@ def from_comfy_multistream(value: object) -> object:
         return [from_comfy_multistream(item) for item in cast("list[object]", value)]
     if isinstance(value, tuple):
         return tuple(from_comfy_multistream(item) for item in cast("tuple[object, ...]", value))
-    multi_stream = importlib.import_module("dinkster_inference").MultiStreamLatent
-    if type(value) is multi_stream:
-        return cast("Any", value).map(from_comfy_multistream)
-    detached = _detach_comfy_tensor(value)
-    if detached is not value:
-        return detached
     if not isinstance(value, Mapping):
         return value
     latent = cast("Mapping[object, object]", value)
     samples = latent.get("samples")
     if not _is_comfy_nested_tensor(samples):
-        return {key: from_comfy_multistream(item) for key, item in latent.items()}
+        return cast("object", value)
     sidecar = latent.get(MULTI_STREAM_ROLES_KEY)
     if not isinstance(sidecar, Mapping):
         raise CompatError("NestedTensor LATENT output lost its multi-stream role sidecar")
@@ -847,6 +828,7 @@ def from_comfy_multistream(value: object) -> object:
         type(role) is not str or not role for role in role_tuple
     ):
         raise CompatError("NestedTensor LATENT output role count does not match its streams")
+    multi_stream = importlib.import_module("dinkster_inference").MultiStreamLatent
     output = dict(latent)
     output["samples"] = multi_stream.from_pairs(zip(role_tuple, payloads, strict=True))
     mask = output.get("noise_mask")

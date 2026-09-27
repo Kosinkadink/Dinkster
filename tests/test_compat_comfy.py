@@ -12,7 +12,6 @@ import sys
 from collections.abc import Mapping
 from decimal import Decimal
 from fractions import Fraction
-from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
@@ -28,7 +27,6 @@ from dinkster_compat_comfy import (
     translate_prompt,
     translate_type,
 )
-from dinkster_compat_comfy.translate import from_comfy_multistream
 from dinkster_engine import Engine, EngineEvent, ExecutionError
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, validate
 from dinkster_inference import MultiStreamLatent
@@ -186,36 +184,6 @@ class _InferenceModeProbe:
 
     def is_inference_mode_enabled(self) -> bool:
         return self.depth > 0
-
-
-def test_comfy_output_tensors_are_detached(monkeypatch: pytest.MonkeyPatch) -> None:
-    detached = object()
-
-    class Tensor:
-        def detach(self) -> object:
-            return detached
-
-    torch = SimpleNamespace(Tensor=Tensor)
-    original_import = importlib.import_module
-    monkeypatch.setattr(
-        importlib,
-        "import_module",
-        lambda name: torch if name == "torch" else original_import(name),
-    )
-
-    result = cast(
-        "Mapping[str, object]",
-        from_comfy_multistream(
-            {
-                "samples": Tensor(),
-                "streams": MultiStreamLatent.from_pairs((("audio", Tensor()),)),
-            }
-        ),
-    )
-
-    assert result["samples"] is detached
-    streams = cast("MultiStreamLatent[object]", result["streams"])
-    assert streams.by_role("audio") is detached
 
 
 def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
