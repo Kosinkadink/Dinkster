@@ -12,7 +12,7 @@ import sys
 from collections.abc import Mapping
 from decimal import Decimal
 from fractions import Fraction
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -168,6 +168,23 @@ class V1Changed:
         return (seed + 1,)
 
 
+class _InferenceModeProbe:
+    def __init__(self) -> None:
+        self.depth = 0
+
+    def inference_mode(self) -> _InferenceModeProbe:
+        return self
+
+    def __enter__(self) -> None:
+        self.depth += 1
+
+    def __exit__(self, *args: object) -> None:
+        self.depth -= 1
+
+    def is_inference_mode_enabled(self) -> bool:
+        return self.depth > 0
+
+
 def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -199,6 +216,8 @@ def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
             return {"required": {"latent_image": ("LATENT",)}}
 
         def sample(self, latent_image):  # noqa: ANN001, ANN201
+            torch = cast("Any", importlib.import_module("torch"))
+            assert torch.is_inference_mode_enabled()
             assert type(latent_image["samples"]) is dinkster_nested
             assert latent_image["dinkster.multi_stream_roles@1"] == {
                 "version": 1,
@@ -209,7 +228,9 @@ def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
             return (latent_image, denoised)
 
     original_import = importlib.import_module
+    torch = _InferenceModeProbe()
     nested_modules = {
+        "torch": torch,
         "dinkster_comfy.nested_tensor": type(
             "DinksterNestedModule", (), {"NestedTensor": dinkster_nested}
         ),
@@ -3043,8 +3064,18 @@ def test_v3_output_count_mismatch_still_raises() -> None:
         node.execute(n=1)
 
 
-def test_async_v3_node_executes_and_unwraps_after_await() -> None:
+def test_async_v3_node_executes_and_unwraps_after_await(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """FUNCTION = EXECUTE_NORMALIZED_ASYNC follows the ordinary worker loop."""
+
+    torch = _InferenceModeProbe()
+    original_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: torch if name == "torch" else original_import(name),
+    )
 
     class V3Async:
         RETURN_TYPES = ("INT",)
@@ -3057,6 +3088,8 @@ def test_async_v3_node_executes_and_unwraps_after_await() -> None:
         @classmethod
         async def EXECUTE_NORMALIZED_ASYNC(cls, n):  # noqa: ANN001, ANN206
             await asyncio.sleep(0)
+            torch = cast("Any", importlib.import_module("torch"))
+            assert torch.is_inference_mode_enabled()
             return FakeNodeOutput(n + 1)
 
     async def scenario() -> None:

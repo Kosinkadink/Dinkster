@@ -100,6 +100,7 @@ import os
 import sys
 import textwrap
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import nullcontext
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple, cast
@@ -760,6 +761,16 @@ def _is_comfy_nested_tensor(value: object) -> bool:
         return False
     module = cast("Any", importlib.import_module(module_name))
     return type(value) is module.NestedTensor
+
+
+def _comfy_inference_mode() -> Any:
+    try:
+        torch = cast("Any", importlib.import_module("torch"))
+    except ModuleNotFoundError as exc:
+        if exc.name != "torch":
+            raise
+        return nullcontext()
+    return torch.inference_mode()
 
 
 def to_comfy_multistream(value: object) -> object:
@@ -3135,7 +3146,8 @@ def translate_node(
         return dict(zip(output_ids, values, strict=True))
 
     async def await_result(result: Awaitable[object]) -> Mapping[str, object]:
-        return normalize_result(await result)
+        with _comfy_inference_mode():
+            return normalize_result(await result)
 
     def invoke(inputs: Mapping[str, object]) -> object:
         custom_combo_options = (
@@ -3182,8 +3194,10 @@ def translate_node(
             assert custom_combo_options is not None
             choice = restored.pop("choice")
             index = restored.pop("index", 0)
-            return fn(choice=choice, index=index, options=custom_combo_options)
-        return fn(**restored)
+            with _comfy_inference_mode():
+                return fn(choice=choice, index=index, options=custom_combo_options)
+        with _comfy_inference_mode():
+            return fn(**restored)
 
     async def execute_async(cls: type[Node], **inputs: object) -> Mapping[str, object]:
         del cls
