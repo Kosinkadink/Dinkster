@@ -23956,6 +23956,46 @@ def test_aura_flow_preserves_overlay_state_without_family_selection() -> None:
     assert patched.sampling_space == accepted[0]
 
 
+def test_replace_native_model_preserves_every_unmodified_overlay_field() -> None:
+    arm = _native_arm()
+    handle = _handle(arm, _runtime())
+    replacement = object()
+    control_handle = SimpleNamespace(register_dependent=lambda _dependent: None)
+    original = arm._NativeModelOverlay(
+        handle=handle,
+        overlays=(object(),),
+        source_resolvers={"digest": object()},
+        z_image_control=SimpleNamespace(handle=control_handle),
+        sampling_shift=2.5,
+        guidance_transforms=(("test", object()),),
+        context_windows=object(),
+        chroma_radiance_options=(object(),),
+        sampling_cache=object(),
+        sampling_timeline=object(),
+        sampling_space=None,
+        sparse_attention=object(),
+    )
+
+    replaced = arm._replace_native_model(original, "model", sparse_attention=replacement)
+
+    assert replaced is not original
+    assert replaced.sparse_attention is replacement
+    for name in (
+        "handle",
+        "overlays",
+        "source_resolvers",
+        "z_image_control",
+        "sampling_shift",
+        "guidance_transforms",
+        "context_windows",
+        "chroma_radiance_options",
+        "sampling_cache",
+        "sampling_timeline",
+        "sampling_space",
+    ):
+        assert getattr(replaced, name) is getattr(original, name)
+
+
 @pytest.mark.parametrize("shift", (True, 3, 0.0, -1.0, float("nan"), float("inf")))
 def test_aura_flow_rejects_invalid_shift(shift: object) -> None:
     arm = _native_arm()

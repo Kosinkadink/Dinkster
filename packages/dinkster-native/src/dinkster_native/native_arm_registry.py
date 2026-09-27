@@ -24,6 +24,8 @@ from .families.ltx import (
     NativeEmptyLTXVLatent,
 )
 from .families.minimax_h3 import (
+    GenerationBlockSparseAttention,
+    GenerationMiniMaxH3SigmaShift,
     NativeApplyMiniMaxH3FunControlPatch,
     NativeConcatAVLatent,
     NativeEmptyMiniMaxH3AV,
@@ -91,7 +93,6 @@ from .native_arm_core import (
 )
 from .native_residency import NativeRuntimeHandle
 from .nodes_conditioning import (
-    GenerationBlockSparseAttention,
     GenerationChromaModelSampling,
     GenerationChromaRadianceOptions,
     GenerationConditioningMerge,
@@ -104,7 +105,6 @@ from .nodes_conditioning import (
     GenerationEmptyFlux2LatentImage,
     GenerationEmptyLatentImage,
     GenerationEmptySD3LatentImage,
-    GenerationMiniMaxH3SigmaShift,
     GenerationModelAttentionBackend,
     GenerationModelSamplingFlux,
     GenerationModelSamplingLTXV,

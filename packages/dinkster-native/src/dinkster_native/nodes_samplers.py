@@ -41,11 +41,7 @@ from .native_arm_runtime import (
     _application_chain_model,
     _bind_model_sampling_options,
     _native_model,
-    _native_model_sampling_cache,
-    _native_model_sampling_space,
-    _native_model_sampling_timeline,
-    _native_model_sparse_attention,
-    _NativeModelOverlay,
+    _replace_native_model,
 )
 from .native_arm_scheduling import (
     _catalog_id,
@@ -1134,24 +1130,16 @@ class GenerationDisableCFG1Optimization(Node):
     def execute(cls, *, model: object) -> Mapping[str, object]:
         original_model = model
         model, applications = _application_chain_model(model, "model")
-        handle, overlays, resolvers, control, shift, transforms, windows, chroma_options = (
-            _native_model(model, "model")
-        )
+        transforms = _native_model(model, "model")[5]
         if any(contribution is _DISABLE_CFG1_OPTIMIZATION for _, contribution in transforms):
             return cls.outputs(model=original_model)
-        disabled = _NativeModelOverlay(
-            handle,
-            overlays,
-            resolvers,
-            control,
-            shift,
-            (*transforms, ("dinkster.disable_cfg1_optimization", _DISABLE_CFG1_OPTIMIZATION)),
-            windows,
-            chroma_options,
-            sampling_cache=_native_model_sampling_cache(model),
-            sampling_timeline=_native_model_sampling_timeline(model),
-            sampling_space=_native_model_sampling_space(model),
-            sparse_attention=_native_model_sparse_attention(model),
+        disabled = _replace_native_model(
+            model,
+            "model",
+            guidance_transforms=(
+                *transforms,
+                ("dinkster.disable_cfg1_optimization", _DISABLE_CFG1_OPTIMIZATION),
+            ),
         )
         if applications:
             inference = importlib.import_module("dinkster_inference")

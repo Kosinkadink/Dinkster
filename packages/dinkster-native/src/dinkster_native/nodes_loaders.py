@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .families import load_registered_model_patch
 from .family_registry import load_registered_component
 from .native_arm_core import (
     Any,
@@ -65,12 +66,12 @@ from .native_arm_runtime import (
     _native_model_sampling_timeline,
     _native_model_sparse_attention,
     _NativeControlNetResource,
-    _NativeModelOverlay,
     _overlay_for_components,
     _overlay_has_offsets,
     _overlay_targets,
     _PixelSpaceCodecHandle,
     _recipe_bundle_name,
+    _replace_native_model,
     _runtime_recipe,
     _weight_storage_dtype,
     _ZImageControlBinding,
@@ -726,59 +727,15 @@ class NativeLoadZImageControlPatch(LoadZImageControlPatch):
                 ),
                 (f"resource={assembled.resource_digest}",),
             )
-        elif inference_torch.is_minimax_h3_fun_state_dict(dict.fromkeys(source.keys())):
-            quant = inference.split_quantization(
-                {key: source.entry(key).geometry for key in source.keys()},
-                source.metadata(),
-                payload_reader=source.read_uint8_configuration,
-            ).layers
-            checkpoint = importlib.import_module("dinkster_inference_torch.checkpoint")
-            state_dict, metadata = checkpoint.load_checkpoint_with_metadata(
-                model_patch.local_path()
-            )
-            if not isinstance(state_dict, Mapping):
-                raise TypeError("MiniMax H3 Fun control checkpoint must contain a state dict")
-            attention = importlib.import_module("dinkster_inference_torch.attention")
-            selection = attention.resolve_role_attention(
-                "flux", context.attention_policy, context.attention_route_token
-            )
-            h3_dit = importlib.import_module("dinkster_inference_torch.minimax_h3_dit")
-            kernel, evidence = h3_dit.minimax_h3_attention_provider(selection)
-            time_embedding_kind = (
-                "curve"
-                if metadata is not None
-                and metadata.get("minimax_h3_fun_controlnet") == "adaln_basis"
-                else "mlp"
-            )
-            module = inference_torch.load_minimax_h3_fun_control(
-                state_dict,
-                metadata,
-                attention_kernel=kernel,
-                evidence=evidence,
-                time_embedding_kind=time_embedding_kind,
-                quant=quant,
-            )
-            family_id = inference.MINIMAX_H3_CONFIG.family_id
-            resource_identity = inference.build_runtime_identity_from_facts(
-                family_id,
-                (
-                    f"family={family_id}",
-                    "component=minimax-h3-fun-control",
-                    f"asset={model_patch.digest}",
-                    f"time_embedding_kind={time_embedding_kind}",
-                ),
-                diffusion_dtype=inference.BFLOAT16.name,
-                text_dtype="unloaded",
-                vae_dtype="unloaded",
-                fp8_matmul=False,
-                attention_policy=context.attention_policy,
-                attention_route_token=context.attention_route_token,
-            )
         else:
-            plan = inference.plan_z_image_control(source, asset_digest=model_patch.digest)
-            assembled = inference_torch.assemble_z_image_control(plan, **attention_kwargs)
-            module = assembled.control
-            resource_identity = assembled.resource_digest
+            registered = load_registered_model_patch(model_patch, source, context)
+            if registered is None:
+                plan = inference.plan_z_image_control(source, asset_digest=model_patch.digest)
+                assembled = inference_torch.assemble_z_image_control(plan, **attention_kwargs)
+                module = assembled.control
+                resource_identity = assembled.resource_digest
+            else:
+                module, resource_identity = registered
         torch = _torch()
         load_device = select_load_device(torch)
         coordinator = default_native_residency()
@@ -812,16 +769,7 @@ class NativeApplyZImageControlPatch(ApplyZImageControlPatch):
         image: object,
         strength: float,
     ) -> Mapping[str, object]:
-        (
-            handle,
-            overlays,
-            resolvers,
-            existing_control,
-            sampling_shift,
-            guidance_transforms,
-            context_windows,
-            chroma_radiance_options,
-        ) = _native_model(model, "model")
+        handle, _, _, existing_control, _, _, _, _ = _native_model(model, "model")
         if getattr(handle.runtime, "accepts_z_image_control", False) is not True:
             raise TypeError("Z-Image Fun ControlNet requires a native Z-Image model")
         if _native_handle(vae, "vae") is not handle:
@@ -843,22 +791,7 @@ class NativeApplyZImageControlPatch(ApplyZImageControlPatch):
             raise ValueError(f"strength must be finite and in [-10.0, 10.0], got {strength}")
         control_image = tensor[..., :3].permute(0, 3, 1, 2).detach().to("cpu").contiguous()
         binding = _ZImageControlBinding(model_patch, control_image, strength)
-        return cls.outputs(
-            model=_NativeModelOverlay(
-                handle,
-                overlays,
-                resolvers,
-                binding,
-                sampling_shift,
-                guidance_transforms,
-                context_windows,
-                chroma_radiance_options,
-                sampling_cache=_native_model_sampling_cache(model),
-                sampling_timeline=_native_model_sampling_timeline(model),
-                sampling_space=_native_model_sampling_space(model),
-                sparse_attention=_native_model_sparse_attention(model),
-            )
-        )
+        return cls.outputs(model=_replace_native_model(model, "model", z_image_control=binding))
 
 
 def load_native_runtime_handle(assets: Mapping[str, object]) -> NativeRuntimeHandle:
@@ -1029,19 +962,12 @@ def _apply_native_lora_stack(
                 or _native_model_sampling_timeline(model) is not None
                 or _native_model_sparse_attention(model) is not None
             ):
-                patched_model = _NativeModelOverlay(
-                    clone,
-                    (),
-                    {},
-                    z_image_control,
-                    sampling_shift,
-                    guidance_transforms,
-                    context_windows,
-                    chroma_radiance_options,
-                    sampling_cache=_native_model_sampling_cache(model),
-                    sampling_timeline=_native_model_sampling_timeline(model),
-                    sampling_space=_native_model_sampling_space(model),
-                    sparse_attention=_native_model_sparse_attention(model),
+                patched_model = _replace_native_model(
+                    model,
+                    "model",
+                    handle=clone,
+                    overlays=(),
+                    source_resolvers={},
                 )
             return patched_model, clone
         return model, clip
@@ -1083,35 +1009,21 @@ def _apply_native_lora_stack(
             or _native_model_sampling_timeline(model) is not None
             or _native_model_sparse_attention(model) is not None
         ):
-            patched_model = _NativeModelOverlay(
-                clone,
-                (),
-                {},
-                z_image_control,
-                sampling_shift,
-                guidance_transforms,
-                context_windows,
-                chroma_radiance_options,
-                sampling_cache=_native_model_sampling_cache(model),
-                sampling_timeline=_native_model_sampling_timeline(model),
-                sampling_space=_native_model_sampling_space(model),
-                sparse_attention=_native_model_sparse_attention(model),
+            patched_model = _replace_native_model(
+                model,
+                "model",
+                handle=clone,
+                overlays=(),
+                source_resolvers={},
             )
         return patched_model, clone
     return (
-        _NativeModelOverlay(
-            model_handle,
-            combined,
-            combined_resolvers,
-            z_image_control,
-            sampling_shift,
-            guidance_transforms,
-            context_windows,
-            chroma_radiance_options,
-            sampling_cache=_native_model_sampling_cache(model),
-            sampling_timeline=_native_model_sampling_timeline(model),
-            sampling_space=_native_model_sampling_space(model),
-            sparse_attention=_native_model_sparse_attention(model),
+        _replace_native_model(
+            model,
+            "model",
+            handle=model_handle,
+            overlays=combined,
+            source_resolvers=combined_resolvers,
         ),
         clip_handle,
     )
@@ -1150,19 +1062,12 @@ def _apply_split_flux2_lora_stack(
                 or _native_model_sampling_timeline(model) is not None
                 or _native_model_sparse_attention(model) is not None
             ):
-                patched_model = _NativeModelOverlay(
-                    clone,
-                    (),
-                    {},
-                    z_image_control,
-                    sampling_shift,
-                    guidance_transforms,
-                    context_windows,
-                    chroma_radiance_options,
-                    sampling_cache=_native_model_sampling_cache(model),
-                    sampling_timeline=_native_model_sampling_timeline(model),
-                    sampling_space=_native_model_sampling_space(model),
-                    sparse_attention=_native_model_sparse_attention(model),
+                patched_model = _replace_native_model(
+                    model,
+                    "model",
+                    handle=clone,
+                    overlays=(),
+                    source_resolvers={},
                 )
             return patched_model, text_handle
         return model, text_handle
@@ -1204,19 +1109,12 @@ def _apply_split_flux2_lora_stack(
         raise ValueError("LoRA offset patches require precalculate execution mode")
     if execution_mode != "precalculate" and not has_text_patches and not has_offset_patches:
         return (
-            _NativeModelOverlay(
-                model_handle,
-                combined,
-                combined_resolvers,
-                z_image_control,
-                sampling_shift,
-                guidance_transforms,
-                context_windows,
-                chroma_radiance_options,
-                sampling_cache=_native_model_sampling_cache(model),
-                sampling_timeline=_native_model_sampling_timeline(model),
-                sampling_space=_native_model_sampling_space(model),
-                sparse_attention=_native_model_sparse_attention(model),
+            _replace_native_model(
+                model,
+                "model",
+                handle=model_handle,
+                overlays=combined,
+                source_resolvers=combined_resolvers,
             ),
             text_handle,
         )
@@ -1249,19 +1147,12 @@ def _apply_split_flux2_lora_stack(
         or _native_model_sampling_timeline(model) is not None
         or _native_model_sparse_attention(model) is not None
     ):
-        patched_model = _NativeModelOverlay(
-            patched_handle,
-            (),
-            {},
-            z_image_control,
-            sampling_shift,
-            guidance_transforms,
-            context_windows,
-            chroma_radiance_options,
-            sampling_cache=_native_model_sampling_cache(model),
-            sampling_timeline=_native_model_sampling_timeline(model),
-            sampling_space=_native_model_sampling_space(model),
-            sparse_attention=_native_model_sparse_attention(model),
+        patched_model = _replace_native_model(
+            model,
+            "model",
+            handle=patched_handle,
+            overlays=(),
+            source_resolvers={},
         )
     return patched_model, patched_text
 
@@ -1305,19 +1196,12 @@ def _apply_native_model_lora_stack(
                 or _native_model_sampling_timeline(model) is not None
                 or _native_model_sparse_attention(model) is not None
             ):
-                return _NativeModelOverlay(
-                    clone,
-                    (),
-                    {},
-                    z_image_control,
-                    sampling_shift,
-                    guidance_transforms,
-                    context_windows,
-                    chroma_radiance_options,
-                    sampling_cache=_native_model_sampling_cache(model),
-                    sampling_timeline=_native_model_sampling_timeline(model),
-                    sampling_space=_native_model_sampling_space(model),
-                    sparse_attention=_native_model_sparse_attention(model),
+                return _replace_native_model(
+                    model,
+                    "model",
+                    handle=clone,
+                    overlays=(),
+                    source_resolvers={},
                 )
             return clone
         return model
@@ -1349,34 +1233,19 @@ def _apply_native_model_lora_stack(
             or _native_model_sampling_timeline(model) is not None
             or _native_model_sparse_attention(model) is not None
         ):
-            return _NativeModelOverlay(
-                clone,
-                (),
-                {},
-                z_image_control,
-                sampling_shift,
-                guidance_transforms,
-                context_windows,
-                chroma_radiance_options,
-                sampling_cache=_native_model_sampling_cache(model),
-                sampling_timeline=_native_model_sampling_timeline(model),
-                sampling_space=_native_model_sampling_space(model),
-                sparse_attention=_native_model_sparse_attention(model),
+            return _replace_native_model(
+                model,
+                "model",
+                handle=clone,
+                overlays=(),
+                source_resolvers={},
             )
         return clone
-    return _NativeModelOverlay(
-        handle,
-        combined,
-        combined_resolvers,
-        z_image_control,
-        sampling_shift,
-        guidance_transforms,
-        context_windows,
-        chroma_radiance_options,
-        sampling_cache=_native_model_sampling_cache(model),
-        sampling_timeline=_native_model_sampling_timeline(model),
-        sampling_space=_native_model_sampling_space(model),
-        sparse_attention=_native_model_sparse_attention(model),
+    return _replace_native_model(
+        model,
+        "model",
+        overlays=combined,
+        source_resolvers=combined_resolvers,
     )
 
 

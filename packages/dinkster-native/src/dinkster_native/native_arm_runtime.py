@@ -56,6 +56,7 @@ from .native_arm_core import (
     native_memory_policy,
     os,
     platform,
+    replace,
     resolve_weight_source,
     resolver_from_env,
     select_load_device,
@@ -1530,6 +1531,19 @@ class _NativeModelOverlay:
 
     def stage(self, role: str) -> Any:
         return self.handle.stage(role)
+
+
+def _replace_native_model(
+    model: object,
+    input_id: str,
+    **changes: Any,
+) -> _NativeModelOverlay:
+    if isinstance(model, _NativeModelOverlay):
+        model.handle.require_active()
+        overlay = model
+    else:
+        overlay = _NativeModelOverlay(_native_handle(model, input_id), (), {})
+    return replace(overlay, **changes)
 
 
 class _NativeCodecHandle:

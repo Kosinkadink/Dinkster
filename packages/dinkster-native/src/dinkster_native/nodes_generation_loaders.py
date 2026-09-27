@@ -41,12 +41,9 @@ from .native_arm_runtime import (
     _ControlledConditioning,
     _native_handle,
     _native_model,
-    _native_model_sampling_cache,
-    _native_model_sampling_timeline,
-    _native_model_sparse_attention,
     _NativeCodecHandle,
     _NativeControlNetResource,
-    _NativeModelOverlay,
+    _replace_native_model,
     _sampling_space_runtime,
     _torch_dtype,
     _weight_storage_dtype,
@@ -1031,33 +1028,16 @@ class GenerationModelSamplingAuraFlow(Node):
     def execute(cls, *, model: object, shift: float) -> Mapping[str, object]:
         if type(shift) is not float or not math.isfinite(shift) or shift <= 0.0:
             raise ValueError("shift must be a positive finite float")
-        (
-            handle,
-            overlays,
-            resolvers,
-            z_image_control,
-            _,
-            guidance_transforms,
-            context_windows,
-            chroma_radiance_options,
-        ) = _native_model(model, "model")
+        handle = _native_model(model, "model")[0]
         inference = importlib.import_module("dinkster_inference")
         space = inference.FlowSigmas(shift=shift, multiplier=1.0, timesteps=1000)
         _sampling_space_runtime(handle.runtime, space)
         return cls.outputs(
-            model=_NativeModelOverlay(
-                handle,
-                overlays,
-                resolvers,
-                z_image_control,
-                None,
-                guidance_transforms,
-                context_windows,
-                chroma_radiance_options,
-                sampling_cache=_native_model_sampling_cache(model),
-                sampling_timeline=_native_model_sampling_timeline(model),
+            model=_replace_native_model(
+                model,
+                "model",
+                sampling_shift=None,
                 sampling_space=space,
-                sparse_attention=_native_model_sparse_attention(model),
             )
         )
 
