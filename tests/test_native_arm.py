@@ -12459,6 +12459,84 @@ def test_load_diffusion_routes_standalone_classic_ltxv_model(
     ]
 
 
+def test_minimax_h3_loaders_return_dinkster_comfy_values(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    arm = _native_arm()
+    paths = tuple(
+        tmp_path / name
+        for name in (
+            "minimax_h3_dit.safetensors",
+            "minimax_h3_text.safetensors",
+            "minimax_h3_video_vae.safetensors",
+        )
+    )
+    for path in paths:
+        path.write_bytes(b"weights")
+    diffusion, text, vae = (_asset(path) for path in paths)
+    model = object()
+    clip = object()
+    state_dict = object()
+    metadata = object()
+
+    class VAE:
+        def __init__(self, *, sd: object, metadata: object) -> None:
+            assert sd is state_dict
+            assert metadata is globals_metadata
+
+        @staticmethod
+        def throw_exception_if_invalid() -> None:
+            pass
+
+    globals_metadata = metadata
+    clip_type = SimpleNamespace(MINIMAX=object())
+
+    def load_clip(**kwargs: object) -> object:
+        assert kwargs == {
+            "ckpt_paths": [str(text.local_path())],
+            "embedding_directory": [],
+            "clip_type": clip_type.MINIMAX,
+            "model_options": {},
+        }
+        return clip
+
+    def load_diffusion_model(path: str, *, model_options: object) -> object:
+        assert path == str(diffusion.local_path())
+        assert model_options == {}
+        return model
+
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_comfy.sd",
+        SimpleNamespace(
+            CLIPType=clip_type,
+            VAE=VAE,
+            load_clip=load_clip,
+            load_diffusion_model=load_diffusion_model,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_comfy.utils",
+        SimpleNamespace(
+            load_torch_file=lambda path, *, return_metadata: (
+                (state_dict, metadata)
+                if path == str(vae.local_path()) and return_metadata
+                else pytest.fail("unexpected VAE load")
+            )
+        ),
+    )
+
+    assert arm.NativeLoadClip.execute(
+        text_encoder=text, type="minimax", device="default"
+    )["clip"] is clip
+    assert arm.NativeLoadVae.execute(vae=vae)["vae"].__class__ is VAE
+    assert arm.NativeLoadDiffusionModel.execute(
+        diffusion_model=diffusion, weight_dtype="default"
+    )["model"] is model
+
+
 def test_generation_load_checkpoint_schema_takes_only_checkpoint() -> None:
     arm = _native_arm()
 
@@ -29826,6 +29904,14 @@ def test_vae_decode_uses_dinkster_comfy_vae_contract(
 
     VAE.__module__ = "dinkster_comfy.sd"
     monkeypatch.setitem(sys.modules, "dinkster_comfy.sd", SimpleNamespace(VAE=VAE))
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_comfy.model_management",
+        SimpleNamespace(
+            unload_all_models=lambda: None,
+            soft_empty_cache=lambda: None,
+        ),
+    )
     result = arm.NativeVAEDecode.execute(samples={"samples": latent}, vae=VAE())
 
     assert result["image"] is image

@@ -99,6 +99,21 @@ class NativeLoadClip(LoadClip):
     def execute(cls, *, text_encoder: object, type: str, device: str) -> Mapping[str, object]:
         if not isinstance(text_encoder, AssetRef):
             raise TypeError("text_encoder must be an AssetRef")
+        if type == "minimax":
+            comfy_sd = importlib.import_module("dinkster_comfy.sd")
+            model_options = {}
+            if device == "cpu":
+                torch = _torch()
+                model_options["load_device"] = model_options["offload_device"] = torch.device(
+                    "cpu"
+                )
+            clip = comfy_sd.load_clip(
+                ckpt_paths=[str(text_encoder.local_path())],
+                embedding_directory=[],
+                clip_type=comfy_sd.CLIPType.MINIMAX,
+                model_options=model_options,
+            )
+            return cls.outputs(clip=clip)
         from dinkster_inference.sources import load_safetensors_header
         from dinkster_inference.text_recipes import UnresolvedTextRecipe, resolve_text_recipe
 
@@ -176,10 +191,10 @@ class NativeLoadVae(LoadVae):
     ) -> Mapping[str, object]:
         if type(pixel_space) is not bool:
             raise TypeError("pixel_space must be a boolean")
-        context = _component_execution_context("load_vae")
         if pixel_space:
             if vae is not None:
                 raise ValueError("pixel_space and vae are mutually exclusive")
+            context = _component_execution_context("load_vae")
             inference = importlib.import_module("dinkster_inference")
             compute_dtype = (
                 context.vae_dtype or inference.default_vae_dtype(inference.CHROMA_RADIANCE.id).name
@@ -189,6 +204,17 @@ class NativeLoadVae(LoadVae):
             )
         if not isinstance(vae, AssetRef):
             raise TypeError("vae must be an AssetRef")
+        if "minimax_h3" in vae.name.lower():
+            comfy_utils = importlib.import_module("dinkster_comfy.utils")
+            state_dict, metadata = comfy_utils.load_torch_file(
+                str(vae.local_path()), return_metadata=True
+            )
+            loaded = importlib.import_module("dinkster_comfy.sd").VAE(
+                sd=state_dict, metadata=metadata
+            )
+            loaded.throw_exception_if_invalid()
+            return cls.outputs(vae=loaded)
+        context = _component_execution_context("load_vae")
         with native_execution_span("load", "load"):
             handle = _load_detected_component(vae, "codec", context)
         return cls.outputs(vae=handle)
@@ -223,6 +249,11 @@ class NativeLoadDiffusionModel(LoadDiffusionModel):
     def execute(cls, *, diffusion_model: object, weight_dtype: str) -> Mapping[str, object]:
         if not isinstance(diffusion_model, AssetRef):
             raise TypeError("diffusion_model must be an AssetRef")
+        if weight_dtype == "default" and "minimax_h3" in diffusion_model.name.lower():
+            model = importlib.import_module("dinkster_comfy.sd").load_diffusion_model(
+                str(diffusion_model.local_path()), model_options={}
+            )
+            return cls.outputs(model=model)
         storage_dtype = (
             None if weight_dtype == "default" else _weight_storage_dtype(_torch(), weight_dtype)
         )

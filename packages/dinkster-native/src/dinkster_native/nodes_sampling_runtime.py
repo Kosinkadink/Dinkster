@@ -1038,7 +1038,20 @@ class NativeVAEDecode(VAEDecode):
     @classmethod
     def execute(cls, *, samples: object, vae: object) -> Mapping[str, object]:
         if _is_exact_dinkster_comfy_type(vae, "dinkster_comfy.sd", "VAE"):
-            return VAEDecode.execute(samples=samples, vae=vae)
+            if not isinstance(samples, Mapping):
+                raise TypeError("samples must be a latent mapping")
+            direct_samples = dict(cast("Mapping[object, object]", samples))
+            latent = direct_samples.get("samples")
+            inference = importlib.import_module("dinkster_inference")
+            if type(latent) is inference.MultiStreamLatent:
+                streams = cast("Any", latent)
+                if "video" not in streams.roles:
+                    raise TypeError("samples['samples'] must contain a video stream")
+                direct_samples["samples"] = streams.by_role("video")
+            model_management = importlib.import_module("dinkster_comfy.model_management")
+            model_management.unload_all_models()
+            model_management.soft_empty_cache()
+            return VAEDecode.execute(samples=direct_samples, vae=vae)
         handle = _native_handle(vae, "vae")
         torch = _torch()
         if not isinstance(samples, Mapping):
