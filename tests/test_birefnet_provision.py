@@ -55,7 +55,7 @@ def provider_runtime(
     manifest = load_manifest(manifest_path)
     assert (
         "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@"
-        "8eeb24bd5ef1e217929b699bd5f6b2d6b1b774f7"
+        "470c4f67d7b68afab9f894bbe69f7cfac5f2a82e"
     ) in manifest.requires
     workspace, pythonpath = _pack_runtime_sources(manifest)
     if request.param == "source":
@@ -91,7 +91,7 @@ def provider_runtime(
             "assert pathlib.Path(spec.origin).is_relative_to(sys.prefix)\n"
             "for name in ('dinkster_engine', 'dinkster_kitchen', 'tokenizers', 'comfy'):\n"
             "    assert u.find_spec(name) is None, name\n",
-            "8eeb24bd5ef1e217929b699bd5f6b2d6b1b774f7",
+            "470c4f67d7b68afab9f894bbe69f7cfac5f2a82e",
         ],
         capture_output=True,
         text=True,
