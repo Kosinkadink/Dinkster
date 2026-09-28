@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-SingleJobMultiGpuMode = Literal["auto", "sequence"]
+SingleJobMultiGpuMode = Literal["auto", "guidance", "sequence", "window"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,5 +23,5 @@ class SingleJobMultiGpuConfig:
             or len(set(self.cuda_indices)) != len(self.cuda_indices)
         ):
             raise ValueError("single-job CUDA ranks require at least two unique logical indices")
-        if self.mode not in ("auto", "sequence"):
+        if self.mode not in ("auto", "guidance", "sequence", "window"):
             raise ValueError("single-job multi-GPU mode is invalid")

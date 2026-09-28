@@ -830,3 +830,39 @@ def test_generation_ksampler_routes_res4lyf_substep_options(
     assert sample_args[6] == "assembled"
     assert sample_args[7] == configured.sigmas
     assert events[-1] == ("to", "cpu", "float32")
+
+
+def test_block_sparse_attention_attaches_execution_config_to_a_model_clone() -> None:
+    class Model:
+        def __init__(self) -> None:
+            self.model_options = {"transformer_options": {}}
+
+        def clone(self) -> Model:
+            return clone
+
+    model = Model()
+    clone = Model()
+
+    result = fork_nodes.NativeBlockSparseAttention.execute(
+        model=model,
+        selection="sla",
+        start_percent=0.25,
+        end_percent=0.75,
+        dense_blocks="0, 49",
+        min_tokens=4096,
+        extra_tokens=64,
+        sink_conditioning="exact_kv",
+        keep_percent=12.5,
+    )
+
+    assert result["MODEL"] is clone
+    assert clone.model_options["transformer_options"]["dinkster_h3_sparse_attention"] == {
+        "start_percent": 0.25,
+        "end_percent": 0.75,
+        "dense_blocks": (0, 49),
+        "min_tokens": 4096,
+        "extra_tokens": 64,
+        "sink_conditioning": "exact_kv",
+        "tau": 0.0,
+        "keep_percent": 12.5,
+    }

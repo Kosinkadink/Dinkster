@@ -121,9 +121,23 @@ class AttentionRuntime:
                 return cast("Callable[..., Any]", selected)
         raise RuntimeError(f"worker attention route for {role!r} is unavailable")
 
-    def for_model(self, token: AttentionRouteToken) -> Callable[..., Any]:
+    def for_model(
+        self, token: AttentionRouteToken, sparse_config: dict[str, Any] | None = None
+    ) -> Callable[..., Any]:
         selected = self.resolve(token)
-        return _DistributedAttention(selected) if _active_attempt is not None else selected
+        if sparse_config is not None:
+            sparse = self.registry["comfy_kitchen_sol"]
+            selected = _SparseAttention(selected, sparse, sparse_config)
+        if _active_attempt is not None:
+            config = _distributed_config()
+            if config.mode in ("auto", "sequence"):
+                if sparse_config is not None:
+                    raise RuntimeError("Ulysses sequence mode does not support sparse attention")
+                return _UlyssesAttention(selected)
+        return selected
+
+    def distributed_active(self) -> bool:
+        return _active_attempt is not None
 
 
 def create_attention_runtime() -> AttentionRuntime:
@@ -173,7 +187,7 @@ def _distributed_config() -> _DistributedConfig:
     if (
         world_size < 2
         or not 0 <= rank < world_size
-        or mode not in ("auto", "sequence")
+        or mode not in ("auto", "guidance", "sequence", "window")
         or not rendezvous_base.startswith("file://")
         or len(token_base) != 32
     ):
@@ -213,23 +227,6 @@ def _ensure_process_group() -> _DistributedConfig:
     return config
 
 
-def _slice_output(
-    output: Any,
-    heads: int,
-    start: int,
-    stop: int,
-    skip_output_reshape: bool,
-) -> Any:
-    if skip_output_reshape:
-        if output.ndim != 4 or output.shape[1] != heads:
-            raise RuntimeError("attention provider returned malformed unflattened heads")
-        return output[:, start:stop]
-    if output.ndim != 3 or output.shape[-1] % heads:
-        raise RuntimeError("attention provider returned malformed flattened heads")
-    width = output.shape[-1] // heads
-    return output[..., start * width : stop * width]
-
-
 def _fence_call(config: _DistributedConfig, q: Any, heads: int) -> None:
     global _attention_call_index
     control = torch.tensor(
@@ -244,7 +241,27 @@ def _fence_call(config: _DistributedConfig, q: Any, heads: int) -> None:
     _attention_call_index += 1
 
 
-class _DistributedAttention:
+def _head_to_sequence(tensor: Any, config: _DistributedConfig) -> Any:
+    local_heads = tensor.shape[1] // config.world_size
+    outgoing = [
+        tensor[:, rank * local_heads : (rank + 1) * local_heads].contiguous()
+        for rank in range(config.world_size)
+    ]
+    incoming = [torch.empty_like(outgoing[0]) for _ in range(config.world_size)]
+    torch.distributed.all_to_all(incoming, outgoing)
+    return torch.cat(incoming, dim=2)
+
+
+def _sequence_to_head(tensor: Any, config: _DistributedConfig) -> Any:
+    if tensor.shape[2] % config.world_size:
+        raise RuntimeError("attention sequence must divide evenly across single-job ranks")
+    outgoing = [value.contiguous() for value in tensor.chunk(config.world_size, dim=2)]
+    incoming = [torch.empty_like(outgoing[0]) for _ in range(config.world_size)]
+    torch.distributed.all_to_all(incoming, outgoing)
+    return torch.cat(incoming, dim=1)
+
+
+class _UlyssesAttention:
     def __init__(self, selected: Callable[..., Any]) -> None:
         self.selected = selected
         self.container_function = self._containers
@@ -264,19 +281,9 @@ class _DistributedAttention:
         skip_output_reshape: bool = False,
         **kwargs: Any,
     ) -> Any:
-        config = _ensure_process_group()
-        if kwargs.get("enable_gqa", False):
-            raise RuntimeError("distributed attention does not support grouped-query attention")
-        if heads % config.world_size:
-            raise RuntimeError("attention heads must divide evenly across single-job ranks")
-        _fence_call(config, q, heads)
-        local_heads = heads // config.world_size
-        start = config.rank * local_heads
-        stop = start + local_heads
-        failure: BaseException | None = None
-        local_output: Any | None = None
-        try:
-            output = self.selected(
+        transformer_options = kwargs.get("transformer_options", {})
+        if not transformer_options.get("dinkster_sequence_sharded", False):
+            return self.selected(
                 q,
                 k,
                 v,
@@ -287,9 +294,53 @@ class _DistributedAttention:
                 skip_output_reshape=skip_output_reshape,
                 **kwargs,
             )
-            if not isinstance(output, torch.Tensor):
-                raise RuntimeError("attention provider returned a non-tensor output")
-            local_output = _slice_output(output, heads, start, stop, skip_output_reshape)
+        config = _ensure_process_group()
+        if config.world_size != 2:
+            raise RuntimeError("Ulysses sequence mode supports exactly two ranks")
+        if not skip_reshape or q.ndim != 4:
+            raise RuntimeError("Ulysses sequence mode requires separated attention heads")
+        if mask is not None:
+            raise RuntimeError("Ulysses sequence mode does not support an attention mask")
+        if kwargs.get("enable_gqa", False):
+            raise RuntimeError("Ulysses sequence mode does not support grouped-query attention")
+        if heads % config.world_size:
+            raise RuntimeError("attention heads must divide evenly across single-job ranks")
+        valid_sequence = transformer_options.get("dinkster_sequence_valid")
+        if (
+            type(valid_sequence) is not int
+            or not 0 < valid_sequence <= q.shape[2] * config.world_size
+        ):
+            raise RuntimeError("Ulysses sequence metadata is invalid")
+        _fence_call(config, q, heads)
+        local_heads = heads // config.world_size
+        failure: BaseException | None = None
+        local_output: Any | None = None
+        try:
+            local_q = _head_to_sequence(q, config)
+            local_k = _head_to_sequence(k, config)
+            local_v = _head_to_sequence(v, config)
+            key_mask = None
+            if valid_sequence < local_k.shape[2]:
+                key_mask = torch.arange(local_k.shape[2], device=q.device) < valid_sequence
+                key_mask = key_mask.reshape(1, 1, -1)
+            output = self.selected(
+                local_q,
+                local_k,
+                local_v,
+                local_heads,
+                mask=key_mask,
+                attn_precision=attn_precision,
+                skip_reshape=True,
+                skip_output_reshape=True,
+                **kwargs,
+            )
+            if (
+                not isinstance(output, torch.Tensor)
+                or output.ndim != 4
+                or output.shape[1] != local_heads
+            ):
+                raise RuntimeError("attention provider returned malformed Ulysses output")
+            local_output = _sequence_to_head(output, config)
         except BaseException as exc:
             failure = exc
         failed = torch.tensor(int(failure is not None), dtype=torch.int32, device=q.device)
@@ -299,10 +350,76 @@ class _DistributedAttention:
         if bool(failed.item()):
             raise RuntimeError("peer distributed attention rank failed")
         assert local_output is not None
-        outputs = [torch.empty_like(local_output) for _ in range(config.world_size)]
-        torch.distributed.all_gather(outputs, local_output.contiguous())
-        dimension = 1 if skip_output_reshape else -1
-        return torch.cat(outputs, dim=dimension)
+        if skip_output_reshape:
+            return local_output
+        return local_output.transpose(1, 2).reshape(
+            local_output.shape[0], local_output.shape[2], heads * local_output.shape[3]
+        )
+
+
+class _SparseAttention:
+    def __init__(
+        self,
+        dense: Callable[..., Any],
+        sparse: Callable[..., Any],
+        config: dict[str, Any],
+    ) -> None:
+        self.dense = dense
+        self.sparse = sparse
+        self.config = config
+        self.container_function = self._containers
+
+    def _containers(self, q: Any, k: Any, v: Any, *args: Any, **kwargs: Any) -> Any:
+        return self(q.take(), k.take(), v.take(), *args, **kwargs)
+
+    def _eligible(self, q: Any, options: dict[str, Any]) -> bool:
+        block = options.get("block_index")
+        layout = options.get("minimax_h3_layout")
+        if type(block) is not int or layout is None:
+            return False
+        if block in self.config["dense_blocks"] or q.shape[2] < self.config["min_tokens"]:
+            return False
+        if q.device.type != "cuda" or q.dtype not in (torch.bfloat16, torch.float16):
+            return False
+        kitchen = importlib.import_module("comfy_kitchen")
+        if not kitchen.sol_attn_is_available(q.device):
+            return False
+        schedule = options.get("sample_sigmas")
+        current = options.get("sigmas")
+        if schedule is None or current is None or len(schedule) < 2:
+            return False
+        step = int((schedule - current.flatten()[0]).abs().argmin())
+        percent = step / (len(schedule) - 1)
+        return self.config["start_percent"] <= percent <= self.config["end_percent"]
+
+    def __call__(
+        self,
+        q: Any,
+        k: Any,
+        v: Any,
+        heads: int,
+        **kwargs: Any,
+    ) -> Any:
+        options = kwargs.get("transformer_options", {})
+        if not self._eligible(q, options):
+            return self.dense(q, k, v, heads, **kwargs)
+        layout = options["minimax_h3_layout"]
+        video_start = next(start for start, _stop, kind in layout.segments if kind == "video")
+        sink_blocks = [0, (video_start + 63) // 64]
+        sink_queries = [0, 0]
+        if self.config["sink_conditioning"] == "off":
+            sink_blocks = [0, 0]
+        elif self.config["sink_conditioning"] == "exact_kv_and_rows":
+            audio_start = next(start for start, _stop, kind in layout.segments if kind == "audio")
+            sink_queries = [audio_start // 64, sink_blocks[1]]
+        sol_options = {
+            "tau": self.config["tau"],
+            "topk_ratio": self.config["keep_percent"] / 100.0,
+            "sink_blocks": sink_blocks,
+            "sink_q": sink_queries,
+            "token_aug": self.config["extra_tokens"],
+        }
+        return self.sparse(q, k, v, heads, sol_options=sol_options, **kwargs)
 
 
 __all__ = [

@@ -41,21 +41,22 @@ This attachment applies to direct KSampler execution and to imported
 `BasicGuider` graphs that feed `SamplerCustomAdvanced`. Both paths therefore
 use the same worker-owned route and workgroup lifecycle.
 
-## Distributed call shape
+## Distributed execution modes
 
-Every rank calls the selected attention backend with the same complete inputs,
-head count, and tensor layout as stock ComfyUI. Each rank then retains its
-ordered share of output heads. An all-gather reconstructs the complete output
-on every rank.
+Guidance mode assigns model-evaluated conditioning lanes to ranks in canonical
+lane order. Synthetic zero lanes remain local. The rank outputs are summed so
+every rank observes the canonical conditioning result.
 
-Keeping the backend call shape unchanged is a numerical requirement. Splitting
-the backend input by head changes CUDA accumulation for otherwise equivalent
-attention and can change decoded output bytes. Output ownership distributes the
-collective result without changing that backend computation.
+Window mode assigns contiguous joint-window ranges to ranks. Ranks evaluate
+their ranges concurrently, broadcast each result in plan order, and run the
+fork's canonical merge once. The four-rank path uses all ranks when the plan has
+at least four joint windows.
 
-This contract does not promise lower latency: all ranks currently perform the
-full attention call. Performance work may partition computation only after an
-oracle proves that the new call shape preserves the accepted stock output.
+Sequence mode supports the two-rank H3 U2R1 layout. Each DiT block retains one
+contiguous sequence shard. Ulysses all-to-all exchanges transform local
+sequence/full-head QKV into full-sequence/local-head attention and invert the
+exchange for the residual and MLP. The final block gathers sequence rows before
+the H3 output heads. Four-rank Ulysses is refused.
 
 ## Mode and admission
 
@@ -63,15 +64,16 @@ Serve exposes:
 
 ```text
 --single-job-multi-gpu-devices 0,1[,2...]
---single-job-multi-gpu-mode auto|sequence
+--single-job-multi-gpu-mode auto|guidance|sequence|window
 ```
 
-Both accepted modes use the worker-owned distributed attention route. `auto`
-does not select retired guidance- or window-parallel implementations.
-`guidance` and `window` are invalid arguments and fail before startup.
+`auto` selects the two-rank sequence path. Guidance and window execution must
+be selected explicitly. Sequence mode requires exactly two ranks; guidance and
+window accept two or more ranks.
 
 The selected rank count must be at least two, device indices must be unique and
-nonnegative, and the attention head count must divide evenly across ranks.
+nonnegative, and the Ulysses attention head and packed sequence counts must
+divide evenly across its two ranks.
 Single-job devices and whole-job replica devices are mutually exclusive so one
 serve process cannot create hidden overlapping residency.
 

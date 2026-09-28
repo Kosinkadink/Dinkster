@@ -991,7 +991,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--single-job-multi-gpu-mode",
-        choices=("auto", "sequence"),
+        choices=("auto", "guidance", "sequence", "window"),
         default="auto",
         help="single-job rank recipe selection (default: auto)",
     )

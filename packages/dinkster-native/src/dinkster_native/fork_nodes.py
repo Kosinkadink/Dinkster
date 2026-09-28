@@ -10,6 +10,7 @@ from typing import Any, cast
 from dinkster_assets import AssetRef
 from dinkster_nodes_generation.nodes import (
     ApplyMiniMaxH3FunControlNet,
+    BlockSparseAttention,
     CLIPTextEncode,
     EmptyLatentImage,
     EmptyMiniMaxH3AV,
@@ -68,7 +69,15 @@ def model_for_attention_route(model: object) -> object:
         return model
     runtime = cast("Any", context.attention_runtime)
     sampling_model = cast("Any", model).clone()
-    sampling_model.set_model_optimized_attention(runtime.for_model(context.attention_route_token))
+    transformer_options = sampling_model.model_options["transformer_options"]
+    sparse_config = transformer_options.get("dinkster_h3_sparse_attention")
+    sampling_model.set_model_optimized_attention(
+        runtime.for_model(context.attention_route_token, sparse_config)
+    )
+    if runtime.distributed_active():
+        from .multigpu import configure_distributed_model
+
+        configure_distributed_model(sampling_model)
     return sampling_model
 
 
@@ -663,6 +672,52 @@ class GenerationVAEDecode(VAEDecode):
         return cls.outputs(image=image)
 
 
+class NativeBlockSparseAttention(BlockSparseAttention):
+    @classmethod
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls,
+        *,
+        model: object,
+        selection: str,
+        start_percent: float = 0.2,
+        end_percent: float = 1.0,
+        dense_blocks: str = "",
+        min_tokens: int = 12288,
+        extra_tokens: int = 256,
+        sink_conditioning: str = "exact_kv_and_rows",
+        verbose: bool = False,
+        tau: float = 1.3,
+        keep_percent: float = 10.0,
+    ) -> Mapping[str, object]:
+        del verbose
+        if selection not in ("sol-attn", "sla"):
+            raise ValueError("fork sparse attention supports sol-attn and sla selection")
+        if not 0.0 <= start_percent <= end_percent <= 1.0:
+            raise ValueError("sparse attention percentages must be ordered within zero and one")
+        if min_tokens < 1:
+            raise ValueError("sparse attention min_tokens must be positive")
+        if extra_tokens not in (0, 64, 128, 192, 256):
+            raise ValueError("sparse attention extra_tokens must be a 64-token increment")
+        if sink_conditioning not in ("off", "exact_kv", "exact_kv_and_rows"):
+            raise ValueError("sparse attention sink_conditioning is invalid")
+        try:
+            dense = tuple(int(value.strip()) for value in dense_blocks.split(",") if value.strip())
+        except ValueError as exc:
+            raise ValueError("sparse attention dense_blocks must contain integers") from exc
+        patched = cast("Any", model).clone()
+        patched.model_options["transformer_options"]["dinkster_h3_sparse_attention"] = {
+            "start_percent": float(start_percent),
+            "end_percent": float(end_percent),
+            "dense_blocks": dense,
+            "min_tokens": int(min_tokens),
+            "extra_tokens": int(extra_tokens),
+            "sink_conditioning": sink_conditioning,
+            "tau": float(tau) if selection == "sol-attn" else 0.0,
+            "keep_percent": float(keep_percent) if selection == "sla" else 0.0,
+        }
+        return cls.outputs(MODEL=patched)
+
+
 def _h3_shape(width: int, height: int, frame_count: int) -> object:
     from dinkster_inference_wire import MultiStreamLatent
 
@@ -783,6 +838,7 @@ FORK_NODES: tuple[type[Node], ...] = (
     GenerationRES4LYFRKBetaSampler,
     GenerationKSampler,
     GenerationVAEDecode,
+    NativeBlockSparseAttention,
     NativeEmptyMiniMaxH3AV,
     NativeMiniMaxH3T2VAConditioning,
     NativeMiniMaxH3ImageToVideo,

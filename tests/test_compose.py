@@ -2172,9 +2172,9 @@ def test_pack_spec_validates_single_job_mode(tmp_path: Path) -> None:
     from dinkster.compose import PackSpec
 
     manifest = write_iso_manifest(tmp_path)
-    for mode in ("auto", "sequence"):
+    for mode in ("auto", "guidance", "sequence", "window"):
         assert PackSpec(manifest, single_job_mode=mode).single_job_mode == mode
-    for mode in ("model", "guidance", "window"):
+    for mode in ("model", "four-way"):
         with pytest.raises(ValueError, match="single_job_mode is invalid"):
             PackSpec(manifest, single_job_mode=mode)
 
