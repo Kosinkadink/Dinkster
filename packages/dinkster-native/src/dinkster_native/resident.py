@@ -20,6 +20,8 @@ DEFAULT_RESIDENT_V1_TYPES = frozenset(
         "MODEL_PATCH",
         "MOTION_MODEL_ADE",
         "M_MODELS",
+        "HOOKS",
+        "CONDITIONING",
         "CLIP",
         "VAE",
         "CONTROL_NET",

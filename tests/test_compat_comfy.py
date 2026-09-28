@@ -2067,6 +2067,76 @@ def test_v1_fanout_scalar_mapping_and_list_aggregation_execute_end_to_end() -> N
     asyncio.run(scenario())
 
 
+def test_v1_hook_fanout_through_conditioning_preserves_shared_identity() -> None:
+    class CreateHooks:
+        RETURN_TYPES = ("HOOKS",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {}}
+
+        def run(self):  # noqa: ANN201
+            return (object(),)
+
+    class AttachHooks:
+        RETURN_TYPES = ("CONDITIONING",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"hooks": ("HOOKS",)}}
+
+        def run(self, hooks):  # noqa: ANN001, ANN201
+            return ({"hooks": hooks},)
+
+    class SameHooks:
+        RETURN_TYPES = ("BOOLEAN",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {
+                "required": {
+                    "first": ("CONDITIONING",),
+                    "second": ("CONDITIONING",),
+                }
+            }
+
+        def run(self, first, second):  # noqa: ANN001, ANN201
+            return (first["hooks"] is second["hooks"],)
+
+    async def scenario() -> None:
+        translation = translate_mappings(
+            {
+                "CreateHooks": CreateHooks,
+                "AttachHooks": AttachHooks,
+                "SameHooks": SameHooks,
+            }
+        )
+        engine = compat_engine(translation)
+        graph = Graph(
+            nodes={
+                "create": GraphNode("comfy.CreateHooks", {}),
+                "left": GraphNode("comfy.AttachHooks", {"hooks": Link("create", "hooks")}),
+                "right": GraphNode("comfy.AttachHooks", {"hooks": Link("create", "hooks")}),
+                "same": GraphNode(
+                    "comfy.SameHooks",
+                    {
+                        "first": Link("left", "conditioning"),
+                        "second": Link("right", "conditioning"),
+                    },
+                ),
+            }
+        )
+
+        result = await engine.run(graph, ["same"])
+
+        assert result.outputs["same"]["boolean"].resolve() is True
+
+    asyncio.run(scenario())
+
+
 def test_core_list_wave_split_tiles_map_and_whole_list_merge() -> None:
     class SplitImageToTileList:
         RETURN_TYPES = ("INT",)
