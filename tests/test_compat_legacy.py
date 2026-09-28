@@ -313,9 +313,9 @@ def test_pack_model_imports_bind_to_fork_without_replacing_stock_modules(
     (tmp_path / "comfy" / "model_base.py").write_text(
         "class BaseModel:\n    source = 'stock'\n", encoding="utf-8"
     )
-    (tmp_path / "dinkster_comfy").mkdir()
-    (tmp_path / "dinkster_comfy" / "__init__.py").write_text("", encoding="utf-8")
-    (tmp_path / "dinkster_comfy" / "model_base.py").write_text(
+    (tmp_path / "dinkster_inference").mkdir()
+    (tmp_path / "dinkster_inference" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "dinkster_inference" / "model_base.py").write_text(
         "class BaseModel:\n    source = 'fork'\n", encoding="utf-8"
     )
     pack = write_pack(
@@ -328,12 +328,12 @@ def test_pack_model_imports_bind_to_fork_without_replacing_stock_modules(
     )
     monkeypatch.syspath_prepend(str(tmp_path))
     for name in tuple(sys.modules):
-        if name == "comfy" or name.startswith("comfy.") or name == "dinkster_comfy":
+        if name == "comfy" or name.startswith("comfy.") or name == "dinkster_inference":
             monkeypatch.delitem(sys.modules, name, raising=False)
 
     stock_model_base = importlib.import_module("comfy.model_base")
     module = _import_pack(pack)
-    fork_model_base = importlib.import_module("dinkster_comfy.model_base")
+    fork_model_base = importlib.import_module("dinkster_inference.model_base")
 
     assert module.BaseModel is fork_model_base.BaseModel
     assert module.BaseModel is not stock_model_base.BaseModel

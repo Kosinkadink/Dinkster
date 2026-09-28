@@ -91,12 +91,12 @@ class _ForkComfyProxy(types.ModuleType):
 
 
 class _ForkComfyImports(importlib.abc.MetaPathFinder, importlib.abc.Loader):
-    """Expose dinkster_comfy under ComfyUI's module names while a pack imports."""
+    """Expose dinkster_inference under ComfyUI's module names while a pack imports."""
 
     @staticmethod
     def target_name(fullname: str) -> str:
         suffix = fullname.removeprefix("comfy")
-        return f"dinkster_comfy{suffix}"
+        return f"dinkster_inference{suffix}"
 
     def find_spec(
         self,
@@ -134,7 +134,7 @@ class _ForkComfyImports(importlib.abc.MetaPathFinder, importlib.abc.Loader):
 @contextmanager
 def _fork_comfy_imports() -> Generator[None]:
     """Bind model-facing custom-pack imports to the fork for object identity."""
-    if importlib.util.find_spec("dinkster_comfy") is None:
+    if importlib.util.find_spec("dinkster_inference") is None:
         yield
         return
 
