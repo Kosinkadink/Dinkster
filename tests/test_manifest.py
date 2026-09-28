@@ -187,15 +187,15 @@ def test_manifest_loads_strict_adjacent_comfy_group_registry_without_importing_c
     ("body", "message"),
     [
         (
-            '{"format":"dinkster-inference-alias/1","sourceSchemas":[],"records":[],"records":[]}',
+            '{"format":"dinkster-comfy-alias/1","sourceSchemas":[],"records":[],"records":[]}',
             "duplicate JSON object key",
         ),
         (
-            '{"format":"dinkster-inference-alias/1","sourceSchemas":[],"records":[],"bad":NaN}',
+            '{"format":"dinkster-comfy-alias/1","sourceSchemas":[],"records":[],"bad":NaN}',
             "non-finite JSON number",
         ),
         (
-            '{"format":"dinkster-inference-alias/1","sourceSchemas":[],"records":[],"bad":1e999}',
+            '{"format":"dinkster-comfy-alias/1","sourceSchemas":[],"records":[],"bad":1e999}',
             "non-finite JSON number",
         ),
         ("[" * 70 + "]" * 70, "nesting depth"),
@@ -211,7 +211,7 @@ def test_manifest_rejects_hostile_comfy_alias_json(tmp_path: Path, body: str, me
 def test_manifest_rejects_hostile_comfy_group_json(tmp_path: Path) -> None:
     manifest_path = write_manifest(tmp_path / "dinkster-pack.toml")
     (tmp_path / "comfy-groups.json").write_text(
-        '{"format":"dinkster-inference-group/1","sourceSchemas":[],"groupSchemas":[],'
+        '{"format":"dinkster-comfy-group/1","sourceSchemas":[],"groupSchemas":[],'
         '"records":[],"records":[]}',
         encoding="utf-8",
     )
@@ -228,7 +228,7 @@ def test_manifest_rejects_oversized_and_escaping_comfy_alias_registry(tmp_path: 
 
     alias_path.unlink()
     outside = tmp_path.parent / "outside-comfy-aliases.json"
-    outside.write_text('{"format":"dinkster-inference-alias/1","sourceSchemas":[],"records":[]}')
+    outside.write_text('{"format":"dinkster-comfy-alias/1","sourceSchemas":[],"records":[]}')
     try:
         alias_path.symlink_to(outside)
     except OSError as exc:

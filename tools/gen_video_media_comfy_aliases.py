@@ -429,7 +429,7 @@ def build_registry(comfy_root: Path) -> dict:
             }
         )
     return {
-        "format": "dinkster-inference-alias/1",
+        "format": "dinkster-comfy-alias/1",
         "sourceSchemas": [schema_to_wire(s) for s in schemas.values()],
         "records": records,
     }

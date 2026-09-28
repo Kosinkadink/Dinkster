@@ -299,7 +299,7 @@ def _build_model3d_registry() -> dict[str, object]:
         ),
     ]
     return {
-        "format": "dinkster-inference-alias/1",
+        "format": "dinkster-comfy-alias/1",
         "sourceSchemas": [schema_to_wire(preview), schema_to_wire(save)],
         "records": records,
     }
@@ -470,7 +470,7 @@ def _build_current_seedvr2_registry(comfy_root: Path) -> dict[str, object]:
         ),
     ]
     return {
-        "format": "dinkster-inference-alias/1",
+        "format": "dinkster-comfy-alias/1",
         "sourceSchemas": [schema_to_wire(schema) for schema in source_schemas],
         "records": records,
     }
@@ -700,7 +700,7 @@ def _build_audio_additions() -> dict[str, object]:
         )
     )
     return {
-        "format": "dinkster-inference-alias/1",
+        "format": "dinkster-comfy-alias/1",
         "sourceSchemas": [schema_to_wire(schema) for schema in (load, upload, crop_schema, save)],
         "records": records,
     }
@@ -1195,7 +1195,7 @@ def _build_audio_registry(comfy_root: Path) -> dict[str, object]:
     ]
     additions = _audio_additions_in_subprocess()
     return {
-        "format": "dinkster-inference-alias/1",
+        "format": "dinkster-comfy-alias/1",
         "sourceSchemas": [
             *[schema_to_wire(schema) for schema in source_schemas],
             *additions["sourceSchemas"],
@@ -1215,7 +1215,7 @@ def build_registry(comfy_root: Path) -> dict[str, object]:
     image_records = cast("list[object]", image["records"])
     model3d_records = cast("list[object]", model3d["records"])
     return {
-        "format": "dinkster-inference-alias/1",
+        "format": "dinkster-comfy-alias/1",
         "sourceSchemas": [*audio_schemas, *image_schemas, *model3d_schemas],
         "records": [*audio_records, *image_records, *model3d_records],
     }

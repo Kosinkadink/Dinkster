@@ -149,7 +149,7 @@ entries to packs and exposes them through `/api/diagnostics`. Skips are
 advisory diagnostics, never schema or execution identity.
 
 A native pack may ship `comfy-aliases.json` beside `dinkster-pack.toml`. The file
-uses the `dinkster-inference-alias/1` envelope and must be included beside the
+uses the `dinkster-comfy-alias/1` envelope and must be included beside the
 manifest in the built wheel. Manifest loading reads it as bounded, strict JSON
 without importing pack code. Worker startup verifies that every carrier is an
 owned native schema and validates the shared replacement references. The data
@@ -157,7 +157,7 @@ is import metadata only; it never adds executable nodes or native schema
 replacements.
 
 A native pack may also ship `comfy-groups.json` beside the manifest. The
-`dinkster-inference-group/1` envelope declares exact foreign subgraphs, their
+`dinkster-comfy-group/1` envelope declares exact foreign subgraphs, their
 import-only source and collapsed schemas, and maintained replacement rules.
 It uses the same bounded strict-JSON loading and carrier ownership checks.
 Source and collapsed schemas never become executable or searchable nodes.
