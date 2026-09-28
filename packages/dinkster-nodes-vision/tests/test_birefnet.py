@@ -18,9 +18,9 @@ pytest.importorskip("torch")
 import torch
 from dinkster_assets import AssetVault, install_declared_assets, use_declared_asset_pack
 from dinkster_caches import MemoryLRUCache
-from dinkster_comfy.cli_args import args
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, TypedLiteral
+from dinkster_inference.cli_args import args
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import IsolatedWorker, load_manifest
 

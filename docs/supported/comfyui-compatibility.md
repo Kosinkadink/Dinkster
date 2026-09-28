@@ -6,7 +6,7 @@
 - Comfy image, mask, audio, and video values cross the compatibility boundary
   through explicit codecs. Invocation-scoped media staging supports source-file
   inputs on POSIX; source-filename custom nodes are unsupported on Windows.
-- SD1.5 and MiniMax H3 execute through the pinned `dinkster_comfy` package.
+- SD1.5 and MiniMax H3 execute through the pinned `dinkster_inference` package.
   Dinkster owns the graph schemas and worker integration, not a second model or
   sampling implementation.
 - Maintained aliases in the foundation, image, and media packs remain active.

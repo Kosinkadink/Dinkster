@@ -46,7 +46,7 @@ directive degrades to the existing unresolvable-embedding path
 
 ## Dinkster handling
 
-Dinkster delegates SD1 prompt tokenization to `dinkster_comfy`, whose current
+Dinkster delegates SD1 prompt tokenization to `dinkster_inference`, whose current
 behavior matches the upstream behavior described above.
 
 ## Status

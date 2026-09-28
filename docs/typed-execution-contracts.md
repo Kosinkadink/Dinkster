@@ -875,7 +875,7 @@ declarations and padding plan (chapter 5), the exchange backend
 seams (chapter 5.6), and the manifest slot (chapter 6) exactly as
 specified. Its sequence-parallel attention kernel is parameterized by mesh,
 partition plan, exchange backend, and an inner route-selected kernel behind
-the `dinkster_comfy` execution boundary. U1R1 collapses to the existing local provider route: the
+the `dinkster_inference` execution boundary. U1R1 collapses to the existing local provider route: the
 provider-route identity is the existing one, while invocation
 identity still binds the full degenerate mesh in normalized form
 per chapter 4.3 - route identity and invocation identity are

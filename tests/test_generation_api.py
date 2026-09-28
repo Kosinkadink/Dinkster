@@ -16,7 +16,7 @@ from aiohttp import ClientResponse, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
-from dinkster_inference import (
+from dinkster_inference_wire import (
     GenerationEvent,
     GenerationFinishReason,
     GenerationMessageRole,

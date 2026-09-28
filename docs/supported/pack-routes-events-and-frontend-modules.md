@@ -76,7 +76,7 @@ create a runtime door by itself.
 | `background-jobs` | Declared and unconsumed | No extension capability consumer |
 | `downloads` | Declared and unconsumed | No extension capability consumer |
 | `filesystem` | Declared and unconsumed | No extension capability consumer |
-| `model-family-registration` | Declared and unconsumed | Model execution is owned by `dinkster_comfy` |
+| `model-family-registration` | Declared and unconsumed | Model execution is owned by `dinkster_inference` |
 | `routes` | Works | `tests/test_pack_surfaces.py` |
 
 The generated contribution vocabulary and doctor diagnostics keep declared

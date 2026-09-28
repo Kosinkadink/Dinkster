@@ -234,7 +234,7 @@ class TestSetupCommands:
             assert benchmark_import == (
                 venv_python(recipe),
                 "-c",
-                "import dinkster_comfy",
+                "import dinkster_inference",
             )
 
     def test_workspace_packages_install_editable(self) -> None:

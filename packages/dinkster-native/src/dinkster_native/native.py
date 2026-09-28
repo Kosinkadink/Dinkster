@@ -11,8 +11,8 @@ from dinkster_assets import (
     register_save_target_type,
     resolver_from_env,
 )
-from dinkster_inference import register_inference_types
-from dinkster_inference.sampling_wire import register_sampling_type
+from dinkster_inference_wire import register_inference_types
+from dinkster_inference_wire.sampling_wire import register_sampling_type
 from dinkster_schema import Node
 from dinkster_values import TypeRegistry, register_curve_type, register_model3d_type
 

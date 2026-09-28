@@ -26,7 +26,7 @@ def translation_skips() -> Mapping[str, CompatGateDiagnostic]:
 
 
 def combo_choices() -> Mapping[str, Sequence[str]]:
-    samplers = cast("Any", importlib.import_module("dinkster_comfy.samplers"))
+    samplers = cast("Any", importlib.import_module("dinkster_inference.samplers"))
     folder_paths = cast("Any", importlib.import_module("folder_paths"))
     return {
         "comfy.samplers": tuple(str(name) for name in samplers.KSampler.SAMPLERS),

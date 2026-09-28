@@ -26,7 +26,7 @@ from .wire import (
     schema_to_wire,
 )
 
-COMFY_ALIAS_FORMAT = "dinkster-comfy-alias/1"
+COMFY_ALIAS_FORMAT = "dinkster-inference-alias/1"
 COMFY_CORE_REVISION = "b78cec87"
 COMFY_CORE_REVISIONS = frozenset(
     (

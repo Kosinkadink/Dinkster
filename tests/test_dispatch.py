@@ -764,8 +764,12 @@ def test_native_model_enters_native_load_lora_body() -> None:
 def test_sampling_settings_cross_domains_but_guider_remains_affine(
     use_shm: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dinkster_inference import register_inference_types
-    from dinkster_inference.sampling_wire import NoiseSelection, SamplerSelection, SigmaSchedule
+    from dinkster_inference_wire import register_inference_types
+    from dinkster_inference_wire.sampling_wire import (
+        NoiseSelection,
+        SamplerSelection,
+        SigmaSchedule,
+    )
 
     # Both codecs share the creator's resource tracker in this process.
     monkeypatch.setattr(

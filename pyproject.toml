@@ -10,7 +10,7 @@ dependencies = [
     "dinkster-schema",
     "dinkster-values",
     "dinkster-graph",
-    "dinkster-inference",
+    "dinkster-inference-wire",
     "dinkster-protocol",
     "dinkster-engine",
     "dinkster-workers",
@@ -83,7 +83,7 @@ dinkster-schema = { workspace = true }
 dinkster-values = { workspace = true }
 dinkster-video = { workspace = true }
 dinkster-graph = { workspace = true }
-dinkster-inference = { workspace = true }
+dinkster-inference-wire = { workspace = true }
 dinkster-protocol = { workspace = true }
 dinkster-engine = { workspace = true }
 dinkster-workers = { workspace = true }

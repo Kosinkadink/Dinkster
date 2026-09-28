@@ -14,7 +14,7 @@ from typing import cast
 
 import numpy as np
 import torch
-from dinkster_inference import GIBIBYTE, MEBIBYTE
+from dinkster_inference_wire import GIBIBYTE, MEBIBYTE
 from torch import Tensor
 from torch.nn.functional import max_pool1d
 

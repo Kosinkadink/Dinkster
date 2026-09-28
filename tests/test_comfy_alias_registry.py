@@ -83,7 +83,7 @@ def test_registry_wire_roundtrip_is_canonical_and_separate_from_native_schema() 
     declared = registry()
     wire = comfy_alias_registry_to_wire(declared)
 
-    assert wire["format"] == "dinkster-comfy-alias/1"
+    assert wire["format"] == "dinkster-inference-alias/1"
     assert wire["records"][0]["mappingKind"] == "op"  # type: ignore[index]
     assert wire["records"][0]["carrier"] == "dinkster.image.resize"  # type: ignore[index]
     assert "replacements" not in wire["sourceSchemas"][0]  # type: ignore[index]

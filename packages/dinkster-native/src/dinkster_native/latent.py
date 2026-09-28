@@ -27,7 +27,7 @@ def _decode_tensor(record: EncodedLatentTensor) -> object:
 
 
 def _multi_stream(pairs: Sequence[tuple[str, object]]) -> object:
-    multi_stream = importlib.import_module("dinkster_inference").MultiStreamLatent
+    multi_stream = importlib.import_module("dinkster_inference_wire").MultiStreamLatent
     return multi_stream.from_pairs(pairs)
 
 

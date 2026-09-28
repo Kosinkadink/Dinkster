@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from typing import Protocol, cast
 
 from aiohttp import web
-from dinkster_inference import (
+from dinkster_inference_wire import (
     GenerationEvent,
     GenerationFinishReason,
     GenerationMessage,

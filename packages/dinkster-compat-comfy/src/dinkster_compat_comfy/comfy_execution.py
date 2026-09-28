@@ -51,10 +51,10 @@ def common_ksampler(
     compat_latent = cast("Mapping[object, object]", to_comfy_multistream(latent))
     roles = _compat_stream_roles(compat_latent)
     latent_image = compat_latent["samples"]
-    sample_module = cast("Any", importlib.import_module("dinkster_comfy.sample"))
-    samplers = cast("Any", importlib.import_module("dinkster_comfy.samplers"))
-    model_management = cast("Any", importlib.import_module("dinkster_comfy.model_management"))
-    utils = cast("Any", importlib.import_module("dinkster_comfy.utils"))
+    sample_module = cast("Any", importlib.import_module("dinkster_inference.sample"))
+    samplers = cast("Any", importlib.import_module("dinkster_inference.samplers"))
+    model_management = cast("Any", importlib.import_module("dinkster_inference.model_management"))
+    utils = cast("Any", importlib.import_module("dinkster_inference.utils"))
 
     # A prior VAE residency transition can make the next load take a
     # numerically different path. Normalize to the complete offload state so
@@ -67,7 +67,7 @@ def common_ksampler(
         compat_latent.get("downscale_ratio_temporal"),
     )
     if roles:
-        nested_type = importlib.import_module("dinkster_comfy.nested_tensor").NestedTensor
+        nested_type = importlib.import_module("dinkster_inference.nested_tensor").NestedTensor
         if type(latent_image) is not nested_type:
             raise TypeError("multi-stream LATENT samples must be an exact NestedTensor")
         streams = tuple(latent_image.unbind())
@@ -137,7 +137,7 @@ def model_unload(obj: object) -> None:
     "nothing to evict here", never an error.
     """
     try:
-        mm = cast("Any", importlib.import_module("dinkster_comfy.model_management"))
+        mm = cast("Any", importlib.import_module("dinkster_inference.model_management"))
     except Exception:  # noqa: BLE001 - not a comfy child
         return
     patcher = getattr(obj, "patcher", obj)  # CLIP/VAE carry one at .patcher
