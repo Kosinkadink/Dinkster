@@ -15,11 +15,6 @@ from .bootstrap import load_comfyui_nodes
 from .devices import comfy_resident_meta
 from .pool import default_pool
 
-_TRANSLATION = load_comfyui_nodes()
-_NATIVE_NODE_SET = frozenset(NATIVE_NODES)
-COMFY_NODES: tuple[type[Node], ...] = tuple(
-    node for node in merge_native_nodes(_TRANSLATION.node_classes) if node not in _NATIVE_NODE_SET
-)
 _COMPAT_ARM_NODE_TYPES = (
     "dinkster.load_checkpoint",
     "dinkster.load_diffusion_model",
@@ -49,6 +44,13 @@ _COMPAT_ARM_NODE_TYPES = (
     "dinkster.render_uv_atlas",
     "dinkster.apply_texture_to_mesh",
     "dinkster.mesh_to_model3d",
+)
+_COMPAT_ARM_NODE_TYPE_SET = frozenset(_COMPAT_ARM_NODE_TYPES)
+_TRANSLATION = load_comfyui_nodes()
+COMFY_NODES: tuple[type[Node], ...] = tuple(
+    node
+    for node in merge_native_nodes(_TRANSLATION.node_classes)
+    if node not in NATIVE_NODES or node.schema().node_type in _COMPAT_ARM_NODE_TYPE_SET
 )
 _NATIVE_NODES_BY_TYPE = {node.schema().node_type: node for node in NATIVE_NODES}
 ARM_NODES = {
