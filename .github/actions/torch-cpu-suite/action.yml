@@ -102,6 +102,9 @@ runs:
       run: .venv/bin/pyright -p packages/dinkster-nodes-vision
     - if: env.DINKSTER_MODEL_TEST_GROUP == ''
       shell: bash
+      run: .venv-torch/bin/python -m pytest -q tests/test_cpu_pack_composition.py
+    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
+      shell: bash
       run: .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_hed.py
     - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
       shell: bash
