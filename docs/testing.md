@@ -188,7 +188,7 @@ Depth Anything V3, and SAM 3.1 model packs.
 
 The CPU job excludes pinned model-weight acquisitions and each vision suite's
 second real-artifact run. Sampling-runtime validation lives in
-`dinkster-comfy`; Dinkster's local gates validate the host and worker
+`dinkster-inference`; Dinkster's local gates validate the host and worker
 integration:
 
 ```bash

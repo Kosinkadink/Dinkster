@@ -95,7 +95,7 @@ def _run_worker(checkpoint: Path) -> dict[str, object]:
     )
 
     torch = cast("Any", importlib.import_module("torch"))
-    sd = importlib.import_module("dinkster_comfy.sd")
+    sd = importlib.import_module("dinkster_inference.sd")
     loaded = GenerationLoadCheckpoint.execute(
         checkpoint=AssetRef(
             digest=digest_file(checkpoint),
@@ -134,7 +134,7 @@ def _run_worker(checkpoint: Path) -> dict[str, object]:
         )
     module_file = sd.__file__
     if module_file is None:
-        raise RuntimeError("dinkster_comfy.sd has no module file")
+        raise RuntimeError("dinkster_inference.sd has no module file")
     return {
         "implementation": str(Path(module_file).resolve()),
         "torch": torch.__version__,

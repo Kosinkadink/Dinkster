@@ -58,5 +58,5 @@ current-device state around every op.
 
 ## Dinkster handling
 
-Dinkster delegates Flux RoPE execution to `dinkster_comfy`, whose current
+Dinkster delegates Flux RoPE execution to `dinkster_inference`, whose current
 Kitchen dispatch matches the upstream behavior described above.

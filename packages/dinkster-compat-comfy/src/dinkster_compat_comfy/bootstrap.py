@@ -211,7 +211,7 @@ def _await_sync(value: object) -> None:
         except BaseException as exc:  # noqa: BLE001 - reraised below
             failure.append(exc)
 
-    thread = threading.Thread(target=runner, name="dinkster-comfy-bootstrap")
+    thread = threading.Thread(target=runner, name="dinkster-inference-bootstrap")
     thread.start()
     thread.join()
     if failure:

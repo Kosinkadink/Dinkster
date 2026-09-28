@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import cast
 
 import pytest
-from dinkster_inference.sparse import (
+from dinkster_inference_wire.sparse import (
     PBR_CHANNELS,
     SUBDIVISION_CHANNELS,
     SparseLatent,

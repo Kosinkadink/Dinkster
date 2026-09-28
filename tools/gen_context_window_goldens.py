@@ -4,7 +4,7 @@ Executes the planning functions of comfy/context_windows.py exactly as
 committed at the pinned reference (read with ``git show``, never from
 the working tree) and records window index lists per schedule, fuse
 weights standalone and per planned window set, and FreeNoise-shuffled
-index orders. The replay tests compare dinkster_inference.context_windows
+index orders. The replay tests compare dinkster_inference_wire.context_windows
 and the torch windowing layer against these values.
 
 Run with a torch-capable interpreter:

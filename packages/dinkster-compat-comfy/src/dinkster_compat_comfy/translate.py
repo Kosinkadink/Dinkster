@@ -728,7 +728,7 @@ class CompatError(Exception):
 
 
 MULTI_STREAM_ROLES_KEY = "dinkster.multi_stream_roles@1"
-_NESTED_TENSOR_MODULES = frozenset({"comfy.nested_tensor", "dinkster_comfy.nested_tensor"})
+_NESTED_TENSOR_MODULES = frozenset({"comfy.nested_tensor", "dinkster_inference.nested_tensor"})
 _MULTI_STREAM_INPUTS: Mapping[str, frozenset[str]] = {
     "KSampler": frozenset({"latent_image"}),
     "LTXVConcatAVLatent": frozenset({"video_latent", "audio_latent"}),
@@ -790,7 +790,7 @@ def to_comfy_multistream(value: object) -> object:
     roles = tuple(streams.roles)
     if not roles or any(type(role) is not str or not role for role in roles):
         raise CompatError("multi-stream LATENT roles must be nonempty strings")
-    nested_type = importlib.import_module("dinkster_comfy.nested_tensor").NestedTensor
+    nested_type = importlib.import_module("dinkster_inference.nested_tensor").NestedTensor
     output = dict(latent)
     output["samples"] = nested_type(tuple(stream.payload for stream in streams.streams))
     mask = output.get("noise_mask")
@@ -829,7 +829,7 @@ def from_comfy_multistream(value: object) -> object:
         type(role) is not str or not role for role in role_tuple
     ):
         raise CompatError("NestedTensor LATENT output role count does not match its streams")
-    multi_stream = importlib.import_module("dinkster_inference").MultiStreamLatent
+    multi_stream = importlib.import_module("dinkster_inference_wire").MultiStreamLatent
     output = dict(latent)
     output["samples"] = multi_stream.from_pairs(zip(role_tuple, payloads, strict=True))
     mask = output.get("noise_mask")

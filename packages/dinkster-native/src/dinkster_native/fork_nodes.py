@@ -55,7 +55,7 @@ class _ForkConditioning:
 def _resident_conditioning(conditioning: object, owner: object) -> object:
     import hashlib
 
-    from dinkster_inference import ResidentConditioningCarrier
+    from dinkster_inference_wire import ResidentConditioningCarrier
 
     fingerprint = "fork-conditioning:" + hashlib.sha256(str(id(owner)).encode()).hexdigest()
     return ResidentConditioningCarrier(_ForkConditioning(conditioning, owner, fingerprint))
@@ -78,12 +78,12 @@ def _unwrap_conditioning(value: object) -> object:
 
 
 def _fork_samples(samples: object) -> tuple[object, tuple[str, ...] | None]:
-    from dinkster_inference import MultiStreamLatent
+    from dinkster_inference_wire import MultiStreamLatent
 
     if type(samples) is not MultiStreamLatent:
         return samples, None
     streams = cast("MultiStreamLatent[Any]", samples)
-    nested = importlib.import_module("dinkster_comfy.nested_tensor").NestedTensor(
+    nested = importlib.import_module("dinkster_inference.nested_tensor").NestedTensor(
         tuple(streams.by_role(role) for role in streams.roles)
     )
     return nested, streams.roles
@@ -92,7 +92,7 @@ def _fork_samples(samples: object) -> tuple[object, tuple[str, ...] | None]:
 def _dinkster_samples(samples: object, roles: tuple[str, ...] | None) -> object:
     if roles is None:
         return samples
-    from dinkster_inference import MultiStreamLatent
+    from dinkster_inference_wire import MultiStreamLatent
 
     return MultiStreamLatent[Any].from_pairs(
         tuple(zip(roles, cast("Any", samples).unbind(), strict=True))
@@ -208,7 +208,7 @@ class GenerationRES4LYFRKBetaSampler(RES4LYFRKBetaSampler):
     def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
         cls, *, rk_type: str, eta: float, eta_substep: float
     ) -> Mapping[str, object]:
-        from dinkster_inference import BuiltinSamplerSelection
+        from dinkster_inference_wire import BuiltinSamplerSelection
 
         return cls.outputs(
             sampler=BuiltinSamplerSelection(
@@ -247,8 +247,8 @@ def _regular_indices(extent: int, length: int, overlap: int) -> tuple[tuple[int,
 
 
 def _latent_media_layouts(latent: object, roles: tuple[str, ...] | None):
-    window_plan = cast("Any", importlib.import_module("dinkster_comfy.window_plan"))
-    window_execution = cast("Any", importlib.import_module("dinkster_comfy.window_execution"))
+    window_plan = cast("Any", importlib.import_module("dinkster_inference.window_plan"))
+    window_execution = cast("Any", importlib.import_module("dinkster_inference.window_execution"))
     tensors: tuple[Any, ...] = (
         (cast("Any", latent),) if roles is None else tuple(cast("Any", latent).unbind())
     )
@@ -278,7 +278,7 @@ def _compile_window_executor(
     layers: list[Any] = []
     claimed_axes: set[str] = set()
     wrappable_axes: set[str] = set()
-    context_windows = cast("Any", importlib.import_module("dinkster_comfy.context_windows"))
+    context_windows = cast("Any", importlib.import_module("dinkster_inference.context_windows"))
     for declaration in _window_layers(plan):
         mode = declaration.get("mode")
         axis = "temporal" if mode == "stock-temporal" else declaration.get("axis")
@@ -380,7 +380,7 @@ class GenerationLoadCheckpoint(LoadCheckpoint):
         if not isinstance(checkpoint, AssetRef):
             raise TypeError("checkpoint must be an AssetRef")
         model, clip, vae, _ = importlib.import_module(
-            "dinkster_comfy.sd"
+            "dinkster_inference.sd"
         ).load_checkpoint_guess_config(
             str(checkpoint.local_path()),
             output_vae=True,
@@ -398,7 +398,7 @@ class GenerationLoadModelPatch(LoadModelPatch):
         if not isinstance(model_patch, AssetRef):
             raise TypeError("model_patch must be an AssetRef")
         loaded = importlib.import_module(
-            "dinkster_comfy.minimax_control"
+            "dinkster_inference.minimax_control"
         ).load_minimax_h3_fun_control_patch(str(model_patch.local_path()))
         return cls.outputs(model_patch=loaded)
 
@@ -421,7 +421,7 @@ class GenerationApplyMiniMaxH3FunControlNet(ApplyMiniMaxH3FunControlNet):
         control = None if control_video is None else cast("Any", control_video).movedim(-1, 1)
         source = None if source_video is None else cast("Any", source_video).movedim(-1, 1)
         patched = importlib.import_module(
-            "dinkster_comfy.minimax_control"
+            "dinkster_inference.minimax_control"
         ).apply_minimax_h3_fun_control(
             model,
             model_patch,
@@ -451,7 +451,7 @@ class GenerationLoadDiffusionModel(LoadDiffusionModel):
                 options["fp8_optimizations"] = True
         elif weight_dtype == "fp8_e5m2":
             options["dtype"] = torch.float8_e5m2
-        model = importlib.import_module("dinkster_comfy.sd").load_diffusion_model(
+        model = importlib.import_module("dinkster_inference.sd").load_diffusion_model(
             str(diffusion_model.local_path()), model_options=options
         )
         return cls.outputs(model=model)
@@ -468,7 +468,7 @@ class NativeLoadClip(LoadClip):
     ) -> Mapping[str, object]:
         if not isinstance(text_encoder, AssetRef):
             raise TypeError("text_encoder must be an AssetRef")
-        sd = importlib.import_module("dinkster_comfy.sd")
+        sd = importlib.import_module("dinkster_inference.sd")
         try:
             clip_type = getattr(sd.CLIPType, type.upper())
         except AttributeError:
@@ -495,10 +495,10 @@ class NativeLoadVae(LoadVAE):
             raise ValueError("pixel-space codecs are not supported")
         if not isinstance(vae, AssetRef):
             raise TypeError("vae must be an AssetRef")
-        state, metadata = importlib.import_module("dinkster_comfy.utils").load_torch_file(
+        state, metadata = importlib.import_module("dinkster_inference.utils").load_torch_file(
             str(vae.local_path()), return_metadata=True
         )
-        loaded = importlib.import_module("dinkster_comfy.sd").VAE(sd=state, metadata=metadata)
+        loaded = importlib.import_module("dinkster_inference.sd").VAE(sd=state, metadata=metadata)
         loaded.throw_exception_if_invalid()
         return cls.outputs(vae=loaded)
 
@@ -557,8 +557,10 @@ class GenerationKSampler(KSampler):
             raise ValueError("segmented sampling is not supported")
         if not isinstance(latent_image, Mapping):
             raise TypeError("latent_image must be a mapping")
-        sample = cast("Any", importlib.import_module("dinkster_comfy.sample"))
-        model_management = cast("Any", importlib.import_module("dinkster_comfy.model_management"))
+        sample = cast("Any", importlib.import_module("dinkster_inference.sample"))
+        model_management = cast(
+            "Any", importlib.import_module("dinkster_inference.model_management")
+        )
         sampling_model = model_for_attention_route(model)
         source = dict(cast("Mapping[object, object]", latent_image))
         latent, roles = _fork_samples(source["samples"])
@@ -603,11 +605,11 @@ class GenerationKSampler(KSampler):
                 seed=seed,
             )
         else:
-            from dinkster_inference import BuiltinSamplerSelection
+            from dinkster_inference_wire import BuiltinSamplerSelection
 
             if type(sampler) is not BuiltinSamplerSelection:
                 raise TypeError("sampler must be a built-in sampler selection")
-            samplers = cast("Any", importlib.import_module("dinkster_comfy.samplers"))
+            samplers = cast("Any", importlib.import_module("dinkster_inference.samplers"))
             configured = samplers.KSampler(
                 sampling_model,
                 steps=steps,
@@ -649,7 +651,7 @@ class GenerationVAEDecode(VAEDecode):
         if not isinstance(samples, Mapping):
             raise TypeError("samples must be a latent mapping")
         latent = cast("Mapping[object, object]", samples)["samples"]
-        from dinkster_inference import MultiStreamLatent
+        from dinkster_inference_wire import MultiStreamLatent
 
         if type(latent) is MultiStreamLatent:
             latent = cast("MultiStreamLatent[Any]", latent).by_role("video")
@@ -662,14 +664,14 @@ class GenerationVAEDecode(VAEDecode):
 
 
 def _h3_shape(width: int, height: int, frame_count: int) -> object:
-    from dinkster_inference import MultiStreamLatent
+    from dinkster_inference_wire import MultiStreamLatent
 
     torch = cast("Any", importlib.import_module("torch"))
     while frame_count % 17 != 5:
         frame_count += 1
     video_frames = 2 if frame_count <= 5 else ((frame_count - 5) // 17) * 5 + 2
     audio_frames = round(frame_count / 24 * 40)
-    device = importlib.import_module("dinkster_comfy.model_management").intermediate_device()
+    device = importlib.import_module("dinkster_inference.model_management").intermediate_device()
     return MultiStreamLatent[Any].from_pairs(
         (
             (
@@ -748,7 +750,7 @@ class NativeVAEDecodeAudio(VAEDecodeAudio):
         if not isinstance(samples, Mapping):
             raise TypeError("samples must be a latent mapping")
         latent = cast("Mapping[object, object]", samples)["samples"]
-        from dinkster_inference import MultiStreamLatent
+        from dinkster_inference_wire import MultiStreamLatent
 
         if type(latent) is MultiStreamLatent:
             latent = cast("MultiStreamLatent[Any]", latent).by_role("audio")

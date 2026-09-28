@@ -21,7 +21,7 @@ from dinkster_compat_comfy.legacy_sources import (
     discover_converted_sidecar,
     resolve_weight_source,
 )
-from dinkster_inference import load_safetensors_header
+from dinkster_inference_wire import load_safetensors_header
 
 
 @pytest.fixture

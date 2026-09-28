@@ -2486,7 +2486,7 @@ def test_pack_comfy_alias_registry_is_dedicated_wire_metadata() -> None:
     registry = alias_registry()
     info = PackInfo(display_name="Native", comfy_aliases=registry)
     pack_wire = info.to_wire()
-    assert pack_wire["comfyAliases"]["format"] == "dinkster-comfy-alias/1"  # type: ignore[index]
+    assert pack_wire["comfyAliases"]["format"] == "dinkster-inference-alias/1"  # type: ignore[index]
     assert pack_wire["comfyAliases"]["records"][0]["carrier"] == "test.echo"  # type: ignore[index]
     assert info.to_wire(schemas=SCHEMAS) == pack_wire
     assert SCHEMAS["test.echo"].replacements == ()
@@ -2518,7 +2518,7 @@ def test_pack_comfy_group_registry_is_dedicated_wire_metadata() -> None:
     schemas = {**SCHEMAS, TARGET.node_type: TARGET}
     info = PackInfo(display_name="Native", comfy_groups=group_registry)
     pack_wire = info.to_wire()
-    assert pack_wire["comfyGroups"]["format"] == "dinkster-comfy-group/1"  # type: ignore[index]
+    assert pack_wire["comfyGroups"]["format"] == "dinkster-inference-group/1"  # type: ignore[index]
     assert pack_wire["comfyGroups"]["records"][0]["carrier"] == TARGET.node_type  # type: ignore[index]
     assert info.to_wire(schemas=schemas) == pack_wire
     assert TARGET.replacements == ()

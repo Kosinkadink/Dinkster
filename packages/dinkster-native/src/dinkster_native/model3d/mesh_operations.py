@@ -21,7 +21,13 @@ from typing import Any
 import numpy as np
 import scipy.ndimage as ndi
 import torch
-from dinkster_inference import GIBIBYTE, MEBIBYTE, DenseVoxelGrid, SparseVolume, TriangleMeshBatch
+from dinkster_inference_wire import (
+    GIBIBYTE,
+    MEBIBYTE,
+    DenseVoxelGrid,
+    SparseVolume,
+    TriangleMeshBatch,
+)
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree

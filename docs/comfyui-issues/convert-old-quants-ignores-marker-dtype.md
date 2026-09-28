@@ -44,5 +44,5 @@ instead of hardcoding `float8_e4m3fn`.
 
 ## Dinkster handling
 
-Dinkster delegates legacy quant conversion to `dinkster_comfy`, whose current
+Dinkster delegates legacy quant conversion to `dinkster_inference`, whose current
 behavior matches the upstream behavior described above.

@@ -49,5 +49,5 @@ name should share one contract.
 
 ## Dinkster handling
 
-Dinkster delegates stochastic rounding to `dinkster_comfy`, which allocates
+Dinkster delegates stochastic rounding to `dinkster_inference`, which allocates
 the rng tensor for each call and does not reuse it.

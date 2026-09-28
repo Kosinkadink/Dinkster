@@ -54,8 +54,8 @@ def provider_runtime(
         assert not (manifest_path.parent / "pyproject.toml").exists()
     manifest = load_manifest(manifest_path)
     assert (
-        "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@"
-        "9ef3ad6f156ea3a0d62e64d14beb5b31b979eef9"
+        "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@"
+        "8eeb24bd5ef1e217929b699bd5f6b2d6b1b774f7"
     ) in manifest.requires
     workspace, pythonpath = _pack_runtime_sources(manifest)
     if request.param == "source":
@@ -79,9 +79,9 @@ def provider_runtime(
             "-I",
             "-c",
             "import importlib.metadata as m, importlib.util as u, json, pathlib, sys\n"
-            "dist = m.distribution('dinkster-comfy')\n"
+            "dist = m.distribution('dinkster-inference')\n"
             "assert dist.version == '0.1.0'\n"
-            "spec = u.find_spec('dinkster_comfy')\n"
+            "spec = u.find_spec('dinkster_inference')\n"
             "assert spec is not None and spec.origin is not None\n"
             "root = pathlib.Path(spec.origin).with_name('background_removal')\n"
             "assert root.joinpath('birefnet.py').is_file()\n"
@@ -91,7 +91,7 @@ def provider_runtime(
             "assert pathlib.Path(spec.origin).is_relative_to(sys.prefix)\n"
             "for name in ('dinkster_engine', 'dinkster_kitchen', 'tokenizers', 'comfy'):\n"
             "    assert u.find_spec(name) is None, name\n",
-            "9ef3ad6f156ea3a0d62e64d14beb5b31b979eef9",
+            "8eeb24bd5ef1e217929b699bd5f6b2d6b1b774f7",
         ],
         capture_output=True,
         text=True,

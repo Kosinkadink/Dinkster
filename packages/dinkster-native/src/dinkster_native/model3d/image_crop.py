@@ -6,7 +6,7 @@ import logging
 import math
 
 import torch
-from dinkster_comfy.utils import common_upscale
+from dinkster_inference.utils import common_upscale
 
 
 def _crop_image_with_mask(

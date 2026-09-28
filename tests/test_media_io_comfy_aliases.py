@@ -37,7 +37,7 @@ def _registry() -> dict[str, Any]:
 def test_media_io_comfy_aliases_use_the_canonical_wire_contract() -> None:
     registry = _registry()
     assert set(registry) == {"format", "sourceSchemas", "records"}
-    assert registry["format"] == "dinkster-comfy-alias/1"
+    assert registry["format"] == "dinkster-inference-alias/1"
     assert comfy_alias_registry_to_wire(comfy_alias_registry_from_wire(registry)) == registry
 
     source_schemas = [schema_from_wire(wire) for wire in registry["sourceSchemas"]]

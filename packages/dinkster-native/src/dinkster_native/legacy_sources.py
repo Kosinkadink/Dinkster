@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from dinkster_inference import load_safetensors_header
+from dinkster_inference_wire import load_safetensors_header
 from dinkster_values import MEBIBYTE
 
 __all__ = [

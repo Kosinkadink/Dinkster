@@ -361,7 +361,7 @@ ceiling raise.
   artifact lookup). NO ComfyUI Python module shim: packs rely on process
   globals, torch objects, private paths, import-time effects, and LiteGraph
   internals; emulating that would undermine the architecture. An out-of-core
-  `dinkster-comfy-bridge` may come later, driven by measured pack ports.
+  `dinkster-inference-bridge` may come later, driven by measured pack ports.
 
 ## 6. Core vs extension packs
 

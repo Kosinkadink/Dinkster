@@ -29,7 +29,7 @@ from dinkster_compat_comfy import (
 )
 from dinkster_engine import Engine, EngineEvent, ExecutionError
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, validate
-from dinkster_inference import MultiStreamLatent
+from dinkster_inference_wire import MultiStreamLatent
 from dinkster_protocol import ExportSnapshot, LazyStatusInvocation
 from dinkster_schema import (
     BooleanWidget,
@@ -199,7 +199,7 @@ def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
     dinkster_nested = type(
         "NestedTensor",
         (NestedTensorBase,),
-        {"__module__": "dinkster_comfy.nested_tensor"},
+        {"__module__": "dinkster_inference.nested_tensor"},
     )
     comfy_nested = type(
         "NestedTensor",
@@ -232,7 +232,7 @@ def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
     torch = _InferenceModeProbe()
     nested_modules = {
         "torch": torch,
-        "dinkster_comfy.nested_tensor": type(
+        "dinkster_inference.nested_tensor": type(
             "DinksterNestedModule", (), {"NestedTensor": dinkster_nested}
         ),
         "comfy.nested_tensor": type("ComfyNestedModule", (), {"NestedTensor": comfy_nested}),

@@ -4,8 +4,8 @@
 It translates legacy ComfyUI nodes behind the ordinary worker boundary and
 keeps application-specific behavior out of the engine.
 
-The worker installs the pinned `dinkster-comfy` fork and imports
-`dinkster_comfy` for SD1.5 and MiniMax H3 inference. Other model-family
+The worker installs the pinned `dinkster-inference` fork and imports
+`dinkster_inference` for SD1.5 and MiniMax H3 inference. Other model-family
 inference surfaces are unsupported.
 
 The former native-loader and MiniMax alias declarations remain as

@@ -4,7 +4,7 @@ Dinkster is a pre-release local engine and browser editor for image, video,
 audio, and model-training workflows. Workflows are node graphs executed by
 isolated packs, with typed values, content-addressed caching, managed memory,
 and optional remote workers. Model execution is supplied by the pinned
-`dinkster_comfy` package. Dinkster can import existing ComfyUI workflows; an
+`dinkster_inference` package. Dinkster can import existing ComfyUI workflows; an
 optional ComfyUI checkout adds compatibility for node packs that have not been
 ported.
 

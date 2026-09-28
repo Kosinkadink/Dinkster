@@ -837,7 +837,7 @@ cross-cutting features on every entry point.
 
 The core inference package owns the wire and value contracts that cross
 Dinkster's graph, worker, and model-execution boundaries. It does not implement
-model loading or sampling. The pinned `dinkster_comfy` package is the single
+model loading or sampling. The pinned `dinkster_inference` package is the single
 owner of those numerical operations.
 
 ### 3.14 Model interposition: patch programs as values, not mutation
@@ -934,7 +934,7 @@ Reuse (adapt, with attribution):
   engine-mediated query set on ResourceHandle. Version-mismatched workers are
   workers that cannot negotiate `shm`/`cuda-ipc`; the fallback tier is a portable
   binary tensor transport, with JSON reserved for small non-tensor values.
-- **`dinkster_comfy`** as the single model-loading and sampling engine. Dinkster
+- **`dinkster_inference`** as the single model-loading and sampling engine. Dinkster
   owns graph composition, execution, isolation, caching, and resource governance;
   the pinned package owns the Comfy-derived inference runtime behind those
   boundaries. The optional `dinkster-compat-comfy` pack translates additional

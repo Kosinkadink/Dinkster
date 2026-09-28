@@ -2,7 +2,7 @@
 
 - The default SD 1.5 workflow runs natively without a ComfyUI checkout. For the
   bare `dinkster` launcher, set `DINKSTER_EXECUTION_PYTHON` to the Python
-  environment containing PyTorch and `dinkster_comfy`. The graph
+  environment containing PyTorch and `dinkster_inference`. The graph
   uses native checkpoint, text-encode, empty-latent, sampler, decode, and
   image-save nodes.
 - Pinned core ComfyUI schemas are advertised as import metadata, including

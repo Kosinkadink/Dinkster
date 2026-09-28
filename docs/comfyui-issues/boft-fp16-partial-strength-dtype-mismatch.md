@@ -71,5 +71,5 @@ torch.einsum("b i j, b j ...-> b i ...", bi, inp)  # RuntimeError: expected Floa
 
 ## Dinkster handling
 
-Dinkster delegates BOFT execution to `dinkster_comfy`. The fork currently
+Dinkster delegates BOFT execution to `dinkster_inference`. The fork currently
 matches the upstream behavior described above.

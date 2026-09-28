@@ -177,7 +177,7 @@ behavior identity whenever conditioning or patch curves can affect execution.
 Compatibility authoring nodes map hook keyframes, LoRA declarations,
 conditioning ranges, and conditioning properties into the canonical records at
 model-execution call sites. Text encoding and sampling consume those records
-through `dinkster_comfy`. Runtime patch state is created only at that execution
+through `dinkster_inference`. Runtime patch state is created only at that execution
 seam, not by graph compilers.
 
 This keeps a graph loaded with the ordinary checkpoint node on the model arm.

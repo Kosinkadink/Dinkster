@@ -41,7 +41,7 @@ watchdog.daemon = True
 watchdog.start()
 
 blocked = ('dinkster_compat_comfy.native_arm', 'dinkster_compat_comfy.entry',
-           'dinkster_comfy', 'torch')
+           'dinkster_inference', 'torch')
 class NoExecutionImports(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
         if any(fullname == name or fullname.startswith(name + '.') for name in blocked):

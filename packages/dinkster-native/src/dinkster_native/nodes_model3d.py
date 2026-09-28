@@ -1,4 +1,4 @@
-"""Native mesh operations retained until dinkster-comfy provides them."""
+"""Native mesh operations retained until dinkster-inference provides them."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import importlib
 from collections.abc import Mapping
 from typing import Any, cast
 
-from dinkster_inference import TriangleMeshBatch
+from dinkster_inference_wire import TriangleMeshBatch
 from dinkster_nodes_generation import MODEL3D_GENERATION_NODES
 from dinkster_schema import Node, NodeSchema
 from dinkster_workers import current_execution_context
@@ -48,7 +48,7 @@ def _mesh(value: object) -> TriangleMeshBatch[Any]:
 
 def _operation(operation: str, *, unload_models: bool = False, **inputs: object) -> object:
     if unload_models:
-        importlib.import_module("dinkster_comfy.model_management").unload_all_models()
+        importlib.import_module("dinkster_inference.model_management").unload_all_models()
     mesh_operations = importlib.import_module("dinkster_native.model3d.mesh_operations")
     return getattr(mesh_operations, operation)(**inputs)
 

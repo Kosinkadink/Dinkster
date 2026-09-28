@@ -1,9 +1,9 @@
 ## Conditioning
 
 - SD1.5 positive and negative text conditioning executes through the pinned
-  `dinkster_comfy` runtime.
+  `dinkster_inference` runtime.
 - MiniMax H3 supports text-to-video conditioning through the pinned
-  `dinkster_comfy` runtime. First/last-frame, reference image, clip, and audio
+  `dinkster_inference` runtime. First/last-frame, reference image, clip, and audio
   guide conditioning are unsupported.
 - MiniMax H3 Fun ControlNet model patches support control video and masked
   source-video inpainting through the same runtime.

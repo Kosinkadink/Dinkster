@@ -77,7 +77,7 @@ when launching:
 | Linux/macOS CPU or macOS Apple Silicon MPS | `$PWD/.venv-torch/bin/python` |
 | Windows CPU | `$PWD\.venv-torch\Scripts\python.exe` |
 
-The selected execution environment installs Dinkster's pinned `dinkster_comfy`
+The selected execution environment installs Dinkster's pinned `dinkster_inference`
 runtime when the native or compatibility worker is provisioned.
 
 ## Model folders

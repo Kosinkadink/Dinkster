@@ -36,7 +36,7 @@ else
     echo "==> dinkster-evidence not found - skipping optional dinkster-acceptance"
 fi
 
-dinkster_comfy_requirement="dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@9ef3ad6f156ea3a0d62e64d14beb5b31b979eef9"
+dinkster_inference_requirement="dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@8eeb24bd5ef1e217929b699bd5f6b2d6b1b774f7"
 
 FORCE=0
 for arg in "$@"; do
@@ -82,7 +82,7 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     "simpleeval==1.0.3" \
     "onnxruntime==1.29.0" "opencv-python-headless==5.0.0.93" "pillow==12.0.0" \
     "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
-    "transformers==5.16.1" "$dinkster_comfy_requirement" \
+    "transformers==5.16.1" "$dinkster_inference_requirement" \
     -e packages/dinkster-api \
     -e packages/dinkster-schema \
     -e packages/dinkster-values \
@@ -90,7 +90,7 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     -e packages/dinkster-protocol \
     -e packages/dinkster-assets \
     -e packages/dinkster-caches \
-    -e packages/dinkster-inference \
+    -e packages/dinkster-inference-wire \
     -e packages/dinkster-memory \
     -e packages/dinkster-graph \
     -e packages/dinkster-engine \
@@ -177,7 +177,7 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         pytest numpy scipy torchsde tqdm pillow packaging \
         "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
         dinkster-kitchen==0.2.35.post1 dinkster-aimdo==0.5.5.post2 \
-        "$dinkster_comfy_requirement" \
+        "$dinkster_inference_requirement" \
         -e packages/dinkster-api \
         -e packages/dinkster-schema \
         -e packages/dinkster-values \
@@ -185,7 +185,7 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         -e packages/dinkster-protocol \
         -e packages/dinkster-assets \
         -e packages/dinkster-caches \
-        -e packages/dinkster-inference \
+        -e packages/dinkster-inference-wire \
         -e packages/dinkster-graph \
         -e packages/dinkster-engine \
         -e packages/dinkster-memory \
