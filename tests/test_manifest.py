@@ -31,6 +31,7 @@ from dinkster_workers import (
     VisionProvider,
     load_manifest,
 )
+from dinkster_workers.host import load_pack
 from dinkster_workers.manifest import (
     COMFY_ALIASES_MAX_BYTES,
     COMFY_ALIASES_MAX_ITEMS,
@@ -39,6 +40,27 @@ from dinkster_workers.manifest import (
     vision_provider_to_wire,
     vision_providers_from_wire,
 )
+
+
+def test_extension_contract_fixture_uses_current_public_pack_surfaces() -> None:
+    manifest = load_manifest(Path("tests/fixtures/extension-contract-pack/dinkster-pack.toml"))
+    _worker, _registry, nodes, arms = load_pack(manifest, import_from_pack_root=True)
+
+    assert manifest.contracts is not None
+    assert manifest.contracts.inference is None
+    assert manifest.extension.privileges == ("schema", "server", "frontend")
+    assert [route.id for route in manifest.extension.routes] == ["extension-contract"]
+    assert [event.name for event in manifest.extension.events] == [
+        "fixture.extension-contract.executed"
+    ]
+    assert [module.id for module in manifest.extension.frontend_modules] == [
+        "dinkster-extension-contract-fixture.frontend"
+    ]
+    assert {node.schema().node_type for node in nodes} == {
+        "fixture.extension.contract",
+        "fixture.extension.value",
+    }
+    assert arms == {}
 
 
 def write_manifest(path: Path, handler: object = None) -> Path:
