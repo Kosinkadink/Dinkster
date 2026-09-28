@@ -191,7 +191,7 @@ def run_worker(args: argparse.Namespace) -> int:
             min_tokens=12_288,
             extra_tokens=256,
             sink_conditioning="exact_kv_and_rows",
-            **{"selection.tau": 1.3},
+            **{"selection.tau": 1.3},  # pyright: ignore[reportArgumentType]
         )["MODEL"]
     latent = cast(
         "dict[str, object]",
@@ -534,20 +534,22 @@ def run_mint(args: argparse.Namespace) -> int:
                 arms[arm] = [_run_serial(args, scratch, sparse_enabled=True)]
             else:
                 arms[arm] = _run_distributed(args, scratch)
-    serial = cast("dict[str, Any]", arms["reference"])
-    candidate = cast("list[dict[str, Any]]", arms["candidate"])
-    sparse_quality_oracle = None
+        serial = cast("dict[str, Any]", arms["reference"])
+        candidate = cast("list[dict[str, Any]]", arms["candidate"])
+        sparse_quality_oracle = (
+            _sparse_quality_oracle(
+                Path(serial.pop("_tensor_output")),
+                Path(candidate[0].pop("_tensor_output")),
+            )
+            if args.mode == "sparse"
+            else None
+        )
     if args.mode != "sparse":
         hashes = {
             json.dumps(result["output_hashes"], sort_keys=True) for result in (serial, *candidate)
         }
         if len(hashes) != 1:
             raise ReceiptError("serial and distributed output hashes differ")
-    else:
-        sparse_quality_oracle = _sparse_quality_oracle(
-            Path(serial.pop("_tensor_output")),
-            Path(candidate[0].pop("_tensor_output")),
-        )
     performance = _performance(serial, candidate)
     speedup = performance["speedup"]
     host = _classify_host(candidate)
