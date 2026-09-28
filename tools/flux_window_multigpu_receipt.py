@@ -134,6 +134,9 @@ def run_worker(args: argparse.Namespace) -> int:
     )
     model = loaded["model"]
     clip = cast("Any", loaded["clip"])
+    compute_dtype = cast("Any", model).model.get_dtype_inference()
+    if compute_dtype is not torch.bfloat16:
+        raise ReceiptError(f"Flux receipt compute dtype must be bfloat16, got {compute_dtype}")
     model_load_seconds = time.perf_counter() - load_started
     conditioning = clip.encode_from_tokens_scheduled(clip.tokenize(PROMPT))
     hooks = cast("Any", importlib.import_module("dinkster_comfy.hooks"))
@@ -202,6 +205,7 @@ def run_worker(args: argparse.Namespace) -> int:
             "torch": torch.__version__,
             "torch_cuda": torch.version.cuda,
             "nccl": torch.cuda.nccl.version(),
+            "compute_dtype": str(compute_dtype),
         },
         "distributions": {
             name: importlib.metadata.version(name) for name in ("comfy-kitchen", "dinkster-comfy")
