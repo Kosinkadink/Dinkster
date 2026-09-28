@@ -84,7 +84,7 @@ $GpuEditablePackages = @(
     "packages/dinkster-compat-comfy"
 )
 $KitchenCpuWheel = "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
-$DinksterComfyRequirement = "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@0a3add8d9cc6d3c15f63d21e10a4cfa279c7f0e8"
+$DinksterComfyRequirement = "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@9ef3ad6f156ea3a0d62e64d14beb5b31b979eef9"
 $PreviousProject = [Environment]::GetEnvironmentVariable("UV_PROJECT", "Process")
 $PreviousProjectEnvironment = [Environment]::GetEnvironmentVariable(
     "UV_PROJECT_ENVIRONMENT", "Process"

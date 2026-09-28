@@ -3,7 +3,7 @@ name = "dinkster-vision-birefnet"
 namespaces = []
 executes = ["dinkster.image.matte"]
 requires = [
-    "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@0a3add8d9cc6d3c15f63d21e10a4cfa279c7f0e8",
+    "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@9ef3ad6f156ea3a0d62e64d14beb5b31b979eef9",
     "numpy==2.5.1",
     "safetensors==0.8.0",
     "torch==2.13.0",

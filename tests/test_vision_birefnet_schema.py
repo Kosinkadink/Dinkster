@@ -44,7 +44,7 @@ def test_birefnet_pack_declares_cpu_provider_and_pinned_model() -> None:
     assert manifest.sandbox.writable_mounts is False
     assert manifest.requires == (
         "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@"
-        "0a3add8d9cc6d3c15f63d21e10a4cfa279c7f0e8",
+        "9ef3ad6f156ea3a0d62e64d14beb5b31b979eef9",
         "numpy==2.5.1",
         "safetensors==0.8.0",
         "torch==2.13.0",
