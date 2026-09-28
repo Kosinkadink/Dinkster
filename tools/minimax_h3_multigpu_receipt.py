@@ -21,6 +21,8 @@ from typing import Any, cast
 BASELINES = {
     ("RipperPC", "guidance", "sdpa", "short"): 1.974,
     ("RipperPC", "guidance", "sdpa", "production"): 1.802,
+    ("RipperPC", "guidance", "dinkster_kitchen_int8", "short"): 1.974,
+    ("RipperPC", "guidance", "dinkster_kitchen_int8", "production"): 1.802,
     ("RipperPC", "sequence", "sdpa", "production"): 1.5404,
     ("RipperPC", "sequence", "dinkster_kitchen_int8", "production"): 1.436792013659844,
     ("X570", "sequence", "dinkster_kitchen_int8", "production"): 1.327,
