@@ -41,7 +41,6 @@ the same import environment the legacy loader gives them.
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
 import sys
@@ -55,7 +54,7 @@ from typing import cast
 from dinkster_schema import schema_to_wire
 
 from .bootstrap import bootstrap_comfyui, ensure_prompt_server
-from .legacy import load_legacy_pack, pack_sys_module_name
+from .legacy import load_legacy_pack, pack_sys_module_name, resolve_v3_nodes
 from .translate import CompatError, CompatTranslation, iter_v1_inputs
 from .translate_v3 import translate_v3_schema
 
@@ -99,35 +98,6 @@ def _node_extras(v1_class: type) -> dict[str, object]:
         except (OSError, TypeError):
             pass
     return extras
-
-
-def _resolve_v3_nodes(module: types.ModuleType) -> list[type]:
-    """Resolve a V3 pack's node classes the way ComfyUI's loader does:
-    call (and await, if async) ``comfy_entrypoint``, then ``on_load``,
-    then ``get_node_list``. Duck-typed on purpose - real comfy_api
-    objects in the probe subprocess, plain fakes in tests."""
-
-    async def collect() -> list[type]:
-        entrypoint = module.comfy_entrypoint
-        extension = entrypoint()
-        if inspect.isawaitable(extension):
-            extension = await extension
-        on_load = getattr(extension, "on_load", None)
-        if callable(on_load):
-            loaded = on_load()
-            if inspect.isawaitable(loaded):
-                await loaded
-        get_node_list = getattr(extension, "get_node_list", None)
-        if not callable(get_node_list):
-            raise CompatError("comfy_entrypoint did not return an extension with get_node_list")
-        node_list = get_node_list()
-        if inspect.isawaitable(node_list):
-            node_list = await node_list
-        if not isinstance(node_list, list):
-            raise CompatError("get_node_list did not return a list of node classes")
-        return cast("list[type]", node_list)
-
-    return asyncio.run(collect())
 
 
 def _v3_node_extras(node_class: type, schema: object) -> dict[str, object]:
@@ -176,7 +146,7 @@ def _probe_v3(
     land in ``skipped`` with reasons (one exotic node must not take the
     pack down); an entrypoint that cannot resolve at all raises."""
     nodes: list[dict[str, object]] = []
-    for node_class in _resolve_v3_nodes(module):
+    for node_class in resolve_v3_nodes(module):
         name = getattr(node_class, "__name__", repr(node_class))
         try:
             # Prefer GET_SCHEMA - ComfyUI's own resolution path, which
@@ -215,7 +185,7 @@ def probe_pack(path: Path, *, server_instance: object | None = None) -> dict[str
     real environment bootstrap first (``main``); tests probe synthesized
     packs directly."""
     translation = CompatTranslation()
-    report = load_legacy_pack(path, translation, server_instance=server_instance)
+    report = load_legacy_pack(path, translation, server_instance=server_instance, load_v3=False)
     nodes: list[dict[str, object]] = []
     v3_skipped: dict[str, str] = {}
     v3_error = ""

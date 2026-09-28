@@ -14,17 +14,15 @@ like core nodes. Anything past that - routes actually being served,
 executor monkey-patching taking effect, IS_LIST calling conventions - is
 reported in the pack's LegacyPackReport instead of half-working.
 
-Import mechanics deliberately mirror ComfyUI's ``load_custom_node`` v1
-path (nodes.py), which is synchronous: module name from the directory
-basename, sys.modules key with ``.`` replaced by ``_x_``, spec from
-``__init__.py`` (or the file itself for single-file packs), module
-registered in sys.modules before exec so relative imports resolve. The
-async half of ComfyUI's loader exists only for V3 ``comfy_entrypoint``
-packs, which this loader classifies and skips: V3 packs are the
-port-them-properly case (``dinkster port`` translates them too), not the
-quarantine case. A mixed pack (v1 mappings AND a V3 entrypoint) loads
-its v1 half and flags ``v3_entrypoint_ignored`` - upstream ComfyUI
-ignores the V3 half of a mixed pack silently; Dinkster reports it.
+Import mechanics deliberately mirror ComfyUI's ``load_custom_node`` path
+(nodes.py): module name from the directory basename, sys.modules key with
+``.`` replaced by ``_x_``, spec from ``__init__.py`` (or the file itself),
+and module registration before exec so relative imports resolve. Pure V3
+``comfy_entrypoint`` packs follow ComfyUI's async extension lifecycle, then
+their compatibility class properties pass through the same translator as v1
+mappings. A mixed pack (v1 mappings AND a V3 entrypoint) loads its v1 half and
+flags ``v3_entrypoint_ignored`` - upstream ComfyUI ignores the V3 half of a
+mixed pack silently; Dinkster reports it.
 
 Node ids are namespaced per pack: ``comfy.<pack>.<v1 name>``. v1's flat
 global node namespace made collisions a runtime surprise; two legacy
@@ -45,7 +43,9 @@ authors and node users never see these):
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
+import inspect
 import json
 import os
 import sys
@@ -173,11 +173,37 @@ def _import_pack(path: Path) -> types.ModuleType:
     return module
 
 
+def resolve_v3_nodes(module: types.ModuleType) -> list[type]:
+    """Resolve a V3 extension through the same lifecycle as ComfyUI."""
+
+    async def collect() -> list[type]:
+        extension = module.comfy_entrypoint()
+        if inspect.isawaitable(extension):
+            extension = await extension
+        on_load = getattr(extension, "on_load", None)
+        if callable(on_load):
+            loaded = on_load()
+            if inspect.isawaitable(loaded):
+                await loaded
+        get_node_list = getattr(extension, "get_node_list", None)
+        if not callable(get_node_list):
+            raise CompatError("comfy_entrypoint did not return an extension with get_node_list")
+        node_list = get_node_list()
+        if inspect.isawaitable(node_list):
+            node_list = await node_list
+        if not isinstance(node_list, list):
+            raise CompatError("get_node_list did not return a list of node classes")
+        return cast("list[type]", node_list)
+
+    return asyncio.run(collect())
+
+
 def load_legacy_pack(
     path: Path,
     translation: CompatTranslation,
     *,
     server_instance: object | None,
+    load_v3: bool = True,
 ) -> LegacyPackReport:
     """Import one unmodified pack and translate its v1 mappings into
     ``translation``. Never raises for pack faults - every outcome lands in
@@ -209,25 +235,50 @@ def load_legacy_pack(
     mappings = getattr(module, "NODE_CLASS_MAPPINGS", None)
     if not mappings:
         if callable(getattr(module, "comfy_entrypoint", None)):
-            report.status = "v3-entrypoint"
-            report.error = (
-                "pack uses the V3 comfy_entrypoint API; port it to a native "
-                "Dinkster pack instead of the legacy quarantine"
-            )
+            if not load_v3:
+                report.status = "v3-entrypoint"
+                report.error = "pack uses the V3 comfy_entrypoint API"
+                return report
+            try:
+                mappings = {}
+                display: Mapping[str, str] | dict[str, str] = {}
+                for node_class in resolve_v3_nodes(module):
+                    get_schema = getattr(node_class, "GET_SCHEMA", None)
+                    if not callable(get_schema):
+                        raise CompatError("V3 node class has no GET_SCHEMA classmethod")
+                    schema: object = get_schema()
+                    node_id = str(getattr(schema, "node_id", "") or "")
+                    if not node_id:
+                        raise CompatError("V3 node schema has no node_id")
+                    if node_id in mappings:
+                        raise CompatError(f"duplicate V3 node_id: {node_id}")
+                    mappings[node_id] = node_class
+                    display_name = getattr(schema, "display_name", None)
+                    if isinstance(display_name, str) and display_name:
+                        display[node_id] = display_name
+            except BaseException as exc:  # noqa: BLE001 - pack code is arbitrary
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
+                report.status = "import-error"
+                report.error = traceback.format_exception_only(type(exc), exc)[-1].strip()
+                return report
         else:
             report.status = "no-mappings"
             report.error = "pack exposes no NODE_CLASS_MAPPINGS"
-        return report
-
-    if callable(getattr(module, "comfy_entrypoint", None)):
+            return report
+    elif callable(getattr(module, "comfy_entrypoint", None)):
         # Mixed pack: v1 mappings win (ComfyUI's own precedence), but the
         # V3 half must not vanish silently - upstream's behavior, not ours.
         report.v3_entrypoint_ignored = True
-
-    display = cast(
-        "Mapping[str, str]",
-        getattr(module, "NODE_DISPLAY_NAME_MAPPINGS", None) or {},
-    )
+        display = cast(
+            "Mapping[str, str]",
+            getattr(module, "NODE_DISPLAY_NAME_MAPPINGS", None) or {},
+        )
+    else:
+        display = cast(
+            "Mapping[str, str]",
+            getattr(module, "NODE_DISPLAY_NAME_MAPPINGS", None) or {},
+        )
     already_skipped = set(translation.skipped)
     before_count = len(translation.node_classes)
     translate_mappings(

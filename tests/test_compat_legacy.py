@@ -318,14 +318,58 @@ def test_import_error_is_classified(tmp_path: Path) -> None:
     assert "boom at import" in report.error
 
 
-def test_no_mappings_and_v3_are_distinguished(tmp_path: Path) -> None:
+def test_no_mappings_and_invalid_v3_are_distinguished(tmp_path: Path) -> None:
     empty = write_pack(tmp_path, "empty_pack", "x = 1\n")
     v3 = write_pack(tmp_path, "v3_pack", "def comfy_entrypoint():\n    return None\n")
     empty_report = load_legacy_pack(empty, CompatTranslation(), server_instance=None)
     v3_report = load_legacy_pack(v3, CompatTranslation(), server_instance=None)
     assert empty_report.status == "no-mappings"
-    assert v3_report.status == "v3-entrypoint"
+    assert v3_report.status == "import-error"
+    assert "get_node_list" in v3_report.error
     assert not v3_report.v3_entrypoint_ignored
+
+
+def test_pure_v3_pack_loads_through_compatibility_properties(tmp_path: Path) -> None:
+    pack = write_pack(
+        tmp_path,
+        "v3_pack",
+        "class Schema:\n"
+        "    node_id = 'V3Echo'\n"
+        "    display_name = 'V3 Echo'\n"
+        "class Echo:\n"
+        "    RETURN_TYPES = ('STRING',)\n"
+        "    RETURN_NAMES = ('text',)\n"
+        "    OUTPUT_IS_LIST = (False,)\n"
+        "    OUTPUT_NODE = False\n"
+        "    INPUT_IS_LIST = False\n"
+        "    FUNCTION = 'execute'\n"
+        "    CATEGORY = 'test'\n"
+        "    DESCRIPTION = ''\n"
+        "    @classmethod\n"
+        "    def GET_SCHEMA(cls):\n"
+        "        return Schema()\n"
+        "    @classmethod\n"
+        "    def INPUT_TYPES(cls):\n"
+        "        return {'required': {'text': ('STRING',)}}\n"
+        "    @classmethod\n"
+        "    def execute(cls, text):\n"
+        "        return (text,)\n"
+        "class Extension:\n"
+        "    async def on_load(self):\n"
+        "        self.loaded = True\n"
+        "    async def get_node_list(self):\n"
+        "        assert self.loaded\n"
+        "        return [Echo]\n"
+        "async def comfy_entrypoint():\n"
+        "    return Extension()\n",
+    )
+    translation = CompatTranslation()
+    report = load_legacy_pack(pack, translation, server_instance=None)
+    assert report.status == "loaded"
+    assert report.nodes_translated == 1
+    schema = translation.node_classes[0].define_schema()
+    assert schema.node_type == "comfy.v3_pack.V3Echo"
+    assert schema.display_name == "V3 Echo"
 
 
 def test_mixed_pack_loads_v1_and_flags_ignored_v3(tmp_path: Path) -> None:
