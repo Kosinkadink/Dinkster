@@ -185,8 +185,7 @@ class GenerationExplicitWindowPlan(ExplicitWindowPlan):
     ) -> Mapping[str, object]:
         try:
             index_lists = [
-                [int(value.strip()) for value in window.split(",")]
-                for window in windows.split(";")
+                [int(value.strip()) for value in window.split(",")] for window in windows.split(";")
             ]
         except ValueError:
             raise ValueError("window indices must be comma-separated integers") from None
@@ -249,9 +248,7 @@ def _latent_media_layouts(latent: object, roles: tuple[str, ...] | None):
     window_plan = cast("Any", importlib.import_module("dinkster_comfy.window_plan"))
     window_execution = cast("Any", importlib.import_module("dinkster_comfy.window_execution"))
     tensors: tuple[Any, ...] = (
-        (cast("Any", latent),)
-        if roles is None
-        else tuple(cast("Any", latent).unbind())
+        (cast("Any", latent),) if roles is None else tuple(cast("Any", latent).unbind())
     )
     names = ("latent",) if roles is None else roles
     primary = tensors[0]
@@ -262,8 +259,7 @@ def _latent_media_layouts(latent: object, roles: tuple[str, ...] | None):
     else:
         raise ValueError("window plans require a four- or five-dimensional primary latent")
     extents = {
-        axis: int(primary.shape[dimension])
-        for axis, dimension in primary_dimensions.items()
+        axis: int(primary.shape[dimension]) for axis, dimension in primary_dimensions.items()
     }
     return window_plan, window_execution, tensors, names, primary_dimensions, extents
 
@@ -312,8 +308,7 @@ def _compile_window_executor(
                 overlap = cast("int", declaration["overlap"])
             elif mode == "explicit":
                 index_lists = tuple(
-                    tuple(indices)
-                    for indices in cast("list[list[int]]", declaration["windows"])
+                    tuple(indices) for indices in cast("list[list[int]]", declaration["windows"])
                 )
                 modular = declaration.get("wrap") is True
                 overlap = 0
@@ -365,11 +360,7 @@ def _compile_window_executor(
             mappings = ()
             invariant = tuple(sorted(claimed_axes))
         kinds.append(window_plan.WindowKind(name, mappings, invariant))
-        layouts.append(
-            window_execution.WindowTensorLayout(
-                name, tuple(sorted(dimensions.items()))
-            )
-        )
+        layouts.append(window_execution.WindowTensorLayout(name, tuple(sorted(dimensions.items()))))
     compiled = window_plan.compile_window_plan(
         axes=axes,
         kinds=tuple(kinds),
