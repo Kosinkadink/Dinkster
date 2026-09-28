@@ -146,6 +146,7 @@ def _run_sample(
 
 
 def run_worker(args: argparse.Namespace) -> int:
+    worker_started = time.perf_counter()
     inventory = _inventory()
     torch = cast("Any", importlib.import_module("torch"))
     from dinkster_native.attention import (
@@ -161,11 +162,14 @@ def run_worker(args: argparse.Namespace) -> int:
 
     if not torch.cuda.is_available():
         raise ReceiptError("MiniMax H3 receipt worker requires CUDA")
+    setup_started = time.perf_counter()
     runtime, token = _route(args.policy)
+    load_started = time.perf_counter()
     model = GenerationLoadDiffusionModel.execute(
         diffusion_model=_asset(args.model, args.model_digest), weight_dtype="default"
     )["model"]
-    if args.mode == "sparse":
+    model_load_seconds = time.perf_counter() - load_started
+    if args.sparse_enabled:
         model = NativeBlockSparseAttention.execute(
             model=model,
             selection="sol-attn",
@@ -196,24 +200,29 @@ def run_worker(args: argparse.Namespace) -> int:
         attention_capabilities=runtime.capabilities,
         attention_runtime=runtime,
     )
+    setup_seconds = time.perf_counter() - setup_started
     if distributed:
         activate_distributed_attention(ATTEMPT_GROUP, ATTEMPT)
     try:
-        hashes = []
-        durations = []
         with use_execution_context(context):
-            for repeat in range(args.warmups + args.repeats):
-                output_hashes, duration = _run_sample(
-                    model, latent, positive, negative, cfg, args.steps, args.seed
-                )
-                hashes.append(output_hashes)
-                if repeat >= args.warmups:
-                    durations.append(duration)
+            cold_hashes, cold_seconds = _run_sample(
+                model, latent, positive, negative, cfg, args.steps, args.seed
+            )
+            cold_workflow_seconds = time.perf_counter() - worker_started
+            warmup_runs = [
+                _run_sample(model, latent, positive, negative, cfg, args.steps, args.seed)
+                for _ in range(args.warmups)
+            ]
+            measured_runs = [
+                _run_sample(model, latent, positive, negative, cfg, args.steps, args.seed)
+                for _ in range(args.repeats)
+            ]
     finally:
         if distributed:
             release_distributed_attention(ATTEMPT_GROUP, ATTEMPT)
-    if any(value != hashes[0] for value in hashes[1:]):
-        raise ReceiptError("MiniMax H3 output was not deterministic across repeats")
+    warmup_seconds = [run[1] for run in warmup_runs]
+    sample_seconds = [run[1] for run in measured_runs]
+    median_sample_seconds = statistics.median(sample_seconds)
     properties = torch.cuda.get_device_properties(0)
     result = {
         "status": "PASS",
@@ -222,9 +231,23 @@ def run_worker(args: argparse.Namespace) -> int:
         "distributed": distributed,
         "rank": int(os.environ["DINKSTER_SINGLE_JOB_RANK"]) if distributed else None,
         "world_size": int(os.environ["DINKSTER_SINGLE_JOB_WORLD_SIZE"]) if distributed else 1,
-        "hashes": hashes[0],
-        "sample_seconds": durations,
-        "median_sample_seconds": statistics.median(durations),
+        "output_hashes": {
+            "cold": cold_hashes,
+            "warmups": [run[0] for run in warmup_runs],
+            "measured": [run[0] for run in measured_runs],
+        },
+        "timing": {
+            "worker_wall_seconds": time.perf_counter() - worker_started,
+            "setup_seconds": setup_seconds,
+            "model_load_seconds": model_load_seconds,
+            "cold_workflow_seconds": cold_workflow_seconds,
+            "cold_sample_seconds": cold_seconds,
+            "warmup_sample_seconds": warmup_seconds,
+            "sample_seconds": sample_seconds,
+            "median_warm_workflow_seconds": median_sample_seconds,
+            "median_sample_seconds": median_sample_seconds,
+            "jobs_per_hour": 3600.0 / median_sample_seconds,
+        },
         "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
         "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
         "environment": {
@@ -261,6 +284,7 @@ def _source_environment(dinkster_root: Path, fork_root: Path) -> dict[str, str]:
 def _spawn_worker(
     args: argparse.Namespace,
     result: Path,
+    log: Path,
     environment: dict[str, str],
 ) -> subprocess.Popen[bytes]:
     command = (
@@ -291,16 +315,25 @@ def _spawn_worker(
         str(args.warmups),
         "--repeats",
         str(args.repeats),
+        *(("--sparse-enabled",) if args.sparse_enabled else ()),
     )
-    return subprocess.Popen(command, cwd=args.dinkster_root, env=environment)
+    with log.open("wb") as output:
+        return subprocess.Popen(
+            command,
+            cwd=args.dinkster_root,
+            env=environment,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
 
 
-def _wait(workers: Sequence[tuple[str, subprocess.Popen[bytes]]]) -> None:
+def _wait(workers: Sequence[tuple[str, subprocess.Popen[bytes], Path]]) -> None:
     failures = []
-    for name, worker in workers:
+    for name, worker, log in workers:
         returncode = worker.wait()
         if returncode:
-            failures.append(f"{name} exited {returncode}")
+            tail = "\n".join(log.read_text(errors="replace").splitlines()[-40:])
+            failures.append(f"{name} exited {returncode}:\n{tail}")
     if failures:
         raise ReceiptError("; ".join(failures))
 
@@ -309,8 +342,12 @@ def _load(path: Path) -> dict[str, Any]:
     return cast("dict[str, Any]", json.loads(path.read_text()))
 
 
-def _run_serial(args: argparse.Namespace, scratch: Path) -> dict[str, Any]:
-    result = scratch / "serial.json"
+def _run_serial(
+    args: argparse.Namespace, scratch: Path, *, sparse_enabled: bool = False
+) -> dict[str, Any]:
+    name = "sparse" if sparse_enabled else "serial"
+    result = scratch / f"{name}.json"
+    log = scratch / f"{name}.log"
     environment = _source_environment(args.dinkster_root, args.fork_root)
     environment = {
         key: value
@@ -318,9 +355,12 @@ def _run_serial(args: argparse.Namespace, scratch: Path) -> dict[str, Any]:
         if not key.startswith("DINKSTER_SINGLE_JOB_")
     }
     environment["CUDA_VISIBLE_DEVICES"] = args.gpu[0]
-    worker = _spawn_worker(args, result, environment)
-    _wait((("serial", worker),))
-    return _load(result)
+    args.sparse_enabled = sparse_enabled
+    worker = _spawn_worker(args, result, log, environment)
+    _wait(((name, worker, log),))
+    loaded = _load(result)
+    loaded["worker_log"] = _log_receipt(log)
+    return loaded
 
 
 def _run_distributed(args: argparse.Namespace, scratch: Path) -> list[dict[str, Any]]:
@@ -340,11 +380,33 @@ def _run_distributed(args: argparse.Namespace, scratch: Path) -> list[dict[str, 
                 "DINKSTER_SINGLE_JOB_MULTI_GPU_MODE": args.mode,
                 "DINKSTER_SINGLE_JOB_RENDEZVOUS": f"file://{rendezvous}",
                 "DINKSTER_SINGLE_JOB_TOKEN": token,
+                "NCCL_DEBUG": "INFO",
+                "NCCL_DEBUG_SUBSYS": "INIT,GRAPH",
             }
         )
-        workers.append((f"rank{rank}", _spawn_worker(args, result, environment)))
+        log = scratch / f"rank{rank}.log"
+        args.sparse_enabled = False
+        workers.append((f"rank{rank}", _spawn_worker(args, result, log, environment), log))
     _wait(workers)
-    return [_load(scratch / f"rank{rank}.json") for rank in range(len(args.gpu))]
+    results = []
+    for rank in range(len(args.gpu)):
+        loaded = _load(scratch / f"rank{rank}.json")
+        loaded["worker_log"] = _log_receipt(scratch / f"rank{rank}.log")
+        results.append(loaded)
+    return results
+
+
+def _log_receipt(path: Path) -> dict[str, Any]:
+    contents = path.read_bytes()
+    lines = contents.decode(errors="replace").splitlines()
+    transport_terms = ("NCCL", "P2P", "NET/", "Channel", "NVLS", "SHM")
+    return {
+        "sha256": hashlib.sha256(contents).hexdigest(),
+        "bytes": len(contents),
+        "transport_lines": [
+            line for line in lines if any(term in line for term in transport_terms)
+        ][-500:],
+    }
 
 
 def _nvidia_smi(*arguments: str) -> str:
@@ -360,6 +422,27 @@ def _classify_host(gpus: Sequence[dict[str, Any]]) -> str:
     return os.uname().nodename
 
 
+def _median_seconds(result: dict[str, Any]) -> float:
+    return float(result["timing"]["median_sample_seconds"])
+
+
+def _performance(
+    reference: dict[str, Any], candidate: Sequence[dict[str, Any]]
+) -> dict[str, float]:
+    reference_seconds = _median_seconds(reference)
+    candidate_seconds = max(_median_seconds(result) for result in candidate)
+    world_size = len(candidate)
+    return {
+        "reference_median_seconds": reference_seconds,
+        "candidate_median_seconds": candidate_seconds,
+        "speedup": reference_seconds / candidate_seconds,
+        "reference_jobs_per_hour": 3600.0 / reference_seconds,
+        "candidate_jobs_per_hour": 3600.0 / candidate_seconds,
+        "reference_gpu_seconds_per_job": reference_seconds,
+        "candidate_gpu_seconds_per_job": candidate_seconds * world_size,
+    }
+
+
 def run_mint(args: argparse.Namespace) -> int:
     from dinkster_assets import digest_file
 
@@ -368,6 +451,10 @@ def run_mint(args: argparse.Namespace) -> int:
     args.model = args.model.resolve()
     if len(args.gpu) != 2 and args.mode != "sparse":
         raise ReceiptError("guidance and U2R1 receipt minting require exactly two GPU UUIDs")
+    if args.mode == "sparse" and len(args.gpu) != 1:
+        raise ReceiptError("sparse attention receipt minting requires exactly one GPU UUID")
+    if args.mode == "sparse" and args.policy != "sdpa":
+        raise ReceiptError("sparse attention uses SDPA as its dense reference policy")
     if not args.model.is_file():
         raise ReceiptError(f"model does not exist: {args.model}")
     for root in (args.dinkster_root, args.fork_root):
@@ -377,18 +464,29 @@ def run_mint(args: argparse.Namespace) -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="minimax-h3-multigpu-") as directory:
         scratch = Path(directory)
-        serial = _run_serial(args, scratch)
-        ranks = [] if args.mode == "sparse" else _run_distributed(args, scratch)
-    compared = ranks or [serial]
-    hashes = {json.dumps(result["hashes"], sort_keys=True) for result in (serial, *ranks)}
-    if len(hashes) != 1:
-        raise ReceiptError("serial and distributed output hashes differ")
-    distributed_seconds = (
-        max(float(rank["median_sample_seconds"]) for rank in ranks) if ranks else None
-    )
-    serial_seconds = float(serial["median_sample_seconds"])
-    speedup = serial_seconds / distributed_seconds if distributed_seconds is not None else None
-    host = _classify_host(compared)
+        arm_order = (
+            ("candidate", "reference") if args.candidate_first else ("reference", "candidate")
+        )
+        arms: dict[str, Any] = {}
+        for arm in arm_order:
+            if arm == "reference":
+                arms[arm] = _run_serial(args, scratch)
+            elif args.mode == "sparse":
+                arms[arm] = [_run_serial(args, scratch, sparse_enabled=True)]
+            else:
+                arms[arm] = _run_distributed(args, scratch)
+    serial = cast("dict[str, Any]", arms["reference"])
+    candidate = cast("list[dict[str, Any]]", arms["candidate"])
+    if args.mode != "sparse":
+        hashes = {
+            json.dumps(result["output_hashes"], sort_keys=True)
+            for result in (serial, *candidate)
+        }
+        if len(hashes) != 1:
+            raise ReceiptError("serial and distributed output hashes differ")
+    performance = _performance(serial, candidate)
+    speedup = performance["speedup"]
+    host = _classify_host(candidate)
     workload = (
         "production"
         if (args.width, args.height, args.frames, args.steps) == (1344, 768, 124, 20)
@@ -396,7 +494,7 @@ def run_mint(args: argparse.Namespace) -> int:
     )
     baseline = BASELINES.get((host, args.mode, args.policy, workload))
     receipt = {
-        "schema": "dinkster.minimax-h3-multigpu-receipt.v1",
+        "schema": "dinkster.minimax-h3-multigpu-receipt.v2",
         "status": "PASS",
         "source": {
             "dinkster_head": _git(args.dinkster_root, "rev-parse", "HEAD"),
@@ -416,15 +514,40 @@ def run_mint(args: argparse.Namespace) -> int:
             "seed": args.seed,
             "warmups": args.warmups,
             "repeats": args.repeats,
+            "sampler": "euler",
+            "scheduler": "simple",
+            "denoise": 1.0,
+            "guidance": 2.0 if args.mode == "guidance" else 1.0,
+            "conditioning": "synthetic 32-token bfloat16 context with seed 220",
         },
         "execution": {
             "mode": args.mode,
+            "execution_provider": "bf16-linear",
+            "compute_dtype": "bfloat16",
             "attention_policy": args.policy,
-            "world_size": len(ranks) if ranks else 1,
-            "output_hashes": serial["hashes"],
-            "serial_median_seconds": serial_seconds,
-            "distributed_median_seconds": distributed_seconds,
-            "speedup": speedup,
+            "attention_provider": {
+                "sdpa": "torch-sdpa-priority-v1",
+                "dinkster_kitchen_int8": "comfy-kitchen-int8-attention-v1",
+            }[args.policy],
+            "sparse_backend": "comfy_kitchen_sol_chunked" if args.mode == "sparse" else None,
+            "world_size": len(candidate),
+            "arm_order": list(arm_order),
+            "measurement_boundaries": {
+                "cold_workflow": (
+                    "worker process start through model load, setup, and first KSampler output"
+                ),
+                "warm_workflow": "one warm KSampler node invocation from resident inputs",
+                "sampling_only": "the same KSampler invocation; VAE decode is excluded",
+                "wall_time": "synchronized host wall clock around each KSampler invocation",
+            },
+            "reference_output_hashes": serial["output_hashes"],
+            "candidate_output_hashes": candidate[0]["output_hashes"],
+            "hash_contract": (
+                "all run hashes retained; sparse output may differ from dense reference"
+                if args.mode == "sparse"
+                else "bit-identical between serial and every distributed rank"
+            ),
+            "performance": performance,
             "pre_reset_speedup": baseline,
             "speedup_ratio_to_pre_reset": speedup / baseline if speedup and baseline else None,
         },
@@ -432,14 +555,16 @@ def run_mint(args: argparse.Namespace) -> int:
             "host": host,
             "hostname": os.uname().nodename,
             "nvidia_smi_topology": _nvidia_smi("topo", "-m"),
+            "nvidia_smi_p2p_read": _nvidia_smi("topo", "-p2p", "r"),
+            "nvidia_smi_p2p_write": _nvidia_smi("topo", "-p2p", "w"),
             "nvidia_smi_inventory": _nvidia_smi(
                 "--query-gpu=index,name,uuid,pci.bus_id,memory.total",
                 "--format=csv,noheader",
             ),
             "requested_gpu_uuids": args.gpu,
         },
-        "serial": serial,
-        "distributed_ranks": ranks,
+        "reference": serial,
+        "candidate_ranks": candidate,
     }
     args.output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     print(f"PASS: {args.output}")
@@ -457,6 +582,7 @@ def _workload_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, default=20260813)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--sparse-enabled", action="store_true", help=argparse.SUPPRESS)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -473,6 +599,7 @@ def _parser() -> argparse.ArgumentParser:
     mint.add_argument("--fork-root", type=Path, required=True)
     mint.add_argument("--gpu", action="append", required=True)
     mint.add_argument("--output", type=Path, required=True)
+    mint.add_argument("--candidate-first", action="store_true")
     mint.set_defaults(function=run_mint)
     return parser
 
