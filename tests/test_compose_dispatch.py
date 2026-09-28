@@ -41,6 +41,7 @@ from dinkster_protocol import (
     ReplicaId,
     ReplicaReady,
     RunWorkUnit,
+    SingleJobMultiGpuConfig,
     WorkGroupCancelled,
     WorkGroupDefinition,
     WorkGroupLifecycle,
@@ -379,7 +380,11 @@ def _single_job_pool(
     workers = (_SingleJobFakeWorker(0), _SingleJobFakeWorker(1))
     lanes = tuple(_ReplicaLane(rank, worker) for rank, worker in enumerate(workers))  # type: ignore[arg-type]
     pool = _SingleJobWorkerPool(lanes, tmp_path / "rendezvous", "guidance")
-    pool._invoke_workgroup = pool._invoke_ranks  # type: ignore[method-assign]
+
+    async def invoke_ranks(lanes, _config, invocations, on_event):
+        return await pool._invoke_ranks(lanes, invocations, on_event)
+
+    pool._invoke_workgroup = invoke_ranks  # type: ignore[method-assign]
     return pool, workers
 
 
@@ -444,6 +449,40 @@ def test_single_job_pool_preserves_rank_local_resources_and_rank_zero_events(
             assert received.resolve() == f"resource-{rank}"
             assert received.meta.get(RESOURCE_OWNER_META_KEY) == f"owner-{rank}"
             assert received.meta.get(RESOURCE_PRODUCER_ARM_META_KEY) == f"arm-{rank}"
+
+    asyncio.run(scenario())
+
+
+def test_single_job_pool_selects_requested_lanes_and_resolves_local_ranks(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        workers = tuple(_SingleJobFakeWorker(rank) for rank in range(4))
+        lanes = tuple(_ReplicaLane(rank, worker) for rank, worker in enumerate(workers))  # type: ignore[arg-type]
+        pool = _SingleJobWorkerPool(lanes, tmp_path / "rendezvous", "window")
+
+        async def invoke_ranks(lanes, _config, invocations, on_event):
+            return await pool._invoke_ranks(lanes, invocations, on_event)
+
+        pool._invoke_workgroup = invoke_ranks  # type: ignore[method-assign]
+        selected = replace(
+            _single_job_invocation(),
+            single_job_multi_gpu=SingleJobMultiGpuConfig((1, 3), "sequence"),
+        )
+        result = await pool.invoke(selected)
+        assert result.error is None
+        assert [len(worker.calls) for worker in workers] == [0, 1, 0, 1]
+        executions = [workers[index].calls[0].single_job_multi_gpu_execution for index in (1, 3)]
+        assert [(item.rank, item.world_size, item.mode) for item in executions if item] == [
+            (0, 2, "sequence"),
+            (1, 2, "sequence"),
+        ]
+
+        invalid = replace(
+            _single_job_invocation(),
+            single_job_multi_gpu=SingleJobMultiGpuConfig((0, 1, 2, 3), "sequence"),
+        )
+        with pytest.raises(RuntimeError, match="requires exactly two"):
+            await pool.invoke(invalid)
+        assert [len(worker.calls) for worker in workers] == [0, 1, 0, 1]
 
     asyncio.run(scenario())
 
@@ -2092,6 +2131,7 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
             inputs: object,
             run_id: str,
             attention_config: object,
+            single_job_multi_gpu: object,
         ) -> object:
             return await composer._plan_execution(
                 node_type,
@@ -2099,6 +2139,7 @@ def test_composer_fallback_keeps_requested_policy_in_cache_identity() -> None:
                 inputs,  # type: ignore[arg-type]
                 run_id,
                 attention_config,  # type: ignore[arg-type]
+                single_job_multi_gpu,  # type: ignore[arg-type]
                 topology={node_type: (arm,)},
             )
 
@@ -3139,7 +3180,10 @@ def test_single_job_topology_follows_replacement_rank_workers(tmp_path: Path) ->
             assert composer._resolve_owner(composer._topology, new_token) is domain
             assert all(arm.domain.worker.alive for arm in arms)
 
-            pool._invoke_workgroup = pool._invoke_ranks  # type: ignore[method-assign]
+            async def invoke_ranks(lanes, _config, invocations, on_event):
+                return await pool._invoke_ranks(lanes, invocations, on_event)
+
+            pool._invoke_workgroup = invoke_ranks  # type: ignore[method-assign]
             registry = composer.composition._registry
             result = await composer._routing._routes["same.echo"].invoke(
                 Invocation(

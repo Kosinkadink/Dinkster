@@ -116,6 +116,9 @@ from dinkster_protocol import (
     ReplicaRecipeId,
     SamplerRegistrySnapshot,
     SemanticSlot,
+    SingleJobMultiGpuConfig,
+    SingleJobMultiGpuExecution,
+    SingleJobMultiGpuMode,
     WorkerInstanceId,
     WorkGroupAttempt,
     WorkGroupId,
@@ -487,7 +490,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
         rendezvous_directory: Path | None = None,
     ) -> None:
         super().__init__(lanes)
-        self._rank_resources: dict[str, tuple[Value, ...]] = {}
+        self._rank_resources: dict[tuple[tuple[int, ...], str], tuple[Value, ...]] = {}
         self._rendezvous_path = rendezvous_path
         self._rendezvous_directory = rendezvous_directory
         self._reservations = reservations
@@ -497,6 +500,22 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
         self._recovery_token = f"single-job-recovery-{uuid.uuid4().hex}"
         self._invoke_lock = asyncio.Lock()
         self.mode = mode
+
+    def resolve_config(
+        self, requested: SingleJobMultiGpuConfig | None
+    ) -> tuple[SingleJobMultiGpuConfig, tuple[_ReplicaLane, ...]]:
+        config = requested or SingleJobMultiGpuConfig(
+            tuple(lane.cuda_index for lane in self.lanes),
+            cast("SingleJobMultiGpuMode", self.mode),
+        )
+        available = {lane.cuda_index: lane for lane in self.lanes}
+        if any(index not in available for index in config.cuda_indices):
+            raise RuntimeError(
+                "single-job multi-GPU request names CUDA lanes outside the configured pool"
+            )
+        if config.mode in ("guidance", "sequence") and len(config.cuda_indices) != 2:
+            raise RuntimeError(f"single-job {config.mode} mode requires exactly two CUDA lanes")
+        return config, tuple(available[index] for index in config.cuda_indices)
 
     @property
     def alive(self) -> bool:
@@ -532,17 +551,17 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
         await self.start()
         self._failed_lanes = False
 
-    def _rank_value(self, value: Value, rank: int) -> Value:
+    def _rank_value(self, value: Value, cuda_indices: tuple[int, ...], rank: int) -> Value:
         children = list_children(value)
         if children is not None:
-            replaced = tuple(self._rank_value(child, rank) for child in children)
+            replaced = tuple(self._rank_value(child, cuda_indices, rank) for child in children)
             if replaced != children:
                 payload = value.payload
                 assert isinstance(payload, ListPayload)
                 value = replace(value, payload=replace(payload, children=replaced))
         resource_id = value.meta.get(RESOURCE_ID_META_KEY)
         if isinstance(resource_id, str):
-            values = self._rank_resources.get(resource_id)
+            values = self._rank_resources.get((cuda_indices, resource_id))
             if values is not None:
                 return values[rank]
         return value
@@ -552,6 +571,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
 
     async def _invoke_ranks(
         self,
+        lanes: tuple[_ReplicaLane, ...],
         invocations: tuple[Invocation, ...],
         on_event: OnInvocationEvent | None,
         primary_failure: asyncio.Future[str] | None = None,
@@ -560,7 +580,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             asyncio.create_task(
                 lane.worker.invoke(invocation, on_event=on_event if rank == 0 else None)
             ): rank
-            for rank, (lane, invocation) in enumerate(zip(self.lanes, invocations, strict=True))
+            for rank, (lane, invocation) in enumerate(zip(lanes, invocations, strict=True))
         }
         results: list[InvocationResult | None] = [None] * len(tasks)
         try:
@@ -611,6 +631,8 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
 
     async def _invoke_workgroup(
         self,
+        lanes: tuple[_ReplicaLane, ...],
+        config: SingleJobMultiGpuConfig,
         invocations: tuple[Invocation, ...],
         on_event: OnInvocationEvent | None,
     ) -> tuple[InvocationResult, ...]:
@@ -618,14 +640,16 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             raise RuntimeError("single-job multi-GPU execution requires reservation service")
         if any(
             WORKGROUP_DATA_PLANE_CAPABILITY not in lane.worker.workgroup_capabilities
-            for lane in self.lanes
+            for lane in lanes
         ):
             raise RuntimeError("single-job rank did not negotiate the workgroup v2 capability")
         group = WorkGroupId(f"single-{uuid.uuid4().hex}")
         attempt = WorkGroupAttempt(1)
         recipe = ReplicaRecipeId(
             "sha256:"
-            + hashlib.sha256(f"single-job:{self.mode}:{len(self.lanes)}".encode()).hexdigest()
+            + hashlib.sha256(
+                f"single-job:{config.mode}:{len(lanes)}".encode()
+            ).hexdigest()
         )
         workgroup_lanes = tuple(
             WorkGroupWorkerLane(
@@ -637,7 +661,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
                 SemanticSlot.SINGLE,
                 lane.worker,
             )
-            for rank, lane in enumerate(self.lanes)
+            for rank, lane in enumerate(lanes)
         )
         definition, endpoints = compose_workgroup_configuration(
             group,
@@ -676,6 +700,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             await workgroup_start
             rank_invocations = asyncio.create_task(
                 self._invoke_ranks(
+                    lanes,
                     invocations,
                     on_event,
                     primary_failure,
@@ -729,7 +754,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             primary_failure.cancel()
             workgroup_start.cancel()
             await asyncio.gather(workgroup_start, return_exceptions=True)
-            for lane, member in zip(self.lanes, definition.members, strict=True):
+            for lane, member in zip(lanes, definition.members, strict=True):
                 lane.worker.unbind_workgroup_endpoint(definition, member.replica)
 
     @staticmethod
@@ -740,7 +765,9 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             request for invocation in invocations for request in plan_reservations(invocation)
         )
 
-    def _record_rank_values(self, values: tuple[Value, ...]) -> None:
+    def _record_rank_values(
+        self, cuda_indices: tuple[int, ...], values: tuple[Value, ...]
+    ) -> None:
         children = tuple(list_children(value) for value in values)
         if any(items is None for items in children) != all(items is None for items in children):
             raise RuntimeError("single-job ranks returned different list value types")
@@ -751,14 +778,14 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             for rank_children in zip(
                 *(cast("tuple[Value, ...]", items) for items in children), strict=True
             ):
-                self._record_rank_values(rank_children)
+                self._record_rank_values(cuda_indices, rank_children)
         resource_id = values[0].meta.get(RESOURCE_ID_META_KEY)
         if isinstance(resource_id, str):
             if any(
                 not isinstance(value.meta.get(RESOURCE_ID_META_KEY), str) for value in values[1:]
             ):
                 raise RuntimeError("single-job ranks returned different resource value types")
-            self._rank_resources[resource_id] = values
+            self._rank_resources[(cuda_indices, resource_id)] = values
 
     @classmethod
     def _parent_value(cls, values: tuple[Value, ...]) -> Value:
@@ -814,18 +841,23 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
         async with self._invoke_lock:
             if self._failed_lanes:
                 await self._replace_failed_lanes()
+            config, lanes = self.resolve_config(invocation.single_job_multi_gpu)
             invocations = tuple(
                 replace(
                     invocation,
+                    single_job_multi_gpu=None,
+                    single_job_multi_gpu_execution=SingleJobMultiGpuExecution(
+                        rank, len(lanes), config.mode
+                    ),
                     inputs={
-                        name: self._rank_value(value, rank)
+                        name: self._rank_value(value, config.cuda_indices, rank)
                         for name, value in invocation.inputs.items()
                     },
                 )
-                for rank in range(len(self.lanes))
+                for rank in range(len(lanes))
             )
             try:
-                results = await self._invoke_workgroup(invocations, on_event)
+                results = await self._invoke_workgroup(lanes, config, invocations, on_event)
             except BaseException:
                 if self._failed_lanes:
                     await self._replace_failed_lanes()
@@ -847,7 +879,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
                 values = tuple(
                     cast("Mapping[str, Value]", result.outputs)[name] for result in results
                 )
-                self._record_rank_values(values)
+                self._record_rank_values(config.cuda_indices, values)
                 parent_outputs[name] = self._parent_value(values)
             return replace(results[0], outputs=parent_outputs)
 
@@ -2496,6 +2528,7 @@ class ServingComposer:
             inputs: Mapping[str, Value],
             run_id: str,
             attention_config: AttentionPolicyConfig | None,
+            single_job_multi_gpu: SingleJobMultiGpuConfig | None,
         ) -> ExecutionSelection | None:
             return await self._plan_execution(
                 node_type,
@@ -2503,6 +2536,7 @@ class ServingComposer:
                 inputs,
                 run_id,
                 attention_config,
+                single_job_multi_gpu,
             )
 
         empty_runtime = ExecutionRuntime(
@@ -3371,6 +3405,7 @@ class ServingComposer:
         inputs: Mapping[str, Value],
         run_id: str | None = None,
         attention_config: AttentionPolicyConfig | None = None,
+        single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
         *,
         topology: Topology | None = None,
         extension_hash: str | None = None,
@@ -3616,6 +3651,7 @@ class ServingComposer:
                 inputs,
                 run_id,
                 attention_config,
+                single_job_multi_gpu,
                 topology=topology,
                 extension_hash=extension_hash,
                 preferred_worker=preferred_worker,
@@ -3632,19 +3668,32 @@ class ServingComposer:
             not arm.domain.worker.alive or arm.instance_token() is None
         ):
             raise RuntimeError(f"dispatch arm {arm.name!r} for {node_type!r} is not live")
+        resolved_single_job: SingleJobMultiGpuConfig | None = None
+        if isinstance(arm.execution_worker, _SingleJobWorkerPool):
+            resolved_single_job, _lanes = arm.execution_worker.resolve_config(single_job_multi_gpu)
+        single_job_cache_tag = (
+            ""
+            if resolved_single_job is None
+            else ":single-job:"
+            + resolved_single_job.mode
+            + ":"
+            + ",".join(str(index) for index in resolved_single_job.cuda_indices)
+        )
         if selected is not None:
             return replace(
                 selected,
+                cache_tag=selected.cache_tag + single_job_cache_tag,
                 worker=(arm.remote or "local"),
                 provider=selected_provider,
                 pack=arm.implementation_pack or arm.default_arm,
                 execution_arm=arm.execution_arm,
                 attention_diagnostic=attention_diagnostics.get(arm.name),
+                single_job_multi_gpu=resolved_single_job,
             )
         token = attention_routes[arm.name]
         return ExecutionSelection(
             target=arm.name,
-            cache_tag=arm.default_cache_tag,
+            cache_tag=arm.default_cache_tag + single_job_cache_tag,
             worker=(arm.remote or "local"),
             provider=selected_provider,
             pack=arm.implementation_pack or arm.default_arm,
@@ -3652,6 +3701,7 @@ class ServingComposer:
             attention_policy=("auto" if token is None else token.requested_policy),
             attention_route_token=token,
             attention_diagnostic=attention_diagnostics.get(arm.name),
+            single_job_multi_gpu=resolved_single_job,
         )
 
     def _publish_runtime(
@@ -3734,6 +3784,7 @@ class ServingComposer:
             inputs: Mapping[str, Value],
             run_id: str,
             attention_config: AttentionPolicyConfig | None,
+            single_job_multi_gpu: SingleJobMultiGpuConfig | None,
         ) -> ExecutionSelection | None:
             return await self._plan_execution(
                 node_type,
@@ -3741,6 +3792,7 @@ class ServingComposer:
                 inputs,
                 run_id,
                 attention_config,
+                single_job_multi_gpu,
                 topology=topology,
                 extension_hash=behavior_hash,
                 vision_provider_routes=vision_provider_routes,
@@ -3834,6 +3886,7 @@ class ServingComposer:
             inputs: Mapping[str, Value],
             run_id: str,
             attention_config: AttentionPolicyConfig | None,
+            single_job_multi_gpu: SingleJobMultiGpuConfig | None,
         ) -> ExecutionSelection | None:
             worker_name = self._hinted_worker(copied, node_id)
             if worker_name is None:
@@ -3841,7 +3894,13 @@ class ServingComposer:
                     None
                     if base_planner is None
                     else await base_planner(
-                        node_id, node_type, schema, inputs, run_id, attention_config
+                        node_id,
+                        node_type,
+                        schema,
+                        inputs,
+                        run_id,
+                        attention_config,
+                        single_job_multi_gpu,
                     )
                 )
             hint_id = top_level_node_id(node_id)
@@ -3893,6 +3952,7 @@ class ServingComposer:
                     inputs,
                     run_id,
                     attention_config,
+                    single_job_multi_gpu,
                     topology=topology,
                     extension_hash=runtime.extension_behavior_hash,
                     preferred_worker=worker_name,

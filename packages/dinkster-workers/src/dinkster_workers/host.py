@@ -1446,6 +1446,7 @@ async def serve_connection(
                         if invocation.attention_route_token is not None
                         else None
                     ),
+                    single_job_multi_gpu_execution=invocation.single_job_multi_gpu_execution,
                     preview_mode=invocation.preview_mode,
                     preview_animation=invocation.preview_animation,
                     cancelled=lambda: (

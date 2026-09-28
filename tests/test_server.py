@@ -50,6 +50,7 @@ from dinkster_protocol import (
     GraphCompilerRegistrySnapshot,
     KeyedContribution,
     PackSettingsSchema,
+    SingleJobMultiGpuConfig,
 )
 from dinkster_schema import (
     SCHEMA_WIRE_VERSION,
@@ -4082,6 +4083,54 @@ def test_attention_submit_validation_and_idempotency() -> None:
             )
             assert permuted.status == 202
             assert (await permuted.json())["duplicate"] is True
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_single_job_multi_gpu_submit_validation_and_idempotency() -> None:
+    async def scenario() -> None:
+        client = await make_client()
+        try:
+            assert (await client.post("/api/queue/pause")).status == 200
+            graph = echo_graph()
+            invalid = await client.post(
+                "/api/jobs",
+                json=submit_body(
+                    graph,
+                    ["s"],
+                    singleJobMultiGpu={"cudaIndices": [0], "mode": "sequence"},
+                ),
+            )
+            assert invalid.status == 400
+            assert client.app[STATE_KEY].queue.jobs() == []
+
+            config = {"cudaIndices": [1, 3], "mode": "sequence"}
+            first = await client.post(
+                "/api/jobs",
+                json=submit_body(graph, ["s"], singleJobMultiGpu=config),
+            )
+            assert first.status == 202
+            job = client.app[STATE_KEY].queue.get("c1", "j1")
+            assert job is not None
+            assert job.single_job_multi_gpu == SingleJobMultiGpuConfig((1, 3), "sequence")
+
+            duplicate = await client.post(
+                "/api/jobs",
+                json=submit_body(graph, ["s"], singleJobMultiGpu=config),
+            )
+            assert duplicate.status == 202
+            assert (await duplicate.json())["duplicate"] is True
+            changed = await client.post(
+                "/api/jobs",
+                json=submit_body(
+                    graph,
+                    ["s"],
+                    singleJobMultiGpu={"cudaIndices": [0, 1], "mode": "guidance"},
+                ),
+            )
+            assert changed.status == 409
         finally:
             await client.close()
 

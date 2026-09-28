@@ -25,6 +25,7 @@ from dinkster_protocol import (
     LazyStatusResult,
     MediaSourceAuthority,
     OnInvocationEvent,
+    SingleJobMultiGpuExecution,
 )
 from dinkster_schema import (
     InputSpec,
@@ -371,6 +372,7 @@ def test_executor_stays_host_only_while_body_fields_cross_the_wire() -> None:
         text_dtype="float16",
         vae_dtype="float32",
         attention_route_token=attention_token,
+        single_job_multi_gpu_execution=SingleJobMultiGpuExecution(1, 2, "sequence"),
         extension_snapshot_digest="sha256:" + "a" * 64,
         export_snapshot=ExportSnapshot(
             prompt={"save": {"class_type": "Save", "inputs": {}}},
@@ -403,6 +405,11 @@ def test_executor_stays_host_only_while_body_fields_cross_the_wire() -> None:
         assert header["attentionPolicy"] == "auto"
         assert "attentionRouteToken" in header
         assert "attentionCapabilities" not in header
+        assert header["singleJobMultiGpuExecution"] == {
+            "rank": 1,
+            "worldSize": 2,
+            "mode": "sequence",
+        }
         assert header["extensionSnapshotDigest"] == "sha256:" + "a" * 64
         assert header["exportSnapshot"] == {
             "prompt": {"save": {"class_type": "Save", "inputs": {}}},
@@ -419,6 +426,7 @@ def test_executor_stays_host_only_while_body_fields_cross_the_wire() -> None:
         assert decoded.vae_dtype == "float32"
         assert decoded.attention_policy == "auto"
         assert decoded.attention_route_token == attention_token
+        assert decoded.single_job_multi_gpu_execution == invocation.single_job_multi_gpu_execution
         assert not hasattr(decoded, "attention_capabilities")
         assert decoded.extension_snapshot_digest == "sha256:" + "a" * 64
         assert decoded.export_snapshot == invocation.export_snapshot

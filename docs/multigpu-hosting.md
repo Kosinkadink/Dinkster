@@ -13,8 +13,8 @@ Dinkster exposes two independent multi-GPU configurations:
   concurrent-job throughput.
 - `--single-job-multi-gpu-devices` starts one isolated rank per device for a
   single graph execution. The ranks coordinate through the worker-owned
-  attention route. This is a numerical-correctness capability and currently
-  makes no latency claim.
+  attention route. Job submission can choose an ordered subset of this startup
+  pool and an eligible guidance, sequence, or window mode.
 
 Do not compare the latency of one distributed job with the throughput of
 several replicas. Record wall seconds per job and completed jobs per hour as
@@ -112,9 +112,10 @@ acceptance.
 
 ## Performance measurements
 
-Correctness does not imply speedup. The current distributed adapter preserves
-the stock backend call shape on every rank, so all ranks perform the complete
-attention operation before gathering rank-owned output heads.
+Correctness does not imply speedup. Guidance divides model-evaluated
+conditioning lanes, H3 U2R1 divides sequence rows and attention heads, and
+window mode divides a joint-window plan. Verify that the selected decomposition
+ran; process count alone is not evidence that work was sharded.
 
 When evaluating later performance work, record cold complete-workflow wall
 time, five warm complete-workflow walls, sampling-only time, peak memory, and

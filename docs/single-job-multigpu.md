@@ -71,6 +71,19 @@ Serve exposes:
 be selected explicitly. Sequence mode requires exactly two ranks; guidance and
 window accept two or more ranks.
 
+The startup list is an allowlist and capacity boundary. Native and
+Comfy-compatible job submission may include a run-scoped selection:
+
+```json
+{"singleJobMultiGpu":{"cudaIndices":[1,3],"mode":"sequence"}}
+```
+
+The pool maps the ordered host indices to local ranks 0 through N-1 before the
+worker boundary. Only those workers join the workgroup. The host selection is
+never serialized to a rank; rank invocations carry only their local rank,
+world size, and resolved mode. Mode and ordered indices partition execution
+cache identity and rank-local resident-resource mappings.
+
 The selected rank count must be at least two, device indices must be unique and
 nonnegative, and the Ulysses attention head and packed sequence counts must
 divide evenly across its two ranks.

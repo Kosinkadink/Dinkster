@@ -20,6 +20,7 @@ from dinkster_protocol import (
     AttentionRouteToken,
     derive_attention_route_token,
 )
+from dinkster_workers import current_execution_context
 
 torch = cast("Any", importlib.import_module("torch"))
 
@@ -177,9 +178,23 @@ def _distributed_config() -> _DistributedConfig:
     if _active_attempt is None:
         raise RuntimeError("distributed attention has no active workgroup attempt")
     try:
-        rank = int(os.environ["DINKSTER_SINGLE_JOB_RANK"])
-        world_size = int(os.environ["DINKSTER_SINGLE_JOB_WORLD_SIZE"])
-        mode = os.environ["DINKSTER_SINGLE_JOB_MULTI_GPU_MODE"]
+        context = current_execution_context()
+        execution = None if context is None else context.single_job_multi_gpu_execution
+        rank = (
+            execution.rank
+            if execution is not None
+            else int(os.environ["DINKSTER_SINGLE_JOB_RANK"])
+        )
+        world_size = (
+            execution.world_size
+            if execution is not None
+            else int(os.environ["DINKSTER_SINGLE_JOB_WORLD_SIZE"])
+        )
+        mode = (
+            execution.mode
+            if execution is not None
+            else os.environ["DINKSTER_SINGLE_JOB_MULTI_GPU_MODE"]
+        )
         rendezvous_base = os.environ["DINKSTER_SINGLE_JOB_RENDEZVOUS"]
         token_base = os.environ["DINKSTER_SINGLE_JOB_TOKEN"]
     except (KeyError, ValueError) as exc:

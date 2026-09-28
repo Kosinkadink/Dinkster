@@ -840,6 +840,14 @@ def encode_invocation(
         header["attentionRouteToken"] = attention_route_token_to_wire(
             invocation.attention_route_token
         )
+    if invocation.single_job_multi_gpu is not None:
+        raise BoundaryError("host single-job multi-GPU selection was not resolved by its pool")
+    if invocation.single_job_multi_gpu_execution is not None:
+        from dinkster_protocol import single_job_multi_gpu_execution_to_wire
+
+        header["singleJobMultiGpuExecution"] = single_job_multi_gpu_execution_to_wire(
+            invocation.single_job_multi_gpu_execution
+        )
     if invocation.media_sources:
         header["mediaSources"] = [
             {
@@ -872,6 +880,7 @@ def decode_invocation(
     from dinkster_protocol import (
         attention_route_token_from_wire,
         resolve_attention_runtime_status,
+        single_job_multi_gpu_execution_from_wire,
         validate_attention_policy,
     )
 
@@ -968,6 +977,14 @@ def decode_invocation(
     except (TypeError, ValueError) as exc:
         raise BoundaryError(f"malformed invocation attention routing: {exc}") from exc
     try:
+        single_job_multi_gpu_execution = (
+            single_job_multi_gpu_execution_from_wire(header["singleJobMultiGpuExecution"])
+            if "singleJobMultiGpuExecution" in header
+            else None
+        )
+    except (TypeError, ValueError) as exc:
+        raise BoundaryError(f"malformed invocation single-job multi-GPU execution: {exc}") from exc
+    try:
         preview_mode = validate_preview_mode(header.get("previewMode", "off"))
     except ValueError as exc:
         raise BoundaryError(f"malformed invocation preview mode: {exc}") from exc
@@ -1033,6 +1050,7 @@ def decode_invocation(
             text_dtype=component_dtypes[1],
             vae_dtype=component_dtypes[2],
             attention_policy=attention_policy,
+            single_job_multi_gpu_execution=single_job_multi_gpu_execution,
             attention_route_token=attention_token,
             media_sources=tuple(media_sources),
             preview_mode=preview_mode,

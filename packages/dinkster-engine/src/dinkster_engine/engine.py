@@ -68,6 +68,7 @@ from dinkster_protocol import (
     PreviewPolicy,
     SamplerRegistrySnapshot,
     SavedArtifact,
+    SingleJobMultiGpuConfig,
     Worker,
     canonical_attention_route_token_bytes,
     extension_behavior_hash,
@@ -184,6 +185,7 @@ class ExecutionSelection:
     attention_policy: AttentionPolicy = "auto"
     attention_route_token: AttentionRouteToken | None = None
     attention_diagnostic: str | None = None
+    single_job_multi_gpu: SingleJobMultiGpuConfig | None = None
 
     def __post_init__(self) -> None:
         # Planning runs BEFORE cache lookup: a blank selection would key a
@@ -207,7 +209,15 @@ class ExecutionSelection:
 
 
 PlanExecution = Callable[
-    [str, str, NodeSchema, Mapping[str, Value], str, AttentionPolicyConfig | None],
+    [
+        str,
+        str,
+        NodeSchema,
+        Mapping[str, Value],
+        str,
+        AttentionPolicyConfig | None,
+        SingleJobMultiGpuConfig | None,
+    ],
     "Awaitable[ExecutionSelection | None]",
 ]
 """Engine hook: decide where one node attempt executes, BEFORE cache
@@ -491,6 +501,7 @@ class Engine:
         self._run_attempts: dict[str, int] = {}
         self._run_preview_policy: dict[str, PreviewPolicy] = {}
         self._run_attention_config: dict[str, AttentionPolicyConfig] = {}
+        self._run_single_job_multi_gpu: dict[str, SingleJobMultiGpuConfig] = {}
         self._run_artifacts: dict[str, list[SavedArtifact]] = {}
         self._run_prepared_types: dict[str, set[str]] = {}
         self._run_prepare_locks: dict[str, asyncio.Lock] = {}
@@ -1240,6 +1251,7 @@ class Engine:
                 inputs,
                 run_id,
                 self._run_attention_config.get(run_id),
+                self._run_single_job_multi_gpu.get(run_id),
             )
         except ExecutionError:
             raise
@@ -1664,6 +1676,9 @@ class Engine:
                 attention_policy=(selection.attention_policy if selection is not None else "auto"),
                 attention_route_token=(
                     selection.attention_route_token if selection is not None else None
+                ),
+                single_job_multi_gpu=(
+                    selection.single_job_multi_gpu if selection is not None else None
                 ),
                 media_sources=self._run_media_sources.get(run_id, ()),
                 preview_mode=(
@@ -2482,6 +2497,7 @@ class Engine:
         media_sources: Sequence[MediaSourceAuthority] = (),
         preview_policy: PreviewPolicy | None = None,
         attention_config: AttentionPolicyConfig | None = None,
+        single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
         cache_enabled: bool = True,
     ) -> RunResult:
         """Execute a raw graph, compiling once when this runtime declares compilers."""
@@ -2514,6 +2530,7 @@ class Engine:
                 media_sources=media_sources,
                 preview_policy=preview_policy,
                 attention_config=attention_config,
+                single_job_multi_gpu=single_job_multi_gpu,
                 cache_enabled=cache_enabled,
             )
         self._compiling_run_ids.add(run_id)
@@ -2530,6 +2547,7 @@ class Engine:
             media_sources=media_sources,
             preview_policy=preview_policy,
             attention_config=attention_config,
+            single_job_multi_gpu=single_job_multi_gpu,
             cache_enabled=cache_enabled,
         )
 
@@ -2544,6 +2562,7 @@ class Engine:
         media_sources: Sequence[MediaSourceAuthority] = (),
         preview_policy: PreviewPolicy | None = None,
         attention_config: AttentionPolicyConfig | None = None,
+        single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
         cache_enabled: bool = True,
     ) -> RunResult:
         """Execute a validated artifact without invoking graph compilation."""
@@ -2569,6 +2588,7 @@ class Engine:
             media_sources=media_sources,
             preview_policy=preview_policy,
             attention_config=attention_config,
+            single_job_multi_gpu=single_job_multi_gpu,
             cache_enabled=cache_enabled,
         )
 
@@ -2584,6 +2604,7 @@ class Engine:
         media_sources: Sequence[MediaSourceAuthority] = (),
         preview_policy: PreviewPolicy | None = None,
         attention_config: AttentionPolicyConfig | None = None,
+        single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
         cache_enabled: bool = True,
     ) -> RunResult:
         """Execute targets. run_id defaults to a fresh unique id; a caller
@@ -2623,6 +2644,11 @@ class Engine:
             raise ValueError("preview_policy must be a PreviewPolicy")
         if attention_config is not None and type(attention_config) is not AttentionPolicyConfig:
             raise ValueError("attention_config must be an AttentionPolicyConfig")
+        if (
+            single_job_multi_gpu is not None
+            and type(single_job_multi_gpu) is not SingleJobMultiGpuConfig
+        ):
+            raise ValueError("single_job_multi_gpu must be a SingleJobMultiGpuConfig")
         runtime_token = _execution_runtime.set(runtime)
         self._run_schemas[run_id] = schemas
         self._run_media_sources[run_id] = sources
@@ -2633,6 +2659,8 @@ class Engine:
             self._run_preview_policy[run_id] = preview_policy
         if attention_config is not None:
             self._run_attention_config[run_id] = attention_config
+        if single_job_multi_gpu is not None:
+            self._run_single_job_multi_gpu[run_id] = single_job_multi_gpu
         self._run_artifacts[run_id] = []
         try:
             # One elaboration pass per run (hazard H10): the SAME effective map
@@ -2729,6 +2757,7 @@ class Engine:
             self._run_attempts.pop(run_id, None)
             self._run_preview_policy.pop(run_id, None)
             self._run_attention_config.pop(run_id, None)
+            self._run_single_job_multi_gpu.pop(run_id, None)
             self._run_artifacts.pop(run_id, None)
             self._run_prepared_types.pop(run_id, None)
             self._run_prepare_locks.pop(run_id, None)

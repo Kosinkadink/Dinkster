@@ -69,6 +69,7 @@ Surface:
                                          /docs/assets/{digest} routes
 - POST   /api/jobs                       submit {clientId, jobId, graph,
                                          targets, priority?, attention?,
+                                         singleJobMultiGpu?,
                                          sourceDocument?, scope?, placement?}
                                          (placement maps top-level node ids
                                          to worker names; scope is
@@ -266,6 +267,8 @@ from dinkster_protocol import (
     attention_policy_config_from_wire,
     attention_policy_config_to_wire,
     canonical_extension_snapshot,
+    single_job_multi_gpu_config_from_wire,
+    single_job_multi_gpu_config_to_wire,
     validate_attention_policy,
     validate_preview_animation,
     validate_preview_mode,
@@ -3270,6 +3273,14 @@ async def handle_submit(request: web.Request) -> web.Response:
     except (TypeError, ValueError) as exc:
         raise _bad_request(f"'attention' is invalid: {exc}") from exc
     attention_config = submitted_attention or state.attention_default
+    try:
+        single_job_multi_gpu = (
+            single_job_multi_gpu_config_from_wire(body["singleJobMultiGpu"])
+            if "singleJobMultiGpu" in body
+            else None
+        )
+    except (TypeError, ValueError) as exc:
+        raise _bad_request(f"'singleJobMultiGpu' is invalid: {exc}") from exc
     # Execution-opaque provenance (frontend contract 2026-07): the canonical
     # asset digest of the workflow document this job was compiled from.
     # Syntax-checked only - it never joins execution or cache identity, so
@@ -3333,6 +3344,10 @@ async def handle_submit(request: web.Request) -> web.Response:
         }
     if submitted_attention is not None and submitted_attention != state.attention_default:
         fingerprint_payload["attention"] = attention_policy_config_to_wire(submitted_attention)
+    if single_job_multi_gpu is not None:
+        fingerprint_payload["singleJobMultiGpu"] = single_job_multi_gpu_config_to_wire(
+            single_job_multi_gpu
+        )
     if not cache_enabled:
         fingerprint_payload["cacheEnabled"] = False
     fingerprint = hashlib.sha256(
@@ -3529,6 +3544,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 compiled_graph=compiled_graph,
                 previews=previews,
                 attention_config=attention_config,
+                single_job_multi_gpu=single_job_multi_gpu,
                 cache_enabled=cache_enabled,
             )
         except JobGraphAdmissionError as exc:
