@@ -3,7 +3,7 @@ name = "dinkster-vision-birefnet"
 namespaces = []
 executes = ["dinkster.image.matte"]
 requires = [
-    "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@470c4f67d7b68afab9f894bbe69f7cfac5f2a82e",
+    "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@dacdebc66f097e9889ce66e36e41c25a7b8f6494",
     "numpy==2.5.1",
     "safetensors==0.8.0",
     "torch==2.13.0",
