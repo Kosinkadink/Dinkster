@@ -11,7 +11,11 @@ import numpy as np
 import pytest
 from dinkster_assets import AssetRef, digest_file
 from dinkster_compat_comfy.translate import CompatTranslation
-from dinkster_inference import MultiStreamLatent, ResidentConditioningCarrier
+from dinkster_inference import (
+    BuiltinSamplerSelection,
+    MultiStreamLatent,
+    ResidentConditioningCarrier,
+)
 from dinkster_native import fork_nodes
 from dinkster_native.native import register_native_types
 from dinkster_protocol import Invocation
@@ -135,6 +139,71 @@ def test_native_types_preserve_resident_conditioning_codec() -> None:
     assert registry.input_object("dinkster.conditioning", carrier) == "native-conditioning"
 
 
+def test_native_types_register_portable_window_plans() -> None:
+    registry = TypeRegistry()
+    register_native_types(registry)
+    plan = fork_nodes.GenerationExplicitWindowPlan.execute(
+        axis="temporal",
+        windows="0,2,0; 1,3",
+        wrap=True,
+        fuse_method="flat",
+    )["plan"]
+
+    spec = registry.spec("dinkster.window-plan")
+
+    assert spec.decode(spec.encode(plan)) == plan
+
+
+def test_native_types_register_resident_model_patches() -> None:
+    registry = TypeRegistry()
+    register_native_types(registry)
+    model_patch = object()
+
+    spec = registry.spec("comfy.MODEL_PATCH")
+
+    assert spec.decode(spec.encode(model_patch)) is model_patch
+
+
+def test_window_plan_nodes_stack_semantic_axes_without_tensor_dimensions() -> None:
+    temporal = fork_nodes.GenerationTemporalWindowPlan.execute(
+        context_length=4,
+        context_overlap=1,
+        context_schedule="standard_static",
+        context_stride=1,
+        closed_loop=False,
+        fuse_method="pyramid",
+    )["plan"]
+    stacked = fork_nodes.GenerationSpatialTilePlan.execute(
+        plan=temporal,
+        tile_height=32,
+        tile_width=48,
+        overlap_height=8,
+        overlap_width=12,
+        fuse_method="overlap-linear",
+    )["plan"]
+
+    layers = cast("Mapping[str, list[Mapping[str, object]]]", stacked)["layers"]
+    assert [layer.get("axis", "temporal") for layer in layers] == [
+        "temporal",
+        "height",
+        "width",
+    ]
+    assert all("dimension" not in layer and "dim" not in layer for layer in layers)
+
+
+def test_res4lyf_sampler_node_preserves_independent_substep_options() -> None:
+    sampler = fork_nodes.GenerationRES4LYFRKBetaSampler.execute(
+        rk_type="res_3s",
+        eta=0.25,
+        eta_substep=0.75,
+    )["sampler"]
+
+    assert sampler == BuiltinSamplerSelection(
+        "res4lyf.rk_beta",
+        (("rk_type", "res_3s"), ("eta", 0.25), ("eta_substep", 0.75)),
+    )
+
+
 def test_worker_unwraps_resident_conditioning_for_node_consumers() -> None:
     class ResidentPayload:
         _dinkster_resident_fingerprint = "test-worker-conditioning"
@@ -185,6 +254,7 @@ def test_fork_loaders_call_dinkster_comfy(monkeypatch: pytest.MonkeyPatch, tmp_p
     asset = _asset(path)
     calls: list[tuple[object, ...]] = []
     model, clip, vae = object(), object(), object()
+    model_patch = object()
 
     class LoadedVAE:
         def __init__(self, *, sd: object, metadata: object) -> None:
@@ -213,6 +283,11 @@ def test_fork_loaders_call_dinkster_comfy(monkeypatch: pytest.MonkeyPatch, tmp_p
     modules = {
         "dinkster_comfy.sd": sd,
         "dinkster_comfy.utils": utils,
+        "dinkster_comfy.minimax_control": SimpleNamespace(
+            load_minimax_h3_fun_control_patch=lambda path: (
+                calls.append(("model-patch", path)) or model_patch
+            )
+        ),
         "torch": _FakeTorch,
     }
     monkeypatch.setattr(
@@ -226,6 +301,9 @@ def test_fork_loaders_call_dinkster_comfy(monkeypatch: pytest.MonkeyPatch, tmp_p
         "clip": clip,
         "vae": vae,
     }
+    assert fork_nodes.GenerationLoadModelPatch.execute(model_patch=asset) == {
+        "model_patch": model_patch
+    }
     assert fork_nodes.GenerationLoadDiffusionModel.execute(
         diffusion_model=asset, weight_dtype="default"
     ) == {"model": model}
@@ -235,14 +313,60 @@ def test_fork_loaders_call_dinkster_comfy(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert isinstance(loaded, LoadedVAE)
     assert [call[0] for call in calls] == [
         "checkpoint",
+        "model-patch",
         "diffusion",
         "clip",
         "torch-file",
         "vae",
         "validate-vae",
     ]
-    assert cast("dict[str, object]", calls[1][2])["model_options"] == {}
-    assert cast("dict[str, object]", calls[2][2])["clip_type"] == "h3"
+    assert cast("dict[str, object]", calls[2][2])["model_options"] == {}
+    assert cast("dict[str, object]", calls[3][2])["clip_type"] == "h3"
+
+
+def test_fork_minimax_control_adapter_preserves_mask_and_converts_video_layout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model, model_patch, vae, patched = object(), object(), object(), object()
+    control = _FakeTensor(np.zeros((4, 8, 6, 3), dtype=np.float32))
+    source = _FakeTensor(np.ones((4, 8, 6, 3), dtype=np.float32))
+    mask = _FakeTensor(np.ones((4, 8, 6), dtype=np.float32))
+    calls: list[tuple[object, ...]] = []
+    minimax_control = SimpleNamespace(
+        apply_minimax_h3_fun_control=lambda *args, **kwargs: (
+            calls.append((*args, kwargs)) or patched
+        )
+    )
+    real_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: (
+            minimax_control if name == "dinkster_comfy.minimax_control" else real_import(name)
+        ),
+    )
+
+    result = fork_nodes.GenerationApplyMiniMaxH3FunControlNet.execute(
+        model=model,
+        model_patch=model_patch,
+        vae=vae,
+        strength=0.75,
+        start_percent=0.2,
+        end_percent=0.8,
+        control_video=control,
+        mask=mask,
+        source_video=source,
+    )
+
+    assert result == {"model": patched}
+    assert calls[0][:3] == (model, model_patch, vae)
+    options = cast("dict[str, object]", calls[0][3])
+    assert tuple(cast("Any", options["control_video"]).shape) == (4, 3, 8, 6)
+    assert options["mask"] is mask
+    assert tuple(cast("Any", options["source_video"]).shape) == (4, 3, 8, 6)
+    assert options["strength"] == 0.75
+    assert options["start_percent"] == 0.2
+    assert options["end_percent"] == 0.8
 
 
 def test_fork_sd15_adapters_preserve_conditioning_latent_and_decode(
@@ -568,3 +692,146 @@ def test_generation_ksampler_attaches_attention_to_a_model_clone(
     assert ("unload", clone) in events
     assert ("fix", clone) in events
     assert ("sample", clone) in events
+
+
+def test_generation_ksampler_attaches_compiled_window_plan_to_a_clone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = object()
+    sampled = object()
+    latent = object()
+    events: list[tuple[object, ...]] = []
+
+    class Model:
+        load_device = "cuda"
+
+        def __init__(self) -> None:
+            self.model_options: dict[str, object] = {"existing": True}
+
+        def clone(self) -> Model:
+            events.append(("clone", self))
+            return clone
+
+    model = Model()
+    clone = Model()
+    monkeypatch.setattr(
+        fork_nodes,
+        "_compile_window_executor",
+        lambda plan, latent, roles, options: (
+            events.append(("compile", plan, latent, roles, options)),
+            executor,
+        )[1],
+    )
+    modules = {
+        "torch": _FakeTorch,
+        "dinkster_comfy.sample": SimpleNamespace(
+            fix_empty_latent_channels=lambda _model, latent, *_args: latent,
+            prepare_noise=lambda *_args: object(),
+            sample=lambda actual, *_args, **_kwargs: (
+                events.append(("sample", actual, actual.model_options)),
+                sampled,
+            )[1],
+        ),
+        "dinkster_comfy.model_management": SimpleNamespace(
+            unload_model_and_clones=lambda _model: None
+        ),
+    }
+    real_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: modules.get(name) or real_import(name),
+    )
+    plan = {"layers": [{"mode": "explicit"}]}
+
+    result = fork_nodes.GenerationKSampler.execute(
+        model=model,
+        seed=459,
+        steps=1,
+        cfg=1.0,
+        sampler_name="dinkster.euler",
+        scheduler="dinkster.normal",
+        positive=object(),
+        negative=object(),
+        latent_image={"samples": latent},
+        denoise=1.0,
+        window_plan=plan,
+    )
+
+    assert events[0] == ("clone", model)
+    assert events[1][0:4] == ("compile", plan, latent, None)
+    assert cast("Mapping[str, object]", result["latent"])["samples"] is sampled
+    assert clone.model_options == {"existing": True, "window_plan": executor}
+    assert events[-1] == ("sample", clone, clone.model_options)
+
+
+def test_generation_ksampler_routes_res4lyf_substep_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[object, ...]] = []
+
+    class Output:
+        def to(self, *, device: object, dtype: object) -> Output:
+            events.append(("to", device, dtype))
+            return self
+
+    model = SimpleNamespace(load_device="cuda", model_options={})
+    configured = SimpleNamespace(sigmas=(3.0, 1.0, 0.0))
+    selection = BuiltinSamplerSelection(
+        "res4lyf.rk_beta",
+        (("rk_type", "res_3s"), ("eta", 0.25), ("eta_substep", 0.75)),
+    )
+    samplers = SimpleNamespace(
+        KSampler=lambda *args, **kwargs: (
+            events.append(("configure", args, kwargs)),
+            configured,
+        )[1],
+        sampler_object=lambda name, options: (
+            events.append(("assemble", name, options)),
+            "assembled",
+        )[1],
+        sample=lambda *args, **kwargs: (
+            events.append(("sample", args, kwargs)),
+            Output(),
+        )[1],
+    )
+    modules = {
+        "torch": _FakeTorch,
+        "dinkster_comfy.sample": SimpleNamespace(
+            fix_empty_latent_channels=lambda _model, latent, *_args: latent,
+            prepare_noise=lambda *_args: "noise",
+        ),
+        "dinkster_comfy.samplers": samplers,
+        "dinkster_comfy.model_management": SimpleNamespace(
+            unload_model_and_clones=lambda _model: None,
+            intermediate_device=lambda: "cpu",
+            intermediate_dtype=lambda: "float32",
+        ),
+    }
+    real_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: modules.get(name) or real_import(name),
+    )
+
+    fork_nodes.GenerationKSampler.execute(
+        model=model,
+        seed=459,
+        steps=5,
+        cfg=7.0,
+        sampler_name="dinkster.euler",
+        scheduler="dinkster.normal",
+        positive=object(),
+        negative=object(),
+        latent_image={"samples": object()},
+        denoise=1.0,
+        sampler=selection,
+    )
+
+    assert ("assemble", "res4lyf.rk_beta", dict(selection.options)) in events
+    sample_event = next(event for event in events if event[0] == "sample")
+    sample_args = cast("tuple[object, ...]", sample_event[1])
+    assert sample_args[6] == "assembled"
+    assert sample_args[7] == configured.sigmas
+    assert events[-1] == ("to", "cpu", "float32")

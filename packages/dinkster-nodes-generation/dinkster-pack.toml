@@ -3,6 +3,8 @@ name = "dinkster-nodes-generation"
 namespaces = ["dinkster"]
 schema-only = [
     "dinkster.load_checkpoint",
+    "dinkster.load_model_patch",
+    "dinkster.apply_minimax_h3_fun_controlnet",
     "dinkster.load_diffusion_model",
     "dinkster.load_clip",
     "dinkster.load_vae",

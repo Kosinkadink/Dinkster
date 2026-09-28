@@ -60,6 +60,7 @@ IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 MASK = TypeExpr.concrete(MASK_TYPE)
 INPAINT_CONDITIONING = TypeExpr.concrete("dinkster.inpaint-conditioning")
 CONTEXT_WINDOWS = TypeExpr.concrete("dinkster.context-windows")
+WINDOW_PLAN = TypeExpr.concrete("dinkster.window-plan")
 SAMPLER = TypeExpr.concrete(SAMPLER_TYPE)
 SIGMAS = TypeExpr.concrete(SIGMAS_TYPE)
 GUIDER = TypeExpr.concrete(GUIDER_TYPE)
@@ -187,6 +188,7 @@ LORA_EXECUTION_MODES = ("auto", "precalculate")
 LATENT_RESIZE_METHODS = ("nearest-exact", "bilinear", "area", "bicubic", "bislerp")
 CONTEXT_SCHEDULE_CHOICES = ("standard_static", "standard_uniform", "looped_uniform", "batched")
 CONTEXT_FUSE_CHOICES = ("flat", "pyramid", "overlap-linear")
+WINDOW_AXIS_CHOICES = ("temporal", "height", "width")
 GENERATION_PROVIDER_CHOICE_ID = "dinkster.generation.providers"
 CONTROL_NET_UNION_TYPES = (
     "auto",
@@ -363,6 +365,85 @@ class LoadCheckpoint(_SchemaOnlyNode):
             ),
             aliases=("CheckpointLoaderSimple",),
             search_terms=("checkpoint", "model loader"),
+        )
+
+
+class LoadModelPatch(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.load_model_patch",
+            display_name="Load Model Patch",
+            category="model/loaders",
+            inputs=(
+                InputSpec(
+                    "model_patch",
+                    ASSET,
+                    widget=AssetWidget(
+                        accept=("application/octet-stream",),
+                        kind="model/patch",
+                    ),
+                ),
+            ),
+            outputs=(OutputSpec("model_patch", MODEL_PATCH),),
+            aliases=("ModelPatchLoader",),
+            search_terms=("model patch", "controlnet", "loader"),
+        )
+
+
+class ApplyMiniMaxH3FunControlNet(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.apply_minimax_h3_fun_controlnet",
+            display_name="Apply MiniMax H3 Fun ControlNet",
+            category="model/patch/minimax",
+            description="Applies a MiniMax H3 Fun ControlNet model patch.",
+            inputs=(
+                InputSpec("model", MODEL),
+                InputSpec("model_patch", MODEL_PATCH),
+                InputSpec("vae", VAE),
+                InputSpec(
+                    "strength",
+                    FLOAT,
+                    required=False,
+                    default=1.0,
+                    widget=NumberWidget(min=0.0, max=10.0, step=0.01),
+                ),
+                InputSpec(
+                    "start_percent",
+                    FLOAT,
+                    required=False,
+                    default=0.0,
+                    advanced=True,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.001),
+                ),
+                InputSpec(
+                    "end_percent",
+                    FLOAT,
+                    required=False,
+                    default=1.0,
+                    advanced=True,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.001),
+                ),
+                InputSpec("control_video", IMAGE, required=False),
+                InputSpec(
+                    "mask",
+                    MASK,
+                    required=False,
+                    doc="1 marks the regions to regenerate.",
+                ),
+                InputSpec(
+                    "source_video",
+                    IMAGE,
+                    required=False,
+                    doc="Video behind the mask; only read when a mask is given.",
+                ),
+            ),
+            outputs=(OutputSpec("model", MODEL),),
+            occupies=("gpu",),
+            aliases=("MiniMaxH3FunControlNetApply",),
+            search_terms=("minimax h3", "fun controlnet", "model patch"),
         )
 
 
@@ -1691,7 +1772,7 @@ class ContextWindowsManual(_SchemaOnlyNode):
                     "context_schedule",
                     COMBO,
                     default="standard_static",
-                    widget=ComboWidget(options=CONTEXT_SCHEDULE_CHOICES),
+                    widget=ComboWidget(options=("standard_static",)),
                 ),
                 InputSpec(
                     "context_stride",
@@ -3291,12 +3372,188 @@ class KSampler(_SchemaOnlyNode):
                     default=1.0,
                     widget=NumberWidget(min=0.0, max=1.0, step=0.01),
                 ),
+                InputSpec("window_plan", WINDOW_PLAN, required=False),
+                InputSpec("sampler", SAMPLER, required=False),
                 *_conditioning_batching_inputs(),
             ),
             outputs=(OutputSpec("latent", LATENT),),
             aliases=("KSampler",),
             search_terms=("sample", "denoise", "generate"),
             emits_previews=True,
+        )
+
+
+class TemporalWindowPlan(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.temporal_window_plan",
+            display_name="Temporal Window Plan",
+            category="model/sampling/windows",
+            description="Adds stock ComfyUI temporal context windows to a media-axis plan.",
+            inputs=(
+                InputSpec("plan", WINDOW_PLAN, required=False),
+                InputSpec(
+                    "context_length",
+                    INT,
+                    default=16,
+                    widget=NumberWidget(min=1, max=16384, step=1),
+                ),
+                InputSpec(
+                    "context_overlap",
+                    INT,
+                    default=4,
+                    widget=NumberWidget(min=0, max=16384, step=1),
+                ),
+                InputSpec(
+                    "context_schedule",
+                    COMBO,
+                    default="standard_static",
+                    widget=ComboWidget(options=CONTEXT_SCHEDULE_CHOICES),
+                ),
+                InputSpec(
+                    "context_stride",
+                    INT,
+                    default=1,
+                    widget=NumberWidget(min=1, max=32, step=1),
+                ),
+                InputSpec("closed_loop", BOOLEAN, default=False),
+                InputSpec(
+                    "fuse_method",
+                    COMBO,
+                    default="pyramid",
+                    widget=ComboWidget(options=CONTEXT_FUSE_CHOICES),
+                ),
+            ),
+            outputs=(OutputSpec("plan", WINDOW_PLAN),),
+            search_terms=("context", "window", "temporal", "video"),
+        )
+
+
+class SpatialTilePlan(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.spatial_tile_plan",
+            display_name="Spatial Tile Plan",
+            category="model/sampling/windows",
+            description="Adds height and width tiles to a media-axis window plan.",
+            inputs=(
+                InputSpec("plan", WINDOW_PLAN, required=False),
+                InputSpec(
+                    "tile_height",
+                    INT,
+                    default=64,
+                    widget=NumberWidget(min=1, max=16384, step=1),
+                ),
+                InputSpec(
+                    "tile_width",
+                    INT,
+                    default=64,
+                    widget=NumberWidget(min=1, max=16384, step=1),
+                ),
+                InputSpec(
+                    "overlap_height",
+                    INT,
+                    default=8,
+                    widget=NumberWidget(min=0, max=16384, step=1),
+                ),
+                InputSpec(
+                    "overlap_width",
+                    INT,
+                    default=8,
+                    widget=NumberWidget(min=0, max=16384, step=1),
+                ),
+                InputSpec(
+                    "fuse_method",
+                    COMBO,
+                    default="overlap-linear",
+                    widget=ComboWidget(options=CONTEXT_FUSE_CHOICES),
+                ),
+            ),
+            outputs=(OutputSpec("plan", WINDOW_PLAN),),
+            search_terms=("tile", "window", "multidiffusion", "spatial"),
+        )
+
+
+class ExplicitWindowPlan(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.explicit_window_plan",
+            display_name="Explicit Window Plan",
+            category="model/sampling/windows",
+            description=(
+                "Adds ordered index lists for one media axis. Separate windows with semicolons."
+            ),
+            inputs=(
+                InputSpec("plan", WINDOW_PLAN, required=False),
+                InputSpec(
+                    "axis",
+                    COMBO,
+                    default="temporal",
+                    widget=ComboWidget(options=WINDOW_AXIS_CHOICES),
+                ),
+                InputSpec(
+                    "windows",
+                    STRING,
+                    default="0,1,2,3",
+                    widget=StringWidget(multiline=True),
+                ),
+                InputSpec("wrap", BOOLEAN, default=False),
+                InputSpec(
+                    "fuse_method",
+                    COMBO,
+                    default="flat",
+                    widget=ComboWidget(options=CONTEXT_FUSE_CHOICES),
+                ),
+            ),
+            outputs=(OutputSpec("plan", WINDOW_PLAN),),
+            search_terms=("window", "indices", "loop", "schedule"),
+        )
+
+
+class RES4LYFRKBetaSampler(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.res4lyf_rk_beta_sampler",
+            display_name="RES4LYF RK Beta Sampler",
+            category="model/sampling/samplers",
+            description="Assembles RK Beta with independent outer-step and substep noise.",
+            inputs=(
+                InputSpec(
+                    "rk_type",
+                    COMBO,
+                    default="res_2m",
+                    widget=ComboWidget(
+                        options=(
+                            "res_2m",
+                            "res_3m",
+                            "res_2s",
+                            "res_3s",
+                            "res_5s",
+                            "res_6s",
+                            "deis_2m",
+                            "deis_3m",
+                        )
+                    ),
+                ),
+                InputSpec(
+                    "eta",
+                    FLOAT,
+                    default=0.5,
+                    widget=NumberWidget(min=0.0, max=0.99, step=0.01),
+                ),
+                InputSpec(
+                    "eta_substep",
+                    FLOAT,
+                    default=0.5,
+                    widget=NumberWidget(min=0.0, max=0.99, step=0.01),
+                ),
+            ),
+            outputs=(OutputSpec("sampler", SAMPLER),),
+            search_terms=("res4lyf", "runge kutta", "substep", "sampler"),
         )
 
 
@@ -5910,6 +6167,8 @@ GENERATION_NODES: tuple[type[Node], ...] = (
     *MODEL3D_GENERATION_NODES,
     LoadModelProfile,
     LoadCheckpoint,
+    LoadModelPatch,
+    ApplyMiniMaxH3FunControlNet,
     LoadControlNet,
     ApplyControlNet,
     ApplyControlNetAdvanced,
@@ -5995,6 +6254,10 @@ GENERATION_NODES: tuple[type[Node], ...] = (
     EmptyLTXAVLatent,
     EmptyLTXVLatent,
     KSampler,
+    TemporalWindowPlan,
+    SpatialTilePlan,
+    ExplicitWindowPlan,
+    RES4LYFRKBetaSampler,
     KSamplerAdvanced,
     KSamplerSelect,
     SamplerDPMPP3MSDE,
@@ -6085,6 +6348,8 @@ GENERATION_COMPAT_CARRIER_NODE_IDS = tuple(
 _SUPPORTED_SCHEMA_NODE_IDS = frozenset(
     {
         "dinkster.load_checkpoint",
+        "dinkster.load_model_patch",
+        "dinkster.apply_minimax_h3_fun_controlnet",
         "dinkster.load_diffusion_model",
         "dinkster.load_clip",
         "dinkster.load_vae",
@@ -6096,6 +6361,10 @@ _SUPPORTED_SCHEMA_NODE_IDS = frozenset(
         "dinkster.clip_text_encode",
         "dinkster.empty_latent_image",
         "dinkster.ksampler",
+        "dinkster.temporal_window_plan",
+        "dinkster.spatial_tile_plan",
+        "dinkster.explicit_window_plan",
+        "dinkster.res4lyf_rk_beta_sampler",
         "dinkster.vae_decode",
         "dinkster.image_crop_to_mask",
         "dinkster.preview_mask",
