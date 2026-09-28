@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from dinkster_assets import AssetRef
 from dinkster_nodes_generation.nodes import (
+    ApplyMiniMaxH3FunControlNet,
     CLIPTextEncode,
     EmptyLatentImage,
     EmptyMiniMaxH3AV,
@@ -17,6 +18,7 @@ from dinkster_nodes_generation.nodes import (
     LoadCheckpoint,
     LoadClip,
     LoadDiffusionModel,
+    LoadModelPatch,
     LoadVAE,
     MiniMaxH3ImageToVideo,
     MiniMaxH3T2VAConditioning,
@@ -388,6 +390,52 @@ class GenerationLoadCheckpoint(LoadCheckpoint):
         return cls.outputs(model=model, clip=clip, vae=vae)
 
 
+class GenerationLoadModelPatch(LoadModelPatch):
+    @classmethod
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, model_patch: object
+    ) -> Mapping[str, object]:
+        if not isinstance(model_patch, AssetRef):
+            raise TypeError("model_patch must be an AssetRef")
+        loaded = importlib.import_module(
+            "dinkster_comfy.minimax_control"
+        ).load_minimax_h3_fun_control_patch(str(model_patch.local_path()))
+        return cls.outputs(model_patch=loaded)
+
+
+class GenerationApplyMiniMaxH3FunControlNet(ApplyMiniMaxH3FunControlNet):
+    @classmethod
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls,
+        *,
+        model: object,
+        model_patch: object,
+        vae: object,
+        strength: float = 1.0,
+        start_percent: float = 0.0,
+        end_percent: float = 1.0,
+        control_video: object = None,
+        mask: object = None,
+        source_video: object = None,
+    ) -> Mapping[str, object]:
+        control = None if control_video is None else cast("Any", control_video).movedim(-1, 1)
+        source = None if source_video is None else cast("Any", source_video).movedim(-1, 1)
+        patched = importlib.import_module(
+            "dinkster_comfy.minimax_control"
+        ).apply_minimax_h3_fun_control(
+            model,
+            model_patch,
+            vae,
+            strength=strength,
+            start_percent=start_percent,
+            end_percent=end_percent,
+            control_video=control,
+            mask=mask,
+            source_video=source,
+        )
+        return cls.outputs(model=patched)
+
+
 class GenerationLoadDiffusionModel(LoadDiffusionModel):
     @classmethod
     def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -720,6 +768,8 @@ class NativeVAEDecodeAudio(VAEDecodeAudio):
 
 FORK_NODES: tuple[type[Node], ...] = (
     GenerationLoadCheckpoint,
+    GenerationLoadModelPatch,
+    GenerationApplyMiniMaxH3FunControlNet,
     GenerationLoadDiffusionModel,
     NativeLoadClip,
     NativeLoadVae,

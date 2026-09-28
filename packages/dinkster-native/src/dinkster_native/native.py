@@ -118,7 +118,12 @@ def register_native_types(registry: TypeRegistry) -> None:
     if SAVE_TARGET_TYPE not in registry:
         register_save_target_type(registry)
 
-    for type_id in ("dinkster.model", "dinkster.clip", "dinkster.vae"):
+    for type_id in (
+        "dinkster.model",
+        "dinkster.clip",
+        "dinkster.vae",
+        "comfy.MODEL_PATCH",
+    ):
         _register_resident(registry, type_id)
 
     if "dinkster.latent" not in registry:

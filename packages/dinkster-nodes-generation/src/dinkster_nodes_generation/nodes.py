@@ -368,6 +368,85 @@ class LoadCheckpoint(_SchemaOnlyNode):
         )
 
 
+class LoadModelPatch(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.load_model_patch",
+            display_name="Load Model Patch",
+            category="model/loaders",
+            inputs=(
+                InputSpec(
+                    "model_patch",
+                    ASSET,
+                    widget=AssetWidget(
+                        accept=("application/octet-stream",),
+                        kind="model/patch",
+                    ),
+                ),
+            ),
+            outputs=(OutputSpec("model_patch", MODEL_PATCH),),
+            aliases=("ModelPatchLoader",),
+            search_terms=("model patch", "controlnet", "loader"),
+        )
+
+
+class ApplyMiniMaxH3FunControlNet(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.apply_minimax_h3_fun_controlnet",
+            display_name="Apply MiniMax H3 Fun ControlNet",
+            category="model/patch/minimax",
+            description="Applies a MiniMax H3 Fun ControlNet model patch.",
+            inputs=(
+                InputSpec("model", MODEL),
+                InputSpec("model_patch", MODEL_PATCH),
+                InputSpec("vae", VAE),
+                InputSpec(
+                    "strength",
+                    FLOAT,
+                    required=False,
+                    default=1.0,
+                    widget=NumberWidget(min=0.0, max=10.0, step=0.01),
+                ),
+                InputSpec(
+                    "start_percent",
+                    FLOAT,
+                    required=False,
+                    default=0.0,
+                    advanced=True,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.001),
+                ),
+                InputSpec(
+                    "end_percent",
+                    FLOAT,
+                    required=False,
+                    default=1.0,
+                    advanced=True,
+                    widget=NumberWidget(min=0.0, max=1.0, step=0.001),
+                ),
+                InputSpec("control_video", IMAGE, required=False),
+                InputSpec(
+                    "mask",
+                    MASK,
+                    required=False,
+                    doc="1 marks the regions to regenerate.",
+                ),
+                InputSpec(
+                    "source_video",
+                    IMAGE,
+                    required=False,
+                    doc="Video behind the mask; only read when a mask is given.",
+                ),
+            ),
+            outputs=(OutputSpec("model", MODEL),),
+            occupies=("gpu",),
+            aliases=("MiniMaxH3FunControlNetApply",),
+            search_terms=("minimax h3", "fun controlnet", "model patch"),
+        )
+
+
 class LoadControlNet(_SchemaOnlyNode):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -6088,6 +6167,8 @@ GENERATION_NODES: tuple[type[Node], ...] = (
     *MODEL3D_GENERATION_NODES,
     LoadModelProfile,
     LoadCheckpoint,
+    LoadModelPatch,
+    ApplyMiniMaxH3FunControlNet,
     LoadControlNet,
     ApplyControlNet,
     ApplyControlNetAdvanced,
@@ -6267,6 +6348,8 @@ GENERATION_COMPAT_CARRIER_NODE_IDS = tuple(
 _SUPPORTED_SCHEMA_NODE_IDS = frozenset(
     {
         "dinkster.load_checkpoint",
+        "dinkster.load_model_patch",
+        "dinkster.apply_minimax_h3_fun_controlnet",
         "dinkster.load_diffusion_model",
         "dinkster.load_clip",
         "dinkster.load_vae",
