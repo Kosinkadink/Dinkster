@@ -331,7 +331,8 @@ def validate_workflow_report(report: dict[str, Any]) -> tuple[str, ...]:
                 receipt = row.get("execution_receipt")
                 if (
                     not isinstance(receipt, dict)
-                    or set(receipt) != {
+                    or set(receipt)
+                    != {
                         "runId",
                         "extensionSnapshotDigest",
                         "dinksterGitHead",

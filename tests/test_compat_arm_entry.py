@@ -34,9 +34,7 @@ def test_legacy_compat_arm_entry_matches_manifest(monkeypatch: pytest.MonkeyPatc
     sys.modules.pop("dinkster_compat_comfy.legacy_entry", None)
     try:
         legacy_entry = importlib.import_module("dinkster_compat_comfy.legacy_entry")
-        manifest = load_manifest(
-            Path("packages/dinkster-compat-comfy/dinkster-legacy-pack.toml")
-        )
+        manifest = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-legacy-pack.toml"))
         expected = dict(manifest.arms)["native"]
         actual = tuple(node.schema().node_type for node in legacy_entry.ARM_NODES["native"])
         assert actual == expected
