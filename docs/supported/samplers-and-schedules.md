@@ -1,6 +1,6 @@
 ## Samplers and schedules
 
-Dinkster has one sampling engine: the sampler provided by `dinkster_comfy`.
+Dinkster has one sampling engine: the sampler provided by `dinkster_inference`.
 SD1.5 and MiniMax H3 use that engine through the production worker boundary.
 
 The native KSampler accepts optional layered window plans declared over the

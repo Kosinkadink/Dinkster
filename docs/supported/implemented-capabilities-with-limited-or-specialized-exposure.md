@@ -6,6 +6,6 @@
 - Collaboration sessions, operations, snapshots, and session WebSockets are
   mountable but are not mounted by `create_app`.
 - MiniMax H3 independently loaded components and attention/residency behavior
-  are supplied by the pinned `dinkster_comfy` runtime.
+  are supplied by the pinned `dinkster_inference` runtime.
 - Model-family training and all retired model-family inference surfaces are not
   currently exposed by Dinkster.

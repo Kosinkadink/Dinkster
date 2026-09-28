@@ -340,7 +340,11 @@ for name in ("not_an_export", "__path__"):
     else:
         raise AssertionError(name)
     assert not hasattr(api, name)
-loaded = {name for name in sys.modules if name.split(".")[0] in {"dinkster_inference", "torch"}}
+loaded = {
+    name
+    for name in sys.modules
+    if name.split(".")[0] in {"dinkster_inference_wire", "torch"}
+}
 assert not loaded, sorted(loaded)
 """
     result = subprocess.run(

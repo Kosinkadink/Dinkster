@@ -45,7 +45,7 @@ deliberate deferrals. Record the outcome in the pull request body
 ## One sampling engine
 
 There is exactly one sampling execution engine: the sampler provided by
-`dinkster_comfy`. Dinkster nodes may compose that engine, but must not add a
+`dinkster_inference`. Dinkster nodes may compose that engine, but must not add a
 second sampler implementation or model-family execution path.
 
 ## Performance parity discipline
@@ -76,7 +76,7 @@ green suite whose tolerances quietly absorbed a real defect.
   fine for value math, NOT for brownian-tree noise streams, which
   decorrelate on one-ulp sigma differences (the harness measured 3.4e-2
   end-to-end from a ~1e-7 karras delta). Any schedule or SigmaSpace kind
-  that can feed an SDE sampler must use the executed `dinkster_comfy`
+  that can feed an SDE sampler must use the executed `dinkster_inference`
   reference kernels with oracle-backed SDE coverage before that pairing
   ships. No evidence, no wiring.
 - Goldens are generated ONLY on the generating tool's own pinned ComfyUI
@@ -108,7 +108,7 @@ when the issue names a numerical, performance or GPU criterion.
 Ruff and pyright must be clean at every frozen head; the root pytest run
 must be clean at a frozen head whenever the issue requires it or the diff
 touches a package outside the fast lane's unit subset. Sampling-runtime GPU
-validation belongs to the `dinkster-comfy` repository; Dinkster validates its
+validation belongs to the `dinkster-inference` repository; Dinkster validates its
 worker integration with the issue-specific production oracles.
 
 Stale wheel cache after rebase: when a pull or rebase changes a node pack or

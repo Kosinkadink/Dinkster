@@ -64,7 +64,7 @@ class AttentionRuntime:
     """Own one worker process's named fork attention registry."""
 
     def __init__(self) -> None:
-        attention = cast("Any", importlib.import_module("dinkster_comfy.ldm.modules.attention"))
+        attention = cast("Any", importlib.import_module("dinkster_inference.ldm.modules.attention"))
         self.registry = cast(
             "dict[str, Callable[..., Any]]", attention.create_attention_function_registry()
         )
@@ -106,7 +106,7 @@ class AttentionRuntime:
         self.route_token = derive_attention_route_token(self.capabilities, AttentionPolicyConfig())
 
     def resolve(self, token: AttentionRouteToken, role: str = "unet") -> Callable[..., Any]:
-        attention = cast("Any", importlib.import_module("dinkster_comfy.ldm.modules.attention"))
+        attention = cast("Any", importlib.import_module("dinkster_inference.ldm.modules.attention"))
         route = next(route for route in token.routes if route.role == role)
         for policy in (route.primary, route.fallback):
             if policy is None:

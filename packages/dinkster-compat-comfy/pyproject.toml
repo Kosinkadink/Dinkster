@@ -7,7 +7,7 @@ dependencies = [
     "dinkster-assets",
     "dinkster-image-document",
     "dinkster-graph",
-    "dinkster-inference",
+    "dinkster-inference-wire",
     "dinkster-memory",
     "dinkster-native",
     "dinkster-nodes-generation",
@@ -34,7 +34,7 @@ packages = ["src/dinkster_compat_comfy"]
 [tool.uv.sources]
 dinkster-assets = { workspace = true }
 dinkster-image-document = { workspace = true }
-dinkster-inference = { workspace = true }
+dinkster-inference-wire = { workspace = true }
 dinkster-native = { workspace = true }
 dinkster-nodes-generation = { workspace = true }
 dinkster-protocol = { workspace = true }

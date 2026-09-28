@@ -1,8 +1,8 @@
-# dinkster-inference
+# dinkster-inference-wire
 
-`dinkster-inference` contains torch-free value and wire contracts shared by
+`dinkster-inference-wire` contains torch-free value and wire contracts shared by
 Dinkster's engine, workers, and node packs. Model loading, sampling, and model
-execution live in the `dinkster_comfy` package.
+execution live in the `dinkster_inference` package.
 
 The retained contracts cover conditioning carriers, generation providers,
 multi-stream and sparse values, safetensors header inspection, device

@@ -1,6 +1,6 @@
 ## Model families (native execution)
 
-Dinkster currently exposes two generation families through `dinkster_comfy`:
+Dinkster currently exposes two generation families through `dinkster_inference`:
 
 - Stable Diffusion 1.5 text-to-image through checkpoint loading, CLIP text
   encoding, latent sampling, VAE decoding, and image saving.

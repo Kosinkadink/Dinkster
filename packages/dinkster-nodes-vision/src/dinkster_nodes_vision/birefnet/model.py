@@ -8,13 +8,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from dinkster_api.v1 import declared_asset
-from dinkster_comfy.cli_args import args
+from dinkster_inference.cli_args import args
 from safetensors.torch import load_file
 
 # This pack is CPU-only; fork modules read the CLI singleton during import.
 args.cpu = True
-from dinkster_comfy import ops  # noqa: E402
-from dinkster_comfy.background_removal.birefnet import BiRefNet  # noqa: E402
+from dinkster_inference import ops  # noqa: E402
+from dinkster_inference.background_removal.birefnet import BiRefNet  # noqa: E402
 
 MODEL_INPUT_SIZE = 1024
 

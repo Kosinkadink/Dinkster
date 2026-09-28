@@ -49,5 +49,5 @@ sigmas can differ.
 
 ## Dinkster handling
 
-Dinkster delegates RenormCFG execution to `dinkster_comfy`, whose current
+Dinkster delegates RenormCFG execution to `dinkster_inference`, whose current
 behavior matches the upstream behavior described above.

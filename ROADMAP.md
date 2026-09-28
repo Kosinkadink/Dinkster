@@ -1,7 +1,7 @@
 # Roadmap
 
 Dinkster has working backend composition, isolated and grouped extension hosting,
-model execution through `dinkster_comfy`, governed memory, typed assets, and
+model execution through `dinkster_inference`, governed memory, typed assets, and
 versioned schema contracts. The next work is to finish the extension and asset
 surfaces already exposed by those foundations and close the remaining execution,
 deployment, and operations gaps without weakening compatibility.
@@ -17,7 +17,7 @@ deployment, and operations gaps without weakening compatibility.
 - Finish in-process model-pack serve wiring and add safe reload support only
   after its lifecycle contracts are settled.
 - Expand generation schemas and workflow translation without introducing a
-  second model-loading or sampling implementation outside `dinkster_comfy`.
+  second model-loading or sampling implementation outside `dinkster_inference`.
 - Complete compat coverage for hidden inputs, dynamic schemas, lazy and accept-all behavior, and nested dynamics where ecosystem evidence requires them.
 - Add generation-bound worker leases for reloads that must preserve inflight work, plus zero-downtime engine swaps when multi-install operation requires them.
 - Continue partner API nodes as an independently updatable pack, then move provider-owned definitions and remote execution behind explicit transport and trust-policy contracts.

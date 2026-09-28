@@ -114,7 +114,7 @@ def _multi_stream_pairs(value: object) -> tuple[tuple[str, object], ...] | None:
 
 def _is_sparse_value(value: object, name: str) -> bool:
     value_type = type(value)
-    return value_type.__module__ == "dinkster_inference.sparse" and value_type.__name__ == name
+    return value_type.__module__ == "dinkster_inference_wire.sparse" and value_type.__name__ == name
 
 
 def _validate_encoded_sparse_support(value: EncodedSparseSupport) -> None:

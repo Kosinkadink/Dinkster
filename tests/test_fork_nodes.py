@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from dinkster_assets import AssetRef, digest_file
 from dinkster_compat_comfy.translate import CompatTranslation
-from dinkster_inference import (
+from dinkster_inference_wire import (
     BuiltinSamplerSelection,
     MultiStreamLatent,
     ResidentConditioningCarrier,
@@ -248,7 +248,9 @@ def test_compat_sampler_boundary_values_remain_process_resident() -> None:
         assert spec.decode(spec.encode(value)) is value
 
 
-def test_fork_loaders_call_dinkster_comfy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_fork_loaders_call_dinkster_inference(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     path = tmp_path / "weights.safetensors"
     path.write_bytes(b"weights")
     asset = _asset(path)
@@ -281,9 +283,9 @@ def test_fork_loaders_call_dinkster_comfy(monkeypatch: pytest.MonkeyPatch, tmp_p
     )
     real_import = importlib.import_module
     modules = {
-        "dinkster_comfy.sd": sd,
-        "dinkster_comfy.utils": utils,
-        "dinkster_comfy.minimax_control": SimpleNamespace(
+        "dinkster_inference.sd": sd,
+        "dinkster_inference.utils": utils,
+        "dinkster_inference.minimax_control": SimpleNamespace(
             load_minimax_h3_fun_control_patch=lambda path: (
                 calls.append(("model-patch", path)) or model_patch
             )
@@ -342,7 +344,7 @@ def test_fork_minimax_control_adapter_preserves_mask_and_converts_video_layout(
         importlib,
         "import_module",
         lambda name: (
-            minimax_control if name == "dinkster_comfy.minimax_control" else real_import(name)
+            minimax_control if name == "dinkster_inference.minimax_control" else real_import(name)
         ),
     )
 
@@ -423,7 +425,7 @@ def test_fork_h3_adapters_preserve_stream_roles_and_media(monkeypatch: pytest.Mo
     real_import = importlib.import_module
 
     def import_module(name: str) -> object:
-        if name == "dinkster_comfy.model_management":
+        if name == "dinkster_inference.model_management":
             return model_management
         if name == "torch":
             return _FakeTorch
@@ -522,9 +524,9 @@ def test_generation_ksampler_preserves_h3_stream_roles(monkeypatch: pytest.Monke
         ),
     )
     modules = {
-        "dinkster_comfy.nested_tensor": SimpleNamespace(NestedTensor=NestedTensor),
-        "dinkster_comfy.sample": sample,
-        "dinkster_comfy.model_management": SimpleNamespace(
+        "dinkster_inference.nested_tensor": SimpleNamespace(NestedTensor=NestedTensor),
+        "dinkster_inference.sample": sample,
+        "dinkster_inference.model_management": SimpleNamespace(
             unload_model_and_clones=lambda model: None
         ),
     }
@@ -589,8 +591,8 @@ def test_generation_ksampler_normalizes_residency_before_sampling(
     )
     model_management = SimpleNamespace(unload_model_and_clones=unload_model)
     modules = {
-        "dinkster_comfy.sample": sample,
-        "dinkster_comfy.model_management": model_management,
+        "dinkster_inference.sample": sample,
+        "dinkster_inference.model_management": model_management,
     }
     real_import = importlib.import_module
     monkeypatch.setattr(
@@ -647,7 +649,7 @@ def test_generation_ksampler_attaches_attention_to_a_model_clone(
         lambda: SimpleNamespace(attention_route_token=token, attention_runtime=runtime),
     )
     modules = {
-        "dinkster_comfy.sample": SimpleNamespace(
+        "dinkster_inference.sample": SimpleNamespace(
             fix_empty_latent_channels=lambda actual, latent, *_args: (
                 events.append(("fix", actual)),
                 latent,
@@ -658,7 +660,7 @@ def test_generation_ksampler_attaches_attention_to_a_model_clone(
                 object(),
             )[1],
         ),
-        "dinkster_comfy.model_management": SimpleNamespace(
+        "dinkster_inference.model_management": SimpleNamespace(
             unload_model_and_clones=lambda actual: events.append(("unload", actual))
         ),
     }
@@ -718,7 +720,7 @@ def test_generation_ksampler_attaches_compiled_window_plan_to_a_clone(
         )[1],
     )
     modules = {
-        "dinkster_comfy.sample": SimpleNamespace(
+        "dinkster_inference.sample": SimpleNamespace(
             fix_empty_latent_channels=lambda _model, latent, *_args: latent,
             prepare_noise=lambda *_args: object(),
             sample=lambda actual, *_args, **_kwargs: (
@@ -726,7 +728,7 @@ def test_generation_ksampler_attaches_compiled_window_plan_to_a_clone(
                 sampled,
             )[1],
         ),
-        "dinkster_comfy.model_management": SimpleNamespace(
+        "dinkster_inference.model_management": SimpleNamespace(
             unload_model_and_clones=lambda _model: None
         ),
     }
@@ -790,12 +792,12 @@ def test_generation_ksampler_routes_res4lyf_substep_options(
         )[1],
     )
     modules = {
-        "dinkster_comfy.sample": SimpleNamespace(
+        "dinkster_inference.sample": SimpleNamespace(
             fix_empty_latent_channels=lambda _model, latent, *_args: latent,
             prepare_noise=lambda *_args: "noise",
         ),
-        "dinkster_comfy.samplers": samplers,
-        "dinkster_comfy.model_management": SimpleNamespace(
+        "dinkster_inference.samplers": samplers,
+        "dinkster_inference.model_management": SimpleNamespace(
             unload_model_and_clones=lambda _model: None,
             intermediate_device=lambda: "cpu",
             intermediate_dtype=lambda: "float32",

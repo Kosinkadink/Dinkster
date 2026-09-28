@@ -97,7 +97,7 @@ def _registry() -> dict[str, Any]:
 
 def test_media_comfy_aliases_use_the_canonical_wire_contract() -> None:
     registry = _registry()
-    assert registry["format"] == "dinkster-comfy-alias/1"
+    assert registry["format"] == "dinkster-inference-alias/1"
     assert set(registry) == {"format", "sourceSchemas", "records"}
     comfy_alias_registry_from_wire(registry)
 

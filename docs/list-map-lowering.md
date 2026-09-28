@@ -177,7 +177,7 @@ tests/test_compat_comfy.py):
 
 ## 7. Consumers / boundaries
 
-Inference-thread ownership (packages/dinkster-inference*) untouched.
+Inference-thread ownership (packages/dinkster-inference-wire*) untouched.
 Frontend contract: no wire version bump; regions already carry. The
 `binding="broadcast"` enum value is additive on the existing field
 (section 3a) - the backend coordinator notifies the frontend thread

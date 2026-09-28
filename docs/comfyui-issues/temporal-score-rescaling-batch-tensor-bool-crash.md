@@ -46,5 +46,5 @@ batched sigma.
 
 ## Dinkster handling
 
-Dinkster delegates TemporalScoreRescaling execution to `dinkster_comfy`, whose
+Dinkster delegates TemporalScoreRescaling execution to `dinkster_inference`, whose
 current behavior matches the upstream behavior described above.

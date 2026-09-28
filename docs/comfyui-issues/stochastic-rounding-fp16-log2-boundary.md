@@ -74,5 +74,5 @@ comfy-kitchen eager) or the kitchen eager/CUDA parity stays broken.
 
 ## Dinkster handling
 
-Dinkster delegates stochastic rounding to `dinkster_comfy`, whose manual and
+Dinkster delegates stochastic rounding to `dinkster_inference`, whose manual and
 Kitchen paths currently match the upstream behavior described above.

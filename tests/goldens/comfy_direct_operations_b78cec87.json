@@ -1,5 +1,5 @@
 {
-  "format": "dinkster-comfy-direct-operation-golden/1",
+  "format": "dinkster-inference-direct-operation-golden/1",
   "operations": [
     {
       "cases": [

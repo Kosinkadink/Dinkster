@@ -7,7 +7,7 @@ dependencies = [
     "dinkster-assets",
     "dinkster-image-document",
     "dinkster-graph",
-    "dinkster-inference",
+    "dinkster-inference-wire",
     "dinkster-memory",
     "dinkster-nodes-generation",
     "dinkster-protocol",
@@ -34,7 +34,7 @@ packages = ["src/dinkster_native"]
 dinkster-assets = { workspace = true }
 dinkster-graph = { workspace = true }
 dinkster-image-document = { workspace = true }
-dinkster-inference = { workspace = true }
+dinkster-inference-wire = { workspace = true }
 dinkster-memory = { workspace = true }
 dinkster-nodes-generation = { workspace = true }
 dinkster-protocol = { workspace = true }

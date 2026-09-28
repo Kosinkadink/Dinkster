@@ -127,7 +127,7 @@ median.
 Retain enough information to reproduce both the accepted path and its failure
 boundaries:
 
-- exact Dinkster and `dinkster-comfy` commits;
+- exact Dinkster and `dinkster-inference` commits;
 - stock ComfyUI reference commit;
 - model and workflow artifact digests;
 - GPU UUIDs, topology, peer access, and selected NCCL transport;

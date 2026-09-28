@@ -75,7 +75,7 @@ from dinkster_engine import (
     Worker,
 )
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, TypedLiteral, top_level_node_id
-from dinkster_inference import register_inference_types
+from dinkster_inference_wire import register_inference_types
 from dinkster_memory import (
     FullReleaseResult,
     MemoryGovernor,

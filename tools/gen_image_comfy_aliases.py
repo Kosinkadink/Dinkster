@@ -1688,7 +1688,7 @@ def _preprocessor_alias_data() -> tuple[list[NodeSchema], list[dict[str, object]
 def build_depth_anything_v2_registry() -> dict[str, object]:
     source_schemas, records = _preprocessor_alias_data()
     return {
-        "format": "dinkster-comfy-alias/1",
+        "format": "dinkster-inference-alias/1",
         "sourceSchemas": [
             schema_to_wire(schema)
             for schema in source_schemas
@@ -5395,7 +5395,7 @@ def build_registry(comfy_root: Path) -> dict[str, object]:
     source_schemas.extend(layer_schemas)
     records.extend(layer_records)
     return {
-        "format": "dinkster-comfy-alias/1",
+        "format": "dinkster-inference-alias/1",
         "sourceSchemas": [schema_to_wire(schema) for schema in source_schemas],
         "records": records,
     }

@@ -66,7 +66,7 @@ _EDITABLE_PACKAGES = (
     "packages/dinkster-assets",
     "packages/dinkster-memory",
     "packages/dinkster-workers",
-    "packages/dinkster-inference",
+    "packages/dinkster-inference-wire",
     "packages/dinkster-image-document",
     "packages/dinkster-video",
     "packages/dinkster-api",
@@ -152,7 +152,7 @@ def setup_commands(recipe: BackendEnvRecipe) -> tuple[tuple[str, ...], ...]:
             recipe.torch_requirement,
         ),
         ("uv", "pip", "install", "--python", python, *recipe.support_packages, *editable_args),
-        (python, "-c", "import dinkster_comfy"),
+        (python, "-c", "import dinkster_inference"),
     )
 
 

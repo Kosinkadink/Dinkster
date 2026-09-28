@@ -46,5 +46,5 @@ state around every op.
 
 ## Dinkster handling
 
-Dinkster delegates stochastic rounding to `dinkster_comfy`, whose current
+Dinkster delegates stochastic rounding to `dinkster_inference`, whose current
 Kitchen dispatch matches the upstream behavior described above.

@@ -21,7 +21,7 @@ members = [
     "dinkster-engine",
     "dinkster-graph",
     "dinkster-image-document",
-    "dinkster-inference",
+    "dinkster-inference-wire",
     "dinkster-memory",
     "dinkster-native",
     "dinkster-nodes-dev",
@@ -530,7 +530,7 @@ dependencies = [
     { name = "dinkster-engine" },
     { name = "dinkster-graph" },
     { name = "dinkster-image-document" },
-    { name = "dinkster-inference" },
+    { name = "dinkster-inference-wire" },
     { name = "dinkster-memory" },
     { name = "dinkster-native" },
     { name = "dinkster-nodes-dev" },
@@ -594,7 +594,7 @@ requires-dist = [
     { name = "dinkster-engine", editable = "packages/dinkster-engine" },
     { name = "dinkster-graph", editable = "packages/dinkster-graph" },
     { name = "dinkster-image-document", editable = "packages/dinkster-image-document" },
-    { name = "dinkster-inference", editable = "packages/dinkster-inference" },
+    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "dinkster-native", editable = "packages/dinkster-native" },
     { name = "dinkster-nodes-dev", editable = "packages/dinkster-nodes-dev" },
@@ -641,7 +641,7 @@ version = "0.0.1"
 source = { editable = "packages/dinkster-api" }
 dependencies = [
     { name = "dinkster-assets" },
-    { name = "dinkster-inference" },
+    { name = "dinkster-inference-wire" },
     { name = "dinkster-memory" },
     { name = "dinkster-protocol" },
     { name = "dinkster-schema" },
@@ -652,7 +652,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
-    { name = "dinkster-inference", editable = "packages/dinkster-inference" },
+    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },
     { name = "dinkster-schema", editable = "packages/dinkster-schema" },
@@ -713,7 +713,7 @@ dependencies = [
     { name = "dinkster-assets" },
     { name = "dinkster-graph" },
     { name = "dinkster-image-document" },
-    { name = "dinkster-inference" },
+    { name = "dinkster-inference-wire" },
     { name = "dinkster-memory" },
     { name = "dinkster-native" },
     { name = "dinkster-nodes-generation" },
@@ -731,7 +731,7 @@ requires-dist = [
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
     { name = "dinkster-graph", editable = "packages/dinkster-graph" },
     { name = "dinkster-image-document", editable = "packages/dinkster-image-document" },
-    { name = "dinkster-inference", editable = "packages/dinkster-inference" },
+    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "dinkster-native", editable = "packages/dinkster-native" },
     { name = "dinkster-nodes-generation", editable = "packages/dinkster-nodes-generation" },
@@ -796,9 +796,9 @@ requires-dist = [
 ]
 
 [[package]]
-name = "dinkster-inference"
+name = "dinkster-inference-wire"
 version = "0.0.1"
-source = { editable = "packages/dinkster-inference" }
+source = { editable = "packages/dinkster-inference-wire" }
 dependencies = [
     { name = "aiohttp" },
     { name = "dinkster-schema" },
@@ -835,7 +835,7 @@ dependencies = [
     { name = "dinkster-assets" },
     { name = "dinkster-graph" },
     { name = "dinkster-image-document" },
-    { name = "dinkster-inference" },
+    { name = "dinkster-inference-wire" },
     { name = "dinkster-memory" },
     { name = "dinkster-nodes-generation" },
     { name = "dinkster-protocol" },
@@ -852,7 +852,7 @@ requires-dist = [
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
     { name = "dinkster-graph", editable = "packages/dinkster-graph" },
     { name = "dinkster-image-document", editable = "packages/dinkster-image-document" },
-    { name = "dinkster-inference", editable = "packages/dinkster-inference" },
+    { name = "dinkster-inference-wire", editable = "packages/dinkster-inference-wire" },
     { name = "dinkster-memory", editable = "packages/dinkster-memory" },
     { name = "dinkster-nodes-generation", editable = "packages/dinkster-nodes-generation" },
     { name = "dinkster-protocol", editable = "packages/dinkster-protocol" },

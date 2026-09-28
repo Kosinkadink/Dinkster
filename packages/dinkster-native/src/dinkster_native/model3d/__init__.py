@@ -1,1 +1,1 @@
-"""Mesh and 3D operations retained until dinkster-comfy exports them."""
+"""Mesh and 3D operations retained until dinkster-inference exports them."""

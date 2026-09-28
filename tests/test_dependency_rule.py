@@ -32,7 +32,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_compat_comfy",
         "dinkster_engine",
         "dinkster_graph",
-        "dinkster_inference",
+        "dinkster_inference_wire",
         "dinkster_schema",
         "dinkster_values",
         "dinkster_workers",
@@ -47,7 +47,7 @@ ALLOWED: dict[str, set[str]] = {
     # dinkster_schema supplies the closed name grammar for registry ids;
     # The conditioning carrier uses the bottom-layer dinkster_values package.
     # Nothing else (and never torch) belongs here.
-    "dinkster_inference": {"dinkster_schema", "dinkster_protocol", "dinkster_values"},
+    "dinkster_inference_wire": {"dinkster_schema", "dinkster_protocol", "dinkster_values"},
     # The execution boundary itself (hazard H3): Worker/CacheStore protocols
     # plus the frozen data they exchange. A leaf on purpose - both the engine
     # (consumer) and workers/caches (implementations) depend on it, so a
@@ -98,7 +98,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_assets",
         "dinkster_memory",
         "dinkster_graph",
-        "dinkster_inference",
+        "dinkster_inference_wire",
         "dinkster_protocol",
         "dinkster_nodes_generation",
         "dinkster_workers",
@@ -128,7 +128,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_assets",
         "dinkster_memory",
         "dinkster_graph",
-        "dinkster_inference",
+        "dinkster_inference_wire",
         "dinkster_native",
         "dinkster_protocol",
         "dinkster_nodes_generation",
@@ -142,7 +142,7 @@ ALLOWED: dict[str, set[str]] = {
         "dinkster_values",
         "dinkster_video",
         "dinkster_protocol",
-        "dinkster_inference",
+        "dinkster_inference_wire",
         "dinkster_memory",
         "dinkster_assets",
     },
@@ -349,7 +349,7 @@ def test_locked_pyav_satisfies_pinned_comfyui_requirement() -> None:
 def test_umbrella_optional_packages_are_locked() -> None:
     root_project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())["project"]
     inference_project = tomllib.loads(
-        (REPO_ROOT / "packages/dinkster-inference/pyproject.toml").read_text()
+        (REPO_ROOT / "packages/dinkster-inference-wire/pyproject.toml").read_text()
     )["project"]
     assert root_project["optional-dependencies"] == {
         "default": [
@@ -371,7 +371,7 @@ def test_umbrella_optional_packages_are_locked() -> None:
     locked = tomllib.loads((REPO_ROOT / "uv.lock").read_text())
     packages = {package["name"]: package for package in locked["package"]}
     root_locked = packages["dinkster"]
-    inference_locked = packages["dinkster-inference"]
+    inference_locked = packages["dinkster-inference-wire"]
     assert "gguf" not in {dependency["name"] for dependency in root_locked["dependencies"]}
     assert root_locked["optional-dependencies"] == {
         "default": [

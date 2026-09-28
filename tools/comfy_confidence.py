@@ -21,7 +21,7 @@ from decimal import MAX_EMAX, MIN_EMIN, Context, Decimal, DecimalException, Inex
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
-FORMAT = "dinkster-comfy-confidence-receipt/1"
+FORMAT = "dinkster-inference-confidence-receipt/1"
 COMFYUI_REFERENCE_REVISION = "b78cec87"
 COMFYUI_REFERENCE_REVISIONS = frozenset(
     (

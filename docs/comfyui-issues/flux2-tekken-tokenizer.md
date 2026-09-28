@@ -70,5 +70,5 @@ deliberate, evidence-backed change.
 
 ## Dinkster handling
 
-Dinkster delegates Flux2 tokenization to `dinkster_comfy`, including its
+Dinkster delegates Flux2 tokenization to `dinkster_inference`, including its
 in-repository tekken conversion.

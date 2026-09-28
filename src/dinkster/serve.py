@@ -65,11 +65,11 @@ from dinkster_assets import (
 )
 from dinkster_assets.resolution import ResolutionStore
 from dinkster_caches import DEFAULT_DISK_CACHE_BYTES, BudgetedDiskCAS
-from dinkster_inference import (
+from dinkster_inference_wire import (
     OpenAICompatibility,
     OpenAIGenerationProvider,
 )
-from dinkster_inference.devices import nvidia_compute_dtypes
+from dinkster_inference_wire.devices import nvidia_compute_dtypes
 from dinkster_memory import (
     BudgetsError,
     GovernorReservationService,

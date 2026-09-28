@@ -60,7 +60,7 @@ The graph value remains the ordinary latent mapping:
 ```
 
 Existing single-tensor latent mappings are unchanged. `MultiStreamLatent` is a
-small torch-free structural value in `dinkster-inference`, parameterized by the
+small torch-free structural value in `dinkster-inference-wire`, parameterized by the
 backend tensor type. It contains a nonempty ordered tuple of `LatentStream`
 records. Each stream has only:
 
@@ -78,7 +78,7 @@ its origin or copying model policy into data.
 The container exposes only structural operations needed by sampling and compat
 adapters: enumerate/unbind, map, topology comparison, and replacement by role.
 Tensor packing, allocation, interpolation, and device movement remain behind
-the `dinkster_comfy` execution boundary.
+the `dinkster_inference` execution boundary.
 
 ### Pack layout
 
@@ -558,7 +558,7 @@ field is introduced here.
 Issue #97 validates the completed rework against ComfyUI on RipperPC with
 like-for-like inputs, per-stage timing, and
 `torch.cuda.memory._record_memory_history()` timelines. The implementation
-defines one torch-free execution-observer protocol in `dinkster-inference`. The
+defines one torch-free execution-observer protocol in `dinkster-inference-wire`. The
 backend attaches an observer to one execution invocation and passes it through
 the resident handle and sampler call; it is never process-global. Every event
 contains an invocation ID, span ID, optional parent span ID, begin/end phase,

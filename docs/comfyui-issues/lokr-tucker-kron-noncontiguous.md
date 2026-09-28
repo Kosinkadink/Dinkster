@@ -61,5 +61,5 @@ torch.kron(w1, w2)  # RuntimeError: view size is not compatible ...
 
 ## Dinkster handling
 
-Dinkster delegates LoKr execution to `dinkster_comfy`. The fork currently
+Dinkster delegates LoKr execution to `dinkster_inference`. The fork currently
 matches the upstream behavior described above.

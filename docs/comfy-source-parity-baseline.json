@@ -11,7 +11,7 @@
       "reason": "Dinkster-only development scaffolding and conformance nodes have no ComfyUI execution counterpart; parity is not claimed."
     }
   ],
-  "format": "dinkster-comfy-source-parity-baseline/1",
+  "format": "dinkster-inference-source-parity-baseline/1",
   "grandfatheredUnreceiptedDigest": "sha256:65e64338332eb08d8209f78e1943ab2cc7e97e2b5c2737eab5148fb64d7e0fdf",
   "measured": {
     "passingReceiptCases": 103,
