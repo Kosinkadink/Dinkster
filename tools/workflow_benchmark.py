@@ -450,6 +450,17 @@ def retain_outputs(
     return rows
 
 
+def dinkster_execution_receipt(accepted: dict[str, Any], commit: str) -> dict[str, str]:
+    receipt = {
+        "runId": accepted.get("runId"),
+        "extensionSnapshotDigest": accepted.get("extensionSnapshotDigest"),
+        "dinksterGitHead": commit,
+    }
+    if not all(isinstance(value, str) and value for value in receipt.values()):
+        raise ValueError("Dinkster acceptance is missing execution provenance")
+    return receipt
+
+
 def run_jobs(
     args: argparse.Namespace,
     report: dict[str, Any],
@@ -515,6 +526,10 @@ def run_jobs(
         if not isinstance(identity, str) or not identity:
             raise ValueError("server returned no job identity")
         row["job_id"] = identity
+        if args.system == "dinkster":
+            row["execution_receipt"] = dinkster_execution_receipt(
+                accepted, report["sources"]["dinkster"]["commit"]
+            )
         route = (
             "/history/" if args.system == "comfyui" else "/api/jobs/by-ref/"
         ) + urllib.parse.quote(identity, safe="")

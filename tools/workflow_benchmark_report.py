@@ -327,6 +327,19 @@ def validate_workflow_report(report: dict[str, Any]) -> tuple[str, ...]:
             if row["job_id"] in identities or not row["job_id"]:
                 raise ValueError("job identity is missing or reused")
             identities.add(row["job_id"])
+            if report.get("system") == "dinkster":
+                receipt = row.get("execution_receipt")
+                if (
+                    not isinstance(receipt, dict)
+                    or set(receipt) != {
+                        "runId",
+                        "extensionSnapshotDigest",
+                        "dinksterGitHead",
+                    }
+                    or not all(isinstance(value, str) and value for value in receipt.values())
+                    or receipt["dinksterGitHead"] != sources["dinkster"]["commit"]
+                ):
+                    raise ValueError("Dinkster execution receipt is missing source provenance")
             if report["report_version"] == 2:
                 allocator = row.get("allocator")
                 nonce = row.get("allocator_window_nonce")
@@ -548,6 +561,12 @@ def validate_workflow_files(report: dict[str, Any], directory: Path) -> tuple[st
             accepted = json.loads(local(row["accepted_file"]).read_text())
             if accepted["prompt_id" if system == "comfyui" else "jobRef"] != row["job_id"]:
                 raise ValueError("retained acceptance identity differs")
+            if system == "dinkster" and row.get("execution_receipt") != {
+                "runId": accepted.get("runId"),
+                "extensionSnapshotDigest": accepted.get("extensionSnapshotDigest"),
+                "dinksterGitHead": report["sources"]["dinkster"]["commit"],
+            }:
+                raise ValueError("retained Dinkster execution receipt differs")
             history = json.loads(local(row["history_file"]).read_text())
             if system == "comfyui":
                 _, success = comfyui_history_status(history, row["job_id"], body["prompt"])

@@ -9,6 +9,9 @@
 - SD1.5 and MiniMax H3 execute through the pinned `dinkster_inference` package.
   Dinkster owns the graph schemas and worker integration, not a second model or
   sampling implementation.
+- AnimateDiff-Evolved runs unmodified through the compatibility worker for SD1.5
+  motion models, context and keyframe schedules, and scheduled LoRA, including
+  INT8 checkpoints.
 - Maintained aliases in the foundation, image, and media packs remain active.
   The retired generation and compatibility aliases are preserved as
   `comfy-aliases.inactive.json` evidence and are unavailable until their
