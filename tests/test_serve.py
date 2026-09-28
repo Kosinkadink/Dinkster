@@ -2923,11 +2923,18 @@ def test_library_startup_composes_without_pack_workers(
     tmp_path: Path, no_defaults: bool, launcher: bool, disable_p2p: bool
 ) -> None:
     import psutil
+    from dinkster_p2p import default_p2p_settings
 
     from tools.benchmark_schema_catalog import ENTRY, bound_server, terminate_children
 
     entry = ENTRY
     port = free_port()
+    enabled_p2p = {
+        **default_p2p_settings(),
+        "downloadsEnabled": True,
+        "seedingEnabled": True,
+    }
+    (tmp_path / "settings.json").write_text(json.dumps({"p2p": enabled_p2p}), encoding="utf-8")
     extra = ("--no-default-packs",) if no_defaults else ()
     if disable_p2p:
         extra += ("--disable-p2p",)
@@ -2975,16 +2982,26 @@ def test_library_startup_composes_without_pack_workers(
                 assert resp.status == 200
                 settings = await resp.json()
             panel_value = settings["settings"]["p2p"]["value"]
-            assert panel_value["downloadsEnabled"] is False
-            assert panel_value["seedingEnabled"] is False
+            assert panel_value["downloadsEnabled"] is not disable_p2p
+            assert panel_value["seedingEnabled"] is not disable_p2p
             async with session.get(f"http://127.0.0.1:{port}/api/p2p/status") as resp:
                 assert resp.status == 200
                 p2p = await resp.json()
-            assert p2p["state"] == "disabled", p2p
-            assert p2p["settings"]["downloadsEnabled"] is False, p2p
-            assert p2p["settings"]["seedingEnabled"] is False, p2p
-            assert p2p["sidecar"] is None, p2p
-            assert server.children(recursive=True) == []
+            assert p2p["state"] == ("disabled" if disable_p2p else "running"), p2p
+            assert p2p["settings"]["downloadsEnabled"] is not disable_p2p, p2p
+            assert p2p["settings"]["seedingEnabled"] is not disable_p2p, p2p
+            if disable_p2p:
+                assert p2p["sidecar"] is None, p2p
+                assert not server.children(recursive=True)
+            else:
+                sidecar = psutil.Process(p2p["sidecar"]["pid"])
+                process_chain = []
+                process_in_chain: psutil.Process | None = sidecar
+                while process_in_chain != server:
+                    assert process_in_chain is not None
+                    process_chain.append(process_in_chain)
+                    process_in_chain = process_in_chain.parent()
+                assert set(server.children(recursive=True)) == set(process_chain)
 
     try:
         asyncio.run(scenario())
