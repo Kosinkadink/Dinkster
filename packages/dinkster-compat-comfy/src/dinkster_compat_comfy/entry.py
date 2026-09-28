@@ -6,8 +6,7 @@ import importlib
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
-from dinkster_native.fork_nodes import FORK_NODES
-from dinkster_native.native import merge_native_nodes, register_native_types
+from dinkster_native.native import NATIVE_NODES, merge_native_nodes, register_native_types
 from dinkster_schema import Node
 from dinkster_values import TypeRegistry
 from dinkster_workers import CompatGateDiagnostic
@@ -16,9 +15,47 @@ from .bootstrap import load_comfyui_nodes
 from .devices import comfy_resident_meta
 from .pool import default_pool
 
+_COMPAT_ARM_NODE_TYPES = (
+    "dinkster.load_checkpoint",
+    "dinkster.load_diffusion_model",
+    "dinkster.clip_text_encode",
+    "dinkster.empty_latent_image",
+    "dinkster.ksampler",
+    "dinkster.vae_decode",
+    "dinkster.load_clip",
+    "dinkster.load_vae",
+    "dinkster.empty_minimax_h3_av",
+    "dinkster.minimax_h3_t2va_conditioning",
+    "dinkster.minimax_h3_image_to_video",
+    "dinkster.separate_av_latent",
+    "dinkster.vae_decode_audio",
+    "dinkster.image_crop_to_mask",
+    "dinkster.preview_mask",
+    "dinkster.voxel_to_mesh",
+    "dinkster.get_mesh_info",
+    "dinkster.remesh_mesh",
+    "dinkster.decimate_mesh",
+    "dinkster.smooth_mesh_normals",
+    "dinkster.unwrap_mesh",
+    "dinkster.paint_mesh",
+    "dinkster.bake_texture_from_voxel",
+    "dinkster.bake_normal_map_from_mesh",
+    "dinkster.bake_ambient_occlusion",
+    "dinkster.render_uv_atlas",
+    "dinkster.apply_texture_to_mesh",
+    "dinkster.mesh_to_model3d",
+)
+_COMPAT_ARM_NODE_TYPE_SET = frozenset(_COMPAT_ARM_NODE_TYPES)
 _TRANSLATION = load_comfyui_nodes()
-COMFY_NODES: tuple[type[Node], ...] = merge_native_nodes(_TRANSLATION.node_classes)
-ARM_NODES = {"native": FORK_NODES}
+COMFY_NODES: tuple[type[Node], ...] = tuple(
+    node
+    for node in merge_native_nodes(_TRANSLATION.node_classes)
+    if node not in NATIVE_NODES or node.schema().node_type in _COMPAT_ARM_NODE_TYPE_SET
+)
+_NATIVE_NODES_BY_TYPE = {node.schema().node_type: node for node in NATIVE_NODES}
+ARM_NODES = {
+    "native": tuple(_NATIVE_NODES_BY_TYPE[node_type] for node_type in _COMPAT_ARM_NODE_TYPES)
+}
 
 
 def translation_skips() -> Mapping[str, CompatGateDiagnostic]:
