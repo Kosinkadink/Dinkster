@@ -686,8 +686,7 @@ class NativeBlockSparseAttention(BlockSparseAttention):
         extra_tokens: int = 256,
         sink_conditioning: str = "exact_kv_and_rows",
         verbose: bool = False,
-        tau: float = 1.3,
-        keep_percent: float = 10.0,
+        **inputs: object,
     ) -> Mapping[str, object]:
         del verbose
         if selection not in ("sol-attn", "sla"):
@@ -704,6 +703,12 @@ class NativeBlockSparseAttention(BlockSparseAttention):
             dense = tuple(int(value.strip()) for value in dense_blocks.split(",") if value.strip())
         except ValueError as exc:
             raise ValueError("sparse attention dense_blocks must contain integers") from exc
+        selection_value = inputs.get(
+            "selection.tau" if selection == "sol-attn" else "selection.keep_percent",
+            1.3 if selection == "sol-attn" else 10.0,
+        )
+        if not isinstance(selection_value, (int, float)) or isinstance(selection_value, bool):
+            raise TypeError("sparse attention selection value must be numeric")
         model_sampling = cast("Any", model).get_model_object("model_sampling")
         patched = cast("Any", model).clone()
         patched.model_options["transformer_options"]["dinkster_h3_sparse_attention"] = {
@@ -713,8 +718,8 @@ class NativeBlockSparseAttention(BlockSparseAttention):
             "min_tokens": int(min_tokens),
             "extra_tokens": int(extra_tokens),
             "sink_conditioning": sink_conditioning,
-            "tau": float(tau) if selection == "sol-attn" else 0.0,
-            "keep_percent": float(keep_percent) if selection == "sla" else 0.0,
+            "tau": float(selection_value) if selection == "sol-attn" else 0.0,
+            "keep_percent": float(selection_value) if selection == "sla" else 0.0,
         }
         return cls.outputs(MODEL=patched)
 

@@ -189,9 +189,7 @@ class _SequenceBlockPatch:
 
 def configure_distributed_model(model: Any) -> None:
     config = attention._distributed_config()  # pyright: ignore[reportPrivateUsage]
-    patcher_extension = cast(
-        "Any", importlib.import_module("dinkster_inference.patcher_extension")
-    )
+    patcher_extension = cast("Any", importlib.import_module("dinkster_inference.patcher_extension"))
     if config.mode == "guidance":
         model.add_wrapper_with_key(
             patcher_extension.WrappersMP.CALC_COND_BATCH,

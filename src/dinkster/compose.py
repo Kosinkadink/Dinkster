@@ -647,9 +647,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
         attempt = WorkGroupAttempt(1)
         recipe = ReplicaRecipeId(
             "sha256:"
-            + hashlib.sha256(
-                f"single-job:{config.mode}:{len(lanes)}".encode()
-            ).hexdigest()
+            + hashlib.sha256(f"single-job:{config.mode}:{len(lanes)}".encode()).hexdigest()
         )
         workgroup_lanes = tuple(
             WorkGroupWorkerLane(
@@ -765,9 +763,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             request for invocation in invocations for request in plan_reservations(invocation)
         )
 
-    def _record_rank_values(
-        self, cuda_indices: tuple[int, ...], values: tuple[Value, ...]
-    ) -> None:
+    def _record_rank_values(self, cuda_indices: tuple[int, ...], values: tuple[Value, ...]) -> None:
         children = tuple(list_children(value) for value in values)
         if any(items is None for items in children) != all(items is None for items in children):
             raise RuntimeError("single-job ranks returned different list value types")

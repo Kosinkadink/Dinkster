@@ -222,7 +222,8 @@ PlanExecution = Callable[
 ]
 """Engine hook: decide where one node attempt executes, BEFORE cache
 lookup. Called with (node_id, node_type, effective schema, resolved inputs,
-run_id, attention policy config) after input resolution and absent policies;
+run_id, attention policy config, single-job multi-GPU config) after input
+resolution and absent policies;
 returns None for node types not enrolled in dispatch (the invocation proceeds
 exactly as without the hook). Raises ExecutionError to fail the node loudly
 (conflicting or dead resident owners). Called exactly once per attempt; the

@@ -191,8 +191,7 @@ def run_worker(args: argparse.Namespace) -> int:
             min_tokens=12_288,
             extra_tokens=256,
             sink_conditioning="exact_kv_and_rows",
-            tau=1.3,
-            keep_percent=10.0,
+            **{"selection.tau": 1.3},
         )["MODEL"]
     latent = cast(
         "dict[str, object]",

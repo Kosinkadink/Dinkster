@@ -862,7 +862,7 @@ def test_block_sparse_attention_attaches_execution_config_to_a_model_clone() -> 
         min_tokens=4096,
         extra_tokens=64,
         sink_conditioning="exact_kv",
-        keep_percent=12.5,
+        **{"selection.keep_percent": 12.5},  # pyright: ignore[reportArgumentType]
     )
 
     assert result["MODEL"] is clone

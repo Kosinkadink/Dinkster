@@ -144,6 +144,10 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
     assert set(dict(native.arms)["native"]) == native_nodes
     assert {node.schema().node_type for node in FORK_NODES} == native_nodes - set(mesh)
 
+    generation = load_manifest(Path("packages/dinkster-nodes-generation/dinkster-pack.toml"))
+    assert generation.namespaces == ("comfy", "dinkster")
+    assert "comfy.BlockSparseAttention" in generation.schema_only
+
 
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(
     tmp_path: Path,
