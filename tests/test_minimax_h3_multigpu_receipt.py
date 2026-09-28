@@ -12,6 +12,13 @@ from tools import minimax_h3_multigpu_receipt as receipt  # noqa: E402
 from tools.minimax_h3_multigpu_receipt import _sparse_quality_oracle  # noqa: E402
 
 
+def test_pre_reset_baselines_do_not_relabel_bf16_guidance_as_int8() -> None:
+    assert receipt.BASELINES[("RipperPC", "guidance", "sdpa", "production")] == 1.802
+    assert ("RipperPC", "guidance", "dinkster_kitchen_int8", "production") not in (
+        receipt.BASELINES
+    )
+
+
 def test_sparse_quality_oracle_reports_dense_relative_error_by_role(tmp_path) -> None:
     reference_path = tmp_path / "reference.pt"
     candidate_path = tmp_path / "candidate.pt"

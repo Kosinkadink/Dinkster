@@ -21,8 +21,6 @@ from typing import Any, cast
 BASELINES = {
     ("RipperPC", "guidance", "sdpa", "short"): 1.974,
     ("RipperPC", "guidance", "sdpa", "production"): 1.802,
-    ("RipperPC", "guidance", "dinkster_kitchen_int8", "short"): 1.974,
-    ("RipperPC", "guidance", "dinkster_kitchen_int8", "production"): 1.802,
     ("RipperPC", "sequence", "sdpa", "production"): 1.5404,
     ("RipperPC", "sequence", "dinkster_kitchen_int8", "production"): 1.436792013659844,
     ("X570", "sequence", "dinkster_kitchen_int8", "production"): 1.327,
@@ -176,6 +174,16 @@ def run_worker(args: argparse.Namespace) -> int:
         raise ReceiptError("MiniMax H3 receipt worker requires CUDA")
     setup_started = time.perf_counter()
     runtime, token = _route(args.policy)
+    sparse_backend_calls = 0
+    if args.sparse_enabled:
+        sparse_backend = runtime.registry["comfy_kitchen_sol_chunked"]
+
+        def counted_sparse_backend(*inputs: object, **options: object) -> object:
+            nonlocal sparse_backend_calls
+            sparse_backend_calls += 1
+            return sparse_backend(*inputs, **options)
+
+        runtime.registry["comfy_kitchen_sol_chunked"] = counted_sparse_backend
     load_started = time.perf_counter()
     model = GenerationLoadDiffusionModel.execute(
         diffusion_model=_asset(args.model, args.model_digest), weight_dtype="default"
@@ -241,6 +249,8 @@ def run_worker(args: argparse.Namespace) -> int:
     warmup_seconds = [run[1] for run in warmup_runs]
     sample_seconds = [run[1] for run in measured_runs]
     median_sample_seconds = statistics.median(sample_seconds)
+    if args.sparse_enabled and sparse_backend_calls == 0:
+        raise ReceiptError("sparse candidate never executed its registry backend")
     properties = torch.cuda.get_device_properties(0)
     result = {
         "status": "PASS",
@@ -269,6 +279,7 @@ def run_worker(args: argparse.Namespace) -> int:
         },
         "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
         "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
+        "sparse_backend_calls": sparse_backend_calls,
         "environment": {
             "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
             "device_capability": ".".join(
