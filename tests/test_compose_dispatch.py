@@ -476,12 +476,13 @@ def test_single_job_pool_selects_requested_lanes_and_resolves_local_ranks(tmp_pa
             (1, 2, "sequence"),
         ]
 
-        invalid = replace(
-            _single_job_invocation(),
-            single_job_multi_gpu=SingleJobMultiGpuConfig((0, 1, 2, 3), "sequence"),
-        )
-        with pytest.raises(RuntimeError, match="requires exactly two"):
-            await pool.invoke(invalid)
+        for mode in ("auto", "guidance", "sequence"):
+            invalid = replace(
+                _single_job_invocation(),
+                single_job_multi_gpu=SingleJobMultiGpuConfig((0, 1, 2, 3), mode),
+            )
+            with pytest.raises(RuntimeError, match="requires exactly two"):
+                await pool.invoke(invalid)
         assert [len(worker.calls) for worker in workers] == [0, 1, 0, 1]
 
     asyncio.run(scenario())

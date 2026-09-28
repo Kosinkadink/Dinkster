@@ -513,7 +513,7 @@ class _SingleJobWorkerPool(_ReplicaWorkerPool):
             raise RuntimeError(
                 "single-job multi-GPU request names CUDA lanes outside the configured pool"
             )
-        if config.mode in ("guidance", "sequence") and len(config.cuda_indices) != 2:
+        if config.mode in ("auto", "guidance", "sequence") and len(config.cuda_indices) != 2:
             raise RuntimeError(f"single-job {config.mode} mode requires exactly two CUDA lanes")
         return config, tuple(available[index] for index in config.cuda_indices)
 

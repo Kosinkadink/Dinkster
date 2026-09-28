@@ -68,8 +68,8 @@ Serve exposes:
 ```
 
 `auto` selects the two-rank sequence path. Guidance and window execution must
-be selected explicitly. Sequence mode requires exactly two ranks; guidance and
-window accept two or more ranks.
+be selected explicitly. Auto, sequence, and guidance modes require exactly two
+ranks. Window accepts two or more ranks.
 
 The startup list is an allowlist and capacity boundary. Native and
 Comfy-compatible job submission may include a run-scoped selection:
@@ -85,8 +85,8 @@ world size, and resolved mode. Mode and ordered indices partition execution
 cache identity and rank-local resident-resource mappings.
 
 The selected rank count must be at least two, device indices must be unique and
-nonnegative, and the Ulysses attention head and packed sequence counts must
-divide evenly across its two ranks.
+nonnegative, and the Ulysses attention head count must divide evenly across its
+two ranks. Sequence rows are padded evenly and cropped after the final gather.
 Single-job devices and whole-job replica devices are mutually exclusive so one
 serve process cannot create hidden overlapping residency.
 
