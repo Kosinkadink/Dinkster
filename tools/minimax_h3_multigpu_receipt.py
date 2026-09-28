@@ -173,11 +173,11 @@ def run_worker(args: argparse.Namespace) -> int:
         model = NativeBlockSparseAttention.execute(
             model=model,
             selection="sol-attn",
-            start_percent=0.0,
+            start_percent=0.2,
             end_percent=1.0,
             dense_blocks="",
-            min_tokens=1,
-            extra_tokens=128,
+            min_tokens=12_288,
+            extra_tokens=256,
             sink_conditioning="exact_kv_and_rows",
             tau=1.3,
             keep_percent=10.0,
@@ -519,6 +519,20 @@ def run_mint(args: argparse.Namespace) -> int:
             "denoise": 1.0,
             "guidance": 2.0 if args.mode == "guidance" else 1.0,
             "conditioning": "synthetic 32-token bfloat16 context with seed 220",
+            "sparse_config": (
+                {
+                    "selection": "sol-attn",
+                    "start_percent": 0.2,
+                    "end_percent": 1.0,
+                    "dense_blocks": [],
+                    "min_tokens": 12_288,
+                    "extra_tokens": 256,
+                    "sink_conditioning": "exact_kv_and_rows",
+                    "tau": 1.3,
+                }
+                if args.mode == "sparse"
+                else None
+            ),
         },
         "execution": {
             "mode": args.mode,
