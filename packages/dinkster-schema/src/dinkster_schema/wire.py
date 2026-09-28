@@ -1020,6 +1020,8 @@ def schema_to_wire(
         }
     if schema.emits_previews:
         wire["emitsPreviews"] = True
+    if schema.may_expand_graph:
+        wire["mayExpandGraph"] = True
     if schema.widget_groups:
         groups: list[dict[str, object]] = []
         for group in schema.widget_groups:
@@ -1078,9 +1080,11 @@ def schema_signature(schema: NodeSchema) -> str:
     found, never what this node computes. Resolution/targeting
     metadata (aliases, outputNode) is excluded too: what names resolve to a
     node and whether submission formats target it by default never change
-    what it computes. Capability metadata (emitsPreviews) is excluded for
-    the same reason: whether a node ships live previews while running never
-    changes what it computes. Mirror, output representation, and pre-execution
+    what it computes. Capability metadata (emitsPreviews, mayExpandGraph) is
+    excluded for the same reason: whether a node ships live previews while
+    running, or whether its execution may return a runtime graph expansion
+    payload, never changes what it computes. Mirror, output representation,
+    and pre-execution
     known-value declarations are excluded for the same reason: declaring,
     changing, or removing one never changes what the node computes.
     Presentation prose (displayName, category, description,
@@ -1176,6 +1180,7 @@ def schema_signature(schema: NodeSchema) -> str:
     wire.pop("aliases", None)
     wire.pop("outputNode", None)
     wire.pop("emitsPreviews", None)
+    wire.pop("mayExpandGraph", None)
     wire.pop("widgetGroups", None)
     wire.pop("mirror", None)
     wire.pop("displayName", None)
@@ -1697,6 +1702,7 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         aliases=_expect_strings(wire.get("aliases", []), "aliases"),
         output_node=_expect_bool(wire.get("outputNode", False), "outputNode"),
         emits_previews=_expect_bool(wire.get("emitsPreviews", False), "emitsPreviews"),
+        may_expand_graph=_expect_bool(wire.get("mayExpandGraph", False), "mayExpandGraph"),
         mirror=_mirror_from_wire(wire.get("mirror"), wire_version),
         selector=selector,
         widget_groups=widget_groups,

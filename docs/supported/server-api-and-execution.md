@@ -7,12 +7,6 @@
 - Resident-resource consumers follow the validated producer execution arm
   without a node-name or native-arm-name allowlist; malformed, unknown, and
   conflicting producer stamps are refused
-- Native-only checkpoint loading errors retain detection and configuration
-  failure details
-- Comfy API prompts resolve EmptyLatentImage through the native generation
-  schema, preserving its dimensions, batch size, and links to all four
-  sampling surfaces. Explicit `comfy.EmptyLatentImage` graphs retain their
-  legacy `comfy.LATENT` contract
 - Routes: health/auth, node catalog, extension/composition diagnostics,
   choices, pack assets/templates, including family/model metadata and
   immutable template thumbnails, jobs (status, cancellation, event
@@ -25,6 +19,11 @@
 - Inbound authentication with operator-managed static Bearer credentials,
   identity-service Ed25519 JWTs verified against cached JWKS, or both with
   static credentials tried first
+- User-delegated agents retain credentials across restarts with optional
+  expiry and explicit revocation. Authenticated servers require a recently
+  verified user JWT; signing in resumes the same delegation under the user's
+  current grants and permission toggles. Auth-off agents do not require JWT
+  freshness
 - Declarative resolver-index subscriptions from local JSON files or HTTPS
   URLs, with ETag revalidation, regional mirror priority, digest-verified
   acquisition leads, isolated source removal, exact-basename suggestions, and
@@ -47,28 +46,13 @@
   was-running); nothing re-runs without explicit resubmission
 - Execution: parallel ready-set scheduling, priority queueing, configurable
   concurrency, queued/running cancellation, first-class caching with
-  cross-run single-flight coalescing, partial execution (execute up
-  to/between/from via target outputs), binary WebSocket preview frames
-- Concurrent native model jobs run on process-isolated GPU replicas configured
-  with `dinkster-serve --multi-gpu-devices INDEX,INDEX`
-- Single native sampling jobs can use fixed ordered logical CUDA ranks. The
-  shared engine distributes guidance lanes for every family, including
-  conditional-only requests, masks, progress and state callbacks, custom
-  samplers, and guidance transforms. SD controls and IP-Adapter also work in
-  distributed mode. No measured device capability or receipt is required.
-  MiniMax H3 FL2VA and REF2VA support explicit sequence mode with compatible
-  attention and rank geometry. Measurements cover BF16 guidance on Ada and Blackwell and
-  BF16 Ulysses sequence execution on two Blackwell GPUs with SDPA and
-  dinkster-kitchen INT8 attention. Unmeasured configurations are diagnosed,
-  not refused because they lack measurements. CUDA/NCCL transport, tensor
-  dtype/shape consistency, and mode-specific geometry checks still apply.
-  Flux packed-grid requests scatter multiple joint windows across ranks with
-  deterministic merges and progress and state callbacks. Requests without
-  multiple windows use shared guidance evaluation.
-  `auto` selects guidance or eligible Flux window scattering, never sequence
-  parallelism.
+  cross-run single-flight coalescing, and per-submission `cacheEnabled: false`
+  execution that recomputes every node without restarting the server or
+  releasing loaded model consumers; partial execution (execute up/between/from
+  via target outputs), binary WebSocket preview frames
 - Memory governance: budgets, headroom, reservations with renewal,
-  governed shedding, admission waiting
+  governed shedding, admission waiting, and item details with Aimdo model-weight
+  page residency when the active Aimdo build exposes it
 - Paused, idle queues support `POST /memory/free` to release volatile
   execution caches and live workers' declared memory consumers without
   starting dormant workers. Results report each worker and consumer;

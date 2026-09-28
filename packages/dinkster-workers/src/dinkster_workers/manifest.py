@@ -56,11 +56,10 @@ import mimetypes
 import re
 import tomllib
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
-from types import MappingProxyType
 from typing import TypeVar, cast
 
 from dinkster_assets import (
@@ -92,6 +91,7 @@ from dinkster_schema import (
     core_logger,
     validate_name,
 )
+from dinkster_values import MEBIBYTE
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
@@ -103,13 +103,6 @@ class ManifestError(Exception):
 PACK_HOST_CONTRACT = "dinkster-pack-host/1"
 PACK_AUTHOR_API_CONTRACT = "dinkster-api/v1"
 PACK_INFERENCE_CONTRACT = "dinkster-inference/1"
-_PACK_REGISTRY_CONTRIBUTION_SURFACES: Mapping[str, str] = MappingProxyType(
-    {
-        "dinkster-model-families": "inference.families",
-        "dinkster-samplers": "inference.samplers",
-        "dinkster-schedulers": "inference.schedulers",
-    }
-)
 
 
 _ABBR_MAX = 8
@@ -128,8 +121,8 @@ ICON_MAX_BYTES = 64 * 1024
 # is generous. Bytes are held in memory at validation to guarantee
 # digest/byte coherence - hence the additional per-pack total budget, or
 # one pack could hold unbounded memory through many just-under-cap files.
-BLUEPRINT_MAX_BYTES = 1024 * 1024
-BLUEPRINT_PACK_MAX_BYTES = 16 * 1024 * 1024
+BLUEPRINT_MAX_BYTES = MEBIBYTE
+BLUEPRINT_PACK_MAX_BYTES = 16 * MEBIBYTE
 
 # The pack-template contract (roadmap "templates surface"): a template is
 # a complete starter workflow document - same plain-data format and the
@@ -141,14 +134,14 @@ TEMPLATE_MAX_BYTES = BLUEPRINT_MAX_BYTES
 TEMPLATE_PACK_MAX_BYTES = BLUEPRINT_PACK_MAX_BYTES
 
 DOC_PAGE_MAX_BYTES = 256 * 1024
-DOC_IMAGE_MAX_BYTES = 2 * 1024 * 1024
-DOC_VIDEO_MAX_BYTES = 16 * 1024 * 1024
-DOC_PACK_MAX_BYTES = 32 * 1024 * 1024
+DOC_IMAGE_MAX_BYTES = 2 * MEBIBYTE
+DOC_VIDEO_MAX_BYTES = 16 * MEBIBYTE
+DOC_PACK_MAX_BYTES = 32 * MEBIBYTE
 DOC_LOCALES = frozenset({"en", "zh"})
-LOCALE_CATALOG_MAX_BYTES = 1024 * 1024
-LOCALE_CATALOG_PACK_MAX_BYTES = 16 * 1024 * 1024
-FRONTEND_ASSET_MAX_BYTES = 4 * 1024 * 1024
-FRONTEND_ASSET_PACK_MAX_BYTES = 16 * 1024 * 1024
+LOCALE_CATALOG_MAX_BYTES = MEBIBYTE
+LOCALE_CATALOG_PACK_MAX_BYTES = 16 * MEBIBYTE
+FRONTEND_ASSET_MAX_BYTES = 4 * MEBIBYTE
+FRONTEND_ASSET_PACK_MAX_BYTES = 16 * MEBIBYTE
 FRONTEND_ASSET_MAX_FILES = 256
 DOC_MEDIA_TYPES = {
     ".gif": "image/gif",
@@ -171,7 +164,7 @@ _LOCALE_TAG_RE = re.compile(r"^[a-z]{2,3}(?:-[a-z0-9]{1,8})*$")
 
 COMFY_ALIASES_FILENAME = "comfy-aliases.json"
 COMFY_GROUPS_FILENAME = "comfy-groups.json"
-COMFY_ALIASES_MAX_BYTES = 4 * 1024 * 1024
+COMFY_ALIASES_MAX_BYTES = 4 * MEBIBYTE
 COMFY_ALIASES_MAX_DEPTH = 64
 COMFY_ALIASES_MAX_ITEMS = 100_000
 
@@ -1895,22 +1888,6 @@ class PackDependency:
 
 
 @dataclass(frozen=True)
-class PackRegistryRequirement:
-    """One exact descriptor required from a named host registry."""
-
-    registry: str
-    id: str
-
-
-@dataclass(frozen=True)
-class PackRegistryProvider:
-    """One exact registry descriptor provided by this pack."""
-
-    registry: str
-    id: str
-
-
-@dataclass(frozen=True)
 class PackCapabilityRequirement:
     """One provider-agnostic capability and its compatible release range."""
 
@@ -1923,39 +1900,9 @@ class PackCapabilityRequirement:
 
 @dataclass(frozen=True)
 class PackRequirements:
-    """Registry descriptors and capabilities consumed by one pack."""
+    """Versioned capabilities consumed by one pack."""
 
-    registry: tuple[PackRegistryRequirement, ...] = ()
     capabilities: tuple[PackCapabilityRequirement, ...] = ()
-
-
-@dataclass(frozen=True)
-class PackProvides:
-    """Registry descriptors supplied by one pack contribution."""
-
-    registry: tuple[PackRegistryProvider, ...] = ()
-
-
-def unmatched_registry_providers(
-    provides: PackProvides,
-    contributions: Iterable[tuple[str, str]],
-) -> tuple[PackRegistryProvider, ...]:
-    """Return provider claims absent from the pack's inference declarations."""
-    registered = {
-        (canonical_name(surface_id), canonical_name(descriptor_id))
-        for surface_id, descriptor_id in contributions
-    }
-    return tuple(
-        provider
-        for provider in provides.registry
-        if (
-            canonical_name(
-                _PACK_REGISTRY_CONTRIBUTION_SURFACES.get(canonical_name(provider.registry), "")
-            ),
-            canonical_name(provider.id),
-        )
-        not in registered
-    )
 
 
 @dataclass(frozen=True)
@@ -2176,9 +2123,7 @@ class PackManifest:
     dependencies: tuple[PackDependency, ...] = ()
     """Pack ordering dependencies, sorted by canonical pack id."""
     requirements: PackRequirements = PackRequirements()
-    """Exact registry descriptors and versioned capabilities this pack consumes."""
-    provides: PackProvides = PackProvides()
-    """Exact registry descriptors supplied by this pack's contribution."""
+    """Versioned capabilities this pack consumes."""
     sandbox: PackSandboxNeeds = PackSandboxNeeds()
     """Requested OS resources. The host remains authoritative over every grant."""
     sandbox_declared: bool = False
@@ -2394,69 +2339,17 @@ def _parse_pack_dependencies(raw: object, manifest_path: Path) -> tuple[PackDepe
     return tuple(dependencies[name] for name in sorted(dependencies))
 
 
-def _parse_registry_descriptor_map(
-    raw: object,
-    manifest_path: Path,
-    *,
-    subject: str,
-    declaration: str,
-) -> tuple[tuple[str, str], ...]:
-    if not isinstance(raw, dict):
-        raise ManifestError(
-            f"{manifest_path}: {subject} registry must be a table of registry ids "
-            "to descriptor-id lists"
-        )
-    registry: dict[tuple[str, str], tuple[str, str]] = {}
-    for registry_declared, ids_raw in cast("dict[str, object]", raw).items():
-        registry_id = _canonical_namespaced_id(
-            registry_declared,
-            field=f"{subject} registry id",
-            manifest_path=manifest_path,
-        )
-        if not isinstance(ids_raw, list) or not all(
-            isinstance(item, str) for item in cast("list[object]", ids_raw)
-        ):
-            raise ManifestError(
-                f"{manifest_path}: {subject} registry {registry_declared!r} "
-                "must be a list of descriptor ids"
-            )
-        for item in cast("list[str]", ids_raw):
-            descriptor_id = _canonical_namespaced_id(
-                item,
-                field=f"{subject} registry {registry_declared!r} descriptor",
-                manifest_path=manifest_path,
-            )
-            key = (canonical_name(registry_id), canonical_name(descriptor_id))
-            if key in registry:
-                raise ManifestError(
-                    f"{manifest_path}: {subject} repeats registry {declaration} "
-                    f"{registry_id!r} {descriptor_id!r}"
-                )
-            registry[key] = (registry_id, descriptor_id)
-    return tuple(registry[key] for key in sorted(registry))
-
-
 def _parse_requirements(raw: object, manifest_path: Path) -> PackRequirements:
     if raw is None:
         return PackRequirements()
     if not isinstance(raw, dict):
         raise ManifestError(f"{manifest_path}: [pack.requirements] must be a table")
     table = cast("dict[str, object]", raw)
-    unknown = sorted(set(table) - {"registry", "capabilities"})
+    unknown = sorted(set(table) - {"capabilities"})
     if unknown:
         raise ManifestError(
             f"{manifest_path}: [pack.requirements] unknown fields: {', '.join(unknown)}"
         )
-
-    registry = tuple(
-        PackRegistryRequirement(registry_id, descriptor_id)
-        for registry_id, descriptor_id in _parse_registry_descriptor_map(
-            table.get("registry", {}),
-            manifest_path,
-            subject="[pack.requirements]",
-            declaration="requirement",
-        )
-    )
 
     capabilities_raw = table.get("capabilities", {})
     if not isinstance(capabilities_raw, dict):
@@ -2485,32 +2378,7 @@ def _parse_requirements(raw: object, manifest_path: Path) -> PackRequirements:
             ),
         )
     return PackRequirements(
-        registry=registry,
         capabilities=tuple(capabilities[key] for key in sorted(capabilities)),
-    )
-
-
-def _parse_provides(raw: object, manifest_path: Path) -> PackProvides:
-    if raw is None:
-        return PackProvides()
-    if not isinstance(raw, dict):
-        raise ManifestError(f"{manifest_path}: [pack.provides] must be a table")
-    table = cast("dict[str, object]", raw)
-    unknown = sorted(set(table) - {"registry"})
-    if unknown:
-        raise ManifestError(
-            f"{manifest_path}: [pack.provides] unknown fields: {', '.join(unknown)}"
-        )
-    return PackProvides(
-        registry=tuple(
-            PackRegistryProvider(registry_id, descriptor_id)
-            for registry_id, descriptor_id in _parse_registry_descriptor_map(
-                table.get("registry", {}),
-                manifest_path,
-                subject="[pack.provides]",
-                declaration="provider",
-            )
-        )
     )
 
 
@@ -2859,6 +2727,8 @@ def load_manifest(path: Path | str) -> PackManifest:
     if not isinstance(pack, dict):
         raise ManifestError(f"{manifest_path}: missing [pack] table")
     pack = cast("dict[str, object]", pack)
+    if "provides" in pack:
+        raise ManifestError(f"{manifest_path}: [pack.provides] is retired")
 
     name = pack.get("name")
     if not isinstance(name, str) or not name:
@@ -3009,7 +2879,6 @@ def load_manifest(path: Path | str) -> PackManifest:
         contracts=_parse_contracts(pack.get("contracts"), manifest_path),
         dependencies=_parse_pack_dependencies(pack.get("dependencies"), manifest_path),
         requirements=_parse_requirements(pack.get("requirements"), manifest_path),
-        provides=_parse_provides(pack.get("provides"), manifest_path),
         sandbox=_parse_sandbox(pack.get("sandbox"), manifest_path),
         sandbox_declared="sandbox" in pack,
         capabilities=_parse_capabilities(pack.get("capabilities"), manifest_path),

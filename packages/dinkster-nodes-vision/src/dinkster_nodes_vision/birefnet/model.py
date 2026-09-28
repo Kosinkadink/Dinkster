@@ -8,8 +8,13 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from dinkster_api.v1 import declared_asset
-from dinkster_inference_torch.birefnet import BiRefNet
+from dinkster_inference.cli_args import args
 from safetensors.torch import load_file
+
+# This pack is CPU-only; fork modules read the CLI singleton during import.
+args.cpu = True
+from dinkster_inference import ops  # noqa: E402
+from dinkster_inference.background_removal.birefnet import BiRefNet  # noqa: E402
 
 MODEL_INPUT_SIZE = 1024
 
@@ -24,7 +29,7 @@ def load_model() -> BiRefNet:
     if _MODEL is not None and _MODEL_DIGEST == reference.digest:
         return _MODEL
     with torch.device("meta"):
-        model = BiRefNet()
+        model = BiRefNet(operations=ops.manual_cast)
     state = load_file(reference.local_path(), device="cpu")
     model.load_state_dict(state, strict=True, assign=True)
     model.float().eval()

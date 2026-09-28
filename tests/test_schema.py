@@ -73,6 +73,7 @@ def test_current_schema_features_roundtrip() -> None:
         search_terms=("legacy",),
         output_node=True,
         emits_previews=True,
+        may_expand_graph=True,
     )
     wire = schema_to_wire(schema)
     assert wire["dispatchAffinity"] == "native"
@@ -82,8 +83,11 @@ def test_current_schema_features_roundtrip() -> None:
     assert wire["searchTerms"] == ["legacy"]
     assert wire["outputNode"] is True
     assert wire["emitsPreviews"] is True
+    assert wire["mayExpandGraph"] is True
     assert schema_from_wire(wire) == schema
     assert schema_signature(schema) == schema_signature(SCHEMA)
+    # Default schemas stay unflagged on the wire: ordinary nodes never expand.
+    assert "mayExpandGraph" not in schema_to_wire(SCHEMA)
 
 
 @pytest.mark.parametrize(

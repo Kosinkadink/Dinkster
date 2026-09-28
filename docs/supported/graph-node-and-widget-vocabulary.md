@@ -55,35 +55,6 @@
   and strict numeric schedule parsing
 - Role-labeled multi-stream values inside ordinary `comfy.LATENT`, with generic
   audio/video concat, separate, visual preview, and audio preview nodes
-- Native temporal video-latent trimming with metadata-preserving
-  `TrimVideoLatent` workflow compatibility
-- Native latent operation library with exact pinned-ComfyUI parity: tensor
-  math (combine, mix, multiply, rotate, flip, crop, resize, composite,
-  concat, cut), batch/metadata operations (from-batch, repeat, seed
-  behavior, batching, rebatching, noise masks, video frame replacement),
-  and reusable latent-operation values (tonemap reinhard, sharpen) applied
-  through `LatentApplyOperation` or per-step before CFG combination through
-  `LatentApplyOperationCFG`, each with comfy workflow alias records
-- Native tensor resizing without a ComfyUI installation: nearest-exact,
-  bilinear, bicubic, area, bislerp, and Lanczos interpolation, center cropping,
-  video-frame resizing, and batch resampling. Empty Hunyuan video latents
-  also work without ComfyUI.
-- Native latent noise tooling with exact pinned-KJNodes parity: standalone
-  noise generation (`GenerateNoise` compatibility: seeded CPU noise in BCHW,
-  BCTHW, or BTCHW shapes with 4 or 16 channels, optional sigma-range scaling
-  from a model's latent scale factor, multiplier, normalization, and
-  constant-batch repetition) and latent noise injection (`InjectNoiseToLatent`
-  compatibility: strength or averaged blending, normalization, bilinear mask
-  gating, and seeded randn mixing), each with comfy workflow alias records
-- Native `EmptyARVideoLatent`, `SamplerARVideo`, and `ARVideoI2V` workflow
-  nodes for Wan 2.1 CausalAR generation
-- Native `AudioEncoderLoader`, `AudioEncoderEncode`, `WanSoundImageToVideo`, and
-  `WanSoundImageToVideoExtend` workflow nodes for Wan 2.2 S2V generation
-- Native `WanDancerEncodeAudio`, `WanDancerVideo`, `WanDancerPadKeyframes`, and
-  `WanDancerPadKeyframesList` workflow nodes for Wan 2.2 WanDancer generation
-- Native `TRACKS` values and the `WanMoveTracksFromCoords`, `GenerateTracks`,
-  `WanMoveConcatTrack`, `WanMoveVisualizeTracks`, and `WanMoveTrackToVideo`
-  workflow nodes
 - Asset-backed native Save/Load Latent with deterministic `.latent`
   safetensors, ordered multi-stream roles, VAE provenance hints, and safe
   stock ComfyUI single-latent import; legacy `LoadLatent` prompts resolve
@@ -101,3 +72,9 @@
   nodes and nested regions neither prepare nor execute.
   Each body exposes its immediate zero-based `$region.index`; an explicitly
   declared `index` port keeps its declared meaning for graph compatibility.
+  Images, latents, conditioning, masks, audio, video, assets, strings,
+  integers, floats, and pack-defined values use the same generic region path.
+  Expansion and per-iteration start/completion events expose real occurrence
+  progress. The foundation template catalog includes executable map, gather,
+  fold/scan, while/until, and per-item image-spawn workflows. See
+  [Loop regions](../loops.md).

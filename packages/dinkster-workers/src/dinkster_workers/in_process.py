@@ -179,6 +179,7 @@ class InProcessWorker:
         pack_context: Callable[[], contextlib.AbstractContextManager[None]] | None = None,
         attention_capabilities: AttentionCapabilityEvidence | None = None,
         attention_route_token: AttentionRouteToken | None = None,
+        attention_runtime: object | None = None,
         combo_choices: Mapping[str, tuple[str, ...]] | None = None,
         lazy_choices: Mapping[str, Callable[[], Sequence[str]]] | None = None,
         memory_consumers: Mapping[str, Shedder] | None = None,
@@ -202,6 +203,7 @@ class InProcessWorker:
             raise ValueError("attention capabilities do not match route token")
         self._attention_capabilities = attention_capabilities
         self._attention_route_token = attention_route_token
+        self._attention_runtime = attention_runtime
         self._combo_choices = dict(combo_choices or {})
         self._lazy_choices = dict(lazy_choices or {})
         self._memory_consumers = dict(memory_consumers or {})
@@ -269,6 +271,10 @@ class InProcessWorker:
     @property
     def attention_capabilities(self) -> AttentionCapabilityEvidence | None:
         return self._attention_capabilities
+
+    @property
+    def attention_runtime(self) -> object | None:
+        return self._attention_runtime
 
     def bind_registry(self, registry: TypeRegistry) -> None:
         """Bind a staged worker to the host registry before publication."""
@@ -404,10 +410,15 @@ class InProcessWorker:
             vae_dtype=invocation.vae_dtype,
             attention_policy=invocation.attention_policy,
             attention_route_token=invocation.attention_route_token,
-            extension_snapshot_digest=invocation.extension_snapshot_digest,
-            inference_registries=(
-                outer_context.inference_registries if outer_context is not None else None
+            attention_capabilities=(
+                self._attention_capabilities
+                if invocation.attention_route_token is not None
+                else None
             ),
+            attention_runtime=(
+                self._attention_runtime if invocation.attention_route_token is not None else None
+            ),
+            extension_snapshot_digest=invocation.extension_snapshot_digest,
             node_id=invocation.node_id,
             cancelled=(outer_context.cancelled if outer_context is not None else lambda: False),
         )
@@ -513,13 +524,22 @@ class InProcessWorker:
                     arm=invocation.arm,
                     expected_execution_identity=invocation.expected_execution_identity,
                     extension_snapshot_digest=invocation.extension_snapshot_digest,
-                    inference_registries=None,
                     fp8_matmul=invocation.fp8_matmul,
                     diffusion_dtype=invocation.diffusion_dtype,
                     text_dtype=invocation.text_dtype,
                     vae_dtype=invocation.vae_dtype,
                     attention_policy=invocation.attention_policy,
                     attention_route_token=invocation.attention_route_token,
+                    attention_capabilities=(
+                        self._attention_capabilities
+                        if invocation.attention_route_token is not None
+                        else None
+                    ),
+                    attention_runtime=(
+                        self._attention_runtime
+                        if invocation.attention_route_token is not None
+                        else None
+                    ),
                     preview_mode=invocation.preview_mode,
                     preview_animation=invocation.preview_animation,
                     node_id=invocation.node_id,
@@ -532,13 +552,22 @@ class InProcessWorker:
                     arm=invocation.arm,
                     expected_execution_identity=invocation.expected_execution_identity,
                     extension_snapshot_digest=invocation.extension_snapshot_digest,
-                    inference_registries=outer_context.inference_registries,
                     fp8_matmul=invocation.fp8_matmul,
                     diffusion_dtype=invocation.diffusion_dtype,
                     text_dtype=invocation.text_dtype,
                     vae_dtype=invocation.vae_dtype,
                     attention_policy=invocation.attention_policy,
                     attention_route_token=invocation.attention_route_token,
+                    attention_capabilities=(
+                        self._attention_capabilities
+                        if invocation.attention_route_token is not None
+                        else None
+                    ),
+                    attention_runtime=(
+                        self._attention_runtime
+                        if invocation.attention_route_token is not None
+                        else None
+                    ),
                     preview_mode=invocation.preview_mode,
                     preview_animation=invocation.preview_animation,
                     node_id=invocation.node_id,
@@ -770,8 +799,14 @@ class InProcessWorker:
         the same pure planner over the same effective schema, so engine and
         worker can never disagree about which coercion applies."""
         spec = invocation.effective_schema.input(input_id)
-        if spec is None or is_absent(value) or spec.type.accepts_concrete(value.type_id):
+        if spec is None or is_absent(value):
             return value.resolve()
+
+        def input_object(type_id: str, obj: object) -> object:
+            return obj if spec.accepts_storage else self._registry.input_object(type_id, obj)
+
+        if spec.type.accepts_concrete(value.type_id):
+            return input_object(value.type_id, value.resolve())
         plan = plan_asset_coercion(value.type_id, spec.type)
         if plan is None:
             if combo_type_mismatch_is_error(value.type_id, spec.type):
@@ -779,7 +814,7 @@ class InProcessWorker:
                     f"input '{input_id}' rejects runtime type {value.type_id}: "
                     "core.combo mismatches require an explicit converter"
                 )
-            return value.resolve()
+            return input_object(value.type_id, value.resolve())
         decoder = self._registry.asset_decoder_for(plan.target_type_id)
         merger = (
             self._registry.batch_merge_for(plan.merge_type_id)
@@ -794,14 +829,17 @@ class InProcessWorker:
             )
         try:
             if plan.kind == "decode":
-                return decoder.decode(value.resolve())
+                return input_object(plan.target_type_id, decoder.decode(value.resolve()))
             children = list_children(value)
             if children is None:
                 raise InputCoercionError(
                     f"input '{input_id}': {value.type_id} arrived without "
                     "list structure; its elements cannot be decoded"
                 )
-            decoded = [decoder.decode(child.resolve()) for child in children]
+            decoded = [
+                input_object(plan.target_type_id, decoder.decode(child.resolve()))
+                for child in children
+            ]
             if plan.kind == "lift":
                 return decoded
             assert merger is not None  # merge plans always name a merger

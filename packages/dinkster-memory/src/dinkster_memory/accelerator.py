@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-MiB = 1024**2
-GiB = 1024**3
+from dinkster_values.limits import GIBIBYTE, MEBIBYTE
 
-DEFAULT_ACCELERATOR_HEADROOM_BYTES = 256 * MiB
-DEFAULT_INFERENCE_RESERVE_BYTES = int(0.8 * GiB)
+DEFAULT_ACCELERATOR_HEADROOM_BYTES = 256 * MEBIBYTE
+DEFAULT_INFERENCE_RESERVE_BYTES = int(0.8 * GIBIBYTE)
 
 
 class AcceleratorMemoryPolicyError(ValueError):

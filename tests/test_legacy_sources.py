@@ -8,8 +8,6 @@ import json
 import os
 import shutil
 import struct
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -23,15 +21,14 @@ from dinkster_compat_comfy.legacy_sources import (
     discover_converted_sidecar,
     resolve_weight_source,
 )
-from dinkster_inference import load_safetensors_header
+from dinkster_inference_wire import load_safetensors_header
 
 
 @pytest.fixture
 def torch_modules() -> tuple[Any, Any]:
     torch = pytest.importorskip("torch")
-    pytest.importorskip("safetensors.torch")
-    inference_torch = pytest.importorskip("dinkster_inference_torch")
-    return torch, inference_torch
+    safetensors_torch = pytest.importorskip("safetensors.torch")
+    return torch, safetensors_torch
 
 
 def _empty_safetensors(path: Path) -> Path:
@@ -142,7 +139,7 @@ def test_conversion_round_trips_and_logs_actual_conversion(
     torch_modules: tuple[Any, Any],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    torch, inference_torch = torch_modules
+    torch, safetensors_torch = torch_modules
     source = tmp_path / "model.ckpt"
     tensors = {
         "z.weight": torch.arange(6, dtype=torch.float32).reshape(2, 3),
@@ -156,7 +153,7 @@ def test_conversion_round_trips_and_logs_actual_conversion(
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     assert sidecar.name == f"model.{digest[:16]}.dinkster.safetensors"
     header = load_safetensors_header(sidecar)
-    loaded = inference_torch.load_tensors(sidecar, header.keys())
+    loaded = safetensors_torch.load_file(sidecar)
     assert tuple(header.keys()) == ("a.bias", "z.weight")
     for key, expected in tensors.items():
         assert loaded[key].shape == expected.shape
@@ -228,7 +225,7 @@ def test_corrupt_existing_sidecar_is_reconverted(
 def test_nested_state_dict_extracts_and_accounts_for_exact_dropped_keys(
     tmp_path: Path, torch_modules: tuple[Any, Any]
 ) -> None:
-    torch, inference_torch = torch_modules
+    torch, safetensors_torch = torch_modules
     source = tmp_path / "nested.ckpt"
     torch.save(
         {
@@ -248,7 +245,7 @@ def test_nested_state_dict_extracts_and_accounts_for_exact_dropped_keys(
     assert result.dropped_keys == ("optimizer", "epoch", "description")
     header = load_safetensors_header(output)
     assert tuple(header.keys()) == ("weight",)
-    assert inference_torch.load_tensors(output)["weight"].shape == (1,)
+    assert safetensors_torch.load_file(output)["weight"].shape == (1,)
 
 
 def test_non_mapping_root_refuses(tmp_path: Path, torch_modules: tuple[Any, Any]) -> None:
@@ -516,117 +513,8 @@ def test_output_hash_failure_is_named(
         convert_legacy_checkpoint(source, output)
 
 
-def test_native_arm_legacy_resolution_is_bounded_to_compatible_sources() -> None:
-    import dinkster_compat_comfy.native_arm as native_arm
-
-    source = "\n".join(inspect.getsource(module) for module in native_arm._IMPLEMENTATION_MODULES)
-
-    # Each prevalidated overlay and canonical role source is resolved before
-    # any residency graph mutation.
-    assert source.count("resolve_weight_source(") == 8
-    assert "load_safetensors_header(checkpoint_asset.local_path())" not in source
-    assert "load_safetensors_header(lora.local_path())" not in source
-    component_loader = inspect.getsource(native_arm._load_detected_component)
-    assert "_component_candidate_path(asset)" in component_loader
-    assert "asset_digest=asset.digest, asset_size=asset.size" in component_loader
-    assert "resolve_weight_source(" not in component_loader
-    assert component_loader.index("load_safetensors_header(") < component_loader.index(
-        "_build_component_runtime_handle("
-    )
-    control_loader = inspect.getsource(native_arm.NativeControlNetLoader.execute)
-    assert control_loader.index("resolve_weight_source(") < control_loader.index(
-        "_enroll_control_module("
-    )
-
-
 def test_module_import_is_torch_free() -> None:
     source = inspect.getsource(legacy_sources)
 
     assert "import torch" not in source
     assert os.path.basename(legacy_sources.__file__) == "legacy_sources.py"
-
-
-def test_latent_served_graph_and_host_import_are_torch_free() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            """
-import asyncio
-import importlib.abc
-import os
-import sys
-class HostOnly(importlib.abc.MetaPathFinder):
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname.split('.')[0] in {'torch', 'dinkster_inference_torch', 'comfy',
-                                     'comfy_extras', 'folder_paths', 'nodes'}:
-            raise AssertionError(fullname)
-sys.meta_path.insert(0, HostOnly())
-os.environ['DINKSTER_COMFY_NATIVE_ONLY'] = '1'
-import dinkster.compat_api
-from aiohttp.test_utils import TestClient, TestServer
-from dinkster_assets import AssetRef
-from dinkster_caches import MemoryLRUCache
-from dinkster_compat_comfy.entry import COMFY_NODES, register_types
-from dinkster_compat_comfy.native import LATENT, LoadLatent
-from dinkster_engine import Engine
-from dinkster_graph import Graph, GraphNode, Link, validate
-from dinkster_schema import build_node_types, build_schemas, schema_from_wire
-from dinkster_server import create_app
-from dinkster_values import TypeRegistry, register_core_types
-from dinkster_workers import InProcessWorker
-registry = TypeRegistry()
-register_core_types(registry)
-register_types(registry)
-schemas = build_schemas(COMFY_NODES)
-assert 'comfy.LoadLatent' not in schemas
-assert schemas['dinkster.load_latent'] == LoadLatent.schema()
-assert tuple(output.id for output in LoadLatent.schema().outputs) == ('samples', 'vae_hint')
-assert LATENT.types == ('comfy.LATENT',)
-selected = {key: schemas[key] for key in (
-    'dinkster.load_latent', 'dinkster.save_latent', 'dinkster.load_vae', 'dinkster.vae_decode',
-)}
-def make_engine(on_event):
-    return Engine(
-        schemas=selected, registry=registry,
-        worker=InProcessWorker(build_node_types(COMFY_NODES), registry),
-        cache=MemoryLRUCache(), on_event=on_event,
-    )
-async def scenario():
-    async with TestClient(TestServer(create_app(make_engine, selected))) as client:
-        async with client.get('/api/nodes') as response:
-            assert response.status == 200
-            data = await response.json()
-    served = {key: schema_from_wire(value) for key, value in data['nodes'].items()}
-    assert served == selected
-    asset = AssetRef('blake3:' + 'a' * 64, 'sample.latent', 4).to_wire()
-    for with_hint in (False, True):
-        save_inputs = {'samples': Link('load', 'samples')}
-        if with_hint:
-            save_inputs['vae'] = Link('vae', 'vae')
-        graph = Graph(nodes={
-            'load': GraphNode('dinkster.load_latent', {'asset': asset}),
-            'vae': GraphNode('dinkster.load_vae', {'pixel_space': True}),
-            'save': GraphNode('dinkster.save_latent', save_inputs),
-            'reload': GraphNode('dinkster.load_latent', {'asset': Link('save', 'asset')}),
-            'decode': GraphNode('dinkster.vae_decode', {
-                'samples': Link('load', 'samples'), 'vae': Link('vae', 'vae'),
-            }),
-            'decode_saved': GraphNode('dinkster.vae_decode', {
-                'samples': Link('save', 'samples'), 'vae': Link('vae', 'vae'),
-            }),
-        })
-        for current in (schemas, served):
-            assert validate(
-                graph, current, ['reload', 'decode', 'decode_saved'], known_types=registry,
-            ) == []
-asyncio.run(scenario())
-assert 'torch' not in sys.modules
-assert 'dinkster_inference_torch' not in sys.modules
-""",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr

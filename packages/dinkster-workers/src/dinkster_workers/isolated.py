@@ -42,7 +42,6 @@ import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
 
 from dinkster_assets import resolver_from_env
 from dinkster_memory import MemoryGovernor, ReportedTelemetry, ReservationService
@@ -50,7 +49,6 @@ from dinkster_protocol import (
     CompatGateDiagnostic,
     Invocation,
     InvocationResult,
-    KeyedContribution,
     LazyStatusInvocation,
     LazyStatusResult,
     NodeError,
@@ -393,31 +391,10 @@ class IsolatedWorker:
     async def prepare(self, node_types: Sequence[str]) -> None:
         await self._session.prepare(node_types)
 
-    async def materialize_sampler_registry(
-        self, key: str
-    ) -> tuple[tuple[str, tuple[KeyedContribution, ...]], ...]:
-        return await self._session.materialize_sampler_registry(key)
-
     async def convert_legacy_checkpoint(
         self, path: Path, logical_name: str
     ) -> tuple[str, str | None] | None:
         return await self._session.convert_legacy_checkpoint(path, logical_name)
-
-    async def materialize_inference_generation(
-        self, key: str
-    ) -> tuple[tuple[str, tuple[KeyedContribution, ...]], ...]:
-        return await self._session.materialize_inference_generation(key)
-
-    async def release_inference_generation(self, key: str) -> None:
-        await self._session.release_inference_generation(key)
-
-    async def compile_graph(
-        self,
-        generation_key: str,
-        graph: Mapping[str, Any],
-        targets: Sequence[str],
-    ) -> dict[str, Any]:
-        return await self._session.compile_graph(generation_key, graph, targets)
 
     async def invoke(
         self,
@@ -619,27 +596,10 @@ class GroupMemberWorker:
     async def prepare(self, node_types: Sequence[str]) -> None:
         await self._session.prepare(node_types)
 
-    async def materialize_sampler_registry(self, key: str):
-        return await self._session.materialize_sampler_registry(key)
-
     async def convert_legacy_checkpoint(
         self, path: Path, logical_name: str
     ) -> tuple[str, str | None] | None:
         return await self._session.convert_legacy_checkpoint(path, logical_name)
-
-    async def materialize_inference_generation(self, key: str):
-        return await self._session.materialize_inference_generation(key)
-
-    async def release_inference_generation(self, key: str) -> None:
-        await self._session.release_inference_generation(key)
-
-    async def compile_graph(
-        self,
-        generation_key: str,
-        graph: Mapping[str, Any],
-        targets: Sequence[str],
-    ) -> dict[str, Any]:
-        return await self._session.compile_graph(generation_key, graph, targets)
 
     async def invoke(self, invocation: Invocation, on_event: OnInvocationEvent | None = None):
         result = await self._session.invoke(invocation, on_event=on_event)

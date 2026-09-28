@@ -23,7 +23,7 @@ def test_workspace_and_generated_metadata_share_python_floor() -> None:
         *sorted((ROOT / "packages").glob("*/pyproject.toml")),
         EVIDENCE_ROOT / "packages/dinkster-acceptance/pyproject.toml",
     ]
-    assert len(manifests) == 34
+    assert len(manifests) == 29
     for manifest in manifests:
         project = _toml(manifest)["project"]
         assert isinstance(project, dict)
@@ -34,11 +34,6 @@ def test_workspace_and_generated_metadata_share_python_floor() -> None:
     assert isinstance(tool, dict)
     assert tool["ruff"]["target-version"] == "py312"  # type: ignore[index]
     assert tool["pyright"]["pythonVersion"] == "3.12"  # type: ignore[index]
-
-    torch = _toml(ROOT / "packages/dinkster-inference-torch/pyproject.toml")
-    torch_tool = torch["tool"]
-    assert isinstance(torch_tool, dict)
-    assert torch_tool["pyright"]["pythonVersion"] == "3.12"  # type: ignore[index]
 
     template = _toml(ROOT / "templates/pack/pyproject.toml")
     template_project = template["project"]

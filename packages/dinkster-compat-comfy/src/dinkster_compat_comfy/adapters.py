@@ -778,6 +778,43 @@ def _make_legacy_combo_adapter(
     return adapt
 
 
+def adapt_create_video_inputs(
+    _node_id: str, inputs: dict[str, object]
+) -> tuple[dict[str, object], list[PromptProblem]]:
+    if "codec" in inputs:
+        inputs = {name: value for name, value in inputs.items() if name != "codec"}
+    bit_depth = inputs.get("bit_depth")
+    if type(bit_depth) is not int:
+        return inputs, []
+    adapted = dict(inputs)
+    adapted["bit_depth"] = str(bit_depth)
+    return adapted, []
+
+
+def adapt_comfy_switch_inputs(
+    _node_id: str, inputs: dict[str, object]
+) -> tuple[dict[str, object], list[PromptProblem]]:
+    if "switch" not in inputs:
+        return inputs, []
+    adapted = dict(inputs)
+    adapted["condition"] = adapted.pop("switch")
+    return adapted, []
+
+
+def adapt_save_video_inputs(
+    node_id: str, inputs: dict[str, object]
+) -> tuple[dict[str, object], list[PromptProblem]]:
+    adapted, problems = adapt_save_image_inputs(node_id, inputs)
+    if problems:
+        return adapted, problems
+    for input_id in ("format.codec", "codec"):
+        if adapted.get(input_id) == "auto":
+            adapted.pop(input_id)
+    if adapted.get("format") == "auto":
+        adapted.pop("format")
+    return adapted, []
+
+
 _LEGACY_AREA_RENAMES = {name: f"units.{name}" for name in ("width", "height", "x", "y")}
 _LEGACY_VIDEO_AREA_RENAMES = {
     name: f"units.{name}" for name in ("width", "height", "temporal", "x", "y", "z")
@@ -785,6 +822,15 @@ _LEGACY_VIDEO_AREA_RENAMES = {
 
 COMFY_INPUT_ADAPTERS: dict[str, InputAdapter] = {
     "comfy.CustomCombo": adapt_custom_combo_inputs,
+    "CreateVideo": adapt_create_video_inputs,
+    "comfy.CreateVideo": adapt_create_video_inputs,
+    "dinkster.video.assemble": adapt_create_video_inputs,
+    "SaveVideo": adapt_save_video_inputs,
+    "comfy.SaveVideo": adapt_save_video_inputs,
+    "dinkster.save_video": adapt_save_video_inputs,
+    "ComfySwitchNode": adapt_comfy_switch_inputs,
+    "comfy.ComfySwitchNode": adapt_comfy_switch_inputs,
+    "dinkster.value.select": adapt_comfy_switch_inputs,
     "dinkster.save_image": adapt_save_image_inputs,
     "ConditioningCombine": _make_legacy_combo_adapter(
         "ConditioningCombine",

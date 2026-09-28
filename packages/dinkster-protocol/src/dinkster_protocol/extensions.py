@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TypeAlias, TypeGuard, cast
 
+from dinkster_values import MEBIBYTE
+
 from .frontend_modules import FrontendModule, validate_frontend_modules
 from .pack_surfaces import (
     PACK_EVENTS_SURFACE,
@@ -167,7 +169,7 @@ GRAPH_COMPILE_MAX_LINKS = 16384
 GRAPH_COMPILE_MAX_PASSES = 32
 GRAPH_COMPILE_MAX_DEPTH = 16
 GRAPH_COMPILE_MAX_GENERATED_PER_PASS = 1024
-GRAPH_COMPILE_MAX_REPLY_BYTES = 8 * 1024 * 1024
+GRAPH_COMPILE_MAX_REPLY_BYTES = 8 * MEBIBYTE
 GRAPH_COMPILE_TIMEOUT_SECONDS = 30.0
 GENERATED_NODE_ID_PREFIX = "$gen-"
 

@@ -11,7 +11,7 @@ from zipfile import ZipFile
 import av
 import numpy as np
 import pytest
-from dinkster_api.v1 import annotate_image
+from dinkster_api.v1 import annotate_image, image_input
 from dinkster_values import edit_video, video_from_source
 from dinkster_video import (
     DITHERS,
@@ -71,7 +71,9 @@ def test_cpu_codec_facts_pixels_metadata(codec: str, container: str) -> None:
     assert probe["container"] == container
     result = disassemble_video(value)
     assert result["frame_count"] == 3
-    np.testing.assert_allclose(cast(np.ndarray, result["images"]), expected, atol=0.025)
+    np.testing.assert_allclose(
+        cast(np.ndarray, image_input(result["images"])), expected, atol=0.025
+    )
     assert read_video_metadata(data) == METADATA
 
 
@@ -99,7 +101,7 @@ def test_cpu_hdr_encoded_precision_and_color(
         9,
         1,
     ]
-    actual = cast(np.ndarray, disassemble_video(value)["images"])
+    actual = cast(np.ndarray, image_input(disassemble_video(value)["images"]))
     assert actual[:, :, 32:].mean() - actual[:, :, :32].mean() > 1 / 1023
     np.testing.assert_allclose(actual, expected, atol=0.003)
 
@@ -138,7 +140,7 @@ def test_independent_alpha_gradient(codec: str, container: str, depth: int) -> N
     probe = cast(dict[str, Any], value["probe"])
     assert probe["alpha"] is True
     assert probe["bit_depth"] >= depth
-    actual = cast(np.ndarray, disassemble_video(value)["images"])
+    actual = cast(np.ndarray, image_input(disassemble_video(value)["images"]))
     np.testing.assert_allclose(
         actual[..., 3], expected[..., 3], atol=1 / 255 if depth == 8 else 1 / 1023
     )
@@ -159,7 +161,10 @@ def test_stream_encoder_converts_premultiplied_components_to_straight_alpha(
         codec=codec,
         container=container,
     )
-    actual = cast(np.ndarray, disassemble_video(video_from_source(output.getvalue()))["images"])
+    actual = cast(
+        np.ndarray,
+        image_input(disassemble_video(video_from_source(output.getvalue()))["images"]),
+    )
     np.testing.assert_allclose(actual, expected, atol=0.025)
 
 
@@ -193,7 +198,10 @@ def test_premultiplied_spatial_padding_encodes_straight_pad_color(
         container=container,
         on_diagnostic=diagnostics.append,
     )
-    actual = cast(np.ndarray, disassemble_video(video_from_source(output.getvalue()))["images"])
+    actual = cast(
+        np.ndarray,
+        image_input(disassemble_video(video_from_source(output.getvalue()))["images"]),
+    )
     np.testing.assert_allclose(actual[0, 0, 0], [0.25, 0, 0, 0.5], atol=2 / 255)
     assert bool(diagnostics) is expects_fallback
     if expects_fallback:
@@ -443,7 +451,7 @@ def test_preserving_defaults_report_requested_and_actual(
     assert probe["video_codec"] == effective
     assert probe["alpha"] == alpha and probe["bit_depth"] >= depth
     np.testing.assert_allclose(
-        cast(np.ndarray, disassemble_video(value)["images"]), expected, atol=0.025
+        cast(np.ndarray, image_input(disassemble_video(value)["images"])), expected, atol=0.025
     )
 
 
@@ -512,7 +520,10 @@ def test_preserving_default_keeps_odd_geometry(codec: str) -> None:
         assemble_video(expected), output, codec=codec, on_diagnostic=diagnostics.append
     )
     assert diagnostics
-    actual = cast(np.ndarray, disassemble_video(video_from_source(output.getvalue()))["images"])
+    actual = cast(
+        np.ndarray,
+        image_input(disassemble_video(video_from_source(output.getvalue()))["images"]),
+    )
     np.testing.assert_allclose(actual, expected, atol=1 / 255)
 
 

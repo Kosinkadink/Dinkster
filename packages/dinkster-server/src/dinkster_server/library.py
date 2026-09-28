@@ -92,6 +92,14 @@ from dinkster_assets import (
     probe_handle,
     valid_vae_hint,
 )
+from dinkster_values import (
+    LATENT_UPLOAD_HEADROOM_BYTES,
+    MEBIBYTE,
+    MEDIA_AUDIO_UPLOAD_LIMIT_BYTES,
+    MEDIA_IMAGE_UPLOAD_LIMIT_BYTES,
+    MEDIA_MODEL3D_UPLOAD_LIMIT_BYTES,
+    MEDIA_VIDEO_UPLOAD_LIMIT_BYTES,
+)
 
 from .asset_stream import open_verified_sized, stream_verified
 from .auth import LOCAL_PRINCIPAL, principal_for
@@ -107,10 +115,10 @@ IMAGE_DOCUMENT_MEDIA_TYPE = "application/vnd.dinkster.image-document+json"
 #: kinds the ingest endpoint accepts.
 _MEDIA_UPLOAD_LIMITS: Mapping[str, int] = MappingProxyType(
     {
-        "media/image": 256 * 1024 * 1024,
-        "media/audio": 1024 * 1024 * 1024,
-        "media/video": 1024 * 1024 * 1024,
-        "media/model3d": 1024 * 1024 * 1024,
+        "media/image": MEDIA_IMAGE_UPLOAD_LIMIT_BYTES,
+        "media/audio": MEDIA_AUDIO_UPLOAD_LIMIT_BYTES,
+        "media/video": MEDIA_VIDEO_UPLOAD_LIMIT_BYTES,
+        "media/model3d": MEDIA_MODEL3D_UPLOAD_LIMIT_BYTES,
     }
 )
 _MEDIA_KINDS = frozenset(_MEDIA_UPLOAD_LIMITS)
@@ -132,9 +140,9 @@ _MEDIA_TYPES = frozenset(
     )
 )
 _MEDIA_NAME_LIMIT = 255
-_MEDIA_UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
+_MEDIA_UPLOAD_CHUNK_SIZE = 8 * MEBIBYTE
 _LATENT_UPLOAD_IDLE_SECONDS = 30.0
-_LATENT_UPLOAD_HEADROOM = 1024 * 1024 * 1024
+_LATENT_UPLOAD_HEADROOM = LATENT_UPLOAD_HEADROOM_BYTES
 _T = TypeVar("_T")
 
 
@@ -147,7 +155,7 @@ class ServerLibrary:
 
     vault: AssetVault
     store: LibraryStore
-    upload_limit: int = 16 * 1024 * 1024
+    upload_limit: int = 16 * MEBIBYTE
     #: Per-kind bounds for classified media ingest; must cover _MEDIA_KINDS.
     media_upload_limits: Mapping[str, int] = _MEDIA_UPLOAD_LIMITS
     #: Optional read-only fallback for digest GETs (e.g. filesystem

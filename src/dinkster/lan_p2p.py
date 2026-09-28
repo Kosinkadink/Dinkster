@@ -9,6 +9,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from dinkster_assets import (
@@ -361,6 +362,21 @@ class LanP2PController:
     async def resume_transfer(self, digest: str) -> dict[str, object]:
         return await self._manager.resume_transfer(digest)
 
+    async def resume_seed_transfers(self, digests: Sequence[str]) -> None:
+        """Explicitly recover current seeds without clearing unrelated safety latches."""
+        async with self._state_lock:
+            await self._reconcile_locked()
+            if self._network_paused or self._manager.global_network_policy[1]:
+                raise P2PManagerError("seed recovery is blocked by network policy")
+            current = {
+                grant.digest
+                for grant in self._snapshot.seed_grants
+                if grant.expires_at > self._clock()
+                and self._local_path_for(grant.digest) is not None
+            }
+            for digest in sorted(current.intersection(digests)):
+                await self._manager.resume_transfer(digest)
+
     async def stop_transfer(self, digest: str) -> dict[str, object]:
         return await self._manager.stop_transfer(digest)
 
@@ -514,8 +530,10 @@ class LanP2PController:
         enabled = self._enabled("downloadsEnabled") or self._enabled("seedingEnabled")
         return declarations, receipts, provider_snapshots, enabled
 
-    async def reconcile(self) -> None:
+    async def reconcile(self, *, local_files_changed: bool = False) -> None:
         async with self._state_lock:
+            if local_files_changed:
+                self._authority_signature = None
             await self._reconcile_locked()
 
     async def _reconcile_locked(self) -> None:
@@ -581,17 +599,17 @@ class LanP2PController:
                     (declaration.size_bytes, grant.descriptor, grant.expires_at)
                 )
         self._authorities = {digest: tuple(rows) for digest, rows in authorities.items()}
-        await self._reconcile_seed_leases(declarations)
-        await self._reconcile_global_leases(provider_snapshots, now=now)
+        global_leases = await self._desired_global_leases(provider_snapshots, now=now)
+        await self._reconcile_seed_leases(declarations, global_leases=global_leases)
         self._authority_signature = signature
 
-    async def _reconcile_global_leases(
+    async def _desired_global_leases(
         self,
         provider_snapshots: Sequence[ProviderP2PSnapshotV1],
         *,
         now: float,
-    ) -> None:
-        desired = (
+    ) -> tuple[AuthorizedGlobalLease, ...]:
+        return (
             await asyncio.to_thread(
                 self._select_global_leases,
                 provider_snapshots,
@@ -605,7 +623,6 @@ class LanP2PController:
             if self._global_scope_enabled()
             else ()
         )
-        await self._manager.reconcile_global(desired)
 
     @staticmethod
     def _select_global_leases(
@@ -641,9 +658,12 @@ class LanP2PController:
         return tuple(desired.values())
 
     async def _reconcile_seed_leases(
-        self, declarations: Sequence[PublicSwarmDeclarationV1]
+        self,
+        declarations: Sequence[PublicSwarmDeclarationV1],
+        *,
+        global_leases: Sequence[AuthorizedGlobalLease] = (),
     ) -> None:
-        desired: dict[str, SeedLease] = {}
+        desired: dict[str, tuple[SeedLease, P2PLocalFileMapping]] = {}
         declaration_sizes = {
             (
                 row.digest,
@@ -695,7 +715,7 @@ class LanP2PController:
                 except (AssetError, OSError) as error:
                     _LOG.warning("P2P seed mapping rejected for %s: %s", digest, error)
                     continue
-                desired[digest] = SeedLease(
+                lease = SeedLease(
                     version=1,
                     kind="seed",
                     lease_id="lan-seed-" + digest.removeprefix("blake3:"),
@@ -707,21 +727,31 @@ class LanP2PController:
                     scope="lan-only",
                     expires_at=min(grant.expires_at for grant in grants),
                 )
-                existing = self._seed_leases.get(digest)
-                if existing is not None and existing[0] == desired[digest]:
-                    continue
-                if existing is not None:
-                    self._seed_leases.pop(digest, None)
-                    self._seed_mappings.pop(digest, None)
-                    with contextlib.suppress(P2PManagerError):
-                        await self._manager.revoke(existing[0].lease_id)
-                await self._manager.grant_seed(desired[digest])
-                self._seed_leases[digest] = (desired[digest], mapping)
-        for digest in set(self._seed_leases) - set(desired):
-            lease, _mapping = self._seed_leases.pop(digest)
+                desired[digest] = (lease, mapping)
+        # Retire both scopes before any admission can fail at the shared capacity limit.
+        for digest, (lease, _mapping) in tuple(self._seed_leases.items()):
+            replacement = desired.get(digest)
+            if replacement is not None and replacement[0] == lease:
+                continue
+            if (
+                replacement is not None
+                and lease.grant_ids == replacement[0].grant_ids
+                and replace(lease, expires_at=replacement[0].expires_at) == replacement[0]
+            ):
+                await self._manager.grant_seed(replacement[0])
+                self._seed_leases[digest] = replacement
+                continue
             with contextlib.suppress(P2PManagerError):
                 await self._manager.revoke(lease.lease_id)
+            self._seed_leases.pop(digest)
             self._seed_mappings.pop(digest, None)
+        await self._manager.reconcile_global(global_leases, revoke_only=True)
+        for digest, (lease, mapping) in desired.items():
+            if digest in self._seed_leases:
+                continue
+            await self._manager.grant_seed(lease)
+            self._seed_leases[digest] = (lease, mapping)
+        await self._manager.reconcile_global(global_leases)
 
     async def _refresh_seed_mappings(self) -> None:
         active: dict[str, ActiveSeedMapping] = {}

@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import BinaryIO, cast
 
 from dinkster_api.v1 import (
+    GIBIBYTE,
     SAVE_TARGET_TYPE,
     AssetError,
     AssetRef,
@@ -32,7 +33,7 @@ SPLAT = TypeExpr.concrete(SPLAT_TYPE)
 SPLAT_ASSET = TypeExpr.asset_of(SPLAT)
 SAVE_TARGET = TypeExpr.concrete(SAVE_TARGET_TYPE)
 
-MAX_SPLAT_PLY_BYTES = 1024 * 1024 * 1024
+MAX_SPLAT_PLY_BYTES = GIBIBYTE
 
 
 def _mount_writer() -> AssetWriter:

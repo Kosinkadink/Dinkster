@@ -75,6 +75,36 @@ lookup falls through to JWT verification. The shared identity verifier keeps
 its JWKS cache, refresh lock, unknown-key throttle, and stale-while-error state
 across requests.
 
+## Durable delegations and user sessions
+
+Human users mint scoped agent credentials through `POST /api/auth/delegations`.
+The server persists only credential hashes and delegation metadata in
+`<library-root>/principals.sqlite`, with the owner's permission toggles. Tokens
+have no default expiry and survive restart; optional `expiresInSeconds` is
+independent of the minting JWT's expiry. Revocation is persisted. Unrevoked
+records are capped transactionally at 32 per owner and 4096 overall.
+
+Using a delegation requires a recently verified human JWT for that owner.
+`--user-session-freshness-seconds` defaults to 600. Any request authenticated
+with a valid human JWT refreshes an in-memory monotonic timestamp and replaces
+the owner's role ceiling with that JWT's grants. Static credentials, agent
+traffic and merely keeping a socket open do not refresh this window. Clients
+must keep sending authenticated requests with current human JWTs while signed
+in. Identity authority changes arrive in subsequent JWTs or through freshness
+expiry; no live identity introspection or identity extension is involved.
+
+After restart or window expiry, agent HTTP requests return 403 with
+`{"error":"user-session-required"}`; both collab and job-event sockets close
+with code 1008 and the same reason within the one-second authorization recheck.
+The next verified user request reactivates the same unrevoked delegation.
+Permission, role and revocation refusals remain definitive. Auth-off local
+agents do not require JWT freshness.
+
+See [collaboration authentication](../packages/dinkster-collab/README.md#delegated-agents)
+for ownership, actor-kind enforcement and principal-keyed budgets.
+
+## HTTP and WebSocket authorization
+
 Send the credential as `Authorization: Bearer <token>`. With auth enabled,
 every `/api` route except `/api/health` requires a valid Bearer credential. The
 `/memory`, `/cache`, and peer `/assets` coordination routes are protected too.

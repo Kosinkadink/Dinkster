@@ -12,12 +12,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 POWERSHELL_SETUP = REPO_ROOT / "scripts" / "setup_envs.ps1"
 POSIX_SETUP = REPO_ROOT / "scripts" / "setup_envs.sh"
-GPU_SETUP_DOC = REPO_ROOT / "packages" / "dinkster-inference-torch" / "README.md"
-GPU_TEST = REPO_ROOT / "packages" / "dinkster-inference-torch" / "tests" / "test_gpu.py"
-GPU_MODEL_PACKS = {
-    "packages/dinkster-model-triposplat": "dinkster_model_triposplat",
-    "packages/dinkster-model-wan": "dinkster_model_wan",
-}
 
 
 def _powershell_package_array(source: str, name: str) -> list[str]:
@@ -56,31 +50,6 @@ def test_powershell_setup_matches_posix_editable_package_closure() -> None:
     )
 
 
-def test_gpu_setup_installs_model_packs_imported_by_gpu_tests() -> None:
-    powershell = POWERSHELL_SETUP.read_text()
-    posix = POSIX_SETUP.read_text()
-    documentation = GPU_SETUP_DOC.read_text()
-    gpu_test = GPU_TEST.read_text()
-    expected = set(GPU_MODEL_PACKS)
-
-    assert all(f"from {module} import" in gpu_test for module in GPU_MODEL_PACKS.values())
-    assert expected <= set(_powershell_package_array(powershell, "GpuEditablePackages"))
-    assert expected <= set(
-        _posix_editables(
-            posix,
-            "uv pip install --python .venv-gpu/bin/python \\",
-            "\n\nelse",
-        )
-    )
-    assert expected <= set(
-        _posix_editables(
-            documentation,
-            "uv pip install --python .venv-gpu/bin/python \\",
-            "DINKSTER_ENABLE_GPU_TESTS=1",
-        )
-    )
-
-
 def test_powershell_setup_pins_native_windows_test_environments() -> None:
     setup = POWERSHELL_SETUP.read_text()
 
@@ -95,6 +64,7 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "pillow==12.0.0",
         "safetensors==0.8.0",
         "sentencepiece==0.2.1",
+        "tokenizers==0.23.1",
         "transformers==5.16.1",
         "dinkster-aimdo==0.5.5.post2",
         "$KitchenCpuWheel",
@@ -109,6 +79,7 @@ def test_powershell_setup_pins_native_windows_test_environments() -> None:
         "packaging",
         "safetensors==0.8.0",
         "sentencepiece==0.2.1",
+        "tokenizers==0.23.1",
         "dinkster-kitchen==0.2.35.post1",
         "dinkster-aimdo==0.5.5.post2",
         "triton-windows==3.7.1.post27",
@@ -174,20 +145,8 @@ def test_powershell_setup_isolates_root_sync_and_prints_runnable_gates() -> None
         ".venv\\Scripts\\ruff.exe check .",
         ".venv\\Scripts\\pyright.exe",
         ".venv\\Scripts\\python.exe -m pytest -q",
-        ".venv-torch\\Scripts\\python.exe -m pytest -q packages\\dinkster-inference-torch\\tests",
-        ".venv-gpu\\Scripts\\python.exe -m pytest -q packages\\dinkster-inference-torch\\tests",
     ):
         assert command in setup
-
-
-def test_setup_scripts_print_cuda_reference_validation_gate() -> None:
-    powershell = POWERSHELL_SETUP.read_text()
-    posix = POSIX_SETUP.read_text()
-
-    assert '$env:DINKSTER_VALIDATE_REFERENCE_GOLDENS = "1"' in powershell
-    assert "Remove-Item Env:\\DINKSTER_VALIDATE_REFERENCE_GOLDENS" in powershell
-    assert "DINKSTER_ENABLE_GPU_TESTS=1 DINKSTER_VALIDATE_REFERENCE_GOLDENS=1" in posix
-    assert ".venv-gpu/bin/python -m pytest -q packages/dinkster-inference-torch/tests" in posix
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="native PowerShell execution requires Windows")

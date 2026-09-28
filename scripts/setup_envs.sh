@@ -11,7 +11,7 @@
 #   .venv-gpu-extras/pyheaders              shared local Python headers
 #
 # This script is the source of truth for exact environment setup commands;
-# README.md and packages/dinkster-inference-torch/README.md explain their use.
+# README.md explains their use.
 # Idempotent: existing venvs are kept and their
 # installs re-asserted (cheap no-ops when already satisfied); pass
 # --force to delete and rebuild all venvs.
@@ -20,8 +20,6 @@
 # instead: torch's mac build ships MPS support in the one default wheel,
 # and dinkster-kitchen's mac-compatible distribution is its pure-Python
 # PyPI wheel (eager/triton backends - the CPU flavor this env wants).
-# The setup finishes with scripts/mps_smoke.py, which reports what the
-# machine's MPS device can actually do.
 
 set -euo pipefail
 
@@ -37,6 +35,8 @@ else
     install_acceptance=0
     echo "==> dinkster-evidence not found - skipping optional dinkster-acceptance"
 fi
+
+dinkster_inference_requirement="dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@90e224eb1a74e61b76c755ad410b7513c83e7549"
 
 FORCE=0
 for arg in "$@"; do
@@ -81,7 +81,8 @@ fi
 uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "scipy>=1.11" \
     "simpleeval==1.0.3" \
     "onnxruntime==1.29.0" "opencv-python-headless==5.0.0.93" "pillow==12.0.0" \
-    "safetensors==0.8.0" "sentencepiece==0.2.1" "transformers==5.16.1" \
+    "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
+    "transformers==5.16.1" "$dinkster_inference_requirement" \
     -e packages/dinkster-api \
     -e packages/dinkster-schema \
     -e packages/dinkster-values \
@@ -89,17 +90,13 @@ uv pip install --python .venv-torch/bin/python pytest packaging "numpy>=1.26" "s
     -e packages/dinkster-protocol \
     -e packages/dinkster-assets \
     -e packages/dinkster-caches \
-    -e packages/dinkster-inference \
+    -e packages/dinkster-inference-wire \
     -e packages/dinkster-memory \
     -e packages/dinkster-graph \
     -e packages/dinkster-engine \
     -e packages/dinkster-native \
-    -e packages/dinkster-inference-torch \
     -e packages/dinkster-nodes-generation \
     -e packages/dinkster-compat-comfy \
-    -e packages/dinkster-model-ipadapter \
-    -e packages/dinkster-model-qwen-image \
-    -e packages/dinkster-model-triposplat \
     -e packages/dinkster-nodes-vision \
     -e packages/dinkster-workers
 if [ "$install_acceptance" = 1 ]; then
@@ -175,11 +172,12 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         --index-url https://download.pytorch.org/whl/cu130 torch==2.13.0+cu130
     # scipy, torchsde, tqdm, and Pillow satisfy the pinned ComfyUI
     # k_diffusion import chain used by the native GPU reference proofs;
-    # safetensors and sentencepiece support the package's model fixtures.
+    # safetensors, sentencepiece, and tokenizers support the package's model fixtures.
     uv pip install --python .venv-gpu/bin/python \
         pytest numpy scipy torchsde tqdm pillow packaging \
-        "safetensors==0.8.0" "sentencepiece==0.2.1" \
+        "safetensors==0.8.0" "sentencepiece==0.2.1" "tokenizers==0.23.1" \
         dinkster-kitchen==0.2.35.post1 dinkster-aimdo==0.5.5.post2 \
+        "$dinkster_inference_requirement" \
         -e packages/dinkster-api \
         -e packages/dinkster-schema \
         -e packages/dinkster-values \
@@ -187,18 +185,14 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
         -e packages/dinkster-protocol \
         -e packages/dinkster-assets \
         -e packages/dinkster-caches \
-        -e packages/dinkster-inference \
+        -e packages/dinkster-inference-wire \
         -e packages/dinkster-graph \
         -e packages/dinkster-engine \
         -e packages/dinkster-memory \
         -e packages/dinkster-native \
-        -e packages/dinkster-inference-torch \
         -e packages/dinkster-workers \
         -e packages/dinkster-nodes-generation \
-        -e packages/dinkster-compat-comfy \
-        -e packages/dinkster-model-ipadapter \
-        -e packages/dinkster-model-triposplat \
-        -e packages/dinkster-model-wan
+        -e packages/dinkster-compat-comfy
     if [ "$install_acceptance" = 1 ]; then
         uv pip install --python .venv-gpu/bin/python --no-deps --no-sources \
             -e "$acceptance_package"
@@ -209,24 +203,9 @@ else
     echo "    applies only on GPU machines, AGENTS.md 'Validation gate')"
 fi
 
-# Apple Silicon only: on such machines a missing MPS device means a broken
-# torch install, so the smoke report's failure should fail the setup. Intel
-# macs have no MPS to probe and skip it.
-if [ "$os" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
-    echo "==> MPS smoke report (scripts/mps_smoke.py)"
-    .venv-torch/bin/python scripts/mps_smoke.py
-fi
-
 echo "==> done. Gates:"
 echo "  .venv/bin/ruff check ."
 echo "  .venv/bin/pyright"
 echo "  .venv/bin/python -m pytest -q"
-echo "  .venv/bin/pyright -p packages/dinkster-inference-torch"
-echo '  CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \'
-echo "    .venv-torch/bin/python -m pytest -q packages/dinkster-inference-torch/tests"
 echo "  .venv/bin/pyright -p packages/dinkster-nodes-vision"
 echo "  .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests"
-echo "GPU machines additionally:"
-echo '  DINKSTER_ENABLE_GPU_TESTS=1 DINKSTER_VALIDATE_REFERENCE_GOLDENS=1 \'
-echo '  CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \'
-echo "    .venv-gpu/bin/python -m pytest -q packages/dinkster-inference-torch/tests"

@@ -3,8 +3,7 @@
 - **Area:** ComfyUI `comfy/utils.py` `convert_old_quants`, legacy
   `scaled_fp8` branch (reference checkout @
   947c2749dd04c51ef0e21b069544d8b0b4f9b411)
-- **Status:** found 2026-07-24; not reported upstream yet; handled in
-  Dinkster by honoring the marker dtype
+- **Status:** found 2026-07-24; not reported upstream yet
 
 ## Symptom
 
@@ -45,9 +44,5 @@ instead of hardcoding `float8_e4m3fn`.
 
 ## Dinkster handling
 
-`dinkster_inference.quantization._split_legacy` honors the marker dtype:
-float32 markers retain the historical e4m3fn meaning, while e5m2
-markers produce `float8_e5m2` layer descriptors. The code documents
-this as a deliberate divergence from ComfyUI and validates that each
-stored weight dtype matches the derived format rather than silently
-value-converting it.
+Dinkster delegates legacy quant conversion to `dinkster_inference`, whose current
+behavior matches the upstream behavior described above.

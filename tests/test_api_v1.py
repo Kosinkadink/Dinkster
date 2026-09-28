@@ -15,15 +15,12 @@ enforcement half of the promise:
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import subprocess
 import sys
 from collections.abc import Mapping
-from pathlib import Path
 
 import dinkster_api.v1 as api
-import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode, Link
@@ -64,63 +61,9 @@ GOLDEN_V1_SURFACE = (
     "extension_behavior_hash",
     # -- training session boundary values (dinkster-protocol)
     "TrainingSessionHandle",
-    # -- sampling extension authoring (dinkster-inference)
-    "AssemblyRegistration",
-    "CancellationToken",
-    "CompilerEmission",
-    "ConditionScaleVector",
-    "ComponentDescriptor",
-    "ComponentWiring",
-    "ControlApplication",
-    "DetectionEvidence",
-    "EngineProperties",
-    "FLOAT32",
-    "GraphCompilerDescriptor",
-    "GuidanceCondition",
-    "GuidanceContribution",
-    "GuidanceEvaluationPlan",
-    "GuidanceEvaluationRequest",
-    "GuidanceEvaluationWrapperDescriptor",
-    "GuidancePlanContext",
-    "GuidancePostCFGContext",
-    "GuidancePostCFGDescriptor",
-    "GuidancePreCFGContext",
-    "GuidancePreCFGDescriptor",
-    "GuidancePrediction",
-    "GuidancePredictionSource",
-    "GuidancePredictions",
-    "GuidanceReduceContext",
-    "GuidanceResult",
-    "GuidanceRole",
-    "GuidanceScaleDescriptor",
-    "GuidanceStrategyDescriptor",
-    "InferenceContribution",
-    "InputRewrite",
-    "ContextDenoiser",
-    "ContextSolverFn",
     "MirrorSpec",
     "MirrorTolerance",
-    "ModelEvaluation",
-    "ModelFamily",
-    "NoiseKind",
-    "NoiseSampler",
-    "OptionKind",
-    "OptionSpec",
-    "OptionValue",
-    "Parameterization",
-    "ProgressScope",
-    "SamplerContribution",
-    "SamplerDescriptor",
-    "SamplerInfo",
-    "SchedulerDescriptor",
-    "SamplingCancelled",
-    "SamplingDescriptor",
-    "SamplingExecutionContext",
-    "LatentDescriptor",
-    "SolverFn",
-    "StepCallback",
     "SourceFilenameSpec",
-    "StepEvent",
     # -- node authoring (dinkster-schema)
     "ABSENT",
     "AbsentOutput",
@@ -201,11 +144,17 @@ GOLDEN_V1_SURFACE = (
     "CORE_STRING",
     "COST_META_KEY",
     "CURVE_TYPE",
+    "ENCODED_MEDIA_LIMIT_BYTES",
+    "GIBIBYTE",
+    "IMAGE_WORKING_SET_LIMIT_BYTES",
     "INLINE_STRING_CAP",
     "LENGTH_META_KEY",
     "MAX_CURVE_POINTS",
+    "MEBIBYTE",
     "RESOURCES_META_KEY",
     "RESOURCE_ID_META_KEY",
+    "VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES",
+    "VIDEO_FRAME_WORKING_SET_LIMIT_BYTES",
     "BufferEncoding",
     "Curve",
     "Rendition",
@@ -221,6 +170,10 @@ GOLDEN_V1_SURFACE = (
     "audio_from_source",
     "audio_meta",
     "audio_window",
+    "array_storage_meta",
+    "audio_input",
+    "byte_storage_meta",
+    "coerce_audio",
     "effective_audio_facts",
     "decode_audio",
     "encode_audio",
@@ -228,6 +181,7 @@ GOLDEN_V1_SURFACE = (
     "register_resource_handle_type",
     "render_audio_wav",
     "stable_hash",
+    "storage_dtype",
     # -- shared image-array codec (dinkster-values.image_codec): npy bytes
     # across interpreter boundaries, PNG renditions out. Added alongside
     # the comfy.IMAGE preview contract so packs register image types the
@@ -238,6 +192,7 @@ GOLDEN_V1_SURFACE = (
     "encode_image_array",
     "image_array_fingerprint",
     "image_array_meta",
+    "image_input",
     "merge_image_batches",
     "prepare_image_array_encoding",
     "render_image_png",
@@ -377,7 +332,6 @@ from dinkster_api.v1 import (
 import dinkster_api.v1 as api
 
 assert set(api.__all__) <= set(dir(api))
-assert not api._INFERENCE_EXPORTS.intersection(vars(api))
 for name in ("not_an_export", "__path__"):
     try:
         getattr(api, name)
@@ -386,110 +340,15 @@ for name in ("not_an_export", "__path__"):
     else:
         raise AssertionError(name)
     assert not hasattr(api, name)
-loaded = {name for name in sys.modules if name.split(".")[0] in {"dinkster_inference", "torch"}}
+loaded = {
+    name
+    for name in sys.modules
+    if name.split(".")[0] in {"dinkster_inference_wire", "torch"}
+}
 assert not loaded, sorted(loaded)
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30
-    )
-    assert result.returncode == 0, result.stderr
-
-
-def test_deferred_exports_match_type_checking_declarations() -> None:
-    assert api.__file__ is not None
-    tree = ast.parse(Path(api.__file__).read_text(encoding="utf-8"))
-    declarations = [
-        alias
-        for guard in tree.body
-        if isinstance(guard, ast.If)
-        and isinstance(guard.test, ast.Name)
-        and guard.test.id == "TYPE_CHECKING"
-        for statement in guard.body
-        if isinstance(statement, ast.ImportFrom) and statement.module == "dinkster_inference"
-        for alias in statement.names
-    ]
-    assert declarations
-    assert all(alias.asname in (None, alias.name) for alias in declarations)
-    declared_names = [alias.name for alias in declarations]
-    assert len(declared_names) == len(set(declared_names))
-    assert set(declared_names) == api._INFERENCE_EXPORTS
-    assert api._INFERENCE_EXPORTS <= set(api.__all__)
-
-
-@pytest.mark.parametrize("style", ["attribute", "from", "star", "inference-first"])
-def test_deferred_export_imports_preserve_identity(style: str) -> None:
-    script = """
-import sys
-
-style = sys.argv[1]
-if style == "inference-first":
-    import dinkster_inference
-import dinkster_api.v1 as api
-
-exports = list(api.__all__)
-discovered = dir(api)
-assert not api._INFERENCE_EXPORTS.intersection(vars(api))
-if style != "inference-first":
-    assert "dinkster_inference" not in sys.modules
-namespace = {}
-if style == "star":
-    exec("from dinkster_api.v1 import *", namespace)
-    assert namespace.keys() - {"__builtins__"} == set(exports)
-for name in sorted(api._INFERENCE_EXPORTS):
-    if style == "from":
-        exec(f"from dinkster_api.v1 import {name}", namespace)
-        value = namespace[name]
-    elif style == "star":
-        value = namespace[name]
-    else:
-        value = getattr(api, name)
-    import dinkster_inference
-    assert value is getattr(dinkster_inference, name), name
-    assert value is getattr(api, name), name
-    assert value is vars(api)[name], name
-assert api.__all__ == exports
-assert dir(api) == discovered
-assert "torch" not in sys.modules
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", script, style], capture_output=True, text=True, timeout=30
-    )
-    assert result.returncode == 0, result.stderr
-
-
-@pytest.mark.parametrize("style", ["attribute", "from"])
-def test_reload_discards_cached_inference_exports(style: str) -> None:
-    script = """
-import importlib
-import sys
-import dinkster_api.v1 as api
-
-cached = {name: getattr(api, name) for name in api._INFERENCE_EXPORTS}
-exports = list(api.__all__)
-import dinkster_inference
-
-sentinel = object()
-try:
-    dinkster_inference.CancellationToken = sentinel
-    importlib.reload(api)
-    assert not api._INFERENCE_EXPORTS.intersection(vars(api))
-    assert api.__all__ == exports
-    if sys.argv[1] == "from":
-        from dinkster_api.v1 import CancellationToken as value
-    else:
-        value = getattr(api, "CancellationToken")
-    assert value is sentinel
-    from dinkster_api.v1 import CancellationToken
-    assert CancellationToken is value
-    assert api.CancellationToken is value
-    assert vars(api)["CancellationToken"] is value
-finally:
-    dinkster_inference.CancellationToken = cached["CancellationToken"]
-    importlib.reload(api)
-assert api.CancellationToken is cached["CancellationToken"]
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", script, style], capture_output=True, text=True, timeout=30
     )
     assert result.returncode == 0, result.stderr
 
@@ -507,7 +366,6 @@ def test_golden_surface_is_exact() -> None:
 def test_reexports_are_the_internal_objects() -> None:
     """Zero wrappers: the door hands out the internal objects themselves."""
     import dinkster_assets
-    import dinkster_inference
     import dinkster_memory
     import dinkster_protocol
     import dinkster_schema
@@ -518,7 +376,6 @@ def test_reexports_are_the_internal_objects() -> None:
         dinkster_schema,
         dinkster_values,
         dinkster_protocol,
-        dinkster_inference,
         dinkster_memory,
         dinkster_assets,
         dinkster_video,

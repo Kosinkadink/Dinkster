@@ -10,6 +10,7 @@ from typing import Literal, ParamSpec, TypeVar, cast
 import numpy as np
 from dinkster_api.v1 import (
     CORE_COMBO,
+    IMAGE_WORKING_SET_LIMIT_BYTES,
     ComboWidget,
     InputSpec,
     NumberWidget,
@@ -21,7 +22,7 @@ from PIL import Image
 
 parse_color = image_math.parse_color
 
-MAX_IMAGE_BYTES = 512 * 1024 * 1024
+MAX_IMAGE_BYTES = IMAGE_WORKING_SET_LIMIT_BYTES
 MAX_DIMENSION = 16_384
 
 COMBO = TypeExpr.concrete(CORE_COMBO)

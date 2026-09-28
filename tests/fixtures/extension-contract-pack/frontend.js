@@ -38,6 +38,21 @@ export const frontendExtension = {
         canvas.strokeRect(proof.x - 8, proof.y - 8, proof.width + 16, proof.height + 16);
       },
     });
+    context.nodeDecoration('dinkster-extension-contract-fixture.node-decoration', {
+      id: 'dinkster-extension-contract-fixture.node-decoration',
+      decorate(node) {
+        if (node.id !== 'proof') return;
+        return {
+          badges: [{
+            id: 'dinkster-extension-contract-fixture.proof-badge',
+            glyph: 'Pack',
+            variant: 'label',
+            interactive: false,
+            color: '#7b3fb2',
+          }],
+        };
+      },
+    });
     context.onDispose(() => { latest = undefined; });
     void context.queryRoute('extension-contract').then((value) => {
       routeMessage = value.message;

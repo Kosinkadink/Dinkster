@@ -56,17 +56,13 @@ $CpuEditablePackages = @(
     "packages/dinkster-protocol",
     "packages/dinkster-assets",
     "packages/dinkster-caches",
-    "packages/dinkster-inference",
+    "packages/dinkster-inference-wire",
     "packages/dinkster-memory",
     "packages/dinkster-graph",
     "packages/dinkster-engine",
     "packages/dinkster-native",
-    "packages/dinkster-inference-torch",
     "packages/dinkster-nodes-generation",
     "packages/dinkster-compat-comfy",
-    "packages/dinkster-model-ipadapter",
-    "packages/dinkster-model-qwen-image",
-    "packages/dinkster-model-triposplat",
     "packages/dinkster-nodes-vision",
     "packages/dinkster-workers"
 )
@@ -78,20 +74,17 @@ $GpuEditablePackages = @(
     "packages/dinkster-protocol",
     "packages/dinkster-assets",
     "packages/dinkster-caches",
-    "packages/dinkster-inference",
+    "packages/dinkster-inference-wire",
     "packages/dinkster-graph",
     "packages/dinkster-engine",
     "packages/dinkster-memory",
     "packages/dinkster-native",
-    "packages/dinkster-inference-torch",
     "packages/dinkster-workers",
     "packages/dinkster-nodes-generation",
-    "packages/dinkster-compat-comfy",
-    "packages/dinkster-model-ipadapter",
-    "packages/dinkster-model-triposplat",
-    "packages/dinkster-model-wan"
+    "packages/dinkster-compat-comfy"
 )
 $KitchenCpuWheel = "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/dinkster_kitchen-0.2.35.post1-py3-none-any.whl#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
+$DinksterInferenceRequirement = "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@90e224eb1a74e61b76c755ad410b7513c83e7549"
 $PreviousProject = [Environment]::GetEnvironmentVariable("UV_PROJECT", "Process")
 $PreviousProjectEnvironment = [Environment]::GetEnvironmentVariable(
     "UV_PROJECT_ENVIRONMENT", "Process"
@@ -131,8 +124,10 @@ try {
         "pytest", "packaging", "numpy>=1.26", "scipy>=1.11",
         "simpleeval==1.0.3", "onnxruntime==1.29.0",
         "opencv-python-headless==5.0.0.93", "pillow==12.0.0",
-        "safetensors==0.8.0", "sentencepiece==0.2.1", "transformers==5.16.1",
+        "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
+        "transformers==5.16.1",
         $KitchenCpuWheel,
+        $DinksterInferenceRequirement,
         "dinkster-aimdo==0.5.5.post2"
     ) + (Get-EditableArguments $CpuEditablePackages)
     Invoke-Native "uv" (@("pip", "install", "--python", $TorchPython) + $CpuDependencies)
@@ -175,8 +170,9 @@ try {
         )
         $GpuDependencies = @(
             "pytest", "numpy", "scipy", "torchsde", "tqdm", "pillow", "packaging",
-            "safetensors==0.8.0", "sentencepiece==0.2.1",
+            "safetensors==0.8.0", "sentencepiece==0.2.1", "tokenizers==0.23.1",
             "dinkster-kitchen==0.2.35.post1", "dinkster-aimdo==0.5.5.post2",
+            $DinksterInferenceRequirement,
             "triton-windows==3.7.1.post27"
         ) + (Get-EditableArguments $GpuEditablePackages)
         Invoke-Native "uv" (@("pip", "install", "--python", $GpuPython) + $GpuDependencies)
@@ -199,15 +195,6 @@ try {
     Write-Host "  .venv\Scripts\ruff.exe check ."
     Write-Host "  .venv\Scripts\pyright.exe"
     Write-Host "  .venv\Scripts\python.exe -m pytest -q"
-    Write-Host "  .venv\Scripts\pyright.exe -p packages\dinkster-inference-torch"
-    Write-Host "  .venv-torch\Scripts\python.exe -m pytest -q packages\dinkster-inference-torch\tests"
-    if ($HasNvidiaGpu) {
-        Write-Host '  $env:DINKSTER_ENABLE_GPU_TESTS = "1"'
-        Write-Host '  $env:DINKSTER_VALIDATE_REFERENCE_GOLDENS = "1"'
-        Write-Host "  .venv-gpu\Scripts\python.exe -m pytest -q packages\dinkster-inference-torch\tests"
-        Write-Host "  Remove-Item Env:\DINKSTER_ENABLE_GPU_TESTS"
-        Write-Host "  Remove-Item Env:\DINKSTER_VALIDATE_REFERENCE_GOLDENS"
-    }
 }
 finally {
     [Environment]::SetEnvironmentVariable("UV_PROJECT", $PreviousProject, "Process")

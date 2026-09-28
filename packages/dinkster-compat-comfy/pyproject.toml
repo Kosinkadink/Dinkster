@@ -7,8 +7,7 @@ dependencies = [
     "dinkster-assets",
     "dinkster-image-document",
     "dinkster-graph",
-    "dinkster-inference",
-    "dinkster-inference-torch",
+    "dinkster-inference-wire",
     "dinkster-memory",
     "dinkster-native",
     "dinkster-nodes-generation",
@@ -30,14 +29,12 @@ packages = ["src/dinkster_compat_comfy"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "dinkster-pack.toml" = "dinkster_compat_comfy_pack/dinkster-pack.toml"
-"comfy-aliases.json" = "dinkster_compat_comfy_pack/comfy-aliases.json"
 "src/dinkster_compat_comfy" = "dinkster_compat_comfy_pack/dinkster_compat_comfy"
 
 [tool.uv.sources]
 dinkster-assets = { workspace = true }
 dinkster-image-document = { workspace = true }
-dinkster-inference = { workspace = true }
-dinkster-inference-torch = { workspace = true }
+dinkster-inference-wire = { workspace = true }
 dinkster-native = { workspace = true }
 dinkster-nodes-generation = { workspace = true }
 dinkster-protocol = { workspace = true }

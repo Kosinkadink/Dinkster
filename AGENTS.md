@@ -33,32 +33,20 @@ by a repository contract remain authoritative and must be preserved.
 
 ## Review discipline
 
-Every slice gets a real code review after implementation and tests pass,
-before the commit - a pass over the new code, not a re-read of the diff
-summary: API cohesion (exported-but-unconsumed surface is a cut candidate),
-invariants (frozen/immutability claims hold, validators fire), layering (no
-reaching into later-stage mechanisms, no hidden global state), and doc drift.
-Fix findings before committing or file an issue for deliberate deferrals.
-Record the outcome in the commit body ("Reviewed: ..." or "no findings").
+Every change gets a real code review after implementation and tests pass,
+before its head is frozen for verification - a pass over the new code, not a
+re-read of the diff summary: API cohesion (exported-but-unconsumed surface is
+a cut candidate), invariants (frozen/immutability claims hold, validators
+fire), layering (no reaching into later-stage mechanisms, no hidden global
+state), and doc drift. Fix findings before freezing or file an issue for
+deliberate deferrals. Record the outcome in the pull request body
+("Reviewed: ..." or "no findings").
 
-## One sampling engine (user directives, 2026-08)
+## One sampling engine
 
-There is exactly one sampling execution engine: the decomposed
-custom-sampling seam (noise / guider / sampler / sigmas / latent, the
-CustomSamplingRuntime contract in dinkster_inference/runtime.py). Every model
-family implements ONLY that seam. KSampler and every other sampler node are
-sugar - thin compositions of the seam (see the runtime entry points in
-dinkster_inference_torch/sampling_runtime.py and the shared composition helper
-in dinkster_inference_torch/sampling_execution.py) - never a second execution
-path. The adapter boundary and migration rules are in
-docs/sampling-execution.md. Do not add bespoke per-family assembly branches,
-KSampler-only sampling code, or family gates that make the decomposed path
-reject what the KSampler path accepts. Cross-cutting sampling behavior
-(distributed admission, previews, cancellation, masks) is a property of the
-engine, so it applies identically to every sampler node; wiring it into one
-node or one path is a defect. Refusing a capability on the decomposed path
-that the KSampler path supports is acceptable only as a brief migration
-intermediate with an open issue, never as an end state. Reviews gate on this.
+There is exactly one sampling execution engine: the sampler provided by
+`dinkster_inference`. Dinkster nodes may compose that engine, but must not add a
+second sampler implementation or model-family execution path.
 
 ## Performance parity discipline
 
@@ -88,9 +76,9 @@ green suite whose tolerances quietly absorbed a real defect.
   fine for value math, NOT for brownian-tree noise streams, which
   decorrelate on one-ulp sigma differences (the harness measured 3.4e-2
   end-to-end from a ~1e-7 karras delta). Any schedule or SigmaSpace kind
-  that can feed an SDE sampler must be ported onto reference kernels in
-  dinkster_inference_torch/schedules.py WITH executed SDE golden coverage
-  before that pairing ships. No evidence, no port, no wiring.
+  that can feed an SDE sampler must use the executed `dinkster_inference`
+  reference kernels with oracle-backed SDE coverage before that pairing
+  ships. No evidence, no wiring.
 - Goldens are generated ONLY on the generating tool's own pinned ComfyUI
   commit (its BASELINE/REFERENCE_COMMIT constant, which the tool enforces)
   with the generator's documented interpreter, and must be proven bit-stable
@@ -102,7 +90,14 @@ green suite whose tolerances quietly absorbed a real defect.
   until the divergence point is found. Do not commit anything whose mismatch
   you cannot explain.
 
-## Validation gate (before any commit)
+## Validation gate (before freezing a head for verification)
+
+Commit and push in-progress work to the feature branch freely; a branch
+commit needs no passing checks. The gates below apply to a head offered for
+verification or landing, and to a pull request head before the landing
+squash. The hosted fast lane (`ci.yml`) plus the verifier PASS is the landing
+gate; the full root suite runs on main after landing and is run locally only
+when the issue names a numerical, performance or GPU criterion.
 
 ```
 .venv/bin/ruff check .
@@ -110,30 +105,11 @@ green suite whose tolerances quietly absorbed a real defect.
 .venv/bin/python -m pytest -q
 ```
 
-All three must be clean. When `packages/dinkster-inference-torch` (or anything
-it consumes) changes, two extra gates apply - the root venv is deliberately
-torch-free, so that package has its own environment (`.venv-torch`, see its
-README for setup) and pyright project:
-
-```
-.venv/bin/pyright -p packages/dinkster-inference-torch
-CPATH="$PWD/.venv-gpu-extras/pyheaders/usr/include/python3.12:$PWD/.venv-gpu-extras/pyheaders/usr/include${CPATH:+:$CPATH}" \
-  .venv-torch/bin/python -m pytest -q packages/dinkster-inference-torch/tests
-```
-
-When the machine has CUDA GPUs, the capability-gated GPU suite
-(`packages/dinkster-inference-torch/tests/test_gpu.py`) must also run - under
-`.venv-torch` it silently skips, which proves nothing. Use the dedicated
-CUDA venv per the package README "GPU validation" section (on this host:
-`.venv-gpu`, torch 2.13.0+cu130, with the CPATH headers from
-`.venv-gpu-extras/pyheaders`). Do NOT defer GPU validation on a GPU machine
-(user directive, 2026-07).
-
-Torch testing policy (user directive, 2026-07-26): test/validation
-environments run torch >= 2.10. The `torch>=2.5` package floor is a
-backwards-compatibility promise for consumers, pinned to upstream ComfyUI's
-published minimum - track upstream if it rises, and do not validate against
-pre-2.10 torch as if it were the primary target.
+Ruff and pyright must be clean at every frozen head; the root pytest run
+must be clean at a frozen head whenever the issue requires it or the diff
+touches a package outside the fast lane's unit subset. Sampling-runtime GPU
+validation belongs to the `dinkster-inference` repository; Dinkster validates its
+worker integration with the issue-specific production oracles.
 
 Stale wheel cache after rebase: when a pull or rebase changes a node pack or
 its committed lockfile, a plain `uv sync --all-packages --frozen` can re-link

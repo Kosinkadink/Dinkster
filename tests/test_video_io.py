@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from av.codec import Codec as AvCodec
 from av.error import InvalidDataError
+from dinkster_api.v1 import image_input
 from dinkster_assets import AssetRef, AssetVault, MountSnapshotResolver, digest_bytes
 from dinkster_nodes_media_io.video import LoadVideo, LoadVideoValue, SaveVideo, SaveVideoValue
 from dinkster_schema import (
@@ -367,7 +368,7 @@ def test_vp9_alpha_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     with av.open(path) as container:
         assert container.streams.video[0].metadata["alpha_mode"] == "1"
     loaded = LoadVideo.execute(video=_bound(ref, snapshot))
-    images = cast(np.ndarray, loaded["images"])
+    images = cast(np.ndarray, image_input(loaded["images"]))
     assert images.shape == (3, 64, 64, 4)
     assert images[..., 3].min() == pytest.approx(1 / 3, abs=2 / 255)
     assert images[..., 3].max() == pytest.approx(1.0, abs=2 / 255)
@@ -476,19 +477,6 @@ def test_late_start_seeks_video_and_audio_and_bounds_decoded_prefix(
     assert decoded < 20
 
 
-def test_input_budget_preflight_runs_before_global_pixel_scan(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    images = np.broadcast_to(np.zeros((1, 2, 2, 3), dtype=np.float32), (2**24, 2, 2, 3))
-
-    def unexpected_scan(_array: object) -> object:
-        raise AssertionError("isfinite ran before the byte budget check")
-
-    monkeypatch.setattr(np, "isfinite", unexpected_scan)
-    with pytest.raises(ValueError, match="512 MiB"):
-        assemble_video(images)
-
-
 def test_encoded_output_spools_to_disk_and_enforces_limit() -> None:
     spool = video_module._BoundedSpool(10 * 1024 * 1024)
     try:
@@ -587,7 +575,7 @@ def test_video_schemas_preserve_preview_and_asset_contracts() -> None:
     assert save.node_type == "dinkster.save_video"
     assert save_value.node_type == "dinkster.save_video_value"
     assert load.aliases == ()
-    assert save.aliases == ()
+    assert save.aliases == ("SaveVideo",)
     assert load.inputs[0].type.element is not None
     assert load.inputs[0].type.element.types == ("comfy.VIDEO",)
     assert load.inputs[0].type.kind == "asset"

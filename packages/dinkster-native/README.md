@@ -1,24 +1,15 @@
 # dinkster-native
 
-`dinkster-native` owns Dinkster's native execution schemas, implementations, value
-codecs, residency, and worker manifest. Its provider can be imported and
-registered without importing ComfyUI or `dinkster-compat-comfy`.
+`dinkster-native` owns Dinkster's retained native media, mesh/3D, and worker
+integration surfaces. It does not contain a sampling engine or model-family
+runtime.
 
-The package is a uv workspace member. From the repository root, install the
-whole workspace with:
+The worker installs the pinned `dinkster-inference` fork and imports
+`dinkster_inference` for supported SD1.5 and MiniMax H3 inference. ComfyUI-backed
+legacy nodes remain in `dinkster-compat-comfy`.
+
+From the repository root, install the workspace with:
 
 ```console
 uv sync --all-packages
-```
-
-Native execution still requires the torch inference environment documented in
-`packages/dinkster-inference-torch/README.md`. ComfyUI-backed translated nodes and
-the remaining compatibility execution bodies live in `dinkster-compat-comfy`.
-
-The worker manifest is generated from the compatibility manifest while
-excluding ComfyUI-dependent execution claims. Regenerate it after changing the
-source manifest or native catalog:
-
-```console
-uv run python tools/gen_native_comfy_manifests.py
 ```

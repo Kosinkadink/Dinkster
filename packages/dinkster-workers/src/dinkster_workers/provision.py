@@ -24,6 +24,10 @@ import tempfile
 import tomllib
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
+
+from packaging.requirements import Requirement
+from packaging.utils import NormalizedName, canonicalize_name
 
 from .interpreter import InterpreterPreflightError, preflight_interpreter
 from .manifest import PackManifest
@@ -104,6 +108,7 @@ def ensure_pack_venv(
     requirements = (
         manifest.requires_for(accelerator) if accelerator is not None else manifest.requires
     )
+    workspace_packages = _without_duplicate_editables(workspace_packages, (manifest.root,))
     return _ensure_venv(
         venv_root / manifest.name,
         requirements=requirements,
@@ -149,11 +154,13 @@ def ensure_group_venv(
             }
         )
     )
+    editable_roots = tuple(manifest.root for manifest in manifests)
+    workspace_packages = _without_duplicate_editables(workspace_packages, editable_roots)
     venv_dir = venv_root / group_name
     return _ensure_venv(
         venv_dir,
         requirements=requirements,
-        editable_roots=tuple(manifest.root for manifest in manifests),
+        editable_roots=editable_roots,
         workspace_packages=workspace_packages,
         uv=uv,
         reinstall=reinstall,
@@ -176,6 +183,137 @@ def _project_inputs(root: Path) -> dict[str, object]:
         }
     except (OSError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
         raise ProvisionError(f"cannot read provisioning inputs from {path}: {exc}") from exc
+
+
+def workspace_packages_for(
+    pack_dir: Path,
+    *,
+    host_requirements: Sequence[str] = _HOST_REQUIREMENTS,
+) -> tuple[Path, ...]:
+    """Find the local workspace members needed to provision ``pack_dir``."""
+    pack_dir = pack_dir.resolve()
+    workspace_root = None
+    workspace: dict[str, object] | None = None
+    for candidate in (pack_dir, *pack_dir.parents):
+        project_path = candidate / "pyproject.toml"
+        if not project_path.is_file():
+            continue
+        try:
+            document = cast(
+                "dict[str, object]",
+                tomllib.loads(project_path.read_text(encoding="utf-8")),
+            )
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        tool = document.get("tool")
+        tool_table = cast("dict[str, object]", tool) if isinstance(tool, dict) else {}
+        uv = tool_table.get("uv")
+        uv_table = cast("dict[str, object]", uv) if isinstance(uv, dict) else {}
+        candidate_workspace = uv_table.get("workspace")
+        if isinstance(candidate_workspace, dict):
+            workspace_root = candidate
+            workspace = cast("dict[str, object]", candidate_workspace)
+            break
+    if workspace_root is None or workspace is None:
+        return ()
+
+    members = workspace.get("members", [])
+    excludes = workspace.get("exclude", [])
+    if not isinstance(members, list) or not all(
+        isinstance(item, str) for item in cast("list[object]", members)
+    ):
+        return ()
+    if not isinstance(excludes, list) or not all(
+        isinstance(item, str) for item in cast("list[object]", excludes)
+    ):
+        return ()
+    excluded = {
+        path.resolve()
+        for pattern in cast("list[str]", excludes)
+        for path in workspace_root.glob(pattern)
+    }
+    candidates = {workspace_root.resolve()}
+    candidates.update(
+        path.resolve()
+        for pattern in cast("list[str]", members)
+        for path in workspace_root.glob(pattern)
+        if path.is_dir()
+    )
+
+    projects: dict[NormalizedName, tuple[Path, tuple[NormalizedName, ...]]] = {}
+    for root in sorted(candidates - excluded):
+        project_path = root / "pyproject.toml"
+        if not project_path.is_file():
+            continue
+        try:
+            document = cast(
+                "dict[str, object]",
+                tomllib.loads(project_path.read_text(encoding="utf-8")),
+            )
+        except (OSError, tomllib.TOMLDecodeError):
+            continue
+        project = document.get("project")
+        if not isinstance(project, dict):
+            continue
+        project_table = cast("dict[str, object]", project)
+        if not isinstance(project_table.get("name"), str):
+            continue
+        dependencies = project_table.get("dependencies", [])
+        if not isinstance(dependencies, list) or not all(
+            isinstance(item, str) for item in cast("list[object]", dependencies)
+        ):
+            continue
+        projects[canonicalize_name(cast(str, project_table["name"]))] = (
+            root,
+            tuple(
+                canonicalize_name(requirement.name)
+                for item in cast("list[str]", dependencies)
+                if (requirement := Requirement(item)).marker is None
+                or requirement.marker.evaluate()
+            ),
+        )
+
+    pack_project = next((project for project in projects.values() if project[0] == pack_dir), None)
+    if pack_project is None:
+        return ()
+    pending = {canonicalize_name(requirement) for requirement in host_requirements}
+    pending.update(pack_project[1])
+    selected: set[Path] = set()
+    visited: set[NormalizedName] = set()
+    while pending:
+        name = pending.pop()
+        if name in visited:
+            continue
+        visited.add(name)
+        project = projects.get(name)
+        if project is None:
+            continue
+        root, dependencies = project
+        if root != pack_dir:
+            selected.add(root)
+        pending.update(dependencies)
+    return tuple(sorted(selected))
+
+
+def _without_duplicate_editables(
+    workspace_packages: Sequence[Path], editable_roots: Sequence[Path]
+) -> tuple[Path, ...]:
+    editable_names = {_project_name(root) for root in editable_roots}
+    return tuple(root for root in workspace_packages if _project_name(root) not in editable_names)
+
+
+def _project_name(root: Path) -> NormalizedName | None:
+    name = _project_inputs(root)["name"]
+    return canonicalize_name(name) if isinstance(name, str) else None
+
+
+def _missing_host_requirements(workspace_packages: Sequence[Path]) -> tuple[str, ...]:
+    provided = {_project_name(root) for root in workspace_packages}
+    return tuple(
+        requirement
+        for requirement in _HOST_REQUIREMENTS
+        if canonicalize_name(requirement) not in provided
+    )
 
 
 def _provisioning_digest(
@@ -220,12 +358,9 @@ def _ensure_venv(
     """Shared create/install machinery for one-pack and grouped venvs."""
     python = venv_dir / "Scripts" / "python.exe" if os.name == "nt" else venv_dir / "bin" / "python"
     complete = venv_dir / ".dinkster-complete"
+    host_requirements = () if pinned is not None else _missing_host_requirements(workspace_packages)
     digest = _provisioning_digest(
-        requirements=(
-            ()
-            if pinned is not None
-            else (*(() if workspace_packages else _HOST_REQUIREMENTS), *requirements)
-        ),
+        requirements=(() if pinned is not None else (*host_requirements, *requirements)),
         editable_roots=editable_roots,
         workspace_packages=workspace_packages,
         pinned=pinned,
@@ -245,12 +380,18 @@ def _ensure_venv(
         venv_dir.parent.mkdir(parents=True, exist_ok=True)
         _run([uv, "venv", "--python", sys.executable, str(venv_dir)])
 
-        install: list[str] = [uv, "pip", "install", "--python", str(python)]
+        install: list[str] = [
+            uv,
+            "pip",
+            "install",
+            "--python",
+            str(python),
+            "--no-sources",
+        ]
         if workspace_packages:
             for package_dir in workspace_packages:
                 install.extend(["-e", str(package_dir)])
-        elif pinned is None:
-            install.extend(_HOST_REQUIREMENTS)
+        install.extend(host_requirements)
         for root in editable_roots:
             if (root / "pyproject.toml").exists():
                 install.extend(["-e", str(root)])

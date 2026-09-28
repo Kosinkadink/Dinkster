@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from dinkster_assets import digest_bytes, is_digest
+from dinkster_values import MEBIBYTE
 from dinkster_values.image_codec import image_color
 
 IMAGE_DOCUMENT_MEDIA_TYPE = "application/vnd.dinkster.image-document+json"
-MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+MAX_DOCUMENT_BYTES = 16 * MEBIBYTE
 MAX_DIMENSION = 16_384
 MAX_PIXELS = 100_000_000
 MAX_JSON_NODES = 1_000_000

@@ -1472,42 +1472,11 @@ NODES = [ArmedEcho]
 ARM_NODES = {"native": [NativeEcho]}
 '''
 
-ATTENTION_EVIDENCE_MODULE = '''\
-"""Stands in for the inference runtime the daemon probes for arm evidence."""
-
-from dinkster_protocol import (
-    AttentionCapabilityEvidence,
-    AttentionPolicyConfig,
-    derive_attention_route_token,
-)
-
-
-def discover_attention_capabilities():
-    return AttentionCapabilityEvidence(
-        version=1,
-        device_kind="cpu",
-        device_sm=None,
-        sdpa_torch_runtime="2.13.0",
-        adapter_contract_revision="dinkster.attention-kernel.v1",
-        available_policies=("sdpa",),
-        provider_versions=(("torch", "2.13.0"),),
-    )
-
-
-def discover_attention_route_token(policy="auto"):
-    return derive_attention_route_token(
-        discover_attention_capabilities(),
-        AttentionPolicyConfig(requested_policy=policy),
-    )
-'''
-
 
 def write_armed_manifest(root: Path) -> Path:
-    """A pack whose manifest declares a native body arm, plus the fake
-    inference runtime the daemon needs to mint attention route evidence."""
+    """Write a pack whose manifest declares a native body arm."""
     root.mkdir()
     (root / "armedpack_nodes.py").write_text(ARMED_NODES_MODULE, encoding="utf-8")
-    (root / "dinkster_inference_torch.py").write_text(ATTENTION_EVIDENCE_MODULE, encoding="utf-8")
     manifest = root / "dinkster-pack.toml"
     manifest.write_text(
         '[pack]\nname = "armedpack"\nnamespaces = ["armed"]\n\n'
@@ -1593,12 +1562,6 @@ def test_remote_body_arm_is_policy_selectable_only_under_placement(tmp_path: Pat
             await stop_service(proc)
 
     asyncio.run(scenario())
-
-
-def test_remote_native_body_arm_without_attention_evidence_is_refused() -> None:
-    worker = SimpleNamespace(body_arms={"native": ("armed.echo",)}, attention_route_token=None)
-    with pytest.raises(CompositionError, match="attention route evidence"):
-        _validated_remote_body_arms("box1", worker, {})
 
 
 def test_remote_body_arm_naming_unannounced_type_is_refused() -> None:

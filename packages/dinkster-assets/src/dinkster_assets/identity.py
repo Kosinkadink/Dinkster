@@ -12,13 +12,15 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from dinkster_values import MEBIBYTE
+
 if TYPE_CHECKING:
     from blake3 import blake3
 
 DIGEST_PREFIX = "blake3:"
 _DIGEST_RE = re.compile(r"^blake3:[0-9a-f]{64}$")
 
-CHUNK_SIZE = 8 * 1024 * 1024
+CHUNK_SIZE = 8 * MEBIBYTE
 """Hash files in 8 MiB chunks (matches ComfyUI's scanner) - bounded memory
 regardless of file size."""
 

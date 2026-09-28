@@ -293,6 +293,9 @@ from dinkster_schema import (
     validate_replacement_references,
 )
 from dinkster_values import (
+    ENGINE_EVENT_FRAME_LIMIT_BYTES,
+    ENGINE_JOB_SUBMISSION_LIMIT_BYTES,
+    MEBIBYTE,
     InvalidRenditionRequest,
     RenditionUnavailable,
     TypeRegistry,
@@ -308,6 +311,7 @@ from .auth import (
     Principal,
     PrincipalPermissionStore,
     add_principal_routes,
+    authorization_reason,
     handle_ws_ticket,
     install_auth,
     principal_for,
@@ -576,6 +580,7 @@ def job_to_wire(
         "finishedAt": job.finished_at,
         "nodeStates": dict(node_states or {}),
         "latestSeq": job.latest_seq,
+        "cacheEnabled": job.cache_enabled,
     }
     if job.execution is not None:
         wire["extensionSnapshotDigest"] = job.execution.extension_snapshot_digest
@@ -1378,7 +1383,7 @@ class ServerState:
         self.settings = settings or RuntimeSettings(
             {
                 "memory-budgets": default_budgets,
-                "memory-headroom": 256 * 1024**2,
+                "memory-headroom": 256 * MEBIBYTE,
                 "aimdo-policy": "auto",
                 "dtype-policy": {
                     "diffusion": "auto",
@@ -3255,6 +3260,9 @@ async def handle_submit(request: web.Request) -> web.Response:
     priority = body.get("priority", 0)
     if not isinstance(priority, int) or isinstance(priority, bool):
         raise _bad_request("'priority' must be an integer")
+    cache_enabled = body.get("cacheEnabled", True)
+    if type(cache_enabled) is not bool:
+        raise _bad_request("'cacheEnabled' must be a boolean")
     try:
         submitted_attention = (
             attention_policy_config_from_wire(body["attention"]) if "attention" in body else None
@@ -3325,6 +3333,8 @@ async def handle_submit(request: web.Request) -> web.Response:
         }
     if submitted_attention is not None and submitted_attention != state.attention_default:
         fingerprint_payload["attention"] = attention_policy_config_to_wire(submitted_attention)
+    if not cache_enabled:
+        fingerprint_payload["cacheEnabled"] = False
     fingerprint = hashlib.sha256(
         json.dumps(
             fingerprint_payload,
@@ -3519,6 +3529,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 compiled_graph=compiled_graph,
                 previews=previews,
                 attention_config=attention_config,
+                cache_enabled=cache_enabled,
             )
         except JobGraphAdmissionError as exc:
             return web.json_response(
@@ -3948,7 +3959,10 @@ async def handle_queue_clear(request: web.Request) -> web.Response:
 async def handle_events(request: web.Request) -> web.WebSocketResponse:
     state = request.app[STATE_KEY]
     client_id = request.query.get("clientId")  # absent -> observe all clients
-    ws = web.WebSocketResponse(heartbeat=30)
+    ws = web.WebSocketResponse(
+        heartbeat=30,
+        max_msg_size=ENGINE_EVENT_FRAME_LIMIT_BYTES,
+    )
     await ws.prepare(request)
 
     def visible(event: Mapping[str, object]) -> bool:
@@ -3966,8 +3980,12 @@ async def handle_events(request: web.Request) -> web.WebSocketResponse:
 
     async def pump() -> None:
         while True:
-            if not principal_for(request).allows("jobs:read"):
-                await ws.close(code=1008, message=b"authorization-expired")
+            principal = principal_for(request)
+            if not principal.allows("jobs:read"):
+                await ws.close(
+                    code=1008,
+                    message=authorization_reason(principal).encode(),
+                )
                 return
             try:
                 event = await asyncio.wait_for(sub.get(), timeout=1)
@@ -3975,8 +3993,12 @@ async def handle_events(request: web.Request) -> web.WebSocketResponse:
                 continue
             if event is None:
                 break
-            if not principal_for(request).allows("jobs:read"):
-                await ws.close(code=1008, message=b"authorization-expired")
+            principal = principal_for(request)
+            if not principal.allows("jobs:read"):
+                await ws.close(
+                    code=1008,
+                    message=authorization_reason(principal).encode(),
+                )
                 return
             if not visible(event):
                 continue
@@ -4414,6 +4436,7 @@ def create_app(
     allow_origins: Sequence[str] = (),
     authenticator: Authenticator | None = None,
     principal_permissions: PrincipalPermissionStore | None = None,
+    user_session_freshness_seconds: float = 600,
     library: ServerLibrary | None = None,
     history: HistoryStore | None = None,
     training_sessions: TrainingSessionStore | None = None,
@@ -4481,7 +4504,7 @@ def create_app(
         execution_journal=execution_journal,
         full_free=full_free,
     )
-    app = web.Application()
+    app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state
     app[PACK_SETTINGS_KEY] = PackSettingsStore(pack_settings_root)
     permission_store = principal_permissions or PrincipalPermissionStore()
@@ -4516,6 +4539,7 @@ def create_app(
         route_capabilities=route_capabilities,
         federated_asset_paths=federated_paths,
         permission_store=permission_store,
+        user_session_freshness_seconds=user_session_freshness_seconds,
     )
     app.router.add_get("/api/health", handle_health)
     app.router.add_post("/api/auth/ws-ticket", handle_ws_ticket)

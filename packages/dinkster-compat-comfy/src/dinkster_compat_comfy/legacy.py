@@ -14,17 +14,15 @@ like core nodes. Anything past that - routes actually being served,
 executor monkey-patching taking effect, IS_LIST calling conventions - is
 reported in the pack's LegacyPackReport instead of half-working.
 
-Import mechanics deliberately mirror ComfyUI's ``load_custom_node`` v1
-path (nodes.py), which is synchronous: module name from the directory
-basename, sys.modules key with ``.`` replaced by ``_x_``, spec from
-``__init__.py`` (or the file itself for single-file packs), module
-registered in sys.modules before exec so relative imports resolve. The
-async half of ComfyUI's loader exists only for V3 ``comfy_entrypoint``
-packs, which this loader classifies and skips: V3 packs are the
-port-them-properly case (``dinkster port`` translates them too), not the
-quarantine case. A mixed pack (v1 mappings AND a V3 entrypoint) loads
-its v1 half and flags ``v3_entrypoint_ignored`` - upstream ComfyUI
-ignores the V3 half of a mixed pack silently; Dinkster reports it.
+Import mechanics deliberately mirror ComfyUI's ``load_custom_node`` path
+(nodes.py): module name from the directory basename, sys.modules key with
+``.`` replaced by ``_x_``, spec from ``__init__.py`` (or the file itself),
+and module registration before exec so relative imports resolve. Pure V3
+``comfy_entrypoint`` packs follow ComfyUI's async extension lifecycle, then
+their compatibility class properties pass through the same translator as v1
+mappings. A mixed pack (v1 mappings AND a V3 entrypoint) loads its v1 half and
+flags ``v3_entrypoint_ignored`` - upstream ComfyUI ignores the V3 half of a
+mixed pack silently; Dinkster reports it.
 
 Node ids are namespaced per pack: ``comfy.<pack>.<v1 name>``. v1's flat
 global node namespace made collisions a runtime surprise; two legacy
@@ -45,13 +43,21 @@ authors and node users never see these):
 
 from __future__ import annotations
 
+import asyncio
+import importlib
+import importlib.abc
 import importlib.util
+import inspect
 import json
 import os
 import sys
+import threading
 import traceback
 import types
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -64,6 +70,102 @@ if TYPE_CHECKING:
 #: ComfyUI runtime modules a pack may hook into; references from pack code
 #: into these mark surfaces Dinkster does not serve (reported, not emulated).
 _HOOK_MODULES = ("server", "execution", "aiohttp")
+
+
+class _ForkComfyProxy(types.ModuleType):
+    def __init__(self, name: str, target: types.ModuleType) -> None:
+        super().__init__(name)
+        types.ModuleType.__setattr__(self, "_target", target)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._target, name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name.startswith("__") or name == "_target":
+            types.ModuleType.__setattr__(self, name, value)
+            return
+        setattr(self._target, name, value)
+
+    def __dir__(self) -> list[str]:
+        return dir(self._target)
+
+
+class _ForkComfyImports(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Expose dinkster_inference under ComfyUI's module names while a pack imports."""
+
+    @staticmethod
+    def target_name(fullname: str) -> str:
+        suffix = fullname.removeprefix("comfy")
+        return f"dinkster_inference{suffix}"
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: object = None,
+        target: types.ModuleType | None = None,
+    ) -> ModuleSpec | None:
+        del path, target
+        if fullname != "comfy" and not fullname.startswith("comfy."):
+            return None
+        target_spec = importlib.util.find_spec(self.target_name(fullname))
+        if target_spec is None:
+            return None
+        return importlib.util.spec_from_loader(
+            fullname,
+            self,
+            is_package=target_spec.submodule_search_locations is not None,
+        )
+
+    def create_module(self, spec: ModuleSpec) -> types.ModuleType:
+        target = importlib.import_module(self.target_name(spec.name))
+        return self.proxy(spec.name, target)
+
+    @staticmethod
+    def proxy(name: str, target: types.ModuleType) -> types.ModuleType:
+        proxy = _ForkComfyProxy(name, target)
+        if hasattr(target, "__path__"):
+            types.ModuleType.__setattr__(proxy, "__path__", target.__path__)
+        return proxy
+
+    def exec_module(self, module: types.ModuleType) -> None:
+        del module
+
+
+@contextmanager
+def _fork_comfy_imports() -> Generator[None]:
+    """Bind model-facing custom-pack imports to the fork for object identity."""
+    if importlib.util.find_spec("dinkster_inference") is None:
+        yield
+        return
+
+    saved = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "comfy" or name.startswith("comfy.")
+    }
+    aliases: dict[str, types.ModuleType] = {}
+    for name in sorted(saved, key=lambda item: item.count(".")):
+        target_name = _ForkComfyImports.target_name(name)
+        if importlib.util.find_spec(target_name) is not None:
+            target = importlib.import_module(target_name)
+            aliases[name] = _ForkComfyImports.proxy(name, target)
+    for name in saved:
+        del sys.modules[name]
+    finder = _ForkComfyImports()
+    sys.meta_path.insert(0, finder)
+    try:
+        sys.modules.update(aliases)
+        for name, module in aliases.items():
+            parent_name, separator, child_name = name.rpartition(".")
+            if separator and parent_name in aliases:
+                types.ModuleType.__setattr__(aliases[parent_name], child_name, module)
+        yield
+    finally:
+        sys.meta_path.remove(finder)
+        for name in tuple(sys.modules):
+            if name == "comfy" or name.startswith("comfy."):
+                del sys.modules[name]
+        sys.modules.update(saved)
 
 
 @dataclass
@@ -169,8 +271,53 @@ def _import_pack(path: Path) -> types.ModuleType:
         raise CompatError(f"cannot build an import spec for {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[sys_module_name] = module
-    spec.loader.exec_module(module)
+    with _fork_comfy_imports():
+        spec.loader.exec_module(module)
     return module
+
+
+def resolve_v3_nodes(module: types.ModuleType) -> list[type]:
+    """Resolve a V3 extension through the same lifecycle as ComfyUI."""
+
+    async def collect() -> list[type]:
+        extension = module.comfy_entrypoint()
+        if inspect.isawaitable(extension):
+            extension = await extension
+        on_load = getattr(extension, "on_load", None)
+        if callable(on_load):
+            loaded = on_load()
+            if inspect.isawaitable(loaded):
+                await loaded
+        get_node_list = getattr(extension, "get_node_list", None)
+        if not callable(get_node_list):
+            raise CompatError("comfy_entrypoint did not return an extension with get_node_list")
+        node_list = get_node_list()
+        if inspect.isawaitable(node_list):
+            node_list = await node_list
+        if not isinstance(node_list, list):
+            raise CompatError("get_node_list did not return a list of node classes")
+        return cast("list[type]", node_list)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(collect())
+
+    result: list[list[type]] = []
+    failure: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            result.append(asyncio.run(collect()))
+        except BaseException as exc:  # noqa: BLE001 - reraised on the worker thread
+            failure.append(exc)
+
+    thread = threading.Thread(target=run, name="dinkster-comfy-v3-entrypoint")
+    thread.start()
+    thread.join()
+    if failure:
+        raise failure[0]
+    return result[0]
 
 
 def load_legacy_pack(
@@ -178,6 +325,7 @@ def load_legacy_pack(
     translation: CompatTranslation,
     *,
     server_instance: object | None,
+    load_v3: bool = True,
 ) -> LegacyPackReport:
     """Import one unmodified pack and translate its v1 mappings into
     ``translation``. Never raises for pack faults - every outcome lands in
@@ -209,25 +357,50 @@ def load_legacy_pack(
     mappings = getattr(module, "NODE_CLASS_MAPPINGS", None)
     if not mappings:
         if callable(getattr(module, "comfy_entrypoint", None)):
-            report.status = "v3-entrypoint"
-            report.error = (
-                "pack uses the V3 comfy_entrypoint API; port it to a native "
-                "Dinkster pack instead of the legacy quarantine"
-            )
+            if not load_v3:
+                report.status = "v3-entrypoint"
+                report.error = "pack uses the V3 comfy_entrypoint API"
+                return report
+            try:
+                mappings = {}
+                display: Mapping[str, str] | dict[str, str] = {}
+                for node_class in resolve_v3_nodes(module):
+                    get_schema = getattr(node_class, "GET_SCHEMA", None)
+                    if not callable(get_schema):
+                        raise CompatError("V3 node class has no GET_SCHEMA classmethod")
+                    schema: object = get_schema()
+                    node_id = str(getattr(schema, "node_id", "") or "")
+                    if not node_id:
+                        raise CompatError("V3 node schema has no node_id")
+                    if node_id in mappings:
+                        raise CompatError(f"duplicate V3 node_id: {node_id}")
+                    mappings[node_id] = node_class
+                    display_name = getattr(schema, "display_name", None)
+                    if isinstance(display_name, str) and display_name:
+                        display[node_id] = display_name
+            except BaseException as exc:  # noqa: BLE001 - pack code is arbitrary
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
+                report.status = "import-error"
+                report.error = traceback.format_exception_only(type(exc), exc)[-1].strip()
+                return report
         else:
             report.status = "no-mappings"
             report.error = "pack exposes no NODE_CLASS_MAPPINGS"
-        return report
-
-    if callable(getattr(module, "comfy_entrypoint", None)):
+            return report
+    elif callable(getattr(module, "comfy_entrypoint", None)):
         # Mixed pack: v1 mappings win (ComfyUI's own precedence), but the
         # V3 half must not vanish silently - upstream's behavior, not ours.
         report.v3_entrypoint_ignored = True
-
-    display = cast(
-        "Mapping[str, str]",
-        getattr(module, "NODE_DISPLAY_NAME_MAPPINGS", None) or {},
-    )
+        display = cast(
+            "Mapping[str, str]",
+            getattr(module, "NODE_DISPLAY_NAME_MAPPINGS", None) or {},
+        )
+    else:
+        display = cast(
+            "Mapping[str, str]",
+            getattr(module, "NODE_DISPLAY_NAME_MAPPINGS", None) or {},
+        )
     already_skipped = set(translation.skipped)
     before_count = len(translation.node_classes)
     translate_mappings(

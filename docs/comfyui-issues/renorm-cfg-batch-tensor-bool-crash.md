@@ -1,7 +1,6 @@
 # RenormCFG crashes on batch > 1 when renorm_cfg > 0
 
-Status: found 2026-08-27; not reported upstream; Dinkster mirrors the
-batch-1 contract and documents it at the factory.
+Status: found 2026-08-27; not reported upstream.
 
 Baseline: ComfyUI b78cec879b9460d5cb25228a83a942fb78d2cd24.
 
@@ -50,7 +49,5 @@ sigmas can differ.
 
 ## Dinkster handling
 
-`renorm_cfg` in `dinkster_inference_torch/guidance_transforms.py` mirrors
-the reference math faithfully, including the batch-1-only contract when
-`renorm > 0`; the limitation is documented in its docstring and goldens
-cover batch 1. Fixing beyond the reference would break bit-exact parity.
+Dinkster delegates RenormCFG execution to `dinkster_inference`, whose current
+behavior matches the upstream behavior described above.

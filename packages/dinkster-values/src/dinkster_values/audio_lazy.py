@@ -11,8 +11,10 @@ from io import BytesIO
 from tempfile import SpooledTemporaryFile
 from typing import Any, BinaryIO, Protocol, cast, runtime_checkable
 
+from .limits import MEBIBYTE
+
 AUDIO_INLINE_LIMIT = 256 * 1024
-AUDIO_WINDOW_LIMIT = 32 * 1024 * 1024
+AUDIO_WINDOW_LIMIT = 32 * MEBIBYTE
 
 
 class AudioRangeError(ValueError):
@@ -28,6 +30,10 @@ class AudioSource(Protocol):
     def open(self) -> BinaryIO: ...
 
     def to_wire(self) -> dict[str, object]: ...
+
+
+class _PCM(Protocol):
+    shape: tuple[int, ...]
 
 
 def mapping(obj: object, name: str) -> Mapping[str, Any]:
@@ -360,14 +366,15 @@ def coerce_audio(obj: object) -> LazyAudio:
         if set(pcm_source) != {"pcm", "sample_rate"}:
             raise ValueError("invalid AUDIO PCM source fields")
         pcm, rate = pcm_source["pcm"], pcm_source["sample_rate"]
-        if not isinstance(pcm, np.ndarray):
-            raise ValueError("inline AUDIO requires int16 or float32 numpy PCM")
-        pcm = cast("np.ndarray[Any, Any]", pcm)
-        if pcm.dtype not in (np.dtype("int16"), np.dtype("float32")):
-            raise ValueError("inline AUDIO requires int16 or float32 numpy PCM")
-        if (probe["batch"], probe["channels"], probe["frames"]) != tuple(
-            pcm.shape
-        ) or rate != probe["sample_rate"]:
+        dtype = str(getattr(pcm, "dtype", "")).removeprefix("torch.")
+        if not isinstance(pcm, np.ndarray) and not hasattr(pcm, "detach"):
+            raise ValueError("inline AUDIO requires int16 or float32 PCM")
+        if dtype not in ("int16", "float32"):
+            raise ValueError("inline AUDIO requires int16 or float32 PCM")
+        shape = tuple(int(n) for n in cast(_PCM, pcm).shape)
+        if (probe["batch"], probe["channels"], probe["frames"]) != shape or rate != probe[
+            "sample_rate"
+        ]:
             raise ValueError("AUDIO probe does not match PCM shape/rate")
     else:
         if isinstance(source, bytes):
@@ -786,7 +793,13 @@ def _audio_window(
                 if batch_index is not None:
                     pcm = pcm[batch_index : batch_index + 1]
                 pcm = pcm[..., begin : begin + length]
-                return pcm.astype(np.float32) / 32768.0 if pcm.dtype == np.int16 else pcm
+                if str(pcm.dtype).removeprefix("torch.") == "int16":
+                    return (
+                        pcm.float() / 32768.0
+                        if hasattr(pcm, "detach")
+                        else pcm.astype(np.float32) / 32768.0
+                    )
+                return pcm
             if not isinstance(source, (bytes, AudioSource)):
                 raise AudioSourceUnavailableError("AUDIO source has no local asset binding")
             return (

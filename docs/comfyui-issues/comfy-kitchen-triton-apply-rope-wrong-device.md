@@ -2,8 +2,7 @@
 
 - **Area:** comfy-kitchen `comfy_kitchen/backends/triton/rope.py`
   (repo `Comfy-Org/comfy-kitchen`, observed at 0.2.22 and 0.2.31)
-- **Status:** still present in 0.2.31; fixed in Dinkster (device-context
-  pin in flux.py apply_rope)
+- **Status:** still present in 0.2.31
 
 ## Symptom
 
@@ -57,12 +56,7 @@ stream of the argument's device) inside the Triton backend wrapper
 before kernel launch, so callers are not required to manage
 current-device state around every op.
 
-## Dinkster interim handling
+## Dinkster handling
 
-`dinkster_inference_torch/flux.py` `apply_rope` pins the device context
-(`with torch.cuda.device(xq.device)`) around the kitchen call for
-CUDA tensors. The direct `test_kitchen_triton_rope_wrong_device_canary`
-launches Kitchen's Triton backend on cuda:0 and then calls it with cuda:1
-tensors while cuda:0 remains current, pinning the 0.2.31 failure. Dinkster's Flux
-tests prove the guarded eager route separately. When upstream fixes the
-launcher, the direct canary will fail and the guard can be removed.
+Dinkster delegates Flux RoPE execution to `dinkster_inference`, whose current
+Kitchen dispatch matches the upstream behavior described above.

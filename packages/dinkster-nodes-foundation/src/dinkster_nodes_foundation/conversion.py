@@ -13,6 +13,7 @@ from dinkster_api.v1 import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    MEBIBYTE,
     ComboWidget,
     CurveWidget,
     InputSpec,
@@ -37,7 +38,7 @@ LIST_FLOAT = TypeExpr.list_of(FLOAT)
 LIST_INT = TypeExpr.list_of(INT)
 CURVE = TypeExpr.concrete(CURVE_TYPE)
 
-MAX_CONVERSION_TEXT_BYTES = 1 << 20
+MAX_CONVERSION_TEXT_BYTES = MEBIBYTE
 MAX_SCHEDULE_TEXT_BYTES = 1 << 16
 
 

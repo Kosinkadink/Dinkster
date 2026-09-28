@@ -61,7 +61,6 @@ samplers, or un-comment the `with torch.no_grad():` in
 ## Dinkster handling
 
 Dinkster's own samplers do not have this hazard. The parity ComfyUI
-adapter ([source in dinkster-evidence](https://github.com/Kosinkadink/dinkster-evidence/blob/main/tools/inference_parity/sd15_inpaint_comfyui_adapter.py))
-wraps its request handling in `torch.inference_mode()` to reproduce
+adapter wraps its request handling in `torch.inference_mode()` to reproduce
 the executed server environment (`execution.py:709`), which both
 fixes the OOM and is the faithful reference behavior.

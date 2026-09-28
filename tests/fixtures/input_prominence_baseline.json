@@ -1355,6 +1355,31 @@
     "class": "I"
   },
   {
+    "node": "comfy.BlockSparseAttention",
+    "path": "sink_conditioning",
+    "class": "A"
+  },
+  {
+    "node": "comfy.BlockSparseAttention",
+    "path": "extra_tokens",
+    "class": "A"
+  },
+  {
+    "node": "comfy.BlockSparseAttention",
+    "path": "min_tokens",
+    "class": "A"
+  },
+  {
+    "node": "comfy.BlockSparseAttention",
+    "path": "dense_blocks",
+    "class": "A"
+  },
+  {
+    "node": "comfy.BlockSparseAttention",
+    "path": "verbose",
+    "class": "A"
+  },
+  {
     "node": "dinkster.wan_context_windows_manual",
     "path": "context_stride",
     "class": "A"
@@ -1727,6 +1752,11 @@
   {
     "node": "dinkster.model_sampling_flux",
     "path": "base_shift",
+    "class": "A"
+  },
+  {
+    "node": "dinkster.resolution_selector",
+    "path": "multiple",
     "class": "A"
   },
   {

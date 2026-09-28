@@ -53,16 +53,9 @@ writable-mounts = false
 [pack.contracts]
 host = "dinkster-pack-host/1"        # composition/hosting contract
 api = "dinkster-api/v1"             # author API imported by the pack
-# inference = "dinkster-inference/1" # only when consuming inference registries
 
 [pack.dependencies]
 # model-provider = ">=2,<3"       # composition order and release compatibility
-
-[pack.requirements.registry]
-# "dinkster.samplers" = ["dinkster.euler"] # exact host registry descriptors
-
-[pack.provides.registry]
-# "dinkster.samplers" = ["my-pack.guided-euler"] # descriptors this pack registers
 
 [pack.requirements.capabilities]
 # "model-provider.video-generation" = ">=2,<3"
@@ -410,19 +403,9 @@ part of one schema-only owner's nodes, that incomplete startup is fatal. A
 configured remote must provide every otherwise-unimplemented node of an owner
 or none of them.
 
-Contracts and requirements are checked before execution. A host/API/
-inference contract mismatch, missing exact registry id, missing or
-incompatible capability, duplicate registry or capability provider, or
-dependency cycle refuses the candidate composition. A pack that provides
-model families, samplers, or schedulers lists each exact id under
-`[pack.provides.registry]`. Doctor and serving composition require every
-listed id to appear in that pack's materialized inference contribution.
-Sampler and scheduler contributions currently expose that materialized
-provider surface. Model-family declarations participate in contract resolution,
-but cannot activate until the pack also materializes a matching family
-contribution.
-Registry requirements supplied by another pack order that provider before
-the consumer and record the provider pack identity in composition provenance.
+Contracts and requirements are checked before execution. A host/API contract
+mismatch, missing or incompatible capability, duplicate capability provider,
+or dependency cycle refuses the candidate composition.
 Dependencies determine provider ordering but do not grant Python imports
 between pack implementations; share behavior through registered ids or a
 deliberately versioned library.

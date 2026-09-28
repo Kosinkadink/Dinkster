@@ -19,6 +19,7 @@ behavior, then keep the file for provenance.
 
 | Issue | Area | Status |
 | --- | --- | --- |
+| [sd15-post-vae-residency-drift.md](sd15-post-vae-residency-drift.md) | comfy/model_management.py + comfy/model_patcher.py | verified at b5cc8830; Dinkster normalizes residency before sampling |
 | [t5-positive-end-layer-index.md](t5-positive-end-layer-index.md) | comfy/sd1_clip.py + comfy/text_encoders/t5.py | verified in pinned source; Dinkster rejects the invalid index |
 | [load-image-small-animated-gif.md](load-image-small-animated-gif.md) | LoadImage / video alignment filter | found locally; native Pillow loading succeeds |
 | [lokr-tucker-kron-noncontiguous.md](lokr-tucker-kron-noncontiguous.md) | comfy/weight_adapter/lokr.py | found 2026-07; fixed in Dinkster |
@@ -49,3 +50,4 @@ behavior, then keep the file for provenance.
 | [flux-normal-collapsed-brownian-interval.md](flux-normal-collapsed-brownian-interval.md) | comfy/k_diffusion/sampling.py + torchsde | executed reference failure on a narrow positive sigma interval |
 | [video-matroska-frame-count.md](video-matroska-frame-count.md) | comfy_api/latest/_input_impl/video_types.py | found at 15eb748b3ec5; Dinkster uses marked container estimates |
 | [ace15-generation-maximum-uses-minimum.md](ace15-generation-maximum-uses-minimum.md) | comfy/text_encoders/ace15.py | verified at 25dfc16f; Dinkster preserves the composer behavior |
+| [minimax-h3-i2v-dark-tail.md](minimax-h3-i2v-dark-tail.md) | MiniMax H3 official I2V template | found at current master b5cc8830; cause unresolved |

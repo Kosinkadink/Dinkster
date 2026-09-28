@@ -39,7 +39,6 @@ import logging
 import threading
 import weakref
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -54,11 +53,6 @@ from dinkster_memory import (
 from dinkster_values import COST_META_KEY, ResourcePins, resident_owners
 
 from .devices import comfy_resident_meta
-from .native_residency import (
-    NativeComponentHandle,
-    NativeResidencyBusyError,
-    NativeRuntimeHandle,
-)
 from .resident import ResidencyTable, resident_resource_id
 
 log = logging.getLogger("dinkster.native.pool")
@@ -195,13 +189,7 @@ class ResidentPool(ResidencyTable):
                 return rid
             entry = self._entries.get(rid)
             if entry is None:
-                # Comfy patchers conservatively enter loaded as before. Native
-                # runtimes assemble on CPU and enter with zero VRAM held; their
-                # loaded state changes only after successful device placement.
-                entry = self._entries[rid] = _PoolEntry(
-                    self._read_cost(obj),
-                    loaded=not isinstance(obj, (NativeRuntimeHandle, NativeComponentHandle)),
-                )
+                entry = self._entries[rid] = _PoolEntry(self._read_cost(obj))
             entry.last_used = next(self._clock)
             return rid
 
@@ -215,11 +203,7 @@ class ResidentPool(ResidencyTable):
             entry = self._entries.get(rid)
             if entry is not None:
                 entry.last_used = next(self._clock)
-                # A Comfy stub resolution means its own manager is about to
-                # reload the patcher. Native resolution alone moves nothing;
-                # native loaded state is reconciled only after actual placement.
-                if not isinstance(obj, (NativeRuntimeHandle, NativeComponentHandle)):
-                    entry.loaded = True
+                entry.loaded = True
             return obj
 
     def set_loaded(self, obj: object, loaded: bool) -> None:
@@ -553,59 +537,50 @@ class ResidentPool(ResidencyTable):
                 obj = ResidencyTable.get(self, rid)
             except Exception:  # noqa: BLE001 - entry raced away
                 return None
-            guard = (
-                obj.terminal_release_guard()
-                if isinstance(obj, NativeComponentHandle)
-                else nullcontext()
-            )
             condemned: list[ResourcePins] = []
-            try:
-                with guard:
-                    resource_id = resident_resource_id(rid)
-                    for invalidate in self._live_invalidators():
-                        try:
-                            invalidate(resource_id)
-                        except Exception:  # noqa: BLE001 - cache may still reference
-                            if failures is not None:
-                                failures.append(f"resident {rid} cache invalidation failed")
-                            return None
-                    if honor_pins:
-                        for pins in self._live_pins():
-                            if not pins.condemn(resource_id):
-                                for accepted in condemned:
-                                    accepted.absolve(resource_id)
-                                return None
-                            condemned.append(pins)
-                    terminal_handled = False
-                    if self._terminal_release is not None:
-                        try:
-                            terminal_handled = self._terminal_release(obj)
-                        except Exception:  # noqa: BLE001 - no proven release
-                            if failures is not None:
-                                failures.append(f"resident {rid} terminal release failed")
-                            for pins in condemned:
-                                pins.absolve(resource_id)
-                            log.warning(
-                                "DINKSTER_COMPAT_RELEASE_FAILED: resident %s remains held",
-                                rid,
-                                exc_info=True,
-                            )
-                            return None
-                    if entry.loaded and not terminal_handled:
-                        failure_count = len(failures) if failures is not None else 0
-                        self._unload_entry(rid, device, failures=failures)
-                        if failures is not None and len(failures) != failure_count:
-                            for pins in condemned:
-                                pins.absolve(resource_id)
-                            return None
-                    self.remove(rid)
-                    return entry.cost.get(device, 0)
-            except NativeResidencyBusyError:
-                return None
+            resource_id = resident_resource_id(rid)
+            for invalidate in self._live_invalidators():
+                try:
+                    invalidate(resource_id)
+                except Exception:  # noqa: BLE001 - cache may still reference
+                    if failures is not None:
+                        failures.append(f"resident {rid} cache invalidation failed")
+                    return None
+            if honor_pins:
+                for pins in self._live_pins():
+                    if not pins.condemn(resource_id):
+                        for accepted in condemned:
+                            accepted.absolve(resource_id)
+                        return None
+                    condemned.append(pins)
+            terminal_handled = False
+            if self._terminal_release is not None:
+                try:
+                    terminal_handled = self._terminal_release(obj)
+                except Exception:  # noqa: BLE001 - no proven release
+                    if failures is not None:
+                        failures.append(f"resident {rid} terminal release failed")
+                    for pins in condemned:
+                        pins.absolve(resource_id)
+                    log.warning(
+                        "DINKSTER_COMPAT_RELEASE_FAILED: resident %s remains held",
+                        rid,
+                        exc_info=True,
+                    )
+                    return None
+            if entry.loaded and not terminal_handled:
+                failure_count = len(failures) if failures is not None else 0
+                self._unload_entry(rid, device, failures=failures)
+                if failures is not None and len(failures) != failure_count:
+                    for pins in condemned:
+                        pins.absolve(resource_id)
+                    return None
+            self.remove(rid)
+            return entry.cost.get(device, 0)
 
     def details(self) -> list[ConsumerItem]:
         with self._coordination_lock:
-            items: list[ConsumerItem] = []
+            rows: list[tuple[str, str, dict[str, int]]] = []
             for rid, entry in sorted(self._entries.items(), key=lambda kv: -kv[1].last_used):
                 if entry.loaded:
                     nbytes = dict(entry.cost)
@@ -617,15 +592,25 @@ class ResidentPool(ResidencyTable):
                         for lane, cost in entry.cost.items()
                         if not lane.startswith("vram:")
                     }
-                items.append(
-                    ConsumerItem(
-                        item_id=rid,
-                        # Never a Python class name (collides); the rid cannot.
-                        display_name=entry.display_name or f"resident {rid[:12]}",
-                        bytes_by_residency=nbytes,
+                rows.append(
+                    (
+                        rid,
+                        entry.display_name or f"resident {rid[:12]}",
+                        nbytes,
                     )
                 )
-            return items
+        # Mechanism operations reconcile the pool while holding their own locks.
+        # Query them only after releasing the pool lock to preserve lock order.
+        return [
+            ConsumerItem(
+                item_id=rid,
+                # Never a Python class name (collides); the rid cannot.
+                display_name=display_name,
+                bytes_by_residency=nbytes,
+                pages=None,
+            )
+            for rid, display_name, nbytes in rows
+        ]
 
     def __len__(self) -> int:
         with self._coordination_lock:
@@ -652,10 +637,7 @@ def default_pool() -> ResidentPool:
     DESIGN 3.10)."""
     global _pool  # noqa: PLW0603 - module-level singleton, child-process scoped
     if _pool is None:
-        _pool = ResidentPool(
-            unload=resident_advisory_unload,
-            terminal_release=native_terminal_release,
-        )
+        _pool = ResidentPool(unload=resident_advisory_unload)
     return _pool
 
 
@@ -668,21 +650,7 @@ def memory_consumers() -> dict[str, ResidentPool]:
 
 
 def resident_advisory_unload(obj: object) -> None:
-    """Dispatch advisory VRAM pressure without conflating backend handles."""
-    if isinstance(obj, (NativeRuntimeHandle, NativeComponentHandle)):
-        obj.advisory_unload()
-        return
+    """Dispatch advisory VRAM pressure to the configured Comfy backend."""
     if _compat_unload is None:
         raise TypeError("foreign resident requires a configured compatibility unload hook")
     _compat_unload(obj)
-
-
-def native_terminal_release(obj: object) -> bool:
-    """Deregister native mechanisms before the pool claims RAM released.
-
-    False preserves the existing Comfy release path byte for byte.
-    """
-    if not isinstance(obj, (NativeRuntimeHandle, NativeComponentHandle)):
-        return False
-    obj.terminal_release()
-    return True

@@ -1,9 +1,9 @@
 """The engine loop: plan, resolve, cache-check, invoke, store.
 
 Location-agnostic by construction: the only way node code runs is
-Worker.invoke (hazard H3), and cache keys derive only from schema signature
-plus input fingerprints (hazard H4), so entries are shareable across
-processes and machines.
+Worker.invoke (hazard H3), and cache keys derive from schema signature, input
+fingerprints, and any structural region occurrence scope (hazard H4), so
+entries are shareable across processes and machines.
 
 Parallel by construction (hazard H12): the plan is a DAG and the scheduler
 is ready-set - every node whose dependencies are satisfied dispatches
@@ -40,6 +40,7 @@ from dinkster_graph import (
     Link,
     RegionNode,
     TypedLiteral,
+    dependency_map,
     elaborate_graph,
     has_errors,
     migrate_pure_node_type_replacements,
@@ -344,6 +345,41 @@ def output_summary(
 # Cache-miss explanation memory: one record per runtime node id (iteration
 # ids included). Bounds the dev-mode bookkeeping, not any cache.
 _KEY_MEMORY_CAP = 4096
+
+
+class _ProducedReferences:
+    """Keep outputs only while a possible consumer or DAG export needs them.
+
+    Lazy edges count until their consumer finishes. Removing an unused branch
+    also retires its ancestors, without executing them or dropping a shared
+    ancestor still reachable by another consumer. Resource pins and cache
+    residency have independent owners; this only releases Python references.
+    """
+
+    def __init__(
+        self,
+        deps: Mapping[str, set[str]],
+        targets: Sequence[str],
+        produced: dict[str, Mapping[str, Value]],
+    ) -> None:
+        self._deps = dict(deps)
+        self._targets = set(targets)
+        self._produced = produced
+        self._uses = dict.fromkeys(deps, 0)
+        for dependencies in deps.values():
+            for dependency in dependencies:
+                self._uses[dependency] += 1
+
+    def finished(self, node_id: str) -> None:
+        retired = [node_id]
+        while retired:
+            current = retired.pop()
+            if self._uses[current] == 0 and current not in self._targets:
+                self._produced.pop(current, None)
+            for dependency in self._deps.pop(current, ()):
+                self._uses[dependency] -= 1
+                if self._uses[dependency] == 0 and dependency not in self._targets:
+                    retired.append(dependency)
 
 
 class Engine:
@@ -852,8 +888,11 @@ class Engine:
         inputs: Mapping[str, Value],
         selection: ExecutionSelection | None = None,
         connected_undemanded_inputs: tuple[str, ...] | None = None,
+        cache_scope: str | None = None,
     ) -> str:
         parts: list[bytes] = [signature.encode("utf-8")]
+        if cache_scope is not None:
+            parts.extend((b"region-occurrence", cache_scope.encode("utf-8")))
         behavior_hash = self._runtime().extension_behavior_hash
         if behavior_hash is not None:
             parts.append(b"extensions")
@@ -1242,6 +1281,8 @@ class Engine:
         export_snapshot: ExportSnapshot | None,
         prefix: str = "",
         ensure_node: Callable[[str], Awaitable[None]] | None = None,
+        cache_enabled: bool = True,
+        cache_scope: str | None = None,
     ) -> None:
         """Produce one node's outputs: coalesce, hit cache, or invoke.
 
@@ -1255,9 +1296,9 @@ class Engine:
 
         ``prefix`` namespaces the node id in events, bookkeeping lists, and
         errors when this node runs inside a region iteration
-        (``region[3]/node``). It never touches cache keys: cache identity is
-        schema signature + input fingerprints, so identical work coalesces
-        across iterations, regions, and runs alike.
+        (``region[3]/node``). Every body node carries its stable iteration
+        occurrence as cache scope, matching loop ancestry while still reusing
+        that same occurrence across runs.
         """
         node = graph.nodes[node_id]
         assert isinstance(node, GraphNode), f"region {node_id!r} dispatched to _run_node"
@@ -1455,6 +1496,7 @@ class Engine:
             inputs,
             selection,
             connected_undemanded_inputs,
+            cache_scope,
         )
         previous_components = (
             self._remember_key_components(
@@ -1468,7 +1510,7 @@ class Engine:
             if self._explain_misses
             else None
         )
-        use_cache = not lazy_consumer or schema.idempotent
+        use_cache = cache_enabled and (not lazy_consumer or schema.idempotent)
 
         while use_cache and (inflight := self._inflight.get(key)) is not None:
             try:
@@ -1742,6 +1784,8 @@ class Engine:
                 )
             )
         except BaseException as exc:
+            # Retained error tracebacks must not own the invocation's inputs.
+            inputs.clear()
             if not future.done():
                 if isinstance(exc, asyncio.CancelledError):
                     future.cancel()  # waiters retry and take ownership
@@ -1769,12 +1813,22 @@ class Engine:
         export_snapshot: ExportSnapshot | None,
         prefix: str = "",
         targets: Sequence[str] | None = None,
+        cache_enabled: bool = True,
+        cache_scope: str | None = None,
+        run_cache_enabled: bool | None = None,
     ) -> None:
         """Ready-set scheduler over one DAG level (hazard H12): dispatch
         every node whose dependencies are satisfied; completions release
         dependents. Used for the top-level document and, recursively, for
         each region iteration - the SAME scheduler, cache, single-flight
         table, admission lanes, and pin list govern both."""
+        if run_cache_enabled is None:
+            run_cache_enabled = cache_enabled
+        initial_targets = (
+            list(targets)
+            if targets is not None
+            else [node_id for node_id in order if not any(node_id in ds for ds in deps.values())]
+        )
         planned = set(order)
         planned_types = sorted(
             {
@@ -1796,24 +1850,35 @@ class Engine:
             for node_id in order
         )
         if not has_connected_lazy:
-            await self._execute_static_dag(
-                run_id,
-                graph,
-                effective,
-                signatures,
-                order,
-                deps,
-                produced,
-                executed,
-                cached,
-                skipped,
-                pinned,
-                export_snapshot,
-                prefix,
-            )
+            try:
+                await self._execute_static_dag(
+                    run_id,
+                    graph,
+                    effective,
+                    signatures,
+                    order,
+                    deps,
+                    produced,
+                    executed,
+                    cached,
+                    skipped,
+                    pinned,
+                    export_snapshot,
+                    prefix,
+                    _ProducedReferences(deps, initial_targets, produced),
+                    cache_enabled,
+                    cache_scope,
+                    run_cache_enabled,
+                )
+            except BaseException:
+                produced.clear()
+                raise
             return
 
         tasks: dict[str, asyncio.Task[None]] = {}
+        references = _ProducedReferences(
+            dependency_map(graph, initial_targets), initial_targets, produced
+        )
 
         def ordinary_dependencies(node_id: str) -> set[str]:
             node = graph.nodes[node_id]
@@ -1849,6 +1914,7 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
+                    run_cache_enabled,
                 )
             else:
                 await self._run_node(
@@ -1865,7 +1931,10 @@ class Engine:
                     export_snapshot,
                     prefix,
                     ensure_node,
+                    cache_enabled,
+                    cache_scope,
                 )
+            references.finished(node_id)
 
         async def ensure_node(node_id: str) -> None:
             task = tasks.get(node_id)
@@ -1874,16 +1943,6 @@ class Engine:
                 tasks[node_id] = task
             await asyncio.shield(task)
 
-        initial_targets = (
-            list(targets)
-            if targets is not None
-            else [
-                node_id
-                for node_id in order
-                if not any(node_id in ordinary_dependencies(other) for other in deps)
-            ]
-        )
-
         try:
             await asyncio.gather(*(ensure_node(node_id) for node_id in initial_targets))
         except BaseException:
@@ -1891,6 +1950,7 @@ class Engine:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks.values(), return_exceptions=True)
+            produced.clear()
             raise
 
     async def _execute_static_dag(
@@ -1908,6 +1968,10 @@ class Engine:
         pinned: list[str],
         export_snapshot: ExportSnapshot | None,
         prefix: str,
+        references: _ProducedReferences,
+        cache_enabled: bool,
+        cache_scope: str | None,
+        run_cache_enabled: bool,
     ) -> None:
         """Original ready-set scheduler for graphs without deferred edges."""
         dependents: dict[str, list[str]] = {node_id: [] for node_id in deps}
@@ -1930,6 +1994,7 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
+                    run_cache_enabled,
                 )
             else:
                 await self._run_node(
@@ -1945,7 +2010,10 @@ class Engine:
                     pinned,
                     export_snapshot,
                     prefix,
+                    cache_enabled=cache_enabled,
+                    cache_scope=cache_scope,
                 )
+            references.finished(node_id)
             for dependent in dependents[node_id]:
                 remaining[dependent] -= 1
                 if remaining[dependent] == 0:
@@ -1971,6 +2039,7 @@ class Engine:
         pinned: list[str],
         export_snapshot: ExportSnapshot | None,
         prefix: str = "",
+        cache_enabled: bool = True,
     ) -> None:
         """Expand one region (DESIGN 3.13): the single repetition primitive
         under the map/fold/while profiles.
@@ -1978,10 +2047,10 @@ class Engine:
         Every iteration's body nodes run through _run_node on the shared
         engine state, so caching, single-flight, admission, pins, and
         diagnostics behave exactly as at top level; iteration node ids are
-        namespaced ``region[3]/node``. Cache identity needs no
-        region-specific bookkeeping: each iteration's bindings flow into
-        body-node input fingerprints, so changing one list element re-executes
-        only that iteration's dependents.
+        namespaced ``region[3]/node``. Each iteration scopes its body cache to
+        that stable occurrence; bindings still flow through ordinary input
+        fingerprints, so changing one list element re-executes only that
+        iteration's dependents.
         """
         label = prefix + node_id
         region_type = f"region:{region.kind}"
@@ -2133,32 +2202,46 @@ class Engine:
             for out_id, out in region.outputs.items()
             if out.mode in ("gather", "compact", "flatten")
         }
+        last_values: dict[str, Value] = {}
 
         async def run_iteration(
             index: int,
             binding: Mapping[str, Value],
             iteration_state: Mapping[str, Value],
         ) -> dict[str, Mapping[str, Value]]:
+            self._emit(EngineEvent("region_iteration_started", run_id, label, {"iteration": index}))
             body_ports = {**broadcast, **binding, **iteration_state}
             if REGION_INDEX_PORT_ID not in region.ports:
                 index_type_id = REGION_INDEX_PORT_TYPE.runtime_type_id()
                 assert index_type_id is not None
                 body_ports[REGION_INDEX_PORT_ID] = self._registry.wrap(index_type_id, index)
             body_produced: dict[str, Mapping[str, Value]] = {PORTS_NODE_ID: body_ports}
-            await self._execute_dag(
-                run_id,
-                region.body,
-                body_effective,
-                body_signatures,
-                body_order,
-                body_deps,
-                body_produced,
-                executed,
-                cached,
-                skipped,
-                pinned,
-                export_snapshot,
-                prefix=f"{label}[{index}]/",
+            try:
+                await self._execute_dag(
+                    run_id,
+                    region.body,
+                    body_effective,
+                    body_signatures,
+                    body_order,
+                    body_deps,
+                    body_produced,
+                    executed,
+                    cached,
+                    skipped,
+                    pinned,
+                    export_snapshot,
+                    prefix=f"{label}[{index}]/",
+                    targets=body_targets,
+                    cache_enabled=cache_enabled and region.cache_policy == "reuse",
+                    cache_scope=f"{label}[{index}]",
+                    run_cache_enabled=cache_enabled,
+                )
+            except BaseException:
+                body_produced.clear()
+                body_ports.clear()
+                raise
+            self._emit(
+                EngineEvent("region_iteration_finished", run_id, label, {"iteration": index})
             )
             return body_produced
 
@@ -2169,6 +2252,8 @@ class Engine:
             for out_id, out in region.outputs.items():
                 if out.mode in ("gather", "compact", "flatten"):
                     gathered[out_id].append(source_value(body_produced, out.source))
+                elif out.mode == "last":
+                    last_values[out_id] = source_value(body_produced, out.source)
 
         def advance_state(body_produced: Mapping[str, Mapping[str, Value]]) -> None:
             for out_id, out in region.outputs.items():
@@ -2195,36 +2280,50 @@ class Engine:
             for body_produced in results:
                 assert body_produced is not None
                 collect(body_produced)
+                body_produced.clear()
             iterations_done = len(bindings)
         elif region.kind == "fold":
             for index, binding in enumerate(bindings):
                 body_produced = await run_iteration(index, binding, state)
                 collect(body_produced)
                 advance_state(body_produced)
+                body_produced.clear()
             iterations_done = len(bindings)
         elif region.kind == "while":
             assert region.continue_source is not None
             assert region.max_iterations is not None
             while True:
-                body_produced = await run_iteration(iterations_done, {}, state)
-                collect(body_produced)
-                advance_state(body_produced)
-                cont_value = source_value(body_produced, region.continue_source)
-                if is_absent(cont_value):
-                    raise region_error("continue source produced no value (absent)")
-                cont = cont_value.resolve()
-                if not isinstance(cont, bool):
-                    raise region_error(
-                        f"continue source produced {type(cont).__name__}, expected a boolean"
-                    )
-                iterations_done += 1
-                if not cont:
-                    break
-                if iterations_done >= region.max_iterations:
-                    raise region_error(
-                        f"reached max_iterations={region.max_iterations} with continue "
-                        "still true (infinite-loop guard)"
-                    )
+                body_produced = {}
+                cont_value = None
+                cont = None
+                try:
+                    body_produced = await run_iteration(iterations_done, {}, state)
+                    cont_value = source_value(body_produced, region.continue_source)
+                    if is_absent(cont_value):
+                        raise region_error("continue source produced no value (absent)")
+                    cont = cont_value.resolve()
+                    if not isinstance(cont, bool):
+                        raise region_error(
+                            f"continue source produced {type(cont).__name__}, expected a boolean"
+                        )
+                    collect(body_produced)
+                    advance_state(body_produced)
+                    iterations_done += 1
+                    if not cont:
+                        break
+                    if iterations_done >= region.max_iterations:
+                        raise region_error(
+                            f"reached max_iterations={region.max_iterations} with continue "
+                            "still true (infinite-loop guard)"
+                        )
+                except BaseException:
+                    gathered.clear()
+                    state.clear()
+                    raise
+                finally:
+                    body_produced.clear()
+                    cont_value = None
+                    cont = None
         else:  # pragma: no cover - validation rejects this
             raise region_error(f"unknown region kind {region.kind!r}")
 
@@ -2235,6 +2334,17 @@ class Engine:
         for out_id, out in region.outputs.items():
             if out.mode == "state":
                 outputs[out_id] = state[out_id]
+                continue
+            if out.mode == "last":
+                if out_id in last_values:
+                    outputs[out_id] = last_values[out_id]
+                else:
+                    output_type = interface[out_id]
+                    outputs[out_id] = make_absent_value(
+                        origin=f"{label}/{out_id}",
+                        reason="region completed zero iterations",
+                        stands_for=(None if output_type is None else output_type.runtime_type_id()),
+                    )
                 continue
             if out.mode not in ("gather", "compact", "flatten"):  # pragma: no cover
                 raise region_error(f"output '{out_id}' has unknown mode {out.mode!r}")
@@ -2372,6 +2482,7 @@ class Engine:
         media_sources: Sequence[MediaSourceAuthority] = (),
         preview_policy: PreviewPolicy | None = None,
         attention_config: AttentionPolicyConfig | None = None,
+        cache_enabled: bool = True,
     ) -> RunResult:
         """Execute a raw graph, compiling once when this runtime declares compilers."""
         # Preserve legacy raw-run admission order: run-id errors precede a
@@ -2380,6 +2491,8 @@ class Engine:
             raise ValueError("run_id must be a non-empty string")
         if type(attempt_id) is not int or attempt_id < 1:
             raise ValueError("attempt_id must be a positive integer")
+        if type(cache_enabled) is not bool:
+            raise ValueError("cache_enabled must be a boolean")
         run_id = run_id if run_id is not None else uuid.uuid4().hex[:12]
         if run_id in self._run_schemas or run_id in self._compiling_run_ids:
             raise ActiveRunIdError(f"run_id {run_id!r} is already active")
@@ -2401,6 +2514,7 @@ class Engine:
                 media_sources=media_sources,
                 preview_policy=preview_policy,
                 attention_config=attention_config,
+                cache_enabled=cache_enabled,
             )
         self._compiling_run_ids.add(run_id)
         try:
@@ -2416,6 +2530,7 @@ class Engine:
             media_sources=media_sources,
             preview_policy=preview_policy,
             attention_config=attention_config,
+            cache_enabled=cache_enabled,
         )
 
     async def run_compiled(
@@ -2429,10 +2544,13 @@ class Engine:
         media_sources: Sequence[MediaSourceAuthority] = (),
         preview_policy: PreviewPolicy | None = None,
         attention_config: AttentionPolicyConfig | None = None,
+        cache_enabled: bool = True,
     ) -> RunResult:
         """Execute a validated artifact without invoking graph compilation."""
         if type(attempt_id) is not int or attempt_id < 1:
             raise ValueError("attempt_id must be a positive integer")
+        if type(cache_enabled) is not bool:
+            raise ValueError("cache_enabled must be a boolean")
         runtime = (
             self.pin_execution() if execution is None else self._normalize_execution(execution)
         )
@@ -2451,6 +2569,7 @@ class Engine:
             media_sources=media_sources,
             preview_policy=preview_policy,
             attention_config=attention_config,
+            cache_enabled=cache_enabled,
         )
 
     async def _run_graph(
@@ -2465,6 +2584,7 @@ class Engine:
         media_sources: Sequence[MediaSourceAuthority] = (),
         preview_policy: PreviewPolicy | None = None,
         attention_config: AttentionPolicyConfig | None = None,
+        cache_enabled: bool = True,
     ) -> RunResult:
         """Execute targets. run_id defaults to a fresh unique id; a caller
         that owns job identity (the server's queue) supplies its own so
@@ -2571,8 +2691,14 @@ class Engine:
                     pinned,
                     export_snapshot,
                     targets=targets,
+                    cache_enabled=cache_enabled,
+                    run_cache_enabled=cache_enabled,
                 )
+                outputs = {t: produced[t] for t in targets}
             finally:
+                # Recursive scheduler closures can survive until cyclic GC.
+                # Only RunResult, not a completed scheduler, owns the exports.
+                produced.clear()
                 if self._pins is not None:
                     for resource_id in pinned:
                         self._pins.unpin(resource_id)
@@ -2590,7 +2716,7 @@ class Engine:
             )
             return RunResult(
                 run_id=run_id,
-                outputs={t: produced[t] for t in targets},
+                outputs=outputs,
                 executed=tuple(executed),
                 cached=tuple(cached),
                 diagnostics=tuple(diagnostics),

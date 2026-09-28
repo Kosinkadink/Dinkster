@@ -1,0 +1,48 @@
+{
+  "format": "dinkster-workflow",
+  "formatVersion": 1,
+  "lineage": "loop-map-images",
+  "root": "root",
+  "graphs": {
+    "root": {
+      "id": "root",
+      "name": "Map image batch items",
+      "nodes": {
+        "source": { "id": "source", "type": "dinkster.image.generate", "dynamic": { "color_source": { "selected": "hex" }, "operation": { "selected": "linear_gradient" } }, "values": { "width": 96, "height": 64, "batch_size": 3, "channels": "rgb", "color_source.color_a": "#172554", "operation.color_b": "#38bdf8", "operation.angle": 25 } },
+        "split": { "id": "split", "type": "dinkster.image.batch.to_list", "values": {} },
+        "map": { "id": "map", "type": "#mapBody", "values": { "x": [8, 36, 64] }, "region": { "kind": "map", "elementPorts": ["image", "x"] } },
+        "batch": { "id": "batch", "type": "dinkster.image.list.to_batch", "dynamic": { "shape_policy": { "selected": "strict" } }, "values": {} },
+        "output": { "id": "output", "type": "dinkster.image.compare", "values": {} }
+      },
+      "links": {
+        "source_split": { "id": "source_split", "from": { "node": "source", "port": "image" }, "to": { "node": "split", "port": "image" } },
+        "split_map": { "id": "split_map", "from": { "node": "split", "port": "images" }, "to": { "node": "map", "port": "image" } },
+        "map_batch": { "id": "map_batch", "from": { "node": "map", "port": "mappedImage" }, "to": { "node": "batch", "port": "images" } },
+        "batch_output": { "id": "batch_output", "from": { "node": "batch", "port": "image" }, "to": { "node": "output", "port": "image_a" } }
+      },
+      "nets": {}, "reroutes": {}, "nextOrdinal": 5
+    },
+    "mapBody": {
+      "id": "mapBody",
+      "name": "Overlay every image",
+      "nodes": {
+        "overlay": { "id": "overlay", "type": "dinkster.image.generate", "dynamic": { "color_source": { "selected": "hex" }, "operation": { "selected": "solid" } }, "values": { "width": 24, "height": 24, "batch_size": 1, "channels": "rgb", "color_source.color_a": "#f97316" } },
+        "composite": { "id": "composite", "type": "dinkster.image.composite", "dynamic": { "source_resize": { "selected": "none" } }, "values": { "x": 8, "y": 8, "blend_mode": "normal", "factor": 1, "clamp_output": true, "batch_policy": "singleton_broadcast" } }
+      },
+      "links": {
+        "overlay_composite": { "id": "overlay_composite", "from": { "node": "overlay", "port": "image" }, "to": { "node": "composite", "port": "source" } }
+      },
+      "nets": {}, "reroutes": {},
+      "boundary": {
+        "inputs": [
+          { "id": "image", "binds": { "kind": "port", "node": "composite", "port": "destination" } },
+          { "id": "x", "binds": { "kind": "port", "node": "composite", "port": "x" } }
+        ],
+        "outputs": [{ "id": "mappedImage", "binds": { "kind": "port", "node": "composite", "port": "image" } }]
+      },
+      "nextOrdinal": 2
+    }
+  },
+  "view": { "graphs": { "root": { "nodes": { "source": { "position": { "x": 80, "y": 120 } }, "split": { "position": { "x": 360, "y": 120 } }, "map": { "position": { "x": 640, "y": 120 } } } }, "mapBody": { "nodes": { "overlay": { "position": { "x": 80, "y": 160 } }, "composite": { "position": { "x": 380, "y": 120 } } } } } },
+  "meta": { "title": "Loop: Map Images" }
+}

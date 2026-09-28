@@ -686,16 +686,20 @@ class ResolverSubscriptionStore:
         region: str = "",
         clock: Callable[[], float] = time.time,
         fetch_timeout: float = RESOLVER_FETCH_TIMEOUT,
+        revalidate_seconds: float = RESOLVER_REVALIDATE_SECONDS,
     ) -> None:
         if region:
             require_region(region)
         if not math.isfinite(fetch_timeout) or fetch_timeout <= 0:
             raise ValueError("resolver fetch timeout must be finite and positive")
+        if not math.isfinite(revalidate_seconds) or revalidate_seconds < 0:
+            raise ValueError("resolver revalidation interval must be finite and non-negative")
         self._path = Path(path)
         self._provenance = provenance
         self._region = region
         self._clock = clock
         self._fetch_timeout = fetch_timeout
+        self._revalidate_seconds = revalidate_seconds
         self._lock = threading.RLock()
         self._official_bootstrap: _OfficialResolverBootstrap | None = None
         self._subscriptions = self._load()
@@ -1324,7 +1328,7 @@ class ResolverSubscriptionStore:
     ) -> tuple[ResolverSubscription, bool]:
         if (
             subscription.source_type == "url"
-            and 0 <= now - subscription.checked_at < RESOLVER_REVALIDATE_SECONDS
+            and 0 <= now - subscription.checked_at < self._revalidate_seconds
         ):
             return subscription, False
         try:

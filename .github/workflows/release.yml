@@ -13,18 +13,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validation:
+    uses: ./.github/workflows/full-validation.yml
+    secrets: inherit
+
   build:
-    runs-on: [self-hosted, linux, x64]
+    needs: validation
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
           persist-credentials: false
-      - uses: ./.github/actions/configure-dinkster-identity
-        with:
-          repository: Kosinkadink/Dinkster-Frontend
-          deploy-key: ${{ secrets.DINKSTER_FRONTEND_READ_KEY }}
       - name: Select the pinned frontend source
         id: frontend
         run: |
@@ -35,20 +36,6 @@ jobs:
           repository: Kosinkadink/Dinkster-Frontend
           ref: ${{ steps.frontend.outputs.ref }}
           path: .release/frontend
-          persist-credentials: false
-      - uses: ./.github/actions/configure-dinkster-identity
-        with:
-          deploy-key: ${{ secrets.DINKSTER_IDENTITY_DEPLOY_KEY }}
-      - name: Select the pinned identity source
-        id: identity
-        run: |
-          echo "ref=$(python3 -c 'import json; print(json.load(open("scripts/release_sources.json"))["identityCommit"])')" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-          repository: Kosinkadink/dinkster-identity
-          ref: ${{ steps.identity.outputs.ref }}
-          path: .release/identity
           persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
@@ -66,13 +53,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - name: Build the complete release contract
         run: |
           uv run --no-project --python 3.12 scripts/build_release.py \
             --tag "$GITHUB_REF_NAME" \
             --frontend-root .release/frontend \
-            --frontend-dist .release/frontend/packages/app/dist \
-            --identity-root .release/identity
+            --frontend-dist .release/frontend/packages/app/dist
           uvx twine check dist/*.whl
       - uses: actions/upload-artifact@v4
         with:
@@ -82,18 +70,18 @@ jobs:
 
   install:
     needs: build
-    runs-on: ${{ matrix.labels }}
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS)[matrix.runner] }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: linux
-            labels: [self-hosted, linux, x64]
+            runner: linux
           - os: windows
-            labels: [self-hosted, windows, x64]
+            runner: windows
           - os: macos
-            labels: [self-hosted, macos, arm64]
+            runner: macos
     steps:
       - name: Expose Git Bash on Windows
         if: runner.os == 'Windows'
@@ -108,7 +96,7 @@ jobs:
         with:
           clean: true
           persist-credentials: false
-      - uses: ./.github/actions/configure-dinkster-identity
+      - uses: ./.github/actions/configure-private-repository
         if: matrix.os == 'linux'
         with:
           repository: Kosinkadink/dinkster-registry
@@ -128,6 +116,8 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - name: Install the independent loopback registry
         if: matrix.os == 'linux'
         shell: bash
@@ -163,7 +153,7 @@ jobs:
 
   release:
     needs: install
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     permissions:
       contents: write
     steps:

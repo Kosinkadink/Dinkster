@@ -1,0 +1,14 @@
+name: Configure private repository access
+description: Configure read-only SSH access without writing a private key to disk
+inputs:
+  deploy-key:
+    description: Read-only repository deploy key
+    required: true
+  repository:
+    description: Repository the deploy key can read
+    required: true
+runs:
+  using: node20
+  main: agent.cjs
+  post: agent.cjs
+  post-if: always()

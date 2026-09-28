@@ -32,6 +32,7 @@ IMPLEMENTED_FRONTEND_CONTRIBUTION_KINDS = (
     "keybinding",
     "setting",
     "canvasLayer",
+    "nodeDecoration",
     "hostUi",
     "searchProvider",
     "eventConsumer",

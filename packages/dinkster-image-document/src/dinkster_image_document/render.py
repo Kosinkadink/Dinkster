@@ -10,7 +10,7 @@ from typing import Any, Literal, cast
 
 import numpy as np
 from dinkster_assets import digest_bytes
-from dinkster_values import encode_canonical_png
+from dinkster_values import IMAGE_DOCUMENT_RESOURCE_LIMIT_BYTES, encode_canonical_png
 from numpy.typing import NDArray
 from PIL import Image, UnidentifiedImageError, features
 from PIL import __version__ as pillow_version
@@ -36,7 +36,7 @@ RENDERER_CONTRACT = ";".join(
 OUTPUT_ENCODING = "image/png;dinkster-canonical=1"
 MAX_RENDER_PIXELS = 4_194_304
 MAX_RENDER_WORK_PIXELS = 67_108_864
-MAX_RESOURCE_MEMORY = 512 * 1024 * 1024
+MAX_RESOURCE_MEMORY = IMAGE_DOCUMENT_RESOURCE_LIMIT_BYTES
 ONE = 65_535
 MAX_INT64 = 9_223_372_036_854_775_807
 

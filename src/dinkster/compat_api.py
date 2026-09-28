@@ -172,9 +172,9 @@ def _input_adapters(
     lora_adapter = make_load_lora_adapter(_kind_resolver(service, KIND_MODEL_LORA))
     adapters["dinkster.load_lora"] = lora_adapter
     adapters["dinkster.load_lora_model_only"] = lora_adapter
-    adapters["dinkster.load_z_image_control_patch"] = make_load_model_patch_adapter(
-        _kind_resolver(service, "model/patch")
-    )
+    model_patch_adapter = make_load_model_patch_adapter(_kind_resolver(service, "model/patch"))
+    adapters["dinkster.load_model_patch"] = model_patch_adapter
+    adapters["dinkster.load_z_image_control_patch"] = model_patch_adapter
     adapters["dinkster.load_vae"] = make_load_vae_adapter(_kind_resolver(service, KIND_MODEL_VAE))
     adapters["dinkster.load_clip"] = make_load_clip_adapter(
         _kind_resolver(service, KIND_MODEL_TEXT_ENCODER)
@@ -226,6 +226,38 @@ def _input_adapters(
     return adapters
 
 
+def _reachable_prompt(
+    prompt: Mapping[str, Any], schemas: Mapping[str, NodeSchema]
+) -> Mapping[str, Any]:
+    index = build_alias_index(schemas)
+    pending = [
+        node_id
+        for node_id, entry in prompt.items()
+        if isinstance(entry, Mapping)
+        and isinstance(entry.get("class_type"), str)
+        and len(candidates := index.get(entry["class_type"], ())) == 1
+        and schemas[candidates[0]].output_node
+    ]
+    if not pending:
+        return prompt
+    reachable = set(pending)
+    while pending:
+        entry = prompt.get(pending.pop())
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("inputs"), Mapping):
+            continue
+        for value in entry["inputs"].values():
+            if (
+                isinstance(value, list)
+                and len(value) == 2
+                and isinstance(value[0], str)
+                and value[0] in prompt
+                and value[0] not in reachable
+            ):
+                reachable.add(value[0])
+                pending.append(value[0])
+    return {node_id: entry for node_id, entry in prompt.items() if node_id in reachable}
+
+
 async def handle_comfy_prompt(request: web.Request) -> web.Response:
     state = request.app[STATE_KEY]
     principal = principal_for(request)
@@ -258,7 +290,7 @@ async def handle_comfy_prompt(request: web.Request) -> web.Response:
         for source_name in ambiguous_skips:
             skipped_classes.pop(source_name, None)
         translation = translate_prompt(
-            prompt,
+            _reachable_prompt(prompt, state.schemas),
             state.schemas,
             input_adapters=_input_adapters(request.app, state.schemas),
             skipped_classes=skipped_classes,

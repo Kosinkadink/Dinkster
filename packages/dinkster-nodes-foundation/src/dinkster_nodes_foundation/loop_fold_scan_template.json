@@ -1,0 +1,40 @@
+{
+  "format": "dinkster-workflow", "formatVersion": 1, "lineage": "loop-fold-scan-images", "root": "root",
+  "graphs": {
+    "root": {
+      "id": "root", "name": "Fold strips onto a canvas and scan states",
+      "nodes": {
+        "canvas": { "id": "canvas", "type": "dinkster.image.generate", "dynamic": { "color_source": { "selected": "hex" }, "operation": { "selected": "solid" } }, "values": { "width": 96, "height": 48, "batch_size": 1, "channels": "rgb", "color_source.color_a": "#111827" } },
+        "fold": { "id": "fold", "type": "#foldBody", "values": { "x": [0, 32, 64] }, "region": { "kind": "fold", "elementPorts": ["x"], "statePorts": ["canvas"], "outputRoles": { "finalCanvas": { "kind": "state", "statePort": "canvas" }, "scan": { "kind": "gather" } } } },
+        "output": { "id": "output", "type": "dinkster.image.compare", "values": {} }
+      },
+      "links": {
+        "canvas_fold": { "id": "canvas_fold", "from": { "node": "canvas", "port": "image" }, "to": { "node": "fold", "port": "canvas" } },
+        "fold_output": { "id": "fold_output", "from": { "node": "fold", "port": "finalCanvas" }, "to": { "node": "output", "port": "image_a" } }
+      },
+      "nets": {}, "reroutes": {}, "nextOrdinal": 3
+    },
+    "foldBody": {
+      "id": "foldBody", "name": "Composite one strip",
+      "nodes": {
+        "strip": { "id": "strip", "type": "dinkster.image.generate", "dynamic": { "color_source": { "selected": "hex" }, "operation": { "selected": "linear_gradient" } }, "values": { "width": 32, "height": 48, "batch_size": 1, "channels": "rgb", "color_source.color_a": "#f59e0b", "operation.color_b": "#fde68a", "operation.angle": 90 } },
+        "composite": { "id": "composite", "type": "dinkster.image.composite", "dynamic": { "source_resize": { "selected": "none" } }, "values": { "y": 0, "blend_mode": "normal", "factor": 1, "clamp_output": true, "batch_policy": "singleton_broadcast" } }
+      },
+      "links": { "strip_composite": { "id": "strip_composite", "from": { "node": "strip", "port": "image" }, "to": { "node": "composite", "port": "source" } } },
+      "nets": {}, "reroutes": {},
+      "boundary": {
+        "inputs": [
+          { "id": "x", "binds": { "kind": "port", "node": "composite", "port": "x" } },
+          { "id": "canvas", "binds": { "kind": "port", "node": "composite", "port": "destination" } }
+        ],
+        "outputs": [
+          { "id": "finalCanvas", "binds": { "kind": "port", "node": "composite", "port": "image" } },
+          { "id": "scan", "binds": { "kind": "port", "node": "composite", "port": "image" } }
+        ]
+      },
+      "nextOrdinal": 2
+    }
+  },
+  "view": { "graphs": { "root": { "nodes": { "canvas": { "position": { "x": 80, "y": 120 } }, "fold": { "position": { "x": 400, "y": 120 } } } }, "foldBody": { "nodes": { "strip": { "position": { "x": 80, "y": 160 } }, "composite": { "position": { "x": 400, "y": 120 } } } } } },
+  "meta": { "title": "Loop: Fold and Scan Images" }
+}

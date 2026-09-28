@@ -1,15 +1,14 @@
 """Backend environment recipes and smoke-report validation.
 
 CPU-side proof for the ROCm/XPU environment groundwork: the recipes pin the
-ruled backend floors, the setup scripts embed the same pins, command
-construction is exact, and smoke-report validation demands every identity
-field a support cell requires. None of this claims hardware support.
+ruled backend floors, command construction is exact, and smoke-report
+validation demands every identity field a support cell requires. None of
+this claims hardware support.
 """
 
 from __future__ import annotations
 
 import json
-import shlex
 import tomllib
 from pathlib import Path
 from typing import Any, cast
@@ -41,13 +40,6 @@ from packaging.requirements import Requirement
 
 REPO_ROOT = Path(__file__).parents[1]
 
-SETUP_SCRIPTS = {
-    "windows-rocm": "scripts/setup_env_rocm.ps1",
-    "linux-rocm": "scripts/setup_env_rocm.sh",
-    "windows-xpu": "scripts/setup_env_xpu.ps1",
-    "linux-xpu": "scripts/setup_env_xpu.sh",
-}
-
 HUMO_COMFYUI_COMMIT = "b78cec879b9460d5cb25228a83a942fb78d2cd24"
 HUMO_ARTIFACT_DIGESTS = {
     "diffusion": "222ddeac4dea6b78363cb5be78c47660c92963a69386026cd6dc0de4d3094f66",
@@ -57,6 +49,11 @@ HUMO_ARTIFACT_DIGESTS = {
     "audio_encoder": "a8e94b85976e5864ba3e9525c7e6c83b2a1eca42d4b797a0c7c24d778e40fd95",
     "input_image": "3a6662eba09c10b72d763cb947ca38e717998bafc55d7d0c14f72a1410ee1eb0",
     "input_audio": "4e920892d3d33ebb8a04d772960a027f185fa55213ce0c60cfd0ec3faf191e8f",
+}
+
+H3_RESIDENCY_REQUIREMENTS = {
+    "residency_route_roles": ("diffusion", "conditioner", "video_vae", "audio_vae"),
+    "requires_accelerator_residency": True,
 }
 ANIMA_ARTIFACT_DIGESTS = {
     "diffusion": "bd43b7cffe1ed1153d9c41e7beb2f18cb1273eafbaa3af3edd6a173dc90a006e",
@@ -202,23 +199,6 @@ class TestRecipes:
             assert recipe.index_url == "https://download.pytorch.org/whl/xpu"
             assert recipe.venv == ".venv-xpu"
 
-    def test_cells_pin_the_pure_python_kitchen_wheel(self) -> None:
-        # PyPI's platform wheels for win_amd64 and linux x86_64 are CUDA
-        # builds; ROCm and XPU cells need the pure-Python eager backend,
-        # hash-pinned so uv verifies the download.
-        for recipe in BACKEND_ENV_RECIPES.values():
-            kitchen = [
-                package
-                for package in recipe.support_packages
-                if package.startswith("dinkster-kitchen@")
-            ]
-            assert kitchen == [
-                "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/"
-                "84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/"
-                "dinkster_kitchen-0.2.35.post1-py3-none-any.whl"
-                "#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
-            ]
-
     def test_backends_never_share_a_venv(self) -> None:
         venvs = {recipe.accelerator: recipe.venv for recipe in BACKEND_ENV_RECIPES.values()}
         assert venvs["rocm"] != venvs["xpu"]
@@ -254,7 +234,7 @@ class TestSetupCommands:
             assert benchmark_import == (
                 venv_python(recipe),
                 "-c",
-                "import dinkster_compat_comfy.native_arm",
+                "import dinkster_inference",
             )
 
     def test_workspace_packages_install_editable(self) -> None:
@@ -292,41 +272,6 @@ class TestSetupCommands:
                         assert dependency[0] in installed, (
                             f"{package_path} requires workspace package {dependency[0]}"
                         )
-
-
-def executable_commands(script: Path) -> list[list[str]]:
-    """Every command a setup script executes, as unquoted token lists."""
-    text = script.read_text()
-    # Join PowerShell backtick and POSIX backslash line continuations.
-    text = text.replace("`\n", " ").replace("\\\n", " ")
-    commands: list[list[str]] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line in ('$ErrorActionPreference = "Stop"', "set -euo pipefail"):
-            continue
-        if line.startswith("if ($LASTEXITCODE"):
-            continue
-        commands.append([token.strip('"') for token in shlex.split(line, posix=False)])
-    return commands
-
-
-class TestSetupScriptSync:
-    @pytest.mark.parametrize("cell", sorted(SETUP_SCRIPTS))
-    def test_script_commands_match_the_recipe_exactly(self, cell: str) -> None:
-        # Full-command equality: the scripts run the recipe's setup commands
-        # and then the backend smoke, nothing more, nothing reordered.
-        recipe = BACKEND_ENV_RECIPES[cell]
-        separator = "\\" if recipe.os_family == "windows" else "/"
-        smoke = [
-            venv_python(recipe),
-            f"scripts{separator}{recipe.accelerator}_smoke.py",
-            "--json",
-            f"{recipe.accelerator}-report.json",
-        ]
-        expected = [list(command) for command in setup_commands(recipe)] + [smoke]
-        assert executable_commands(REPO_ROOT / SETUP_SCRIPTS[cell]) == expected
 
 
 class TestSmokeReportValidation:
@@ -1008,9 +953,10 @@ class TestBenchmarkReportValidation:
     @pytest.mark.parametrize("system", BENCHMARK_SYSTEMS)
     def test_complete_report_is_accepted(self, accelerator: str, family: str, system: str) -> None:
         report = complete_benchmark_report(accelerator, family, system)
-        assert validate_benchmark_report(report, accelerator=accelerator) == ()
+        requirements = H3_RESIDENCY_REQUIREMENTS if family == "minimax_h3" else {}
+        assert validate_benchmark_report(report, accelerator=accelerator, **requirements) == ()
         roundtrip = json.loads(json.dumps(report))
-        assert validate_benchmark_report(roundtrip, accelerator=accelerator) == ()
+        assert validate_benchmark_report(roundtrip, accelerator=accelerator, **requirements) == ()
 
     def test_dinkster_compile_report_is_accepted(self) -> None:
         report = complete_benchmark_report("cuda", mode="compile")
@@ -1398,10 +1344,24 @@ class TestBenchmarkReportValidation:
     def test_minimax_h3_comfyui_requires_the_exact_commit(self) -> None:
         report = complete_benchmark_report("cuda", family="minimax_h3", system="comfyui")
         report["comfyui"]["commit"] = HUMO_COMFYUI_COMMIT[:12]
-        problems = validate_benchmark_report(report, accelerator="cuda")
-        assert any(
-            "comfyui.commit is not the pinned MiniMax H3 commit" in problem for problem in problems
+        problems = validate_benchmark_report(
+            report, accelerator="cuda", expected_comfyui_commit=HUMO_COMFYUI_COMMIT
         )
+        assert any(
+            "comfyui.commit is not the required MiniMax H3 commit" in problem
+            for problem in problems
+        )
+
+    def test_minimax_h3_comfyui_accepts_the_run_specific_commit(self) -> None:
+        report = complete_benchmark_report("cuda", family="minimax_h3", system="comfyui")
+        expected = "f" * 40
+        report["comfyui"]["commit"] = expected
+
+        problems = validate_benchmark_report(
+            report, accelerator="cuda", expected_comfyui_commit=expected
+        )
+
+        assert not any("comfyui.commit" in problem for problem in problems)
 
     @pytest.mark.parametrize("system", ["dinkster", "comfyui"])
     def test_minimax_h3_requires_the_system_execution_path(self, system: str) -> None:
@@ -1726,11 +1686,19 @@ class TestBenchmarkResidencySection:
         self, family: str
     ) -> None:
         report = complete_benchmark_report("cuda", family=family)
-        assert validate_benchmark_report(report, accelerator="cuda", canonical_evidence=True) == ()
+        requirements = H3_RESIDENCY_REQUIREMENTS if family == "minimax_h3" else {}
+        assert (
+            validate_benchmark_report(
+                report, accelerator="cuda", canonical_evidence=True, **requirements
+            )
+            == ()
+        )
         section = report.pop("residency")
         assert (
             "canonical production evidence requires residency route facts"
-            in validate_benchmark_report(report, accelerator="cuda", canonical_evidence=True)
+            in validate_benchmark_report(
+                report, accelerator="cuda", canonical_evidence=True, **requirements
+            )
         )
         report["residency"] = section
         for routes in ({}, {"unexpected": next(iter(section["routes"].values()))}):
@@ -1738,7 +1706,10 @@ class TestBenchmarkResidencySection:
             assert any(
                 "residency.routes must record exactly" in problem
                 for problem in validate_benchmark_report(
-                    report, accelerator="cuda", canonical_evidence=True
+                    report,
+                    accelerator="cuda",
+                    canonical_evidence=True,
+                    **requirements,
                 )
             )
 
@@ -1845,14 +1816,21 @@ class TestBenchmarkResidencySection:
         }
         section["routes"] = routes
         report["residency"] = section
-        assert validate_benchmark_report(report, accelerator="cuda") == ()
+        assert "catalog residency requirements missing for family-specific routes" in (
+            validate_benchmark_report(report, accelerator="cuda")
+        )
+        assert (
+            validate_benchmark_report(report, accelerator="cuda", **H3_RESIDENCY_REQUIREMENTS) == ()
+        )
 
         routes["conditioner"].update(
             mechanism="eager",
             fallback_reason="aimdo activation failed",
             dynamic_components=[],
         )
-        problems = validate_benchmark_report(report, accelerator="cuda")
+        problems = validate_benchmark_report(
+            report, accelerator="cuda", **H3_RESIDENCY_REQUIREMENTS
+        )
         assert "residency.routes.conditioner.mechanism is not required aimdo" in problems
         assert "residency.routes.conditioner fell back from required aimdo residency" in problems
 

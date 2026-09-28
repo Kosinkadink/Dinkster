@@ -5,31 +5,25 @@ one frozen recipe: an isolated venv name, a pinned torch build, the vendor
 wheel index that serves it, and the workspace packages the backend smoke
 and test lanes import. The torch build is the pinned fact; support
 packages float, like the CUDA validation lane's. The recipes are the
-single source of truth for the executable setup scripts
-(scripts/setup_env_rocm.* and scripts/setup_env_xpu.*); a test compares
-the scripts' executable commands against :func:`setup_commands` so they
-cannot drift silently.
+single source of truth for callers that construct isolated environments.
 
 The ROCm and XPU torch packages are different builds of the same ``torch``
 distribution and cannot coexist in one environment, so every cell gets its
 own venv and its own worker process - even on a host with both GPUs.
 
 A backend claims nothing until its smoke report passes on real hardware.
-:func:`validate_smoke_report` checks that a report produced by
-scripts/rocm_smoke.py or scripts/xpu_smoke.py records the identity evidence
-a support cell requires: host OS build or kernel, driver, torch and backend
-runtime versions, device name and architecture, and the baseline capability
-probes. Validation proves the report is complete, not that the backend
-works; only the recorded probe results say that.
+:func:`validate_smoke_report` checks that a report records the identity
+evidence a support cell requires: host OS build or kernel, driver, torch and
+backend runtime versions, device name and architecture, and the baseline
+capability probes. Validation proves the report is complete, not that the
+backend works; only the recorded probe results say that.
 
-Model-family validation runs one level above the smoke lane:
-scripts/family_validation.py executes one real inference workload per cell
-(family, execution mode) and emits a report that
-:func:`validate_family_report` checks for the same identity evidence plus
-the workload, input artifact digests, memory telemetry, and per-check
-outcomes. Compile-mode reports must reference a passing eager report for
-the cell: eager execution is the support contract, and torch.compile
-claims exist only relative to proven eager behavior.
+Model-family validation runs one level above the smoke lane.
+:func:`validate_family_report` checks the same identity evidence plus the
+workload, input artifact digests, memory telemetry, and per-check outcomes.
+Compile-mode reports must reference a passing eager report for the cell:
+eager execution is the support contract, and torch.compile claims exist
+only relative to proven eager behavior.
 
 This module stays torch-free: the torch-free root environment inspects
 recipes and parses reports, while torch itself exists only inside the
@@ -45,22 +39,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
+from dinkster_values import MEBIBYTE
+
 _ROCM_INDEX_URL = "https://repo.amd.com/rocm/whl-multi-arch/"
 _ROCM_TORCH_REQUIREMENT = "torch[device-all]==2.12.0+rocm7.14.0"
 _XPU_INDEX_URL = "https://download.pytorch.org/whl/xpu"
 _XPU_TORCH_REQUIREMENT = "torch==2.13.0+xpu"
-
-# dinkster_inference_torch imports dinkster_kitchen unconditionally, so every
-# backend cell needs it. The pin must be the pure-Python wheel: PyPI's
-# platform wheels for win_amd64 and linux x86_64 carry CUDA-only compiled
-# kernels, while the pure wheel provides the device-agnostic eager backend
-# that ROCm and XPU cells run on. uv enforces the sha256 fragment.
-_KITCHEN_REQUIREMENT = (
-    "dinkster-kitchen@https://files.pythonhosted.org/packages/2e/20/"
-    "84e29ca1dedcd51eb5edd297d3c2f6c665cf2e30bb9237892f0f8d108d0d/"
-    "dinkster_kitchen-0.2.35.post1-py3-none-any.whl"
-    "#sha256=31458547cdcf9ff26974a4955cf79e83ebdf50077666720d3bb3255786c5fc4f"
-)
 
 _SUPPORT_PACKAGES = (
     "pytest",
@@ -70,7 +54,7 @@ _SUPPORT_PACKAGES = (
     "tqdm",
     "pillow",
     "packaging",
-    _KITCHEN_REQUIREMENT,
+    "tokenizers==0.23.1",
 )
 
 _EDITABLE_PACKAGES = (
@@ -82,8 +66,7 @@ _EDITABLE_PACKAGES = (
     "packages/dinkster-assets",
     "packages/dinkster-memory",
     "packages/dinkster-workers",
-    "packages/dinkster-inference",
-    "packages/dinkster-inference-torch",
+    "packages/dinkster-inference-wire",
     "packages/dinkster-image-document",
     "packages/dinkster-video",
     "packages/dinkster-api",
@@ -169,7 +152,7 @@ def setup_commands(recipe: BackendEnvRecipe) -> tuple[tuple[str, ...], ...]:
             recipe.torch_requirement,
         ),
         ("uv", "pip", "install", "--python", python, *recipe.support_packages, *editable_args),
-        (python, "-c", "import dinkster_compat_comfy.native_arm"),
+        (python, "-c", "import dinkster_inference"),
     )
 
 
@@ -815,7 +798,7 @@ BENCHMARK_RESIDENCY_REGIMES = ("open", "constrained")
 #: (process on Windows, machine on WSL, off elsewhere).
 BENCHMARK_RESIDENCY_SPILL_SCOPES = ("process", "machine", "off")
 
-_MIB = 1024 * 1024
+_MIB = MEBIBYTE
 
 _REQUIRED_BENCHMARK_CHECKS = (
     "load",
@@ -882,6 +865,8 @@ def _residency_problems(
     problems: list[str],
     *,
     canonical_evidence: bool,
+    residency_route_roles: tuple[str, ...],
+    requires_accelerator_residency: bool,
 ) -> None:
     """The optional residency section is dinkster-only mechanism-comparison
     evidence: the offload mechanism the process ran under, the VRAM
@@ -891,8 +876,8 @@ def _residency_problems(
     cannot serve as canonical generic or H3 production evidence."""
     expected_routes: set[str] = set()
     if system == "dinkster" and fields.get("placement") == BENCHMARK_DINKSTER_PRODUCTION_PLACEMENT:
-        if family == "minimax_h3":
-            expected_routes = {"diffusion", "conditioner", "video_vae", "audio_vae"}
+        if residency_route_roles:
+            expected_routes = set(residency_route_roles)
         elif canonical_evidence and family in ("sd15", "sdxl", "lora", "zimage", "wan21", "flux"):
             expected_routes = {"runtime"}
     if "residency" not in fields:
@@ -918,6 +903,13 @@ def _residency_problems(
         routes: Mapping[str, object] = {}
     else:
         routes = route_fields
+    if (
+        system == "dinkster"
+        and fields.get("placement") == BENCHMARK_DINKSTER_PRODUCTION_PLACEMENT
+        and set(routes) - {"runtime"}
+        and not residency_route_roles
+    ):
+        problems.append("catalog residency requirements missing for family-specific routes")
     if expected_routes and set(routes) != expected_routes:
         problems.append(
             "residency.routes must record exactly " + ", ".join(sorted(expected_routes))
@@ -960,7 +952,7 @@ def _residency_problems(
                 and not _nonempty_str(fallback_reason)
             ):
                 problems.append(f"{where} has no reason for eager fallback")
-        if (family == "minimax_h3" or canonical_evidence) and required_actual is not None:
+        if (requires_accelerator_residency or canonical_evidence) and required_actual is not None:
             if actual != required_actual:
                 problems.append(f"{where}.mechanism is not required {required_actual}")
             if fallback_reason is not None or component_fields["fallback_components"]:
@@ -968,7 +960,7 @@ def _residency_problems(
             if not component_fields["dynamic_components"]:
                 problems.append(f"{where} did not enroll a dynamic component")
     if (
-        (family == "minimax_h3" or (canonical_evidence and expected_routes))
+        (requires_accelerator_residency or (canonical_evidence and expected_routes))
         and required_actual == "aimdo"
         and bootstrap is not True
     ):
@@ -1034,6 +1026,9 @@ def validate_benchmark_report(
     *,
     accelerator: str,
     canonical_evidence: bool = False,
+    expected_comfyui_commit: str | None = None,
+    residency_route_roles: tuple[str, ...] = (),
+    requires_accelerator_residency: bool = False,
 ) -> tuple[str, ...]:
     """Problems that make an inference benchmark report unusable as evidence.
 
@@ -1051,6 +1046,8 @@ def validate_benchmark_report(
     requires route facts for generic and H3 production handles. CUDA auto
     and explicit on must record successful bootstrap, Aimdo enrollment,
     and no component fallback, not merely a production placement label.
+    Family-specific requirements are projected from the inference catalog
+    by the caller so this validator does not invert the package dependency.
     """
     if accelerator not in BENCHMARK_ACCELERATORS:
         raise ValueError(f"unknown benchmark accelerator {accelerator!r}")
@@ -1125,10 +1122,12 @@ def validate_benchmark_report(
             comfyui = _as_mapping(fields.get("comfyui"))
             if comfyui is None:
                 problems.append(f"comfyui section missing for a ComfyUI {family_label} report")
-            elif comfyui.get("commit") != BENCHMARK_COMFYUI_COMMIT:
+            expected_commit = expected_comfyui_commit or BENCHMARK_COMFYUI_COMMIT
+            if comfyui is not None and comfyui.get("commit") != expected_commit:
+                requirement = "required" if expected_comfyui_commit is not None else "pinned"
                 problems.append(
-                    f"comfyui.commit is not the pinned {family_label} commit "
-                    f"{BENCHMARK_COMFYUI_COMMIT}"
+                    f"comfyui.commit is not the {requirement} {family_label} commit "
+                    f"{expected_commit}"
                 )
         if family == "anima":
             comfyui = _as_mapping(fields.get("comfyui"))
@@ -1432,7 +1431,14 @@ def validate_benchmark_report(
             problems.append("memory.peak_rss_bytes is not a positive integer")
 
     _residency_problems(
-        fields, system, accelerator, family, problems, canonical_evidence=canonical_evidence
+        fields,
+        system,
+        accelerator,
+        family,
+        problems,
+        canonical_evidence=canonical_evidence,
+        residency_route_roles=residency_route_roles,
+        requires_accelerator_residency=requires_accelerator_residency,
     )
 
     checks = _as_mapping(fields.get("checks"))

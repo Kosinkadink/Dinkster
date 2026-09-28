@@ -35,6 +35,7 @@ from dinkster_workers import (
     LaunchSpec,
     current_execution_context,
 )
+from dinkster_workers.in_process import attention_route_token_matches_capabilities
 from dinkster_workers.launch import Launcher
 
 
@@ -292,6 +293,38 @@ def test_worker_requires_exact_optional_startup_attention_evidence() -> None:
                 )
 
     asyncio.run(scenario())
+
+
+def test_attention_tokens_stay_bound_to_restart_and_concurrent_worker_evidence() -> None:
+    first = AttentionCapabilityEvidence(
+        version=1,
+        device_kind="cuda",
+        device_sm=120,
+        sdpa_torch_runtime="2.13.0",
+        adapter_contract_revision="dinkster.attention-kernel.v1",
+        available_policies=("sdpa",),
+        provider_versions=(("torch", "2.13.0"),),
+    )
+    restarted_same = replace(first)
+    concurrent_other = replace(
+        first,
+        device_sm=121,
+        sdpa_torch_runtime="2.14.0",
+        provider_versions=(("torch", "2.14.0"),),
+    )
+    first_token = derive_attention_route_token(first, AttentionPolicyConfig())
+    restarted_token = derive_attention_route_token(restarted_same, AttentionPolicyConfig())
+    other_token = derive_attention_route_token(concurrent_other, AttentionPolicyConfig())
+
+    assert attention_route_token_matches_capabilities(first, first_token)
+    assert attention_route_token_matches_capabilities(restarted_same, restarted_token)
+    assert attention_route_token_matches_capabilities(restarted_same, first_token)
+    assert attention_route_token_matches_capabilities(concurrent_other, other_token)
+    assert not attention_route_token_matches_capabilities(concurrent_other, first_token)
+    assert not attention_route_token_matches_capabilities(first, other_token)
+    assert attention_route_token_matches_capabilities(None, None)
+    assert not attention_route_token_matches_capabilities(first, None)
+    assert not attention_route_token_matches_capabilities(None, first_token)
 
 
 def test_engine_keeps_export_snapshot_off_non_output_invocations() -> None:

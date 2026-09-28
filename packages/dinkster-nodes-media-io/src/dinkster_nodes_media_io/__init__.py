@@ -17,6 +17,7 @@ from dinkster_api.v1 import (
     encode_splat,
     image_array_fingerprint,
     image_array_meta,
+    image_input,
     mask_array_meta,
     merge_image_batches,
     prepare_image_array_encoding,
@@ -45,6 +46,7 @@ from .audio import (
     SaveAudio,
     SaveAudioMP3,
     SaveAudioOpus,
+    writable_media_recorder_webm_audio_encoders,
 )
 from .audio_ops import (
     AUDIO_OPS_NODES,
@@ -181,6 +183,7 @@ def register_media_types(registry: TypeRegistry) -> None:
                 prepare_buffer_encoding=prepare_image_array_encoding,
                 fingerprint=image_array_fingerprint(type_id),
                 meta=mask_array_meta if type_id == MASK_TYPE else image_array_meta,
+                input_convert=image_input,
                 validate_encoded=validate_image_encoded,
                 validate_encoded_buffer=validate_image_encoded,
             )
@@ -317,4 +320,5 @@ __all__ = [
     "WebcamCapture",
     "capture_device_choices",
     "register_media_types",
+    "writable_media_recorder_webm_audio_encoders",
 ]

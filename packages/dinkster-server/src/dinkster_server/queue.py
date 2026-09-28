@@ -116,6 +116,8 @@ class Job:
     attention_config: AttentionPolicyConfig | None = None
     """Effective job-scoped attention routing policy. None preserves the
     legacy automatic route for non-HTTP callers."""
+    cache_enabled: bool = True
+    """Whether native result reuse and single-flight coalescing apply."""
     attempt: int = 1
     """Engine-side execution attempt for this jobRef. Retry plumbing is not
     implemented yet, so every current job has exactly one attempt."""
@@ -246,6 +248,7 @@ class JobQueue:
         export_snapshot: ExportSnapshot | None = None,
         previews: PreviewPolicy | None = None,
         attention_config: AttentionPolicyConfig | None = None,
+        cache_enabled: bool = True,
     ) -> Job:
         """Queue a lowered graph under an optional pre-pinned execution."""
         if self._closed:
@@ -267,6 +270,8 @@ class JobQueue:
             )
         if attention_config is not None and type(attention_config) is not AttentionPolicyConfig:
             raise TypeError("attention_config must be an AttentionPolicyConfig")
+        if type(cache_enabled) is not bool:
+            raise TypeError("cache_enabled must be a boolean")
         export_snapshot = deepcopy(export_snapshot)
         if not fingerprint:
             fingerprint_payload: dict[str, object] = {
@@ -287,6 +292,8 @@ class JobQueue:
                 }
             if attention_config is not None and attention_config != AttentionPolicyConfig():
                 fingerprint_payload["attention"] = attention_policy_config_to_wire(attention_config)
+            if not cache_enabled:
+                fingerprint_payload["cacheEnabled"] = False
             fingerprint = hashlib.sha256(
                 json.dumps(
                     fingerprint_payload,
@@ -318,6 +325,7 @@ class JobQueue:
             execution=execution,
             preview_policy=previews,
             attention_config=attention_config,
+            cache_enabled=cache_enabled,
         )
         if self._store is not None:
             # Durability before acknowledgment: if the accepted-job record
@@ -508,6 +516,7 @@ class JobQueue:
                     export_snapshot=job.export_snapshot,
                     preview_policy=job.preview_policy,
                     attention_config=job.attention_config,
+                    cache_enabled=job.cache_enabled,
                 )
             else:
                 result = await self._engine.run(
@@ -519,6 +528,7 @@ class JobQueue:
                     export_snapshot=job.export_snapshot,
                     preview_policy=job.preview_policy,
                     attention_config=job.attention_config,
+                    cache_enabled=job.cache_enabled,
                 )
             job.result = result
             self._finish(job, "completed")

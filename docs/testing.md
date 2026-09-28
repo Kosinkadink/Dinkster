@@ -30,21 +30,16 @@ makes, and these rules keep it that way as the codebase grows.
   extension scope in its disposable probe. The parameterized doctor test is
   keyed by the shared scope vocabulary, so accepting another scope without
   entry-resolution coverage fails the suite.
-- **Builtin inference vocabularies have explicit consumers.** The fast CI
-  scanner pins every zero-argument registry factory, assembly-registry builder,
-  and descriptor-catalog read to an exact source location and separate
-  non-increasing ceilings. The committed ceilings are 9 registry factories,
-  1 assembly builder, and 17 descriptor-catalog reads. New and stale sites fail
-  the check. The shared-engine family-gate scanner also runs in fast CI with its
-  current zero-site ceiling.
+- **Extension factories have explicit consumers.** The fast CI scanner checks
+  extension contribution factories against the committed source baseline.
 
 ## Platform golden evidence
 
 Portable golden baselines remain in Dinkster. Platform-specific variants live
-only in the sibling `dinkster-evidence` checkout under
+only in the maintainer evidence checkout under
 `platform-goldens/files/<Dinkster-relative-path>`; its manifest records each
 path, platform key, and SHA-256 digest. `DINKSTER_EVIDENCE_ROOT` selects that
-checkout and defaults to the sibling `dinkster-evidence` directory.
+checkout and defaults to the expected sibling location.
 
 Golden generators write Linux baselines to Dinkster. On other platforms they
 route variant output to the evidence layout instead of creating a sidecar in
@@ -57,22 +52,17 @@ the evidence repository. Generation fails if the evidence checkout or its
 
 ## Pull requests and full validation
 
-`.github/workflows/ci.yml` runs a fast job with a ten-minute limit alongside
-the engine-test matrix. After installing the locked workspace and fetching
-pinned evidence for type resolution (not model weights or coverage inputs),
-the fast job runs `bash scripts/ci-fast.sh`: Ruff format, Ruff lint, Pyright,
-and this fixed path-based unit subset:
+`.github/workflows/ci.yml` runs one fast job with a ten-minute limit. After
+installing the locked workspace and fetching pinned evidence for type
+resolution (not model weights or coverage inputs), it runs
+`bash scripts/ci-fast.sh`: Ruff format, Ruff lint, Pyright, and this fixed
+path-based unit subset:
 
-- `tests/test_extension_contract_pack.py`: a real CPU server composed with only
-  the ordinary extension fixture pack, proving two custom nodes linked through
-  a pack value type, a typed route and event, the frontend snapshot module, and
-  execution end to end.
 - `tests/test_extension_factory_guard.py`: exact registry-factory,
-  assembly-builder, and descriptor-catalog sites with separate non-increasing
-  ceilings.
-- `tests/test_family_registration_gates.py`: zero literal family gates in
-  shared engine code and registered-property coverage.
+  contribution-kind and factory baseline checks.
+- `tests/test_release_install.py`: release wheel and install surface checks.
 - `tests/test_schema.py`: schema construction and type validation.
+- `tests/test_schema_current_contracts.py`: generated current schema contracts.
 - `tests/test_values.py`: codecs, fingerprints, inline values and renditions.
 - `tests/test_graph.py`: graph validation and execution planning.
 - `tests/test_graph_wire.py`: wire round trips and malformed-input rejection.
@@ -83,10 +73,16 @@ remain required locally before landing; this subset is fast PR feedback,
 not a replacement for full validation. Reproduce the job after
 `uv sync --locked --all-packages` with `bash scripts/ci-fast.sh`.
 
-The PR job defaults to `[self-hosted, linux, x64]`. To use hosted Linux
-without editing the job, set repository variable `DINKSTER_PR_RUNNER` to
-the JSON string `"ubuntu-latest"`. No local wrapper or machine path is used
-by the fast checks.
+The required `CI_RUNNERS` repository variable controls every job. Its
+`linux`, `windows`, `macos`, and `forkLinux` values select GitHub-hosted
+images. CPU Torch jobs pin AVX2 dispatch in their environment rather than
+depending on machine labels.
+When required private inputs are unavailable, the PR job records an explicit
+not-run reason and fails instead of reporting unexecuted validation as green.
+
+```json
+{"linux":["ubuntu-latest"],"windows":["windows-latest"],"macos":["macos-latest"],"forkLinux":["ubuntu-latest"]}
+```
 
 `.github/workflows/full-validation.yml` runs on every main push, every two
 hours from 06:00 through 22:00 Pacific, daily at 10:23 UTC, on manual
@@ -101,10 +97,13 @@ next completed run at a descendant head. Find candidate runs in the Actions
 `full-validation` history, then confirm coverage from a local clone with
 `git merge-base --is-ancestor <merge-sha> <run-head-sha>`. Scheduled,
 dispatched and release-called runs use a separate non-cancelling durable group,
-so push traffic neither queues nor replaces them. Full validation retains the
-Python 3.12 Linux suite, both Python 3.12 Windows shards, branch coverage
-with the 80% floor, model tests, one torch CPU job, translation coverage,
-artifact smoke checks and the macOS descriptor test. Select a branch in Actions'
+so push traffic neither queues nor replaces them. Full validation runs the
+Python 3.12 Linux suite as four whole-file shards, both Python 3.12 Windows
+shards, branch coverage as four shards combined before enforcing the unchanged
+80% floor, model tests, one torch CPU job, translation coverage, artifact
+smoke checks and the macOS descriptor test. Every complete lane has a
+20-minute or lower job timeout. `main-status` uploads one JSON artifact with
+every aggregate result and fails unless every selected lane passed. Select a branch in Actions'
 "Run workflow" menu, or pass the dispatch ref explicitly:
 
 ```bash
@@ -115,19 +114,18 @@ The dispatch ref selects both the workflow and checked-out code, so owners
 can obtain Windows and full-suite evidence for an unmerged branch. The
 selected branch must contain the workflow. The daily audit uses main.
 
-`release.yml` runs only for version tags. It builds the complete wheel set,
-then installs and launch-checks those exact artifacts on Linux, Windows and
-macOS before publishing the GitHub Release.
+`release.yml` runs only for version tags. It calls full validation for the
+exact tagged commit before building the complete wheel set, then installs and
+launch-checks those exact artifacts on Linux, Windows and macOS before
+publishing the GitHub Release. Its hosted-eligible jobs use the same
+`CI_RUNNERS` variable.
 
 Both workflows use Python 3.12 only. Package requirements and the dependency
 lock continue to support Python 3.13. Heavy jobs run independently; the
-torch CPU job asserts its golden-data CPU contract and fails on mismatch,
-without retry jobs or an aggregate.
+torch CPU job pins AVX2 dispatch without retry jobs.
 
-Linux ARM64 artifact smoke and release installation are **not run** until
-Dinkster goes public ([ruling](https://github.com/Kosinkadink/comfy-vibe-station/issues/162)).
-Their matrices retain self-hosted Linux x64, Windows x64 and macOS ARM64;
-the unavailable Linux ARM64 leg is neither a pass nor a failure.
+Linux ARM64 artifact smoke and release installation are not part of the
+supported matrix. Linux x64, Windows x64, and macOS use GitHub-hosted images.
 
 ## Coverage
 
@@ -175,40 +173,38 @@ fault injection for the remote boundary, and property/fuzz tests for the
 wire decoders, type-id grammar, and graph nesting - the highest-value fuzz
 targets because their inputs come from outside.
 
-## CPU checks and dedicated model tests
+## CPU checks
 
 The single `torch-cpu` job never acquires or executes model weights. It
 passes `run-model-tests: "false"` to
 `.github/actions/torch-cpu-suite`. The action defaults to false as well.
-Environment setup, pinned source downloads, source-parity receipts and their
-tests, and all eleven Torch/vision pyright projects remain in this job. The
-nine vision package suites also run without their artifact
+Environment setup and the vision pyright projects remain in this job. The
+vision package suites also run without their artifact
 environment variables, so their weight-dependent cases skip while synthetic
 input validation, preprocessing, batching, cache, fallback, tiling, and
 architecture tests still run. The `dinkster-nodes-vision` distribution contains
 the HED, upscale, Depth Anything V2, DETR, RT-DETR, EfficientSAM, BiRefNet,
 Depth Anything V3, and SAM 3.1 model packs.
 
-The CPU job excludes all pinned model-weight acquisitions, the combined
-`dinkster-inference-torch` and `dinkster-model-ipadapter` test lane, each vision
-suite's second real-artifact run, and
-`tests/test_benchmark_inference.py::test_minimax_h3_identities_are_accepted_by_the_production_dit_loader`.
-No tests, assertions, goldens, hashes, or deadlines are removed or relaxed.
-The default local gates remain full, including the model lanes:
+The CPU job excludes pinned model-weight acquisitions and each vision suite's
+second real-artifact run. Sampling-runtime validation lives in
+`dinkster-inference`; Dinkster's local gates validate the host and worker
+integration:
 
 ```bash
 ./scripts/setup_envs.sh
 .venv/bin/python -m pytest -q
-unset MKL_CBWR
-export ATEN_CPU_CAPABILITY=avx2 ONEDNN_MAX_CPU_ISA=AVX2
-export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4
-.venv-torch/bin/python -m pytest -q packages/dinkster-inference-torch/tests packages/dinkster-model-ipadapter/tests
 ```
 
 On Windows, `scripts\setup_envs.ps1` creates the equivalent root, CPU Torch,
 and NVIDIA CUDA environments. Run the gates it prints with native Windows
 paths; rerunning the script reasserts the environments, while `-Force` rebuilds
 only the environments it owns.
+
+MediaRecorder WebM upload tests generate local samples only for the writable
+`libopus` and `libvorbis` encoders present in the installed PyAV wheel. The
+fixture gate always requires `libopus`; decode-side admission separately keeps
+Vorbis WebM coverage when the wheel cannot generate it through `libvorbis`.
 
 Run each vision package's full `tests` directory and the benchmark selector
 above with `.venv-torch/bin/python -m pytest -q` too. Supply the real-artifact
@@ -218,36 +214,23 @@ GPU gates in `scripts/setup_envs.sh` and the Torch README also remain required
 where applicable. No CI input or repository variable changes local pytest
 selection.
 
-The `model-tests` matrix runs in full validation in `Kosinkadink/Dinkster` on
-main pushes, the daily schedule and manual dispatch. PR labels never enable
-heavy jobs; dispatch full validation against the branch when model evidence
-is needed before landing. Six fixed groups cover inference and IPAdapter;
-acceptance sampling and the benchmark loader; HED, upscale and EfficientSAM;
-Depth Anything V2, DETR and RT-DETR; BiRefNet and Depth Anything V3; and SAM
-3.1. Every vision test is selected from the single
-`packages/dinkster-nodes-vision/tests` tree. All six groups may run
-concurrently on runners carrying the `cpu-golden-avx2` label. The `torch-cpu`
-job requires the same label; other CPU-only full validation jobs retain the
-generic Linux labels and can use RipperPC and LesserRipperPC. The model suites
-still execute with CPU Torch and the pinned AVX2 dispatch. `model-tests-gate`
-requires every group to pass. The contract test asserts the complete suite
-manifest so a suite cannot be silently omitted or assigned twice. Each group
-uses the same composite action with
-`run-model-tests: "true"` and the existing read-only identity and evidence
-deploy keys.
+For physical workflow runs, use the tracked transcript harness and the exact
+interpreter, preflight, catalog preparation, and evidence recipe in
+[Workflow benchmark invocation](workflow-benchmark.md).
 
-The runner must have an AuthenticAMD CPU with AVX2 and **without AVX-512**,
-`MKL_CBWR` unset, and sufficient disk/RAM for the pinned CPU workloads.
-The `torch-cpu` job checks the vendor and instruction flags before checkout
-or dependency setup and fails with the required CPU golden contract on mismatch.
-A GPU-equipped machine still runs CPU parity with Torch 2.13.0+cpu and the
-existing AVX2 dispatch pins; this does not switch to GPU goldens. Checkouts
-clean the workspace and do not persist credentials. Deploy keys live in
-per-step SSH agents with post-job cleanup, and downloads use `RUNNER_TEMP`.
-Linux full suites use the host's counted-suite launcher. The disk-reclaim
-step that removes hosted image tooling is guarded by
-`runner.environment == 'github-hosted'` and
-never runs on a self-hosted machine.
+The `model-tests` matrix runs in full validation in `Kosinkadink/Dinkster` on
+main pushes, the daily schedule and manual dispatch. Pull requests run only
+the fast tier. Eight whole-file inference and IPAdapter shards run beside
+fixed groups for acceptance sampling and the benchmark loader; HED, upscale
+and EfficientSAM; Depth Anything V2, DETR and RT-DETR; BiRefNet and Depth
+Anything V3; and SAM 3.1. Every vision test is selected from the single
+`packages/dinkster-nodes-vision/tests` tree. All groups run on GitHub-hosted
+Linux with CPU Torch and pinned AVX2 dispatch. `model-tests-gate` requires
+every group to pass. The contract test asserts the complete suite manifest so
+a suite cannot be silently omitted or assigned twice. Each group uses the
+same composite action with `run-model-tests: "true"` and the existing
+read-only identity and evidence deploy keys. Checkouts do not persist
+credentials, downloads use `RUNNER_TEMP`, and full suites execute directly.
 
 ## Tooling enforcement
 
@@ -255,24 +238,3 @@ never runs on a self-hosted machine.
 optional extras. `dinkster doctor` is the same idea pointed at packs: run it in
 pack CI (the pack template wires it in) so pack regressions surface before
 users hit them.
-
-## Capability evidence census
-
-`tools/comfy_coverage.py` owns both the official-template translation census
-and the capability evidence ledger. Its pinned workflow_templates and ComfyUI
-revisions are constants in that file. With clean read-only checkouts at those
-revisions, regenerate all four checked outputs with:
-
-```bash
-uv run --locked python tools/comfy_coverage.py \
-  --templates /path/to/workflow_templates/templates \
-  --comfyui /path/to/ComfyUI
-```
-
-Add `--check` to perform the CI staleness and drift gate without writing. The
-maintained evidence source is `tools/data/comfy_capability_evidence.json`.
-Every `builtin_families()` registration must be present there, and every
-`docs/supported/` family claim must carry the matching capability marker. Maintained
-aliases enter the generated ledger automatically at T1 after their test
-selectors are validated. T0 and T1 never count as support; missing template
-capabilities remain explicit `absent`, `refused`, or `unverified` records.

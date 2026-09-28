@@ -16,6 +16,7 @@ from dinkster_api.v1 import (
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
+    MEBIBYTE,
     SAVE_TARGET_TYPE,
     AssetError,
     AssetRef,
@@ -49,7 +50,7 @@ FLOAT = TypeExpr.concrete(CORE_FLOAT)
 COMBO = TypeExpr.concrete(CORE_COMBO)
 SAVE_TARGET = TypeExpr.concrete(SAVE_TARGET_TYPE)
 
-MAX_ENCODED_AUDIO_BYTES = 256 * 1024 * 1024
+MAX_ENCODED_AUDIO_BYTES = 256 * MEBIBYTE
 MAX_EMPTY_AUDIO_SECONDS = 86_400.0
 MAX_SAMPLE_RATE = 192_000
 
@@ -72,6 +73,7 @@ _FORMAT_DETAILS = {
     "opus": ("opus", "libopus", ".opus", "audio/ogg"),
 }
 _REQUIRED_AUDIO_ENCODERS = ("flac", "libmp3lame", "libopus")
+_MEDIA_RECORDER_WEBM_AUDIO_ENCODERS = ("libopus", "libvorbis")
 
 # libmp3lame accepts exactly these input sample rates; anything else must be
 # rejected loudly rather than silently resampled (declared source behavior:
@@ -88,6 +90,18 @@ _OPUS_QUALITIES = ("64k", "96k", "128k", "192k", "320k")
 _BIT_RATES = {"64k": 64_000, "96k": 96_000, "128k": 128_000, "192k": 192_000, "320k": 320_000}
 
 DEFAULT_AUDIO_TARGET = {"mount": "comfy-output", "prefix": "audio/ComfyUI"}
+
+
+def writable_media_recorder_webm_audio_encoders() -> tuple[str, ...]:
+    """Return the MediaRecorder fixture encoders available in this PyAV build."""
+    available: list[str] = []
+    for codec in _MEDIA_RECORDER_WEBM_AUDIO_ENCODERS:
+        try:
+            Codec(codec, "w")
+        except Exception:  # noqa: BLE001 - PyAV uses several codec error classes
+            continue
+        available.append(codec)
+    return tuple(available)
 
 
 def require_audio_encoders() -> None:
@@ -214,7 +228,7 @@ def _save_audio(
                     stream.bit_rate = _BIT_RATES[quality]
                 elif quality == "V0":
                     stream.codec_context.qscale = 1
-                chunk_size = max(1, min(65_536, 1024 * 1024 // (4 * facts["channels"])))
+                chunk_size = max(1, min(65_536, MEBIBYTE // (4 * facts["channels"])))
                 for start in range(0, frames, chunk_size):
                     clip = reader.read(start, min(chunk_size, frames - start), batch_index=batch)[
                         "waveform"

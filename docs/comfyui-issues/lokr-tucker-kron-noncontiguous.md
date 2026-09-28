@@ -61,15 +61,5 @@ torch.kron(w1, w2)  # RuntimeError: view size is not compatible ...
 
 ## Dinkster handling
 
-FIXED in Dinkster (2026-07): `LoKrAdapter.calculate` makes the Tucker
-einsum output contiguous before `torch.kron`, so the path applies
-correctly. Since no upstream oracle golden can exist while ComfyUI is
-broken, correctness is verified independently -
-`test_lokr_tucker_conv_fixed_beyond_reference` in
-`packages/dinkster-inference-torch/tests/test_adapters.py` checks the
-result against a float64 explicit-loop reconstruction (Tucker +
-Kronecker from their definitions). Ledgered in ROADMAP
-"Upstream-broken adapter paths: oracle cross-check pending". When
-upstream fixes this, regenerate `tools/gen_adapter_goldens.py`
-goldens including this case and cross-check Dinkster against the fixed
-reference.
+Dinkster delegates LoKr execution to `dinkster_inference`. The fork currently
+matches the upstream behavior described above.

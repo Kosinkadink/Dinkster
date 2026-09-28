@@ -22,7 +22,6 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetError, AssetRef, MountDef, MountTable, digest_bytes
 from dinkster_compat_comfy import CompatTranslation, bootstrap, translate_mappings
-from dinkster_compat_comfy.native import NATIVE_NODES
 from dinkster_compat_comfy.translate import (
     MODEL_FILE_CATEGORIES,
     MODEL_FILE_SELECTORS,
@@ -34,8 +33,7 @@ from dinkster_compat_comfy.translate import (
     translate_node,
 )
 from dinkster_engine import Engine, EventListener
-from dinkster_nodes_generation import GENERATION_NODES
-from dinkster_schema import AssetWidget, ComboWidget, InputSpec, TypeExpr
+from dinkster_schema import AssetWidget, ComboWidget, TypeExpr
 from dinkster_server import create_app
 from dinkster_values import TypeRegistry
 from dinkster_workers import ManifestError
@@ -376,7 +374,7 @@ _BACKGROUND_SCHEMA_SOURCE = (
 )
 
 
-def test_path_loaded_builtin_extra_inventory_and_complete_catalog_contract(
+def test_path_loaded_builtin_extra_inventory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _fake_comfy_root(tmp_path)
@@ -417,32 +415,7 @@ def test_path_loaded_builtin_extra_inventory_and_complete_catalog_contract(
         )
         translated_assets.append((selector.class_name, selector.input_id, widget.kind))
 
-    native_assets = [
-        (schema.node_type, input_spec.id, input_spec.widget.kind)
-        for node_class in (*NATIVE_NODES, *GENERATION_NODES)
-        for schema in (node_class.schema(),)
-        for input_spec in (
-            *schema.inputs,
-            *(item for family in schema.input_families for item in family.template),
-        )
-        if isinstance(input_spec, InputSpec)
-        and isinstance(input_spec.widget, AssetWidget)
-        and input_spec.widget.kind.startswith("model/")
-    ]
     assert len(translated_assets) == 38
-    assert ("dinkster.load_controlnet", "control_net_name", "model/controlnet") in native_assets
-    assert len(native_assets) == 24
-    assert len(translated_assets) + len(native_assets) == 62
-    assert (
-        "dinkster.load_dual_clip",
-        "text_encoder1",
-        "model/text-encoder",
-    ) in native_assets
-    assert (
-        "dinkster.load_dual_clip",
-        "text_encoder2",
-        "model/text-encoder",
-    ) in native_assets
 
 
 def test_path_loaded_builtin_selector_provenance_fails_closed(
@@ -1073,7 +1046,7 @@ def test_combo_choices_serves_listing_snapshots(
         "import_module",
         lambda name: (
             SimpleNamespace(KSampler=SimpleNamespace(SAMPLERS=["euler"], SCHEDULERS=["normal"]))
-            if name == "comfy.samplers"
+            if name == "dinkster_inference.samplers"
             else folder_paths
             if name == "folder_paths"
             else real_import(name)
@@ -1122,7 +1095,7 @@ def test_prompt_inventory_choices_compose_without_matching_schemas(
         "import_module",
         lambda name: (
             SimpleNamespace(KSampler=SimpleNamespace(SAMPLERS=(), SCHEDULERS=()))
-            if name == "comfy.samplers"
+            if name == "dinkster_inference.samplers"
             else SimpleNamespace(get_filename_list=lambda category: listings[category])
             if name == "folder_paths"
             else real_import(name)
@@ -1183,7 +1156,7 @@ def test_prompt_inventory_choices_use_shared_validation(
         "import_module",
         lambda name: (
             SimpleNamespace(KSampler=SimpleNamespace(SAMPLERS=(), SCHEDULERS=()))
-            if name == "comfy.samplers"
+            if name == "dinkster_inference.samplers"
             else SimpleNamespace(
                 get_filename_list=lambda category: values if category == "embeddings" else ()
             )

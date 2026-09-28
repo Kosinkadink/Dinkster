@@ -1,19 +1,16 @@
 name: torch-cpu suite
 description: >
-  Set up the torch environment and run the torch-dependent test suites
+  Set up the torch environment and run the vision test suites
   under the pinned CPU dispatch (job env must set ATEN_CPU_CAPABILITY
   and ONEDNN_MAX_CPU_ISA). Model lanes require explicit opt-in;
-  setup, source receipts, and typechecks always run.
+  setup and vision typechecks always run.
 inputs:
   run-model-tests:
-    description: Run complete inference, IPAdapter, vision, and benchmark model-loader lanes
+    description: Run complete vision model-loader lanes
     default: "false"
   pytest-args:
-    description: Additional pytest arguments for the inference and IPAdapter suites
+    description: Additional pytest arguments for model suites
     default: ""
-  identity-deploy-key:
-    description: Read-only dinkster-identity deploy key
-    required: true
   evidence-deploy-key:
     description: Read-only dinkster-evidence deploy key
     required: true
@@ -30,9 +27,6 @@ runs:
       with:
         evidence-deploy-key: ${{ inputs.evidence-deploy-key }}
         coverage: "false"
-    - uses: ./.github/actions/configure-dinkster-identity
-      with:
-        deploy-key: ${{ inputs.identity-deploy-key }}
     - uses: astral-sh/setup-uv@v5
       with:
         python-version: "3.12"
@@ -49,123 +43,22 @@ runs:
         --constraint "${{ runner.temp }}/torch-constraints.txt"
         --index-url https://download.pytorch.org/whl/cpu
         torch==2.13.0+cpu
-    - name: Checkout pinned ComfyUI source
-      if: env.DINKSTER_MODEL_TEST_GROUP == ''
-      shell: bash
-      run: |
-        git init --quiet "$RUNNER_TEMP/comfyui-source"
-        git -C "$RUNNER_TEMP/comfyui-source" remote add origin https://github.com/Comfy-Org/ComfyUI.git
-        git -C "$RUNNER_TEMP/comfyui-source" fetch --quiet --depth=1 --filter=blob:none origin \
-          b78cec879b9460d5cb25228a83a942fb78d2cd24 \
-          c67885b14556cf3e4e061862925282d403d09862 \
-          15eb748b3ec5f8a0a2d470b7fb280e2d7579f916 \
-          8a33128f2f8c5585c57486c07de481241e70a39c
-        git -C "$RUNNER_TEMP/comfyui-source" checkout --quiet --detach b78cec879b9460d5cb25228a83a942fb78d2cd24
-    - name: Checkout pinned workflow templates
-      if: env.DINKSTER_MODEL_TEST_GROUP == ''
-      shell: bash
-      run: |
-        git init --quiet "$RUNNER_TEMP/workflow-templates-source"
-        git -C "$RUNNER_TEMP/workflow-templates-source" remote add origin https://github.com/Comfy-Org/workflow_templates.git
-        git -C "$RUNNER_TEMP/workflow-templates-source" fetch --quiet --depth=1 --filter=blob:none origin d3b4a9e89573162b005961865164c18c8ae2206b
-        git -C "$RUNNER_TEMP/workflow-templates-source" checkout --quiet --detach FETCH_HEAD
-    - name: Acquire pinned Impact Pack source
-      if: env.DINKSTER_MODEL_TEST_GROUP == ''
-      shell: bash
-      run: |
-        curl --fail --location --retry 3 \
-          --output "$RUNNER_TEMP/impact-special-samplers.py" \
-          https://raw.githubusercontent.com/ltdrdata/ComfyUI-Impact-Pack/429d0159ad429e64d2b3916e6e7be9c22d025c3c/modules/impact/special_samplers.py
-        curl --fail --location --retry 3 \
-          --output "$RUNNER_TEMP/impact-core.py" \
-          https://raw.githubusercontent.com/ltdrdata/ComfyUI-Impact-Pack/429d0159ad429e64d2b3916e6e7be9c22d025c3c/modules/impact/core.py
-        curl --fail --location --retry 3 \
-          --output "$RUNNER_TEMP/inspire-sampler-nodes.py" \
-          https://raw.githubusercontent.com/ltdrdata/ComfyUI-Inspire-Pack/6b2ca017a168bcdba5f22c258b3b86c5c76470ca/inspire/sampler_nodes.py
-        echo "32647b60dd169f953b04ebdacf9e2a59c3870ecf442f01f3f76d96906283989c  $RUNNER_TEMP/impact-special-samplers.py" | sha256sum --check
-        echo "7989de178999904cacf440bd6c9fd6d250ff5f8df8a4a2dad7abe33d2dfacdd5  $RUNNER_TEMP/impact-core.py" | sha256sum --check
-        echo "153c5cbf334ca67176569625d10feac924bb289a8c18321bcaee0d9a99d18c51  $RUNNER_TEMP/inspire-sampler-nodes.py" | sha256sum --check
-    - name: Verify source-generated parity receipts
-      if: env.DINKSTER_MODEL_TEST_GROUP == ''
-      shell: bash
-      env:
-        DINKSTER_INFERENCE_PARITY_RECORDS: ${{ github.workspace }}/.evidence-source/inference-parity/records
-        COMFYUI_ROOT: ${{ runner.temp }}/comfyui-source
-        WORKFLOW_TEMPLATES_ROOT: ${{ runner.temp }}/workflow-templates-source
-        IMPACT_PACK_SOURCE: ${{ runner.temp }}/impact-special-samplers.py
-        IMPACT_PACK_CORE_SOURCE: ${{ runner.temp }}/impact-core.py
-        INSPIRE_PACK_SOURCE: ${{ runner.temp }}/inspire-sampler-nodes.py
-      run: .venv-torch/bin/python tools/gen_comfy_source_parity_receipts.py --check
-    - name: Test source-parity receipt generation
-      if: env.DINKSTER_MODEL_TEST_GROUP == ''
-      shell: bash
-      env:
-        DINKSTER_INFERENCE_PARITY_RECORDS: ${{ github.workspace }}/.evidence-source/inference-parity/records
-        COMFYUI_ROOT: ${{ runner.temp }}/comfyui-source
-        WORKFLOW_TEMPLATES_ROOT: ${{ runner.temp }}/workflow-templates-source
-        IMPACT_PACK_SOURCE: ${{ runner.temp }}/impact-special-samplers.py
-        IMPACT_PACK_CORE_SOURCE: ${{ runner.temp }}/impact-core.py
-        INSPIRE_PACK_SOURCE: ${{ runner.temp }}/inspire-sampler-nodes.py
-      run: .venv-torch/bin/python -m pytest -q tests/test_gen_comfy_source_parity_receipts.py
-    # Typecheck the torch-side pyright projects before the test suites:
-    # the root pyright project excludes every package that imports torch,
-    # so these are the only hosted runs that see them (#981). They resolve
-    # against the .venv-torch built above. The vision provider packages
-    # are checked further down next to their suites.
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
-      shell: bash
-      run: .venv/bin/pyright -p .evidence-source/packages/dinkster-acceptance --pythonpath .venv-torch/bin/python
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
-      shell: bash
-      run: >
-        .venv-torch/bin/python -m pytest -q
-        .evidence-source/packages/dinkster-acceptance/tests/test_acceptance_closure.py
-    - if: env.DINKSTER_MODEL_TEST_GROUP == ''
-      shell: bash
-      run: .venv/bin/pyright -p packages/dinkster-inference-torch
-    - name: Assert pinned CPU dispatch
+    - name: Assert pinned AVX2 dispatch
       shell: bash
       run: |
         grep -m1 'model name' /proc/cpuinfo
-        vendor="$(grep -m1 '^vendor_id' /proc/cpuinfo | awk '{print $3}')"
-        echo "vendor_id: $vendor"
-        if [ "$vendor" != "AuthenticAMD" ] || ! grep -qw avx2 /proc/cpuinfo || grep -qw avx512f /proc/cpuinfo; then
-          echo "Exact CPU vectors require an AMD host without AVX-512 (#900, #1045)."
-          exit 1
-        fi
-        echo "no avx512f"
         .venv-torch/bin/python - <<'EOF'
         import torch
         capability = torch.backends.cpu.get_cpu_capability()
         print(f"torch {torch.__version__} ATen CPU capability: {capability}")
         assert capability == "AVX2", capability
         EOF
-        # Log the oneMKL CNR state actually engaged for GEMM. oneMKL is
-        # deliberately unpinned (MKL_CBWR unset), so CNR:OFF is expected;
-        # the engaged state is recorded for divergence forensics, not
-        # asserted. The probe itself must succeed - only the grep is
-        # non-asserting, so a probe failure fails the step instead of
-        # being masked.
+        # Log the oneMKL CNR state actually engaged for GEMM. Callers choose
+        # whether to pin MKL_CBWR; the engaged state is recorded for
+        # divergence forensics. The probe itself must succeed - only the grep
+        # is non-asserting, so a probe failure fails instead of being masked.
         MKL_VERBOSE=1 .venv-torch/bin/python -c "import torch; a = torch.randn(512, 512); b = a @ a" > "$RUNNER_TEMP/mkl-verbose.log" 2>&1
         grep -m1 -o 'CNR:[A-Z0-9_,]*' "$RUNNER_TEMP/mkl-verbose.log" || echo 'no MKL verbose GEMM line'
-    - name: Test inference and IPAdapter
-      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'inference'
-      shell: bash
-      env:
-        DINKSTER_MODEL_PYTEST_ARGS: ${{ inputs.pytest-args }}
-      run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
-        .venv-torch/bin/python -m pytest -q
-        $DINKSTER_MODEL_PYTEST_ARGS
-        packages/dinkster-inference-torch/tests
-        packages/dinkster-model-ipadapter/tests
-    - name: Test acceptance sampling
-      if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'acceptance'
-      shell: bash
-      run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
-        .venv-torch/bin/python -m pytest -q
-        .evidence-source/packages/dinkster-acceptance/tests/test_acceptance_sampling.py
     - name: Acquire pinned line and edge parity artifacts
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
       shell: bash
@@ -222,7 +115,6 @@ runs:
         DINKSTER_TEED_TEST_MODEL: ${{ runner.temp }}/7_model.pth
         DINKSTER_MTEED_TEST_MODEL: ${{ runner.temp }}/MTEED.pth
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_hed.py
     - name: Acquire pinned upscale parity artifacts
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
@@ -247,7 +139,6 @@ runs:
         DINKSTER_UPSCALE_TEST_ANIME6B: ${{ runner.temp }}/RealESRGAN_x4plus_anime_6B.pth
         DINKSTER_UPSCALE_TEST_GENERAL: ${{ runner.temp }}/realesr-general-x4v3.pth
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_upscale.py
     - name: Acquire pinned Depth Anything V2 parity artifact
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
@@ -265,7 +156,6 @@ runs:
       env:
         DINKSTER_DEPTH_ANYTHING_V2_TEST_MODEL: ${{ runner.temp }}/depth-anything-v2-large.safetensors
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_depth_anything_v2.py
     - name: Acquire pinned DETR parity artifact
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
@@ -283,7 +173,6 @@ runs:
       env:
         DINKSTER_DETR_TEST_MODEL: ${{ runner.temp }}/detr-r50-e632da11.pth
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_detr.py
     - name: Acquire pinned RT-DETR parity artifact
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-detection'
@@ -301,7 +190,6 @@ runs:
       env:
         DINKSTER_RTDETR_TEST_MODEL: ${{ runner.temp }}/rt_detr_v4-x-hgnet_fp16.safetensors
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_rtdetr.py
     - name: Acquire pinned EfficientSAM parity artifacts
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-fast'
@@ -326,7 +214,6 @@ runs:
         DINKSTER_EFFICIENT_SAM_TEST_ENCODER: ${{ runner.temp }}/efficient-sam-vitt-encoder-d525f622.onnx
         DINKSTER_EFFICIENT_SAM_TEST_DECODER: ${{ runner.temp }}/efficient-sam-vitt-decoder-d525f622.onnx
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_efficient_sam.py
     - name: Acquire pinned BiRefNet parity artifact
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-large'
@@ -344,7 +231,6 @@ runs:
       env:
         DINKSTER_BIREFNET_TEST_MODEL: ${{ runner.temp }}/birefnet.safetensors
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_birefnet.py
     - name: Acquire pinned Depth Anything 3 Mono Large parity artifact
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-large'
@@ -362,7 +248,6 @@ runs:
       env:
         DINKSTER_DEPTH_ANYTHING_V3_TEST_MODEL: ${{ runner.temp }}/depth-anything-3-mono-large.safetensors
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_depth_anything_v3.py
     - name: Acquire pinned SAM 3.1 parity artifact
       if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'vision-sam'
@@ -380,13 +265,4 @@ runs:
       env:
         DINKSTER_SAM31_TEST_MODEL: ${{ runner.temp }}/sam3.1_multiplex_fp16.safetensors
       run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
         .venv-torch/bin/python -m pytest -q packages/dinkster-nodes-vision/tests/test_sam31.py
-    # Torch-dependent benchmark-harness tests skip in the torch-free
-    # root suite; this is the lane that actually executes them.
-    - if: inputs.run-model-tests == 'true' && env.DINKSTER_MODEL_TEST_GROUP == 'acceptance'
-      shell: bash
-      run: >
-        "$HOME/comfy-vibe-station/run_counted_suite.sh"
-        .venv-torch/bin/python -m pytest -q
-        "tests/test_benchmark_inference.py::test_minimax_h3_identities_are_accepted_by_the_production_dit_loader"

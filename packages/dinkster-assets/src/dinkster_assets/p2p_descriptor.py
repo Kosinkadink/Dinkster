@@ -7,15 +7,18 @@ import os
 import re
 import stat
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeAlias
+from typing import BinaryIO, TypeAlias
+
+from dinkster_values import MEBIBYTE
 
 from .identity import DIGEST_PREFIX, AssetError, new_hasher, require_digest
 
 P2P_PROTOCOL = "bittorrent-v2"
 P2P_BLOCK_LENGTH = 16 * 1024
-P2P_PIECE_LENGTH = 8 * 1024 * 1024
+P2P_PIECE_LENGTH = 8 * MEBIBYTE
 
 _BLOCKS_PER_PIECE = P2P_PIECE_LENGTH // P2P_BLOCK_LENGTH
 _HEX_256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -247,13 +250,16 @@ def _descriptor_result(
     return P2PDescriptorResult(asset_digest, size, descriptor, info, piece_layer)
 
 
-def derive_p2p_descriptor(path: Path | str) -> P2PDescriptorResult:
-    """Derive BLAKE3 identity and BEP 52 material in one bounded scan."""
+def derive_p2p_descriptor(
+    path: Path | str, *, handle: BinaryIO | None = None
+) -> P2PDescriptorResult:
+    """Derive BLAKE3 and BEP 52 in one scan, optionally borrowing an already-open file."""
     source = Path(path)
     builder = P2PDescriptorBuilder()
     total = 0
 
-    with source.open("rb") as handle:
+    with source.open("rb") if handle is None else nullcontext(handle) as handle:
+        handle.seek(0)
         before = os.fstat(handle.fileno())
         if not stat.S_ISREG(before.st_mode):
             raise P2PDescriptorError(f"descriptor source must be a regular file: {source}")

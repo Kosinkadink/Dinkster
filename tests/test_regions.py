@@ -51,6 +51,7 @@ from dinkster_schema import (
 )
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
+    ABSENT_STANDS_FOR_META_KEY,
     TypeRegistry,
     is_absent,
     list_children,
@@ -62,6 +63,7 @@ INT = TypeExpr.concrete("core.int")
 BOOL = TypeExpr.concrete("core.boolean")
 COMBO = TypeExpr.concrete("core.combo")
 STRING = TypeExpr.concrete("core.string")
+GENERIC = TypeExpr.variable("T")
 
 
 class AddOne(Node):
@@ -246,6 +248,20 @@ class Sleeper(Node):
         return cls.outputs(out=value)
 
 
+class GenericIdentity(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.generic_identity",
+            inputs=(InputSpec("value", GENERIC),),
+            outputs=(OutputSpec("value", GENERIC),),
+        )
+
+    @classmethod
+    def execute(cls, value: object) -> Mapping[str, object]:
+        return cls.outputs(value=value)
+
+
 NODES: tuple[type[Node], ...] = (
     AddOne,
     AddPair,
@@ -258,16 +274,20 @@ NODES: tuple[type[Node], ...] = (
     MaybeList,
     FailOnOdd,
     Sleeper,
+    GenericIdentity,
 )
 
 
 def make_engine(
     events: list[EngineEvent] | None = None,
     extra_nodes: Sequence[type[Node]] = (),
+    extra_types: Sequence[str] = (),
 ) -> Engine:
     node_types = (*NODES, *extra_nodes)
     registry = TypeRegistry()
     register_core_types(registry)
+    for type_id in extra_types:
+        registry.register(type_id)
     return Engine(
         schemas=build_schemas(node_types),
         registry=registry,
@@ -466,11 +486,31 @@ def test_compact_output_wire_roundtrip() -> None:
     assert graph_from_wire(wire) == graph
 
 
+def test_last_output_and_rerun_cache_policy_wire_roundtrip() -> None:
+    region = map_region(
+        outputs={"result": RegionOutput(Link("add", "out"), mode="last")},
+        cache_policy="rerun",
+    )
+    graph = Graph(nodes={"m": region})
+    wire = graph_to_wire(graph)
+    region_wire = wire["nodes"]["m"]["region"]
+    assert region_wire["outputs"]["result"]["mode"] == "last"
+    assert region_wire["cachePolicy"] == "rerun"
+    assert graph_from_wire(wire) == graph
+
+
+def test_reuse_cache_policy_is_omitted_on_wire() -> None:
+    wire = graph_to_wire(Graph(nodes={"m": map_region()}))
+    assert "cachePolicy" not in wire["nodes"]["m"]["region"]
+    assert graph_from_wire(wire).nodes["m"].cache_policy == "reuse"  # type: ignore[union-attr]
+
+
 @pytest.mark.parametrize(
     ("mutate", "match"),
     [
         ({"kind": "loop"}, "unknown kind"),
         ({"binding": "diagonal"}, "unknown binding"),
+        ({"cachePolicy": "sometimes"}, "cache policy"),
         ({"maxIterations": True}, "maxIterations"),
         ({"maxIterations": "5"}, "maxIterations"),
         ({"elementPorts": "item"}, "elementPorts"),
@@ -546,11 +586,13 @@ def test_invalid_direct_region_modes_have_named_diagnostics() -> None:
             )
         },
         binding=cast(BindingMode, "pairwise"),
+        cache_policy=cast(Literal["reuse", "rerun"], "sometimes"),
     )
     found = codes(Graph(nodes={"bad": region}), ["bad"])
     assert {
         "unknown-region-kind",
         "unknown-binding-mode",
+        "unknown-cache-policy",
         "unknown-output-mode",
     } <= found.keys()
 
@@ -637,6 +679,17 @@ def test_kind_profiles_are_enforced() -> None:
     for binding in ("cross", "broadcast"):
         bound_while = while_region(binding=cast("BindingMode", binding))
         assert "region-shape" in codes(Graph(nodes={"w": bound_while}), ["w"])
+
+
+def test_stateless_fold_is_valid() -> None:
+    region = fold_region(
+        body=Graph(nodes={"add": GraphNode("test.add_one", {"value": port("item")})}),
+        ports={"item": INT},
+        inputs={"item": [1, 2, 3]},
+        state_ports=(),
+        outputs={"results": RegionOutput(Link("add", "out"))},
+    )
+    assert not has_errors(validate(Graph(nodes={"f": region}), schemas(), ["f"]))
 
 
 def test_state_chain_must_close() -> None:
@@ -935,8 +988,120 @@ def test_map_region_executes_per_element() -> None:
         expanded = next(e for e in events if e.kind == "region_expanded")
         assert expanded.node_id == "m"
         assert expanded.detail["iterations"] == 3
+        started = [
+            cast(int, e.detail["iteration"]) for e in events if e.kind == "region_iteration_started"
+        ]
+        completed = [
+            cast(int, e.detail["iteration"])
+            for e in events
+            if e.kind == "region_iteration_finished"
+        ]
+        assert sorted(started) == [0, 1, 2]
+        assert sorted(completed) == [0, 1, 2]
+        for iteration in range(3):
+            assert next(
+                i
+                for i, event in enumerate(events)
+                if event.kind == "region_iteration_started"
+                and event.detail["iteration"] == iteration
+            ) < next(
+                i
+                for i, event in enumerate(events)
+                if event.kind == "region_iteration_finished"
+                and event.detail["iteration"] == iteration
+            )
         finished = next(e for e in events if e.kind == "region_finished")
         assert finished.detail["iterations"] == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("type_id", "payloads"),
+    [
+        ("comfy.IMAGE", [[[[0.0, 0.25, 0.5], [0.75, 1.0, 0.125]]], [[[1.0, 0.5, 0.0]]]]),
+        ("comfy.LATENT", [{"samples": [[[[1.5, -2.0], [3.25, 4.5]]]]}, {"samples": [[[[9.0]]]]}]),
+        ("dinkster.conditioning", [{"tokens": [1, 4], "weight": 0.75}, {"tokens": [9]}]),
+        ("comfy.MASK", [[[0.0, 1.0], [0.25, 0.75]], [[1.0]]]),
+        (
+            "comfy.AUDIO",
+            [
+                {"waveform": [[0.0, -0.5, 0.5]], "sample_rate": 48000},
+                {"waveform": [[1.0]], "sample_rate": 44100},
+            ],
+        ),
+        ("comfy.VIDEO", [{"frames": ["a", "b"], "fps": 24.0}, {"frames": ["c"], "fps": 30.0}]),
+        (
+            "dinkster.asset",
+            [
+                {"digest": "blake3:" + "1" * 64, "name": "one.png"},
+                {"digest": "blake3:" + "2" * 64, "name": "two.wav"},
+            ],
+        ),
+        ("core.string", ["alpha", "beta"]),
+        ("core.int", [7, -3]),
+        ("core.float", [1.25, -8.5]),
+    ],
+)
+def test_map_gather_preserves_generic_payload_type_and_exact_values(
+    type_id: str, payloads: list[object]
+) -> None:
+    async def scenario() -> None:
+        value_type = TypeExpr.concrete(type_id)
+        region = RegionNode(
+            kind="map",
+            body=Graph(
+                nodes={"identity": GraphNode("test.generic_identity", {"value": port("item")})}
+            ),
+            ports={"item": value_type},
+            inputs={"item": payloads},
+            element_ports=("item",),
+            outputs={"results": RegionOutput(Link("identity", "value"))},
+        )
+        core_types = {"core.string", "core.int", "core.float"}
+        engine = make_engine(extra_types=() if type_id in core_types else (type_id,))
+        result = await engine.run(Graph(nodes={"m": region}), ["m"])
+        gathered = result.outputs["m"]["results"]
+        assert gathered.type_id == f"list<{type_id}>"
+        children = list_children(gathered)
+        assert children is not None
+        assert [child.type_id for child in children] == [type_id, type_id]
+        assert [child.resolve() for child in children] == payloads
+
+    asyncio.run(scenario())
+
+
+def test_fold_state_preserves_heterogeneous_list_backed_value() -> None:
+    async def scenario() -> None:
+        heterogeneous_type_id = "test.heterogeneous"
+        heterogeneous = TypeExpr.concrete(heterogeneous_type_id)
+        region = RegionNode(
+            kind="fold",
+            body=Graph(
+                nodes={"identity": GraphNode("test.generic_identity", {"value": port("carry")})}
+            ),
+            ports={"item": INT, "carry": heterogeneous},
+            inputs={"item": [0, 1], "carry": [7, "7"]},
+            element_ports=("item",),
+            state_ports=("carry",),
+            outputs={
+                "carry": RegionOutput(Link("identity", "value"), mode="state"),
+                "observed": RegionOutput(Link("identity", "value")),
+            },
+        )
+        result = await make_engine(extra_types=(heterogeneous_type_id,)).run(
+            Graph(nodes={"f": region}), ["f"]
+        )
+
+        assert result.outputs["f"]["carry"].type_id == heterogeneous_type_id
+        assert result.outputs["f"]["carry"].resolve() == [7, "7"]
+        observed = list_children(result.outputs["f"]["observed"])
+        assert observed is not None
+        assert [value.type_id for value in observed] == [
+            heterogeneous_type_id,
+            heterogeneous_type_id,
+        ]
+        assert [value.resolve() for value in observed] == [[7, "7"], [7, "7"]]
 
     asyncio.run(scenario())
 
@@ -1102,8 +1267,10 @@ def test_named_route_selects_stable_member_ids_per_iteration() -> None:
             "m[0]/route",
             "m[1]/right",
             "m[1]/route",
+            "m[2]/left",
+            "m[2]/route",
         ]
-        assert {"m[2]/left", "m[2]/route"} <= set(result.cached)
+        assert result.cached == ()
 
     asyncio.run(scenario())
 
@@ -1768,6 +1935,20 @@ def test_while_region_iterates_until_continue_false() -> None:
         engine = make_engine(events)
         result = await engine.run(Graph(nodes={"w": while_region()}), ["w"])
         assert result.outputs["w"]["count"].resolve() == 5
+        assert [e.detail["iteration"] for e in events if e.kind == "region_iteration_started"] == [
+            0,
+            1,
+            2,
+            3,
+            4,
+        ]
+        assert [e.detail["iteration"] for e in events if e.kind == "region_iteration_finished"] == [
+            0,
+            1,
+            2,
+            3,
+            4,
+        ]
         finished = next(e for e in events if e.kind == "region_finished")
         assert finished.detail["iterations"] == 5
 
@@ -1821,17 +2002,17 @@ def test_per_item_caching_reexecutes_only_changed_iterations() -> None:
     asyncio.run(scenario())
 
 
-def test_duplicate_items_coalesce_through_single_flight() -> None:
+def test_duplicate_items_execute_as_separate_iteration_occurrences() -> None:
     async def scenario() -> None:
         AddOne.ran.clear()
         engine = make_engine()
         result = await engine.run(Graph(nodes={"m": map_region(inputs={"item": [5, 5, 5]})}), ["m"])
-        assert AddOne.ran == [5]  # one real execution
+        assert AddOne.ran == [5, 5, 5]
         children = list_children(result.outputs["m"]["results"])
         assert children is not None
         assert [c.resolve() for c in children] == [6, 6, 6]
-        assert len(result.executed) == 1
-        assert len(result.cached) == 2  # coalesced or cache-hit iterations
+        assert len(result.executed) == 3
+        assert result.cached == ()
 
     asyncio.run(scenario())
 
@@ -1863,6 +2044,200 @@ def test_region_index_participates_in_cache_identity_when_consumed() -> None:
         assert AddPair.calls == []
         assert second.executed == ()
         assert sorted(second.cached) == ["m[0]/add", "m[1]/add", "m[2]/add"]
+
+    asyncio.run(scenario())
+
+
+def test_stateless_fold_executes_in_iteration_order() -> None:
+    async def scenario() -> None:
+        AddPair.calls.clear()
+        region = RegionNode(
+            kind="fold",
+            body=Graph(
+                nodes={
+                    "add": GraphNode(
+                        "test.add_pair",
+                        {"a": port("item"), "b": port(REGION_INDEX_PORT_ID)},
+                    )
+                }
+            ),
+            ports={"item": INT},
+            inputs={"item": [30, 10, 20]},
+            element_ports=("item",),
+            outputs={"results": RegionOutput(Link("add", "out"))},
+        )
+        result = await make_engine().run(Graph(nodes={"f": region}), ["f"])
+        assert AddPair.calls == [(30, 0), (10, 1), (20, 2)]
+        assert result.outputs["f"]["results"].resolve() == [30, 11, 22]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("items", [[4, 8, 15], []])
+def test_last_output_returns_final_value_or_typed_absence(items: list[int]) -> None:
+    async def scenario() -> None:
+        region = map_region(
+            inputs={"item": items},
+            outputs={"result": RegionOutput(Link("add", "out"), mode="last")},
+        )
+        result = await make_engine().run(Graph(nodes={"m": region}), ["m"])
+        output = result.outputs["m"]["result"]
+        if items:
+            assert output.resolve() == 16
+            assert output.type_id == "core.int"
+        else:
+            assert is_absent(output)
+            assert output.meta.get(ABSENT_ORIGIN_META_KEY) == "m/result"
+            assert output.meta.get(ABSENT_STANDS_FOR_META_KEY) == "core.int"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("cache_policy", "calls_per_run"), [("reuse", 3), ("rerun", 3)])
+def test_region_cache_policy_applies_to_each_occurrence_across_runs(
+    cache_policy: Literal["reuse", "rerun"], calls_per_run: int
+) -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        engine = make_engine()
+        region = map_region(inputs={"item": [7, 7, 7]}, cache_policy=cache_policy)
+        graph = Graph(nodes={"m": region})
+
+        first = await engine.run(graph, ["m"])
+        assert first.outputs["m"]["results"].resolve() == [8, 8, 8]
+        assert len(AddOne.ran) == calls_per_run
+
+        second = await engine.run(graph, ["m"])
+        assert second.outputs["m"]["results"].resolve() == [8, 8, 8]
+        assert len(AddOne.ran) == calls_per_run * (1 if cache_policy == "reuse" else 2)
+        if cache_policy == "reuse":
+            assert len(second.cached) == 3
+        else:
+            assert second.cached == ()
+            assert len(second.executed) == 3
+
+    asyncio.run(scenario())
+
+
+def test_execution_no_cache_overrides_nested_region_reuse() -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        engine = make_engine()
+        graph = Graph(nodes={"m": map_region(inputs={"item": [7, 7, 7]})})
+
+        warmup = await engine.run(graph, ["m"])
+        result = await engine.run(graph, ["m"], cache_enabled=False)
+
+        assert warmup.outputs["m"]["results"].resolve() == [8, 8, 8]
+        assert result.outputs["m"]["results"].resolve() == [8, 8, 8]
+        assert AddOne.ran == [7, 7, 7, 7, 7, 7]
+        assert len(result.executed) == 3
+        assert result.cached == ()
+
+    asyncio.run(scenario())
+
+
+def test_inner_reuse_overrides_outer_rerun() -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        AddPair.calls.clear()
+        engine = make_engine()
+        inner = map_region(inputs={"item": port("row")}, cache_policy="reuse")
+        outer = RegionNode(
+            kind="map",
+            body=Graph(
+                nodes={
+                    "inner": inner,
+                    "outer_probe": GraphNode(
+                        "test.add_pair",
+                        {"a": port(REGION_INDEX_PORT_ID), "b": 100},
+                    ),
+                }
+            ),
+            ports={"row": TypeExpr.list_of(INT)},
+            inputs={"row": [[0, 1], [0, 1]]},
+            element_ports=("row",),
+            outputs={
+                "rows": RegionOutput(Link("inner", "results")),
+                "outer_probes": RegionOutput(Link("outer_probe", "out")),
+            },
+            cache_policy="rerun",
+        )
+        graph = Graph(nodes={"outer": outer})
+
+        first = await engine.run(graph, ["outer"])
+        second = await engine.run(graph, ["outer"])
+
+        assert first.outputs["outer"]["rows"].resolve() == [[1, 2], [1, 2]]
+        assert second.outputs["outer"]["rows"].resolve() == [[1, 2], [1, 2]]
+        assert first.outputs["outer"]["outer_probes"].resolve() == [100, 101]
+        assert second.outputs["outer"]["outer_probes"].resolve() == [100, 101]
+        assert sorted(AddOne.ran) == [0, 0, 1, 1]
+        assert sorted(AddPair.calls) == [(0, 100), (0, 100), (1, 100), (1, 100)]
+        assert len(first.executed) == 6
+        assert len(second.executed) == 2
+        assert first.cached == ()
+        assert len(second.cached) == 4
+
+    asyncio.run(scenario())
+
+
+def test_native_nested_reuse_scopes_identical_inputs_by_iteration_occurrence() -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        engine = make_engine()
+        inner = map_region(inputs={"item": port("row")}, cache_policy="reuse")
+        outer = RegionNode(
+            kind="map",
+            body=Graph(nodes={"inner": inner}),
+            ports={"row": TypeExpr.list_of(INT)},
+            inputs={"row": [[7, 7], [7, 7]]},
+            element_ports=("row",),
+            outputs={"rows": RegionOutput(Link("inner", "results"))},
+            cache_policy="reuse",
+        )
+        graph = Graph(nodes={"outer": outer})
+
+        first = await engine.run(graph, ["outer"])
+        second = await engine.run(graph, ["outer"])
+
+        assert first.outputs["outer"]["rows"].resolve() == [[8, 8], [8, 8]]
+        assert second.outputs["outer"]["rows"].resolve() == [[8, 8], [8, 8]]
+        assert AddOne.ran == [7, 7, 7, 7]
+        assert len(first.executed) == 4
+        assert first.cached == ()
+        assert second.executed == ()
+        assert len(second.cached) == 4
+
+    asyncio.run(scenario())
+
+
+def test_nested_reuse_matches_comfyui_iteration_inputs() -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        engine = make_engine()
+        inner = map_region(inputs={"item": port("row")}, cache_policy="reuse")
+        outer = RegionNode(
+            kind="map",
+            body=Graph(nodes={"inner": inner}),
+            ports={"row": TypeExpr.list_of(INT)},
+            inputs={"row": [[0, 1], [0, 1]]},
+            element_ports=("row",),
+            outputs={"rows": RegionOutput(Link("inner", "results"))},
+            cache_policy="reuse",
+        )
+        graph = Graph(nodes={"outer": outer})
+
+        first = await engine.run(graph, ["outer"])
+        second = await engine.run(graph, ["outer"])
+
+        assert first.outputs["outer"]["rows"].resolve() == [[1, 2], [1, 2]]
+        assert second.outputs["outer"]["rows"].resolve() == [[1, 2], [1, 2]]
+        assert sorted(AddOne.ran) == [0, 0, 1, 1]
+        assert len(first.executed) == 4
+        assert first.cached == ()
+        assert second.executed == ()
+        assert len(second.cached) == 4
 
     asyncio.run(scenario())
 
@@ -1933,6 +2308,7 @@ def test_compact_gather_omits_absent_iterations_in_order() -> None:
 
 def test_compact_gather_does_not_turn_failed_iterations_into_absence() -> None:
     async def scenario() -> None:
+        events: list[EngineEvent] = []
         region = RegionNode(
             kind="map",
             body=Graph(nodes={"fail": GraphNode("test.fail_on_odd", {"value": port("item")})}),
@@ -1942,7 +2318,17 @@ def test_compact_gather_does_not_turn_failed_iterations_into_absence() -> None:
             outputs={"results": RegionOutput(Link("fail", "out"), mode="compact")},
         )
         with pytest.raises(ExecutionError, match="odd input failed"):
-            await make_engine().run(Graph(nodes={"m": region}), ["m"])
+            await make_engine(events).run(Graph(nodes={"m": region}), ["m"])
+        failed_iteration_started = any(
+            event.kind == "region_iteration_started" and event.detail["iteration"] == 1
+            for event in events
+        )
+        failed_iteration_finished = any(
+            event.kind == "region_iteration_finished" and event.detail["iteration"] == 1
+            for event in events
+        )
+        assert failed_iteration_started
+        assert not failed_iteration_finished
 
     asyncio.run(scenario())
 

@@ -77,6 +77,8 @@ _LIFECYCLE_TYPES = frozenset(
         "node_failed",
         "node_skipped",
         "region_expanded",
+        "region_iteration_started",
+        "region_iteration_finished",
         "region_finished",
         "run_finished",
     }

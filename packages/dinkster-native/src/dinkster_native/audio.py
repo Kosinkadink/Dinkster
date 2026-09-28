@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from collections.abc import Mapping
 from typing import Any, cast
 
 from dinkster_assets import resolver_from_env
@@ -22,8 +23,18 @@ AUDIO_V1_NAME = "AUDIO"
 
 class TorchAudio(LazyAudio):
     def __missing__(self, key: str) -> object:
+        source = self.get("source")
+        if key == "waveform" and not self.get("edits") and isinstance(source, Mapping):
+            pcm = cast("Mapping[str, object]", source).get("pcm")
+            if hasattr(pcm, "detach"):
+                return pcm
+            if pcm is not None:
+                torch = cast(Any, importlib.import_module("torch"))
+                return torch.from_numpy(pcm)
         result = super().__missing__(key)
         if key == "waveform":
+            if hasattr(result, "detach"):
+                return result
             torch = cast(Any, importlib.import_module("torch"))
             return torch.from_numpy(result)
         return result

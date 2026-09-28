@@ -46,13 +46,9 @@ directive degrades to the existing unresolvable-embedding path
 
 ## Dinkster handling
 
-Deliberate divergence, not bug-for-bug compatibility:
-`dinkster_inference.prompt_tokens.tokenize_prompt` reports the empty
-name in `TokenizedPrompt.missing_embeddings` and drops the directive;
-the remaining prompt tokenizes identically to the reference without
-the directive. Pinned by
-`tests/test_inference_clip_tokenize.py::test_bare_directive_is_missing_not_a_crash`.
+Dinkster delegates SD1 prompt tokenization to `dinkster_inference`, whose current
+behavior matches the upstream behavior described above.
 
 ## Status
 
-found 2026-07; handled in Dinkster (reported-not-crash divergence)
+found 2026-07; not reported upstream

@@ -18,6 +18,8 @@ EventKind = Literal[
     "node_skipped",
     "value_diagnostics",
     "region_expanded",
+    "region_iteration_started",
+    "region_iteration_finished",
     "region_finished",
     "run_finished",
 ]

@@ -65,12 +65,11 @@ from dinkster_assets import (
 )
 from dinkster_assets.resolution import ResolutionStore
 from dinkster_caches import DEFAULT_DISK_CACHE_BYTES, BudgetedDiskCAS
-from dinkster_inference import (
+from dinkster_inference_wire import (
     OpenAICompatibility,
     OpenAIGenerationProvider,
-    load_model_output_profile,
 )
-from dinkster_inference.devices import nvidia_compute_dtypes
+from dinkster_inference_wire.devices import nvidia_compute_dtypes
 from dinkster_memory import (
     BudgetsError,
     GovernorReservationService,
@@ -114,6 +113,7 @@ from dinkster_server import (
     validate_comfy_args,
 )
 from dinkster_server.image_document import InvalidDocument, validate_document
+from dinkster_values import MEBIBYTE
 from dinkster_workers import (
     PackManifest,
     SandboxPolicy,
@@ -125,6 +125,7 @@ from dinkster_workers import (
 )
 from dinkster_workers.catalog import read_catalog
 from dinkster_workers.doctor import prepare_catalog
+from dinkster_workers.provision import workspace_packages_for
 
 from .activation import add_activation_routes
 from .benchmark import (
@@ -139,7 +140,6 @@ from .comfy_compose import (
     RETIRED_EXECUTION_PYTHON_FLAG_MESSAGE,
     comfy_compat_specs,
     comfy_model_roots,
-    execution_python,
 )
 from .compat_api import add_comfy_compat_routes
 from .compose import (
@@ -159,7 +159,6 @@ from .generation_api import GenerationModel, GenerationService, add_generation_r
 from .guess_api import add_guess_routes
 from .installer import Installer
 from .mounts_api import MountService, add_mount_routes
-from .native_policy import NativeDispatchPolicy, NativePolicyDiagnostic
 from .p2p_plugin import load_p2p_plugin
 from .reload_api import add_reload_routes, apply_reload
 from .remote_reconnect import RemoteReconnectSupervisor
@@ -171,20 +170,6 @@ from .watch import PackWatcher
 _PERMISSIVE_COMPUTE_DTYPES = frozenset({"float16", "bfloat16", "float32"})
 _SERVING_PYTHON_ENV = "DINKSTER_SERVING_PYTHON"
 _PACK_VENV_LOCK_TIMEOUT = 600.0
-_PACK_HOST_WORKSPACE_PACKAGES = (
-    "dinkster-api",
-    "dinkster-assets",
-    "dinkster-caches",
-    "dinkster-image-document",
-    "dinkster-inference",
-    "dinkster-inference-torch",
-    "dinkster-memory",
-    "dinkster-protocol",
-    "dinkster-schema",
-    "dinkster-values",
-    "dinkster-video",
-    "dinkster-workers",
-)
 
 
 def _validate_collaboration_snapshot(
@@ -251,12 +236,7 @@ def _pack_runtime_sources(manifest: PackManifest) -> tuple[tuple[Path, ...], str
                 f"installed pack {manifest.name!r} does not bundle its runtime module"
             )
         return (), str(manifest_root)
-    workspace = tuple(packages / name for name in _PACK_HOST_WORKSPACE_PACKAGES)
-    missing = tuple(path.name for path in workspace if not (path / "pyproject.toml").is_file())
-    if missing:
-        raise CompositionError(
-            f"source workspace is missing pack-host packages: {', '.join(missing)}"
-        )
+    workspace = workspace_packages_for(source_root)
     pythonpath = os.pathsep.join(str(path / "src") for path in (*workspace, source_root))
     return workspace, pythonpath
 
@@ -326,6 +306,59 @@ def _order_default_pack_specs(
             error,
         )
         return order_pack_entries_by_requirements(specs[:default_count])
+
+
+def _prepare_stale_catalogs(
+    specs: Sequence[PackSpec | Path | str],
+    *,
+    venv_root: Path,
+    accelerator: str,
+) -> None:
+    stale_by_spec: list[tuple[PackSpec, tuple[Path, ...]]] = []
+    for entry in specs:
+        if not isinstance(entry, PackSpec) or not entry.require_catalog:
+            continue
+        manifest_paths = tuple(
+            path
+            for path in (
+                resolve_manifest_path(entry.manifest),
+                *entry.group_manifests,
+            )
+            if read_catalog(load_manifest(path)) is None
+        )
+        if manifest_paths:
+            stale_by_spec.append((entry, manifest_paths))
+
+    total = sum(len(paths) for _entry, paths in stale_by_spec)
+    if total == 0:
+        return
+
+    started = time.perf_counter()
+    print(f"Preparing pack catalogs (first launch): 0/{total}", flush=True)
+    completed = 0
+    for entry, manifest_paths in stale_by_spec:
+        prepared = (
+            _prepare_default_pack(entry, venv_root=venv_root, accelerator=accelerator)
+            if not entry.in_process and _is_standard_vision_pack(entry)
+            else entry
+        )
+        for manifest_path in manifest_paths:
+            pack_started = time.perf_counter()
+            report = prepare_catalog(
+                manifest_path,
+                interpreter=prepared.python,
+                environment=prepared.env,
+            )
+            if not report.ok:
+                raise CompositionError(f"runtime catalog preparation failed for {report.pack_name}")
+            completed += 1
+            duration = time.perf_counter() - pack_started
+            print(
+                f"Prepared pack catalog: {report.pack_name} ({completed}/{total}, {duration:.1f}s)",
+                flush=True,
+            )
+    elapsed = time.perf_counter() - started
+    print(f"Prepared {total} pack catalogs in {elapsed:.1f}s", flush=True)
 
 
 def detect_native_compute_dtypes(executing_cuda_indices: Sequence[int] = ()) -> frozenset[str]:
@@ -581,15 +614,6 @@ async def _schedule_legacy_checkpoint_conversion(
                 if outcome is not None:
                     return cast("tuple[str, str | None]", outcome)
         return "transport-failure", None
-
-
-def _log_native_policy_diagnostic(diagnostic: NativePolicyDiagnostic) -> None:
-    core_logger("serve.native").info(
-        "native checkpoint %s for %s: %s",
-        diagnostic.kind,
-        diagnostic.digest,
-        "; ".join(diagnostic.reasons),
-    )
 
 
 def parse_memory_budget(entry: str) -> tuple[str, int]:
@@ -967,7 +991,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--single-job-multi-gpu-mode",
-        choices=("auto", "guidance", "sequence", "window"),
+        choices=("auto", "sequence"),
         default="auto",
         help="single-job rank recipe selection (default: auto)",
     )
@@ -1208,6 +1232,12 @@ def main(argv: list[str] | None = None) -> None:
         default=os.environ.get(_IDENTITY_JWKS_URL_ENV, ""),
         metavar="URL",
         help="identity-service JWKS endpoint (default: $DINKSTER_IDENTITY_JWKS_URL)",
+    )
+    parser.add_argument(
+        "--user-session-freshness-seconds",
+        type=parse_positive_float,
+        default=600,
+        help="how long a verified human JWT keeps delegations usable (default: 600 seconds)",
     )
     parser.add_argument(
         "--identity-issuer",
@@ -1474,7 +1504,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         dtype_policy_source = "cli"
 
-    reserve_vram = cast("int", persisted_settings.get("memory-headroom", 256 * 1024**2))
+    reserve_vram = cast("int", persisted_settings.get("memory-headroom", 256 * MEBIBYTE))
     reserve_source: SettingsSource = (
         "persisted" if "memory-headroom" in persisted_settings else "default"
     )
@@ -1501,11 +1531,6 @@ def main(argv: list[str] | None = None) -> None:
         SingleJobMultiGpuConfig(args.single_job_multi_gpu_devices, args.single_job_multi_gpu_mode)
         if args.single_job_multi_gpu_devices
         else None
-    )
-    # Same lane-selection precedence as worker launch: replica lanes win
-    # over single-job ranks, and both index into CUDA_VISIBLE_DEVICES.
-    executing_cuda_indices: tuple[int, ...] = tuple(args.multi_gpu_devices or ()) or (
-        single_job_multi_gpu.cuda_indices if single_job_multi_gpu is not None else ()
     )
 
     persisted_jobs = persisted_settings.get("jobs", {"maxRunningJobs": 1})
@@ -1807,32 +1832,10 @@ def main(argv: list[str] | None = None) -> None:
             telemetry_devices=reported.devices,
         )
         vault: AssetVault | None = None
-        native_policy: NativeDispatchPolicy | None = None
-        composer_ref: list[ServingComposer] = []
         if args.library_root:
             root = Path(args.library_root)
             vault = AssetVault(root / "vault")
             assert mount_service is not None
-            native_policy = NativeDispatchPolicy(
-                _native_asset_locator(vault, mount_service.table),
-                _log_native_policy_diagnostic,
-                fp8_matmul=lambda: runtime_settings.fp8_matmul,
-                dtype_policy=lambda: runtime_settings.dtype_policy,
-                compute_dtypes=lambda: detect_native_compute_dtypes(executing_cuda_indices),
-                schedule_conversion=lambda path, logical_name: (
-                    _schedule_legacy_checkpoint_conversion(composer_ref[0], path, logical_name)
-                ),
-                minimax_h3_runtime_versions=(
-                    lambda: detect_native_runtime_versions(
-                        execution_python(Path(args.comfy_root), args.execution_python or None)
-                        if args.comfy_root
-                        else args.execution_python
-                        or os.environ.get("DINKSTER_EXECUTION_PYTHON")
-                        or sys.executable
-                    )
-                ),
-                schemas=lambda: composer_ref[0].composition.schemas,
-            )
         sandbox_policy: SandboxPolicy | None = None
         sandbox_writable_mounts: list[str] = []
         if args.sandbox_packs:
@@ -1891,7 +1894,6 @@ def main(argv: list[str] | None = None) -> None:
             governor=governor,
             reservations=GovernorReservationService(governor),
             telemetry=reported,
-            native_policy=native_policy,
             runtime_worker_settings=lambda: (
                 runtime_settings.aimdo_policy,
                 runtime_settings.memory_headroom,
@@ -1919,40 +1921,13 @@ def main(argv: list[str] | None = None) -> None:
         specs[:resolved_default_pack_count] = list(
             _order_default_pack_specs(composer, specs, resolved_default_pack_count)
         )
-        composer_ref.append(composer)
         composer.validate_specs(specs)
         if args.prepare_stale_catalogs:
-            for entry in specs:
-                if not isinstance(entry, PackSpec) or not entry.require_catalog:
-                    continue
-                prepared = (
-                    _prepare_default_pack(
-                        entry,
-                        venv_root=default_pack_venv_root,
-                        accelerator=default_pack_accelerator,
-                    )
-                    if not entry.in_process and _is_standard_vision_pack(entry)
-                    else entry
-                )
-                for manifest_path in (
-                    resolve_manifest_path(prepared.manifest),
-                    *prepared.group_manifests,
-                ):
-                    manifest = load_manifest(manifest_path)
-                    if read_catalog(manifest) is None:
-                        report = prepare_catalog(
-                            manifest_path,
-                            interpreter=prepared.python,
-                            environment=prepared.env,
-                        )
-                        if not report.ok:
-                            raise CompositionError(
-                                f"runtime catalog preparation failed for {report.pack_name}"
-                            )
-                        print(
-                            f"Prepared runtime catalog: {report.pack_name} "
-                            f"({len(report.node_types)} nodes)"
-                        )
+            _prepare_stale_catalogs(
+                specs,
+                venv_root=default_pack_venv_root,
+                accelerator=default_pack_accelerator,
+            )
         composer.validate_catalogs(specs)
         composition = composer.composition
         make_engine = composition.make_engine
@@ -1998,14 +1973,6 @@ def main(argv: list[str] | None = None) -> None:
                 # surface. Same object for the process lifetime - the
                 # catalog swaps its CONTENTS, never its identity.
                 pack_assets=composition.asset_catalog,
-                model_output_profile=lambda path, handle, digest, size: (
-                    load_model_output_profile(
-                        path,
-                        asset_digest=digest,
-                        asset_size=size,
-                        handle=handle,
-                    ).document
-                ),
             )
             if p2p_plugin is not None:
                 manager = p2p_plugin.controller(
@@ -2106,6 +2073,7 @@ def main(argv: list[str] | None = None) -> None:
                 allow_origins=args.allow_origin,
                 authenticator=authenticator,
                 principal_permissions=principal_permissions,
+                user_session_freshness_seconds=args.user_session_freshness_seconds,
                 library=library,
                 history=history,
                 training_sessions=training_sessions,

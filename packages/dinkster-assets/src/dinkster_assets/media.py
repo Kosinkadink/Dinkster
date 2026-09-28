@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
+from dinkster_values import MEBIBYTE
 from dinkster_values.media_containers import bmff_boxes as _bmff_boxes
 from dinkster_values.media_containers import ebml_elements as _ebml_elements
 
@@ -39,7 +40,7 @@ _MEDIA_ROWS = (
     (KIND_MEDIA_MODEL3D, "model/ply", "ply"),
 )
 _STRUCTURE_ITEM_LIMIT = 100_000
-_GLB_JSON_LIMIT = 64 * 1024 * 1024
+_GLB_JSON_LIMIT = 64 * MEBIBYTE
 
 
 @dataclass(frozen=True)

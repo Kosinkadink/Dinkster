@@ -57,7 +57,6 @@ contains internal artifact member paths.
 
 ## Learn more
 
-See the [registry repository](https://github.com/Kosinkadink/dinkster-registry)
-for the PostgreSQL hosted and SQLite self-hosted service. Focused client
-coverage is in `tests/test_artifact.py`, `tests/test_install.py`, and
-`tests/test_installer.py`.
+The same service supports PostgreSQL-hosted and SQLite self-hosted deployments.
+Focused client coverage is in `tests/test_artifact.py`,
+`tests/test_install.py`, and `tests/test_installer.py`.

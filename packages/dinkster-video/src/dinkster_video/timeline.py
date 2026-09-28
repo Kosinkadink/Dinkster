@@ -10,7 +10,12 @@ from fractions import Fraction
 from typing import Any, Protocol, cast
 
 import numpy as np
-from dinkster_values import coerce_video, edit_video
+from dinkster_values import (
+    TIMELINE_ACTIVE_FRAME_LIMIT_BYTES,
+    TIMELINE_AUDIO_WINDOW_LIMIT_BYTES,
+    coerce_video,
+    edit_video,
+)
 from dinkster_values.video_document import (
     TimelineError,
     document,
@@ -401,7 +406,7 @@ def iter_timeline_frames(
         for index in range(math.ceil(total * rate)):
             time = Fraction(index) / rate
             active = [p for p in visual if p.start <= time < p.end]
-            if width * height * 4 * 4 * (4 * len(active) + 22) > 512 * 1024 * 1024:
+            if width * height * 4 * 4 * (4 * len(active) + 22) > TIMELINE_ACTIVE_FRAME_LIMIT_BYTES:
                 raise TimelineError(
                     "document_limit", "tracks", "active frame budget exceeds 512 MiB"
                 )
@@ -517,7 +522,7 @@ def iter_timeline_audio(
                     "audio_layout_mismatch", placement.path, "expected [C,T] window"
                 )
             allocated += (samples.shape[0] + 1) * count * 4
-            if allocated > 128 * 1024 * 1024:
+            if allocated > TIMELINE_AUDIO_WINDOW_LIMIT_BYTES:
                 raise TimelineError("document_limit", "$", "active audio windows exceed 128 MiB")
             padded = np.zeros((samples.shape[0], count), dtype=np.float32)
             padded[:, left - first : right - first] = samples

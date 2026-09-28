@@ -226,8 +226,17 @@ def comparability_problems(
         if not isinstance(accelerator, str):
             problems.append(f"{label} accelerator is missing")
             continue
+        family_id = report.get("family_id")
+        h3 = family_id == "dinkster.minimax_h3"
         try:
-            incomplete = validate_benchmark_report(report, accelerator=accelerator)
+            incomplete = validate_benchmark_report(
+                report,
+                accelerator=accelerator,
+                residency_route_roles=(
+                    ("diffusion", "conditioner", "video_vae", "audio_vae") if h3 else ()
+                ),
+                requires_accelerator_residency=h3,
+            )
         except ValueError as error:
             problems.append(f"{label} report validation failed: {error}")
         else:

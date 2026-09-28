@@ -13,7 +13,6 @@ kind of thing doctor flags.)
 from __future__ import annotations
 
 import contextlib
-import importlib
 import inspect
 import io
 import json
@@ -319,24 +318,6 @@ def probe(manifest_path: str) -> dict[str, Any]:
                     if (other := registry.equivalent_type(tid)) is not None
                 },
             }
-            inference_entry = manifest.extension.entries.inference
-            if inference_entry is not None:
-                import tempfile
-                from dataclasses import asdict
-
-                inference = importlib.import_module("dinkster_inference.extensions")
-                with tempfile.TemporaryDirectory() as directory:
-                    path = Path(directory) / "inference.json"
-                    key = "candidate:doctor"
-                    inference.write_sampler_catalog(
-                        path,
-                        key,
-                        (inference.SamplerExtensionEntry(manifest.name, inference_entry),),
-                    )
-                    generation = inference.materialize_inference_generation(key, catalog_path=path)
-                    report["catalog"]["inferenceContributions"] = [
-                        asdict(item) for item in generation.extensions[0][1]
-                    ]
     except Exception as exc:
         report.pop("catalog", None)
         report["schema_errors"].append(f"catalog: {_exception_detail(exc)}")

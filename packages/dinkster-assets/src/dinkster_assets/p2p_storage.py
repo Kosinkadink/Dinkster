@@ -19,8 +19,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, cast
 
+from dinkster_values import MEBIBYTE
+
 from .identity import CHUNK_SIZE, AssetError, new_hasher, require_digest
 from .integrity import AssetVerificationRecord, verification_record
+from .p2p_descriptor import (
+    P2PDescriptorResult,
+    P2PDescriptorV1,
+    derive_p2p_descriptor,
+    validate_p2p_descriptor,
+)
 
 if os.name == "nt":  # pragma: no cover - exercised by Windows CI
     from . import p2p_windows as _p2p_windows
@@ -32,7 +40,7 @@ P2P_PARTIAL_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
 _HEX = frozenset("0123456789abcdef")
 _RESUME_VERSION = 1
-_MAX_RESUME_BYTES = 16 * 1024 * 1024
+_MAX_RESUME_BYTES = 16 * MEBIBYTE
 _MAX_HEADER_BYTES = 100_000_000
 _MAX_GGUF_ITEMS = 1_000_000
 _MAX_GGUF_RANK = 4
@@ -111,6 +119,10 @@ class P2PLocalFileMapping:
     format_policy_version: int
     verification: AssetVerificationRecord | None
     _fingerprint: tuple[int, ...]
+
+    @property
+    def fingerprint(self) -> tuple[int, ...]:
+        return self._fingerprint
 
     def is_current(self) -> bool:
         if os.name == "nt":
@@ -919,31 +931,193 @@ def verify_p2p_local_file(
     path = Path(local_path)
     if not path.is_absolute():
         raise P2PStorageError("P2P local file mapping requires an absolute path")
+    cached = cached_p2p_local_file(vault_root, path)
+    if cached is not None and (
+        cached.digest == digest
+        and cached.size == size
+        and cached.format_policy_version == format_policy_version
+    ):
+        return cached
+    verified_p2p_seed_descriptor(vault_root, digest, size, path)
+    mapping = cached_p2p_local_file(vault_root, path)
+    if mapping is None or mapping.digest != digest or mapping.size != size:
+        raise P2PStorageError("P2P local file changed after verification")
+    return mapping
+
+
+def _verification_name(path: Path) -> str:
+    hasher = new_hasher()
+    hasher.update(os.fsencode(path))
+    return hasher.hexdigest() + ".json"
+
+
+def _read_local_verification(vault_root: Path, path: Path) -> dict[str, object]:
+    try:
+        with _vault_directories(vault_root, (".p2p", "verified-local"), create=False) as dirs:
+            with dirs[-1].open_file(_verification_name(path), writable=False) as handle:
+                data = handle.read(_MAX_RESUME_BYTES + 1)
+                if len(data) > _MAX_RESUME_BYTES:
+                    return {}
+                value: object = json.loads(data)
+        return cast(dict[str, object], value) if isinstance(value, dict) else {}
+    except (OSError, P2PStorageError, ValueError):
+        return {}
+
+
+def cached_p2p_local_file(vault_root: Path, path: Path) -> P2PLocalFileMapping | None:
+    """Reuse private local verification state, never provider-supplied metadata."""
+    row = _read_local_verification(vault_root, path)
+    if set(row) != {"version", "path", "digest", "size", "policy", "fingerprint", "descriptor"}:
+        return None
+    fingerprint = row["fingerprint"]
+    if (
+        type(row["version"]) is not int
+        or row["version"] != 1
+        or row["path"] != str(path)
+        or not path.is_absolute()
+        or not isinstance(row["digest"], str)
+        or type(row["size"]) is not int
+        or row["size"] <= 0
+        or type(row["policy"]) is not int
+        or row["policy"] != P2P_FORMAT_POLICY_VERSION
+        or not isinstance(fingerprint, list)
+        or len(cast(list[object], fingerprint)) not in (6, 7)
+        or any(type(item) is not int for item in cast(list[object], fingerprint))
+    ):
+        return None
+    try:
+        digest = require_digest(row["digest"])
+        with _open_regular(path, writable=False) as handle:
+            current = os.fstat(handle.fileno())
+            _require_path_binding(path, current)
+            identity = _local_file_fingerprint(handle, current)
+            if list(identity) != fingerprint or current.st_size != row["size"]:
+                return None
+        return P2PLocalFileMapping(
+            digest,
+            row["size"],
+            path,
+            P2P_FORMAT_POLICY_VERSION,
+            verification_record(digest, current),
+            identity,
+        )
+    except (AssetError, OSError):
+        return None
+
+
+def _save_local_verification(
+    vault_root: Path,
+    mapping: P2PLocalFileMapping,
+    descriptor: P2PDescriptorResult | None = None,
+) -> None:
+    mapping.require_current()
+    row = {
+        "version": 1,
+        "path": str(mapping.path),
+        "digest": mapping.digest,
+        "size": mapping.size,
+        "policy": mapping.format_policy_version,
+        "fingerprint": list(mapping.fingerprint),
+        "descriptor": None
+        if descriptor is None
+        else {
+            "descriptor": descriptor.descriptor.to_wire(),
+            "info": descriptor.info.hex(),
+            "pieceLayer": descriptor.piece_layer.hex(),
+        },
+    }
+    with _vault_directories(vault_root, (".p2p", "verified-local"), create=True) as dirs:
+        directory = dirs[-1]
+        name = _verification_name(mapping.path)
+        temporary = name + ".tmp-" + uuid.uuid4().hex
+        try:
+            with directory.open_file(temporary, writable=True, create_exclusive=True) as handle:
+                handle.write(json.dumps(row, separators=(",", ":")).encode())
+                handle.flush()
+                os.fsync(handle.fileno())
+            directory.replace(temporary, name)
+            directory.fsync()
+        finally:
+            directory.unlink_entry(temporary)
+
+
+def verified_p2p_seed_descriptor(
+    vault_root: Path,
+    digest: str | None,
+    size: int,
+    path: Path,
+) -> P2PDescriptorResult:
+    """Verify safe bytes and derive their identity in one scan, or reuse current state."""
+    if digest is not None:
+        digest = require_digest(digest)
+    size = _require_size(size)
+    if not path.is_absolute():
+        raise P2PStorageError("P2P local file mapping requires an absolute path")
+    mapping = cached_p2p_local_file(vault_root, path)
+    row = _read_local_verification(vault_root, path)
+    value = row.get("descriptor")
+    if (
+        mapping is not None
+        and mapping.size == size
+        and (digest is None or mapping.digest == digest)
+        and isinstance(value, dict)
+        and row.get("fingerprint") == list(mapping.fingerprint)
+    ):
+        material = cast(dict[str, object], value)
+        try:
+            if set(material) == {"descriptor", "info", "pieceLayer"}:
+                wire = material["descriptor"]
+                if (
+                    isinstance(wire, dict)
+                    and isinstance(material["info"], str)
+                    and isinstance(material["pieceLayer"], str)
+                ):
+                    result = P2PDescriptorResult(
+                        mapping.digest,
+                        size,
+                        P2PDescriptorV1.from_wire(cast(dict[str, object], wire)),
+                        bytes.fromhex(material["info"]),
+                        bytes.fromhex(material["pieceLayer"]),
+                    )
+                    validate_p2p_descriptor(
+                        result.descriptor,
+                        asset_digest=mapping.digest,
+                        size=size,
+                        info=result.info,
+                        piece_layer=result.piece_layer,
+                    )
+                    mapping.require_current()
+                    return result
+        except (ValueError, AssetError):
+            pass
     with _open_regular(path, writable=False) as handle:
         before = os.fstat(handle.fileno())
         if not stat.S_ISREG(before.st_mode) or before.st_size != size:
             raise P2PStorageError("P2P local file must be a regular file of the declared size")
         _require_path_binding(path, before)
         before_fingerprint = _local_file_fingerprint(handle, before)
-        _validate_safe_format(handle, format_policy_version)
-        actual = _hash_handle(handle)
-        if actual != digest:
+        _validate_safe_format(handle, P2P_FORMAT_POLICY_VERSION)
+        result = derive_p2p_descriptor(path, handle=handle)
+        if digest is not None and result.asset_digest != digest:
             raise P2PStorageError(
-                f"P2P local file did not verify: expected {digest}, bytes hash to {actual}"
+                f"P2P local file did not verify: expected {digest}, "
+                f"bytes hash to {result.asset_digest}"
             )
         after = os.fstat(handle.fileno())
         fingerprint = _local_file_fingerprint(handle, after)
-        if fingerprint != before_fingerprint:
+        if fingerprint != before_fingerprint or result.size != size:
             raise P2PStorageError("P2P local file changed during verification")
         _require_path_binding(path, after)
-    return P2PLocalFileMapping(
-        digest,
+    mapping = P2PLocalFileMapping(
+        result.asset_digest,
         size,
         path,
-        format_policy_version,
-        verification_record(digest, after),
+        P2P_FORMAT_POLICY_VERSION,
+        verification_record(result.asset_digest, after),
         fingerprint,
     )
+    _save_local_verification(vault_root, mapping, result)
+    return result
 
 
 def p2p_partial_growth(vault_root: Path, info_hash: str, digest: str, expected_size: int) -> int:
@@ -1119,11 +1293,29 @@ def _require_path_binding(path: Path, item: os.stat_result) -> None:
 
 
 def _open_regular(path: Path, *, writable: bool) -> BinaryIO:
-    flags = (os.O_RDWR if writable else os.O_RDONLY) | _binary_flag() | _nofollow_flag()
+    access_flags = (os.O_RDWR if writable else os.O_RDONLY) | _binary_flag()
+    root_handle: int | None = None
+    raw_handle: int | None = None
     try:
-        descriptor = os.open(path, flags)
+        if _p2p_windows is None:
+            descriptor = os.open(path, access_flags | _nofollow_flag())
+        else:  # pragma: no cover - exercised by Windows CI
+            root_handle = _p2p_windows.open_root(path.parent)
+            raw_handle = _p2p_windows.open_file(
+                root_handle,
+                path.name,
+                writable=writable,
+                exclusive=False,
+            )
+            descriptor = _p2p_windows.take_file_descriptor(raw_handle, access_flags)
+            raw_handle = None
     except OSError as error:
         raise P2PStorageError(f"could not open regular P2P file: {error}") from error
+    finally:
+        if raw_handle is not None:
+            _p2p_windows.close(raw_handle)
+        if root_handle is not None:
+            _p2p_windows.close(root_handle)
     handle = os.fdopen(descriptor, "r+b" if writable else "rb")
     if not stat.S_ISREG(os.fstat(descriptor).st_mode):
         handle.close()

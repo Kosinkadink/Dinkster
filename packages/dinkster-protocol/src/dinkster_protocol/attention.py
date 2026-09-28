@@ -55,8 +55,6 @@ def automatic_attention_route(
     available = {validate_attention_policy(policy) for policy in available_policies}
     if "sdpa" not in available:
         raise ValueError("automatic attention requires SDPA capability")
-    if "sage" in available:
-        return AttentionRoute(role, "sage", "sdpa")
     if role == "vae" and device_kind == "rocm":
         return AttentionRoute(role, "bounded")
     if role == "vae":

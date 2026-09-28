@@ -169,9 +169,8 @@ contracts and never import the engine; node packs see only the extension API.
 - **Node packs** - `dinkster-nodes-foundation` (logic, math, text, lists,
   utilities), `dinkster-nodes-media-io` (asset-backed media I/O),
   `dinkster-nodes-generation` (provider-independent loading, conditioning,
-  sampling, and codec schemas), model-family packs such as `dinkster-model-wan`,
-  `dinkster-compat-comfy` (the quarantined ComfyUI surface and an execution
-  provider for generation schemas), and catalog-driven `dinkster-nodes-remote`.
+  sampling, and codec schemas), `dinkster-compat-comfy` (the quarantined
+  ComfyUI surface), and catalog-driven `dinkster-nodes-remote`.
   `dinkster-nodes-std` is the metadata-only install suite for the foundation and
   media packs.
 
@@ -836,13 +835,10 @@ assembled checkpoint. Family-specific sigma spaces and conditioning adapters
 provide model semantics; shared sampling checks and numerical receipts govern
 cross-cutting features on every entry point.
 
-The core inference package owns backend-agnostic descriptors, option schemas,
-assembly plans, checkpoint inspection, and family detection. It does not own
-executing numerical mirrors. `dinkster-inference-torch` binds the shared
-sampler descriptors and model contracts to torch kernels; a sibling backend
-that does not use torch can bind the same declarations to its own kernels.
-Only the documented float64 `schedules.py` pair remains because those functions
-are part of schedule declaration rather than backend execution.
+The core inference package owns the wire and value contracts that cross
+Dinkster's graph, worker, and model-execution boundaries. It does not implement
+model loading or sampling. The pinned `dinkster_inference` package is the single
+owner of those numerical operations.
 
 ### 3.14 Model interposition: patch programs as values, not mutation
 
@@ -938,13 +934,11 @@ Reuse (adapt, with attribution):
   engine-mediated query set on ResourceHandle. Version-mismatched workers are
   workers that cannot negotiate `shm`/`cuda-ipc`; the fallback tier is a portable
   binary tensor transport, with JSON reserved for small non-tensor values.
-- **`comfy` library** (model management, samplers, model detection) via
-  `dinkster-compat-comfy` - the *transitional* inference backend and the test oracle
-  for the native inference program (docs/native-inference-plan.md). Dinkster grows a
-  typed native inference substrate that reuses Comfy's proven algorithms and
-  detection knowledge as reference material while rejecting its untyped,
-  global-state architecture; comfy demotes from foundation to optional backend as
-  native stages land.
+- **`dinkster_inference`** as the single model-loading and sampling engine. Dinkster
+  owns graph composition, execution, isolation, caching, and resource governance;
+  the pinned package owns the Comfy-derived inference runtime behind those
+  boundaries. The optional `dinkster-compat-comfy` pack translates additional
+  ComfyUI nodes without creating another sampling engine.
 - **comfy-aimdo** as an optional residency backend under the governor (3.10): its
   page-faulting VBAR mechanism is exactly the mechanism layer a governed shedder
   wants; its implicit recency-only policy is not adopted - the governor owns

@@ -31,6 +31,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from golden_platform import cpu_identity
 
 BASELINE = "a1079ba16f2674734b065eb036fbfdddaa321a4d"
 MODELS = {
@@ -134,6 +135,7 @@ def main() -> None:
 
     document = {
         "baseline": BASELINE,
+        "generationCpu": cpu_identity(),
         "models": MODELS,
         "scales": scales,
         "tilings": {name: list(pair) for name, pair in TILINGS.items()},

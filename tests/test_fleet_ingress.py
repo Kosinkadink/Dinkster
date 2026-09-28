@@ -25,6 +25,12 @@ from dinkster_supervisor import (
 from dinkster_supervisor import ingress as ingress_module
 from dinkster_supervisor.install_manager import _write_config
 from dinkster_supervisor.installs import InstallsError
+from dinkster_supervisor.limits import (
+    INGRESS_CLIENT_MAX_SIZE_BYTES,
+    INGRESS_EVENT_FRAME_LIMIT_BYTES,
+    INGRESS_EVENT_QUEUE_LIMIT_BYTES,
+    INGRESS_JOB_SUBMISSION_LIMIT_BYTES,
+)
 from multidict import CIMultiDict
 
 
@@ -619,7 +625,10 @@ def test_ws_verbatim_filter_serialized_bounded_merge_and_member_reconnect(tmp_pa
 
 
 def test_streams_large_bodies_and_strips_hop_headers(tmp_path: Path) -> None:
-    upload_chunks = [b"upload-one" * (128 * 1024), b"upload-two" * (128 * 1024)]
+    upload_chunks = [
+        b"a" * (INGRESS_CLIENT_MAX_SIZE_BYTES // 2 + 1),
+        b"b" * (INGRESS_CLIENT_MAX_SIZE_BYTES // 2 + 1),
+    ]
     download_chunks = [b"download-one" * (128 * 1024), b"download-two" * (128 * 1024)]
     first_upload_received = asyncio.Event()
     first_download_received = asyncio.Event()
@@ -702,7 +711,7 @@ def test_streams_large_bodies_and_strips_hop_headers(tmp_path: Path) -> None:
 
 
 def test_submit_request_and_accepted_response_body_caps(tmp_path: Path) -> None:
-    limit = ingress_module._SUBMIT_BODY_LIMIT
+    limit = INGRESS_JOB_SUBMISSION_LIMIT_BYTES
 
     def request_body(job_id: str, size: int) -> bytes:
         prefix = f'{{"clientId":"c","jobId":"{job_id}","padding":"'.encode()
@@ -815,8 +824,8 @@ def test_reconnect_jitter_never_exceeds_cap(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_ws_queue_blocks_on_multiple_large_frames_and_has_heartbeat() -> None:
     async def scenario() -> None:
-        large = b"x" * (2 * 1024 * 1024)
-        queue = ingress_module._FrameQueue(max_frames=64, max_bytes=4 * 1024 * 1024)
+        large = b"x" * (INGRESS_EVENT_QUEUE_LIMIT_BYTES // 2)
+        queue = ingress_module._FrameQueue(max_frames=64, max_bytes=INGRESS_EVENT_QUEUE_LIMIT_BYTES)
         await queue.put(True, large)
         await queue.put(True, large)
         blocked = asyncio.create_task(queue.put(True, large))
@@ -837,7 +846,7 @@ def test_oversized_upstream_ws_frame_loudly_closes_downstream(tmp_path: Path) ->
     async def events(request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
-        await ws.send_bytes(b"x" * (4 * 1024 * 1024 + 1))
+        await ws.send_bytes(b"x" * (INGRESS_EVENT_FRAME_LIMIT_BYTES + 1))
         await ws.close()
         return ws
 

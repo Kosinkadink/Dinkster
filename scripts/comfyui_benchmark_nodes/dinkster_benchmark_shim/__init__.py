@@ -54,6 +54,7 @@ import subprocess
 import sys
 import threading
 import time
+import wave
 from pathlib import Path
 
 import comfy.model_management
@@ -64,6 +65,7 @@ import torch
 from aiohttp import web
 from comfy_execution.progress import ProgressRegistry
 from comfy_execution.utils import get_executing_context
+from PIL import Image
 from server import PromptServer
 
 _LOCK = threading.Lock()
@@ -331,7 +333,14 @@ class DinksterBenchmarkSink:
     def INPUT_TYPES(cls):
         return {
             "required": {"images": ("IMAGE", {})},
-            "optional": {"audio": ("AUDIO", {})},
+            "optional": {
+                "audio": ("AUDIO", {}),
+                "conditioning": ("CONDITIONING", {}),
+                "latent": ("LATENT", {}),
+                "final_latent": ("LATENT", {}),
+                "sigmas": ("SIGMAS", {}),
+                "seed": ("INT", {"default": 0}),
+            },
         }
 
     RETURN_TYPES = ()
@@ -339,7 +348,16 @@ class DinksterBenchmarkSink:
     OUTPUT_NODE = True
     CATEGORY = "dinkster_benchmark"
 
-    def observe(self, images, audio=None):
+    def observe(
+        self,
+        images,
+        audio=None,
+        conditioning=None,
+        latent=None,
+        final_latent=None,
+        sigmas=None,
+        seed=0,
+    ):
         global _QUALITY_CAPTURED, _QUALITY_CAPTURE_ARMED, _QUALITY_CAPTURE_SEED
         observation = {
             "finite": bool(torch.isfinite(images).all().item()),
@@ -372,6 +390,39 @@ class DinksterBenchmarkSink:
                     spatial_stride=None,
                 )
                 capture["audio_sample_rate"] = audio["sample_rate"]
+                capture["raw_outputs"] = _capture_raw_outputs(
+                    images,
+                    audio["waveform"],
+                    audio["sample_rate"],
+                    output_dir,
+                )
+            if conditioning is not None:
+                capture["text_context"] = _capture_quality_tensor(
+                    conditioning[0][0],
+                    output_dir / "text_context.npy",
+                    spatial_stride=None,
+                )
+            if latent is not None:
+                noise = importlib.import_module("comfy.sample").prepare_noise(
+                    latent["samples"], seed
+                )
+                capture["initial_noise"] = _capture_nested_tensor(
+                    noise,
+                    output_dir,
+                    "initial_noise",
+                )
+            if final_latent is not None:
+                capture["final_latent"] = _capture_nested_tensor(
+                    final_latent["samples"],
+                    output_dir,
+                    "final_latent",
+                )
+            if sigmas is not None:
+                capture["sigmas"] = _capture_quality_tensor(
+                    sigmas,
+                    output_dir / "sigmas.npy",
+                    spatial_stride=None,
+                )
             observation["quality_capture"] = capture
             _QUALITY_CAPTURED = True
             _QUALITY_CAPTURE_ARMED = False
@@ -610,6 +661,59 @@ def _capture_quality_tensor(tensor, path: Path, *, spatial_stride: int | None):
         "source_shape": list(source_shape),
         "captured_shape": list(captured_shape),
         "spatial_stride": spatial_stride,
+    }
+
+
+def _capture_nested_tensor(value, output_dir: Path, stem: str):
+    tensors = value.unbind() if value.is_nested else (value,)
+    roles = ("video", "audio") if len(tensors) == 2 else tuple(str(i) for i in range(len(tensors)))
+    return {
+        role: _capture_quality_tensor(
+            tensor,
+            output_dir / f"{stem}_{role}.npy",
+            spatial_stride=None,
+        )
+        for role, tensor in zip(roles, tensors, strict=True)
+    }
+
+
+def _capture_raw_outputs(images, waveform, sample_rate: int, output_dir: Path):
+    frames = {}
+    for label, index in (
+        ("first", 0),
+        ("middle", int(images.shape[0]) // 2),
+        ("last", int(images.shape[0]) - 1),
+    ):
+        path = output_dir / f"frame_{label}.png"
+        pixels = (
+            images[index]
+            .detach()
+            .to(device="cpu", dtype=torch.float32)
+            .clamp(0.0, 1.0)
+            .mul(255.0)
+            .round()
+            .to(dtype=torch.uint8)
+            .numpy()
+        )
+        Image.fromarray(pixels, mode="RGB").save(path)
+        frames[label] = {**_quality_file(path), "frame_index": index}
+
+    audio_path = output_dir / "audio.wav"
+    audio = waveform[0].detach().to(device="cpu", dtype=torch.float32).clamp(-1.0, 1.0)
+    pcm = (audio.mul(32767.0).round().to(dtype=torch.int16).numpy().T).astype("<i2", copy=False)
+    with wave.open(str(audio_path), "wb") as output:
+        output.setnchannels(int(pcm.shape[1]))
+        output.setsampwidth(2)
+        output.setframerate(sample_rate)
+        output.writeframes(pcm.tobytes())
+    return {
+        "frames": frames,
+        "audio": {
+            **_quality_file(audio_path),
+            "channels": int(pcm.shape[1]),
+            "sample_rate": sample_rate,
+            "sample_width_bytes": 2,
+        },
     }
 
 

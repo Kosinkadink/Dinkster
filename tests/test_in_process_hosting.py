@@ -5,9 +5,6 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-import sys
-from collections.abc import Generator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,7 +21,6 @@ from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, ManifestError
 from dinkster_workers.doctor import DoctorReport, Finding
 
-import dinkster.compose as compose_module
 import dinkster.installer as installer_module
 from dinkster.compose import (
     CompositionError,
@@ -71,38 +67,6 @@ def test_in_process_full_release_rejects_malformed_consumer_result() -> None:
 
 
 PINS = {"torch": "2.13.0", "dinkster-aimdo": "0.4.13"}
-
-
-@pytest.fixture(autouse=True)
-def component_publisher_events(
-    monkeypatch: pytest.MonkeyPatch,
-) -> dict[str, list[object]]:
-    events: list[object] = []
-    publishers: list[object] = []
-
-    class Publisher:
-        def __init__(self) -> None:
-            self.close_calls = 0
-            publishers.append(self)
-
-        def close(self) -> None:
-            self.close_calls += 1
-
-    @contextmanager
-    def use_component_publisher(publisher: object) -> Generator[None, None, None]:
-        events.append(("enter", publisher))
-        try:
-            yield
-        finally:
-            events.append(("exit", publisher))
-
-    monkeypatch.setattr(compose_module, "NativeComponentPublisher", Publisher)
-    monkeypatch.setitem(
-        cast("dict[str, Any]", sys.modules),
-        "dinkster_inference_torch",
-        SimpleNamespace(use_component_publisher=use_component_publisher),
-    )
-    return {"events": events, "publishers": publishers}
 
 
 def _lockfile() -> Lockfile:
@@ -294,61 +258,6 @@ def test_in_process_placement_is_byte_identical_for_schema_provenance_and_invoca
         finally:
             await composer.close()
             await isolated.close()
-
-    asyncio.run(scenario())
-
-
-def test_runtime_pinned_pack_owns_component_publisher_until_pack_removal(
-    tmp_path: Path,
-    component_publisher_events: dict[str, list[object]],
-) -> None:
-    async def scenario() -> None:
-        manifest = _placement_manifest(tmp_path / "publisher-pack")
-        module = manifest.parent / "h31_placement_nodes.py"
-        publisher_module = manifest.parent / "component_publisher_nodes.py"
-        module.rename(publisher_module)
-        manifest.write_text(
-            manifest.read_text().replace("h31_placement_nodes", "component_publisher_nodes")
-        )
-        spec = PackSpec(manifest, in_process=True, runtime_pins=PINS)
-        composer = _composer()
-        await composer.add_pack(spec)
-        record = composer._records["h31-placement"]
-        publisher = record.component_publisher
-        assert publisher is not None
-        assert record.owns_component_publisher
-        assert composer.composition._component_publishers == [publisher]
-        assert component_publisher_events["publishers"] == [publisher]
-
-        component_publisher_events["events"].clear()
-        graph = Graph(nodes={"n": GraphNode("h31.echo", {"value": "same"})})
-        result = await composer.composition.make_engine(lambda _event: None).run(graph, ["n"])
-        assert result.outputs["n"]["value"].resolve() == "same"
-        assert component_publisher_events["events"] == [
-            ("enter", publisher),
-            ("exit", publisher),
-        ]
-
-        discarded = composer.spawn_empty()
-        await discarded.add_pack(spec)
-        assert discarded._records["h31-placement"].component_publisher is publisher
-        assert not discarded._records["h31-placement"].owns_component_publisher
-        await discarded.close()
-        assert cast("Any", publisher).close_calls == 0
-
-        staged = composer.spawn_empty()
-        await staged.add_pack(spec)
-        old = composer.adopt(staged)
-        await old.close()
-        assert cast("Any", publisher).close_calls == 0
-        assert composer._records["h31-placement"].owns_component_publisher
-        assert composer.composition._component_publishers == [publisher]
-
-        await composer.remove_pack("h31-placement")
-        assert cast("Any", publisher).close_calls == 1
-        assert composer.composition._component_publishers == []
-        await composer.close()
-        assert cast("Any", publisher).close_calls == 1
 
     asyncio.run(scenario())
 

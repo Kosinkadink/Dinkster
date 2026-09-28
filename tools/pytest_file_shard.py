@@ -5,29 +5,35 @@ from pathlib import Path
 
 import pytest
 
-_SHARD_COUNT = 2
+_SHARD_COUNTS = frozenset({2, 4, 8})
 # The namespace balances whole files by the root suite's measured phase times.
 _HASH_PREFIX = b"dinkster-windows-pytest-v1:22340:"
 ALL_FILE_SHARDS_MARKER = "all_file_shards"
 
 
-def file_shard(path: str) -> int:
+def file_shard(path: str, count: int = 2) -> int:
+    if count not in _SHARD_COUNTS:
+        raise ValueError("file shard count must be 2, 4, or 8")
     digest = hashlib.sha256(_HASH_PREFIX + path.encode("utf-8")).digest()
-    return digest[0] % _SHARD_COUNT + 1
+    return digest[0] % count + 1
 
 
-def parse_file_shard(value: str) -> int:
+def parse_file_shard(value: str) -> tuple[int, int]:
     try:
         index, count = (int(part) for part in value.split("/", 1))
     except ValueError as exc:
-        raise ValueError("file shard must be INDEX/2") from exc
-    if count != _SHARD_COUNT or not 1 <= index <= count:
-        raise ValueError("file shard must be 1/2 or 2/2")
-    return index
+        raise ValueError("file shard must be INDEX/COUNT, with COUNT 2, 4, or 8") from exc
+    if count not in _SHARD_COUNTS or not 1 <= index <= count:
+        raise ValueError("file shard must be INDEX/COUNT, with COUNT 2, 4, or 8")
+    return index, count
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    parser.addoption("--file-shard", metavar="INDEX/2", help="run one whole-file test shard")
+    parser.addoption(
+        "--file-shard",
+        metavar="INDEX/COUNT",
+        help="run one of 2, 4, or 8 whole-file test shards",
+    )
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -43,7 +49,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         return
 
     try:
-        index = parse_file_shard(value)
+        index, count = parse_file_shard(value)
     except ValueError as exc:
         raise pytest.UsageError(str(exc)) from exc
 
@@ -53,7 +59,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         path = Path(item.path).relative_to(root).as_posix()
         runs_on_all_shards = item.get_closest_marker(ALL_FILE_SHARDS_MARKER) is not None
-        (selected if runs_on_all_shards or file_shard(path) == index else deselected).append(item)
+        (selected if runs_on_all_shards or file_shard(path, count) == index else deselected).append(
+            item
+        )
 
     config.hook.pytest_deselected(items=deselected)
     items[:] = selected

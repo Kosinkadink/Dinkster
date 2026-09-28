@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import FrozenInstanceError, replace
-from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from dinkster_inference import (
-    ReconstructionRecipe,
-    RuntimeKnobs,
-    WeightSourceBinding,
-    WeightSourceRef,
-    build_runtime_identity_from_facts,
-)
 from dinkster_protocol import (
     ATTENTION_ROLES,
     AttentionCapabilityEvidence,
@@ -34,7 +27,7 @@ from dinkster_protocol import (
     resolve_attention_runtime_status,
     resolve_role_policy,
 )
-from dinkster_workers.host import AttentionRouteDiscoveryError, discover_attention_route_token
+from dinkster_workers import ExecutionContext
 
 
 def route_token(*, policy: str = "auto", torch_version: str = "2.13.0") -> AttentionRouteToken:
@@ -105,16 +98,8 @@ def capability_evidence(
 
 
 def identity(token: AttentionRouteToken | None = None) -> str:
-    return build_runtime_identity_from_facts(
-        "dinkster.sd15",
-        ("family=dinkster.sd15", "component=diffusion"),
-        diffusion_dtype="float16",
-        text_dtype="float32",
-        vae_dtype="float32",
-        fp8_matmul=False,
-        attention_policy="auto" if token is None else token.requested_policy,
-        attention_route_token=token,
-    )
+    payload = b"legacy-auto" if token is None else canonical_attention_route_token_bytes(token)
+    return hashlib.sha256(payload).hexdigest()
 
 
 def test_route_token_is_frozen_canonical_and_strictly_round_trips() -> None:
@@ -165,6 +150,63 @@ def test_capability_evidence_is_frozen_canonical_and_strictly_round_trips() -> N
             evidence,
             provider_versions=(("torch", "2.14.0"),),
             available_policies=("sdpa",),
+        )
+
+
+def test_execution_context_rejects_cross_worker_route_token_replay() -> None:
+    sm80 = replace(capability_evidence(device_kind="cuda"), device_sm=80)
+    sm90 = replace(sm80, device_sm=90)
+    sm80_token = derive_attention_route_token(sm80, AttentionPolicyConfig())
+    sm90_token = derive_attention_route_token(sm90, AttentionPolicyConfig())
+
+    ExecutionContext(
+        "native",
+        None,
+        attention_route_token=sm80_token,
+        attention_capabilities=sm80,
+    )
+    assert canonical_attention_route_token_bytes(
+        sm80_token
+    ) == canonical_attention_route_token_bytes(
+        derive_attention_route_token(sm80, AttentionPolicyConfig())
+    )
+    with pytest.raises(ValueError, match="does not match worker capabilities"):
+        ExecutionContext(
+            "native",
+            None,
+            attention_route_token=sm80_token,
+            attention_capabilities=sm90,
+        )
+    with pytest.raises(ValueError, match="does not match worker capabilities"):
+        ExecutionContext(
+            "native",
+            None,
+            attention_route_token=sm90_token,
+            attention_capabilities=sm80,
+        )
+
+
+def test_execution_context_capabilities_require_a_route_token() -> None:
+    evidence = capability_evidence()
+
+    with pytest.raises(ValueError, match="require an attention route token"):
+        ExecutionContext("native", None, attention_capabilities=evidence)
+
+
+def test_execution_context_rejects_tampered_provider_evidence() -> None:
+    evidence = capability_evidence()
+    token = derive_attention_route_token(evidence, AttentionPolicyConfig())
+    tampered = replace(
+        token,
+        provider_versions=(("extension", "forged"), *token.provider_versions),
+    )
+
+    with pytest.raises(ValueError, match="does not match worker capabilities"):
+        ExecutionContext(
+            "native",
+            None,
+            attention_route_token=tampered,
+            attention_capabilities=evidence,
         )
 
 
@@ -381,8 +423,14 @@ def test_sage_evidence_routes_and_provider_filtering() -> None:
     with pytest.raises(ValueError, match="inconsistent with its effective policy"):
         replace(token, routes=tuple(AttentionRoute(route.role, "sage") for route in token.routes))
     auto = derive_attention_route_token(evidence, AttentionPolicyConfig())
-    assert all((route.primary, route.fallback) == ("sage", "sdpa") for route in auto.routes)
-    assert dict(auto.provider_versions) == {"sageattention": "2.2.0", "torch": "2.13.0"}
+    auto_routes = {route.role: route for route in auto.routes}
+    assert auto_routes["vae"] == AttentionRoute("vae", "sdpa", "bounded")
+    assert all(
+        (route.primary, route.fallback) == ("sdpa", None)
+        for role, route in auto_routes.items()
+        if role != "vae"
+    )
+    assert auto.provider_versions == (("torch", "2.13.0"),)
     # Sage evidence appearing on a worker must not change the token bytes of
     # any non-sage request, kitchen included.
     assert derive_attention_route_token(
@@ -405,10 +453,11 @@ def test_sage_evidence_routes_and_provider_filtering() -> None:
     assert overridden.version == 4
     routes = {route.role: route for route in overridden.routes}
     assert (routes["flux"].primary, routes["flux"].fallback) == ("sage", "sdpa")
+    assert routes["vae"] == AttentionRoute("vae", "sdpa", "bounded")
     assert all(
-        (route.primary, route.fallback) == ("sage", "sdpa")
+        (route.primary, route.fallback) == ("sdpa", None)
         for role, route in routes.items()
-        if role != "flux"
+        if role not in ("flux", "vae")
     )
     assert dict(overridden.provider_versions) == {"sageattention": "2.2.0", "torch": "2.13.0"}
 
@@ -471,13 +520,14 @@ def test_v4_auto_route_round_trip_and_forged_route_refusal() -> None:
     rocm = derive_attention_route_token(
         capability_evidence(device_kind="rocm"), AttentionPolicyConfig()
     )
-    assert len({identity(plain), identity(token), identity(rocm)}) == 3
+    assert token == plain
+    assert len({identity(plain), identity(rocm)}) == 2
     wire = attention_route_token_to_wire(token)
     assert wire["version"] == 4
     assert attention_route_token_from_wire(wire) == token
     forged = dict(wire)
     forged["routes"] = [
-        dict(route, primary="sdpa", fallback=None) if route["role"] == "flux" else route
+        dict(route, primary="sage", fallback="sdpa") if route["role"] == "flux" else route
         for route in cast("list[dict[str, object]]", wire["routes"])
     ]
     with pytest.raises(ValueError, match="inconsistent with its effective policy"):
@@ -725,102 +775,3 @@ def test_authenticated_identity_has_unambiguous_provider_encoding() -> None:
     provider_colon_right = identity(replace(token, provider_versions=(("a", "b:c"),)))
 
     assert provider_colon_left != provider_colon_right
-
-
-def test_reconstruction_recipe_preserves_and_authenticates_route_facts() -> None:
-    token = route_token()
-    recipe = ReconstructionRecipe(
-        sources=(
-            WeightSourceBinding(
-                "checkpoint",
-                WeightSourceRef(
-                    digest="blake3:" + "0" * 64,
-                    name="weights.safetensors",
-                    size=1,
-                ),
-            ),
-        ),
-        family_id="dinkster.sd15",
-        component_identity=("family=dinkster.sd15", "component=diffusion"),
-        knobs=RuntimeKnobs(
-            diffusion_dtype="float16",
-            text_dtype="float32",
-            vae_dtype="float32",
-            fp8_matmul=False,
-            attention_route_token=token,
-        ),
-    )
-    assert recipe.knobs.attention_route_token == token
-    assert recipe.runtime_identity == identity(token)
-    with pytest.raises(ValueError, match="does not match"):
-        replace(recipe.knobs, attention_policy="sdpa")
-
-
-def test_worker_discovery_accepts_absent_top_level_only_and_rejects_nested_failure() -> None:
-    def missing_top_level(_name: str) -> object:
-        raise ModuleNotFoundError(name="dinkster_inference_torch")
-
-    def missing_nested(_name: str) -> object:
-        raise ModuleNotFoundError(name="torch")
-
-    assert discover_attention_route_token(missing_top_level) is None
-    with pytest.raises(AttentionRouteDiscoveryError, match="nested import"):
-        discover_attention_route_token(missing_nested)
-
-
-def test_worker_discovery_rejects_missing_probe_and_malformed_evidence() -> None:
-    with pytest.raises(AttentionRouteDiscoveryError, match="no capability discovery export"):
-        discover_attention_route_token(lambda _name: SimpleNamespace())
-    with pytest.raises(AttentionRouteDiscoveryError, match="malformed evidence"):
-        discover_attention_route_token(
-            lambda _name: SimpleNamespace(
-                discover_attention_capabilities=lambda: {"forged": True},
-                discover_attention_route_token=lambda _policy: route_token(),
-            )
-        )
-    with pytest.raises(AttentionRouteDiscoveryError, match="malformed token"):
-        discover_attention_route_token(
-            lambda _name: SimpleNamespace(
-                discover_attention_capabilities=lambda: capability_evidence(),
-                discover_attention_route_token=lambda _policy: {"forged": True},
-            )
-        )
-    token = derive_attention_route_token(capability_evidence(), AttentionPolicyConfig())
-    assert (
-        discover_attention_route_token(
-            lambda _name: SimpleNamespace(
-                discover_attention_capabilities=lambda: capability_evidence(),
-                discover_attention_route_token=lambda _policy: token,
-            )
-        )
-        == token
-    )
-    with pytest.raises(AttentionRouteDiscoveryError, match="does not match"):
-        discover_attention_route_token(
-            lambda _name: SimpleNamespace(
-                discover_attention_capabilities=lambda: capability_evidence(),
-                discover_attention_route_token=lambda _policy: route_token(torch_version="forged"),
-            )
-        )
-
-
-def test_worker_discovery_ignores_environment_policy(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    seen: list[object] = []
-
-    def probe(policy: object) -> AttentionRouteToken:
-        seen.append(policy)
-        assert policy == "auto"
-        return derive_attention_route_token(capability_evidence(), AttentionPolicyConfig())
-
-    module = SimpleNamespace(
-        configure_amd_miopen=lambda: seen.append("configure"),
-        discover_attention_capabilities=lambda: capability_evidence(),
-        discover_attention_route_token=probe,
-    )
-    monkeypatch.setenv("DINKSTER_ATTENTION_POLICY", "fast")
-    assert discover_attention_route_token(lambda _name: module) == derive_attention_route_token(
-        capability_evidence(), AttentionPolicyConfig()
-    )
-    assert seen == ["configure", "auto"]

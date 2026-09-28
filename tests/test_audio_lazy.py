@@ -971,7 +971,11 @@ def test_lazy_audio_chain_matches_across_worker_shared_memory(source, concat) ->
             / "packages/dinkster-nodes-media-io/dinkster-pack.toml"
         )
         worker = IsolatedWorker(
-            manifest, registry, shm_threshold=64, on_diagnostic=diagnostics.append
+            manifest,
+            registry,
+            shm_threshold=64,
+            on_diagnostic=diagnostics.append,
+            extra_env={"DINKSTER_ASSET_VAULT": str(cast(AssetVault, asset.resolver).root)},
         )
         await worker.start()
         try:

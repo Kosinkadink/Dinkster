@@ -12,11 +12,13 @@ import sys
 from collections.abc import Mapping
 from decimal import Decimal
 from fractions import Fraction
-from typing import cast
+from typing import Any, cast
 
+import numpy as np
 import pytest
 from dinkster_caches import MemoryLRUCache
 from dinkster_compat_comfy import (
+    NATIVE_NODES,
     CompatError,
     CompatTranslation,
     comfy_type_id,
@@ -27,6 +29,7 @@ from dinkster_compat_comfy import (
 )
 from dinkster_engine import Engine, EngineEvent, ExecutionError
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, validate
+from dinkster_inference_wire import MultiStreamLatent
 from dinkster_protocol import ExportSnapshot, LazyStatusInvocation
 from dinkster_schema import (
     BooleanWidget,
@@ -163,6 +166,131 @@ class V1Changed:
     def roll(self, seed):  # noqa: ANN001, ANN201
         type(self).rolls += 1
         return (seed + 1,)
+
+
+class _InferenceModeProbe:
+    def __init__(self) -> None:
+        self.depth = 0
+        self.inference_mode = self._inference_mode
+
+    def _inference_mode(self) -> _InferenceModeProbe:
+        return self
+
+    def __enter__(self) -> None:
+        self.depth += 1
+
+    def __exit__(self, *args: object) -> None:
+        self.depth -= 1
+
+    def is_inference_mode_enabled(self) -> bool:
+        return self.depth > 0
+
+
+def test_sampler_custom_advanced_accepts_declared_multi_stream_latent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NestedTensorBase:
+        def __init__(self, streams: tuple[object, ...]) -> None:
+            self.streams = streams
+
+        def unbind(self) -> tuple[object, ...]:
+            return self.streams
+
+    dinkster_nested = type(
+        "NestedTensor",
+        (NestedTensorBase,),
+        {"__module__": "dinkster_inference.nested_tensor"},
+    )
+    comfy_nested = type(
+        "NestedTensor",
+        (NestedTensorBase,),
+        {"__module__": "comfy.nested_tensor"},
+    )
+
+    class SamplerCustomAdvanced:
+        RETURN_TYPES = ("LATENT", "LATENT")
+        RETURN_NAMES = ("output", "denoised_output")
+        FUNCTION = "sample"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"latent_image": ("LATENT",)}}
+
+        def sample(self, latent_image):  # noqa: ANN001, ANN201
+            torch = cast("Any", importlib.import_module("torch"))
+            assert torch.is_inference_mode_enabled()
+            assert type(latent_image["samples"]) is dinkster_nested
+            assert latent_image["dinkster.multi_stream_roles@1"] == {
+                "version": 1,
+                "roles": ("video", "audio"),
+            }
+            denoised = dict(latent_image)
+            denoised["samples"] = comfy_nested(tuple(latent_image["samples"].unbind()))
+            return (latent_image, denoised)
+
+    original_import = importlib.import_module
+    torch = _InferenceModeProbe()
+    nested_modules = {
+        "torch": torch,
+        "dinkster_inference.nested_tensor": type(
+            "DinksterNestedModule", (), {"NestedTensor": dinkster_nested}
+        ),
+        "comfy.nested_tensor": type("ComfyNestedModule", (), {"NestedTensor": comfy_nested}),
+    }
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: nested_modules.get(name) or original_import(name),
+    )
+    video = np.zeros((1, 2, 3), dtype=np.float32)
+    audio = np.zeros((1, 4), dtype=np.float32)
+    latent = {"samples": MultiStreamLatent.from_pairs((("video", video), ("audio", audio)))}
+
+    translation = CompatTranslation()
+    node = translate_node("SamplerCustomAdvanced", SamplerCustomAdvanced, translation)
+    result = cast("Mapping[str, object]", node.execute(latent_image=latent))
+    registry = TypeRegistry()
+    translation.register_types(registry)
+    latent_spec = registry.spec("comfy.LATENT")
+    assert latent_spec.validate_encoded is not None
+    for output_id in ("output", "denoised_output"):
+        output = cast("Mapping[str, MultiStreamLatent[object]]", result[output_id])["samples"]
+        assert output.roles == ("video", "audio")
+        assert output.by_role("video") is video
+        assert output.by_role("audio") is audio
+        encoded = latent_spec.encode(result[output_id])
+        latent_spec.validate_encoded(encoded, {})
+
+
+def test_basic_guider_attaches_the_worker_attention_route_to_a_model_clone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = object()
+    clone = object()
+    received: list[object] = []
+
+    class BasicGuider:
+        RETURN_TYPES = ("GUIDER",)
+        FUNCTION = "get_guider"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"model": ("MODEL",), "conditioning": ("CONDITIONING",)}}
+
+        def get_guider(self, model: object, conditioning: object) -> tuple[object]:
+            del conditioning
+            received.append(model)
+            return (object(),)
+
+    monkeypatch.setattr(
+        "dinkster_compat_comfy.translate.model_for_attention_route",
+        lambda actual: clone if actual is model else actual,
+    )
+    node = translate_node("BasicGuider", BasicGuider, CompatTranslation())
+
+    node.execute(model=model, conditioning=object())
+
+    assert received == [clone]
 
 
 # --- translation: schema shape ------------------------------------------
@@ -907,6 +1035,27 @@ def test_return_names_and_collision_ids() -> None:
     assert [out.id for out in named.schema().outputs] == ["model", "clip", "vae"]
     collided = translate_node("Dup", V1Collide, translation)
     assert [out.id for out in collided.schema().outputs] == ["image", "image_2"]
+
+
+@pytest.mark.parametrize("type_name", ["MOTION_MODEL_ADE", "M_MODELS"])
+def test_animatediff_model_types_stay_resident(type_name: str) -> None:
+    class Loader:
+        RETURN_TYPES = (type_name,)
+        FUNCTION = "load"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {}}
+
+        def load(self):  # noqa: ANN201
+            return (object(),)
+
+    translation = CompatTranslation()
+    translate_node("Loader", Loader, translation)
+    registry = TypeRegistry()
+    translation.register_types(registry)
+
+    assert registry.spec(f"comfy.{type_name}").declared_codec is True
 
 
 def test_output_node_and_is_changed_are_never_cached() -> None:
@@ -1665,11 +1814,29 @@ def test_unique_id_nodes_are_not_shared_across_engine_cache_keys() -> None:
 
 
 def test_opaque_values_flow_between_compat_nodes() -> None:
-    """IMAGE from one v1 node feeds another: envelopes carry what the
-    engine cannot introspect (a dict here; a tensor on the real thing)."""
+    """Unknown value types use the default boundary without media conversion."""
+
+    class OpaqueBlend(V1Blend):
+        RETURN_TYPES = ("OPAQUE",)
+        RETURN_NAMES = ("image",)
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: N802
+            inputs = super().INPUT_TYPES()
+            inputs["required"]["image_a"] = ("OPAQUE",)
+            inputs["required"]["image_b"] = ("OPAQUE",)
+            return inputs
+
+    class OpaqueDup(V1Collide):
+        RETURN_TYPES = ("OPAQUE", "OPAQUE")
+        RETURN_NAMES = ("image", "other_image")
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: N802
+            return {"required": {"x": ("OPAQUE",)}}
 
     async def scenario() -> None:
-        translation = translate_mappings({"Blend": V1Blend, "Dup": V1Collide})
+        translation = translate_mappings({"Blend": OpaqueBlend, "Dup": OpaqueDup})
         engine = compat_engine(translation)
         graph = Graph(
             nodes={
@@ -1896,6 +2063,76 @@ def test_v1_fanout_scalar_mapping_and_list_aggregation_execute_end_to_end() -> N
         assert isinstance(translated.graph.nodes["scale"], RegionNode)
         result = await compat_engine(translation).run(translated.graph, translated.targets)
         assert result.outputs["collect"]["values"].resolve() == [0, 4, 8]
+
+    asyncio.run(scenario())
+
+
+def test_v1_hook_fanout_through_conditioning_preserves_shared_identity() -> None:
+    class CreateHooks:
+        RETURN_TYPES = ("HOOKS",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {}}
+
+        def run(self):  # noqa: ANN201
+            return (object(),)
+
+    class AttachHooks:
+        RETURN_TYPES = ("CONDITIONING",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"hooks": ("HOOKS",)}}
+
+        def run(self, hooks):  # noqa: ANN001, ANN201
+            return ({"hooks": hooks},)
+
+    class SameHooks:
+        RETURN_TYPES = ("BOOLEAN",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {
+                "required": {
+                    "first": ("CONDITIONING",),
+                    "second": ("CONDITIONING",),
+                }
+            }
+
+        def run(self, first, second):  # noqa: ANN001, ANN201
+            return (first["hooks"] is second["hooks"],)
+
+    async def scenario() -> None:
+        translation = translate_mappings(
+            {
+                "CreateHooks": CreateHooks,
+                "AttachHooks": AttachHooks,
+                "SameHooks": SameHooks,
+            }
+        )
+        engine = compat_engine(translation)
+        graph = Graph(
+            nodes={
+                "create": GraphNode("comfy.CreateHooks", {}),
+                "left": GraphNode("comfy.AttachHooks", {"hooks": Link("create", "hooks")}),
+                "right": GraphNode("comfy.AttachHooks", {"hooks": Link("create", "hooks")}),
+                "same": GraphNode(
+                    "comfy.SameHooks",
+                    {
+                        "first": Link("left", "conditioning"),
+                        "second": Link("right", "conditioning"),
+                    },
+                ),
+            }
+        )
+
+        result = await engine.run(graph, ["same"])
+
+        assert result.outputs["same"]["boolean"].resolve() is True
 
     asyncio.run(scenario())
 
@@ -2285,6 +2522,103 @@ def test_v1_mapping_result_with_none_expand_refuses_by_key_presence() -> None:
     node = translate_node("ExpandNone", V1ExpandNone, CompatTranslation())
     with pytest.raises(CompatError, match="v1 result requested graph expansion"):
         node.execute(n=1)
+
+
+def test_translated_schema_declares_may_expand_graph_and_still_refuses() -> None:
+    """A v1 function that statically returns an "expand" dict is flagged, the
+    wire round-trips the flag as capability metadata outside the schema
+    signature, and the flagged node still refuses an expansion payload loudly
+    at runtime."""
+
+    class V1MaybeExpand:
+        RETURN_TYPES = ("INT",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"n": ("INT", {"default": 1})}}
+
+        def run(self, n):  # noqa: ANN001, ANN201
+            return {"result": (n,), "expand": {"nodes": {}}}
+
+    node = translate_node("MaybeExpand", V1MaybeExpand, CompatTranslation())
+    schema = node.schema()
+    assert schema.may_expand_graph is True
+    wire = schema_to_wire(schema)
+    assert wire["mayExpandGraph"] is True
+    assert schema_from_wire(wire) == schema
+    assert schema_signature(schema) == schema_signature(
+        dataclasses.replace(schema, may_expand_graph=False)
+    )
+    with pytest.raises(CompatError, match="requested graph expansion"):
+        node.execute(n=1)
+
+
+def test_ordinary_v1_node_does_not_claim_expansion() -> None:
+    class V1Ordinary:
+        RETURN_TYPES = ("INT",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"n": ("INT", {"default": 1})}}
+
+        def run(self, n):  # noqa: ANN001, ANN201
+            return {"result": (n,)}
+
+    schema = translate_node("Ordinary", V1Ordinary, CompatTranslation()).schema()
+    assert schema.may_expand_graph is False
+    assert "mayExpandGraph" not in schema_to_wire(schema)
+
+
+def test_delegated_expand_return_stays_unflagged_and_refuses_at_runtime() -> None:
+    """A dynamically built return is unclassifiable at translation time: the
+    schema stays unflagged and the loud runtime refusal is the boundary."""
+
+    class V1DelegatedExpand:
+        RETURN_TYPES = ("INT",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"n": ("INT", {"default": 1})}}
+
+        def run(self, n):  # noqa: ANN001, ANN201
+            payload = {"expand": {"nodes": {}}, "result": (n,)}
+            return payload
+
+    node = translate_node("DelegatedExpand", V1DelegatedExpand, CompatTranslation())
+    assert node.schema().may_expand_graph is False
+    with pytest.raises(CompatError, match="requested graph expansion"):
+        node.execute(n=1)
+
+
+def test_core_expander_enumeration_flags_the_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_compat_comfy import translate as translate_module
+
+    class V1CoreExpander:
+        RETURN_TYPES = ("INT",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"n": ("INT", {"default": 1})}}
+
+        def run(self, n):  # noqa: ANN001, ANN201
+            return (n,)
+
+    monkeypatch.setattr(translate_module, "_CORE_EXPANDER_V1_NAMES", frozenset({"CoreExpander"}))
+    schema = translate_node("CoreExpander", V1CoreExpander, CompatTranslation()).schema()
+    assert schema.may_expand_graph is True
+    assert "mayExpandGraph" in schema_to_wire(schema)
+
+
+def test_native_compat_schemas_do_not_claim_expansion() -> None:
+    for node_class in NATIVE_NODES:
+        assert node_class.schema().may_expand_graph is False
+        assert "mayExpandGraph" not in schema_to_wire(node_class.schema())
 
 
 def test_v1_scalar_execution_blocker_refuses_loudly() -> None:
@@ -2853,8 +3187,18 @@ def test_v3_output_count_mismatch_still_raises() -> None:
         node.execute(n=1)
 
 
-def test_async_v3_node_executes_and_unwraps_after_await() -> None:
+def test_async_v3_node_executes_and_unwraps_after_await(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """FUNCTION = EXECUTE_NORMALIZED_ASYNC follows the ordinary worker loop."""
+
+    torch = _InferenceModeProbe()
+    original_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: torch if name == "torch" else original_import(name),
+    )
 
     class V3Async:
         RETURN_TYPES = ("INT",)
@@ -2867,6 +3211,8 @@ def test_async_v3_node_executes_and_unwraps_after_await() -> None:
         @classmethod
         async def EXECUTE_NORMALIZED_ASYNC(cls, n):  # noqa: ANN001, ANN206
             await asyncio.sleep(0)
+            torch = cast("Any", importlib.import_module("torch"))
+            assert torch.is_inference_mode_enabled()
             return FakeNodeOutput(n + 1)
 
     async def scenario() -> None:
@@ -3044,6 +3390,8 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
             return {
                 "required": {
                     "switch": ("BOOLEAN", {}),
+                },
+                "optional": {
                     "on_false": (
                         "COMFY_MATCHTYPE_V3",
                         {"template": template, "lazy": True},
@@ -3052,7 +3400,7 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
                         "COMFY_MATCHTYPE_V3",
                         {"template": template, "lazy": True},
                     ),
-                }
+                },
             }
 
         @classmethod
@@ -3070,6 +3418,7 @@ def test_v3_switch_lazy_matchtype_markers_keep_selector_lowering() -> None:
     schema = node_class.schema()
     assert schema.selector == SelectorSpec("switch", {"false": "on_false", "true": "on_true"})
     assert [spec.lazy for spec in schema.inputs] == [False, True, True]
+    assert [spec.required for spec in schema.inputs] == [True, False, False]
 
     registry = TypeRegistry()
     register_core_types(registry)

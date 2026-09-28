@@ -100,10 +100,16 @@ def gate_problems(report: dict[str, Any], label: str) -> tuple[str, ...]:
     accelerator = report.get("accelerator")
     if accelerator not in BENCHMARK_ACCELERATORS:
         return (f"{label}: accelerator is not one of {BENCHMARK_ACCELERATORS}",)
+    family_id = report.get("family_id")
+    h3 = family_id == "dinkster.minimax_h3"
     problems = validate_benchmark_report(
         report,
         accelerator=accelerator,
         canonical_evidence=True,
+        residency_route_roles=(
+            ("diffusion", "conditioner", "video_vae", "audio_vae") if h3 else ()
+        ),
+        requires_accelerator_residency=h3,
     )
     return tuple(f"{label}: {problem}" for problem in problems)
 

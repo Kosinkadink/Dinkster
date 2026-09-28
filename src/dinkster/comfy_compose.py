@@ -62,6 +62,7 @@ from dinkster_values import (
     encode_latent,
     image_array_fingerprint,
     image_array_meta,
+    image_input,
     latent_fingerprint,
     mask_array_meta,
     merge_image_batches,
@@ -167,6 +168,7 @@ def register_comfy_host_types(registry: TypeRegistry) -> None:
             prepare_buffer_encoding=prepare_image_array_encoding,
             fingerprint=image_array_fingerprint(COMFY_IMAGE_TYPE),
             meta=image_array_meta,
+            input_convert=image_input,
             validate_encoded=validate_image_encoded,
             validate_encoded_buffer=validate_image_encoded,
         )
@@ -198,6 +200,7 @@ def register_comfy_host_types(registry: TypeRegistry) -> None:
             prepare_buffer_encoding=prepare_image_array_encoding,
             fingerprint=image_array_fingerprint(COMFY_MASK_TYPE),
             meta=mask_array_meta,
+            input_convert=image_input,
             validate_encoded=validate_image_encoded,
             validate_encoded_buffer=validate_image_encoded,
         )
@@ -663,7 +666,10 @@ def comfy_compat_specs(
     # corresponding parent-visible index.
     vram_budgets = cuda_vram_budgets(memory_budgets or {})
 
-    comfy_info = _COMFY_INFO
+    comfy_info = replace(
+        _COMFY_INFO,
+        comfy_aliases=load_manifest(find_compat_manifest()).comfy_aliases,
+    )
     core_env = dict(base_env)
     if asset_vault:
         core_env["DINKSTER_ASSET_VAULT"] = str(asset_vault)
@@ -675,31 +681,31 @@ def comfy_compat_specs(
         core_env["DINKSTER_MOUNTS_SNAPSHOT"] = str(mounts_snapshot)
     if comfy_nodes is not None:
         core_env["DINKSTER_COMFY_NODES"] = ",".join(comfy_nodes)
-    specs = [
-        generation_spec,
-        PackSpec(
-            manifest=core_manifest,
-            python=interpreter,
-            env=core_env,
-            aimdo=aimdo,
-            vram_budgets=vram_budgets,
-            reserve_vram=reserve_vram,
-            comfy_args=comfy_args,
-            runtime_settings=True,
-            replica_cuda_indices=multi_device_cuda_indices,
-            single_job_cuda_indices=(
-                () if single_job_multi_gpu is None else single_job_multi_gpu.cuda_indices
-            ),
-            single_job_mode=("auto" if single_job_multi_gpu is None else single_job_multi_gpu.mode),
-            start_timeout=_CORE_START_TIMEOUT,
-            packs={COMFY_PACK_ID: comfy_info},
-            attribute=lambda _node_type: COMFY_PACK_ID,
-            # The compat manifests claim the reserved "comfy" root; the
-            # host wiring them up IS the trust grant.
-            trust_reserved=True,
-            host_types=register_comfy_host_types,
+    core_spec = PackSpec(
+        manifest=core_manifest,
+        python=interpreter,
+        env=core_env,
+        aimdo=aimdo,
+        vram_budgets=vram_budgets,
+        reserve_vram=reserve_vram,
+        comfy_args=comfy_args,
+        runtime_settings=True,
+        replica_cuda_indices=multi_device_cuda_indices,
+        single_job_cuda_indices=(
+            () if single_job_multi_gpu is None else single_job_multi_gpu.cuda_indices
         ),
-    ]
+        single_job_mode=("auto" if single_job_multi_gpu is None else single_job_multi_gpu.mode),
+        start_timeout=_CORE_START_TIMEOUT,
+        packs={COMFY_PACK_ID: comfy_info},
+        attribute=lambda _node_type: COMFY_PACK_ID,
+        # The compat manifests claim the reserved "comfy" root; the
+        # host wiring them up IS the trust grant.
+        trust_reserved=True,
+        host_types=register_comfy_host_types,
+    )
+    specs = [generation_spec]
+    if not legacy_packs:
+        specs.append(core_spec)
 
     if legacy_packs:
         pack_paths: list[Path] = []
@@ -732,6 +738,8 @@ def comfy_compat_specs(
             **base_env,
             "DINKSTER_LEGACY_PACKS": os.pathsep.join(str(p) for p in pack_paths),
         }
+        if comfy_nodes is not None:
+            legacy_env["DINKSTER_COMFY_NODES"] = ",".join(comfy_nodes)
         # Translated custom-pack model selectors consume the same AssetRefs
         # as core compat nodes. Give the quarantine worker the same read-only
         # resolver chain so it can verify a selected digest before converting

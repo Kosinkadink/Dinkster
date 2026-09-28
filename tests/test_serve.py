@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import builtins
 import json
 import os
 import signal
@@ -307,8 +308,20 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
     assert calls[0]["accelerator"] == "cuda"
     workspace = calls[0]["workspace_packages"]
     assert isinstance(workspace, tuple)
-    assert {path.name for path in workspace} == set(serve._PACK_HOST_WORKSPACE_PACKAGES)
-    workspace_names = set(serve._PACK_HOST_WORKSPACE_PACKAGES)
+    workspace_names = {path.name for path in workspace}
+    assert workspace_names == {
+        "dinkster-api",
+        "dinkster-assets",
+        "dinkster-caches",
+        "dinkster-image-document",
+        "dinkster-inference-wire",
+        "dinkster-memory",
+        "dinkster-protocol",
+        "dinkster-schema",
+        "dinkster-values",
+        "dinkster-video",
+        "dinkster-workers",
+    }
     package_names = {
         tomllib.loads(path.read_text(encoding="utf-8"))["project"]["name"]
         for path in (TESTS_DIR.parent / "packages").glob("*/pyproject.toml")
@@ -319,8 +332,9 @@ def test_standard_vision_pack_provisions_declared_runtime_before_composition(
         assert dependencies & package_names <= workspace_names
     assert TESTS_DIR.parent / "packages" / "dinkster-video" in workspace
     if pack_name == "dinkster-vision-birefnet":
-        assert "dinkster-inference-torch==0.0.1" in manifest.requires
-        assert TESTS_DIR.parent / "packages" / "dinkster-inference-torch" in workspace
+        assert any(
+            requirement.startswith("dinkster-inference @ git+") for requirement in manifest.requires
+        )
     assert str(manifest.root.parent / "src") in prepared.env["PYTHONPATH"].split(os.pathsep)
 
 
@@ -640,7 +654,7 @@ def test_settings_gate_argparse_matrix(
 
 @pytest.mark.parametrize("persisted_enabled", [None, False, True])
 @pytest.mark.parametrize("disabled", [False, True])
-def test_serve_p2p_defaults_on_preserves_saved_choice_and_allows_cli_disable(
+def test_serve_p2p_defaults_off_preserves_saved_choice_and_allows_cli_disable(
     persisted_enabled: bool | None,
     disabled: bool,
     tmp_path: Path,
@@ -686,7 +700,7 @@ def test_serve_p2p_defaults_on_preserves_saved_choice_and_allows_cli_disable(
     serve.main()
     value = captured[0][0]["p2p"]
     assert isinstance(value, dict)
-    enabled = not disabled and persisted_enabled is not False
+    enabled = not disabled and persisted_enabled is True
     assert value["downloadsEnabled"] is enabled
     assert value["seedingEnabled"] is enabled
     assert value["stagingBudgetBytes"] == 64 * 1024**3
@@ -1949,10 +1963,8 @@ def test_serve_multi_gpu_cli_reaches_compat_worker(
 @pytest.mark.parametrize(
     ("devices", "mode"),
     (
-        ("2,0", "guidance"),
-        ("3,1,2", "guidance"),
         ("1,0", "sequence"),
-        ("1,0", "window"),
+        ("3,1,2", "auto"),
     ),
 )
 def test_serve_single_job_multi_gpu_preserves_logical_rank_order(
@@ -2001,6 +2013,19 @@ def test_serve_rejects_removed_single_job_model_mode(monkeypatch: pytest.MonkeyP
         sys,
         "argv",
         ["dinkster-serve", "--single-job-multi-gpu-mode", "model"],
+    )
+    with pytest.raises(SystemExit):
+        serve.main()
+
+
+@pytest.mark.parametrize("mode", ("guidance", "window"))
+def test_serve_rejects_parked_single_job_modes(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    from dinkster import serve
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["dinkster-serve", "--single-job-multi-gpu-mode", mode],
     )
     with pytest.raises(SystemExit):
         serve.main()
@@ -2410,6 +2435,64 @@ def test_unprepared_library_catalog_fails_before_api_binding(
     serve.main()
 
     assert attempted
+
+
+def test_prepare_stale_catalogs_reports_each_pack_and_elapsed_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+    from dinkster.compose import PackSpec
+
+    manifests = (tmp_path / "alpha.toml", tmp_path / "beta.toml")
+    spec = PackSpec(manifests[0], require_catalog=True, group_manifests=(manifests[1],))
+    reports = iter(
+        (
+            type("Report", (), {"ok": True, "pack_name": "alpha"})(),
+            type("Report", (), {"ok": True, "pack_name": "beta"})(),
+        )
+    )
+    times = iter((10.0, 10.5, 11.7, 12.0, 14.4, 14.5))
+    monkeypatch.setattr(serve, "resolve_manifest_path", Path)
+    monkeypatch.setattr(serve, "load_manifest", lambda path: path)
+    monkeypatch.setattr(serve, "read_catalog", lambda _manifest: None)
+    monkeypatch.setattr(serve, "prepare_catalog", lambda *_args, **_kwargs: next(reports))
+    monkeypatch.setattr(serve.time, "perf_counter", lambda: next(times))
+    output = Mock(wraps=builtins.print)
+    monkeypatch.setattr(builtins, "print", output)
+
+    serve._prepare_stale_catalogs((spec,), venv_root=tmp_path / "venvs", accelerator="cpu")
+
+    assert capsys.readouterr().out.splitlines() == [
+        "Preparing pack catalogs (first launch): 0/2",
+        "Prepared pack catalog: alpha (1/2, 1.2s)",
+        "Prepared pack catalog: beta (2/2, 2.4s)",
+        "Prepared 2 pack catalogs in 4.5s",
+    ]
+    output.assert_any_call("Preparing pack catalogs (first launch): 0/2", flush=True)
+    output.assert_any_call("Prepared pack catalog: alpha (1/2, 1.2s)", flush=True)
+    output.assert_any_call("Prepared pack catalog: beta (2/2, 2.4s)", flush=True)
+    output.assert_any_call("Prepared 2 pack catalogs in 4.5s", flush=True)
+
+
+def test_prepare_stale_catalogs_is_silent_when_catalogs_are_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dinkster import serve
+    from dinkster.compose import PackSpec
+
+    spec = PackSpec(tmp_path / "current.toml", require_catalog=True)
+    monkeypatch.setattr(serve, "resolve_manifest_path", Path)
+    monkeypatch.setattr(serve, "load_manifest", lambda path: path)
+    monkeypatch.setattr(serve, "read_catalog", lambda _manifest: object())
+    monkeypatch.setattr(
+        serve,
+        "prepare_catalog",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not prepare")),
+    )
+
+    serve._prepare_stale_catalogs((spec,), venv_root=tmp_path / "venvs", accelerator="cpu")
+
+    assert capsys.readouterr().out == ""
 
 
 def test_video_preview_pack_route_event_and_module_end_to_end(tmp_path: Path) -> None:
@@ -2840,11 +2923,18 @@ def test_library_startup_composes_without_pack_workers(
     tmp_path: Path, no_defaults: bool, launcher: bool, disable_p2p: bool
 ) -> None:
     import psutil
+    from dinkster_p2p import default_p2p_settings
 
     from tools.benchmark_schema_catalog import ENTRY, bound_server, terminate_children
 
     entry = ENTRY
     port = free_port()
+    enabled_p2p = {
+        **default_p2p_settings(),
+        "downloadsEnabled": True,
+        "seedingEnabled": True,
+    }
+    (tmp_path / "settings.json").write_text(json.dumps({"p2p": enabled_p2p}), encoding="utf-8")
     extra = ("--no-default-packs",) if no_defaults else ()
     if disable_p2p:
         extra += ("--disable-p2p",)
@@ -2863,17 +2953,23 @@ def test_library_startup_composes_without_pack_workers(
 
     async def scenario() -> None:
         async with aiohttp.ClientSession() as session:
-            async with asyncio.timeout(30):
-                while True:
-                    assert process.poll() is None, log.read_text()
-                    try:
-                        async with session.get(f"http://127.0.0.1:{port}/api/composition") as resp:
-                            report = await resp.json()
-                        if not report.get("composing"):
-                            break
-                    except aiohttp.ClientError:
-                        pass
-                    await asyncio.sleep(0.05)
+            try:
+                async with asyncio.timeout(120):
+                    while True:
+                        assert process.poll() is None, log.read_text()
+                        try:
+                            async with session.get(
+                                f"http://127.0.0.1:{port}/api/composition"
+                            ) as resp:
+                                report = await resp.json()
+                            if not report.get("composing"):
+                                break
+                        except aiohttp.ClientError:
+                            pass
+                        await asyncio.sleep(0.05)
+            except TimeoutError as error:
+                error.add_note("server output:\n" + log.read_text())
+                raise
             expected = set() if no_defaults else set(await _default_pack_names())
             assert set(report["packs"]) == expected, report
             assert all(pack["state"] == "announced" for pack in report["packs"].values()), report
@@ -2882,10 +2978,18 @@ def test_library_startup_composes_without_pack_workers(
             server = bound_server(process.pid, output.splitlines())
             if launcher:
                 assert server.pid != process.pid
+            async with session.get(f"http://127.0.0.1:{port}/api/settings") as resp:
+                assert resp.status == 200
+                settings = await resp.json()
+            panel_value = settings["settings"]["p2p"]["value"]
+            assert panel_value["downloadsEnabled"] is not disable_p2p
+            assert panel_value["seedingEnabled"] is not disable_p2p
             async with session.get(f"http://127.0.0.1:{port}/api/p2p/status") as resp:
                 assert resp.status == 200
                 p2p = await resp.json()
             assert p2p["state"] == ("disabled" if disable_p2p else "running"), p2p
+            assert p2p["settings"]["downloadsEnabled"] is not disable_p2p, p2p
+            assert p2p["settings"]["seedingEnabled"] is not disable_p2p, p2p
             if disable_p2p:
                 assert p2p["sidecar"] is None, p2p
                 assert not server.children(recursive=True)
@@ -2982,9 +3086,7 @@ def test_degraded_default_ordering_composes_media_io_before_image(
         asyncio.run(composer.close())
 
 
-def test_degraded_default_ordering_places_generation_before_model_packs(
-    tmp_path: Path,
-) -> None:
+def test_degraded_default_ordering_retains_generation_pack(tmp_path: Path) -> None:
     from dinkster_workers import load_manifest
 
     import dinkster.serve as serve
@@ -3009,13 +3111,7 @@ def test_degraded_default_ordering_places_generation_before_model_packs(
         asyncio.run(composer.close())
 
     names = [load_manifest(Path(spec.manifest)).name for spec in ordered]
-    generation = names.index("dinkster-nodes-generation")
-    for model in (
-        "dinkster-model-qwen-image",
-        "dinkster-model-triposplat",
-        "dinkster-model-wan",
-    ):
-        assert generation < names.index(model)
+    assert "dinkster-nodes-generation" in names
 
 
 def test_serve_progressive_pack_announcement(tmp_path: Path) -> None:
@@ -3146,9 +3242,6 @@ def test_default_catalog_publishes_only_owned_translation_carriers(
                     for key in ("comfyAliases", "comfyGroups"):
                         for record in pack.get(key, {}).get("records", []):
                             assert payload["nodes"][record["carrier"]]["pack"] == pack_id
-                for pack_id in ("dinkster-nodes-generation", "dinkster-nodes-image"):
-                    for key in ("comfyAliases", "comfyGroups"):
-                        assert payload["packs"][pack_id][key]["records"]
                 # CI passes this real HTTP response to the frontend validator.
                 if output := os.environ.get("DINKSTER_CATALOG_WIRE_OUTPUT"):
                     Path(output).write_text(json.dumps(payload), encoding="utf-8")

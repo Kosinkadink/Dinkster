@@ -3,8 +3,7 @@
 - **Area:** comfy-kitchen `comfy_kitchen/backends/cuda` compiled
   extension (repo `Comfy-Org/comfy-kitchen`, observed through 0.2.31,
   PyPI wheel with prebuilt `_C.abi3.so`)
-- **Status:** still present in 0.2.31; Dinkster immune by construction (rng
-  allocated fresh per call); canary test pins the behavior
+- **Status:** still present in 0.2.31
 
 ## Symptom
 
@@ -48,12 +47,7 @@ scratch space is needed), or document the argument as consumed and
 make the eager backend match. Backends registered under one operation
 name should share one contract.
 
-## Dinkster interim handling
+## Dinkster handling
 
-`dinkster_inference_torch/rounding.py` allocates the rng tensor fresh
-from a seeded generator on every call and never reuses it, so Dinkster's
-outputs are unaffected. The quirk is pinned by
-`tests/test_gpu.py::test_kitchen_cuda_rng_mutation_canary` - if that
-test fails after a kitchen upgrade, upstream fixed the kernel: update
-this status line and drop the defensive `rng.clone()` calls in
-`test_kitchen_cuda_kernel_matches_eager_bitwise`.
+Dinkster delegates stochastic rounding to `dinkster_inference`, which allocates
+the rng tensor for each call and does not reuse it.

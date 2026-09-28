@@ -293,13 +293,6 @@ with aliases, validators (extension/magic-byte), role metadata, recursive
 enumeration, duplicate policy, safe path handles (no raw path-table mutation),
 and state-dict loading that accepts already-loaded data.
 
-Packs register families, components, and assemblies together through
-`InferenceContribution`. The worker merges them with built-ins before detection
-or loading, and composition requires the `model-family-registration` capability.
-Pack authors follow the [new model-family checklist](new-model-family.md).
-Current capability status is listed in
-[Pack routes, events, and frontend modules](supported/pack-routes-events-and-frontend-modules.md#extension-capability-status).
-
 ### 3.10 ControlNet pipeline contract (core)
 Not just a `control-apply` wrapper (report-01): immutable/cloneable ordered
 control chain; hint preparation; per-run lifecycle (configure hint, pre-run
@@ -340,10 +333,11 @@ current per-kind status is listed in
 ## 5. Packaging, identity, compatibility
 
 Extension factory allowlists pin every site by path, line, column, and owning
-issue. Their ceilings are non-increasing; raising one is an explicit reviewed
-decision, never an effect of regeneration. When a scanned file is renamed or
-split, retarget or re-add its allowlist entries with their owning issues before
-running `--write`; ownership deliberately does not carry across path changes.
+issue. Their ceilings are merge-base ratchets with zero slack: each recorded
+ceiling equals the measured count, and a pull request cannot raise it even when
+the allowlist is edited to match. When a scanned file is renamed or split,
+retarget or re-add its allowlist entries with their owning issues before running
+`--write`; ownership deliberately does not carry across path changes.
 After merging main, run
 `uv run --locked python scripts/check_extension_factories.py --write`, review
 that only expected line or column coordinates changed and no ceiling changed,

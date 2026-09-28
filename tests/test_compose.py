@@ -41,10 +41,10 @@ from dinkster_memory import (
 from dinkster_nodes_foundation import FOUNDATION_NODES
 from dinkster_nodes_image import IMAGE_NODES
 from dinkster_nodes_media_io import MEDIA_IO_NODES
-from dinkster_protocol import GRAPH_COMPILERS_SURFACE, KeyedContribution, extension_behavior_hash
 from dinkster_schema import ComfyAliasRegistry, ComfyGroupRegistry, build_schemas
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
+from dinkster_values.storage import image_input
 from dinkster_workers import load_manifest
 from dinkster_workers.doctor import prepare_catalog
 
@@ -139,7 +139,7 @@ def test_lazy_media_pack_resolves_assets_after_compat_host_registration(
                 ["load"],
             )
             loaded = cast("np.ndarray", result.outputs["load"]["image"].resolve())
-            np.testing.assert_array_equal(loaded[0] * 255, pixels)
+            np.testing.assert_array_equal(cast("np.ndarray", image_input(loaded))[0] * 255, pixels)
         finally:
             await composer.close()
 
@@ -510,52 +510,13 @@ def test_comfy_compat_specs_probe_selected_interpreter_once_with_legacy(
         legacy_packs=[legacy],
     )
 
-    assert len(specs) == 3
+    assert len(specs) == 2
     assert Path(specs[0].manifest).name == "dinkster-pack.toml"
     assert specs[0].in_process is True
     assert calls == [
         "requirements:/selected/comfy/python",
         "blake3:/selected/comfy/python",
     ]
-
-
-def write_sampling_host_manifest(directory: Path) -> Path:
-    directory.mkdir(parents=True, exist_ok=True)
-    manifest = directory / "dinkster-pack.toml"
-    manifest.write_text(
-        '[pack]\nname = "sampling-host"\n'
-        'namespaces = ["dinkster", "comfy"]\n\n'
-        '[pack.arms]\nnative = ["dinkster.ksampler"]\n\n'
-        '[pack.entry]\nnodes = "s1_sampler_host:NODES"\n'
-        'arm_nodes = "s1_sampler_host:ARM_NODES"\n'
-        'choices = "s1_sampler_host:choices"\n',
-        encoding="utf-8",
-    )
-    return manifest
-
-
-def write_inference_extension_manifest(directory: Path, name: str) -> Path:
-    directory.mkdir(parents=True, exist_ok=True)
-    manifest = directory / "dinkster-pack.toml"
-    manifest.write_text(
-        f'[pack]\nname = "{name}"\nnamespaces = ["{name}"]\n\n'
-        '[pack.entry]\nnodes = "s1_sampler_empty:NODES"\n\n'
-        '[pack.extension]\ninference = "unused_parent_fake:register"\n'
-        'privileges = ["inference"]\n',
-        encoding="utf-8",
-    )
-    return manifest
-
-
-def graph_compiler(
-    compiler_id: str, order: int | str, *, aliases: tuple[str, ...] = ()
-) -> KeyedContribution:
-    return KeyedContribution(
-        surface_id=GRAPH_COMPILERS_SURFACE,
-        id=compiler_id,
-        aliases=aliases,
-        behavior_metadata=(("contractVersion", 1), ("order", order)),
-    )
 
 
 def write_iso_manifest(
@@ -737,11 +698,12 @@ def test_serving_composer_registers_inference_boundary_types() -> None:
 
     inference_types = {
         "dinkster.conditioning",
-        "dinkster.latent",
-        "dinkster.control",
         "dinkster.model",
         "dinkster.clip",
         "dinkster.vae",
+        "dinkster.sampler",
+        "dinkster.sigmas",
+        "dinkster.noise",
     }
     default = ServingComposer()
     supplied_registry = TypeRegistry()
@@ -807,7 +769,7 @@ def test_compose_serving_orders_provider_before_consumer(tmp_path: Path) -> None
     asyncio.run(scenario())
 
 
-def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_registry_ids(
+def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_capabilities(
     tmp_path: Path,
 ) -> None:
     digest = "blake3:" + "b" * 64
@@ -845,9 +807,9 @@ def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_registry_i
         missing = write_contract_manifest(
             tmp_path / "missing",
             "missing",
-            '[pack.requirements.registry]\n"dinkster.model-families" = ["missing.family"]\n',
+            '[pack.requirements.capabilities]\n"missing.family" = ">=1"\n',
         )
-        with pytest.raises(CompositionError, match="unavailable"):
+        with pytest.raises(CompositionError, match="no pack provides it"):
             composer.order_pack_entries((spec(missing, "missing"),))
 
         invalid_provenance = PackSpec(
@@ -878,80 +840,12 @@ def test_pack_contract_resolver_refuses_cycles_collisions_and_missing_registry_i
         asyncio.run(composer.close())
 
 
-def test_pack_registry_providers_order_consumers_and_report_conflicts(tmp_path: Path) -> None:
-    digest = "blake3:" + "9" * 64
-
-    def spec(path: Path, name: str) -> PackSpec:
-        return PackSpec(
-            path,
-            packs={name: PackInfo(display_name=name, version="1.0.0", artifact_digest=digest)},
-        )
-
-    provider = write_contract_manifest(
-        tmp_path / "provider",
-        "provider",
-        '[pack.provides.registry]\n"dinkster.samplers" = ["provider.sampler"]\n'
-        '"dinkster.model-families" = ["provider.family"]\n',
-    )
-    consumer = write_contract_manifest(
-        tmp_path / "consumer",
-        "consumer",
-        '[pack.requirements.registry]\n"dinkster.samplers" = ["provider.sampler"]\n'
-        '"dinkster.model-families" = ["provider.family"]\n',
-    )
-    composer = ServingComposer()
-    try:
-        ordered = composer.order_pack_entries(
-            (spec(consumer, "consumer"), spec(provider, "provider"))
-        )
-        assert [Path(item.manifest) for item in ordered] == [provider, consumer]
-
-        duplicate = write_contract_manifest(
-            tmp_path / "duplicate",
-            "duplicate",
-            '[pack.provides.registry]\n"dinkster.samplers" = ["provider.sampler"]\n',
-        )
-        with pytest.raises(CompositionError, match="provided by both"):
-            composer.order_pack_entries((spec(provider, "provider"), spec(duplicate, "duplicate")))
-
-        builtin_collision = write_contract_manifest(
-            tmp_path / "builtin-collision",
-            "builtin-collision",
-            '[pack.provides.registry]\n"dinkster.samplers" = ["dinkster.euler"]\n',
-        )
-        with pytest.raises(CompositionError, match="dinkster-inference/1.*builtin-collision"):
-            composer.order_pack_entries((spec(builtin_collision, "builtin-collision"),))
-
-        alpha = write_contract_manifest(
-            tmp_path / "registry-alpha",
-            "registry-alpha",
-            '[pack.provides.registry]\n"dinkster.samplers" = ["alpha.sampler"]\n'
-            '[pack.requirements.registry]\n"dinkster.schedulers" = ["beta.scheduler"]\n',
-        )
-        beta = write_contract_manifest(
-            tmp_path / "registry-beta",
-            "registry-beta",
-            '[pack.provides.registry]\n"dinkster.schedulers" = ["beta.scheduler"]\n'
-            '[pack.requirements.registry]\n"dinkster.samplers" = ["alpha.sampler"]\n',
-        )
-        with pytest.raises(
-            CompositionError,
-            match=(
-                "dependency cycle: registry-alpha -> registry-beta, registry-beta -> registry-alpha"
-            ),
-        ):
-            composer.order_pack_entries(
-                (spec(alpha, "registry-alpha"), spec(beta, "registry-beta"))
-            )
-    finally:
-        asyncio.run(composer.close())
-
-
-def test_composed_generation_records_contract_and_registry_resolution(tmp_path: Path) -> None:
+def test_composed_generation_records_contract_and_capability_resolution(tmp_path: Path) -> None:
     manifest = write_contract_manifest(
         tmp_path / "consumer",
         "consumer",
-        '[pack.requirements.registry]\n"dinkster.samplers" = ["dinkster.euler"]\n',
+        '[pack.capabilities]\n"consumer.graph-import" = "1.0.0"\n'
+        '[pack.requirements.capabilities]\n"consumer.graph-import" = ">=1,<2"\n',
     )
     digest = "blake3:" + "c" * 64
 
@@ -983,7 +877,11 @@ def test_composed_generation_records_contract_and_registry_resolution(tmp_path: 
             assert receipts == {
                 ("host", "dinkster-pack-host/1", "dinkster-pack-host/1"),
                 ("api", "dinkster-api/v1", "dinkster-api/v1"),
-                ("registry", "dinkster.samplers:dinkster.euler", "dinkster-inference/1"),
+                (
+                    "capability",
+                    "consumer.graph-import<2,>=1",
+                    f"consumer@1.0.0#{digest}:1.0.0",
+                ),
             }
         finally:
             await composition.close()
@@ -1153,256 +1051,24 @@ def test_compose_serving_default_resolution_is_atomic(
         asyncio.run(compose_serving())
 
 
-def test_graph_compiler_generation_orders_identity_and_binds_transport(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster.compose import PackSpec, ServingComposer
-
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env=WORKER_ENV)
-        try:
-            await composer.add_pack(
-                PackSpec(
-                    write_sampling_host_manifest(tmp_path / "host"),
-                    trust_reserved=True,
-                )
-            )
-            worker = composer._sampling_worker(composer._topology)
-            assert worker is not None
-            declarations: list[tuple[str, tuple[KeyedContribution, ...]]] = []
-            materialized: list[str] = []
-            released: list[str] = []
-            compile_calls: list[tuple[str, object, object]] = []
-            compile_result = {"graph": {}, "targets": []}
-
-            async def materialize(key: str):
-                materialized.append(key)
-                return tuple(declarations)
-
-            async def release(key: str) -> None:
-                released.append(key)
-
-            async def compile_graph(key: str, graph: object, targets: object):
-                compile_calls.append((key, graph, targets))
-                return compile_result
-
-            monkeypatch.setattr(worker, "materialize_inference_generation", materialize)
-            monkeypatch.setattr(worker, "release_inference_generation", release)
-            monkeypatch.setattr(worker, "compile_graph", compile_graph)
-
-            declarations[:] = [
-                ("proof_b", (graph_compiler("proof_b.second", 2),)),
-            ]
-            await composer.add_pack(
-                write_inference_extension_manifest(tmp_path / "proof_b", "proof_b")
-            )
-            old_runtime = composer._runtime_seat.pin()
-            old_digest = "sha256:" + extension_behavior_hash(old_runtime.extension_snapshot)
-
-            declarations[:] = [
-                (
-                    "proof_a",
-                    (
-                        graph_compiler("proof_a.tie", 2),
-                        graph_compiler("proof_a.first", -1),
-                    ),
-                ),
-                ("proof_b", (graph_compiler("proof_b.second", 2),)),
-            ]
-            await composer.add_pack(
-                write_inference_extension_manifest(tmp_path / "proof_a", "proof_a")
-            )
-            runtime = composer._runtime_seat.pin()
-            digest = "sha256:" + extension_behavior_hash(runtime.extension_snapshot)
-            assert tuple(
-                contribution.id for contribution in runtime.graph_compiler_registry.contributions
-            ) == ("proof_a.first", "proof_a.tie", "proof_b.second")
-            assert tuple(
-                contribution.id
-                for extension in runtime.extension_snapshot.extensions
-                for contribution in extension.keyed_contributions
-            ) == ("proof_a.tie", "proof_a.first", "proof_b.second")
-            assert runtime.graph_compile_transport is not None
-
-            graph = {"node": {"type": "std.math.add_ints"}}
-            targets = ("node", "other")
-            assert await runtime.graph_compile_transport(digest, graph, targets) is compile_result
-            assert compile_calls == [(digest, graph, targets)]
-            with pytest.raises(AssertionError, match="owning digest"):
-                await runtime.graph_compile_transport("sha256:" + "0" * 64, graph, targets)
-            assert compile_calls == [(digest, graph, targets)]
-
-            assert old_runtime.graph_compile_transport is not None
-            await old_runtime.graph_compile_transport(old_digest, graph, targets)
-            assert compile_calls[-1] == (old_digest, graph, targets)
-            with pytest.raises(AssertionError):
-                await old_runtime.graph_compile_transport(digest, graph, targets)
-            assert compile_calls[-1] == (old_digest, graph, targets)
-
-            class UnexpectedWorker:
-                async def compile_graph(self, *_args: object):
-                    raise AssertionError("transport resolved the current worker")
-
-            with monkeypatch.context() as current_lookup:
-                current_lookup.setattr(
-                    composer,
-                    "_sampling_worker",
-                    lambda _topology: UnexpectedWorker(),
-                )
-                await runtime.graph_compile_transport(digest, graph, targets)
-            assert compile_calls[-1] == (digest, graph, targets)
-            assert worker is composer._sampling_worker(composer._topology)
-            assert materialized[-1] == digest
-            assert any(key.startswith("candidate:") for key in released)
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())
-
-
-def test_noncompiler_inference_generation_has_no_compile_transport(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster_inference import INFERENCE_SAMPLERS_SURFACE
-
-    from dinkster.compose import PackSpec, ServingComposer
-
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env=WORKER_ENV)
-        try:
-            await composer.add_pack(
-                PackSpec(
-                    write_sampling_host_manifest(tmp_path / "host"),
-                    trust_reserved=True,
-                )
-            )
-            worker = composer._sampling_worker(composer._topology)
-            assert worker is not None
-            sampler = KeyedContribution(
-                surface_id=INFERENCE_SAMPLERS_SURFACE,
-                id="sampler_only.proof",
-            )
-            compile_calls: list[object] = []
-
-            async def materialize(_key: str):
-                return (("sampler_only", (sampler,)),)
-
-            async def compile_graph(*args: object):
-                compile_calls.append(args)
-                return {}
-
-            monkeypatch.setattr(worker, "materialize_inference_generation", materialize)
-            monkeypatch.setattr(worker, "compile_graph", compile_graph)
-            await composer.add_pack(
-                write_inference_extension_manifest(tmp_path / "sampler_only", "sampler_only")
-            )
-            runtime = composer._runtime_seat.pin()
-            assert runtime.graph_compiler_registry.contributions == ()
-            assert runtime.graph_compile_transport is None
-            assert compile_calls == []
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())
-
-
-def test_invalid_graph_compilers_fail_before_final_generation_materialization(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from dinkster.compose import PackSpec, ServingComposer
-
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env=WORKER_ENV)
-        try:
-            await composer.add_pack(
-                PackSpec(
-                    write_sampling_host_manifest(tmp_path / "host"),
-                    trust_reserved=True,
-                )
-            )
-            worker = composer._sampling_worker(composer._topology)
-            assert worker is not None
-            declarations: list[tuple[str, tuple[KeyedContribution, ...]]] = []
-            materialized: list[str] = []
-            released: list[str] = []
-
-            async def materialize(key: str):
-                materialized.append(key)
-                return tuple(declarations)
-
-            async def release(key: str) -> None:
-                released.append(key)
-
-            monkeypatch.setattr(worker, "materialize_inference_generation", materialize)
-            monkeypatch.setattr(worker, "release_inference_generation", release)
-
-            declarations[:] = [
-                ("good", (graph_compiler("good.compiler", 0),)),
-            ]
-            await composer.add_pack(write_inference_extension_manifest(tmp_path / "good", "good"))
-            published = composer._runtime_seat.pin()
-            catalog_before = json.loads(composer._sampler_catalog_path.read_text(encoding="utf-8"))
-            final_count = sum(not key.startswith("candidate:") for key in materialized)
-
-            invalid_cases = (
-                (
-                    "malformed",
-                    (graph_compiler("malformed.compiler", "not-an-int"),),
-                ),
-                (
-                    "duplicate",
-                    (
-                        graph_compiler("duplicate.compiler", 1),
-                        graph_compiler("duplicate.compiler", 1),
-                    ),
-                ),
-            )
-            for name, invalid in invalid_cases:
-                declarations[:] = sorted(
-                    [
-                        (name, invalid),
-                        ("good", (graph_compiler("good.compiler", 0),)),
-                    ]
-                )
-                before_calls = len(materialized)
-                with pytest.raises(CompositionError, match="invalid graph compiler composition"):
-                    await composer.add_pack(
-                        write_inference_extension_manifest(tmp_path / name, name)
-                    )
-                attempted = materialized[before_calls:]
-                assert len(attempted) == 1 and attempted[0].startswith("candidate:")
-                assert attempted[0] in released
-                assert composer._runtime_seat.pin() is published
-                assert name not in composer.pack_specs()
-                assert (
-                    json.loads(composer._sampler_catalog_path.read_text(encoding="utf-8"))
-                    == catalog_before
-                )
-                assert sum(not key.startswith("candidate:") for key in materialized) == final_count
-        finally:
-            await composer.close()
-
-    asyncio.run(scenario())
-
-
 @pytest.mark.parametrize(
     ("pack_id", "expected_digest"),
     [
         (
             "dinkster-nodes-foundation",
-            "blake3:4b2babc83d81f1275238b69031fd1c8a5e5aed07065ed75b56fc432c23a8f064",
+            "blake3:62d4ad93db627dd51bb738ea987a2dedd240fc7d6eafd5bf302b66a3d13c23bf",
         ),
         (
             "dinkster-nodes-media-io",
-            "blake3:89fc8de3ac0477fad3622c57fbc884facb6546125757115eb6bdb9223530892f",
+            "blake3:1f96fc07b4868b6beb922936d59c93ad53041598ed167320d14d79adf7370c8a",
         ),
         (
             "dinkster-nodes-image",
-            "blake3:2f872d26be5cf8dc3a592384e22fe3d227f516e93f1313d49dc8a3354bbad3cb",
+            "blake3:7a44b85c68f0f1e59bdd8eb54a6c8012c82b2b93052f952839c8763a433b3dde",
         ),
         (
             "dinkster-nodes-remote",
-            "blake3:4685f09942fd5d6a3d85bb559f42fd99d69484dd8f6253f5dda0f2a1c3e7be39",
+            "blake3:db56d16df9059930093ac30166558e96a90644d0fc754a58ef7bc8c37baca6b4",
         ),
     ],
 )
@@ -1427,7 +1093,7 @@ def test_foundation_default_pack_ships_docs() -> None:
     assert docs is not None
     assert [(page.kind, page.id, page.locale) for page in docs.pages] == [
         ("node", "std.math.add_ints", "en"),
-        ("guide", "map-and-gather", "en"),
+        ("guide", "loops", "en"),
     ]
     page = next(page for page in docs.pages if page.kind == "node")
     assert page.title == "Add Integers"
@@ -1733,7 +1399,7 @@ def test_vision_pack_license_checkout_endings_do_not_change_digest(tmp_path: Pat
     manifest = copied / "dinkster_vision_hed_pack/dinkster-pack.toml"
     module = copied / "src/dinkster_nodes_vision/hed"
     expected = compose._installed_pack_digest(manifest, module)
-    assert expected == ("blake3:0421374ac24c9b910a97fc5a5b2982c681b9785ddbeb415f27a08b934bfc1a48")
+    assert expected == ("blake3:da3d4f989afa330e68c479afac8bdc13a5a6df878f56cbf38d0444f1fabd2019")
     license_file = manifest.parent / "MLSD_LICENSE"
     license_bytes = license_file.read_bytes().replace(b"\r\n", b"\n")
     license_file.write_bytes(license_bytes.replace(b"\n", b"\r\n"))
@@ -2439,9 +2105,7 @@ def test_add_pack_applies_host_types_at_commit(tmp_path: Path) -> None:
 def test_comfy_compat_specs_carry_host_types(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Both compat specs (core and legacy quarantine) install the comfy
-    host-type hook, so whichever composes first gives the torchless engine
-    the comfy.IMAGE decode + PNG rendition."""
+    """The combined core and legacy worker installs the comfy host types."""
     from dinkster import comfy_compose
     from dinkster.comfy_compose import comfy_compat_specs, register_comfy_host_types
 
@@ -2454,12 +2118,12 @@ def test_comfy_compat_specs_carry_host_types(
         memory_budgets={"vram:cuda:0": 20_000, "ram": 40_000},
         reserve_vram=128,
     )
-    assert len(specs) == 3
+    assert len(specs) == 2
     assert specs[0].host_types is None
-    assert all(spec.host_types is register_comfy_host_types for spec in specs[1:])
-    assert all(spec.aimdo == "on" for spec in specs[1:])
-    assert all(spec.vram_budgets == {"vram:cuda:0": 20_000} for spec in specs[1:])
-    assert all(spec.reserve_vram == 128 for spec in specs[1:])
+    assert specs[1].host_types is register_comfy_host_types
+    assert specs[1].aimdo == "on"
+    assert specs[1].vram_budgets == {"vram:cuda:0": 20_000}
+    assert specs[1].reserve_vram == 128
 
 
 def test_pack_spec_validates_aimdo_mode(tmp_path: Path) -> None:
@@ -2506,10 +2170,11 @@ def test_pack_spec_validates_single_job_mode(tmp_path: Path) -> None:
     from dinkster.compose import PackSpec
 
     manifest = write_iso_manifest(tmp_path)
-    for mode in ("auto", "guidance", "sequence", "window"):
+    for mode in ("auto", "sequence"):
         assert PackSpec(manifest, single_job_mode=mode).single_job_mode == mode
-    with pytest.raises(ValueError, match="single_job_mode is invalid"):
-        PackSpec(manifest, single_job_mode="model")
+    for mode in ("model", "guidance", "window"):
+        with pytest.raises(ValueError, match="single_job_mode is invalid"):
+            PackSpec(manifest, single_job_mode=mode)
 
 
 def test_pack_spec_comfy_args_are_frozen_validated_and_allow_unknowns(
@@ -2904,7 +2569,7 @@ def test_serving_composer_starts_ordered_cuda_replica_workers(
 
 
 @pytest.mark.usefixtures("unrestricted_cuda_devices")
-def test_serving_composer_sets_pure_ulysses_sequence_geometry(tmp_path: Path) -> None:
+def test_serving_composer_sets_sequence_attention_environment(tmp_path: Path) -> None:
     from dinkster_values import TypeRegistry
 
     from dinkster.compose import PackSpec, ServingComposer, _SingleJobWorkerPool
@@ -2926,9 +2591,7 @@ def test_serving_composer_sets_pure_ulysses_sequence_geometry(tmp_path: Path) ->
         assert environment["DINKSTER_SINGLE_JOB_RANK"] == str(rank)
         assert environment["DINKSTER_SINGLE_JOB_WORLD_SIZE"] == "2"
         assert environment["DINKSTER_SINGLE_JOB_MULTI_GPU_MODE"] == "sequence"
-        assert environment["DINKSTER_SINGLE_JOB_SEQUENCE_ULYSSES"] == "2"
-        assert environment["DINKSTER_SINGLE_JOB_SEQUENCE_RING"] == "1"
-        assert environment["DINKSTER_SINGLE_JOB_SEQUENCE_GUIDANCE"] == "1"
+        assert not any(key.startswith("DINKSTER_SINGLE_JOB_SEQUENCE_") for key in environment)
     asyncio.run(pool.close())
 
 
@@ -3189,24 +2852,19 @@ def test_comfy_compat_specs_shapes(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         asset_vault=tmp_path / "library" / "vault",
         mounts_snapshot=tmp_path / "library" / "mounts.json",
     )
-    assert len(specs) == 3
-    generation, core, legacy = specs
+    assert len(specs) == 2
+    generation, legacy = specs
     assert generation.in_process is True
     assert generation.packs is not None and set(generation.packs) == {"dinkster-nodes-generation"}
-    assert core.env["DINKSTER_COMFYUI_ROOT"] == str(root)
-    assert core.env["DINKSTER_COMFY_NODES"] == "EmptyLatentImage"
-    assert core.env["DINKSTER_ASSET_VAULT"] == str(tmp_path / "library" / "vault")
-    assert core.env["DINKSTER_MOUNTS_SNAPSHOT"] == str(tmp_path / "library" / "mounts.json")
-    assert core.python == sys.executable
-    assert core.packs is not None and set(core.packs) == {"comfy"}
-    assert core.attribute is not None
-    assert core.attribute("comfy.EmptyLatentImage") == "comfy"
-    assert core.attribute("dinkster.ksampler") == "comfy"
+    assert legacy.env["DINKSTER_COMFYUI_ROOT"] == str(root)
+    assert legacy.env["DINKSTER_COMFY_NODES"] == "EmptyLatentImage"
+    assert legacy.python == sys.executable
     # The compat layer's own declared chip: distinguishable from legacy
     # packs (shared color, no puzzle mark).
-    assert core.packs["comfy"].display_name == "ComfyUI Compat"
-    assert core.packs["comfy"].abbr == "C1"
-    assert core.packs["comfy"].color
+    assert legacy.packs is not None
+    assert legacy.packs["comfy"].display_name == "ComfyUI Compat"
+    assert legacy.packs["comfy"].abbr == "C1"
+    assert legacy.packs["comfy"].color
 
     multi_gpu = comfy_compat_specs(
         root,
@@ -3215,7 +2873,6 @@ def test_comfy_compat_specs_shapes(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     )[1]
     assert multi_gpu.replica_cuda_indices == (1, 0)
 
-    assert legacy.packs is not None
     assert set(legacy.packs) == {
         "comfy",
         "comfy.rgthree",
@@ -3365,35 +3022,6 @@ def test_composition_close_is_exactly_once_concurrent_and_cancellation_safe() ->
         await other_close
         await composition.close()
         assert close_calls == 1
-
-    asyncio.run(scenario())
-
-
-def test_composition_closes_component_publishers_after_tenant_registries() -> None:
-    async def scenario() -> None:
-        composer = ServingComposer(worker_env=WORKER_ENV)
-        composition = composer.composition
-        events: list[str] = []
-
-        class Registry:
-            async def close(self) -> None:
-                events.append("registry")
-
-        class Publisher:
-            def close(self) -> None:
-                events.append("publisher")
-
-        class Worker:
-            async def close(self) -> None:
-                events.append("worker")
-
-        composition._tenant_registries.append(Registry())  # type: ignore[arg-type]  # noqa: SLF001
-        composition._component_publishers.append(Publisher())  # type: ignore[arg-type]  # noqa: SLF001
-        composition._isolated.append(Worker())  # noqa: SLF001
-
-        await composition.close()
-
-        assert events == ["registry", "publisher", "worker"]
 
     asyncio.run(scenario())
 

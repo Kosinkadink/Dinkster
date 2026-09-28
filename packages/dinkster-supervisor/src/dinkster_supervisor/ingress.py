@@ -17,6 +17,12 @@ import aiohttp
 from aiohttp import WSCloseCode, WSMsgType, web
 
 from .leases import LeaseStore, LeaseStoreError
+from .limits import (
+    INGRESS_CLIENT_MAX_SIZE_BYTES,
+    INGRESS_EVENT_FRAME_LIMIT_BYTES,
+    INGRESS_EVENT_QUEUE_LIMIT_BYTES,
+    INGRESS_JOB_SUBMISSION_LIMIT_BYTES,
+)
 from .supervisor import EngineLink, install_cors
 
 
@@ -45,11 +51,7 @@ _HOP_BY_HOP = frozenset(
         "upgrade",
     }
 )
-_UPLOAD_LIMIT = 16 * 1024 * 1024
-_SUBMIT_BODY_LIMIT = 4 * 1024 * 1024
-_WS_FRAME_LIMIT = 4 * 1024 * 1024
 _WS_QUEUE_FRAMES = 64
-_WS_QUEUE_BYTES = 8 * 1024 * 1024
 _WS_HEARTBEAT = 30.0
 _FANOUT_TIMEOUT = 5.0
 _RECONNECT_INITIAL = 0.1
@@ -192,7 +194,9 @@ async def _forward_submit(request: web.Request, owner: str, body: bytes) -> web.
             data=body,
             allow_redirects=False,
         ) as upstream:
-            response_body = await _read_bounded(upstream.content, _SUBMIT_BODY_LIMIT)
+            response_body = await _read_bounded(
+                upstream.content, INGRESS_JOB_SUBMISSION_LIMIT_BYTES
+            )
             if response_body is None:
                 return web.json_response({"error": "accepted-body-too-large"}, status=502)
             response = web.Response(body=response_body, status=upstream.status)
@@ -207,7 +211,7 @@ async def _forward_submit(request: web.Request, owner: str, body: bytes) -> web.
 
 async def _submit(request: web.Request) -> web.Response:
     try:
-        raw = await _read_bounded(request.content, _SUBMIT_BODY_LIMIT)
+        raw = await _read_bounded(request.content, INGRESS_JOB_SUBMISSION_LIMIT_BYTES)
         if raw is None:
             return web.json_response({"error": "job-body-too-large"}, status=413)
         value: object = json.loads(raw)
@@ -536,7 +540,7 @@ def _correlated(data: str | bytes, binary: bool) -> bool:
 async def _events(request: web.Request) -> web.WebSocketResponse:
     downstream = web.WebSocketResponse(heartbeat=_WS_HEARTBEAT)
     await downstream.prepare(request)
-    queue = _FrameQueue(_WS_QUEUE_FRAMES, _WS_QUEUE_BYTES)
+    queue = _FrameQueue(_WS_QUEUE_FRAMES, INGRESS_EVENT_QUEUE_LIMIT_BYTES)
 
     async def reader(name: str, member: IngressMember) -> None:
         delay = 0.1
@@ -548,7 +552,8 @@ async def _events(request: web.Request) -> web.WebSocketResponse:
             try:
                 url = member.link.base_url.replace("http://", "ws://").replace("https://", "wss://")
                 async with request.app[SESSION_KEY].ws_connect(
-                    url + request.rel_url.path_qs, max_msg_size=_WS_FRAME_LIMIT
+                    url + request.rel_url.path_qs,
+                    max_msg_size=INGRESS_EVENT_FRAME_LIMIT_BYTES,
                 ) as upstream:
                     connected_at = time.monotonic()
                     async for message in upstream:
@@ -633,7 +638,9 @@ def create_ingress_app(
         raise ValueError("ingress members must be non-empty and contain the primary")
     if any(name != member.owner_id for name, member in members.items()):
         raise ValueError("ingress member keys must match their owner ids")
-    app = web.Application(middlewares=[_ownership_errors], client_max_size=_UPLOAD_LIMIT)
+    app = web.Application(
+        middlewares=[_ownership_errors], client_max_size=INGRESS_CLIENT_MAX_SIZE_BYTES
+    )
     app[MEMBERS_KEY], app[PRIMARY_KEY], app[STORE_KEY] = dict(members), primary, store
     app.cleanup_ctx.append(_session)
     install_cors(app, frozenset(allow_origins))

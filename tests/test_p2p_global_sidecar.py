@@ -578,8 +578,10 @@ def test_transfer_actions_control_global_session_and_preserve_counters(
 
 
 def test_lan_and_global_activity_counters_remain_independent_across_restart(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setattr("dinkster_p2p.global_transfers.time.monotonic", lambda: 100.0)
     lease = _seed_lease(tmp_path)
     state_root = tmp_path / "state"
     runtime = SidecarRuntime(
@@ -907,6 +909,8 @@ def test_global_accounting_baselines_borrowed_handle_totals(tmp_path: Path) -> N
         disable_pex=4,
         override_trackers=8,
         override_web_seeds=16,
+        seed_mode=32,
+        upload_mode=64,
     )
     libtorrent = SimpleNamespace(
         add_torrent_params=SimpleNamespace,

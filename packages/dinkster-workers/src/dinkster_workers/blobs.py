@@ -28,10 +28,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, BinaryIO, TypeVar, cast
 
+from dinkster_values import MEBIBYTE
+
 from .boundary import BoundaryError, TransferStat, ValueStore
 from .produced_assets import result_asset_digests
 
-_CHUNK_BYTES = 8 * 1024 * 1024
+_CHUNK_BYTES = 8 * MEBIBYTE
 
 SendFrame = Callable[[dict[str, object], Sequence[bytes]], Awaitable[None]]
 _T = TypeVar("_T")

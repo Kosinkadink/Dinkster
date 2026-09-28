@@ -84,26 +84,7 @@ def _vault(tmp_path: Path) -> AssetVault:
     return vault
 
 
-def _require_exact_vector_cpu() -> None:
-    try:
-        fields = {
-            key.strip(): value.strip()
-            for line in Path("/proc/cpuinfo")
-            .read_text(encoding="utf-8")
-            .split("\n\n", 1)[0]
-            .splitlines()
-            if ":" in line
-            for key, value in (line.split(":", 1),)
-        }
-    except OSError:
-        pytest.skip("EfficientSAM exact vectors require Linux CPU dispatch metadata")
-    flags = set(fields.get("flags", "").split())
-    if fields.get("vendor_id") != "AuthenticAMD" or "avx2" not in flags or "avx512f" in flags:
-        pytest.skip("EfficientSAM exact vectors require an AMD AVX2 host without AVX-512")
-
-
 def test_efficient_sam_outputs_match_pinned_reference_vectors(tmp_path: Path) -> None:
-    _require_exact_vector_cpu()
     golden = _golden()
     assert golden["baseline"] == "d525f622e6f640acf5a0fc37c7ca1f243da5bde0"
     assert golden["encoderSha256"] == ENCODER_SHA256
@@ -121,8 +102,10 @@ def test_efficient_sam_outputs_match_pinned_reference_vectors(tmp_path: Path) ->
     with use_declared_asset_pack(manifest.name):
         sessions = _create_sessions(intra_op_num_threads=INTRA_OP_NUM_THREADS)
         logits, ious = _predict_candidates(frame, boxes, sessions)
-    np.testing.assert_array_equal(logits, _decode_float32(golden["logits"]))
-    np.testing.assert_array_equal(ious, _decode_float32(golden["ious"]))
+    # The pinned AMD run measured zero drift; the 1e-05 relative and absolute
+    # floors cover float32 model kernels without restricting the hosted CPU family.
+    np.testing.assert_allclose(logits, _decode_float32(golden["logits"]), rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(ious, _decode_float32(golden["ious"]), rtol=1e-5, atol=1e-5)
 
 
 def test_efficient_sam_preserves_detections_and_attaches_soft_masks(tmp_path: Path) -> None:

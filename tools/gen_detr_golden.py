@@ -22,6 +22,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
+from golden_platform import cpu_identity
 
 BASELINE = "29901c51d7fe8712168b8d0d64351170bc0f83e0"
 MODEL_SHA256 = "e632da11ec76ae67bac2f8579fbed3724e08dead7d200ca13e019b197784eadc"
@@ -144,6 +145,7 @@ def main() -> None:
 
     document = {
         "baseline": BASELINE,
+        "generationCpu": cpu_identity(),
         "modelBlake3": MODEL_BLAKE3,
         "modelSha256": MODEL_SHA256,
         "numpy": np.__version__,

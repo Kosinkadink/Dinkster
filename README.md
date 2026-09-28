@@ -1,10 +1,36 @@
 # Dinkster
 
-A clean-slate ComfyUI backend. Modular by construction: schema, values, graph,
-engine, workers, caches, server, and extension API are separate packages with
-one-way dependencies. Node execution is boundary-first - same venv, another venv,
-or another machine are just different `Worker` transports. Everything on a graph
-edge is a typed value envelope, so caching and transport are location-independent.
+Dinkster is a pre-release local engine and browser editor for image, video,
+audio, and model-training workflows. Workflows are node graphs executed by
+isolated packs, with typed values, content-addressed caching, managed memory,
+and optional remote workers. Model execution is supplied by the pinned
+`dinkster_inference` package. Dinkster can import existing ComfyUI workflows; an
+optional ComfyUI checkout adds compatibility for node packs that have not been
+ported.
+
+To run Dinkster from source, clone Dinkster and Dinkster-Frontend beside each
+other, build the frontend, install the locked Python workspace, and launch:
+
+```sh
+cd Dinkster-Frontend
+pnpm install --frozen-lockfile
+pnpm --filter @dinkster/app build
+cd ../Dinkster
+uv sync --python 3.12 --all-packages --frozen
+uv run dinkster setup
+uv run dinkster
+```
+
+The editor opens at `http://127.0.0.1:3639`. See the
+[browser editor quickstart](docs/quickstart.md) for model folders, execution
+environments, and the first-image walkthrough.
+
+Packs are independently installable Python distributions with a
+`dinkster-pack.toml` manifest. A pack declares its schemas, runtime entry
+point, dependencies, and optional frontend module; the server composes those
+contracts and starts a pack worker only when execution needs it. Start with
+the [pack authoring guide](docs/pack-authoring.md) and
+[pack template](templates/pack/).
 
 - Launch the browser editor: [docs/quickstart.md](docs/quickstart.md)
 - End-user backend and Desktop installation: [docs/install.md](docs/install.md)
@@ -25,20 +51,15 @@ edge is a typed value envelope, so caching and transport are location-independen
   healthy by this repo's own suite. `uv run dinkster-doctor <pack-dir>` is the
   pack linter and publish gate.
 - Companion frontend: [Dinkster-Frontend](https://github.com/Kosinkadink/Dinkster-Frontend)
-  (repository access is required until its planned public release)
-- Receipts, parity tooling, benchmarks, acceptance package, and hardware records:
-  [dinkster-evidence](https://github.com/Kosinkadink/dinkster-evidence)
-  (private maintainer repository; access is required)
 
-Status: pre-release. One private backend source archive is available; no
-Desktop release exists. See [installation](docs/install.md) for prerequisites,
-platform limits, and release assets. Native and ComfyUI-compatibility workflows run through the
-same typed graph, server, worker, and sampling boundaries. The exact model,
-node, dtype, training, and compatibility coverage is linked from the
+Status: in progress. No stable package or Desktop release exists yet. See
+[installation](docs/install.md) for prerequisites and platform limits. Model
+workflows and ComfyUI-compatibility workflows run through the same typed graph,
+server, and worker boundaries. The exact model, node, dtype, training, and
+compatibility coverage is linked from the
 [SUPPORTED.md index](SUPPORTED.md). `uv sync --all-packages` (or
 `scripts/setup_envs.sh` on Linux/macOS or `scripts/setup_envs.ps1` on Windows,
-which also build the torch/GPU test venvs - see
-`packages/dinkster-inference-torch/README.md`), then:
+which also build the optional torch/GPU test venvs), then:
 
 On Linux and Windows, the setup script installs `dinkster-kitchen==0.2.35.post1`
 and `dinkster-aimdo==0.5.5.post2` from PyPI. macOS installs the pure-Python
@@ -50,32 +71,6 @@ Both setup scripts pin root synchronization to this checkout's torch-free
 `.venv-torch` and `.venv-gpu` separately with `uv pip`. Do not target those
 Torch environments with project `uv sync`: exact sync can remove their
 platform-specific torch and kitchen wheels.
-
-Validation requires a sibling `dinkster-evidence` checkout, or an absolute
-`DINKSTER_EVIDENCE_ROOT` override. The `tools.inference_parity` imports, parity
-manifest paths in harness tests, `scripts/benchmark_*` loaders, `benchmarks/`
-fixtures, and `packages/dinkster-acceptance` install/test paths refer to that
-checkout, not to files in core. Harness tests run with the evidence checkout as
-their working directory. Capability evidence selectors under
-`tools/inference_parity/` use the same external root. The receipt generator
-writes its `docs/comfy-confidence-receipts/` there; `--check` verifies those bytes.
-
-Coverage tests generate JSON into temporary directories from pinned input
-checkouts. Set `WORKFLOW_TEMPLATES_ROOT` to workflow_templates at
-`d3b4a9e89573162b005961865164c18c8ae2206b` and `COMFYUI_ROOT` to ComfyUI at
-`15eb748b3ec5f8a0a2d470b7fb280e2d7579f916`; defaults are sibling checkouts with
-those names. The historical research comparison reads the immutable report in
-Dinkster commit `fd02ae351d2ba3eb84f5a68cb89fe208a7365ae3` with `git show`; shallow
-clones must fetch that commit. Current research lives only in the workspace.
-`docs/comfy-source-parity-baseline.json` is a maintained debt baseline, not a
-generated report, and remains tracked. Generated translation/capability JSON
-is ignored; CI regenerates it and verifies the tracked Markdown separately.
-CI's input action requires the read-only `DINKSTER_EVIDENCE_READ_KEY` secret.
-
-For cloud acceptance archives, pass both `--commit` and `--evidence-commit` to
-`scripts/prepare_cloud_acceptance.py`. It assembles the pinned external acceptance
-package with core in a disposable workspace, updates that workspace's lockfile,
-performs a locked install and import check, and records both Git identities.
 
 - `uv run pytest` - test suite (incl. the one-way dependency rule, hazard H6)
 - `uv run pyright` - static type checking (strict for `packages/`, standard

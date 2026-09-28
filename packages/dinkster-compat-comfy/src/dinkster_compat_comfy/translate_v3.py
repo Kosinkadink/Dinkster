@@ -726,6 +726,11 @@ def translate_v3_schema(
         deprecation=deprecation,
         search_visibility="hidden" if bool(getattr(schema, "is_dev_only", False)) else "normal",
         aliases=(node_id,),
+        # ComfyUI itself refuses NodeOutput.expand unless the source schema
+        # declares enable_expand, so this is the exact V3 classification; the
+        # loud runtime refusal (_unwrap_node_output) stays for anything that
+        # slips through.
+        may_expand_graph=bool(getattr(schema, "enable_expand", False)),
         output_node=is_output_node,
         selector=(
             SelectorSpec("switch", {"false": "on_false", "true": "on_true"})

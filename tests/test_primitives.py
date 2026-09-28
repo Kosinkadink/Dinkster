@@ -157,15 +157,16 @@ def test_scalar_or_list_match_inputs_share_the_unconstrained_t_contract() -> Non
         assert item.type == TypeExpr.variable("T"), name
 
 
-def test_compat_claim_list_pinned_to_declared_aliases() -> None:
-    """dinkster-compat-comfy evicts translated foundation twins via a
-    hand-kept STD_CLAIMED_V1_NAMES (the one-way dependency rule forbids
-    it importing this pack), so this test is the drift guard: the list
-    must equal exactly the legacy aliases the foundation nodes declare."""
-    from dinkster_compat_comfy.native import STD_CLAIMED_V1_NAMES
+def test_compat_translation_claims_match_always_composed_schema_aliases() -> None:
+    from dinkster_compat_comfy.native import (
+        FOUNDATION_CLAIMED_V1_NAMES,
+        MEDIA_IO_CLAIMED_V1_NAMES,
+    )
 
-    declared = {alias for node in FOUNDATION_NODES for alias in node.schema().aliases}
-    assert set(STD_CLAIMED_V1_NAMES) == declared
+    foundation = {alias for node in FOUNDATION_NODES for alias in node.schema().aliases}
+    media = {alias for node in MEDIA_IO_NODES for alias in node.schema().aliases}
+    assert set(FOUNDATION_CLAIMED_V1_NAMES) == foundation
+    assert set(MEDIA_IO_CLAIMED_V1_NAMES) == media
 
 
 def test_primitive_wire_presentation() -> None:

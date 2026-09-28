@@ -23,8 +23,12 @@ from dinkster_api.v1 import (
     CORE_INT,
     CORE_STRING,
     DITHERS,
+    ENCODED_MEDIA_LIMIT_BYTES,
     FRAME_FORMATS,
+    MEBIBYTE,
     SAVE_TARGET_TYPE,
+    VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES,
+    VIDEO_FRAME_WORKING_SET_LIMIT_BYTES,
     AssetError,
     AssetRef,
     AssetWidget,
@@ -67,9 +71,9 @@ FLOAT = TypeExpr.concrete(CORE_FLOAT)
 COMBO = TypeExpr.concrete(CORE_COMBO)
 SAVE_TARGET = TypeExpr.concrete(SAVE_TARGET_TYPE)
 
-MAX_DECODED_FRAME_BYTES = 512 * 1024 * 1024
-MAX_DECODED_AUDIO_BYTES = 256 * 1024 * 1024
-MAX_ENCODED_VIDEO_BYTES = 1024 * 1024 * 1024
+MAX_DECODED_FRAME_BYTES = VIDEO_FRAME_WORKING_SET_LIMIT_BYTES
+MAX_DECODED_AUDIO_BYTES = VIDEO_AUDIO_WORKING_SET_LIMIT_BYTES
+MAX_ENCODED_VIDEO_BYTES = ENCODED_MEDIA_LIMIT_BYTES
 
 _REQUIRED_ENCODERS = ("libx264", "libvpx-vp9", "libsvtav1", "aac", "libopus")
 
@@ -218,20 +222,24 @@ def _image_array(frame: Any, width: int, height: int, alpha: bool) -> np.ndarray
     source_height = int(frame.height)
     if source_width < 1 or source_height < 1:
         raise ValueError("decoded video frame has invalid dimensions")
-    if source_width * source_height * 4 * np.dtype(np.float32).itemsize > MAX_DECODED_FRAME_BYTES:
+    depth = max(component.bits for component in frame.format.components)
+    dtype = np.dtype(np.uint16 if depth > 8 else np.uint8)
+    if source_width * source_height * channels * dtype.itemsize > MAX_DECODED_FRAME_BYTES:
         raise ValueError("decoded source frame exceeds the 512 MiB limit")
-    if width * height * channels * np.dtype(np.float32).itemsize > MAX_DECODED_FRAME_BYTES:
+    if width * height * channels * dtype.itemsize > MAX_DECODED_FRAME_BYTES:
         raise ValueError("resized video frame exceeds the 512 MiB limit")
-    format_name = "rgba" if alpha else "rgb24"
+    format_name = (
+        ("rgba64le" if alpha else "rgb48le") if depth > 8 else ("rgba" if alpha else "rgb24")
+    )
     converted = frame.reformat(width=width, height=height, format=format_name)
     array = converted.to_ndarray()
     expected = (height, width, channels)
-    if array.dtype != np.uint8 or array.shape != expected:
+    if array.dtype != dtype or array.shape != expected:
         raise ValueError(
             f"decoded video frame has dtype/shape {array.dtype}/{array.shape}, "
-            f"expected uint8/{expected}"
+            f"expected {dtype}/{expected}"
         )
-    return np.ascontiguousarray(array, dtype=np.float32) / 255.0
+    return np.ascontiguousarray(array)
 
 
 def _video_frames(container: Any, stream: Any) -> Any:
@@ -300,9 +308,6 @@ def decode_video_frames(
         )
         if width <= 0 or height <= 0:
             raise ValueError("video stream has invalid dimensions")
-        largest_frame_bytes = width * height * 4 * np.dtype(np.float32).itemsize
-        if largest_frame_bytes > MAX_DECODED_FRAME_BYTES:
-            raise ValueError("one decoded video frame exceeds the 512 MiB limit")
         if start:
             container.seek(
                 int(start / float(stream.time_base)),
@@ -330,12 +335,11 @@ def decode_video_frames(
                 alpha = frame_alpha
             elif alpha != frame_alpha:
                 raise ValueError("video changes alpha layout between frames")
-            frame_bytes = width * height * (4 if alpha else 3) * np.dtype(np.float32).itemsize
-            if selected_bytes + frame_bytes > MAX_DECODED_FRAME_BYTES:
+            array = _image_array(frame, width, height, bool(alpha))
+            if selected_bytes + array.nbytes > MAX_DECODED_FRAME_BYTES:
                 raise ValueError(
                     "decoded video frames exceed the 512 MiB limit; use resize, start, or frame cap"
                 )
-            array = _image_array(frame, width, height, bool(alpha))
             selected_bytes += int(array.nbytes)
             selected.append(array)
             return bool(frame_load_cap and len(selected) >= frame_load_cap)
@@ -645,6 +649,7 @@ class SaveVideo(Node):
         )
         return NodeSchema(
             node_type="dinkster.save_video",
+            aliases=("SaveVideo",),
             version=4,
             display_name="Save Video",
             category="video",
@@ -752,7 +757,7 @@ class SaveVideo(Node):
                 container, codec = format.split("_", 1)
             else:
                 codec = format
-        if not isinstance(metadata, str) or len(metadata.encode("utf-8")) > 1024 * 1024:
+        if not isinstance(metadata, str) or len(metadata.encode("utf-8")) > MEBIBYTE:
             raise ValueError("video metadata must be a JSON object under 1 MiB")
         tags = json.loads(metadata)
         if not isinstance(tags, dict):
@@ -874,7 +879,7 @@ class SaveVideoFrames(Node):
         quality: int = 80,
         metadata: object = "{}",
     ) -> Mapping[str, object]:
-        if not isinstance(metadata, str) or len(metadata) > 1024 * 1024:
+        if not isinstance(metadata, str) or len(metadata) > MEBIBYTE:
             raise ValueError("video metadata must be a JSON object under 1 MiB")
         tags = json.loads(metadata)
         if not isinstance(tags, dict):

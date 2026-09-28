@@ -25,6 +25,7 @@ import cv2
 import numpy as np
 import PIL
 import torch
+from golden_platform import cpu_identity
 from PIL import Image
 from safetensors.torch import load_file
 
@@ -235,6 +236,7 @@ def main() -> None:
 
     document = {
         "baseline": BASELINE,
+        "generationCpu": cpu_identity(),
         "modelSha256": MODEL_SHA256,
         "numpy": np.__version__,
         "opencv": cv2.__version__,

@@ -138,36 +138,6 @@ def authenticate_artifacts(manifest: Path) -> list[dict[str, Any]]:
     return result
 
 
-def family_observations(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    from dinkster_inference import load_safetensors_header
-    from dinkster_inference.runtime import probe_native
-
-    observations = []
-    for artifact in artifacts:
-        path = Path(artifact["path"])
-        if path.suffix != ".safetensors":
-            continue
-        try:
-            capability = probe_native(load_safetensors_header(path))
-            observations.append(
-                {
-                    "name": artifact["name"],
-                    "family": capability.family_id,
-                    "native": capability.native,
-                    "diagnostics": list(capability.reasons),
-                }
-            )
-        except (OSError, ValueError) as error:
-            observations.append(
-                {
-                    "name": artifact["name"],
-                    "family": None,
-                    "diagnostics": [f"{type(error).__name__}: {error}"],
-                }
-            )
-    return observations
-
-
 def server_command(args: argparse.Namespace, artifacts: list[dict[str, Any]]) -> list[str]:
     output = args.output
     for name in (
@@ -480,6 +450,17 @@ def retain_outputs(
     return rows
 
 
+def dinkster_execution_receipt(accepted: dict[str, Any], commit: str) -> dict[str, str]:
+    receipt = {
+        "runId": accepted.get("runId"),
+        "extensionSnapshotDigest": accepted.get("extensionSnapshotDigest"),
+        "dinksterGitHead": commit,
+    }
+    if not all(isinstance(value, str) and value for value in receipt.values()):
+        raise ValueError("Dinkster acceptance is missing execution provenance")
+    return receipt
+
+
 def run_jobs(
     args: argparse.Namespace,
     report: dict[str, Any],
@@ -545,6 +526,10 @@ def run_jobs(
         if not isinstance(identity, str) or not identity:
             raise ValueError("server returned no job identity")
         row["job_id"] = identity
+        if args.system == "dinkster":
+            row["execution_receipt"] = dinkster_execution_receipt(
+                accepted, report["sources"]["dinkster"]["commit"]
+            )
         route = (
             "/history/" if args.system == "comfyui" else "/api/jobs/by-ref/"
         ) + urllib.parse.quote(identity, safe="")
@@ -690,7 +675,12 @@ def parse_arguments(system: str, argv: Sequence[str] | None = None) -> argparse.
         "--seed-input", action="append", required=True, help="literal NODE_ID.INPUT to vary"
     )
     parser.add_argument("--seed", type=int, default=1064)
-    parser.add_argument("--warm-runs", type=int, default=5)
+    parser.add_argument(
+        "--warm-runs",
+        type=int,
+        default=5,
+        help="warm runs after the initial cold run; zero records a one-shot smoke",
+    )
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--startup-timeout", type=float, default=300)
     parser.add_argument("--job-timeout", type=float, default=1800)
@@ -705,8 +695,8 @@ def parse_arguments(system: str, argv: Sequence[str] | None = None) -> argparse.
         c not in "0123456789abcdef" for c in args.reference_commit
     ):
         parser.error("--reference-commit must be a full hexadecimal revision")
-    if not 1 <= args.port <= 65535 or args.warm_runs < 1:
-        parser.error("port must be valid and at least one warm run is required")
+    if not 1 <= args.port <= 65535 or args.warm_runs < 0:
+        parser.error("port must be valid and warm runs must be nonnegative")
     for name in ("startup_timeout", "job_timeout", "poll_interval"):
         value = getattr(args, name)
         if not math.isfinite(value) or value <= 0:
@@ -781,10 +771,6 @@ def main(system: str, argv: Sequence[str] | None = None) -> int:
         }
         validate_workload(report["workload"])
         report["artifacts"] = authenticate_artifacts(args.artifacts)
-        report["family_observations"] = family_observations(report["artifacts"])
-        report["diagnostics"] = [
-            "Family hints and unknown labels are not used for admission or routing."
-        ]
         command = server_command(args, report["artifacts"])
         report["command"] = command
         report["device"] = {"kind": "cpu"} if args.cpu else {"kind": "cuda", "uuid": args.gpu_uuid}
@@ -918,7 +904,8 @@ def main(system: str, argv: Sequence[str] | None = None) -> int:
                             "unload_record": free_evidence,
                         }
                     )
-        report["warm_summary"] = summary([row["client_wall_seconds"] for row in report["runs"][1:]])
+        warm_samples = [row["client_wall_seconds"] for row in report["runs"][1:]]
+        report["warm_summary"] = summary(warm_samples) if warm_samples else None
         for name, root in (
             ("harness", Path(__file__).resolve().parents[1]),
             ("dinkster", args.repo),

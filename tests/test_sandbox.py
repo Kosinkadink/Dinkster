@@ -1113,7 +1113,7 @@ class TestLiveJail:
             script = f"""
 import os
 from pathlib import Path
-from dinkster_inference import (
+from dinkster_inference_wire import (
     GenerationRequest,
     GenerationSamplerChain,
     GenerationSamplerKind,

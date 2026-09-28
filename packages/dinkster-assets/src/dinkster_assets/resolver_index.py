@@ -11,6 +11,8 @@ from types import MappingProxyType
 from typing import cast
 from urllib.parse import urlsplit
 
+from dinkster_values import MEBIBYTE
+
 from .component_manifest import AssetComponentManifest
 from .identity import AssetError, require_digest
 from .json_metadata import freeze_json, thaw_json
@@ -18,7 +20,7 @@ from .kind import require_asset_kind
 from .p2p_descriptor import P2PDescriptorError, P2PDescriptorV1, validate_p2p_descriptor
 
 RESOLVER_INDEX_VERSION = 1
-RESOLVER_INDEX_MAX_BYTES = 16 * 1024 * 1024
+RESOLVER_INDEX_MAX_BYTES = 16 * MEBIBYTE
 RESOLVER_INDEX_MAX_ENTRIES = 100_000
 RESOLVER_INDEX_MAX_URLS = 64
 RESOLVER_INDEX_MAX_STRING = 4096

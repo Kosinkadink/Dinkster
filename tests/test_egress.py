@@ -8,7 +8,7 @@ from pathlib import Path
 
 import dinkster_workers.egress as egress_module
 import pytest
-from dinkster_inference import (
+from dinkster_inference_wire import (
     GenerationRequest,
     GenerationSamplerChain,
     GenerationSamplerKind,

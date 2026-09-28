@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from dinkster_native.fork_nodes import FORK_NODES
 from dinkster_schema import (
     SCHEMA_WIRE_VERSION,
     ComfyAliasConfidence,
@@ -27,12 +28,10 @@ from dinkster_workers import (
     PACK_INFERENCE_CONTRACT,
     GenerationProvider,
     ManifestError,
-    PackProvides,
-    PackRegistryProvider,
     VisionProvider,
     load_manifest,
-    unmatched_registry_providers,
 )
+from dinkster_workers.host import load_pack
 from dinkster_workers.manifest import (
     COMFY_ALIASES_MAX_BYTES,
     COMFY_ALIASES_MAX_ITEMS,
@@ -41,6 +40,27 @@ from dinkster_workers.manifest import (
     vision_provider_to_wire,
     vision_providers_from_wire,
 )
+
+
+def test_extension_contract_fixture_uses_current_public_pack_surfaces() -> None:
+    manifest = load_manifest(Path("tests/fixtures/extension-contract-pack/dinkster-pack.toml"))
+    _worker, _registry, nodes, arms = load_pack(manifest, import_from_pack_root=True)
+
+    assert manifest.contracts is not None
+    assert manifest.contracts.inference is None
+    assert manifest.extension.privileges == ("schema", "server", "frontend")
+    assert [route.id for route in manifest.extension.routes] == ["extension-contract"]
+    assert [event.name for event in manifest.extension.events] == [
+        "fixture.extension-contract.executed"
+    ]
+    assert [module.id for module in manifest.extension.frontend_modules] == [
+        "dinkster-extension-contract-fixture.frontend"
+    ]
+    assert {node.schema().node_type for node in nodes} == {
+        "fixture.extension.contract",
+        "fixture.extension.value",
+    }
+    assert arms == {}
 
 
 def write_manifest(path: Path, handler: object = None) -> Path:
@@ -81,6 +101,84 @@ def write_group_registry(path: Path) -> None:
     from test_comfy_group_registry import registry
 
     path.write_text(json.dumps(comfy_group_registry_to_wire(registry())), encoding="utf-8")
+
+
+def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
+    manifest = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-pack.toml"))
+
+    fork_backed = (
+        "dinkster.load_checkpoint",
+        "dinkster.load_model_patch",
+        "dinkster.apply_minimax_h3_fun_controlnet",
+        "dinkster.load_diffusion_model",
+        "dinkster.clip_text_encode",
+        "dinkster.empty_latent_image",
+        "dinkster.ksampler",
+        "dinkster.vae_decode",
+        "dinkster.load_clip",
+        "dinkster.load_vae",
+        "dinkster.empty_minimax_h3_av",
+        "dinkster.minimax_h3_t2va_conditioning",
+        "dinkster.minimax_h3_image_to_video",
+        "dinkster.separate_av_latent",
+        "dinkster.vae_decode_audio",
+    )
+    mesh = (
+        "dinkster.image_crop_to_mask",
+        "dinkster.preview_mask",
+        "dinkster.voxel_to_mesh",
+        "dinkster.get_mesh_info",
+        "dinkster.remesh_mesh",
+        "dinkster.decimate_mesh",
+        "dinkster.smooth_mesh_normals",
+        "dinkster.unwrap_mesh",
+        "dinkster.paint_mesh",
+        "dinkster.bake_texture_from_voxel",
+        "dinkster.bake_normal_map_from_mesh",
+        "dinkster.bake_ambient_occlusion",
+        "dinkster.render_uv_atlas",
+        "dinkster.apply_texture_to_mesh",
+        "dinkster.mesh_to_model3d",
+    )
+    assert manifest.executes == (*fork_backed, *mesh)
+    assert dict(manifest.arms) == {"native": (*fork_backed, *mesh)}
+    assert manifest.arm_nodes_entry == "dinkster_compat_comfy.entry:ARM_NODES"
+    assert manifest.assets == ()
+    assert (
+        manifest.workgroup_handler_entry
+        == "dinkster_native.workgroup:create_single_job_workgroup_handler"
+    )
+
+    legacy = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-legacy-pack.toml"))
+    legacy_extra = {
+        "dinkster.load_model_patch",
+        "dinkster.apply_minimax_h3_fun_controlnet",
+        "dinkster.temporal_window_plan",
+        "dinkster.spatial_tile_plan",
+        "dinkster.explicit_window_plan",
+        "dinkster.res4lyf_rk_beta_sampler",
+    }
+    legacy_native = set(fork_backed) | legacy_extra
+    assert set(legacy.executes) == legacy_native | set(mesh)
+    assert set(dict(legacy.arms)["native"]) == legacy_native
+    assert legacy.arm_nodes_entry == "dinkster_compat_comfy.legacy_entry:ARM_NODES"
+
+    native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
+    retained = set((*fork_backed, *mesh))
+    native_sampling = {
+        "dinkster.temporal_window_plan",
+        "dinkster.spatial_tile_plan",
+        "dinkster.explicit_window_plan",
+        "dinkster.res4lyf_rk_beta_sampler",
+    }
+    native_model_patches = {
+        "dinkster.load_model_patch",
+        "dinkster.apply_minimax_h3_fun_controlnet",
+    }
+    native_nodes = retained | native_sampling | native_model_patches
+    assert set(native.executes) == native_nodes
+    assert set(dict(native.arms)["native"]) == native_nodes
+    assert {node.schema().node_type for node in FORK_NODES} == native_nodes - set(mesh)
 
 
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(
@@ -218,7 +316,7 @@ def test_workgroup_handler_entry_requires_exact_nonempty_module_attr(
         load_manifest(write_manifest(tmp_path / "invalid.toml", declared))
 
 
-def test_pack_contracts_dependencies_and_registry_requirements_are_data_only(
+def test_pack_contracts_dependencies_and_capability_requirements_are_data_only(
     tmp_path: Path,
 ) -> None:
     sys.modules.pop("manifest_purity_probe", None)
@@ -228,9 +326,7 @@ def test_pack_contracts_dependencies_and_registry_requirements_are_data_only(
         '[pack.contracts]\nhost = "dinkster-pack-host/1"\n'
         'api = "dinkster-api/v1"\ninference = "dinkster-inference/1"\n'
         '[pack.dependencies]\nprovider = ">=1.2,<2"\n'
-        '[pack.requirements.registry]\n"dinkster.model-families" = ["dinkster.wan21"]\n'
         '[pack.requirements.capabilities]\n"dinkster.video-generation" = ">=2,<3"\n'
-        '[pack.provides.registry]\n"dinkster.samplers" = ["consumer.sampler"]\n'
         '[pack.capabilities]\n"consumer.graph-import" = "1.0.0"\n'
         '[pack.entry]\nnodes = "manifest_purity_probe:NODES"\n',
         encoding="utf-8",
@@ -245,14 +341,8 @@ def test_pack_contracts_dependencies_and_registry_requirements_are_data_only(
     assert [(item.pack, item.version) for item in manifest.dependencies] == [
         ("provider", "<2,>=1.2")
     ]
-    assert [(item.registry, item.id) for item in manifest.requirements.registry] == [
-        ("dinkster.model-families", "dinkster.wan21")
-    ]
     assert [(item.id, item.version) for item in manifest.requirements.capabilities] == [
         ("dinkster.video-generation", "<3,>=2")
-    ]
-    assert [(item.registry, item.id) for item in manifest.provides.registry] == [
-        ("dinkster.samplers", "consumer.sampler")
     ]
     assert [(item.id, item.version) for item in manifest.capabilities] == [
         ("consumer.graph-import", "1.0.0")
@@ -522,27 +612,10 @@ def test_pack_sandbox_needs_reject_ambiguous_shapes(
         ('[pack.contracts]\nhost = "dinkster-pack-host/0"\napi = "dinkster-api/v1"\n', "host"),
         ('[pack.dependencies]\nprovider = ""\n', "non-empty"),
         (
-            '[pack.requirements.registry]\n"families" = ["dinkster.wan21"]\n',
-            "must be namespaced",
-        ),
-        (
             '[pack.requirements.capabilities]\n"video-generation" = ">=1"\n',
             "must be namespaced",
         ),
-        (
-            '[pack.provides.registry]\n"families" = ["consumer.family"]\n',
-            "must be namespaced",
-        ),
-        (
-            '[pack.provides.registry]\n"dinkster.model-families" = ["consumer.one"]\n'
-            '"dinkster.model_families" = ["consumer.one"]\n',
-            "repeats registry provider",
-        ),
-        (
-            '[pack.requirements.registry]\n"dinkster.some-registry" = ["consumer.one"]\n'
-            '"dinkster.some_registry" = ["consumer.one"]\n',
-            "repeats registry requirement",
-        ),
+        ('[pack.requirements.registry]\n"families" = ["consumer.family"]\n', "unknown fields"),
         ('[pack.capabilities]\n"consumer.video" = "1.0"\n', "major.minor.patch"),
     ],
 )
@@ -556,15 +629,6 @@ def test_pack_contract_metadata_rejects_ambiguous_shapes(
     )
     with pytest.raises(ManifestError, match=message):
         load_manifest(path)
-
-
-def test_registry_provider_agreement_uses_canonical_registry_identity() -> None:
-    provides = PackProvides(
-        registry=(PackRegistryProvider("dinkster.model_families", "consumer.family"),)
-    )
-    assert (
-        unmatched_registry_providers(provides, (("inference.families", "consumer.family"),)) == ()
-    )
 
 
 def test_same_session_arms_may_implement_cross_pack_executes_claims(tmp_path: Path) -> None:

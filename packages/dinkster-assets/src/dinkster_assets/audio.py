@@ -8,7 +8,7 @@ import tempfile
 from collections.abc import Mapping
 from typing import Any, cast
 
-from dinkster_values import TypeRegistry
+from dinkster_values import MEBIBYTE, TypeRegistry
 from dinkster_values.audio_codec import (
     AUDIO_INLINE_LIMIT,
     AUDIO_WAVEFORM_LIMITS,
@@ -30,6 +30,7 @@ from dinkster_values.audio_codec import (
     validate_audio_encoded,
 )
 from dinkster_values.audio_lazy import LazyAudio
+from dinkster_values.storage import audio_input
 
 from .identity import AssetError, new_hasher
 from .model import AssetRef, AssetResolver
@@ -55,12 +56,12 @@ def bind_audio_value(obj: object, resolver: AssetResolver | None = None) -> Lazy
                 size = file.tell()
                 file.seek(0)
                 hasher = new_hasher()
-                while chunk := file.read(1024 * 1024):
+                while chunk := file.read(MEBIBYTE):
                     hasher.update(chunk)
                 digest = "blake3:" + hasher.hexdigest()
                 file.seek(0)
                 with vault.writer(digest) as writer:
-                    while chunk := file.read(1024 * 1024):
+                    while chunk := file.read(MEBIBYTE):
                         writer.write(chunk)
                     writer.commit()
             published = audio_from_source(AssetRef(digest, "audio.pcm", size, resolver=vault))
@@ -90,6 +91,7 @@ def register_audio_value_type(
         coerce=lambda obj: bind_audio_value(obj, resolver),
         fingerprint=audio_fingerprint(type_id),
         meta=audio_meta,
+        input_convert=audio_input,
         validate_encoded_buffer=validate_audio_encoded,
     )
     registry.register_rendition(type_id, "wav", mime="audio/wav", render=render_audio_wav)

@@ -250,7 +250,12 @@ def test_layer_stack_codec_round_trips_pixels_masks_placement_and_meta() -> None
         actual.flip_vertical,
     ) == ("Frames", -2.5, 4.0, 8.0, 6.0, 0.25, 0.75, "screen", False, True, False)
     assert spec.meta is not None
-    assert spec.meta(stack) == {"layers": 2, "canvas": (16, 12)}
+    assert spec.meta(stack) == {
+        "layers": 2,
+        "canvas": (16, 12),
+        "storage_dtype": ["fp32"],
+        "cost": {"ram": image.nbytes + mask.nbytes},
+    }
     assert [member.name for member in decoded.expanded()] == ["Frames 1", "Frames 2"]
 
 
