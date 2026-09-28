@@ -13,7 +13,7 @@ torch = attention.torch
 def _first_tensor(value: Any) -> Any:
     if isinstance(value, torch.Tensor):
         return value
-    nested = importlib.import_module("dinkster_comfy.nested_tensor").NestedTensor
+    nested = importlib.import_module("dinkster_inference.nested_tensor").NestedTensor
     if type(value) is nested:
         return value.unbind()[0]
     raise TypeError("distributed output must be a tensor or NestedTensor")
@@ -22,7 +22,7 @@ def _first_tensor(value: Any) -> Any:
 def _empty_like(value: Any) -> Any:
     if isinstance(value, torch.Tensor):
         return torch.empty_like(value)
-    nested = importlib.import_module("dinkster_comfy.nested_tensor").NestedTensor
+    nested = importlib.import_module("dinkster_inference.nested_tensor").NestedTensor
     if type(value) is nested:
         return nested(tuple(torch.empty_like(tensor) for tensor in value.unbind()))
     raise TypeError("distributed output must be a tensor or NestedTensor")
@@ -189,7 +189,9 @@ class _SequenceBlockPatch:
 
 def configure_distributed_model(model: Any) -> None:
     config = attention._distributed_config()  # pyright: ignore[reportPrivateUsage]
-    patcher_extension = cast("Any", importlib.import_module("dinkster_comfy.patcher_extension"))
+    patcher_extension = cast(
+        "Any", importlib.import_module("dinkster_inference.patcher_extension")
+    )
     if config.mode == "guidance":
         model.add_wrapper_with_key(
             patcher_extension.WrappersMP.CALC_COND_BATCH,

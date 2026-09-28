@@ -105,7 +105,7 @@ def _inventory() -> dict[str, Any]:
                 }
             )
     distributions = {}
-    for name in ("comfy-kitchen", "dinkster-comfy"):
+    for name in ("comfy-kitchen", "dinkster-inference"):
         distributions[name] = importlib.metadata.version(name)
     return {
         "executable": sys.executable,

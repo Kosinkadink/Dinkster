@@ -139,7 +139,7 @@ def run_worker(args: argparse.Namespace) -> int:
         raise ReceiptError(f"Flux receipt compute dtype must be bfloat16, got {compute_dtype}")
     model_load_seconds = time.perf_counter() - load_started
     conditioning = clip.encode_from_tokens_scheduled(clip.tokenize(PROMPT))
-    hooks = cast("Any", importlib.import_module("dinkster_comfy.hooks"))
+    hooks = cast("Any", importlib.import_module("dinkster_inference.hooks"))
     positive = hooks.conditioning_set_values(conditioning, {"guidance": 3.5})
     latent = {
         "samples": torch.zeros((1, 16, args.height // 8, args.width // 8), dtype=torch.float32)
@@ -208,7 +208,8 @@ def run_worker(args: argparse.Namespace) -> int:
             "compute_dtype": str(compute_dtype),
         },
         "distributions": {
-            name: importlib.metadata.version(name) for name in ("comfy-kitchen", "dinkster-comfy")
+            name: importlib.metadata.version(name)
+            for name in ("comfy-kitchen", "dinkster-inference")
         },
     }
     args.result.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")

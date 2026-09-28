@@ -135,7 +135,7 @@ class AttentionRuntime:
             raise RuntimeError("Ulysses sequence mode does not support sparse attention")
         backend = self.registry["comfy_kitchen_sol_chunked"]
         sparse = _SparseH3Attention(backend, config)
-        minimax = importlib.import_module("dinkster_comfy.ldm.minimax.model")
+        minimax = importlib.import_module("dinkster_inference.ldm.minimax.model")
         diffusion_model = model.get_model_object("diffusion_model")
         if not isinstance(diffusion_model, minimax.MiniMaxH3Model):
             raise RuntimeError("fork sparse attention requires a MiniMax H3 model")
