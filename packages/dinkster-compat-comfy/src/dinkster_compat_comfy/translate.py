@@ -2541,6 +2541,8 @@ class CompatTranslation:
             register_asset_type(registry, resolver_from_env())
         resident_types = resident if resident is not None else DEFAULT_RESIDENT_V1_TYPES
         for type_id in sorted(self.opaque_types):
+            if type_id in registry:
+                continue
             v1_name = type_id.removeprefix(COMFY_TYPE_PREFIX)
             if v1_name in resident_types:
                 register_resident_type(registry, type_id, table=table, meta=resident_meta)

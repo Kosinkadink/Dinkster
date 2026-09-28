@@ -1037,6 +1037,27 @@ def test_return_names_and_collision_ids() -> None:
     assert [out.id for out in collided.schema().outputs] == ["image", "image_2"]
 
 
+@pytest.mark.parametrize("type_name", ["MOTION_MODEL_ADE", "M_MODELS"])
+def test_animatediff_model_types_stay_resident(type_name: str) -> None:
+    class Loader:
+        RETURN_TYPES = (type_name,)
+        FUNCTION = "load"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {}}
+
+        def load(self):  # noqa: ANN201
+            return (object(),)
+
+    translation = CompatTranslation()
+    translate_node("Loader", Loader, translation)
+    registry = TypeRegistry()
+    translation.register_types(registry)
+
+    assert registry.spec(f"comfy.{type_name}").declared_codec is True
+
+
 def test_output_node_and_is_changed_are_never_cached() -> None:
     translation = CompatTranslation()
     assert translate_node("Save", V1Save, translation).schema().idempotent is False

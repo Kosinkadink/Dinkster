@@ -230,39 +230,41 @@ class GenerationKSampler(KSampler):
             raise ValueError("segmented sampling is not supported")
         if not isinstance(latent_image, Mapping):
             raise TypeError("latent_image must be a mapping")
+        torch = cast("Any", importlib.import_module("torch"))
         sample = cast("Any", importlib.import_module("dinkster_comfy.sample"))
         model_management = cast("Any", importlib.import_module("dinkster_comfy.model_management"))
-        sampling_model = model_for_attention_route(model)
-        source = dict(cast("Mapping[object, object]", latent_image))
-        latent, roles = _fork_samples(source["samples"])
-        model_management.unload_model_and_clones(sampling_model)
-        latent = sample.fix_empty_latent_channels(
-            sampling_model,
-            latent,
-            source.get("downscale_ratio_spacial"),
-            source.get("downscale_ratio_temporal"),
-        )
-        noise = sample.prepare_noise(latent, seed, source.get("batch_index"))
-        output = sample.sample(
-            sampling_model,
-            noise,
-            steps,
-            cfg,
-            sampler_name.removeprefix("dinkster."),
-            scheduler.removeprefix("dinkster."),
-            _unwrap_conditioning(positive),
-            _unwrap_conditioning(negative),
-            latent,
-            denoise=denoise,
-            disable_noise=False,
-            start_step=None,
-            last_step=None,
-            force_full_denoise=False,
-            noise_mask=source.get("noise_mask"),
-            callback=None,
-            disable_pbar=True,
-            seed=seed,
-        )
+        with torch.inference_mode():
+            sampling_model = model_for_attention_route(model)
+            source = dict(cast("Mapping[object, object]", latent_image))
+            latent, roles = _fork_samples(source["samples"])
+            model_management.unload_model_and_clones(sampling_model)
+            latent = sample.fix_empty_latent_channels(
+                sampling_model,
+                latent,
+                source.get("downscale_ratio_spacial"),
+                source.get("downscale_ratio_temporal"),
+            )
+            noise = sample.prepare_noise(latent, seed, source.get("batch_index"))
+            output = sample.sample(
+                sampling_model,
+                noise,
+                steps,
+                cfg,
+                sampler_name.removeprefix("dinkster."),
+                scheduler.removeprefix("dinkster."),
+                _unwrap_conditioning(positive),
+                _unwrap_conditioning(negative),
+                latent,
+                denoise=denoise,
+                disable_noise=False,
+                start_step=None,
+                last_step=None,
+                force_full_denoise=False,
+                noise_mask=source.get("noise_mask"),
+                callback=None,
+                disable_pbar=True,
+                seed=seed,
+            )
         source["samples"] = _dinkster_samples(output, roles)
         return cls.outputs(latent=source)
 

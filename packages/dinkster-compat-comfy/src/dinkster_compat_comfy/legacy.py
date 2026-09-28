@@ -44,6 +44,8 @@ authors and node users never see these):
 from __future__ import annotations
 
 import asyncio
+import importlib
+import importlib.abc
 import importlib.util
 import inspect
 import json
@@ -52,7 +54,10 @@ import sys
 import threading
 import traceback
 import types
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -65,6 +70,102 @@ if TYPE_CHECKING:
 #: ComfyUI runtime modules a pack may hook into; references from pack code
 #: into these mark surfaces Dinkster does not serve (reported, not emulated).
 _HOOK_MODULES = ("server", "execution", "aiohttp")
+
+
+class _ForkComfyProxy(types.ModuleType):
+    def __init__(self, name: str, target: types.ModuleType) -> None:
+        super().__init__(name)
+        types.ModuleType.__setattr__(self, "_target", target)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._target, name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name.startswith("__") or name == "_target":
+            types.ModuleType.__setattr__(self, name, value)
+            return
+        setattr(self._target, name, value)
+
+    def __dir__(self) -> list[str]:
+        return dir(self._target)
+
+
+class _ForkComfyImports(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Expose dinkster_comfy under ComfyUI's module names while a pack imports."""
+
+    @staticmethod
+    def target_name(fullname: str) -> str:
+        suffix = fullname.removeprefix("comfy")
+        return f"dinkster_comfy{suffix}"
+
+    def find_spec(
+        self,
+        fullname: str,
+        path: object = None,
+        target: types.ModuleType | None = None,
+    ) -> ModuleSpec | None:
+        del path, target
+        if fullname != "comfy" and not fullname.startswith("comfy."):
+            return None
+        target_spec = importlib.util.find_spec(self.target_name(fullname))
+        if target_spec is None:
+            return None
+        return importlib.util.spec_from_loader(
+            fullname,
+            self,
+            is_package=target_spec.submodule_search_locations is not None,
+        )
+
+    def create_module(self, spec: ModuleSpec) -> types.ModuleType:
+        target = importlib.import_module(self.target_name(spec.name))
+        return self.proxy(spec.name, target)
+
+    @staticmethod
+    def proxy(name: str, target: types.ModuleType) -> types.ModuleType:
+        proxy = _ForkComfyProxy(name, target)
+        if hasattr(target, "__path__"):
+            types.ModuleType.__setattr__(proxy, "__path__", target.__path__)
+        return proxy
+
+    def exec_module(self, module: types.ModuleType) -> None:
+        del module
+
+
+@contextmanager
+def _fork_comfy_imports() -> Generator[None]:
+    """Bind model-facing custom-pack imports to the fork for object identity."""
+    if importlib.util.find_spec("dinkster_comfy") is None:
+        yield
+        return
+
+    saved = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "comfy" or name.startswith("comfy.")
+    }
+    aliases: dict[str, types.ModuleType] = {}
+    for name in sorted(saved, key=lambda item: item.count(".")):
+        target_name = _ForkComfyImports.target_name(name)
+        if importlib.util.find_spec(target_name) is not None:
+            target = importlib.import_module(target_name)
+            aliases[name] = _ForkComfyImports.proxy(name, target)
+    for name in saved:
+        del sys.modules[name]
+    finder = _ForkComfyImports()
+    sys.meta_path.insert(0, finder)
+    try:
+        sys.modules.update(aliases)
+        for name, module in aliases.items():
+            parent_name, separator, child_name = name.rpartition(".")
+            if separator and parent_name in aliases:
+                types.ModuleType.__setattr__(aliases[parent_name], child_name, module)
+        yield
+    finally:
+        sys.meta_path.remove(finder)
+        for name in tuple(sys.modules):
+            if name == "comfy" or name.startswith("comfy."):
+                del sys.modules[name]
+        sys.modules.update(saved)
 
 
 @dataclass
@@ -170,7 +271,8 @@ def _import_pack(path: Path) -> types.ModuleType:
         raise CompatError(f"cannot build an import spec for {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[sys_module_name] = module
-    spec.loader.exec_module(module)
+    with _fork_comfy_imports():
+        spec.loader.exec_module(module)
     return module
 
 

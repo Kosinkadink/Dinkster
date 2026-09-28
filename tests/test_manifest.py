@@ -125,6 +125,11 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
         == "dinkster_native.workgroup:create_single_job_workgroup_handler"
     )
 
+    legacy = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-legacy-pack.toml"))
+    assert legacy.executes == (*fork_backed, *mesh)
+    assert dict(legacy.arms) == {"native": fork_backed}
+    assert legacy.arm_nodes_entry == "dinkster_compat_comfy.legacy_entry:ARM_NODES"
+
     native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
     retained = set((*fork_backed, *mesh))
     assert set(native.executes) == retained

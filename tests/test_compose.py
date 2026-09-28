@@ -510,7 +510,7 @@ def test_comfy_compat_specs_probe_selected_interpreter_once_with_legacy(
         legacy_packs=[legacy],
     )
 
-    assert len(specs) == 3
+    assert len(specs) == 2
     assert Path(specs[0].manifest).name == "dinkster-pack.toml"
     assert specs[0].in_process is True
     assert calls == [
@@ -2105,9 +2105,7 @@ def test_add_pack_applies_host_types_at_commit(tmp_path: Path) -> None:
 def test_comfy_compat_specs_carry_host_types(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Both compat specs (core and legacy quarantine) install the comfy
-    host-type hook, so whichever composes first gives the torchless engine
-    the comfy.IMAGE decode + PNG rendition."""
+    """The combined core and legacy worker installs the comfy host types."""
     from dinkster import comfy_compose
     from dinkster.comfy_compose import comfy_compat_specs, register_comfy_host_types
 
@@ -2120,12 +2118,12 @@ def test_comfy_compat_specs_carry_host_types(
         memory_budgets={"vram:cuda:0": 20_000, "ram": 40_000},
         reserve_vram=128,
     )
-    assert len(specs) == 3
+    assert len(specs) == 2
     assert specs[0].host_types is None
-    assert all(spec.host_types is register_comfy_host_types for spec in specs[1:])
-    assert all(spec.aimdo == "on" for spec in specs[1:])
-    assert all(spec.vram_budgets == {"vram:cuda:0": 20_000} for spec in specs[1:])
-    assert all(spec.reserve_vram == 128 for spec in specs[1:])
+    assert specs[1].host_types is register_comfy_host_types
+    assert specs[1].aimdo == "on"
+    assert specs[1].vram_budgets == {"vram:cuda:0": 20_000}
+    assert specs[1].reserve_vram == 128
 
 
 def test_pack_spec_validates_aimdo_mode(tmp_path: Path) -> None:
@@ -2854,24 +2852,19 @@ def test_comfy_compat_specs_shapes(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         asset_vault=tmp_path / "library" / "vault",
         mounts_snapshot=tmp_path / "library" / "mounts.json",
     )
-    assert len(specs) == 3
-    generation, core, legacy = specs
+    assert len(specs) == 2
+    generation, legacy = specs
     assert generation.in_process is True
     assert generation.packs is not None and set(generation.packs) == {"dinkster-nodes-generation"}
-    assert core.env["DINKSTER_COMFYUI_ROOT"] == str(root)
-    assert core.env["DINKSTER_COMFY_NODES"] == "EmptyLatentImage"
-    assert core.env["DINKSTER_ASSET_VAULT"] == str(tmp_path / "library" / "vault")
-    assert core.env["DINKSTER_MOUNTS_SNAPSHOT"] == str(tmp_path / "library" / "mounts.json")
-    assert core.python == sys.executable
-    assert core.packs is not None and set(core.packs) == {"comfy"}
-    assert core.attribute is not None
-    assert core.attribute("comfy.EmptyLatentImage") == "comfy"
-    assert core.attribute("dinkster.ksampler") == "comfy"
+    assert legacy.env["DINKSTER_COMFYUI_ROOT"] == str(root)
+    assert legacy.env["DINKSTER_COMFY_NODES"] == "EmptyLatentImage"
+    assert legacy.python == sys.executable
     # The compat layer's own declared chip: distinguishable from legacy
     # packs (shared color, no puzzle mark).
-    assert core.packs["comfy"].display_name == "ComfyUI Compat"
-    assert core.packs["comfy"].abbr == "C1"
-    assert core.packs["comfy"].color
+    assert legacy.packs is not None
+    assert legacy.packs["comfy"].display_name == "ComfyUI Compat"
+    assert legacy.packs["comfy"].abbr == "C1"
+    assert legacy.packs["comfy"].color
 
     multi_gpu = comfy_compat_specs(
         root,
@@ -2880,7 +2873,6 @@ def test_comfy_compat_specs_shapes(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     )[1]
     assert multi_gpu.replica_cuda_indices == (1, 0)
 
-    assert legacy.packs is not None
     assert set(legacy.packs) == {
         "comfy",
         "comfy.rgthree",

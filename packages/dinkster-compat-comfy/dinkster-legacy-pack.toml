@@ -7,16 +7,77 @@ name = "dinkster-compat-legacy"
 # Quarantined legacy nodes arrive as comfy.<pack>.<v1 name>: the same
 # reserved "comfy" claim the core compat worker holds - trusted workers
 # may share one reserved root (the host granted it to both).
-namespaces = ["comfy"]
-requires = []
+namespaces = ["comfy", "dinkster"]
+executes = [
+    "dinkster.load_checkpoint",
+    "dinkster.load_diffusion_model",
+    "dinkster.clip_text_encode",
+    "dinkster.empty_latent_image",
+    "dinkster.ksampler",
+    "dinkster.vae_decode",
+    "dinkster.load_clip",
+    "dinkster.load_vae",
+    "dinkster.empty_minimax_h3_av",
+    "dinkster.minimax_h3_t2va_conditioning",
+    "dinkster.minimax_h3_image_to_video",
+    "dinkster.separate_av_latent",
+    "dinkster.vae_decode_audio",
+    "dinkster.image_crop_to_mask",
+    "dinkster.preview_mask",
+    "dinkster.voxel_to_mesh",
+    "dinkster.get_mesh_info",
+    "dinkster.remesh_mesh",
+    "dinkster.decimate_mesh",
+    "dinkster.smooth_mesh_normals",
+    "dinkster.unwrap_mesh",
+    "dinkster.paint_mesh",
+    "dinkster.bake_texture_from_voxel",
+    "dinkster.bake_normal_map_from_mesh",
+    "dinkster.bake_ambient_occlusion",
+    "dinkster.render_uv_atlas",
+    "dinkster.apply_texture_to_mesh",
+    "dinkster.mesh_to_model3d",
+]
+requires = [
+    "dinkster-comfy @ git+https://github.com/Kosinkadink/dinkster-comfy.git@b80df3e7507a406ae168b468fcb2593c409372bc",
+]
 
 [pack.sandbox]
 gpu = true
 writable-mounts = true
 
+[pack.dependencies]
+dinkster-nodes-generation = ">=0.0.1,<1"
+dinkster-nodes-media-io = ">=0.0.1,<1"
+
+[pack.requirements.capabilities]
+"dinkster.generation.schemas" = ">=1.0.0,<2"
+
+[pack.arms]
+native = [
+    "dinkster.load_checkpoint",
+    "dinkster.load_diffusion_model",
+    "dinkster.clip_text_encode",
+    "dinkster.empty_latent_image",
+    "dinkster.ksampler",
+    "dinkster.vae_decode",
+    "dinkster.load_clip",
+    "dinkster.load_vae",
+    "dinkster.empty_minimax_h3_av",
+    "dinkster.minimax_h3_t2va_conditioning",
+    "dinkster.minimax_h3_image_to_video",
+    "dinkster.separate_av_latent",
+    "dinkster.vae_decode_audio",
+]
+
 [pack.entry]
 nodes = "dinkster_compat_comfy.legacy_entry:LEGACY_NODES"
+arm_nodes = "dinkster_compat_comfy.legacy_entry:ARM_NODES"
 types = "dinkster_compat_comfy.legacy_entry:register_types"
 reservations = "dinkster_compat_comfy.memory:plan_reservations"
 consumers = "dinkster_compat_comfy.pool:memory_consumers"
+telemetry = "dinkster_compat_comfy.devices:vram_telemetry_snapshot"
+choices = "dinkster_compat_comfy.legacy_entry:combo_choices"
 skips = "dinkster_compat_comfy.legacy_entry:translation_skips"
+source_staging = "dinkster_compat_comfy.source_staging:source_staging_provider"
+workgroup_handler = "dinkster_native.workgroup:create_single_job_workgroup_handler"
