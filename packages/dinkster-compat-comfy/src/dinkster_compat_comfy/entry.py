@@ -17,6 +17,8 @@ from .pool import default_pool
 
 _COMPAT_ARM_NODE_TYPES = (
     "dinkster.load_checkpoint",
+    "dinkster.load_model_patch",
+    "dinkster.apply_minimax_h3_fun_controlnet",
     "dinkster.load_diffusion_model",
     "dinkster.clip_text_encode",
     "dinkster.empty_latent_image",

@@ -3,6 +3,8 @@ name = "dinkster-compat-comfy"
 namespaces = ["comfy", "dinkster"]
 executes = [
     "dinkster.load_checkpoint",
+    "dinkster.load_model_patch",
+    "dinkster.apply_minimax_h3_fun_controlnet",
     "dinkster.load_diffusion_model",
     "dinkster.clip_text_encode",
     "dinkster.empty_latent_image",
@@ -53,6 +55,8 @@ dinkster-nodes-media-io = ">=0.0.1,<1"
 [pack.arms]
 native = [
     "dinkster.load_checkpoint",
+    "dinkster.load_model_patch",
+    "dinkster.apply_minimax_h3_fun_controlnet",
     "dinkster.load_diffusion_model",
     "dinkster.clip_text_encode",
     "dinkster.empty_latent_image",
