@@ -353,8 +353,8 @@ def run_mint(args: argparse.Namespace) -> int:
     args.dinkster_root = args.dinkster_root.resolve()
     args.fork_root = args.fork_root.resolve()
     args.checkpoint = args.checkpoint.resolve()
-    if len(args.gpu) not in (2, 4):
-        raise ReceiptError("Flux window receipts require two or four GPU UUIDs")
+    if len(args.gpu) not in (2, 3, 4):
+        raise ReceiptError("Flux window receipts require two, three, or four GPU UUIDs")
     if not args.checkpoint.is_file():
         raise ReceiptError(f"checkpoint does not exist: {args.checkpoint}")
     for root in (args.dinkster_root, args.fork_root):
