@@ -252,6 +252,7 @@ def run_worker(args: argparse.Namespace) -> int:
     if args.sparse_enabled and sparse_backend_calls == 0:
         raise ReceiptError("sparse candidate never executed its registry backend")
     properties = torch.cuda.get_device_properties(0)
+    resources = cast("Any", importlib.import_module("resource"))
     result = {
         "status": "PASS",
         "mode": args.mode,
@@ -279,6 +280,7 @@ def run_worker(args: argparse.Namespace) -> int:
         },
         "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
         "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
+        "peak_host_rss_bytes": resources.getrusage(resources.RUSAGE_SELF).ru_maxrss * 1024,
         "sparse_backend_calls": sparse_backend_calls,
         "environment": {
             "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),

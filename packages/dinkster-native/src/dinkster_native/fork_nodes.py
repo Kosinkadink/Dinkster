@@ -453,7 +453,7 @@ class GenerationLoadDiffusionModel(LoadDiffusionModel):
         if not isinstance(diffusion_model, AssetRef):
             raise TypeError("diffusion_model must be an AssetRef")
         torch = cast("Any", importlib.import_module("torch"))
-        options: dict[str, object] = {}
+        options: dict[str, object] = {"assign_loaded_weights": True}
         if weight_dtype in ("fp8_e4m3fn", "fp8_e4m3fn_fast"):
             options["dtype"] = torch.float8_e4m3fn
             if weight_dtype.endswith("_fast"):
