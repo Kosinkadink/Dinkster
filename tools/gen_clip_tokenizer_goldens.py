@@ -4,8 +4,8 @@ Runs the REFERENCE tokenizers @ the audited baseline - Hugging Face
 CLIPTokenizer over comfy/sd1_tokenizer for raw BPE ids, and
 comfy.sd1_clip.SDTokenizer / comfy.sdxl_clip.SDXLClipGTokenizer for
 tokenize_with_weights - and writes
-tests/goldens/clip_tokenizer_goldens.json. dinkster_inference_wire.clip_bpe
-and dinkster_inference_wire.prompt_tokens are pinned against these outputs;
+tests/goldens/clip_tokenizer_goldens.json. dinkster_inference.clip_bpe
+and dinkster_inference.prompt_tokens are pinned against these outputs;
 the oracle is the executed reference, never a re-derivation.
 
 Embedding cases use fixture safetensors files written to a temp

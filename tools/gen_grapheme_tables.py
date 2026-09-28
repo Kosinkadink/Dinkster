@@ -6,7 +6,7 @@ unicode-segmentation 1.12.0 crate, whose tables are generated from
 Unicode 16.0.0 (src/tables.rs UNICODE_VERSION). This script reproduces
 that crate's table generation (scripts/unicode.py @ v1.12.0) from the
 authoritative UCD files and writes the compact JSON consumed by
-dinkster_inference_wire.graphemes:
+dinkster_inference.graphemes:
 
 - Grapheme_Cluster_Break categories from auxiliary/GraphemeBreakProperty.txt
 - Extended_Pictographic from emoji/emoji-data.txt
@@ -26,7 +26,7 @@ where <ucd_dir> contains GraphemeBreakProperty.txt, emoji-data.txt,
 DerivedCoreProperties.txt, and GraphemeBreakTest.txt, all from
 https://www.unicode.org/Public/16.0.0/ucd/. Writes:
 
-- packages/dinkster-inference-wire/src/dinkster_inference_wire/data/grapheme_break.json.gz
+- packages/dinkster-inference/src/dinkster_inference/data/grapheme_break.json.gz
 - tests/goldens/grapheme_break_test.txt.gz (the UCD conformance file)
 
 and prints the sha256 hashes to pin in the loading module.
@@ -147,8 +147,7 @@ def main() -> None:
         "incb_linker": merge_ranges(derived[("InCB", "Linker")]),
     }
     raw = json.dumps(data, separators=(",", ":"), sort_keys=True).encode()
-    package = repo / "packages/dinkster-inference-wire/src/dinkster_inference_wire"
-    out = package / "data/grapheme_break.json.gz"
+    out = repo / "packages/dinkster-inference/src/dinkster_inference/data/grapheme_break.json.gz"
     out.write_bytes(gzip.compress(raw, mtime=0))
     print(f"{out}: sha256 {hashlib.sha256(raw).hexdigest()}")
 

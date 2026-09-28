@@ -3,11 +3,11 @@
 Runs the REFERENCE tokenizers at the audited ComfyUI baseline -
 Hugging Face ``tokenizers`` loading
 comfy/text_encoders/t5_tokenizer/tokenizer.json (the byte-identical
-file dinkster_inference_wire vendors as t5_tokenizer.json.gz) for raw ids,
+file dinkster_inference vendors as t5_tokenizer.json.gz) for raw ids,
 and comfy.text_encoders.flux.T5XXLTokenizer.tokenize_with_weights for
 the Flux weighting/packing shape (no start token, EOS 1, pad 0,
 min_length 256, unbounded chunk) - and writes
-tests/goldens/t5_tokenizer_goldens.json. dinkster_inference_wire.t5_spm and
+tests/goldens/t5_tokenizer_goldens.json. dinkster_inference.t5_spm and
 the T5 packing profile are pinned against these outputs; the oracle
 is the executed reference, never a re-derivation.
 
