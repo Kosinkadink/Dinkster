@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
 import pytest
-from dinkster_workers import load_manifest
-from dinkster_workers.host import load_pack
-from dinkster_workers.manifest import add_pack_root_to_import_path
+
+from dinkster import comfy_compose
+from dinkster.compose import compose_serving, default_pack_spec
 
 torch = pytest.importorskip("torch")
 
 
 def _write_fake_comfyui(root: Path) -> None:
     (root / "comfy").mkdir(parents=True)
+    for directory in ("input", "output", "temp"):
+        (root / directory).mkdir()
     (root / "comfy" / "options.py").write_text(
         "def enable_args_parsing(value):\n    pass\n",
         encoding="utf-8",
@@ -28,7 +31,9 @@ def _write_fake_comfyui(root: Path) -> None:
     (root / "folder_paths.py").write_text(
         "from pathlib import Path\n"
         "root = Path(__file__).parent\n"
+        "def get_input_directory(): return str(root / 'input')\n"
         "def get_output_directory(): return str(root / 'output')\n"
+        "def get_temp_directory(): return str(root / 'temp')\n"
         "def add_model_folder_path(category, path): pass\n"
         "def get_filename_list(category): return []\n"
         "def get_folder_paths(category): return [str(root / 'models' / category)]\n",
@@ -61,9 +66,22 @@ def test_generation_and_comfy_compat_compose_with_cpu_torch(
     monkeypatch.setenv("DINKSTER_COMFYUI_ROOT", str(comfy_root))
     monkeypatch.setenv("DINKSTER_COMFY_NODES", "TestNode")
     monkeypatch.setenv("DINKSTER_ACCELERATOR", "cpu")
+    monkeypatch.setattr(comfy_compose, "_probe_comfy_blake3", lambda _interpreter: None)
 
-    for pack in ("dinkster-nodes-generation", "dinkster-compat-comfy"):
-        manifest = load_manifest(Path("packages") / pack / "dinkster-pack.toml")
-        add_pack_root_to_import_path(manifest, sys.path)
-        _worker, _registry, nodes, _arms = load_pack(manifest)
-        assert nodes
+    async def scenario() -> None:
+        specs = comfy_compose.comfy_compat_specs(
+            comfy_root,
+            python=sys.executable,
+            _requirements_checked=True,
+            comfy_nodes=["TestNode"],
+        )
+        composition = await compose_serving(
+            (default_pack_spec("dinkster-nodes-media-io"), *specs),
+            include_default_packs=False,
+        )
+        try:
+            assert "dinkster.load_checkpoint" in composition.schemas
+        finally:
+            await composition.close()
+
+    asyncio.run(scenario())
