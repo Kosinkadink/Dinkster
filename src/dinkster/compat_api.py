@@ -172,9 +172,11 @@ def _input_adapters(
     lora_adapter = make_load_lora_adapter(_kind_resolver(service, KIND_MODEL_LORA))
     adapters["dinkster.load_lora"] = lora_adapter
     adapters["dinkster.load_lora_model_only"] = lora_adapter
-    adapters["dinkster.load_z_image_control_patch"] = make_load_model_patch_adapter(
+    model_patch_adapter = make_load_model_patch_adapter(
         _kind_resolver(service, "model/patch")
     )
+    adapters["dinkster.load_model_patch"] = model_patch_adapter
+    adapters["dinkster.load_z_image_control_patch"] = model_patch_adapter
     adapters["dinkster.load_vae"] = make_load_vae_adapter(_kind_resolver(service, KIND_MODEL_VAE))
     adapters["dinkster.load_clip"] = make_load_clip_adapter(
         _kind_resolver(service, KIND_MODEL_TEXT_ENCODER)
