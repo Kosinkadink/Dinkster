@@ -71,9 +71,9 @@ def model_for_attention_route(model: object) -> object:
     sampling_model = cast("Any", model).clone()
     transformer_options = sampling_model.model_options["transformer_options"]
     sparse_config = transformer_options.get("dinkster_h3_sparse_attention")
-    sampling_model.set_model_optimized_attention(
-        runtime.for_model(context.attention_route_token, sparse_config)
-    )
+    sampling_model.set_model_optimized_attention(runtime.for_model(context.attention_route_token))
+    if sparse_config is not None:
+        runtime.configure_sparse_model(sampling_model, sparse_config)
     if runtime.distributed_active():
         from .multigpu import configure_distributed_model
 
@@ -704,10 +704,11 @@ class NativeBlockSparseAttention(BlockSparseAttention):
             dense = tuple(int(value.strip()) for value in dense_blocks.split(",") if value.strip())
         except ValueError as exc:
             raise ValueError("sparse attention dense_blocks must contain integers") from exc
+        model_sampling = cast("Any", model).get_model_object("model_sampling")
         patched = cast("Any", model).clone()
         patched.model_options["transformer_options"]["dinkster_h3_sparse_attention"] = {
-            "start_percent": float(start_percent),
-            "end_percent": float(end_percent),
+            "sigma_start": float(model_sampling.percent_to_sigma(start_percent)),
+            "sigma_end": float(model_sampling.percent_to_sigma(end_percent)),
             "dense_blocks": dense,
             "min_tokens": int(min_tokens),
             "extra_tokens": int(extra_tokens),

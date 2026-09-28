@@ -114,54 +114,99 @@ def test_ulysses_attention_exchanges_local_sequences_and_heads(
     assert exchanges == 4
 
 
-def test_sparse_attention_routes_h3_blocks_with_declared_conditioning_sinks(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[dict[str, object]] = []
-    q = torch.zeros((1, 4, 6, 8))
+def test_sparse_attention_routes_h3_blocks_with_declared_conditioning_sinks() -> None:
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    output = torch.zeros((257, 32))
 
-    def dense(*_args: object, **_kwargs: object) -> Any:
-        raise AssertionError("eligible sparse attention fell back to dense")
-
-    def sparse(_q: Any, _k: Any, _v: Any, _heads: int, **kwargs: object) -> Any:
-        calls.append(cast("dict[str, object]", kwargs["sol_options"]))
-        return q
+    def sparse(*args: object, **kwargs: object) -> tuple[object, str, str]:
+        calls.append((args, kwargs))
+        return output, "key-mean", "value-scale"
 
     config = {
         "dense_blocks": (),
         "min_tokens": 1,
-        "start_percent": 0.0,
-        "end_percent": 1.0,
+        "sigma_start": 1.0,
+        "sigma_end": 0.0,
         "sink_conditioning": "exact_kv_and_rows",
         "tau": 1.3,
         "keep_percent": 0.0,
         "extra_tokens": 128,
     }
-    routed = attention._SparseAttention(dense, sparse, config)  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(routed, "_eligible", lambda *_args: True)
+    routed = attention._SparseH3Attention(sparse, config)  # pyright: ignore[reportPrivateUsage]
+    attn = SimpleNamespace(
+        qkv_proj="qkv",
+        out_proj="out",
+        q_norm="q-norm",
+        k_norm="k-norm",
+        heads=4,
+    )
+    hidden = torch.zeros((257, 32))
+    options = {
+        "minimax_h3_layout": SimpleNamespace(
+            segments=((0, 65, "text"), (65, 129, "audio"), (129, 257, "video"))
+        ),
+        "uuids": ("conditional",),
+    }
 
-    result = routed(
-        q,
-        q,
-        q,
-        4,
-        transformer_options={
-            "minimax_h3_layout": SimpleNamespace(
-                segments=((0, 65, "text"), (65, 129, "audio"), (129, 257, "video"))
-            )
-        },
+    result = routed._attention(  # pyright: ignore[reportPrivateUsage]
+        attn, hidden, "rope", options, 7
+    )
+    routed._attention(attn, hidden, "rope", options, 7)  # pyright: ignore[reportPrivateUsage]
+
+    assert result is output
+    assert calls[0][0] == (hidden, "qkv", "out", "q-norm", "k-norm", 4, "rope")
+    assert calls[0][1] == {
+        "kmean": None,
+        "vscale": None,
+        "tau": 1.3,
+        "topk_ratio": 0.0,
+        "sink_blocks": [0, 3],
+        "sink_q": [1, 3],
+        "token_aug": 128,
+    }
+    assert calls[1][1]["kmean"] == "key-mean"
+    assert calls[1][1]["vscale"] == "value-scale"
+
+
+def test_sparse_attention_uses_model_sampling_sigma_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = {
+        "dense_blocks": (),
+        "min_tokens": 12_288,
+        "sigma_start": 0.8,
+        "sigma_end": 0.2,
+    }
+    routed = attention._SparseH3Attention(lambda: None, config)  # pyright: ignore[reportPrivateUsage]
+    attn = SimpleNamespace(head_dim=128)
+    hidden = SimpleNamespace(
+        shape=(12_288, 4096),
+        device=SimpleNamespace(type="cuda"),
+        dtype=torch.bfloat16,
+    )
+    monkeypatch.setattr(
+        attention.importlib,
+        "import_module",
+        lambda _name: SimpleNamespace(sol_attn_is_available=lambda _device: True),
     )
 
-    assert result is q
-    assert calls == [
-        {
-            "tau": 1.3,
-            "topk_ratio": 0.0,
-            "sink_blocks": [0, 3],
-            "sink_q": [1, 3],
-            "token_aug": 128,
-        }
-    ]
+    def eligible(sigma: float) -> bool:
+        return routed._eligible(  # pyright: ignore[reportPrivateUsage]
+            attn,
+            hidden,
+            object(),
+            {
+                "minimax_h3_layout": object(),
+                "sigmas": torch.tensor([sigma], dtype=torch.float64),
+            },
+            7,
+        )
+
+    assert not eligible(0.81)
+    assert eligible(0.8)
+    assert eligible(0.5)
+    assert eligible(0.2)
+    assert not eligible(0.19)
 
 
 def test_workgroup_attempt_gates_one_invocation_and_releases_attention(

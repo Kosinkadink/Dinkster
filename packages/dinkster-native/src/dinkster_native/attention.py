@@ -122,20 +122,27 @@ class AttentionRuntime:
                 return cast("Callable[..., Any]", selected)
         raise RuntimeError(f"worker attention route for {role!r} is unavailable")
 
-    def for_model(
-        self, token: AttentionRouteToken, sparse_config: dict[str, Any] | None = None
-    ) -> Callable[..., Any]:
+    def for_model(self, token: AttentionRouteToken) -> Callable[..., Any]:
         selected = self.resolve(token)
-        if sparse_config is not None:
-            sparse = self.registry["comfy_kitchen_sol"]
-            selected = _SparseAttention(selected, sparse, sparse_config)
         if _active_attempt is not None:
             config = _distributed_config()
             if config.mode in ("auto", "sequence"):
-                if sparse_config is not None:
-                    raise RuntimeError("Ulysses sequence mode does not support sparse attention")
                 return _UlyssesAttention(selected)
         return selected
+
+    def configure_sparse_model(self, model: Any, config: dict[str, Any]) -> None:
+        if _active_attempt is not None and _distributed_config().mode in ("auto", "sequence"):
+            raise RuntimeError("Ulysses sequence mode does not support sparse attention")
+        backend = self.registry["comfy_kitchen_sol_chunked"]
+        sparse = _SparseH3Attention(backend, config)
+        minimax = importlib.import_module("dinkster_comfy.ldm.minimax.model")
+        diffusion_model = model.get_model_object("diffusion_model")
+        if not isinstance(diffusion_model, minimax.MiniMaxH3Model):
+            raise RuntimeError("fork sparse attention requires a MiniMax H3 model")
+        for block_index, block in enumerate(diffusion_model.blocks):
+            model.set_model_patch_replace(
+                sparse.block_patch(block, block_index), "dit", "double_block", block_index
+            )
 
     def distributed_active(self) -> bool:
         return _active_attempt is not None
@@ -181,9 +188,7 @@ def _distributed_config() -> _DistributedConfig:
         context = current_execution_context()
         execution = None if context is None else context.single_job_multi_gpu_execution
         rank = (
-            execution.rank
-            if execution is not None
-            else int(os.environ["DINKSTER_SINGLE_JOB_RANK"])
+            execution.rank if execution is not None else int(os.environ["DINKSTER_SINGLE_JOB_RANK"])
         )
         world_size = (
             execution.world_size
@@ -372,52 +377,41 @@ class _UlyssesAttention:
         )
 
 
-class _SparseAttention:
+class _SparseH3Attention:
     def __init__(
         self,
-        dense: Callable[..., Any],
-        sparse: Callable[..., Any],
+        backend: Callable[..., Any],
         config: dict[str, Any],
     ) -> None:
-        self.dense = dense
-        self.sparse = sparse
+        self.backend = backend
         self.config = config
-        self.container_function = self._containers
+        self.pooled: dict[tuple[int, int, tuple[object, ...]], tuple[Any, Any]] = {}
 
-    def _containers(self, q: Any, k: Any, v: Any, *args: Any, **kwargs: Any) -> Any:
-        return self(q.take(), k.take(), v.take(), *args, **kwargs)
-
-    def _eligible(self, q: Any, options: dict[str, Any]) -> bool:
-        block = options.get("block_index")
+    def _eligible(
+        self, attention: Any, hidden: Any, rope_freqs: Any, options: dict[str, Any], block: int
+    ) -> bool:
         layout = options.get("minimax_h3_layout")
-        if type(block) is not int or layout is None:
+        if layout is None or rope_freqs is None:
             return False
-        if block in self.config["dense_blocks"] or q.shape[2] < self.config["min_tokens"]:
+        if block in self.config["dense_blocks"] or hidden.shape[0] < self.config["min_tokens"]:
             return False
-        if q.device.type != "cuda" or q.dtype not in (torch.bfloat16, torch.float16):
+        if hidden.device.type != "cuda" or hidden.dtype != torch.bfloat16:
             return False
         kitchen = importlib.import_module("comfy_kitchen")
-        if not kitchen.sol_attn_is_available(q.device):
+        if not kitchen.sol_attn_is_available(hidden.device):
             return False
-        schedule = options.get("sample_sigmas")
         current = options.get("sigmas")
-        if schedule is None or current is None or len(schedule) < 2:
+        if current is None:
             return False
-        step = int((schedule - current.flatten()[0]).abs().argmin())
-        percent = step / (len(schedule) - 1)
-        return self.config["start_percent"] <= percent <= self.config["end_percent"]
+        sigma = float(current.flatten()[0])
+        return (
+            attention.head_dim == 128
+            and self.config["sigma_start"] >= sigma >= self.config["sigma_end"]
+        )
 
-    def __call__(
-        self,
-        q: Any,
-        k: Any,
-        v: Any,
-        heads: int,
-        **kwargs: Any,
+    def _attention(
+        self, attention: Any, hidden: Any, rope_freqs: Any, options: dict[str, Any], block: int
     ) -> Any:
-        options = kwargs.get("transformer_options", {})
-        if not self._eligible(q, options):
-            return self.dense(q, k, v, heads, **kwargs)
         layout = options["minimax_h3_layout"]
         video_start = next(start for start, _stop, kind in layout.segments if kind == "video")
         sink_blocks = [0, (video_start + 63) // 64]
@@ -427,14 +421,49 @@ class _SparseAttention:
         elif self.config["sink_conditioning"] == "exact_kv_and_rows":
             audio_start = next(start for start, _stop, kind in layout.segments if kind == "audio")
             sink_queries = [audio_start // 64, sink_blocks[1]]
-        sol_options = {
-            "tau": self.config["tau"],
-            "topk_ratio": self.config["keep_percent"] / 100.0,
-            "sink_blocks": sink_blocks,
-            "sink_q": sink_queries,
-            "token_aug": self.config["extra_tokens"],
-        }
-        return self.sparse(q, k, v, heads, sol_options=sol_options, **kwargs)
+        pool_key = (block, hidden.shape[0], tuple(options.get("uuids", ())))
+        pooled = self.pooled.get(pool_key)
+        output, key_mean, value_scale = self.backend(
+            hidden,
+            attention.qkv_proj,
+            attention.out_proj,
+            attention.q_norm,
+            attention.k_norm,
+            attention.heads,
+            rope_freqs,
+            kmean=None if pooled is None else pooled[0],
+            vscale=None if pooled is None else pooled[1],
+            tau=self.config["tau"],
+            topk_ratio=self.config["keep_percent"] / 100.0,
+            sink_blocks=sink_blocks,
+            sink_q=sink_queries,
+            token_aug=self.config["extra_tokens"],
+        )
+        self.pooled[pool_key] = (key_mean, value_scale)
+        return output
+
+    def block_patch(self, block: Any, block_index: int) -> Callable[..., Any]:
+        def attention(
+            hidden: Any,
+            rope_freqs: Any = None,
+            transformer_options: dict[str, Any] | None = None,
+        ) -> Any:
+            if transformer_options is None:
+                transformer_options = {}
+            return self._attention(block.attn, hidden, rope_freqs, transformer_options, block_index)
+
+        def patch(args: dict[str, Any], extra: dict[str, Any]) -> Any:
+            if self._eligible(
+                block.attn,
+                args["img"],
+                args["rope_freqs"],
+                args["transformer_options"],
+                block_index,
+            ):
+                args = {**args, "attention": attention}
+            return extra["original_block"](args)
+
+        return patch
 
 
 __all__ = [
