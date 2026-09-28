@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -185,7 +186,7 @@ def test_sparse_attention_uses_model_sampling_sigma_boundaries(
         dtype=torch.bfloat16,
     )
     monkeypatch.setattr(
-        attention.importlib,
+        importlib,
         "import_module",
         lambda _name: SimpleNamespace(sol_attn_is_available=lambda _device: True),
     )
