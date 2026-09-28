@@ -8,6 +8,7 @@ against a real install is in test_compat_live.py."""
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ from dinkster_compat_comfy import (
     load_legacy_pack,
     translate_mappings,
 )
-from dinkster_compat_comfy.legacy import _import_pack
+from dinkster_compat_comfy.legacy import LegacyPackReport, _import_pack
 from dinkster_schema import TypeExpr
 from dinkster_values import CORE_INT
 
@@ -370,6 +371,40 @@ def test_pure_v3_pack_loads_through_compatibility_properties(tmp_path: Path) -> 
     schema = translation.node_classes[0].define_schema()
     assert schema.node_type == "comfy.v3_pack.V3Echo"
     assert schema.display_name == "V3 Echo"
+
+
+def test_pure_v3_pack_loads_inside_worker_event_loop(tmp_path: Path) -> None:
+    pack = write_pack(
+        tmp_path,
+        "v3_pack",
+        "class Schema:\n"
+        "    node_id = 'V3Echo'\n"
+        "class Echo:\n"
+        "    RETURN_TYPES = ('STRING',)\n"
+        "    FUNCTION = 'execute'\n"
+        "    CATEGORY = 'test'\n"
+        "    @classmethod\n"
+        "    def GET_SCHEMA(cls):\n"
+        "        return Schema()\n"
+        "    @classmethod\n"
+        "    def INPUT_TYPES(cls):\n"
+        "        return {'required': {'text': ('STRING',)}}\n"
+        "    @classmethod\n"
+        "    def execute(cls, text):\n"
+        "        return (text,)\n"
+        "class Extension:\n"
+        "    async def get_node_list(self):\n"
+        "        return [Echo]\n"
+        "async def comfy_entrypoint():\n"
+        "    return Extension()\n",
+    )
+
+    async def load() -> LegacyPackReport:
+        return load_legacy_pack(pack, CompatTranslation(), server_instance=None)
+
+    report = asyncio.run(load())
+    assert report.status == "loaded"
+    assert report.nodes_translated == 1
 
 
 def test_mixed_pack_loads_v1_and_flags_ignored_v3(tmp_path: Path) -> None:

@@ -49,6 +49,7 @@ import inspect
 import json
 import os
 import sys
+import threading
 import traceback
 import types
 from dataclasses import asdict, dataclass, field
@@ -195,7 +196,26 @@ def resolve_v3_nodes(module: types.ModuleType) -> list[type]:
             raise CompatError("get_node_list did not return a list of node classes")
         return cast("list[type]", node_list)
 
-    return asyncio.run(collect())
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(collect())
+
+    result: list[list[type]] = []
+    failure: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            result.append(asyncio.run(collect()))
+        except BaseException as exc:  # noqa: BLE001 - reraised on the worker thread
+            failure.append(exc)
+
+    thread = threading.Thread(target=run, name="dinkster-comfy-v3-entrypoint")
+    thread.start()
+    thread.join()
+    if failure:
+        raise failure[0]
+    return result[0]
 
 
 def load_legacy_pack(

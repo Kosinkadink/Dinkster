@@ -1,7 +1,8 @@
 ## ComfyUI compatibility
 
-- `dinkster-serve --comfy-root ... --legacy-pack PATH` runs unmodified v1
-  custom-node packs in quarantined isolated workers under namespaced node ids.
+- `dinkster-serve --comfy-root ... --legacy-pack PATH` runs unmodified v1 and
+  pure V3 custom-node packs in quarantined isolated workers under namespaced
+  node ids.
 - Comfy image, mask, audio, and video values cross the compatibility boundary
   through explicit codecs. Invocation-scoped media staging supports source-file
   inputs on POSIX; source-filename custom nodes are unsupported on Windows.
@@ -16,5 +17,5 @@
   snapshot, and pre-retirement capability evidence remain committed as
   historical evidence. The old capability selectors are inactive and make no
   current support claim.
-- V3-only (`comfy_entrypoint`) packs, pack HTTP routes, web assets, and executor
-  hooks are diagnosed rather than emulated.
+- Pack HTTP routes, web assets, and executor hooks are diagnosed rather than
+  emulated.
