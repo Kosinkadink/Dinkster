@@ -160,7 +160,7 @@ def test_group_registry_roundtrip_is_canonical_and_import_only() -> None:
     declared = registry()
     wire = comfy_group_registry_to_wire(declared)
 
-    assert wire["format"] == "dinkster-inference-group/1"
+    assert wire["format"] == "dinkster-comfy-group/1"
     assert wire["records"][0]["mappingKind"] == "op"  # type: ignore[index]
     assert wire["records"][0]["pattern"]["anchor"] == "preprocess"  # type: ignore[index]
     assert wire["records"][0]["pattern"]["disconnected"] == [  # type: ignore[index]
