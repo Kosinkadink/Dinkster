@@ -65,6 +65,21 @@ native = [
     "dinkster.minimax_h3_image_to_video",
     "dinkster.separate_av_latent",
     "dinkster.vae_decode_audio",
+    "dinkster.image_crop_to_mask",
+    "dinkster.preview_mask",
+    "dinkster.voxel_to_mesh",
+    "dinkster.get_mesh_info",
+    "dinkster.remesh_mesh",
+    "dinkster.decimate_mesh",
+    "dinkster.smooth_mesh_normals",
+    "dinkster.unwrap_mesh",
+    "dinkster.paint_mesh",
+    "dinkster.bake_texture_from_voxel",
+    "dinkster.bake_normal_map_from_mesh",
+    "dinkster.bake_ambient_occlusion",
+    "dinkster.render_uv_atlas",
+    "dinkster.apply_texture_to_mesh",
+    "dinkster.mesh_to_model3d",
 ]
 
 [pack.entry]

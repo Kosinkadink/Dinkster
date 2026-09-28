@@ -19,6 +19,8 @@ def test_compat_arm_entry_matches_manifest(monkeypatch: pytest.MonkeyPatch) -> N
         expected = dict(manifest.arms)["native"]
         actual = tuple(node.schema().node_type for node in entry.ARM_NODES["native"])
         assert actual == expected
+        assert actual == manifest.executes
+        assert {node.schema().node_type for node in entry.COMFY_NODES}.isdisjoint(actual)
     finally:
         sys.modules.pop("dinkster_compat_comfy.entry", None)
 
