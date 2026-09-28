@@ -122,7 +122,8 @@ def _run_sample(
     cfg: float,
     steps: int,
     seed: int,
-) -> tuple[dict[str, str], float]:
+    tensor_output: Path | None = None,
+) -> tuple[dict[str, str], float, float]:
     from dinkster_native.fork_nodes import GenerationKSampler
 
     torch = cast("Any", importlib.import_module("torch"))
@@ -144,7 +145,16 @@ def _run_sample(
         )["latent"],
     )
     torch.cuda.synchronize()
-    return _latent_hashes(sampled["samples"]), time.perf_counter() - started
+    samples = sampled["samples"]
+    hashes = _latent_hashes(samples)
+    sample_seconds = time.perf_counter() - started
+    evidence_started = time.perf_counter()
+    if tensor_output is not None:
+        torch.save(
+            {role: samples.by_role(role).detach().cpu() for role in samples.roles},
+            tensor_output,
+        )
+    return hashes, sample_seconds, time.perf_counter() - evidence_started
 
 
 def run_worker(args: argparse.Namespace) -> int:
@@ -207,10 +217,17 @@ def run_worker(args: argparse.Namespace) -> int:
         activate_distributed_attention(ATTEMPT_GROUP, ATTEMPT)
     try:
         with use_execution_context(context):
-            cold_hashes, cold_seconds = _run_sample(
-                model, latent, positive, negative, cfg, args.steps, args.seed
+            cold_hashes, cold_seconds, evidence_write_seconds = _run_sample(
+                model,
+                latent,
+                positive,
+                negative,
+                cfg,
+                args.steps,
+                args.seed,
+                args.tensor_output,
             )
-            cold_workflow_seconds = time.perf_counter() - worker_started
+            cold_workflow_seconds = time.perf_counter() - worker_started - evidence_write_seconds
             warmup_runs = [
                 _run_sample(model, latent, positive, negative, cfg, args.steps, args.seed)
                 for _ in range(args.warmups)
@@ -244,6 +261,7 @@ def run_worker(args: argparse.Namespace) -> int:
             "model_load_seconds": model_load_seconds,
             "cold_workflow_seconds": cold_workflow_seconds,
             "cold_sample_seconds": cold_seconds,
+            "excluded_evidence_write_seconds": evidence_write_seconds,
             "warmup_sample_seconds": warmup_seconds,
             "sample_seconds": sample_seconds,
             "median_warm_workflow_seconds": median_sample_seconds,
@@ -318,6 +336,7 @@ def _spawn_worker(
         "--repeats",
         str(args.repeats),
         *(("--sparse-enabled",) if args.sparse_enabled else ()),
+        *(("--tensor-output", str(args.tensor_output)) if args.tensor_output else ()),
     )
     with log.open("wb") as output:
         return subprocess.Popen(
@@ -358,10 +377,13 @@ def _run_serial(
     }
     environment["CUDA_VISIBLE_DEVICES"] = args.gpu[0]
     args.sparse_enabled = sparse_enabled
+    args.tensor_output = scratch / f"{name}-tensors.pt" if args.mode == "sparse" else None
     worker = _spawn_worker(args, result, log, environment)
     _wait(((name, worker, log),))
     loaded = _load(result)
     loaded["worker_log"] = _log_receipt(log)
+    if args.tensor_output is not None:
+        loaded["_tensor_output"] = str(args.tensor_output)
     return loaded
 
 
@@ -445,6 +467,42 @@ def _performance(
     }
 
 
+def _sparse_quality_oracle(reference_path: Path, candidate_path: Path) -> dict[str, Any]:
+    torch = cast("Any", importlib.import_module("torch"))
+    reference = torch.load(reference_path, map_location="cpu", weights_only=True)
+    candidate = torch.load(candidate_path, map_location="cpu", weights_only=True)
+    if not isinstance(reference, dict) or set(reference) != set(candidate):
+        raise ReceiptError("sparse quality tensors have different roles")
+    metrics = {}
+    for role in sorted(reference):
+        expected = reference[role]
+        actual = candidate[role]
+        if not isinstance(expected, torch.Tensor) or not isinstance(actual, torch.Tensor):
+            raise ReceiptError("sparse quality output is not a tensor")
+        if expected.shape != actual.shape:
+            raise ReceiptError("sparse quality tensors have different shapes")
+        expected = expected.float().flatten()
+        actual = actual.float().flatten()
+        difference = actual - expected
+        reference_rms = float(expected.square().mean().sqrt())
+        metrics[role] = {
+            "shape": list(reference[role].shape),
+            "max_abs": float(difference.abs().max()),
+            "rmse": float(difference.square().mean().sqrt()),
+            "relative_rmse": (
+                float(difference.square().mean().sqrt()) / reference_rms if reference_rms else None
+            ),
+            "cosine_similarity": float(
+                torch.nn.functional.cosine_similarity(expected, actual, dim=0)
+            ),
+        }
+    return {
+        "baseline": "same-session dense SDPA with identical model, inputs, sampler, and seed",
+        "candidate": "fork registry comfy_kitchen_sol_chunked",
+        "metrics_by_role": metrics,
+    }
+
+
 def run_mint(args: argparse.Namespace) -> int:
     from dinkster_assets import digest_file
 
@@ -479,13 +537,18 @@ def run_mint(args: argparse.Namespace) -> int:
                 arms[arm] = _run_distributed(args, scratch)
     serial = cast("dict[str, Any]", arms["reference"])
     candidate = cast("list[dict[str, Any]]", arms["candidate"])
+    sparse_quality_oracle = None
     if args.mode != "sparse":
         hashes = {
-            json.dumps(result["output_hashes"], sort_keys=True)
-            for result in (serial, *candidate)
+            json.dumps(result["output_hashes"], sort_keys=True) for result in (serial, *candidate)
         }
         if len(hashes) != 1:
             raise ReceiptError("serial and distributed output hashes differ")
+    else:
+        sparse_quality_oracle = _sparse_quality_oracle(
+            Path(serial.pop("_tensor_output")),
+            Path(candidate[0].pop("_tensor_output")),
+        )
     performance = _performance(serial, candidate)
     speedup = performance["speedup"]
     host = _classify_host(candidate)
@@ -563,6 +626,7 @@ def run_mint(args: argparse.Namespace) -> int:
                 if args.mode == "sparse"
                 else "bit-identical between serial and every distributed rank"
             ),
+            "sparse_quality_oracle": sparse_quality_oracle,
             "performance": performance,
             "pre_reset_speedup": baseline,
             "speedup_ratio_to_pre_reset": speedup / baseline if speedup and baseline else None,
@@ -608,6 +672,7 @@ def _parser() -> argparse.ArgumentParser:
     _workload_arguments(worker)
     worker.add_argument("--model-digest", required=True)
     worker.add_argument("--result", type=Path, required=True)
+    worker.add_argument("--tensor-output", type=Path, help=argparse.SUPPRESS)
     worker.set_defaults(function=run_worker)
     mint = commands.add_parser("mint")
     _workload_arguments(mint)
