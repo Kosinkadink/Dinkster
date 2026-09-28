@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import replace
 
+from dinkster_native.fork_nodes import FORK_NODES
 from dinkster_values import TypeRegistry
 from dinkster_workers import CompatGateDiagnostic
 
@@ -28,7 +29,31 @@ from .pool import default_pool
 _TRANSLATION, LEGACY_REPORTS = load_legacy_packs()
 
 LEGACY_NODES = (*entry.COMFY_NODES, *_TRANSLATION.node_classes)
-ARM_NODES = entry.ARM_NODES
+_LEGACY_ARM_NODE_TYPES = (
+    "dinkster.load_checkpoint",
+    "dinkster.load_model_patch",
+    "dinkster.apply_minimax_h3_fun_controlnet",
+    "dinkster.load_diffusion_model",
+    "dinkster.clip_text_encode",
+    "dinkster.empty_latent_image",
+    "dinkster.temporal_window_plan",
+    "dinkster.spatial_tile_plan",
+    "dinkster.explicit_window_plan",
+    "dinkster.res4lyf_rk_beta_sampler",
+    "dinkster.ksampler",
+    "dinkster.vae_decode",
+    "dinkster.load_clip",
+    "dinkster.load_vae",
+    "dinkster.empty_minimax_h3_av",
+    "dinkster.minimax_h3_t2va_conditioning",
+    "dinkster.minimax_h3_image_to_video",
+    "dinkster.separate_av_latent",
+    "dinkster.vae_decode_audio",
+)
+_FORK_NODES_BY_TYPE = {node.schema().node_type: node for node in FORK_NODES}
+ARM_NODES = {
+    "native": tuple(_FORK_NODES_BY_TYPE[node_type] for node_type in _LEGACY_ARM_NODE_TYPES)
+}
 combo_choices = entry.combo_choices
 
 
