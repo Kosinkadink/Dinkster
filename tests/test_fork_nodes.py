@@ -524,6 +524,7 @@ def test_generation_ksampler_preserves_h3_stream_roles(monkeypatch: pytest.Monke
         ),
     )
     modules = {
+        "torch": _FakeTorch,
         "dinkster_inference.nested_tensor": SimpleNamespace(NestedTensor=NestedTensor),
         "dinkster_inference.sample": sample,
         "dinkster_inference.model_management": SimpleNamespace(
@@ -581,6 +582,7 @@ def test_generation_ksampler_normalizes_residency_before_sampling(
         return object()
 
     def sample_latent(*args: object, **kwargs: object) -> object:
+        assert _FakeTorch.inference_mode_enabled
         events.append(("sample", args, kwargs))
         return sampled
 
@@ -591,6 +593,7 @@ def test_generation_ksampler_normalizes_residency_before_sampling(
     )
     model_management = SimpleNamespace(unload_model_and_clones=unload_model)
     modules = {
+        "torch": _FakeTorch,
         "dinkster_inference.sample": sample,
         "dinkster_inference.model_management": model_management,
     }
@@ -623,6 +626,7 @@ def test_generation_ksampler_normalizes_residency_before_sampling(
     assert events[1] == ("fix", model, latent, 8, 4)
     assert events[2][1:] == (normalized, 459, (3,))
     assert cast("Mapping[str, object]", result["latent"])["samples"] is sampled
+    assert not _FakeTorch.inference_mode_enabled
 
 
 def test_generation_ksampler_attaches_attention_to_a_model_clone(
@@ -649,6 +653,7 @@ def test_generation_ksampler_attaches_attention_to_a_model_clone(
         lambda: SimpleNamespace(attention_route_token=token, attention_runtime=runtime),
     )
     modules = {
+        "torch": _FakeTorch,
         "dinkster_inference.sample": SimpleNamespace(
             fix_empty_latent_channels=lambda actual, latent, *_args: (
                 events.append(("fix", actual)),
@@ -720,6 +725,7 @@ def test_generation_ksampler_attaches_compiled_window_plan_to_a_clone(
         )[1],
     )
     modules = {
+        "torch": _FakeTorch,
         "dinkster_inference.sample": SimpleNamespace(
             fix_empty_latent_channels=lambda _model, latent, *_args: latent,
             prepare_noise=lambda *_args: object(),
@@ -792,6 +798,7 @@ def test_generation_ksampler_routes_res4lyf_substep_options(
         )[1],
     )
     modules = {
+        "torch": _FakeTorch,
         "dinkster_inference.sample": SimpleNamespace(
             fix_empty_latent_channels=lambda _model, latent, *_args: latent,
             prepare_noise=lambda *_args: "noise",

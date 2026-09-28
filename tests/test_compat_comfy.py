@@ -1037,6 +1037,27 @@ def test_return_names_and_collision_ids() -> None:
     assert [out.id for out in collided.schema().outputs] == ["image", "image_2"]
 
 
+@pytest.mark.parametrize("type_name", ["MOTION_MODEL_ADE", "M_MODELS"])
+def test_animatediff_model_types_stay_resident(type_name: str) -> None:
+    class Loader:
+        RETURN_TYPES = (type_name,)
+        FUNCTION = "load"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {}}
+
+        def load(self):  # noqa: ANN201
+            return (object(),)
+
+    translation = CompatTranslation()
+    translate_node("Loader", Loader, translation)
+    registry = TypeRegistry()
+    translation.register_types(registry)
+
+    assert registry.spec(f"comfy.{type_name}").declared_codec is True
+
+
 def test_output_node_and_is_changed_are_never_cached() -> None:
     translation = CompatTranslation()
     assert translate_node("Save", V1Save, translation).schema().idempotent is False
@@ -2042,6 +2063,76 @@ def test_v1_fanout_scalar_mapping_and_list_aggregation_execute_end_to_end() -> N
         assert isinstance(translated.graph.nodes["scale"], RegionNode)
         result = await compat_engine(translation).run(translated.graph, translated.targets)
         assert result.outputs["collect"]["values"].resolve() == [0, 4, 8]
+
+    asyncio.run(scenario())
+
+
+def test_v1_hook_fanout_through_conditioning_preserves_shared_identity() -> None:
+    class CreateHooks:
+        RETURN_TYPES = ("HOOKS",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {}}
+
+        def run(self):  # noqa: ANN201
+            return (object(),)
+
+    class AttachHooks:
+        RETURN_TYPES = ("CONDITIONING",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {"required": {"hooks": ("HOOKS",)}}
+
+        def run(self, hooks):  # noqa: ANN001, ANN201
+            return ({"hooks": hooks},)
+
+    class SameHooks:
+        RETURN_TYPES = ("BOOLEAN",)
+        FUNCTION = "run"
+
+        @classmethod
+        def INPUT_TYPES(cls):  # noqa: ANN206
+            return {
+                "required": {
+                    "first": ("CONDITIONING",),
+                    "second": ("CONDITIONING",),
+                }
+            }
+
+        def run(self, first, second):  # noqa: ANN001, ANN201
+            return (first["hooks"] is second["hooks"],)
+
+    async def scenario() -> None:
+        translation = translate_mappings(
+            {
+                "CreateHooks": CreateHooks,
+                "AttachHooks": AttachHooks,
+                "SameHooks": SameHooks,
+            }
+        )
+        engine = compat_engine(translation)
+        graph = Graph(
+            nodes={
+                "create": GraphNode("comfy.CreateHooks", {}),
+                "left": GraphNode("comfy.AttachHooks", {"hooks": Link("create", "hooks")}),
+                "right": GraphNode("comfy.AttachHooks", {"hooks": Link("create", "hooks")}),
+                "same": GraphNode(
+                    "comfy.SameHooks",
+                    {
+                        "first": Link("left", "conditioning"),
+                        "second": Link("right", "conditioning"),
+                    },
+                ),
+            }
+        )
+
+        result = await engine.run(graph, ["same"])
+
+        assert result.outputs["same"]["boolean"].resolve() is True
 
     asyncio.run(scenario())
 

@@ -8,6 +8,9 @@ against a real install is in test_compat_live.py."""
 
 from __future__ import annotations
 
+import asyncio
+import importlib
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,7 +20,7 @@ from dinkster_compat_comfy import (
     load_legacy_pack,
     translate_mappings,
 )
-from dinkster_compat_comfy.legacy import _import_pack
+from dinkster_compat_comfy.legacy import LegacyPackReport, _import_pack
 from dinkster_schema import TypeExpr
 from dinkster_values import CORE_INT
 
@@ -302,6 +305,44 @@ def test_good_pack_loads_and_reports_skips(tmp_path: Path) -> None:
     assert batcher.inputs[0].type == TypeExpr.list_of(TypeExpr.concrete(CORE_INT))
 
 
+def test_pack_model_imports_bind_to_fork_without_replacing_stock_modules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "comfy").mkdir()
+    (tmp_path / "comfy" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "comfy" / "model_base.py").write_text(
+        "class BaseModel:\n    source = 'stock'\n", encoding="utf-8"
+    )
+    (tmp_path / "dinkster_inference").mkdir()
+    (tmp_path / "dinkster_inference" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "dinkster_inference" / "model_base.py").write_text(
+        "class BaseModel:\n    source = 'fork'\n", encoding="utf-8"
+    )
+    pack = write_pack(
+        tmp_path,
+        "model_pack",
+        "from comfy.model_base import BaseModel\n"
+        "import comfy.model_base as model_base\n"
+        "def patch_runtime():\n    model_base.runtime_patch = 'fork'\n"
+        "NODE_CLASS_MAPPINGS = {}\n",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    for name in tuple(sys.modules):
+        if name == "comfy" or name.startswith("comfy.") or name == "dinkster_inference":
+            monkeypatch.delitem(sys.modules, name, raising=False)
+
+    stock_model_base = importlib.import_module("comfy.model_base")
+    module = _import_pack(pack)
+    fork_model_base = importlib.import_module("dinkster_inference.model_base")
+
+    assert module.BaseModel is fork_model_base.BaseModel
+    assert module.BaseModel is not stock_model_base.BaseModel
+    assert importlib.import_module("comfy.model_base") is stock_model_base
+    module.patch_runtime()
+    assert fork_model_base.runtime_patch == "fork"
+    assert not hasattr(stock_model_base, "runtime_patch")
+
+
 def test_missing_dependency_is_classified(tmp_path: Path) -> None:
     pack = write_pack(
         tmp_path, "needs_dep", "import definitely_not_installed_xyz\nNODE_CLASS_MAPPINGS = {}\n"
@@ -318,14 +359,92 @@ def test_import_error_is_classified(tmp_path: Path) -> None:
     assert "boom at import" in report.error
 
 
-def test_no_mappings_and_v3_are_distinguished(tmp_path: Path) -> None:
+def test_no_mappings_and_invalid_v3_are_distinguished(tmp_path: Path) -> None:
     empty = write_pack(tmp_path, "empty_pack", "x = 1\n")
     v3 = write_pack(tmp_path, "v3_pack", "def comfy_entrypoint():\n    return None\n")
     empty_report = load_legacy_pack(empty, CompatTranslation(), server_instance=None)
     v3_report = load_legacy_pack(v3, CompatTranslation(), server_instance=None)
     assert empty_report.status == "no-mappings"
-    assert v3_report.status == "v3-entrypoint"
+    assert v3_report.status == "import-error"
+    assert "get_node_list" in v3_report.error
     assert not v3_report.v3_entrypoint_ignored
+
+
+def test_pure_v3_pack_loads_through_compatibility_properties(tmp_path: Path) -> None:
+    pack = write_pack(
+        tmp_path,
+        "v3_pack",
+        "class Schema:\n"
+        "    node_id = 'V3Echo'\n"
+        "    display_name = 'V3 Echo'\n"
+        "class Echo:\n"
+        "    RETURN_TYPES = ('STRING',)\n"
+        "    RETURN_NAMES = ('text',)\n"
+        "    OUTPUT_IS_LIST = (False,)\n"
+        "    OUTPUT_NODE = False\n"
+        "    INPUT_IS_LIST = False\n"
+        "    FUNCTION = 'execute'\n"
+        "    CATEGORY = 'test'\n"
+        "    DESCRIPTION = ''\n"
+        "    @classmethod\n"
+        "    def GET_SCHEMA(cls):\n"
+        "        return Schema()\n"
+        "    @classmethod\n"
+        "    def INPUT_TYPES(cls):\n"
+        "        return {'required': {'text': ('STRING',)}}\n"
+        "    @classmethod\n"
+        "    def execute(cls, text):\n"
+        "        return (text,)\n"
+        "class Extension:\n"
+        "    async def on_load(self):\n"
+        "        self.loaded = True\n"
+        "    async def get_node_list(self):\n"
+        "        assert self.loaded\n"
+        "        return [Echo]\n"
+        "async def comfy_entrypoint():\n"
+        "    return Extension()\n",
+    )
+    translation = CompatTranslation()
+    report = load_legacy_pack(pack, translation, server_instance=None)
+    assert report.status == "loaded"
+    assert report.nodes_translated == 1
+    schema = translation.node_classes[0].define_schema()
+    assert schema.node_type == "comfy.v3_pack.V3Echo"
+    assert schema.display_name == "V3 Echo"
+
+
+def test_pure_v3_pack_loads_inside_worker_event_loop(tmp_path: Path) -> None:
+    pack = write_pack(
+        tmp_path,
+        "v3_pack",
+        "class Schema:\n"
+        "    node_id = 'V3Echo'\n"
+        "class Echo:\n"
+        "    RETURN_TYPES = ('STRING',)\n"
+        "    FUNCTION = 'execute'\n"
+        "    CATEGORY = 'test'\n"
+        "    @classmethod\n"
+        "    def GET_SCHEMA(cls):\n"
+        "        return Schema()\n"
+        "    @classmethod\n"
+        "    def INPUT_TYPES(cls):\n"
+        "        return {'required': {'text': ('STRING',)}}\n"
+        "    @classmethod\n"
+        "    def execute(cls, text):\n"
+        "        return (text,)\n"
+        "class Extension:\n"
+        "    async def get_node_list(self):\n"
+        "        return [Echo]\n"
+        "async def comfy_entrypoint():\n"
+        "    return Extension()\n",
+    )
+
+    async def load() -> LegacyPackReport:
+        return load_legacy_pack(pack, CompatTranslation(), server_instance=None)
+
+    report = asyncio.run(load())
+    assert report.status == "loaded"
+    assert report.nodes_translated == 1
 
 
 def test_mixed_pack_loads_v1_and_flags_ignored_v3(tmp_path: Path) -> None:
