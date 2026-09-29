@@ -566,6 +566,7 @@ class GenerationKSampler(KSampler):
             raise ValueError("segmented sampling is not supported")
         if not isinstance(latent_image, Mapping):
             raise TypeError("latent_image must be a mapping")
+        torch = cast("Any", importlib.import_module("torch"))
         sample = cast("Any", importlib.import_module("dinkster_inference.sample"))
         model_management = cast(
             "Any", importlib.import_module("dinkster_inference.model_management")
@@ -593,26 +594,27 @@ class GenerationKSampler(KSampler):
             cast("Any", sampling_model).model_options = model_options
         noise = sample.prepare_noise(latent, seed, source.get("batch_index"))
         if sampler is None:
-            output = sample.sample(
-                sampling_model,
-                noise,
-                steps,
-                cfg,
-                sampler_name.removeprefix("dinkster."),
-                scheduler.removeprefix("dinkster."),
-                _unwrap_conditioning(positive),
-                _unwrap_conditioning(negative),
-                latent,
-                denoise=denoise,
-                disable_noise=False,
-                start_step=None,
-                last_step=None,
-                force_full_denoise=False,
-                noise_mask=source.get("noise_mask"),
-                callback=None,
-                disable_pbar=True,
-                seed=seed,
-            )
+            with torch.inference_mode():
+                output = sample.sample(
+                    sampling_model,
+                    noise,
+                    steps,
+                    cfg,
+                    sampler_name.removeprefix("dinkster."),
+                    scheduler.removeprefix("dinkster."),
+                    _unwrap_conditioning(positive),
+                    _unwrap_conditioning(negative),
+                    latent,
+                    denoise=denoise,
+                    disable_noise=False,
+                    start_step=None,
+                    last_step=None,
+                    force_full_denoise=False,
+                    noise_mask=source.get("noise_mask"),
+                    callback=None,
+                    disable_pbar=True,
+                    seed=seed,
+                )
         else:
             from dinkster_inference_wire import BuiltinSamplerSelection
 
@@ -628,22 +630,23 @@ class GenerationKSampler(KSampler):
                 denoise=denoise,
                 model_options=cast("Any", sampling_model).model_options,
             )
-            output = samplers.sample(
-                sampling_model,
-                noise,
-                _unwrap_conditioning(positive),
-                _unwrap_conditioning(negative),
-                cfg,
-                cast("Any", sampling_model).load_device,
-                samplers.sampler_object(sampler.sampler_id, dict(sampler.options)),
-                configured.sigmas,
-                cast("Any", sampling_model).model_options,
-                latent_image=latent,
-                denoise_mask=source.get("noise_mask"),
-                callback=None,
-                disable_pbar=True,
-                seed=seed,
-            )
+            with torch.inference_mode():
+                output = samplers.sample(
+                    sampling_model,
+                    noise,
+                    _unwrap_conditioning(positive),
+                    _unwrap_conditioning(negative),
+                    cfg,
+                    cast("Any", sampling_model).load_device,
+                    samplers.sampler_object(sampler.sampler_id, dict(sampler.options)),
+                    configured.sigmas,
+                    cast("Any", sampling_model).model_options,
+                    latent_image=latent,
+                    denoise_mask=source.get("noise_mask"),
+                    callback=None,
+                    disable_pbar=True,
+                    seed=seed,
+                )
             output = output.to(
                 device=model_management.intermediate_device(),
                 dtype=model_management.intermediate_dtype(),

@@ -31,6 +31,7 @@ from dinkster_workers import (
     VisionProvider,
     load_manifest,
 )
+from dinkster_workers.host import load_pack
 from dinkster_workers.manifest import (
     COMFY_ALIASES_MAX_BYTES,
     COMFY_ALIASES_MAX_ITEMS,
@@ -39,6 +40,27 @@ from dinkster_workers.manifest import (
     vision_provider_to_wire,
     vision_providers_from_wire,
 )
+
+
+def test_extension_contract_fixture_uses_current_public_pack_surfaces() -> None:
+    manifest = load_manifest(Path("tests/fixtures/extension-contract-pack/dinkster-pack.toml"))
+    _worker, _registry, nodes, arms = load_pack(manifest, import_from_pack_root=True)
+
+    assert manifest.contracts is not None
+    assert manifest.contracts.inference is None
+    assert manifest.extension.privileges == ("schema", "server", "frontend")
+    assert [route.id for route in manifest.extension.routes] == ["extension-contract"]
+    assert [event.name for event in manifest.extension.events] == [
+        "fixture.extension-contract.executed"
+    ]
+    assert [module.id for module in manifest.extension.frontend_modules] == [
+        "dinkster-extension-contract-fixture.frontend"
+    ]
+    assert {node.schema().node_type for node in nodes} == {
+        "fixture.extension.contract",
+        "fixture.extension.value",
+    }
+    assert arms == {}
 
 
 def write_manifest(path: Path, handler: object = None) -> Path:
@@ -86,6 +108,8 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
 
     fork_backed = (
         "dinkster.load_checkpoint",
+        "dinkster.load_model_patch",
+        "dinkster.apply_minimax_h3_fun_controlnet",
         "dinkster.load_diffusion_model",
         "dinkster.clip_text_encode",
         "dinkster.empty_latent_image",
@@ -117,13 +141,27 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
         "dinkster.mesh_to_model3d",
     )
     assert manifest.executes == (*fork_backed, *mesh)
-    assert dict(manifest.arms) == {"native": fork_backed}
+    assert dict(manifest.arms) == {"native": (*fork_backed, *mesh)}
     assert manifest.arm_nodes_entry == "dinkster_compat_comfy.entry:ARM_NODES"
     assert manifest.assets == ()
     assert (
         manifest.workgroup_handler_entry
         == "dinkster_native.workgroup:create_single_job_workgroup_handler"
     )
+
+    legacy = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-legacy-pack.toml"))
+    legacy_extra = {
+        "dinkster.load_model_patch",
+        "dinkster.apply_minimax_h3_fun_controlnet",
+        "dinkster.temporal_window_plan",
+        "dinkster.spatial_tile_plan",
+        "dinkster.explicit_window_plan",
+        "dinkster.res4lyf_rk_beta_sampler",
+    }
+    legacy_native = set(fork_backed) | legacy_extra
+    assert set(legacy.executes) == legacy_native | set(mesh)
+    assert set(dict(legacy.arms)["native"]) == legacy_native
+    assert legacy.arm_nodes_entry == "dinkster_compat_comfy.legacy_entry:ARM_NODES"
 
     native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
     retained = set((*fork_backed, *mesh))
@@ -193,15 +231,15 @@ def test_manifest_loads_strict_adjacent_comfy_group_registry_without_importing_c
     ("body", "message"),
     [
         (
-            '{"format":"dinkster-inference-alias/1","sourceSchemas":[],"records":[],"records":[]}',
+            '{"format":"dinkster-comfy-alias/1","sourceSchemas":[],"records":[],"records":[]}',
             "duplicate JSON object key",
         ),
         (
-            '{"format":"dinkster-inference-alias/1","sourceSchemas":[],"records":[],"bad":NaN}',
+            '{"format":"dinkster-comfy-alias/1","sourceSchemas":[],"records":[],"bad":NaN}',
             "non-finite JSON number",
         ),
         (
-            '{"format":"dinkster-inference-alias/1","sourceSchemas":[],"records":[],"bad":1e999}',
+            '{"format":"dinkster-comfy-alias/1","sourceSchemas":[],"records":[],"bad":1e999}',
             "non-finite JSON number",
         ),
         ("[" * 70 + "]" * 70, "nesting depth"),
@@ -217,7 +255,7 @@ def test_manifest_rejects_hostile_comfy_alias_json(tmp_path: Path, body: str, me
 def test_manifest_rejects_hostile_comfy_group_json(tmp_path: Path) -> None:
     manifest_path = write_manifest(tmp_path / "dinkster-pack.toml")
     (tmp_path / "comfy-groups.json").write_text(
-        '{"format":"dinkster-inference-group/1","sourceSchemas":[],"groupSchemas":[],'
+        '{"format":"dinkster-comfy-group/1","sourceSchemas":[],"groupSchemas":[],'
         '"records":[],"records":[]}',
         encoding="utf-8",
     )
@@ -234,7 +272,7 @@ def test_manifest_rejects_oversized_and_escaping_comfy_alias_registry(tmp_path: 
 
     alias_path.unlink()
     outside = tmp_path.parent / "outside-comfy-aliases.json"
-    outside.write_text('{"format":"dinkster-inference-alias/1","sourceSchemas":[],"records":[]}')
+    outside.write_text('{"format":"dinkster-comfy-alias/1","sourceSchemas":[],"records":[]}')
     try:
         alias_path.symlink_to(outside)
     except OSError as exc:

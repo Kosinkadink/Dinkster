@@ -40,7 +40,7 @@ from .wire import (
     schema_to_wire,
 )
 
-COMFY_GROUP_FORMAT = "dinkster-inference-group/1"
+COMFY_GROUP_FORMAT = "dinkster-comfy-group/1"
 COMFY_GROUP_MAX_NODES = 16
 COMFY_GROUP_MAX_EDGES = 64
 
