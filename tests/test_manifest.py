@@ -123,6 +123,7 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
         "dinkster.separate_av_latent",
         "dinkster.vae_decode_audio",
     )
+    default_native = ("comfy.BlockSparseAttention", *fork_backed)
     mesh = (
         "dinkster.image_crop_to_mask",
         "dinkster.preview_mask",
@@ -140,8 +141,8 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
         "dinkster.apply_texture_to_mesh",
         "dinkster.mesh_to_model3d",
     )
-    assert manifest.executes == (*fork_backed, *mesh)
-    assert dict(manifest.arms) == {"native": (*fork_backed, *mesh)}
+    assert manifest.executes == (*default_native, *mesh)
+    assert dict(manifest.arms) == {"native": (*default_native, *mesh)}
     assert manifest.arm_nodes_entry == "dinkster_compat_comfy.entry:ARM_NODES"
     assert manifest.assets == ()
     assert (
@@ -164,7 +165,7 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
     assert legacy.arm_nodes_entry == "dinkster_compat_comfy.legacy_entry:ARM_NODES"
 
     native = load_manifest(Path("packages/dinkster-native/dinkster-pack.toml"))
-    retained = set((*fork_backed, *mesh))
+    retained = set((*default_native, *mesh))
     native_sampling = {
         "dinkster.temporal_window_plan",
         "dinkster.spatial_tile_plan",
