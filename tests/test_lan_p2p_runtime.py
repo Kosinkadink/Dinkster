@@ -881,7 +881,9 @@ def test_download_distinguishes_sparse_bytes_from_corrupt_resumed_piece(
         downloader.grant(hinted_download.to_wire(), "download")
         torrent = downloader._torrents[download.lease_id]
         torrent.handle.set_metadata(derive_p2p_descriptor(source).info)
-        deadline = time.monotonic() + 15
+        # Native completion precedes flush/read-back publication, which can lag on loaded Windows
+        # runners. Wait through the resolver's stall budget for the terminal lease state.
+        deadline = time.monotonic() + 30
         while time.monotonic() < deadline and torrent.state not in {"complete", "failed"}:
             seeder.poll_alerts()
             downloader.poll_alerts()
@@ -1319,6 +1321,12 @@ def test_controller_requires_receipt_then_maps_transfers_revokes_and_preserves_l
                 lambda value: value["lan"]["mappingPort"] is not None,
             )
             assert seeded["lan"]["mappedDigests"] == [digest]
+            # Mapping readiness precedes delivery of the mDNS advertisement on Windows. Wait for
+            # the downloader's actual discovery signal before exercising transfer resolution.
+            await _wait_for(
+                lambda: downloader._discover(digest),
+                bool,
+            )
             resolved = await asyncio.to_thread(downloader.resolve_sync, digest)
             assert resolved is not None
             assert resolved.read_bytes() == source.read_bytes()
