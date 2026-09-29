@@ -102,9 +102,7 @@ def test_pre_reset_baselines_do_not_relabel_bf16_guidance_as_int8() -> None:
     assert ("RipperPC", "guidance", "dinkster_kitchen_int8", "production") not in (
         receipt.BASELINES
     )
-    assert ("X570", "sequence", "dinkster_kitchen_int8", "production") not in (
-        receipt.BASELINES
-    )
+    assert ("X570", "sequence", "dinkster_kitchen_int8", "production") not in (receipt.BASELINES)
 
 
 def test_mint_arguments_initialize_worker_only_tensor_output() -> None:
