@@ -322,7 +322,9 @@ def test_fork_loaders_call_dinkster_inference(
         "vae",
         "validate-vae",
     ]
-    assert cast("dict[str, object]", calls[2][2])["model_options"] == {}
+    assert cast("dict[str, object]", calls[2][2])["model_options"] == {
+        "assign_loaded_weights": True
+    }
     assert cast("dict[str, object]", calls[3][2])["clip_type"] == "h3"
 
 
@@ -637,6 +639,9 @@ def test_generation_ksampler_attaches_attention_to_a_model_clone(
     events: list[tuple[object, ...]] = []
 
     class Model:
+        def __init__(self) -> None:
+            self.model_options = {"transformer_options": {}}
+
         def clone(self) -> Model:
             events.append(("clone", self))
             return clone
@@ -646,7 +651,10 @@ def test_generation_ksampler_attaches_attention_to_a_model_clone(
 
     model = Model()
     clone = Model()
-    runtime = SimpleNamespace(for_model=lambda actual: selected if actual is token else None)
+    runtime = SimpleNamespace(
+        for_model=lambda actual: selected if actual is token else None,
+        distributed_active=lambda: False,
+    )
     monkeypatch.setattr(
         fork_nodes,
         "current_execution_context",
@@ -837,3 +845,43 @@ def test_generation_ksampler_routes_res4lyf_substep_options(
     assert sample_args[6] == "assembled"
     assert sample_args[7] == configured.sigmas
     assert events[-1] == ("to", "cpu", "float32")
+
+
+def test_block_sparse_attention_attaches_execution_config_to_a_model_clone() -> None:
+    class Model:
+        def __init__(self) -> None:
+            self.model_options = {"transformer_options": {}}
+
+        def clone(self) -> Model:
+            return clone
+
+        def get_model_object(self, name: str) -> object:
+            assert name == "model_sampling"
+            return SimpleNamespace(percent_to_sigma=lambda percent: 1.0 - percent)
+
+    model = Model()
+    clone = Model()
+
+    result = fork_nodes.NativeBlockSparseAttention.execute(
+        model=model,
+        selection="sla",
+        start_percent=0.25,
+        end_percent=0.75,
+        dense_blocks="0, 49",
+        min_tokens=4096,
+        extra_tokens=64,
+        sink_conditioning="exact_kv",
+        **{"selection.keep_percent": 12.5},  # pyright: ignore[reportArgumentType]
+    )
+
+    assert result["MODEL"] is clone
+    assert clone.model_options["transformer_options"]["dinkster_h3_sparse_attention"] == {
+        "sigma_start": 0.75,
+        "sigma_end": 0.25,
+        "dense_blocks": (0, 49),
+        "min_tokens": 4096,
+        "extra_tokens": 64,
+        "sink_conditioning": "exact_kv",
+        "tau": 0.0,
+        "keep_percent": 12.5,
+    }

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -43,43 +45,52 @@ def test_attention_runtime_owns_an_isolated_named_registry() -> None:
 
 
 @pytest.mark.parametrize("skip_output_reshape", (False, True))
-def test_distributed_attention_partitions_heads_and_gathers_in_order(
+def test_ulysses_attention_exchanges_local_sequences_and_heads(
     monkeypatch: pytest.MonkeyPatch, skip_output_reshape: bool
 ) -> None:
     config = attention._DistributedConfig(1, 2, "sequence", "file:///unused", "token")  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(attention, "_ensure_process_group", lambda: config)
-    q = torch.arange(1 * 4 * 3 * 2, dtype=torch.float32).reshape(1, 4, 3, 2)
+    peer_q = torch.arange(1 * 4 * 3 * 2, dtype=torch.float32).reshape(1, 4, 3, 2)
+    q = peer_q + 1000
     k = q + 100
     v = q + 200
     calls: list[tuple[Any, Any, Any, int]] = []
+    masks: list[Any] = []
 
     def selected(
         local_q: Any,
         local_k: Any,
         local_v: Any,
         heads: int,
-        **_kwargs: object,
+        **kwargs: object,
     ) -> Any:
         calls.append((local_q, local_k, local_v, heads))
-        if skip_output_reshape:
-            return local_v
-        return local_v.transpose(1, 2).reshape(1, 3, -1)
+        masks.append(kwargs["mask"])
+        return local_v
 
     def all_gather(outputs: list[Any], value: Any) -> None:
         if value.dtype == torch.int64:
             for output in outputs:
                 output.copy_(value)
-            return
-        rank_zero = v[:, :2]
-        if not skip_output_reshape:
-            rank_zero = rank_zero.transpose(1, 2).reshape(1, 3, -1)
-        outputs[0].copy_(rank_zero)
-        outputs[1].copy_(value)
+
+    exchanges = 0
+
+    def all_to_all(outputs: list[Any], inputs: list[Any]) -> None:
+        nonlocal exchanges
+        if exchanges < 3:
+            peer = (peer_q, peer_q + 100, peer_q + 200)[exchanges]
+            outputs[0].copy_(peer[:, 2:4])
+            outputs[1].copy_(inputs[1])
+        else:
+            outputs[0].copy_(v[:, :2])
+            outputs[1].copy_(inputs[1])
+        exchanges += 1
 
     monkeypatch.setattr(torch.distributed, "all_gather", all_gather)
+    monkeypatch.setattr(torch.distributed, "all_to_all", all_to_all)
     monkeypatch.setattr(torch.distributed, "all_reduce", lambda _value, **_kwargs: None)
 
-    distributed = attention._DistributedAttention(selected)  # pyright: ignore[reportPrivateUsage]
+    distributed = attention._UlyssesAttention(selected)  # pyright: ignore[reportPrivateUsage]
     output = distributed(
         q,
         k,
@@ -87,15 +98,116 @@ def test_distributed_attention_partitions_heads_and_gathers_in_order(
         4,
         skip_reshape=True,
         skip_output_reshape=skip_output_reshape,
+        transformer_options={
+            "dinkster_sequence_sharded": True,
+            "dinkster_sequence_valid": 5,
+        },
     )
 
     expected = v if skip_output_reshape else v.transpose(1, 2).reshape(1, 3, -1)
     torch.testing.assert_close(output, expected)
     actual_q, actual_k, actual_v, actual_heads = calls[0]
-    assert actual_heads == 4
-    torch.testing.assert_close(actual_q, q)
-    torch.testing.assert_close(actual_k, k)
-    torch.testing.assert_close(actual_v, v)
+    assert actual_heads == 2
+    torch.testing.assert_close(actual_q, torch.cat((peer_q[:, 2:4], q[:, 2:4]), dim=2))
+    torch.testing.assert_close(actual_k, torch.cat((peer_q[:, 2:4] + 100, k[:, 2:4]), dim=2))
+    torch.testing.assert_close(actual_v, torch.cat((peer_q[:, 2:4] + 200, v[:, 2:4]), dim=2))
+    assert torch.equal(masks[0], torch.tensor([[[True, True, True, True, True, False]]]))
+    assert exchanges == 4
+
+
+def test_sparse_attention_routes_h3_blocks_with_declared_conditioning_sinks() -> None:
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    output = torch.zeros((257, 32))
+
+    def sparse(*args: object, **kwargs: object) -> tuple[object, str, str]:
+        calls.append((args, kwargs))
+        return output, "key-mean", "value-scale"
+
+    config = {
+        "dense_blocks": (),
+        "min_tokens": 1,
+        "sigma_start": 1.0,
+        "sigma_end": 0.0,
+        "sink_conditioning": "exact_kv_and_rows",
+        "tau": 1.3,
+        "keep_percent": 0.0,
+        "extra_tokens": 128,
+    }
+    routed = attention._SparseH3Attention(sparse, config)  # pyright: ignore[reportPrivateUsage]
+    attn = SimpleNamespace(
+        qkv_proj="qkv",
+        out_proj="out",
+        q_norm="q-norm",
+        k_norm="k-norm",
+        heads=4,
+    )
+    hidden = torch.zeros((257, 32))
+    options = {
+        "minimax_h3_layout": SimpleNamespace(
+            segments=((0, 65, "text"), (65, 129, "audio"), (129, 257, "video"))
+        ),
+        "uuids": ("conditional",),
+    }
+
+    result = routed._attention(  # pyright: ignore[reportPrivateUsage]
+        attn, hidden, "rope", options, 7
+    )
+    routed._attention(attn, hidden, "rope", options, 7)  # pyright: ignore[reportPrivateUsage]
+
+    assert result is output
+    assert calls[0][0] == (hidden, "qkv", "out", "q-norm", "k-norm", 4, "rope")
+    assert calls[0][1] == {
+        "kmean": None,
+        "vscale": None,
+        "tau": 1.3,
+        "topk_ratio": 0.0,
+        "sink_blocks": [0, 3],
+        "sink_q": [1, 3],
+        "token_aug": 128,
+    }
+    assert calls[1][1]["kmean"] == "key-mean"
+    assert calls[1][1]["vscale"] == "value-scale"
+
+
+def test_sparse_attention_uses_model_sampling_sigma_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = {
+        "dense_blocks": (),
+        "min_tokens": 12_288,
+        "sigma_start": 0.8,
+        "sigma_end": 0.2,
+    }
+    routed = attention._SparseH3Attention(lambda: None, config)  # pyright: ignore[reportPrivateUsage]
+    attn = SimpleNamespace(head_dim=128)
+    hidden = SimpleNamespace(
+        shape=(12_288, 4096),
+        device=SimpleNamespace(type="cuda"),
+        dtype=torch.bfloat16,
+    )
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda _name: SimpleNamespace(sol_attn_is_available=lambda _device: True),
+    )
+
+    def eligible(sigma: float) -> bool:
+        return routed._eligible(  # pyright: ignore[reportPrivateUsage]
+            attn,
+            hidden,
+            object(),
+            {
+                "minimax_h3_layout": object(),
+                "sigmas": torch.tensor([sigma], dtype=torch.float64),
+            },
+            7,
+        )
+
+    assert not eligible(0.81)
+    assert eligible(0.8)
+    assert eligible(0.5)
+    assert eligible(0.2)
+    assert not eligible(0.19)
 
 
 def test_workgroup_attempt_gates_one_invocation_and_releases_attention(

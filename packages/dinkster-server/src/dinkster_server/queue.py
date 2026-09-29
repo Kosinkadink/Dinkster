@@ -53,7 +53,9 @@ from dinkster_protocol import (
     AttentionPolicyConfig,
     ExportSnapshot,
     PreviewPolicy,
+    SingleJobMultiGpuConfig,
     attention_policy_config_to_wire,
+    single_job_multi_gpu_config_to_wire,
 )
 
 from .redaction import PathRedactor
@@ -116,6 +118,8 @@ class Job:
     attention_config: AttentionPolicyConfig | None = None
     """Effective job-scoped attention routing policy. None preserves the
     legacy automatic route for non-HTTP callers."""
+    single_job_multi_gpu: SingleJobMultiGpuConfig | None = None
+    """Effective run-scoped single-job multi-GPU mode and CUDA lanes."""
     cache_enabled: bool = True
     """Whether native result reuse and single-flight coalescing apply."""
     attempt: int = 1
@@ -248,6 +252,7 @@ class JobQueue:
         export_snapshot: ExportSnapshot | None = None,
         previews: PreviewPolicy | None = None,
         attention_config: AttentionPolicyConfig | None = None,
+        single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
         cache_enabled: bool = True,
     ) -> Job:
         """Queue a lowered graph under an optional pre-pinned execution."""
@@ -270,6 +275,11 @@ class JobQueue:
             )
         if attention_config is not None and type(attention_config) is not AttentionPolicyConfig:
             raise TypeError("attention_config must be an AttentionPolicyConfig")
+        if (
+            single_job_multi_gpu is not None
+            and type(single_job_multi_gpu) is not SingleJobMultiGpuConfig
+        ):
+            raise TypeError("single_job_multi_gpu must be a SingleJobMultiGpuConfig")
         if type(cache_enabled) is not bool:
             raise TypeError("cache_enabled must be a boolean")
         export_snapshot = deepcopy(export_snapshot)
@@ -292,6 +302,10 @@ class JobQueue:
                 }
             if attention_config is not None and attention_config != AttentionPolicyConfig():
                 fingerprint_payload["attention"] = attention_policy_config_to_wire(attention_config)
+            if single_job_multi_gpu is not None:
+                fingerprint_payload["singleJobMultiGpu"] = single_job_multi_gpu_config_to_wire(
+                    single_job_multi_gpu
+                )
             if not cache_enabled:
                 fingerprint_payload["cacheEnabled"] = False
             fingerprint = hashlib.sha256(
@@ -325,6 +339,7 @@ class JobQueue:
             execution=execution,
             preview_policy=previews,
             attention_config=attention_config,
+            single_job_multi_gpu=single_job_multi_gpu,
             cache_enabled=cache_enabled,
         )
         if self._store is not None:
@@ -516,6 +531,7 @@ class JobQueue:
                     export_snapshot=job.export_snapshot,
                     preview_policy=job.preview_policy,
                     attention_config=job.attention_config,
+                    single_job_multi_gpu=job.single_job_multi_gpu,
                     cache_enabled=job.cache_enabled,
                 )
             else:
@@ -528,6 +544,7 @@ class JobQueue:
                     export_snapshot=job.export_snapshot,
                     preview_policy=job.preview_policy,
                     attention_config=job.attention_config,
+                    single_job_multi_gpu=job.single_job_multi_gpu,
                     cache_enabled=job.cache_enabled,
                 )
             job.result = result

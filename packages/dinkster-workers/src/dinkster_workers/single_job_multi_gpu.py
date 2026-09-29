@@ -1,27 +1,7 @@
-"""Parent-owned fixed selection contract for one job spanning CUDA ranks."""
+"""Compatibility exports for single-job multi-GPU contracts."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
+from dinkster_protocol import SingleJobMultiGpuConfig, SingleJobMultiGpuMode
 
-SingleJobMultiGpuMode = Literal["auto", "sequence"]
-
-
-@dataclass(frozen=True, slots=True)
-class SingleJobMultiGpuConfig:
-    """Ordered logical CUDA ranks fixed for the lifetime of a server."""
-
-    cuda_indices: tuple[int, ...]
-    mode: SingleJobMultiGpuMode
-
-    def __post_init__(self) -> None:
-        if (
-            type(self.cuda_indices) is not tuple
-            or len(self.cuda_indices) < 2
-            or any(type(index) is not int or index < 0 for index in self.cuda_indices)
-            or len(set(self.cuda_indices)) != len(self.cuda_indices)
-        ):
-            raise ValueError("single-job CUDA ranks require at least two unique logical indices")
-        if self.mode not in ("auto", "sequence"):
-            raise ValueError("single-job multi-GPU mode is invalid")
+__all__ = ["SingleJobMultiGpuConfig", "SingleJobMultiGpuMode"]

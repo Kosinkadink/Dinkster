@@ -10,6 +10,7 @@ from typing import Any, cast
 from dinkster_assets import AssetRef
 from dinkster_nodes_generation.nodes import (
     ApplyMiniMaxH3FunControlNet,
+    BlockSparseAttention,
     CLIPTextEncode,
     EmptyLatentImage,
     EmptyMiniMaxH3AV,
@@ -68,7 +69,15 @@ def model_for_attention_route(model: object) -> object:
         return model
     runtime = cast("Any", context.attention_runtime)
     sampling_model = cast("Any", model).clone()
+    transformer_options = sampling_model.model_options["transformer_options"]
+    sparse_config = transformer_options.get("dinkster_h3_sparse_attention")
     sampling_model.set_model_optimized_attention(runtime.for_model(context.attention_route_token))
+    if sparse_config is not None:
+        runtime.configure_sparse_model(sampling_model, sparse_config)
+    if runtime.distributed_active():
+        from .multigpu import configure_distributed_model
+
+        configure_distributed_model(sampling_model)
     return sampling_model
 
 
@@ -444,7 +453,7 @@ class GenerationLoadDiffusionModel(LoadDiffusionModel):
         if not isinstance(diffusion_model, AssetRef):
             raise TypeError("diffusion_model must be an AssetRef")
         torch = cast("Any", importlib.import_module("torch"))
-        options: dict[str, object] = {}
+        options: dict[str, object] = {"assign_loaded_weights": True}
         if weight_dtype in ("fp8_e4m3fn", "fp8_e4m3fn_fast"):
             options["dtype"] = torch.float8_e4m3fn
             if weight_dtype.endswith("_fast"):
@@ -666,6 +675,58 @@ class GenerationVAEDecode(VAEDecode):
         return cls.outputs(image=image)
 
 
+class NativeBlockSparseAttention(BlockSparseAttention):
+    @classmethod
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls,
+        *,
+        model: object,
+        selection: str,
+        start_percent: float = 0.2,
+        end_percent: float = 1.0,
+        dense_blocks: str = "",
+        min_tokens: int = 12288,
+        extra_tokens: int = 256,
+        sink_conditioning: str = "exact_kv_and_rows",
+        verbose: bool = False,
+        **inputs: object,
+    ) -> Mapping[str, object]:
+        del verbose
+        if selection not in ("sol-attn", "sla"):
+            raise ValueError("fork sparse attention supports sol-attn and sla selection")
+        if not 0.0 <= start_percent <= end_percent <= 1.0:
+            raise ValueError("sparse attention percentages must be ordered within zero and one")
+        if min_tokens < 1:
+            raise ValueError("sparse attention min_tokens must be positive")
+        if extra_tokens not in (0, 64, 128, 192, 256):
+            raise ValueError("sparse attention extra_tokens must be a 64-token increment")
+        if sink_conditioning not in ("off", "exact_kv", "exact_kv_and_rows"):
+            raise ValueError("sparse attention sink_conditioning is invalid")
+        try:
+            dense = tuple(int(value.strip()) for value in dense_blocks.split(",") if value.strip())
+        except ValueError as exc:
+            raise ValueError("sparse attention dense_blocks must contain integers") from exc
+        selection_value = inputs.get(
+            "selection.tau" if selection == "sol-attn" else "selection.keep_percent",
+            1.3 if selection == "sol-attn" else 10.0,
+        )
+        if not isinstance(selection_value, (int, float)) or isinstance(selection_value, bool):
+            raise TypeError("sparse attention selection value must be numeric")
+        model_sampling = cast("Any", model).get_model_object("model_sampling")
+        patched = cast("Any", model).clone()
+        patched.model_options["transformer_options"]["dinkster_h3_sparse_attention"] = {
+            "sigma_start": float(model_sampling.percent_to_sigma(start_percent)),
+            "sigma_end": float(model_sampling.percent_to_sigma(end_percent)),
+            "dense_blocks": dense,
+            "min_tokens": int(min_tokens),
+            "extra_tokens": int(extra_tokens),
+            "sink_conditioning": sink_conditioning,
+            "tau": float(selection_value) if selection == "sol-attn" else 0.0,
+            "keep_percent": float(selection_value) if selection == "sla" else 0.0,
+        }
+        return cls.outputs(MODEL=patched)
+
+
 def _h3_shape(width: int, height: int, frame_count: int) -> object:
     from dinkster_inference_wire import MultiStreamLatent
 
@@ -786,6 +847,7 @@ FORK_NODES: tuple[type[Node], ...] = (
     GenerationRES4LYFRKBetaSampler,
     GenerationKSampler,
     GenerationVAEDecode,
+    NativeBlockSparseAttention,
     NativeEmptyMiniMaxH3AV,
     NativeMiniMaxH3T2VAConditioning,
     NativeMiniMaxH3ImageToVideo,

@@ -172,13 +172,19 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
         "dinkster.res4lyf_rk_beta_sampler",
     }
     native_model_patches = {
+        "comfy.BlockSparseAttention",
         "dinkster.load_model_patch",
         "dinkster.apply_minimax_h3_fun_controlnet",
     }
     native_nodes = retained | native_sampling | native_model_patches
+    assert native.namespaces == ("comfy", "dinkster")
     assert set(native.executes) == native_nodes
     assert set(dict(native.arms)["native"]) == native_nodes
     assert {node.schema().node_type for node in FORK_NODES} == native_nodes - set(mesh)
+
+    generation = load_manifest(Path("packages/dinkster-nodes-generation/dinkster-pack.toml"))
+    assert generation.namespaces == ("comfy", "dinkster")
+    assert "comfy.BlockSparseAttention" in generation.schema_only
 
 
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(

@@ -98,6 +98,15 @@ from .extensions import (
     is_extension_snapshot_digest,
 )
 from .frontend_modules import FrontendContribution, FrontendModule
+from .multigpu import (
+    SingleJobMultiGpuConfig,
+    SingleJobMultiGpuExecution,
+    SingleJobMultiGpuMode,
+    single_job_multi_gpu_config_from_wire,
+    single_job_multi_gpu_config_to_wire,
+    single_job_multi_gpu_execution_from_wire,
+    single_job_multi_gpu_execution_to_wire,
+)
 from .pack_surfaces import (
     JsonField,
     JsonObjectSchema,
@@ -397,6 +406,10 @@ class Invocation:
     attention_policy: AttentionPolicy = "auto"
     attention_route_token: AttentionRouteToken | None = None
     """Worker-authenticated attention route evidence selected by the host."""
+    single_job_multi_gpu: SingleJobMultiGpuConfig | None = None
+    """Host-side run selection consumed by a same-host multi-GPU pool."""
+    single_job_multi_gpu_execution: SingleJobMultiGpuExecution | None = None
+    """Rank-local distributed facts resolved by the same-host pool."""
     extension_snapshot_digest: str | None = None
     """The extension generation pinned when this execution was admitted.
     It crosses the worker boundary as an opaque ``sha256:<hex>`` handle; the
@@ -449,6 +462,13 @@ class Invocation:
                 "expected_execution_identity"
             )
         resolve_attention_runtime_status(self.attention_policy, self.attention_route_token)
+        if (
+            self.single_job_multi_gpu is not None
+            and self.single_job_multi_gpu_execution is not None
+        ):
+            raise ValueError(
+                "Invocation cannot contain host and rank multi-GPU selections together"
+            )
 
 
 @dataclass(frozen=True)
@@ -734,6 +754,9 @@ __all__ = [
     "validate_preview_animation",
     "validate_preview_mode",
     "SamplerRegistrySnapshot",
+    "SingleJobMultiGpuConfig",
+    "SingleJobMultiGpuExecution",
+    "SingleJobMultiGpuMode",
     "Worker",
     "RESULT_ALGEBRA_CAPABILITY",
     "RESULT_ALGEBRA_MAX_COUNT",
@@ -776,6 +799,10 @@ __all__ = [
     "resolve_attention_runtime_status",
     "resolve_role_policy",
     "validate_attention_policy",
+    "single_job_multi_gpu_config_from_wire",
+    "single_job_multi_gpu_config_to_wire",
+    "single_job_multi_gpu_execution_from_wire",
+    "single_job_multi_gpu_execution_to_wire",
     "TrainingEventName",
     "TrainingJournalEvent",
     "TrainingSessionHandle",

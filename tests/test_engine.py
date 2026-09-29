@@ -267,6 +267,7 @@ def test_computed_lazy_selector_runs_only_the_selected_branch_cold_and_warm() ->
         _inputs: Mapping[str, object],
         _run_id: str,
         _attention_config: object,
+        _single_job_multi_gpu: object,
     ) -> ExecutionSelection:
         return ExecutionSelection(target="owner", cache_tag="owner@1")
 
@@ -409,6 +410,7 @@ def test_computed_selector_keeps_resident_value_in_producer_domain() -> None:
         _inputs: Mapping[str, object],
         _run_id: str,
         _attention_config: object,
+        _single_job_multi_gpu: object,
     ) -> ExecutionSelection:
         planned.append(node_type)
         target = "models" if node_type == ResidentSource.schema().node_type else "foundation"

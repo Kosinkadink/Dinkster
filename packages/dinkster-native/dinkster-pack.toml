@@ -1,7 +1,8 @@
 [pack]
 name = "dinkster-native"
-namespaces = ["dinkster"]
+namespaces = ["comfy", "dinkster"]
 executes = [
+    "comfy.BlockSparseAttention",
     "dinkster.load_checkpoint",
     "dinkster.load_model_patch",
     "dinkster.apply_minimax_h3_fun_controlnet",
@@ -38,7 +39,7 @@ executes = [
     "dinkster.mesh_to_model3d",
 ]
 requires = [
-    "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@90e224eb1a74e61b76c755ad410b7513c83e7549",
+    "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@078028aa3e048f7944d3612cab5ae7c0132edd11",
 ]
 
 [pack.sandbox]
@@ -57,6 +58,7 @@ dinkster-nodes-generation = ">=0.0.1,<1"
 
 [pack.arms]
 native = [
+    "comfy.BlockSparseAttention",
     "dinkster.load_checkpoint",
     "dinkster.load_model_patch",
     "dinkster.apply_minimax_h3_fun_controlnet",

@@ -62,7 +62,7 @@ from dinkster_compat_comfy.prompt import build_alias_index
 from dinkster_compat_comfy.schema_snapshot import core_schema_snapshot
 from dinkster_compat_comfy.translate import MODEL_FILE_CATEGORIES
 from dinkster_graph import graph_to_wire
-from dinkster_protocol import ExportSnapshot
+from dinkster_protocol import ExportSnapshot, single_job_multi_gpu_config_from_wire
 from dinkster_schema import AssetWidget, NodeSchema, TypeExpr, WidgetRepresentations
 from dinkster_server import (
     LOCAL_PRINCIPAL,
@@ -274,6 +274,17 @@ async def handle_comfy_prompt(request: web.Request) -> web.Response:
             content_type="application/json",
         ) from exc
     try:
+        single_job_multi_gpu = (
+            single_job_multi_gpu_config_from_wire(body["singleJobMultiGpu"])
+            if "singleJobMultiGpu" in body
+            else None
+        )
+    except (TypeError, ValueError) as exc:
+        raise web.HTTPBadRequest(
+            text=json.dumps({"error": f"invalid singleJobMultiGpu: {exc}"}),
+            content_type="application/json",
+        ) from exc
+    try:
         prompt, client_id, extra_pnginfo = extract_prompt(body)
         skipped_classes = {}
         ambiguous_skips: set[str] = set()
@@ -311,7 +322,6 @@ async def handle_comfy_prompt(request: web.Request) -> web.Response:
             ),
             content_type="application/json",
         ) from exc
-
     graph_wire = graph_to_wire(translation.graph)
     targets = list(translation.targets)
     if request.rel_url.query.get("dryRun") in ("1", "true"):
@@ -329,6 +339,7 @@ async def handle_comfy_prompt(request: web.Request) -> web.Response:
             principal_kind=principal.kind,
             export_snapshot=ExportSnapshot(prompt=prompt, extra_pnginfo=extra_pnginfo),
             attention_config=state.attention_default,
+            single_job_multi_gpu=single_job_multi_gpu,
         )
     except JobGraphAdmissionError as exc:
         raise web.HTTPBadRequest(

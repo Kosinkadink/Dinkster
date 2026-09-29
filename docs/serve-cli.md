@@ -455,26 +455,28 @@ pool VRAM, or shard one model across GPUs.
 
 ### --single-job-multi-gpu-devices / --single-job-multi-gpu-mode
 
-`--single-job-multi-gpu-devices INDEX,INDEX[,INDEX...]` fixes two or more
-ordered logical CUDA ranks for each single-job workgroup. Indices are relative
-to `CUDA_VISIBLE_DEVICES`; Dinkster does not discover or add devices. It is
-mutually exclusive with `--multi-gpu-devices`.
+`--single-job-multi-gpu-devices INDEX,INDEX[,INDEX...]` starts two or more
+ordered logical CUDA ranks as the server's allowed single-job pool. Indices are
+relative to `CUDA_VISIBLE_DEVICES`; Dinkster does not discover or add devices.
+It is mutually exclusive with `--multi-gpu-devices`.
 
-The mode is `auto` or `sequence` (default `auto`). Both use every selected
-rank through the worker-owned attention route and require the model's attention
-head count to divide evenly across the rank count. The selected attention
-backend keeps its ordinary one-GPU call shape so the distributed result retains
-the stock ComfyUI numerical contract. This is a correctness and process-isolation
-capability; it does not claim lower latency.
-
-The former `guidance` and `window` modes are not exposed. They fail at argument
-validation rather than running another topology under those names.
+The startup mode is `auto`, `guidance`, `sequence`, or `window` (default
+`auto`). Guidance splits model-evaluated conditioning lanes, sequence selects
+two-rank H3 U2R1, and window scatters a Flux joint-window plan. Sequence and
+guidance require exactly two participating ranks. Window accepts two or more
+ranks; four-rank window execution uses all four when the plan has enough work.
+Four-rank Ulysses is refused.
 
 Every rank is a separate process with one selected GPU and its own model
 residency. Rank 0 owns progress and the final result. A rank failure or
 cancellation terminates the workgroup because a timed-out NCCL communicator
-cannot be reused. Mode and device selection are fixed for the server lifetime;
-they are not currently workflow widgets or per-request settings.
+cannot be reused.
+
+The native and Comfy-compatible job APIs may select a permitted subset and mode
+for one run with `singleJobMultiGpu`, for example
+`{"cudaIndices":[1,3],"mode":"sequence"}`. The indices must belong to the
+startup pool. Mode and ordered device selection are part of execution and cache
+identity; rank-local resources do not cross between different subsets.
 
 ### --memory-budget
 

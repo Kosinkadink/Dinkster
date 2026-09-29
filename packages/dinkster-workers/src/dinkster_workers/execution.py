@@ -18,6 +18,7 @@ from dinkster_protocol import (
     MediaSourceAuthority,
     PreviewAnimation,
     PreviewMode,
+    SingleJobMultiGpuExecution,
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
     is_extension_snapshot_digest,
@@ -71,6 +72,7 @@ class ExecutionContext:
     attention_route_token: AttentionRouteToken | None = None
     attention_capabilities: AttentionCapabilityEvidence | None = None
     attention_runtime: object | None = None
+    single_job_multi_gpu_execution: SingleJobMultiGpuExecution | None = None
     extension_snapshot_digest: str | None = None
     preview_mode: PreviewMode = "off"
     preview_animation: PreviewAnimation = "ring"
