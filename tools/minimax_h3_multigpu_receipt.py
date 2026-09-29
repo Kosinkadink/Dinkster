@@ -23,7 +23,6 @@ BASELINES = {
     ("RipperPC", "guidance", "sdpa", "production"): 1.802,
     ("RipperPC", "sequence", "sdpa", "production"): 1.5404,
     ("RipperPC", "sequence", "dinkster_kitchen_int8", "production"): 1.436792013659844,
-    ("X570", "sequence", "dinkster_kitchen_int8", "production"): 1.327,
 }
 POLICIES = ("sdpa", "dinkster_kitchen_int8")
 MODES = ("guidance", "sequence", "sparse")
@@ -33,6 +32,33 @@ ATTEMPT = 1
 
 class ReceiptError(RuntimeError):
     pass
+
+
+class _CollectiveTimer:
+    def __init__(self, torch: Any) -> None:
+        self.torch = torch
+        self.events: list[tuple[Any, Any]] = []
+
+    def install(self) -> None:
+        for name in ("all_gather", "all_reduce", "all_to_all"):
+            operation = getattr(self.torch.distributed, name)
+
+            def timed(*args: object, _operation: Any = operation, **kwargs: object) -> Any:
+                started = self.torch.cuda.Event(enable_timing=True)
+                finished = self.torch.cuda.Event(enable_timing=True)
+                started.record()
+                result = _operation(*args, **kwargs)
+                finished.record()
+                self.events.append((started, finished))
+                return result
+
+            setattr(self.torch.distributed, name, timed)
+
+    def reset(self) -> None:
+        self.events.clear()
+
+    def elapsed_seconds(self) -> float:
+        return sum(start.elapsed_time(end) for start, end in self.events) / 1000.0
 
 
 class _Resolver:
@@ -121,10 +147,13 @@ def _run_sample(
     steps: int,
     seed: int,
     tensor_output: Path | None = None,
-) -> tuple[dict[str, str], float, float]:
+    collective_timer: _CollectiveTimer | None = None,
+) -> tuple[dict[str, str], float, float, dict[str, float]]:
     from dinkster_native.fork_nodes import GenerationKSampler
 
     torch = cast("Any", importlib.import_module("torch"))
+    if collective_timer is not None:
+        collective_timer.reset()
     torch.cuda.synchronize()
     started = time.perf_counter()
     sampled = cast(
@@ -146,13 +175,23 @@ def _run_sample(
     samples = sampled["samples"]
     hashes = _latent_hashes(samples)
     sample_seconds = time.perf_counter() - started
+    communication_sync_seconds = (
+        collective_timer.elapsed_seconds() if collective_timer is not None else 0.0
+    )
+    compute_seconds = sample_seconds - communication_sync_seconds
+    timing_breakdown = {
+        "compute_seconds": compute_seconds,
+        "communication_sync_seconds": communication_sync_seconds,
+        "compute_share": compute_seconds / sample_seconds,
+        "communication_sync_share": communication_sync_seconds / sample_seconds,
+    }
     evidence_started = time.perf_counter()
     if tensor_output is not None:
         torch.save(
             {role: samples.by_role(role).detach().cpu() for role in samples.roles},
             tensor_output,
         )
-    return hashes, sample_seconds, time.perf_counter() - evidence_started
+    return hashes, sample_seconds, time.perf_counter() - evidence_started, timing_breakdown
 
 
 def run_worker(args: argparse.Namespace) -> int:
@@ -220,11 +259,15 @@ def run_worker(args: argparse.Namespace) -> int:
         attention_runtime=runtime,
     )
     setup_seconds = time.perf_counter() - setup_started
+    collective_timer = None
+    if distributed and args.mode == "sequence":
+        collective_timer = _CollectiveTimer(torch)
+        collective_timer.install()
     if distributed:
         activate_distributed_attention(ATTEMPT_GROUP, ATTEMPT)
     try:
         with use_execution_context(context):
-            cold_hashes, cold_seconds, evidence_write_seconds = _run_sample(
+            cold_hashes, cold_seconds, evidence_write_seconds, cold_timing_breakdown = _run_sample(
                 model,
                 latent,
                 positive,
@@ -233,14 +276,33 @@ def run_worker(args: argparse.Namespace) -> int:
                 args.steps,
                 args.seed,
                 args.tensor_output,
+                collective_timer,
             )
             cold_workflow_seconds = time.perf_counter() - worker_started - evidence_write_seconds
             warmup_runs = [
-                _run_sample(model, latent, positive, negative, cfg, args.steps, args.seed)
+                _run_sample(
+                    model,
+                    latent,
+                    positive,
+                    negative,
+                    cfg,
+                    args.steps,
+                    args.seed,
+                    collective_timer=collective_timer,
+                )
                 for _ in range(args.warmups)
             ]
             measured_runs = [
-                _run_sample(model, latent, positive, negative, cfg, args.steps, args.seed)
+                _run_sample(
+                    model,
+                    latent,
+                    positive,
+                    negative,
+                    cfg,
+                    args.steps,
+                    args.seed,
+                    collective_timer=collective_timer,
+                )
                 for _ in range(args.repeats)
             ]
     finally:
@@ -248,6 +310,7 @@ def run_worker(args: argparse.Namespace) -> int:
             release_distributed_attention(ATTEMPT_GROUP, ATTEMPT)
     warmup_seconds = [run[1] for run in warmup_runs]
     sample_seconds = [run[1] for run in measured_runs]
+    measured_breakdowns = [run[3] for run in measured_runs]
     median_sample_seconds = statistics.median(sample_seconds)
     if args.sparse_enabled and sparse_backend_calls == 0:
         raise ReceiptError("sparse candidate never executed its registry backend")
@@ -274,6 +337,21 @@ def run_worker(args: argparse.Namespace) -> int:
             "excluded_evidence_write_seconds": evidence_write_seconds,
             "warmup_sample_seconds": warmup_seconds,
             "sample_seconds": sample_seconds,
+            "cold_compute_communication": cold_timing_breakdown,
+            "warmup_compute_communication": [run[3] for run in warmup_runs],
+            "measured_compute_communication": measured_breakdowns,
+            "median_compute_seconds": statistics.median(
+                run["compute_seconds"] for run in measured_breakdowns
+            ),
+            "median_communication_sync_seconds": statistics.median(
+                run["communication_sync_seconds"] for run in measured_breakdowns
+            ),
+            "median_compute_share": statistics.median(
+                run["compute_share"] for run in measured_breakdowns
+            ),
+            "median_communication_sync_share": statistics.median(
+                run["communication_sync_share"] for run in measured_breakdowns
+            ),
             "median_warm_workflow_seconds": median_sample_seconds,
             "median_sample_seconds": median_sample_seconds,
             "jobs_per_hour": 3600.0 / median_sample_seconds,
@@ -466,11 +544,21 @@ def _performance(
     reference: dict[str, Any], candidate: Sequence[dict[str, Any]]
 ) -> dict[str, float]:
     reference_seconds = _median_seconds(reference)
-    candidate_seconds = max(_median_seconds(result) for result in candidate)
+    slowest_candidate = max(candidate, key=_median_seconds)
+    candidate_seconds = _median_seconds(slowest_candidate)
+    candidate_timing = slowest_candidate["timing"]
     world_size = len(candidate)
     return {
         "reference_median_seconds": reference_seconds,
         "candidate_median_seconds": candidate_seconds,
+        "candidate_compute_seconds": float(candidate_timing["median_compute_seconds"]),
+        "candidate_communication_sync_seconds": float(
+            candidate_timing["median_communication_sync_seconds"]
+        ),
+        "candidate_compute_share": float(candidate_timing["median_compute_share"]),
+        "candidate_communication_sync_share": float(
+            candidate_timing["median_communication_sync_share"]
+        ),
         "speedup": reference_seconds / candidate_seconds,
         "reference_jobs_per_hour": 3600.0 / reference_seconds,
         "candidate_jobs_per_hour": 3600.0 / candidate_seconds,
@@ -632,6 +720,10 @@ def run_mint(args: argparse.Namespace) -> int:
                 "warm_workflow": "one warm KSampler node invocation from resident inputs",
                 "sampling_only": "the same KSampler invocation; VAE decode is excluded",
                 "wall_time": "synchronized host wall clock around each KSampler invocation",
+                "communication_sync": (
+                    "CUDA event time around all_gather, all_reduce, and all_to_all collectives"
+                ),
+                "compute": "synchronized sampling wall time minus communication_sync",
             },
             "reference_output_hashes": serial["output_hashes"],
             "candidate_output_hashes": candidate[0]["output_hashes"],
@@ -695,7 +787,7 @@ def _parser() -> argparse.ArgumentParser:
     mint.add_argument("--gpu", action="append", required=True)
     mint.add_argument("--output", type=Path, required=True)
     mint.add_argument("--candidate-first", action="store_true")
-    mint.set_defaults(function=run_mint)
+    mint.set_defaults(function=run_mint, tensor_output=None)
     return parser
 
 

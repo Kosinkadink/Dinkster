@@ -9,7 +9,92 @@ import pytest
 torch = cast("Any", pytest.importorskip("torch"))
 
 from tools import minimax_h3_multigpu_receipt as receipt  # noqa: E402
-from tools.minimax_h3_multigpu_receipt import _sparse_quality_oracle  # noqa: E402
+from tools.minimax_h3_multigpu_receipt import (  # noqa: E402
+    _CollectiveTimer,
+    _sparse_quality_oracle,
+)
+
+
+def test_collective_timer_records_and_resets_cuda_event_durations() -> None:
+    calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+    class Event:
+        def record(self) -> None:
+            pass
+
+        def elapsed_time(self, _other: object) -> float:
+            return 125.0
+
+    class Distributed:
+        @staticmethod
+        def all_gather(*args: object, **kwargs: object) -> str:
+            calls.append(("all_gather", args, kwargs))
+            return "gathered"
+
+        @staticmethod
+        def all_reduce(*args: object, **kwargs: object) -> str:
+            calls.append(("all_reduce", args, kwargs))
+            return "reduced"
+
+        @staticmethod
+        def all_to_all(*args: object, **kwargs: object) -> str:
+            calls.append(("all_to_all", args, kwargs))
+            return "exchanged"
+
+    fake_torch = cast(
+        "Any",
+        type(
+            "FakeTorch",
+            (),
+            {
+                "cuda": type("Cuda", (), {"Event": staticmethod(lambda **_kwargs: Event())})(),
+                "distributed": Distributed(),
+            },
+        )(),
+    )
+    timer = _CollectiveTimer(fake_torch)
+    timer.install()
+
+    assert fake_torch.distributed.all_gather("peer") == "gathered"
+    assert fake_torch.distributed.all_reduce("failure", op="max") == "reduced"
+    assert fake_torch.distributed.all_to_all("out", "in") == "exchanged"
+    assert [call[0] for call in calls] == ["all_gather", "all_reduce", "all_to_all"]
+    assert timer.elapsed_seconds() == pytest.approx(0.375)
+
+    timer.reset()
+    assert timer.elapsed_seconds() == 0.0
+
+
+def test_performance_reports_compute_and_collective_shares_from_slowest_rank() -> None:
+    reference = {"timing": {"median_sample_seconds": 12.0}}
+    candidate = [
+        {
+            "timing": {
+                "median_sample_seconds": 7.0,
+                "median_compute_seconds": 5.0,
+                "median_communication_sync_seconds": 2.0,
+                "median_compute_share": 5.0 / 7.0,
+                "median_communication_sync_share": 2.0 / 7.0,
+            }
+        },
+        {
+            "timing": {
+                "median_sample_seconds": 8.0,
+                "median_compute_seconds": 5.5,
+                "median_communication_sync_seconds": 2.5,
+                "median_compute_share": 5.5 / 8.0,
+                "median_communication_sync_share": 2.5 / 8.0,
+            }
+        },
+    ]
+
+    performance = receipt._performance(reference, candidate)  # pyright: ignore[reportPrivateUsage]
+
+    assert performance["candidate_median_seconds"] == 8.0
+    assert performance["candidate_compute_seconds"] == 5.5
+    assert performance["candidate_communication_sync_seconds"] == 2.5
+    assert performance["candidate_compute_share"] == 5.5 / 8.0
+    assert performance["candidate_communication_sync_share"] == 2.5 / 8.0
 
 
 def test_pre_reset_baselines_do_not_relabel_bf16_guidance_as_int8() -> None:
@@ -17,6 +102,34 @@ def test_pre_reset_baselines_do_not_relabel_bf16_guidance_as_int8() -> None:
     assert ("RipperPC", "guidance", "dinkster_kitchen_int8", "production") not in (
         receipt.BASELINES
     )
+    assert ("X570", "sequence", "dinkster_kitchen_int8", "production") not in (
+        receipt.BASELINES
+    )
+
+
+def test_mint_arguments_initialize_worker_only_tensor_output() -> None:
+    args = receipt._parser().parse_args(  # pyright: ignore[reportPrivateUsage]
+        [
+            "mint",
+            "--model",
+            "model.safetensors",
+            "--mode",
+            "sequence",
+            "--policy",
+            "sdpa",
+            "--dinkster-root",
+            "Dinkster",
+            "--fork-root",
+            "dinkster-inference",
+            "--gpu",
+            "GPU-test",
+            "--output",
+            "receipt.json",
+            "--candidate-first",
+        ]
+    )
+
+    assert args.tensor_output is None
 
 
 def test_sparse_quality_oracle_reports_dense_relative_error_by_role(tmp_path) -> None:
