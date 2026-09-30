@@ -40,6 +40,174 @@ class _Resolver:
         return self.path
 
 
+class _WindowProfiler:
+    def __init__(self, torch: Any) -> None:
+        self.torch = torch
+        self.reset()
+
+    def reset(self) -> None:
+        self.events: dict[str, list[tuple[Any, Any]]] = {
+            "model_unload": [],
+            "model_prepare": [],
+            "patcher_pre_run": [],
+            "patcher_cleanup": [],
+            "window_compute": [],
+            "window_merge": [],
+            "collective": [],
+        }
+        self.cpu_seconds = {
+            "model_unload": 0.0,
+            "model_prepare": 0.0,
+            "patcher_pre_run": 0.0,
+            "patcher_cleanup": 0.0,
+            "window_compute": 0.0,
+            "window_merge": 0.0,
+            "collective": 0.0,
+            "failure_sync": 0.0,
+            "process_group_init": 0.0,
+            "process_group_lookup": 0.0,
+        }
+        self.calls = {
+            "model_unload": 0,
+            "model_prepare": 0,
+            "patcher_pre_run": 0,
+            "patcher_cleanup": 0,
+            "window_evaluations": 0,
+            "window_merges": 0,
+            "collectives": 0,
+            "failure_syncs": 0,
+            "process_group": 0,
+        }
+
+    def cuda_call(self, category: str, function: Any, *args: Any, **kwargs: Any) -> Any:
+        start = self.torch.cuda.Event(enable_timing=True)
+        stop = self.torch.cuda.Event(enable_timing=True)
+        start.record()
+        cpu_started = time.perf_counter()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            self.cpu_seconds[category] += time.perf_counter() - cpu_started
+            stop.record()
+            self.events[category].append((start, stop))
+
+    def snapshot(self, sample_seconds: float) -> dict[str, Any]:
+        gpu_seconds = {
+            category: sum(start.elapsed_time(stop) for start, stop in events) / 1000.0
+            for category, events in self.events.items()
+        }
+        accounted = (
+            gpu_seconds["model_unload"]
+            + gpu_seconds["model_prepare"]
+            + gpu_seconds["patcher_pre_run"]
+            + gpu_seconds["patcher_cleanup"]
+            + gpu_seconds["window_compute"]
+            + gpu_seconds["window_merge"]
+            + gpu_seconds["collective"]
+        )
+        return {
+            "model_unload_gpu_seconds": gpu_seconds["model_unload"],
+            "model_unload_cpu_seconds": self.cpu_seconds["model_unload"],
+            "model_prepare_gpu_seconds": gpu_seconds["model_prepare"],
+            "model_prepare_cpu_seconds": self.cpu_seconds["model_prepare"],
+            "patcher_pre_run_gpu_seconds": gpu_seconds["patcher_pre_run"],
+            "patcher_pre_run_cpu_seconds": self.cpu_seconds["patcher_pre_run"],
+            "patcher_cleanup_gpu_seconds": gpu_seconds["patcher_cleanup"],
+            "patcher_cleanup_cpu_seconds": self.cpu_seconds["patcher_cleanup"],
+            "window_compute_gpu_seconds": gpu_seconds["window_compute"],
+            "window_compute_cpu_seconds": self.cpu_seconds["window_compute"],
+            "window_merge_gpu_seconds": gpu_seconds["window_merge"],
+            "window_merge_cpu_seconds": self.cpu_seconds["window_merge"],
+            "collective_gpu_seconds": gpu_seconds["collective"],
+            "collective_cpu_seconds": self.cpu_seconds["collective"],
+            "failure_sync_cpu_seconds": self.cpu_seconds["failure_sync"],
+            "process_group_init_cpu_seconds": self.cpu_seconds["process_group_init"],
+            "process_group_lookup_cpu_seconds": self.cpu_seconds["process_group_lookup"],
+            "other_sample_wall_seconds": max(0.0, sample_seconds - accounted),
+            "calls": dict(self.calls),
+        }
+
+
+def _install_window_profiler(torch: Any) -> _WindowProfiler:
+    from dinkster_inference import model_management, model_patcher, sampler_helpers
+    from dinkster_inference.window_execution import WindowPlanExecutor
+    from dinkster_native import attention, multigpu
+
+    profiler = _WindowProfiler(torch)
+    unload_model = model_management.unload_model_and_clones
+    prepare_sampling = sampler_helpers.prepare_sampling
+    patcher_pre_run = model_patcher.ModelPatcher.pre_run
+    patcher_cleanup = model_patcher.ModelPatcher.cleanup
+    evaluate_window = WindowPlanExecutor.evaluate_window
+    merge_latent = WindowPlanExecutor._merge_latent  # pyright: ignore[reportPrivateUsage]
+    ensure_process_group = attention._ensure_process_group  # pyright: ignore[reportPrivateUsage]
+    raise_group_failure = multigpu._raise_group_failure  # pyright: ignore[reportPrivateUsage]
+    broadcast = torch.distributed.broadcast
+    all_gather = torch.distributed.all_gather
+
+    def profiled_unload(*args: Any, **kwargs: Any) -> Any:
+        profiler.calls["model_unload"] += 1
+        return profiler.cuda_call("model_unload", unload_model, *args, **kwargs)
+
+    def profiled_prepare(*args: Any, **kwargs: Any) -> Any:
+        profiler.calls["model_prepare"] += 1
+        return profiler.cuda_call("model_prepare", prepare_sampling, *args, **kwargs)
+
+    def profiled_evaluate(self: Any, *args: Any, **kwargs: Any) -> Any:
+        profiler.calls["window_evaluations"] += 1
+        return profiler.cuda_call("window_compute", evaluate_window, self, *args, **kwargs)
+
+    def profiled_pre_run(self: Any, *args: Any, **kwargs: Any) -> Any:
+        profiler.calls["patcher_pre_run"] += 1
+        return profiler.cuda_call("patcher_pre_run", patcher_pre_run, self, *args, **kwargs)
+
+    def profiled_cleanup(self: Any, *args: Any, **kwargs: Any) -> Any:
+        profiler.calls["patcher_cleanup"] += 1
+        return profiler.cuda_call("patcher_cleanup", patcher_cleanup, self, *args, **kwargs)
+
+    def profiled_merge(self: Any, *args: Any, **kwargs: Any) -> Any:
+        profiler.calls["window_merges"] += 1
+        return profiler.cuda_call("window_merge", merge_latent, self, *args, **kwargs)
+
+    def profiled_group() -> Any:
+        initialized = attention._process_group_config is not None  # pyright: ignore[reportPrivateUsage]
+        started = time.perf_counter()
+        try:
+            return ensure_process_group()
+        finally:
+            category = "process_group_lookup" if initialized else "process_group_init"
+            profiler.cpu_seconds[category] += time.perf_counter() - started
+            profiler.calls["process_group"] += 1
+
+    def profiled_failure(*args: Any, **kwargs: Any) -> Any:
+        started = time.perf_counter()
+        try:
+            return raise_group_failure(*args, **kwargs)
+        finally:
+            profiler.cpu_seconds["failure_sync"] += time.perf_counter() - started
+            profiler.calls["failure_syncs"] += 1
+
+    def profiled_collective(function: Any, *args: Any, **kwargs: Any) -> Any:
+        profiler.calls["collectives"] += 1
+        return profiler.cuda_call("collective", function, *args, **kwargs)
+
+    model_management.unload_model_and_clones = profiled_unload
+    sampler_helpers.prepare_sampling = profiled_prepare
+    model_patcher.ModelPatcher.pre_run = profiled_pre_run
+    model_patcher.ModelPatcher.cleanup = profiled_cleanup
+    WindowPlanExecutor.evaluate_window = profiled_evaluate
+    WindowPlanExecutor._merge_latent = profiled_merge  # pyright: ignore[reportPrivateUsage]
+    attention._ensure_process_group = profiled_group  # pyright: ignore[reportPrivateUsage]
+    multigpu._raise_group_failure = profiled_failure  # pyright: ignore[reportPrivateUsage]
+    torch.distributed.broadcast = lambda *args, **kwargs: profiled_collective(
+        broadcast, *args, **kwargs
+    )
+    torch.distributed.all_gather = lambda *args, **kwargs: profiled_collective(
+        all_gather, *args, **kwargs
+    )
+    return profiler
+
+
 def _git(root: Path, *arguments: str) -> str:
     return subprocess.check_output(
         ("git", "-C", str(root), *arguments), text=True, timeout=30
@@ -71,10 +239,22 @@ def _route() -> tuple[Any, Any]:
     return runtime, token
 
 
-def _window_plan(name: str) -> object:
+def _workload_windows(name: str, width: int) -> tuple[tuple[int, ...], ...]:
+    if width % 512:
+        raise ReceiptError("Flux window receipt width must be a multiple of 512")
+    scale = width // 512
+    return tuple(
+        tuple(index * scale + offset for index in window for offset in range(scale))
+        for window in WORKLOADS[name]
+    )
+
+
+def _window_plan(name: str, width: int) -> object:
     from dinkster_native.fork_nodes import GenerationExplicitWindowPlan
 
-    windows = ";".join(",".join(str(index) for index in window) for window in WORKLOADS[name])
+    windows = ";".join(
+        ",".join(str(index) for index in window) for window in _workload_windows(name, width)
+    )
     return GenerationExplicitWindowPlan.execute(
         axis="width",
         windows=windows,
@@ -89,10 +269,12 @@ def _sample(
     latent: dict[str, object],
     window_plan: object,
     args: argparse.Namespace,
-) -> tuple[str, float]:
+    profiler: _WindowProfiler,
+) -> dict[str, Any]:
     from dinkster_native.fork_nodes import GenerationKSampler
 
     torch = cast("Any", importlib.import_module("torch"))
+    profiler.reset()
     torch.cuda.synchronize()
     started = time.perf_counter()
     sampled = cast(
@@ -112,7 +294,80 @@ def _sample(
         )["latent"],
     )
     torch.cuda.synchronize()
-    return _tensor_sha256(sampled["samples"]), time.perf_counter() - started
+    sample_seconds = time.perf_counter() - started
+    return {
+        "latent": sampled["samples"],
+        "latent_sha256": _tensor_sha256(sampled["samples"]),
+        "sample_seconds": sample_seconds,
+        "profile": profiler.snapshot(sample_seconds),
+    }
+
+
+def _job(
+    model: object,
+    clip: Any,
+    vae: Any,
+    latent: dict[str, object],
+    window_plan: object,
+    args: argparse.Namespace,
+    profiler: _WindowProfiler,
+) -> dict[str, Any]:
+    torch = cast("Any", importlib.import_module("torch"))
+    torch.cuda.synchronize()
+    job_started = time.perf_counter()
+    conditioning_started = job_started
+    conditioning = clip.encode_from_tokens_scheduled(clip.tokenize(PROMPT))
+    hooks = cast("Any", importlib.import_module("dinkster_inference.hooks"))
+    positive = hooks.conditioning_set_values(conditioning, {"guidance": 3.5})
+    torch.cuda.synchronize()
+    conditioning_seconds = time.perf_counter() - conditioning_started
+    sampled = _sample(model, positive, latent, window_plan, args, profiler)
+    decode_started = time.perf_counter()
+    image = vae.decode(sampled["latent"])
+    torch.cuda.synchronize()
+    decode_seconds = time.perf_counter() - decode_started
+    return {
+        "latent_sha256": sampled["latent_sha256"],
+        "image_sha256": _tensor_sha256(image),
+        "conditioning_seconds": conditioning_seconds,
+        "sample_seconds": sampled["sample_seconds"],
+        "decode_seconds": decode_seconds,
+        "whole_job_seconds": time.perf_counter() - job_started,
+        "profile": sampled["profile"],
+    }
+
+
+def _resident_job(
+    model: object,
+    positive: object,
+    vae: Any,
+    latent: dict[str, object],
+    window_plan: object,
+    args: argparse.Namespace,
+    profiler: _WindowProfiler,
+) -> dict[str, Any]:
+    from dinkster_inference import model_management
+
+    torch = cast("Any", importlib.import_module("torch"))
+    preload_started = time.perf_counter()
+    model_management.load_models_gpu([model], force_full_load=True)
+    torch.cuda.synchronize()
+    preload_seconds = time.perf_counter() - preload_started
+    job_started = time.perf_counter()
+    sampled = _sample(model, positive, latent, window_plan, args, profiler)
+    decode_started = time.perf_counter()
+    image = vae.decode(sampled["latent"])
+    torch.cuda.synchronize()
+    decode_seconds = time.perf_counter() - decode_started
+    return {
+        "latent_sha256": sampled["latent_sha256"],
+        "image_sha256": _tensor_sha256(image),
+        "preload_seconds": preload_seconds,
+        "sample_seconds": sampled["sample_seconds"],
+        "decode_seconds": decode_seconds,
+        "whole_job_seconds": time.perf_counter() - job_started,
+        "profile": sampled["profile"],
+    }
 
 
 def run_worker(args: argparse.Namespace) -> int:
@@ -134,17 +389,16 @@ def run_worker(args: argparse.Namespace) -> int:
     )
     model = loaded["model"]
     clip = cast("Any", loaded["clip"])
+    vae = cast("Any", loaded["vae"])
     compute_dtype = cast("Any", model).model.get_dtype_inference()
     if compute_dtype is not torch.bfloat16:
         raise ReceiptError(f"Flux receipt compute dtype must be bfloat16, got {compute_dtype}")
     model_load_seconds = time.perf_counter() - load_started
-    conditioning = clip.encode_from_tokens_scheduled(clip.tokenize(PROMPT))
-    hooks = cast("Any", importlib.import_module("dinkster_inference.hooks"))
-    positive = hooks.conditioning_set_values(conditioning, {"guidance": 3.5})
     latent = {
         "samples": torch.zeros((1, 16, args.height // 8, args.width // 8), dtype=torch.float32)
     }
-    window_plan = _window_plan(args.workload)
+    window_plan = _window_plan(args.workload, args.width)
+    profiler = _install_window_profiler(torch)
     distributed = "DINKSTER_SINGLE_JOB_RANK" in os.environ
     context = ExecutionContext(
         arm="native",
@@ -158,19 +412,31 @@ def run_worker(args: argparse.Namespace) -> int:
         activate_distributed_attention(ATTEMPT_GROUP, ATTEMPT)
     try:
         with use_execution_context(context):
-            cold = _sample(model, positive, latent, window_plan, args)
+            cold = _job(model, clip, vae, latent, window_plan, args, profiler)
             cold_workflow_seconds = time.perf_counter() - worker_started
             warmups = [
-                _sample(model, positive, latent, window_plan, args) for _ in range(args.warmups)
+                _job(model, clip, vae, latent, window_plan, args, profiler)
+                for _ in range(args.warmups)
             ]
             measured = [
-                _sample(model, positive, latent, window_plan, args) for _ in range(args.repeats)
+                _job(model, clip, vae, latent, window_plan, args, profiler)
+                for _ in range(args.repeats)
+            ]
+            conditioning = clip.encode_from_tokens_scheduled(clip.tokenize(PROMPT))
+            hooks = cast("Any", importlib.import_module("dinkster_inference.hooks"))
+            positive = hooks.conditioning_set_values(conditioning, {"guidance": 3.5})
+            resident = [
+                _resident_job(model, positive, vae, latent, window_plan, args, profiler)
+                for _ in range(args.resident_repeats)
             ]
     finally:
         if distributed:
             release_distributed_attention(ATTEMPT_GROUP, ATTEMPT)
-    sample_seconds = [run[1] for run in measured]
+    sample_seconds = [float(run["sample_seconds"]) for run in measured]
+    whole_job_seconds = [float(run["whole_job_seconds"]) for run in measured]
     median_seconds = statistics.median(sample_seconds)
+    median_whole_job_seconds = statistics.median(whole_job_seconds)
+    profile_keys = tuple(key for key in measured[0]["profile"] if key != "calls")
     properties = torch.cuda.get_device_properties(0)
     result = {
         "status": "PASS",
@@ -178,19 +444,56 @@ def run_worker(args: argparse.Namespace) -> int:
         "rank": int(os.environ["DINKSTER_SINGLE_JOB_RANK"]) if distributed else None,
         "world_size": int(os.environ.get("DINKSTER_SINGLE_JOB_WORLD_SIZE", "1")),
         "output_hashes": {
-            "cold": cold[0],
-            "warmups": [run[0] for run in warmups],
-            "measured": [run[0] for run in measured],
+            "cold": {
+                "latent": cold["latent_sha256"],
+                "image": cold["image_sha256"],
+            },
+            "warmups": [
+                {"latent": run["latent_sha256"], "image": run["image_sha256"]} for run in warmups
+            ],
+            "measured": [
+                {"latent": run["latent_sha256"], "image": run["image_sha256"]} for run in measured
+            ],
+            "resident": [
+                {"latent": run["latent_sha256"], "image": run["image_sha256"]} for run in resident
+            ],
         },
         "timing": {
             "worker_wall_seconds": time.perf_counter() - worker_started,
             "model_load_seconds": model_load_seconds,
             "cold_workflow_seconds": cold_workflow_seconds,
-            "cold_sample_seconds": cold[1],
-            "warmup_sample_seconds": [run[1] for run in warmups],
+            "cold_job": {key: value for key, value in cold.items() if not key.endswith("sha256")},
+            "warmup_jobs": [
+                {key: value for key, value in run.items() if not key.endswith("sha256")}
+                for run in warmups
+            ],
+            "measured_jobs": [
+                {key: value for key, value in run.items() if not key.endswith("sha256")}
+                for run in measured
+            ],
             "sample_seconds": sample_seconds,
             "median_sample_seconds": median_seconds,
-            "jobs_per_hour": 3600.0 / median_seconds,
+            "median_sample_step_seconds": median_seconds / args.steps,
+            "whole_job_seconds": whole_job_seconds,
+            "median_whole_job_seconds": median_whole_job_seconds,
+            "jobs_per_hour": 3600.0 / median_whole_job_seconds,
+            "median_profile": {
+                key: statistics.median(float(run["profile"][key]) for run in measured)
+                for key in profile_keys
+            },
+            "median_profile_per_step": {
+                key: statistics.median(float(run["profile"][key]) for run in measured) / args.steps
+                for key in profile_keys
+            },
+            "resident_model_cached_conditioning_jobs": [
+                {key: value for key, value in run.items() if not key.endswith("sha256")}
+                for run in resident
+            ],
+            "resident_model_cached_conditioning_median_whole_job_seconds": (
+                statistics.median(float(run["whole_job_seconds"]) for run in resident)
+                if resident
+                else None
+            ),
         },
         "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
         "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
@@ -260,6 +563,8 @@ def _spawn_worker(
         str(args.warmups),
         "--repeats",
         str(args.repeats),
+        "--resident-repeats",
+        str(args.resident_repeats),
     )
     with log.open("wb") as output:
         return subprocess.Popen(
@@ -385,6 +690,10 @@ def run_mint(args: argparse.Namespace) -> int:
     candidate_seconds = max(
         float(result["timing"]["median_sample_seconds"]) for result in candidate
     )
+    reference_job_seconds = float(reference["timing"]["median_whole_job_seconds"])
+    candidate_job_seconds = max(
+        float(result["timing"]["median_whole_job_seconds"]) for result in candidate
+    )
     receipt = {
         "schema": "dinkster.flux-window-multigpu-receipt.v1",
         "status": "PASS",
@@ -405,10 +714,11 @@ def run_mint(args: argparse.Namespace) -> int:
             "seed": args.seed,
             "prompt": PROMPT,
             "guidance": 3.5,
-            "windows": WORKLOADS[args.workload],
+            "windows": _workload_windows(args.workload, args.width),
             "window_indices": "latent width; retained Flux token indices multiplied by two",
             "warmups": args.warmups,
             "repeats": args.repeats,
+            "resident_repeats": args.resident_repeats,
         },
         "execution": {
             "mode": "window",
@@ -419,13 +729,19 @@ def run_mint(args: argparse.Namespace) -> int:
             "arm_order": list(arm_order),
             "hash_contract": "bit-identical between serial and every distributed rank",
             "performance": {
-                "reference_median_seconds": reference_seconds,
-                "candidate_median_seconds": candidate_seconds,
-                "speedup": reference_seconds / candidate_seconds,
-                "reference_jobs_per_hour": 3600.0 / reference_seconds,
-                "candidate_jobs_per_hour": 3600.0 / candidate_seconds,
-                "reference_gpu_seconds_per_job": reference_seconds,
-                "candidate_gpu_seconds_per_job": candidate_seconds * len(candidate),
+                "reference_median_sample_seconds": reference_seconds,
+                "candidate_median_sample_seconds": candidate_seconds,
+                "sample_speedup": reference_seconds / candidate_seconds,
+                "reference_median_sample_step_seconds": reference_seconds / args.steps,
+                "candidate_median_sample_step_seconds": candidate_seconds / args.steps,
+                "sample_step_speedup": reference_seconds / candidate_seconds,
+                "reference_median_whole_job_seconds": reference_job_seconds,
+                "candidate_median_whole_job_seconds": candidate_job_seconds,
+                "whole_job_speedup": reference_job_seconds / candidate_job_seconds,
+                "reference_jobs_per_hour": 3600.0 / reference_job_seconds,
+                "candidate_jobs_per_hour": 3600.0 / candidate_job_seconds,
+                "reference_gpu_seconds_per_job": reference_job_seconds,
+                "candidate_gpu_seconds_per_job": candidate_job_seconds * len(candidate),
             },
         },
         "environment": {
@@ -456,6 +772,7 @@ def _workload_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--seed", type=int, default=424242)
     parser.add_argument("--warmups", type=int, default=1)
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument("--resident-repeats", type=int, default=0)
 
 
 def _parser() -> argparse.ArgumentParser:
