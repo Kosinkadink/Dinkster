@@ -600,17 +600,21 @@ def test_generation_ksampler_preserves_h3_stream_roles(monkeypatch: pytest.Monke
     assert sampled.by_role("audio") is outputs[1]
 
 
-def test_generation_ksampler_normalizes_residency_before_sampling(
+def test_generation_ksampler_switches_from_lora_clone_to_base_without_eviction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[tuple[object, ...]] = []
-    model = object()
+    base_weight = 10.0
+    resident_patch = 0.0
+
+    class Model:
+        def __init__(self, patch: float) -> None:
+            self.patch = patch
+
+    base_model = Model(0.0)
+    lora_model = Model(2.5)
     latent = object()
     normalized = object()
-    sampled = object()
-
-    def unload_model(actual_model: object) -> None:
-        events.append(("unload", actual_model))
 
     def fix_latent(
         actual_model: object,
@@ -625,17 +629,21 @@ def test_generation_ksampler_normalizes_residency_before_sampling(
         events.append(("noise", actual_latent, seed, batch_index))
         return object()
 
-    def sample_latent(*args: object, **kwargs: object) -> object:
+    def sample_latent(actual_model: Model, *args: object, **kwargs: object) -> float:
+        nonlocal resident_patch
         assert _FakeTorch.inference_mode_enabled
-        events.append(("sample", args, kwargs))
-        return sampled
+        resident_patch = actual_model.patch
+        events.append(("sample", actual_model, args, kwargs))
+        return base_weight + resident_patch
 
     sample = SimpleNamespace(
         fix_empty_latent_channels=fix_latent,
         prepare_noise=prepare_noise,
         sample=sample_latent,
     )
-    model_management = SimpleNamespace(unload_model_and_clones=unload_model)
+    model_management = SimpleNamespace(
+        unload_model_and_clones=lambda _model: pytest.fail("sampler evicted a resident model")
+    )
     modules = {
         "torch": _FakeTorch,
         "dinkster_inference.sample": sample,
@@ -648,28 +656,41 @@ def test_generation_ksampler_normalizes_residency_before_sampling(
         lambda name: modules.get(name) or real_import(name),
     )
 
-    result = fork_nodes.GenerationKSampler.execute(
-        model=model,
-        seed=459,
-        steps=5,
-        cfg=7.0,
-        sampler_name="euler",
-        scheduler="normal",
-        positive=object(),
-        negative=object(),
-        latent_image={
-            "samples": latent,
-            "batch_index": (3,),
-            "downscale_ratio_spacial": 8,
-            "downscale_ratio_temporal": 4,
-        },
-        denoise=1.0,
-    )
+    def run(model: Model) -> object:
+        return fork_nodes.GenerationKSampler.execute(
+            model=model,
+            seed=459,
+            steps=5,
+            cfg=7.0,
+            sampler_name="euler",
+            scheduler="normal",
+            positive=object(),
+            negative=object(),
+            latent_image={
+                "samples": latent,
+                "batch_index": (3,),
+                "downscale_ratio_spacial": 8,
+                "downscale_ratio_temporal": 4,
+            },
+            denoise=1.0,
+        )["latent"]
 
-    assert [event[0] for event in events] == ["unload", "fix", "noise", "sample"]
-    assert events[1] == ("fix", model, latent, 8, 4)
-    assert events[2][1:] == (normalized, 459, (3,))
-    assert cast("Mapping[str, object]", result["latent"])["samples"] is sampled
+    lora_result = cast("Mapping[str, object]", run(lora_model))
+    base_result = cast("Mapping[str, object]", run(base_model))
+
+    assert lora_result["samples"] == 12.5
+    assert base_result["samples"] == 10.0
+    assert [event[0] for event in events] == [
+        "fix",
+        "noise",
+        "sample",
+        "fix",
+        "noise",
+        "sample",
+    ]
+    assert events[0] == ("fix", lora_model, latent, 8, 4)
+    assert events[3] == ("fix", base_model, latent, 8, 4)
+    assert events[1][1:] == events[4][1:] == (normalized, 459, (3,))
     assert not _FakeTorch.inference_mode_enabled
 
 
@@ -716,7 +737,7 @@ def test_generation_ksampler_attaches_attention_to_a_model_clone(
             )[1],
         ),
         "dinkster_inference.model_management": SimpleNamespace(
-            unload_model_and_clones=lambda actual: events.append(("unload", actual))
+            unload_model_and_clones=lambda _model: pytest.fail("sampler evicted a resident model")
         ),
     }
     real_import = importlib.import_module
@@ -741,7 +762,6 @@ def test_generation_ksampler_attaches_attention_to_a_model_clone(
 
     assert events[:2] == [("clone", model), ("attach", clone, selected)]
     assert ("attach", model, selected) not in events
-    assert ("unload", clone) in events
     assert ("fix", clone) in events
     assert ("sample", clone) in events
 

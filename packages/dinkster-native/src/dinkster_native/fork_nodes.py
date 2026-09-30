@@ -590,7 +590,6 @@ class GenerationKSampler(KSampler):
         sampling_model = model_for_attention_route(model)
         source = dict(cast("Mapping[object, object]", latent_image))
         latent, roles = _fork_samples(source["samples"])
-        model_management.unload_model_and_clones(sampling_model)
         latent = sample.fix_empty_latent_channels(
             sampling_model,
             latent,

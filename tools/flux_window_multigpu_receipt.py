@@ -129,8 +129,14 @@ class _WindowProfiler:
 
 
 def _install_window_profiler(torch: Any) -> _WindowProfiler:
-    from dinkster_inference import model_management, model_patcher, sampler_helpers
-    from dinkster_inference.window_execution import WindowPlanExecutor
+    from dinkster_inference import (  # pyright: ignore[reportMissingImports]
+        model_management,
+        model_patcher,
+        sampler_helpers,
+    )
+    from dinkster_inference.window_execution import (  # pyright: ignore[reportMissingImports]
+        WindowPlanExecutor,
+    )
     from dinkster_native import attention, multigpu
 
     profiler = _WindowProfiler(torch)
@@ -225,6 +231,34 @@ def _tensor_sha256(value: Any) -> str:
     return hashlib.sha256(
         tensor.view(cast("Any", importlib.import_module("torch")).uint8).numpy().tobytes()
     ).hexdigest()
+
+
+def _tensor_difference(reference: Any, candidate: Any) -> dict[str, Any]:
+    torch = cast("Any", importlib.import_module("torch"))
+    reference_cpu = reference.detach().cpu().contiguous()
+    candidate_cpu = candidate.detach().cpu().contiguous()
+    if reference_cpu.shape != candidate_cpu.shape or reference_cpu.dtype != candidate_cpu.dtype:
+        raise ReceiptError("cold and warm tensors must have matching shapes and dtypes")
+    different = reference_cpu != candidate_cpu
+    differing_values = int(torch.count_nonzero(different).item())
+    max_abs_difference = (
+        float((reference_cpu.float() - candidate_cpu.float()).abs().max().item())
+        if reference_cpu.numel()
+        else 0.0
+    )
+    return {
+        "bit_identical": differing_values == 0,
+        "differing_values": differing_values,
+        "max_abs_difference": max_abs_difference,
+    }
+
+
+def _job_metrics(run: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in run.items()
+        if key not in ("latent", "image") and not key.endswith("sha256")
+    }
 
 
 def _route() -> tuple[Any, Any]:
@@ -327,6 +361,8 @@ def _job(
     torch.cuda.synchronize()
     decode_seconds = time.perf_counter() - decode_started
     return {
+        "latent": sampled["latent"].detach().cpu().contiguous(),
+        "image": image.detach().cpu().contiguous(),
         "latent_sha256": sampled["latent_sha256"],
         "image_sha256": _tensor_sha256(image),
         "conditioning_seconds": conditioning_seconds,
@@ -346,7 +382,7 @@ def _resident_job(
     args: argparse.Namespace,
     profiler: _WindowProfiler,
 ) -> dict[str, Any]:
-    from dinkster_inference import model_management
+    from dinkster_inference import model_management  # pyright: ignore[reportMissingImports]
 
     torch = cast("Any", importlib.import_module("torch"))
     preload_started = time.perf_counter()
@@ -360,6 +396,8 @@ def _resident_job(
     torch.cuda.synchronize()
     decode_seconds = time.perf_counter() - decode_started
     return {
+        "latent": sampled["latent"].detach().cpu().contiguous(),
+        "image": image.detach().cpu().contiguous(),
         "latent_sha256": sampled["latent_sha256"],
         "image_sha256": _tensor_sha256(image),
         "preload_seconds": preload_seconds,
@@ -458,19 +496,36 @@ def run_worker(args: argparse.Namespace) -> int:
                 {"latent": run["latent_sha256"], "image": run["image_sha256"]} for run in resident
             ],
         },
+        "cold_comparisons": {
+            "warmups": [
+                {
+                    "latent": _tensor_difference(cold["latent"], run["latent"]),
+                    "image": _tensor_difference(cold["image"], run["image"]),
+                }
+                for run in warmups
+            ],
+            "measured": [
+                {
+                    "latent": _tensor_difference(cold["latent"], run["latent"]),
+                    "image": _tensor_difference(cold["image"], run["image"]),
+                }
+                for run in measured
+            ],
+            "resident": [
+                {
+                    "latent": _tensor_difference(cold["latent"], run["latent"]),
+                    "image": _tensor_difference(cold["image"], run["image"]),
+                }
+                for run in resident
+            ],
+        },
         "timing": {
             "worker_wall_seconds": time.perf_counter() - worker_started,
             "model_load_seconds": model_load_seconds,
             "cold_workflow_seconds": cold_workflow_seconds,
-            "cold_job": {key: value for key, value in cold.items() if not key.endswith("sha256")},
-            "warmup_jobs": [
-                {key: value for key, value in run.items() if not key.endswith("sha256")}
-                for run in warmups
-            ],
-            "measured_jobs": [
-                {key: value for key, value in run.items() if not key.endswith("sha256")}
-                for run in measured
-            ],
+            "cold_job": _job_metrics(cold),
+            "warmup_jobs": [_job_metrics(run) for run in warmups],
+            "measured_jobs": [_job_metrics(run) for run in measured],
             "sample_seconds": sample_seconds,
             "median_sample_seconds": median_seconds,
             "median_sample_step_seconds": median_seconds / args.steps,
@@ -485,10 +540,7 @@ def run_worker(args: argparse.Namespace) -> int:
                 key: statistics.median(float(run["profile"][key]) for run in measured) / args.steps
                 for key in profile_keys
             },
-            "resident_model_cached_conditioning_jobs": [
-                {key: value for key, value in run.items() if not key.endswith("sha256")}
-                for run in resident
-            ],
+            "resident_model_cached_conditioning_jobs": [_job_metrics(run) for run in resident],
             "resident_model_cached_conditioning_median_whole_job_seconds": (
                 statistics.median(float(run["whole_job_seconds"]) for run in resident)
                 if resident

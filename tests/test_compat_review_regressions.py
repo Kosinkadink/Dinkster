@@ -3,14 +3,17 @@ from __future__ import annotations
 import asyncio
 import importlib
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import cast
 
 import pytest
 from dinkster_compat_comfy import (
     CompatError,
     CompatTranslation,
     bootstrap,
+    comfy_execution,
     load_legacy_pack,
     translate_mappings,
 )
@@ -30,6 +33,77 @@ class GoodNode:
 
     def run(self) -> tuple[int]:
         return (1,)
+
+
+def test_compat_sampler_switches_from_lora_clone_to_base_without_eviction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base_weight = 10.0
+    resident_patch = 0.0
+
+    class Model:
+        load_device = "cuda"
+        model_options: dict[str, object] = {}
+
+        def __init__(self, patch: float) -> None:
+            self.patch = patch
+
+    class Output:
+        def __init__(self, value: float) -> None:
+            self.value = value
+
+        def to(self, *, device: object, dtype: object) -> Output:
+            assert (device, dtype) == ("cpu", "float32")
+            return self
+
+    def sample(model: Model, *_args: object, **_kwargs: object) -> Output:
+        nonlocal resident_patch
+        resident_patch = model.patch
+        return Output(base_weight + resident_patch)
+
+    sample_module = SimpleNamespace(
+        fix_empty_latent_channels=lambda _model, latent, *_args: latent,
+        prepare_noise=lambda *_args: object(),
+    )
+    samplers = SimpleNamespace(
+        KSampler=lambda *_args, **_kwargs: SimpleNamespace(sigmas=(1.0, 0.0), sampler="euler"),
+        sampler_object=lambda name: name,
+        sample=sample,
+    )
+    modules = {
+        "dinkster_inference.sample": sample_module,
+        "dinkster_inference.samplers": samplers,
+        "dinkster_inference.model_management": SimpleNamespace(
+            unload_model_and_clones=lambda _model: pytest.fail("sampler evicted a resident model"),
+            intermediate_device=lambda: "cpu",
+            intermediate_dtype=lambda: "float32",
+        ),
+        "dinkster_inference.utils": SimpleNamespace(PROGRESS_BAR_ENABLED=False),
+    }
+    real_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: modules.get(name) or real_import(name),
+    )
+
+    def run(model: Model) -> Output:
+        result = comfy_execution.common_ksampler(
+            model,
+            seed=459,
+            steps=5,
+            cfg=7.0,
+            sampler_name="euler",
+            scheduler="normal",
+            positive=object(),
+            negative=object(),
+            latent={"samples": object()},
+            denoise=1.0,
+        )
+        return cast("Output", cast("Mapping[str, object]", result)["samples"])
+
+    assert run(Model(2.5)).value == 12.5
+    assert run(Model(0.0)).value == 10.0
 
 
 @pytest.mark.parametrize("requires_asset_manager", [False, True])
