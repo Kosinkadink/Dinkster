@@ -23,10 +23,14 @@ runs:
       with:
         repository: Kosinkadink/dinkster-evidence
         deploy-key: ${{ inputs.evidence-deploy-key }}
+    - name: Read the validation evidence revision
+      id: evidence-revision
+      shell: bash
+      run: echo "revision=$(cat tools/evidence-revision.txt)" >> "$GITHUB_OUTPUT"
     - uses: actions/checkout@v4
       with:
         repository: Kosinkadink/dinkster-evidence
-        ref: a5949cd95ab302f73377ad5aa02a6f35565a60b9
+        ref: ${{ steps.evidence-revision.outputs.revision }}
         path: .evidence-source
         clean: true
         persist-credentials: false
