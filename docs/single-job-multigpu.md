@@ -47,10 +47,22 @@ Guidance mode assigns model-evaluated conditioning lanes to ranks in canonical
 lane order. Synthetic zero lanes remain local. The rank outputs are summed so
 every rank observes the canonical conditioning result.
 
-Window mode assigns contiguous joint-window ranges to ranks. Ranks evaluate
-their ranges concurrently, broadcast each result in plan order, and run the
-fork's canonical merge once. The four-rank path uses all ranks when the plan has
-at least four joint windows.
+Window mode assigns balanced contiguous joint-window ranges to ranks. Ranks
+evaluate their ranges concurrently, exchange packed outputs once per tensor
+dtype and device, reconstruct canonical plan order, and run the fork's
+canonical merge once. The four-rank path uses all ranks when the plan has at
+least four joint windows. Plans should contain similarly sized windows and at
+least as many windows as ranks; an idle rank cannot improve latency.
+
+Window mode helps when denoiser work dominates fixed job setup. On two RTX
+4090 GPUs, the explicit two-window Flux plan at 1024x1024 and 20 steps reduced
+window compute by 1.993x and the whole measured job by 1.461x. The 512x512,
+four-step workload did not improve whole-job latency because per-job model
+eviction and reload dominated its small denoising workload. Use whole-job
+replicas instead for short jobs. The two benchmark windows intentionally
+overlap by 50 percent: serial evaluates 96 latent columns and each rank
+evaluates 48, so 2x is the ideal same-plan compute speedup. Removing the
+overlap would define a different plan and output.
 
 Sequence mode supports the two-rank H3 U2R1 layout. Each DiT block retains one
 contiguous sequence shard. Ulysses all-to-all exchanges transform local
