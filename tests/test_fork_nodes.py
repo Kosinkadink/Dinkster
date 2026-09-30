@@ -19,7 +19,7 @@ from dinkster_inference_wire import (
 from dinkster_native import fork_nodes
 from dinkster_native.native import register_native_types
 from dinkster_protocol import Invocation
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import ComboWidget, InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 
@@ -309,7 +309,9 @@ def test_fork_loaders_call_dinkster_inference(
     assert fork_nodes.GenerationLoadDiffusionModel.execute(
         diffusion_model=asset, weight_dtype="default"
     ) == {"model": model}
-    assert fork_nodes.NativeLoadClip.execute(text_encoder=asset, type="h3") == {"clip": clip}
+    assert fork_nodes.NativeLoadClip.execute(
+        text_encoder=asset, text_encoder_2=asset, type="h3"
+    ) == {"clip": clip}
     loaded = fork_nodes.NativeLoadVae.execute(vae=asset)["vae"]
 
     assert isinstance(loaded, LoadedVAE)
@@ -326,6 +328,7 @@ def test_fork_loaders_call_dinkster_inference(
         "assign_loaded_weights": True
     }
     assert cast("dict[str, object]", calls[3][2])["clip_type"] == "h3"
+    assert cast("dict[str, object]", calls[3][2])["ckpt_paths"] == [str(path), str(path)]
 
 
 def test_fork_loaders_forward_gguf_residency_only_for_gguf_assets(
@@ -337,7 +340,7 @@ def test_fork_loaders_forward_gguf_residency_only_for_gguf_assets(
     calls: list[tuple[str, dict[str, object]]] = []
     clip = object()
     sd = SimpleNamespace(
-        CLIPType=SimpleNamespace(WAN="wan"),
+        CLIPType=SimpleNamespace(FLUX="flux"),
         load_diffusion_model=lambda _path, model_options: (
             calls.append(("diffusion", model_options)) or object()
         ),
@@ -353,8 +356,13 @@ def test_fork_loaders_forward_gguf_residency_only_for_gguf_assets(
         diffusion_model=asset, weight_dtype="default", gguf_residency="balanced"
     )
     assert fork_nodes.NativeLoadClip.execute(
-        text_encoder=asset, type="wan", gguf_residency="eager"
+        text_encoder=asset, type="flux", gguf_residency="eager"
     ) == {"clip": clip}
+
+    clip_type = fork_nodes.NativeLoadClip.define_schema().input("type")
+    assert clip_type is not None
+    assert isinstance(clip_type.widget, ComboWidget)
+    assert clip_type.widget.options == ("stable_diffusion", "flux", "minimax", "wan")
 
     assert calls == [
         ("diffusion", {"assign_loaded_weights": True, "gguf_residency": "balanced"}),

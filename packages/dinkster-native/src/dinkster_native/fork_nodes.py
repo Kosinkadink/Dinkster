@@ -480,11 +480,14 @@ class NativeLoadClip(LoadClip):
         *,
         text_encoder: object,
         type: str,
+        text_encoder_2: object = None,
         device: str = "default",
         gguf_residency: str = "memory",
     ) -> Mapping[str, object]:
         if not isinstance(text_encoder, AssetRef):
             raise TypeError("text_encoder must be an AssetRef")
+        if text_encoder_2 is not None and not isinstance(text_encoder_2, AssetRef):
+            raise TypeError("text_encoder_2 must be an AssetRef")
         sd = importlib.import_module("dinkster_inference.sd")
         try:
             clip_type = getattr(sd.CLIPType, type.upper())
@@ -494,11 +497,13 @@ class NativeLoadClip(LoadClip):
         if device == "cpu":
             torch = cast("Any", importlib.import_module("torch"))
             options["load_device"] = options["offload_device"] = torch.device("cpu")
-        path = text_encoder.local_path()
-        if path.suffix.lower() == ".gguf":
+        paths = [text_encoder.local_path()]
+        if text_encoder_2 is not None:
+            paths.append(text_encoder_2.local_path())
+        if any(path.suffix.lower() == ".gguf" for path in paths):
             options["gguf_residency"] = gguf_residency
         clip = sd.load_clip(
-            ckpt_paths=[str(path)],
+            ckpt_paths=[str(path) for path in paths],
             embedding_directory=[],
             clip_type=clip_type,
             model_options=options,

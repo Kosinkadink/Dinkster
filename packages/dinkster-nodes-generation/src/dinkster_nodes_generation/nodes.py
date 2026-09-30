@@ -750,10 +750,18 @@ class LoadClip(_SchemaOnlyNode):
                     ),
                 ),
                 InputSpec(
+                    "text_encoder_2",
+                    ASSET,
+                    required=False,
+                    widget=AssetWidget(
+                        accept=("application/octet-stream",), kind="model/text-encoder"
+                    ),
+                ),
+                InputSpec(
                     "type",
                     COMBO,
                     default="minimax",
-                    widget=ComboWidget(options=("stable_diffusion", "minimax", "wan")),
+                    widget=ComboWidget(options=("stable_diffusion", "flux", "minimax", "wan")),
                 ),
                 InputSpec(
                     "device",
