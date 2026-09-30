@@ -56,10 +56,6 @@ def common_ksampler(
     model_management = cast("Any", importlib.import_module("dinkster_inference.model_management"))
     utils = cast("Any", importlib.import_module("dinkster_inference.utils"))
 
-    # A prior VAE residency transition can make the next load take a
-    # numerically different path. Normalize to the complete offload state so
-    # cold, warm, and fresh-process runs agree.
-    model_management.unload_model_and_clones(model)
     latent_image = sample_module.fix_empty_latent_channels(
         model,
         latent_image,
