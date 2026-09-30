@@ -175,10 +175,22 @@ def _route() -> tuple[Any, Any]:
     return runtime, token
 
 
-def _window_plan(name: str) -> object:
+def _workload_windows(name: str, width: int) -> tuple[tuple[int, ...], ...]:
+    if width % 512:
+        raise ReceiptError("Flux window receipt width must be a multiple of 512")
+    scale = width // 512
+    return tuple(
+        tuple(index * scale + offset for index in window for offset in range(scale))
+        for window in WORKLOADS[name]
+    )
+
+
+def _window_plan(name: str, width: int) -> object:
     from dinkster_native.fork_nodes import GenerationExplicitWindowPlan
 
-    windows = ";".join(",".join(str(index) for index in window) for window in WORKLOADS[name])
+    windows = ";".join(
+        ",".join(str(index) for index in window) for window in _workload_windows(name, width)
+    )
     return GenerationExplicitWindowPlan.execute(
         axis="width",
         windows=windows,
@@ -288,7 +300,7 @@ def run_worker(args: argparse.Namespace) -> int:
     latent = {
         "samples": torch.zeros((1, 16, args.height // 8, args.width // 8), dtype=torch.float32)
     }
-    window_plan = _window_plan(args.workload)
+    window_plan = _window_plan(args.workload, args.width)
     profiler = _install_window_profiler(torch)
     distributed = "DINKSTER_SINGLE_JOB_RANK" in os.environ
     context = ExecutionContext(
@@ -584,7 +596,7 @@ def run_mint(args: argparse.Namespace) -> int:
             "seed": args.seed,
             "prompt": PROMPT,
             "guidance": 3.5,
-            "windows": WORKLOADS[args.workload],
+            "windows": _workload_windows(args.workload, args.width),
             "window_indices": "latent width; retained Flux token indices multiplied by two",
             "warmups": args.warmups,
             "repeats": args.repeats,
