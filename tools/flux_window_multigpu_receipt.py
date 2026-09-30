@@ -51,6 +51,7 @@ class _WindowProfiler:
             "collective": [],
         }
         self.cpu_seconds = {
+            "window_compute": 0.0,
             "collective": 0.0,
             "failure_sync": 0.0,
             "process_group_init": 0.0,
@@ -83,6 +84,7 @@ class _WindowProfiler:
         accounted = gpu_seconds["window_compute"] + gpu_seconds["collective"]
         return {
             "window_compute_gpu_seconds": gpu_seconds["window_compute"],
+            "window_compute_cpu_seconds": self.cpu_seconds["window_compute"],
             "collective_gpu_seconds": gpu_seconds["collective"],
             "collective_cpu_seconds": self.cpu_seconds["collective"],
             "failure_sync_cpu_seconds": self.cpu_seconds["failure_sync"],
