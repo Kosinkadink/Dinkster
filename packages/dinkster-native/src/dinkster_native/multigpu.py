@@ -87,7 +87,11 @@ def _window_owner(index: int, count: int, world_size: int) -> int:
 
 
 def _gather_window_outputs(
-    local: dict[int, list[Any]], expected: list[Any], condition_count: int, config: Any
+    local: dict[int, list[Any]],
+    expected: list[Any],
+    condition_count: int,
+    config: Any,
+    error: BaseException | None,
 ) -> list[list[Any]]:
     groups: dict[tuple[Any, Any], list[tuple[int, int, int, Any]]] = {}
     received: dict[tuple[int, int], list[Any]] = {}
@@ -106,22 +110,33 @@ def _gather_window_outputs(
             owner_sizes[_window_owner(window_index, len(expected), config.world_size)] += int(
                 template.numel()
             )
-        send_size = max(owner_sizes)
+        send_size = max(owner_sizes) + 1
         send = torch.empty(send_size, dtype=dtype, device=device)
-        position = 0
-        for condition_index, window_index, part_index, template in specs:
-            if _window_owner(window_index, len(expected), config.world_size) != config.rank:
-                continue
-            part = _tensor_parts(local[window_index][condition_index])[part_index]
-            if part.shape != template.shape or part.dtype != dtype or part.device != device:
-                raise ValueError("window evaluation returned an incompatible distributed tensor")
-            count = int(part.numel())
-            send[position : position + count].copy_(part.reshape(-1))
-            position += count
+        send[0] = int(error is not None)
+        if error is None:
+            position = 1
+            for condition_index, window_index, part_index, template in specs:
+                if _window_owner(window_index, len(expected), config.world_size) != config.rank:
+                    continue
+                part = _tensor_parts(local[window_index][condition_index])[part_index]
+                if part.shape != template.shape or part.dtype != dtype or part.device != device:
+                    error = ValueError(
+                        "window evaluation returned an incompatible distributed tensor"
+                    )
+                    send[0] = 1
+                    break
+                count = int(part.numel())
+                send[position : position + count].copy_(part.reshape(-1))
+                position += count
 
         gathered = [torch.empty_like(send) for _ in range(config.world_size)]
         torch.distributed.all_gather(gathered, send)
-        offsets = [0] * config.world_size
+        peer_failed = any(bool(value[0].item()) for value in gathered)
+        if error is not None:
+            raise error
+        if peer_failed:
+            raise RuntimeError("peer distributed execution rank failed")
+        offsets = [1] * config.world_size
         for condition_index, window_index, part_index, template in specs:
             owner = _window_owner(window_index, len(expected), config.world_size)
             count = int(template.numel())
@@ -162,9 +177,11 @@ def _window_wrapper(
                 )
     except BaseException as exc:
         error = exc
-    _raise_group_failure(error, _first_tensor(template).device)
     expected = [window_executor.window_latent(index, template) for index in range(count)]
-    return _gather_window_outputs(local, expected, len(conds), config)
+    if not conds:
+        _raise_group_failure(error, _first_tensor(template).device)
+        return []
+    return _gather_window_outputs(local, expected, len(conds), config, error)
 
 
 def _local_modulation_segments(

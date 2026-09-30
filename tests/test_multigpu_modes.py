@@ -68,8 +68,10 @@ def test_window_wrapper_uses_contiguous_four_rank_assignment_and_canonical_order
 
     def all_gather(outputs: list[Any], value: Any) -> None:
         nonlocal gather_calls
-        assert tuple(value.shape) == (2,)
-        for rank, packed in enumerate(((1.0, 2.0), (3.0, 4.0), (5.0, -1.0), (6.0, -1.0))):
+        assert tuple(value.shape) == (3,)
+        for rank, packed in enumerate(
+            ((0.0, 1.0, 2.0), (0.0, 3.0, 4.0), (0.0, 5.0, -1.0), (0.0, 6.0, -1.0))
+        ):
             outputs[rank].copy_(torch.tensor(packed))
         gather_calls += 1
 
@@ -90,6 +92,42 @@ def test_window_wrapper_uses_contiguous_four_rank_assignment_and_canonical_order
     assert visited == [4]
     assert gather_calls == 1
     assert [float(value) for value in outputs[0]] == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+
+
+def test_window_wrapper_reports_peer_failure_through_the_output_gather(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = attention._DistributedConfig(0, 2, "window", "file:///unused", "token")  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(attention, "_ensure_process_group", lambda: config)
+
+    class WindowExecutor:
+        plan = SimpleNamespace(joint_windows=(0, 1))
+
+        def evaluate_window(self, index: int, *_args: object) -> list[Any]:
+            return [torch.tensor(float(index + 1))]
+
+        def window_latent(self, _index: int, _template: Any) -> Any:
+            return torch.empty(())
+
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *_args, **_kwargs: None)
+
+    def all_gather(outputs: list[Any], _value: Any) -> None:
+        outputs[0].copy_(torch.tensor((0.0, 1.0)))
+        outputs[1].copy_(torch.tensor((1.0, 0.0)))
+
+    monkeypatch.setattr(torch.distributed, "all_gather", all_gather)
+
+    with pytest.raises(RuntimeError, match="peer distributed execution rank failed"):
+        multigpu._window_wrapper(  # pyright: ignore[reportPrivateUsage]
+            SimpleNamespace(class_obj=WindowExecutor()),
+            object(),
+            object(),
+            [[{}]],
+            torch.zeros(()),
+            torch.ones(1),
+            {},
+            False,
+        )
 
 
 def test_sequence_block_patch_shards_modulation_and_gathers_last_block(
