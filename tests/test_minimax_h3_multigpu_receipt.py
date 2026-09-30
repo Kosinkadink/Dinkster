@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import struct
 from pathlib import Path
 from typing import Any, cast
 
@@ -103,6 +105,53 @@ def test_pre_reset_baselines_do_not_relabel_bf16_guidance_as_int8() -> None:
         receipt.BASELINES
     )
     assert ("X570", "sequence", "dinkster_kitchen_int8", "production") not in (receipt.BASELINES)
+    assert receipt.INT8_WEIGHT_BASELINES[("X570", "sequence", "sdpa", "production")] == 1.327
+
+
+def test_model_artifact_identifies_int8_convrot_and_excludes_quant_metadata(
+    tmp_path: Path,
+) -> None:
+    quantization = json.dumps(
+        {"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 64},
+        separators=(",", ":"),
+    ).encode()
+    header = {
+        "block.weight": {"dtype": "I8", "shape": [3, 5], "data_offsets": [0, 15]},
+        "block.comfy_quant": {
+            "dtype": "U8",
+            "shape": [len(quantization)],
+            "data_offsets": [15, 15 + len(quantization)],
+        },
+        "norm.weight": {
+            "dtype": "BF16",
+            "shape": [5],
+            "data_offsets": [15 + len(quantization), 25 + len(quantization)],
+        },
+    }
+    encoded = json.dumps(header, separators=(",", ":")).encode()
+    model = tmp_path / "model.safetensors"
+    model.write_bytes(
+        struct.pack("<Q", len(encoded)) + encoded + bytes(15) + quantization + bytes(10)
+    )
+
+    artifact = receipt._model_artifact(model)  # pyright: ignore[reportPrivateUsage]
+
+    assert artifact["provider"] == "int8-convrot"
+    assert artifact["logical_weight_bytes"] == 25
+    assert artifact["quantized_linear_weights"] == 1
+    assert artifact["tensor_dtype_counts"] == {"BF16": 1, "I8": 1, "U8": 1}
+    assert artifact["quantization_format"] == "int8_tensorwise"
+    assert artifact["convrot_group_sizes"] == [64]
+    assert artifact["sha256"] == receipt.hashlib.sha256(model.read_bytes()).hexdigest()
+
+    non_convrot = tmp_path / "non-convrot.safetensors"
+    non_convrot.write_bytes(model.read_bytes().replace(b'"convrot":true', b'"convrot":null'))
+    assert (
+        receipt._model_artifact(non_convrot)[  # pyright: ignore[reportPrivateUsage]
+            "provider"
+        ]
+        == "mixed-linear"
+    )
 
 
 def test_mint_arguments_initialize_worker_only_tensor_output() -> None:
@@ -119,6 +168,10 @@ def test_mint_arguments_initialize_worker_only_tensor_output() -> None:
             "Dinkster",
             "--fork-root",
             "dinkster-inference",
+            "--model-source-url",
+            "https://models.example/model.safetensors",
+            "--model-source-revision",
+            "revision-test",
             "--gpu",
             "GPU-test",
             "--output",
@@ -193,6 +246,19 @@ def test_sparse_mint_reads_quality_tensors_before_scratch_cleanup(
     monkeypatch.setattr(receipt, "_performance", lambda *_args: {"speedup": 1.0})
     monkeypatch.setattr(receipt, "_classify_host", lambda *_args: "test-host")
     monkeypatch.setattr(receipt, "_nvidia_smi", lambda *_args: "topology")
+    monkeypatch.setattr(
+        receipt,
+        "_model_artifact",
+        lambda *_args: {
+            "sha256": "model-sha256",
+            "provider": "bf16-linear",
+            "logical_weight_bytes": 5,
+            "tensor_dtype_counts": {"BF16": 1},
+            "quantized_linear_weights": 0,
+            "quantization_format": None,
+            "convrot_group_sizes": [],
+        },
+    )
     output = tmp_path / "receipt.json"
     args = argparse.Namespace(
         dinkster_root=dinkster,
@@ -210,6 +276,8 @@ def test_sparse_mint_reads_quality_tensors_before_scratch_cleanup(
         gpu=["GPU-test"],
         output=output,
         candidate_first=False,
+        model_source_url="https://models.example/model.safetensors",
+        model_source_revision="revision-test",
     )
 
     assert receipt.run_mint(args) == 0

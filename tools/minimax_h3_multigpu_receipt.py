@@ -7,13 +7,17 @@ import hashlib
 import importlib
 import importlib.metadata
 import json
+import math
 import os
 import secrets
+import shlex
 import statistics
+import struct
 import subprocess
 import sys
 import tempfile
 import time
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -23,6 +27,9 @@ BASELINES = {
     ("RipperPC", "guidance", "sdpa", "production"): 1.802,
     ("RipperPC", "sequence", "sdpa", "production"): 1.5404,
     ("RipperPC", "sequence", "dinkster_kitchen_int8", "production"): 1.436792013659844,
+}
+INT8_WEIGHT_BASELINES = {
+    ("X570", "sequence", "sdpa", "production"): 1.327,
 }
 POLICIES = ("sdpa", "dinkster_kitchen_int8")
 MODES = ("guidance", "sequence", "sparse")
@@ -90,6 +97,81 @@ def _asset(path: Path, digest: str) -> Any:
     from dinkster_assets import AssetRef
 
     return AssetRef(digest, path.name, path.stat().st_size, resolver=_Resolver(path))
+
+
+def _model_artifact(path: Path) -> dict[str, Any]:
+    dtype_bytes = {
+        "BOOL": 1,
+        "U8": 1,
+        "I8": 1,
+        "F8_E4M3": 1,
+        "F8_E5M2": 1,
+        "I16": 2,
+        "U16": 2,
+        "F16": 2,
+        "BF16": 2,
+        "I32": 4,
+        "U32": 4,
+        "F32": 4,
+        "I64": 8,
+        "U64": 8,
+        "F64": 8,
+    }
+    with path.open("rb") as model_file:
+        header_length_bytes = model_file.read(8)
+        if len(header_length_bytes) != 8:
+            raise ReceiptError("model is not a safetensors file")
+        header_length = struct.unpack("<Q", header_length_bytes)[0]
+        header = json.loads(model_file.read(header_length))
+        data_start = 8 + header_length
+        quantization = {}
+        for key, value in header.items():
+            if key.endswith(".comfy_quant"):
+                start, end = value["data_offsets"]
+                model_file.seek(data_start + start)
+                quantization[key.removesuffix(".comfy_quant")] = json.loads(
+                    model_file.read(end - start)
+                )
+        model_file.seek(0)
+        sha256 = hashlib.file_digest(model_file, "sha256")
+    tensors = {key: value for key, value in header.items() if key != "__metadata__"}
+    dtype_counts = Counter(value["dtype"] for value in tensors.values())
+    quantized_weights = [
+        key
+        for key, value in tensors.items()
+        if key.endswith(".weight")
+        and value["dtype"] == "I8"
+        and f"{key.removesuffix('.weight')}.comfy_quant" in tensors
+    ]
+    logical_weight_bytes = sum(
+        math.prod(value["shape"]) * dtype_bytes[value["dtype"]]
+        for key, value in tensors.items()
+        if not key.endswith(".comfy_quant")
+    )
+    weight_dtypes = {value["dtype"] for key, value in tensors.items() if key.endswith(".weight")}
+    convrot_configs = [
+        quantization[key.removesuffix(".weight")]
+        for key in quantized_weights
+        if quantization.get(key.removesuffix(".weight"), {}).get("format") == "int8_tensorwise"
+        and quantization[key.removesuffix(".weight")].get("convrot") is True
+    ]
+    if quantized_weights and len(convrot_configs) == len(quantized_weights):
+        provider = "int8-convrot"
+    elif weight_dtypes == {"BF16"}:
+        provider = "bf16-linear"
+    else:
+        provider = "mixed-linear"
+    return {
+        "sha256": sha256.hexdigest(),
+        "provider": provider,
+        "logical_weight_bytes": logical_weight_bytes,
+        "tensor_dtype_counts": dict(sorted(dtype_counts.items())),
+        "quantized_linear_weights": len(quantized_weights),
+        "quantization_format": "int8_tensorwise" if convrot_configs else None,
+        "convrot_group_sizes": sorted(
+            {int(config["convrot_groupsize"]) for config in convrot_configs}
+        ),
+    }
 
 
 def _conditioning(torch: Any, seed: int) -> list[list[object]]:
@@ -224,22 +306,36 @@ def run_worker(args: argparse.Namespace) -> int:
 
         runtime.registry["comfy_kitchen_sol_chunked"] = counted_sparse_backend
     load_started = time.perf_counter()
-    model = GenerationLoadDiffusionModel.execute(
-        diffusion_model=_asset(args.model, args.model_digest), weight_dtype="default"
-    )["model"]
+    model = cast(
+        "Any",
+        GenerationLoadDiffusionModel.execute(
+            diffusion_model=_asset(args.model, args.model_digest), weight_dtype="default"
+        )["model"],
+    )
     model_load_seconds = time.perf_counter() - load_started
+    model_size = int(model.model_size())
+    loading_route = {
+        "loader": "dinkster_native.fork_nodes.GenerationLoadDiffusionModel",
+        "assign_loaded_weights": True,
+        "mmap_backed_state_dict": bool(model.fast_disk),
+        "direct_offloaded_weight_pinning": bool(model.pin_offloaded_weights),
+        "dynamic_weight_loading": bool(model.is_dynamic()),
+    }
     if args.sparse_enabled:
-        model = NativeBlockSparseAttention.execute(
-            model=model,
-            selection="sol-attn",
-            start_percent=0.2,
-            end_percent=1.0,
-            dense_blocks="",
-            min_tokens=12_288,
-            extra_tokens=256,
-            sink_conditioning="exact_kv_and_rows",
-            **{"selection.tau": 1.3},  # pyright: ignore[reportArgumentType]
-        )["MODEL"]
+        model = cast(
+            "Any",
+            NativeBlockSparseAttention.execute(
+                model=model,
+                selection="sol-attn",
+                start_percent=0.2,
+                end_percent=1.0,
+                dense_blocks="",
+                min_tokens=12_288,
+                extra_tokens=256,
+                sink_conditioning="exact_kv_and_rows",
+                **{"selection.tau": 1.3},  # pyright: ignore[reportArgumentType]
+            )["MODEL"],
+        )
     latent = cast(
         "dict[str, object]",
         NativeEmptyMiniMaxH3AV.execute(
@@ -316,6 +412,7 @@ def run_worker(args: argparse.Namespace) -> int:
         raise ReceiptError("sparse candidate never executed its registry backend")
     properties = torch.cuda.get_device_properties(0)
     resources = cast("Any", importlib.import_module("resource"))
+    loaded_size = int(model.loaded_size())
     result = {
         "status": "PASS",
         "mode": args.mode,
@@ -359,6 +456,12 @@ def run_worker(args: argparse.Namespace) -> int:
         "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
         "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
         "peak_host_rss_bytes": resources.getrusage(resources.RUSAGE_SELF).ru_maxrss * 1024,
+        "model_residency": {
+            "logical_weight_bytes": model_size,
+            "loaded_bytes": loaded_size,
+            "offloaded_bytes": model_size - loaded_size,
+        },
+        "loading_route": loading_route,
         "sparse_backend_calls": sparse_backend_calls,
         "environment": {
             "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
@@ -621,6 +724,7 @@ def run_mint(args: argparse.Namespace) -> int:
         if _git(root, "status", "--porcelain=v1", "--untracked-files=all"):
             raise ReceiptError(f"source checkout is dirty: {root}")
     args.model_digest = digest_file(args.model)
+    artifact = _model_artifact(args.model)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="minimax-h3-multigpu-") as directory:
         scratch = Path(directory)
@@ -659,10 +763,18 @@ def run_mint(args: argparse.Namespace) -> int:
         if (args.width, args.height, args.frames, args.steps) == (1344, 768, 124, 20)
         else "short"
     )
-    baseline = BASELINES.get((host, args.mode, args.policy, workload))
+    baseline = (
+        INT8_WEIGHT_BASELINES.get((host, args.mode, args.policy, workload))
+        if artifact["provider"] == "int8-convrot"
+        else BASELINES.get((host, args.mode, args.policy, workload))
+    )
     receipt = {
-        "schema": "dinkster.minimax-h3-multigpu-receipt.v2",
+        "schema": "dinkster.minimax-h3-multigpu-receipt.v3",
         "status": "PASS",
+        "invocation": {
+            "command": shlex.join([sys.executable, *sys.argv]),
+            "working_directory": os.getcwd(),
+        },
         "source": {
             "dinkster_head": _git(args.dinkster_root, "rev-parse", "HEAD"),
             "fork_head": _git(args.fork_root, "rev-parse", "HEAD"),
@@ -671,6 +783,9 @@ def run_mint(args: argparse.Namespace) -> int:
             "path": str(args.model),
             "bytes": args.model.stat().st_size,
             "blake3": args.model_digest.removeprefix("blake3:"),
+            **artifact,
+            "source_url": args.model_source_url,
+            "source_revision": args.model_source_revision,
         },
         "workload": {
             "name": workload,
@@ -703,7 +818,7 @@ def run_mint(args: argparse.Namespace) -> int:
         },
         "execution": {
             "mode": args.mode,
-            "execution_provider": "bf16-linear",
+            "execution_provider": artifact["provider"],
             "compute_dtype": "bfloat16",
             "attention_policy": args.policy,
             "attention_provider": {
@@ -784,6 +899,8 @@ def _parser() -> argparse.ArgumentParser:
     _workload_arguments(mint)
     mint.add_argument("--dinkster-root", type=Path, required=True)
     mint.add_argument("--fork-root", type=Path, required=True)
+    mint.add_argument("--model-source-url", required=True)
+    mint.add_argument("--model-source-revision", required=True)
     mint.add_argument("--gpu", action="append", required=True)
     mint.add_argument("--output", type=Path, required=True)
     mint.add_argument("--candidate-first", action="store_true")
