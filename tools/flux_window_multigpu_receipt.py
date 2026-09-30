@@ -47,6 +47,7 @@ class _WindowProfiler:
 
     def reset(self) -> None:
         self.events: dict[str, list[tuple[Any, Any]]] = {
+            "model_unload": [],
             "model_prepare": [],
             "patcher_pre_run": [],
             "patcher_cleanup": [],
@@ -55,6 +56,7 @@ class _WindowProfiler:
             "collective": [],
         }
         self.cpu_seconds = {
+            "model_unload": 0.0,
             "model_prepare": 0.0,
             "patcher_pre_run": 0.0,
             "patcher_cleanup": 0.0,
@@ -66,6 +68,7 @@ class _WindowProfiler:
             "process_group_lookup": 0.0,
         }
         self.calls = {
+            "model_unload": 0,
             "model_prepare": 0,
             "patcher_pre_run": 0,
             "patcher_cleanup": 0,
@@ -94,7 +97,8 @@ class _WindowProfiler:
             for category, events in self.events.items()
         }
         accounted = (
-            gpu_seconds["model_prepare"]
+            gpu_seconds["model_unload"]
+            + gpu_seconds["model_prepare"]
             + gpu_seconds["patcher_pre_run"]
             + gpu_seconds["patcher_cleanup"]
             + gpu_seconds["window_compute"]
@@ -102,6 +106,8 @@ class _WindowProfiler:
             + gpu_seconds["collective"]
         )
         return {
+            "model_unload_gpu_seconds": gpu_seconds["model_unload"],
+            "model_unload_cpu_seconds": self.cpu_seconds["model_unload"],
             "model_prepare_gpu_seconds": gpu_seconds["model_prepare"],
             "model_prepare_cpu_seconds": self.cpu_seconds["model_prepare"],
             "patcher_pre_run_gpu_seconds": gpu_seconds["patcher_pre_run"],
@@ -123,11 +129,12 @@ class _WindowProfiler:
 
 
 def _install_window_profiler(torch: Any) -> _WindowProfiler:
-    from dinkster_inference import model_patcher, sampler_helpers
+    from dinkster_inference import model_management, model_patcher, sampler_helpers
     from dinkster_inference.window_execution import WindowPlanExecutor
     from dinkster_native import attention, multigpu
 
     profiler = _WindowProfiler(torch)
+    unload_model = model_management.unload_model_and_clones
     prepare_sampling = sampler_helpers.prepare_sampling
     patcher_pre_run = model_patcher.ModelPatcher.pre_run
     patcher_cleanup = model_patcher.ModelPatcher.cleanup
@@ -137,6 +144,10 @@ def _install_window_profiler(torch: Any) -> _WindowProfiler:
     raise_group_failure = multigpu._raise_group_failure  # pyright: ignore[reportPrivateUsage]
     broadcast = torch.distributed.broadcast
     all_gather = torch.distributed.all_gather
+
+    def profiled_unload(*args: Any, **kwargs: Any) -> Any:
+        profiler.calls["model_unload"] += 1
+        return profiler.cuda_call("model_unload", unload_model, *args, **kwargs)
 
     def profiled_prepare(*args: Any, **kwargs: Any) -> Any:
         profiler.calls["model_prepare"] += 1
@@ -180,6 +191,7 @@ def _install_window_profiler(torch: Any) -> _WindowProfiler:
         profiler.calls["collectives"] += 1
         return profiler.cuda_call("collective", function, *args, **kwargs)
 
+    model_management.unload_model_and_clones = profiled_unload
     sampler_helpers.prepare_sampling = profiled_prepare
     model_patcher.ModelPatcher.pre_run = profiled_pre_run
     model_patcher.ModelPatcher.cleanup = profiled_cleanup
