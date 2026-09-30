@@ -8,7 +8,7 @@ DINKSTER_ROOT = Path(os.environ.get("DINKSTER_ROOT", Path(__file__).resolve().pa
 EVIDENCE_REVISION = (DINKSTER_ROOT / "tools/evidence-revision.txt").read_text().strip()
 
 EVIDENCE_ROOT = Path(
-    os.environ.get("DINKSTER_EVIDENCE_ROOT", DINKSTER_ROOT / ".evidence-source")
+    os.environ.get("DINKSTER_EVIDENCE_ROOT", DINKSTER_ROOT.parent / ".dinkster-evidence-source")
 ).resolve()
 
 

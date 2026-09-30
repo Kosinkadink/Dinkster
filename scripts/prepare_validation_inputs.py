@@ -41,7 +41,9 @@ def prepare(root: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--evidence-root", type=Path, default=ROOT / ".evidence-source")
+    parser.add_argument(
+        "--evidence-root", type=Path, default=ROOT.parent / ".dinkster-evidence-source"
+    )
     arguments = parser.parse_args()
     prepare(arguments.evidence_root.resolve())
 

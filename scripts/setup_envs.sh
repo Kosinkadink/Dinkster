@@ -26,7 +26,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 os=$(uname -s)
-evidence_root=${DINKSTER_EVIDENCE_ROOT:-"$PWD/../dinkster-evidence"}
+evidence_root=${DINKSTER_EVIDENCE_ROOT:-"$PWD/../.dinkster-evidence-source"}
 acceptance_package="$evidence_root/packages/dinkster-acceptance"
 
 if [ -d "$acceptance_package" ]; then

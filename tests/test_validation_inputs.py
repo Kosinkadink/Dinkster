@@ -9,6 +9,10 @@ import pytest
 from tools import evidence_paths
 
 
+def test_local_evidence_checkout_is_a_sibling_of_dinkster() -> None:
+    assert evidence_paths.EVIDENCE_ROOT.parent == evidence_paths.DINKSTER_ROOT.parent
+
+
 def test_hosted_checkout_reads_the_local_evidence_revision() -> None:
     action = (
         evidence_paths.DINKSTER_ROOT / ".github/actions/prepare-validation-inputs/action.yml"

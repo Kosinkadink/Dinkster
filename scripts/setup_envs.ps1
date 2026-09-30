@@ -40,7 +40,7 @@ $TorchPython = Join-Path $TorchEnvironment "Scripts\python.exe"
 $GpuPython = Join-Path $GpuEnvironment "Scripts\python.exe"
 $EvidenceRoot = $env:DINKSTER_EVIDENCE_ROOT
 if (-not $EvidenceRoot) {
-    $EvidenceRoot = Join-Path $RepoRoot "../dinkster-evidence"
+    $EvidenceRoot = Join-Path $RepoRoot "../.dinkster-evidence-source"
 }
 $AcceptancePackage = Join-Path $EvidenceRoot "packages/dinkster-acceptance"
 $InstallAcceptance = Test-Path $AcceptancePackage -PathType Container
