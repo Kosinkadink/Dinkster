@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -167,14 +168,14 @@ def test_window_wrapper_preserves_local_failure_after_the_output_gather(
 def test_window_gather_preserves_nested_stream_dtypes_shapes_and_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from dinkster_inference.nested_tensor import NestedTensor
+    nested = importlib.import_module("dinkster_inference.nested_tensor").NestedTensor
 
     expected = [
-        NestedTensor((torch.empty(1, dtype=torch.float32), torch.empty(2, dtype=torch.float16)))
+        nested((torch.empty(1, dtype=torch.float32), torch.empty(2, dtype=torch.float16)))
         for _ in range(2)
     ]
     local = {
-        0: [NestedTensor((torch.tensor([1.0]), torch.tensor([10.0, 11.0], dtype=torch.float16)))]
+        0: [nested((torch.tensor([1.0]), torch.tensor([10.0, 11.0], dtype=torch.float16)))]
     }
     gathers = []
 
