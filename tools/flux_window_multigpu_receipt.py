@@ -48,12 +48,18 @@ class _WindowProfiler:
     def reset(self) -> None:
         self.events: dict[str, list[tuple[Any, Any]]] = {
             "model_prepare": [],
+            "patcher_pre_run": [],
+            "patcher_cleanup": [],
             "window_compute": [],
+            "window_merge": [],
             "collective": [],
         }
         self.cpu_seconds = {
             "model_prepare": 0.0,
+            "patcher_pre_run": 0.0,
+            "patcher_cleanup": 0.0,
             "window_compute": 0.0,
+            "window_merge": 0.0,
             "collective": 0.0,
             "failure_sync": 0.0,
             "process_group_init": 0.0,
@@ -61,7 +67,10 @@ class _WindowProfiler:
         }
         self.calls = {
             "model_prepare": 0,
+            "patcher_pre_run": 0,
+            "patcher_cleanup": 0,
             "window_evaluations": 0,
+            "window_merges": 0,
             "collectives": 0,
             "failure_syncs": 0,
             "process_group": 0,
@@ -85,13 +94,24 @@ class _WindowProfiler:
             for category, events in self.events.items()
         }
         accounted = (
-            gpu_seconds["model_prepare"] + gpu_seconds["window_compute"] + gpu_seconds["collective"]
+            gpu_seconds["model_prepare"]
+            + gpu_seconds["patcher_pre_run"]
+            + gpu_seconds["patcher_cleanup"]
+            + gpu_seconds["window_compute"]
+            + gpu_seconds["window_merge"]
+            + gpu_seconds["collective"]
         )
         return {
             "model_prepare_gpu_seconds": gpu_seconds["model_prepare"],
             "model_prepare_cpu_seconds": self.cpu_seconds["model_prepare"],
+            "patcher_pre_run_gpu_seconds": gpu_seconds["patcher_pre_run"],
+            "patcher_pre_run_cpu_seconds": self.cpu_seconds["patcher_pre_run"],
+            "patcher_cleanup_gpu_seconds": gpu_seconds["patcher_cleanup"],
+            "patcher_cleanup_cpu_seconds": self.cpu_seconds["patcher_cleanup"],
             "window_compute_gpu_seconds": gpu_seconds["window_compute"],
             "window_compute_cpu_seconds": self.cpu_seconds["window_compute"],
+            "window_merge_gpu_seconds": gpu_seconds["window_merge"],
+            "window_merge_cpu_seconds": self.cpu_seconds["window_merge"],
             "collective_gpu_seconds": gpu_seconds["collective"],
             "collective_cpu_seconds": self.cpu_seconds["collective"],
             "failure_sync_cpu_seconds": self.cpu_seconds["failure_sync"],
@@ -103,13 +123,16 @@ class _WindowProfiler:
 
 
 def _install_window_profiler(torch: Any) -> _WindowProfiler:
-    from dinkster_inference import sampler_helpers
+    from dinkster_inference import model_patcher, sampler_helpers
     from dinkster_inference.window_execution import WindowPlanExecutor
     from dinkster_native import attention, multigpu
 
     profiler = _WindowProfiler(torch)
     prepare_sampling = sampler_helpers.prepare_sampling
+    patcher_pre_run = model_patcher.ModelPatcher.pre_run
+    patcher_cleanup = model_patcher.ModelPatcher.cleanup
     evaluate_window = WindowPlanExecutor.evaluate_window
+    merge_latent = WindowPlanExecutor._merge_latent  # pyright: ignore[reportPrivateUsage]
     ensure_process_group = attention._ensure_process_group  # pyright: ignore[reportPrivateUsage]
     raise_group_failure = multigpu._raise_group_failure  # pyright: ignore[reportPrivateUsage]
     broadcast = torch.distributed.broadcast
@@ -122,6 +145,18 @@ def _install_window_profiler(torch: Any) -> _WindowProfiler:
     def profiled_evaluate(self: Any, *args: Any, **kwargs: Any) -> Any:
         profiler.calls["window_evaluations"] += 1
         return profiler.cuda_call("window_compute", evaluate_window, self, *args, **kwargs)
+
+    def profiled_pre_run(self: Any, *args: Any, **kwargs: Any) -> Any:
+        profiler.calls["patcher_pre_run"] += 1
+        return profiler.cuda_call("patcher_pre_run", patcher_pre_run, self, *args, **kwargs)
+
+    def profiled_cleanup(self: Any, *args: Any, **kwargs: Any) -> Any:
+        profiler.calls["patcher_cleanup"] += 1
+        return profiler.cuda_call("patcher_cleanup", patcher_cleanup, self, *args, **kwargs)
+
+    def profiled_merge(self: Any, *args: Any, **kwargs: Any) -> Any:
+        profiler.calls["window_merges"] += 1
+        return profiler.cuda_call("window_merge", merge_latent, self, *args, **kwargs)
 
     def profiled_group() -> Any:
         initialized = attention._process_group_config is not None  # pyright: ignore[reportPrivateUsage]
@@ -146,7 +181,10 @@ def _install_window_profiler(torch: Any) -> _WindowProfiler:
         return profiler.cuda_call("collective", function, *args, **kwargs)
 
     sampler_helpers.prepare_sampling = profiled_prepare
+    model_patcher.ModelPatcher.pre_run = profiled_pre_run
+    model_patcher.ModelPatcher.cleanup = profiled_cleanup
     WindowPlanExecutor.evaluate_window = profiled_evaluate
+    WindowPlanExecutor._merge_latent = profiled_merge  # pyright: ignore[reportPrivateUsage]
     attention._ensure_process_group = profiled_group  # pyright: ignore[reportPrivateUsage]
     multigpu._raise_group_failure = profiled_failure  # pyright: ignore[reportPrivateUsage]
     torch.distributed.broadcast = lambda *args, **kwargs: profiled_collective(
