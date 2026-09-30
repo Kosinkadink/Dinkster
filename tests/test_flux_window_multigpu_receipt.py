@@ -71,8 +71,7 @@ def test_flux_receipt_quantifies_exact_tensor_difference(
         ) -> object:
             assert isinstance(other, Tensor)
             return tuple(
-                left != right
-                for left, right in zip(self.values, other.values, strict=True)
+                left != right for left, right in zip(self.values, other.values, strict=True)
             )
 
         def __sub__(self, other: object) -> Tensor:
