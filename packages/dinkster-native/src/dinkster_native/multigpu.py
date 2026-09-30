@@ -111,7 +111,7 @@ def _gather_window_outputs(
                 template.numel()
             )
         send_size = max(owner_sizes) + 1
-        send = torch.empty(send_size, dtype=dtype, device=device)
+        send = torch.zeros(send_size, dtype=dtype, device=device)
         send[0] = int(error is not None)
         if error is None:
             position = 1

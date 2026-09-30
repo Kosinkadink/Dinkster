@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -162,6 +163,44 @@ def test_window_wrapper_preserves_local_failure_after_the_output_gather(
             {},
             False,
         )
+
+
+def test_window_gather_preserves_nested_stream_dtypes_shapes_and_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nested = importlib.import_module("dinkster_inference.nested_tensor").NestedTensor
+
+    expected = [
+        nested((torch.empty(1, dtype=torch.float32), torch.empty(2, dtype=torch.float16)))
+        for _ in range(2)
+    ]
+    local = {0: [nested((torch.tensor([1.0]), torch.tensor([10.0, 11.0], dtype=torch.float16)))]}
+    gathers = []
+
+    def all_gather(outputs: list[Any], value: Any) -> None:
+        gathers.append(value.dtype)
+        if value.dtype is torch.float32:
+            assert torch.equal(value, torch.tensor([0.0, 1.0]))
+            outputs[0].copy_(torch.tensor([0.0, 1.0]))
+            outputs[1].copy_(torch.tensor([0.0, 2.0]))
+        else:
+            assert torch.equal(value, torch.tensor([0.0, 10.0, 11.0], dtype=torch.float16))
+            outputs[0].copy_(torch.tensor([0.0, 10.0, 11.0], dtype=torch.float16))
+            outputs[1].copy_(torch.tensor([0.0, 20.0, 21.0], dtype=torch.float16))
+
+    monkeypatch.setattr(torch.distributed, "all_gather", all_gather)
+
+    outputs = multigpu._gather_window_outputs(  # pyright: ignore[reportPrivateUsage]
+        local,
+        expected,
+        1,
+        SimpleNamespace(rank=0, world_size=2),
+        None,
+    )
+
+    assert gathers == [torch.float32, torch.float16]
+    assert [part.tolist() for part in outputs[0][0].unbind()] == [[1.0], [10.0, 11.0]]
+    assert [part.tolist() for part in outputs[0][1].unbind()] == [[2.0], [20.0, 21.0]]
 
 
 def test_sequence_block_patch_shards_modulation_and_gathers_last_block(
