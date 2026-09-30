@@ -328,6 +328,40 @@ def test_fork_loaders_call_dinkster_inference(
     assert cast("dict[str, object]", calls[3][2])["clip_type"] == "h3"
 
 
+def test_fork_loaders_forward_gguf_residency_only_for_gguf_assets(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    path = tmp_path / "weights.gguf"
+    path.write_bytes(b"GGUF")
+    asset = _asset(path)
+    calls: list[tuple[str, dict[str, object]]] = []
+    clip = object()
+    sd = SimpleNamespace(
+        CLIPType=SimpleNamespace(WAN="wan"),
+        load_diffusion_model=lambda _path, model_options: (
+            calls.append(("diffusion", model_options)) or object()
+        ),
+        load_clip=lambda **kwargs: calls.append(("clip", kwargs["model_options"])) or clip,
+    )
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: sd if name == "dinkster_inference.sd" else _FakeTorch,
+    )
+
+    fork_nodes.GenerationLoadDiffusionModel.execute(
+        diffusion_model=asset, weight_dtype="default", gguf_residency="balanced"
+    )
+    assert fork_nodes.NativeLoadClip.execute(
+        text_encoder=asset, type="wan", gguf_residency="eager"
+    ) == {"clip": clip}
+
+    assert calls == [
+        ("diffusion", {"assign_loaded_weights": True, "gguf_residency": "balanced"}),
+        ("clip", {"gguf_residency": "eager"}),
+    ]
+
+
 def test_fork_minimax_control_adapter_preserves_mask_and_converts_video_layout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

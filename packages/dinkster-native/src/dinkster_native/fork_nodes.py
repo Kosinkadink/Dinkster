@@ -448,7 +448,11 @@ class GenerationApplyMiniMaxH3FunControlNet(ApplyMiniMaxH3FunControlNet):
 class GenerationLoadDiffusionModel(LoadDiffusionModel):
     @classmethod
     def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
-        cls, *, diffusion_model: object, weight_dtype: str
+        cls,
+        *,
+        diffusion_model: object,
+        weight_dtype: str,
+        gguf_residency: str = "memory",
     ) -> Mapping[str, object]:
         if not isinstance(diffusion_model, AssetRef):
             raise TypeError("diffusion_model must be an AssetRef")
@@ -460,8 +464,11 @@ class GenerationLoadDiffusionModel(LoadDiffusionModel):
                 options["fp8_optimizations"] = True
         elif weight_dtype == "fp8_e5m2":
             options["dtype"] = torch.float8_e5m2
+        path = diffusion_model.local_path()
+        if path.suffix.lower() == ".gguf":
+            options["gguf_residency"] = gguf_residency
         model = importlib.import_module("dinkster_inference.sd").load_diffusion_model(
-            str(diffusion_model.local_path()), model_options=options
+            str(path), model_options=options
         )
         return cls.outputs(model=model)
 
@@ -474,6 +481,7 @@ class NativeLoadClip(LoadClip):
         text_encoder: object,
         type: str,
         device: str = "default",
+        gguf_residency: str = "memory",
     ) -> Mapping[str, object]:
         if not isinstance(text_encoder, AssetRef):
             raise TypeError("text_encoder must be an AssetRef")
@@ -486,8 +494,11 @@ class NativeLoadClip(LoadClip):
         if device == "cpu":
             torch = cast("Any", importlib.import_module("torch"))
             options["load_device"] = options["offload_device"] = torch.device("cpu")
+        path = text_encoder.local_path()
+        if path.suffix.lower() == ".gguf":
+            options["gguf_residency"] = gguf_residency
         clip = sd.load_clip(
-            ckpt_paths=[str(text_encoder.local_path())],
+            ckpt_paths=[str(path)],
             embedding_directory=[],
             clip_type=clip_type,
             model_options=options,
