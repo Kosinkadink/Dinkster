@@ -130,6 +130,40 @@ def test_window_wrapper_reports_peer_failure_through_the_output_gather(
         )
 
 
+def test_window_wrapper_preserves_local_failure_after_the_output_gather(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = attention._DistributedConfig(0, 2, "window", "file:///unused", "token")  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(attention, "_ensure_process_group", lambda: config)
+
+    class WindowExecutor:
+        plan = SimpleNamespace(joint_windows=(0, 1))
+
+        def evaluate_window(self, _index: int, *_args: object) -> list[Any]:
+            raise ValueError("local window failed")
+
+        def window_latent(self, _index: int, _template: Any) -> Any:
+            return torch.empty(())
+
+    def all_gather(outputs: list[Any], value: Any) -> None:
+        for output in outputs:
+            output.copy_(value)
+
+    monkeypatch.setattr(torch.distributed, "all_gather", all_gather)
+
+    with pytest.raises(ValueError, match="local window failed"):
+        multigpu._window_wrapper(  # pyright: ignore[reportPrivateUsage]
+            SimpleNamespace(class_obj=WindowExecutor()),
+            object(),
+            object(),
+            [[{}]],
+            torch.zeros(()),
+            torch.ones(1),
+            {},
+            False,
+        )
+
+
 def test_sequence_block_patch_shards_modulation_and_gathers_last_block(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
