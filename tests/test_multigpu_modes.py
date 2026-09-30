@@ -174,9 +174,7 @@ def test_window_gather_preserves_nested_stream_dtypes_shapes_and_order(
         nested((torch.empty(1, dtype=torch.float32), torch.empty(2, dtype=torch.float16)))
         for _ in range(2)
     ]
-    local = {
-        0: [nested((torch.tensor([1.0]), torch.tensor([10.0, 11.0], dtype=torch.float16)))]
-    }
+    local = {0: [nested((torch.tensor([1.0]), torch.tensor([10.0, 11.0], dtype=torch.float16)))]}
     gathers = []
 
     def all_gather(outputs: list[Any], value: Any) -> None:
