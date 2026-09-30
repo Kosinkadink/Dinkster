@@ -64,15 +64,16 @@ def test_window_wrapper_uses_contiguous_four_rank_assignment_and_canonical_order
         "all_reduce",
         lambda value, **_kwargs: None,
     )
-    broadcast_index = 0
+    gather_calls = 0
 
-    def broadcast(value: Any, owner: int) -> None:
-        nonlocal broadcast_index
-        assert owner == (0, 0, 1, 1, 2, 3)[broadcast_index]
-        value.fill_(broadcast_index + 1)
-        broadcast_index += 1
+    def all_gather(outputs: list[Any], value: Any) -> None:
+        nonlocal gather_calls
+        assert tuple(value.shape) == (2,)
+        for rank, packed in enumerate(((1.0, 2.0), (3.0, 4.0), (5.0, -1.0), (6.0, -1.0))):
+            outputs[rank].copy_(torch.tensor(packed))
+        gather_calls += 1
 
-    monkeypatch.setattr(torch.distributed, "broadcast", broadcast)
+    monkeypatch.setattr(torch.distributed, "all_gather", all_gather)
     executor = SimpleNamespace(class_obj=WindowExecutor())
 
     outputs = multigpu._window_wrapper(  # pyright: ignore[reportPrivateUsage]
@@ -87,6 +88,7 @@ def test_window_wrapper_uses_contiguous_four_rank_assignment_and_canonical_order
     )
 
     assert visited == [4]
+    assert gather_calls == 1
     assert [float(value) for value in outputs[0]] == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 
 

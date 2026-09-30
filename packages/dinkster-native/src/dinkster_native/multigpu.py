@@ -19,12 +19,21 @@ def _first_tensor(value: Any) -> Any:
     raise TypeError("distributed output must be a tensor or NestedTensor")
 
 
-def _empty_like(value: Any) -> Any:
+def _tensor_parts(value: Any) -> tuple[Any, ...]:
     if isinstance(value, torch.Tensor):
-        return torch.empty_like(value)
+        return (value,)
     nested = importlib.import_module("dinkster_inference.nested_tensor").NestedTensor
     if type(value) is nested:
-        return nested(tuple(torch.empty_like(tensor) for tensor in value.unbind()))
+        return tuple(value.unbind())
+    raise TypeError("distributed output must be a tensor or NestedTensor")
+
+
+def _from_tensor_parts(template: Any, parts: list[Any]) -> Any:
+    if isinstance(template, torch.Tensor):
+        return parts[0]
+    nested = importlib.import_module("dinkster_inference.nested_tensor").NestedTensor
+    if type(template) is nested:
+        return nested(tuple(parts))
     raise TypeError("distributed output must be a tensor or NestedTensor")
 
 
@@ -34,14 +43,6 @@ def _all_reduce(value: Any) -> None:
         return
     for tensor in value.unbind():
         torch.distributed.all_reduce(tensor)
-
-
-def _broadcast(value: Any, owner: int) -> None:
-    if isinstance(value, torch.Tensor):
-        torch.distributed.broadcast(value, owner)
-        return
-    for tensor in value.unbind():
-        torch.distributed.broadcast(tensor, owner)
 
 
 def _raise_group_failure(error: BaseException | None, device: Any) -> None:
@@ -85,6 +86,59 @@ def _window_owner(index: int, count: int, world_size: int) -> int:
     return remainder + (index - boundary) // width
 
 
+def _gather_window_outputs(
+    local: dict[int, list[Any]], expected: list[Any], condition_count: int, config: Any
+) -> list[list[Any]]:
+    groups: dict[tuple[Any, Any], list[tuple[int, int, int, Any]]] = {}
+    received: dict[tuple[int, int], list[Any]] = {}
+    for window_index, template in enumerate(expected):
+        parts = _tensor_parts(template)
+        for condition_index in range(condition_count):
+            received[condition_index, window_index] = [None] * len(parts)
+            for part_index, part in enumerate(parts):
+                groups.setdefault((part.dtype, part.device), []).append(
+                    (condition_index, window_index, part_index, part)
+                )
+
+    for (dtype, device), specs in groups.items():
+        owner_sizes = [0] * config.world_size
+        for _condition_index, window_index, _part_index, template in specs:
+            owner_sizes[_window_owner(window_index, len(expected), config.world_size)] += int(
+                template.numel()
+            )
+        send_size = max(owner_sizes)
+        send = torch.empty(send_size, dtype=dtype, device=device)
+        position = 0
+        for condition_index, window_index, part_index, template in specs:
+            if _window_owner(window_index, len(expected), config.world_size) != config.rank:
+                continue
+            part = _tensor_parts(local[window_index][condition_index])[part_index]
+            if part.shape != template.shape or part.dtype != dtype or part.device != device:
+                raise ValueError("window evaluation returned an incompatible distributed tensor")
+            count = int(part.numel())
+            send[position : position + count].copy_(part.reshape(-1))
+            position += count
+
+        gathered = [torch.empty_like(send) for _ in range(config.world_size)]
+        torch.distributed.all_gather(gathered, send)
+        offsets = [0] * config.world_size
+        for condition_index, window_index, part_index, template in specs:
+            owner = _window_owner(window_index, len(expected), config.world_size)
+            count = int(template.numel())
+            received[condition_index, window_index][part_index] = gathered[owner][
+                offsets[owner] : offsets[owner] + count
+            ].view(template.shape)
+            offsets[owner] += count
+
+    return [
+        [
+            _from_tensor_parts(expected[window_index], received[condition_index, window_index])
+            for window_index in range(len(expected))
+        ]
+        for condition_index in range(condition_count)
+    ]
+
+
 def _window_wrapper(
     executor: Any,
     evaluate: Any,
@@ -109,16 +163,8 @@ def _window_wrapper(
     except BaseException as exc:
         error = exc
     _raise_group_failure(error, _first_tensor(template).device)
-
-    outputs: list[list[Any]] = [[None] * count for _ in conds]
-    for index in range(count):
-        owner = _window_owner(index, count, config.world_size)
-        expected = window_executor.window_latent(index, template)
-        for condition_index in range(len(conds)):
-            value = local[index][condition_index] if owner == config.rank else _empty_like(expected)
-            _broadcast(value, owner)
-            outputs[condition_index][index] = value
-    return outputs
+    expected = [window_executor.window_latent(index, template) for index in range(count)]
+    return _gather_window_outputs(local, expected, len(conds), config)
 
 
 def _local_modulation_segments(
