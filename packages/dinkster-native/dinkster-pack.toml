@@ -39,7 +39,7 @@ executes = [
     "dinkster.mesh_to_model3d",
 ]
 requires = [
-    "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@078028aa3e048f7944d3612cab5ae7c0132edd11",
+    "dinkster-inference @ git+https://github.com/Kosinkadink/dinkster-inference.git@049836d3fa51f9ad63451de0476329dfb76ee9b9",
 ]
 
 [pack.sandbox]
