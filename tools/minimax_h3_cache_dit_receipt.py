@@ -686,8 +686,12 @@ def _quality_summary(cases: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
     return {
         name: {
-            "median": statistics.median(cast("Sequence[float]", values)),
-            "worst": min(values) if "cosine" in name or "ssim" in name else max(values),
+            "median": statistics.median(cast("Sequence[float]", values))
+            if all(value is not None for value in values)
+            else None,
+            "worst": (min(values) if "cosine" in name or "ssim" in name else max(values))
+            if all(value is not None for value in values)
+            else None,
         }
         for name, values in fields.items()
     }

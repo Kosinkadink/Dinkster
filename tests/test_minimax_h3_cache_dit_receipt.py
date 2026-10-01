@@ -108,6 +108,20 @@ def test_cache_summary_counts_computed_and_skipped_blocks_by_step() -> None:
     assert summary["steps"][1]["step"] == 1
 
 
+def test_quality_summary_preserves_failed_profile_with_unavailable_metric() -> None:
+    case = {
+        "video_latent": {"cosine_similarity": None, "relative_rmse": None},
+        "audio_latent": {"cosine_similarity": 0.99, "relative_rmse": 0.1},
+        "decoded_video": {"ssim_8x8_data_range_1": 0.95},
+    }
+
+    summary = receipt._quality_summary([case])  # pyright: ignore[reportPrivateUsage]
+
+    assert summary["video_latent_cosine"] == {"median": None, "worst": None}
+    assert summary["video_latent_relative_rmse"] == {"median": None, "worst": None}
+    assert summary["audio_latent_cosine"] == {"median": 0.99, "worst": 0.99}
+
+
 def test_audio_and_spectrogram_artifacts_are_reviewable(tmp_path: Path) -> None:
     samples = np.stack(
         (
