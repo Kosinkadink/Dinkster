@@ -283,7 +283,10 @@ def _run_sample(
     if collective_timer is not None:
         collective_timer.reset()
     torch.cuda.synchronize()
+    cuda_started = torch.cuda.Event(enable_timing=True)
+    cuda_finished = torch.cuda.Event(enable_timing=True)
     started = time.perf_counter()
+    cuda_started.record()
     sampled = cast(
         "dict[str, Any]",
         GenerationKSampler.execute(
@@ -299,9 +302,11 @@ def _run_sample(
             denoise=1.0,
         )["latent"],
     )
+    cuda_finished.record()
     fence_started = time.perf_counter()
     torch.cuda.synchronize()
     fence_seconds = time.perf_counter() - fence_started
+    cuda_sample_seconds = cuda_started.elapsed_time(cuda_finished) / 1000.0
     samples = sampled["samples"]
     sample_seconds = time.perf_counter() - started
     hashes: dict[str, Any] = {"latents": _latent_hashes(samples)}
@@ -334,14 +339,15 @@ def _run_sample(
     communication_sync_seconds = (
         collective_timer.elapsed_seconds() if collective_timer is not None else 0.0
     )
-    compute_seconds = sample_seconds - communication_sync_seconds
+    compute_seconds = cuda_sample_seconds - communication_sync_seconds
     timing_breakdown = {
         "compute_seconds": compute_seconds,
         "communication_sync_seconds": communication_sync_seconds,
-        "compute_share": compute_seconds / sample_seconds,
-        "communication_sync_share": communication_sync_seconds / sample_seconds,
+        "compute_share": compute_seconds / cuda_sample_seconds,
+        "communication_sync_share": communication_sync_seconds / cuda_sample_seconds,
         "fence_seconds": fence_seconds,
         "collectives": collective_timer.evidence() if collective_timer is not None else {},
+        "cuda_sample_seconds": cuda_sample_seconds,
         "sample_seconds": sample_seconds,
         "decode_seconds": decode_seconds,
         "whole_job_seconds": sample_seconds + decode_seconds,
@@ -1040,6 +1046,7 @@ def _mint_sequence_matrix(args: argparse.Namespace, artifact: dict[str, Any]) ->
                 "whole_job": "one KSampler invocation followed by video and audio VAE decode",
                 "sample": "synchronized KSampler wall time",
                 "decode": "synchronized video and audio VAE decode wall time",
+                "compute": "KSampler CUDA event time minus CUDA-event collective time",
                 "collectives": (
                     "CUDA event time per operation; input payload bytes and logical peer bytes "
                     "use collective semantics rather than a provider-specific wire algorithm"
