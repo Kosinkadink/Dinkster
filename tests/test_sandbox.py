@@ -249,12 +249,16 @@ class TestBuildBwrapCommand:
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(os, "readlink", unsupported_reparse_point)
         assert (
-            sandbox_module._next_symlink_target(tmp_path / "python.exe")  # pyright: ignore[reportPrivateUsage]
+            sandbox_module._next_symlink_step(tmp_path / "python.exe")  # pyright: ignore[reportPrivateUsage]
             is None
         )
 
     @pytest.mark.skipif(os.name != "posix", reason="requires POSIX symlinks")
-    def test_absolute_interpreter_symlink_chain_is_bound(self, tmp_path: Path) -> None:
+    def test_absolute_interpreter_alias_is_recreated_after_target_bind(
+        self, tmp_path: Path
+    ) -> None:
+        from dinkster_workers import build_probe_bwrap_command
+
         uv_python_root = tmp_path / "uv" / "python"
         resolved_prefix = uv_python_root / "cpython-3.13.14-linux-x86_64-gnu"
         resolved_bin = resolved_prefix / "bin"
@@ -275,8 +279,17 @@ class TestBuildBwrapCommand:
         )
         read_only = pairs(argv, "--ro-bind")
         assert (str(venv), str(venv)) in read_only
-        assert (str(alias_prefix), str(alias_prefix)) in read_only
         assert (str(resolved_prefix), str(resolved_prefix)) in read_only
+        assert (str(alias_prefix), str(alias_prefix)) not in read_only
+        assert pairs(argv, "--symlink") == [(str(resolved_prefix), str(alias_prefix))]
+        assert argv.index(str(resolved_prefix)) < argv.index("--symlink")
+
+        probe_argv = build_probe_bwrap_command(str(python), tmp_path)
+        probe_read_only = pairs(probe_argv, "--ro-bind")
+        assert (str(resolved_prefix), str(resolved_prefix)) in probe_read_only
+        assert (str(alias_prefix), str(alias_prefix)) not in probe_read_only
+        assert pairs(probe_argv, "--symlink") == [(str(resolved_prefix), str(alias_prefix))]
+        assert probe_argv.index(str(resolved_prefix)) < probe_argv.index("--symlink")
 
     @pytest.mark.skipif(os.name != "posix", reason="requires POSIX root semantics")
     def test_policy_binds_land_and_forbidden_roots_refuse(self, tmp_path: Path) -> None:
@@ -1463,14 +1476,15 @@ def test_probe_jail_binds_the_import_surface(tmp_path: Path) -> None:
     its parent can."""
     from dinkster_workers import build_probe_bwrap_command
 
-    bound = _ro_bound(build_probe_bwrap_command(sys.executable, tmp_path))
+    argv = build_probe_bwrap_command(sys.executable, tmp_path)
+    readable = [*_ro_bound(argv), *(link for _, link in pairs(argv, "--symlink"))]
     for entry in sys.path:
         if not entry or not os.path.isabs(entry) or not os.path.exists(entry):
             continue
         normalized = os.path.normpath(entry)
-        assert any(normalized == b or normalized.startswith(b + os.sep) for b in bound), (
-            f"sys.path entry {normalized} is not readable inside the probe jail"
-        )
+        assert any(
+            normalized == path or normalized.startswith(path + os.sep) for path in readable
+        ), f"sys.path entry {normalized} is not readable inside the probe jail"
 
 
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX root semantics")

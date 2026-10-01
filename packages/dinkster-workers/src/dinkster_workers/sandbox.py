@@ -253,8 +253,8 @@ def _covered_by_system(path: str) -> bool:
     return any(path == root or path.startswith(root + "/") for root in SANDBOX_SYSTEM_PATHS)
 
 
-def _next_symlink_target(path: Path) -> Path | None:
-    """Resolve the first symlink component without hiding later link hops."""
+def _next_symlink_step(path: Path) -> tuple[Path, Path, Path] | None:
+    """Find the first symlink component without hiding later link hops."""
     if sys.platform == "win32":
         return None
     parts = path.parts
@@ -265,9 +265,9 @@ def _next_symlink_target(path: Path) -> Path | None:
             target = Path(os.readlink(current))
         except OSError:
             continue
-        if not target.is_absolute():
-            target = current.parent / target
-        return Path(os.path.normpath(target.joinpath(*parts[index + 1 :])))
+        resolved_target = target if target.is_absolute() else current.parent / target
+        next_path = Path(os.path.normpath(resolved_target.joinpath(*parts[index + 1 :])))
+        return current, target, next_path
     return None
 
 
@@ -275,12 +275,10 @@ def _absolute_executable(python: str) -> str:
     return os.path.abspath(shutil.which(python) or python)
 
 
-def _interpreter_binds(python: str) -> list[str]:
-    """Paths the child interpreter needs beyond the system allow-list: its
-    venv, every installation prefix in its symlink chain (uv-managed
-    interpreters use an absolute executable link through a version alias),
-    and the parent's base prefix for the same-interpreter case."""
+def _interpreter_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
+    """Binds and symlinks needed to reproduce an interpreter installation."""
     binds: list[str] = []
+    symlinks: list[tuple[str, str]] = []
     python_path = Path(_absolute_executable(python))
     seen: set[str] = set()
     for _ in range(40):
@@ -288,17 +286,29 @@ def _interpreter_binds(python: str) -> list[str]:
         if key in seen:
             break
         seen.add(key)
-        binds.append(str(python_path.parent.parent))
-        target = _next_symlink_target(python_path)
-        if target is None:
+        prefix = python_path.parent.parent
+        prefix_step = _next_symlink_step(prefix)
+        if prefix_step is None:
+            binds.append(str(prefix))
+        else:
+            link, target, _ = prefix_step
+            symlinks.append((str(target), str(link)))
+        executable_step = _next_symlink_step(python_path)
+        if executable_step is None:
             break
-        python_path = target
+        python_path = executable_step[2]
     binds.append(sys.base_prefix)
-    return [
+    binds = [
         path
         for path in _existing(binds)
         if path not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(path)
     ]
+    symlinks = [
+        (target, link)
+        for target, link in dict.fromkeys(symlinks)
+        if link not in FORBIDDEN_BIND_ROOTS and not _covered_by_system(link)
+    ]
+    return binds, symlinks
 
 
 def _forbidden_root_targets() -> frozenset[str]:
@@ -440,7 +450,14 @@ def build_bwrap_command(
     command.extend(["--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"])
 
     system_binds = _existing(SANDBOX_SYSTEM_PATHS)
-    interpreter_binds = _validated(tuple(_interpreter_binds(spec.python)), role="interpreter")
+    interpreter_binds, interpreter_symlinks = _interpreter_mounts(spec.python)
+    interpreter_binds = _validated(tuple(interpreter_binds), role="interpreter")
+    interpreter_aliases = _validated(
+        tuple(link for _, link in interpreter_symlinks), role="interpreter alias"
+    )
+    interpreter_symlinks = [
+        (target, link) for target, link in interpreter_symlinks if link in interpreter_aliases
+    ]
     pack_root = _validated((str(spec.pack_root),), role="pack root")[0]
     endpoint_bind = _validated((str(spec.endpoint_dir),), role="endpoint")[0]
     pythonpath = spec.env.get("PYTHONPATH", "")
@@ -474,6 +491,7 @@ def build_bwrap_command(
     read_only_binds = [
         *system_binds,
         *interpreter_binds,
+        *interpreter_aliases,
         pack_root,
         *pythonpath_binds,
         *gpu_ro_binds,
@@ -508,6 +526,8 @@ def build_bwrap_command(
         command.extend(["--ro-bind", path, path])
     for path in interpreter_binds:
         command.extend(["--ro-bind", path, path])
+    for target, link in interpreter_symlinks:
+        command.extend(["--symlink", target, link])
     command.extend(["--ro-bind", pack_root, pack_root])
     for entry in pythonpath_binds:
         command.extend(["--ro-bind", entry, entry])
@@ -585,14 +605,15 @@ def probe_environment(environment: Mapping[str, str] | None) -> dict[str, str]:
     }
 
 
-def _import_surface_binds(python: str) -> list[str]:
+def _import_surface_mounts(python: str) -> tuple[list[str], list[tuple[str, str]]]:
     """The read-only paths the probe child needs to import what its parent
     can import: the interpreter's own prefixes plus every existing absolute
     ``sys.path`` entry (editable installs land their source roots there via
     .pth files, so this covers dev workspaces and deployed site-packages
     with one rule). Nothing here is writable and nothing outside it is
     visible."""
-    binds = _interpreter_binds(python)
+    binds, symlinks = _interpreter_mounts(python)
+    mounted = [*binds, *(link for _, link in symlinks)]
     for entry in sys.path:
         if not entry or not os.path.isabs(entry):
             continue
@@ -601,11 +622,12 @@ def _import_surface_binds(python: str) -> list[str]:
             continue
         if _covered_by_system(normalized):
             continue
-        if any(normalized == bound or normalized.startswith(bound + os.sep) for bound in binds):
+        if any(normalized == path or normalized.startswith(path + os.sep) for path in mounted):
             continue
         if os.path.exists(normalized):
             binds.append(normalized)
-    return binds
+            mounted.append(normalized)
+    return binds, symlinks
 
 
 def build_probe_bwrap_command(
@@ -633,8 +655,11 @@ def build_probe_bwrap_command(
 
     for path in _existing(SANDBOX_SYSTEM_PATHS):
         command.extend(["--ro-bind", path, path])
-    for path in _import_surface_binds(python):
+    import_binds, interpreter_symlinks = _import_surface_mounts(python)
+    for path in import_binds:
         command.extend(["--ro-bind", path, path])
+    for target, link in interpreter_symlinks:
+        command.extend(["--symlink", target, link])
     root = os.path.normpath(str(manifest_root))
     if root in FORBIDDEN_BIND_ROOTS:
         raise SandboxError(f"probe root '{manifest_root}' would dissolve the sandbox")
