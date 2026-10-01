@@ -297,10 +297,15 @@ def _run_sample(
     samples = sampled["samples"]
     sample_seconds = time.perf_counter() - started
     hashes: dict[str, Any] = {"latents": _latent_hashes(samples)}
+    tensor_evidence = (
+        {"latents": {role: samples.by_role(role).detach().cpu() for role in samples.roles}}
+        if tensor_output is not None
+        else None
+    )
     decode_seconds = 0.0
     if video_vae is not None and audio_vae is not None:
         decode_started = time.perf_counter()
-        video = GenerationVAEDecode.execute(samples=sampled, vae=video_vae)["image"]
+        video = cast("Any", GenerationVAEDecode.execute(samples=sampled, vae=video_vae)["image"])
         audio = cast(
             "dict[str, Any]",
             NativeVAEDecodeAudio.execute(samples=sampled, vae=audio_vae)["audio"],
@@ -308,6 +313,11 @@ def _run_sample(
         torch.cuda.synchronize()
         decode_seconds = time.perf_counter() - decode_started
         hashes["decoded"] = {"video": _tensor_sha256(video), "audio": _tensor_sha256(audio)}
+        if tensor_evidence is not None:
+            tensor_evidence["decoded"] = {
+                "video": video.detach().cpu(),
+                "audio": audio.detach().cpu(),
+            }
     elif video_vae is not None or audio_vae is not None:
         raise ReceiptError("dense receipt decoding requires both video and audio VAEs")
     communication_sync_seconds = (
@@ -329,10 +339,8 @@ def _run_sample(
         )
     evidence_started = time.perf_counter()
     if tensor_output is not None:
-        torch.save(
-            {role: samples.by_role(role).detach().cpu() for role in samples.roles},
-            tensor_output,
-        )
+        assert tensor_evidence is not None
+        torch.save(tensor_evidence, tensor_output)
     return (
         hashes,
         sample_seconds + decode_seconds,
@@ -694,7 +702,9 @@ def _run_serial(
     worker_args = argparse.Namespace(**vars(args))
     worker_args.policy = policy or args.policy
     worker_args.sparse_enabled = sparse_enabled
-    worker_args.tensor_output = scratch / f"{name}-tensors.pt" if args.mode == "sparse" else None
+    worker_args.tensor_output = (
+        scratch / f"{name}-tensors.pt" if args.mode in ("dense", "sparse") else None
+    )
     worker = _spawn_worker(worker_args, result, log, environment)
     _wait(((name, worker, log),))
     loaded = _load(result)
@@ -833,6 +843,88 @@ def _sparse_quality_oracle(reference_path: Path, candidate_path: Path) -> dict[s
     }
 
 
+def _flatten_tensor_evidence(value: object, prefix: str = "") -> dict[str, Any]:
+    torch = cast("Any", importlib.import_module("torch"))
+    if isinstance(value, torch.Tensor):
+        return {prefix: value}
+    if not isinstance(value, dict):
+        raise ReceiptError(f"quality evidence is not a tensor mapping at {prefix or '<root>'}")
+    flattened = {}
+    for name, child in value.items():
+        if not isinstance(name, str):
+            raise ReceiptError("quality evidence keys must be strings")
+        child_prefix = f"{prefix}.{name}" if prefix else name
+        flattened.update(_flatten_tensor_evidence(child, child_prefix))
+    return flattened
+
+
+def _dense_quality_oracle(reference_path: Path, candidate_path: Path) -> dict[str, Any]:
+    torch = cast("Any", importlib.import_module("torch"))
+    reference = _flatten_tensor_evidence(
+        torch.load(reference_path, map_location="cpu", weights_only=True, mmap=True)
+    )
+    candidate = _flatten_tensor_evidence(
+        torch.load(candidate_path, map_location="cpu", weights_only=True, mmap=True)
+    )
+    if set(reference) != set(candidate):
+        raise ReceiptError("dense quality tensors have different outputs")
+    metrics = {}
+    chunk_size = 1_048_576
+    for name in sorted(reference):
+        expected = reference[name]
+        actual = candidate[name]
+        if expected.shape != actual.shape or expected.dtype != actual.dtype:
+            raise ReceiptError(f"dense quality tensor contract differs for {name}")
+        expected = expected.flatten()
+        actual = actual.flatten()
+        max_abs = 0.0
+        sum_abs = 0.0
+        sum_squared = 0.0
+        reference_min = math.inf
+        reference_max = -math.inf
+        unequal = 0
+        for start in range(0, expected.numel(), chunk_size):
+            expected_chunk = expected[start : start + chunk_size]
+            actual_chunk = actual[start : start + chunk_size]
+            difference = actual_chunk.float() - expected_chunk.float()
+            max_abs = max(max_abs, float(difference.abs().max()))
+            sum_abs += float(difference.abs().double().sum())
+            sum_squared += float(difference.double().square().sum())
+            reference_min = min(reference_min, float(expected_chunk.min()))
+            reference_max = max(reference_max, float(expected_chunk.max()))
+            unequal += int(torch.count_nonzero(actual_chunk != expected_chunk))
+        count = expected.numel()
+        mean_abs = sum_abs / count if count else 0.0
+        rmse = math.sqrt(sum_squared / count) if count else 0.0
+        data_range = reference_max - reference_min if count else 0.0
+        psnr = 20.0 * math.log10(data_range / rmse) if rmse and data_range > 0.0 else None
+        metrics[name] = {
+            "shape": list(reference[name].shape),
+            "dtype": str(reference[name].dtype),
+            "values": count,
+            "unequal_values": unequal,
+            "exact": unequal == 0,
+            "max_abs": max_abs,
+            "mean_abs": mean_abs,
+            "rmse": rmse,
+            "reference_data_range": data_range,
+            "psnr_db": psnr,
+        }
+    return {
+        "baseline": "same-session dense SDPA with identical model, inputs, sampler, and seed",
+        "candidate": "flash-attn-4 CuTe SM120 dense attention",
+        "psnr_data_range": "maximum minus minimum of each reference tensor",
+        "metrics_by_output": metrics,
+    }
+
+
+def _require_run_determinism(result: dict[str, Any], arm: str) -> None:
+    hashes = result["output_hashes"]
+    runs = (hashes["cold"], *hashes["warmups"], *hashes["measured"])
+    if len({json.dumps(run, sort_keys=True) for run in runs}) != 1:
+        raise ReceiptError(f"{arm} output hashes differ between repeated runs")
+
+
 def run_mint(args: argparse.Namespace) -> int:
     from dinkster_assets import digest_file
 
@@ -903,7 +995,21 @@ def run_mint(args: argparse.Namespace) -> int:
             if args.mode == "sparse"
             else None
         )
-    if args.mode != "sparse":
+        dense_quality_oracle = (
+            _dense_quality_oracle(
+                Path(serial.pop("_tensor_output")),
+                Path(candidate[0].pop("_tensor_output")),
+            )
+            if args.mode == "dense"
+            else None
+        )
+    if args.mode == "dense":
+        _require_run_determinism(serial, "SDPA reference")
+        _require_run_determinism(candidate[0], "FA4 candidate")
+    elif args.mode != "sparse":
+        _require_run_determinism(serial, "serial reference")
+        for rank, result in enumerate(candidate):
+            _require_run_determinism(result, f"distributed rank {rank}")
         hashes = {
             json.dumps(result["output_hashes"], sort_keys=True) for result in (serial, *candidate)
         }
@@ -923,7 +1029,7 @@ def run_mint(args: argparse.Namespace) -> int:
         else BASELINES.get((host, args.mode, args.policy, workload))
     )
     receipt = {
-        "schema": "dinkster.minimax-h3-multigpu-receipt.v4",
+        "schema": "dinkster.minimax-h3-multigpu-receipt.v5",
         "status": "PASS",
         "invocation": {
             "command": shlex.join([sys.executable, *sys.argv]),
@@ -1022,12 +1128,13 @@ def run_mint(args: argparse.Namespace) -> int:
                 "all run hashes retained; sparse output may differ from dense reference"
                 if args.mode == "sparse"
                 else (
-                    "bit-identical latents and decoded video/audio between SDPA and FA4"
+                    "bit-identical within each arm; SDPA-versus-FA4 differences are measured"
                     if args.mode == "dense"
                     else "bit-identical between serial and every distributed rank"
                 )
             ),
             "sparse_quality_oracle": sparse_quality_oracle,
+            "dense_quality_oracle": dense_quality_oracle,
             "performance": performance,
             "pre_reset_speedup": baseline,
             "speedup_ratio_to_pre_reset": speedup / baseline if speedup and baseline else None,

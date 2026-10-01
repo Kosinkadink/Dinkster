@@ -251,7 +251,7 @@ def test_dense_receipt_requires_fa4_policy_and_both_decoders(tmp_path: Path) -> 
         receipt.run_mint(missing_decoders)
 
 
-def test_dense_mint_routes_sdpa_and_fa4_and_rejects_hash_drift(
+def test_dense_mint_routes_sdpa_and_fa4_and_measures_hash_drift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model = tmp_path / "model.safetensors"
@@ -267,7 +267,7 @@ def test_dense_mint_routes_sdpa_and_fa4_and_rejects_hash_drift(
 
     def run_serial(
         args: argparse.Namespace,
-        _scratch: Path,
+        scratch: Path,
         *,
         sparse_enabled: bool = False,
         policy: str | None = None,
@@ -276,15 +276,35 @@ def test_dense_mint_routes_sdpa_and_fa4_and_rejects_hash_drift(
         del sparse_enabled, name
         selected = policy or args.policy
         policies.append(selected)
-        output_hashes = {"latents": {"video": "same"}, "decoded": {"video": "same"}}
+        run_hashes = {"latents": {"video": "same"}, "decoded": {"video": "same"}}
+        value = 0.0
         if selected == "flash4_sm120_dense":
-            output_hashes["decoded"]["video"] = "different"
-        return {"output_hashes": output_hashes}
+            run_hashes["decoded"]["video"] = "different"
+            value = 1.0
+        tensor_output = scratch / f"{selected}.pt"
+        torch.save(
+            {
+                "latents": {"video": torch.tensor([0.0, value])},
+                "decoded": {"video": torch.tensor([0.0, value])},
+            },
+            tensor_output,
+        )
+        return {
+            "_tensor_output": str(tensor_output),
+            "output_hashes": {
+                "cold": run_hashes,
+                "warmups": [run_hashes],
+                "measured": [run_hashes, run_hashes, run_hashes],
+            },
+        }
 
     monkeypatch.setattr(
         receipt, "_git", lambda _root, *arguments: "" if arguments[0] == "status" else "head"
     )
     monkeypatch.setattr(receipt, "_run_serial", run_serial)
+    monkeypatch.setattr(receipt, "_performance", lambda *_args: {"speedup": 1.0})
+    monkeypatch.setattr(receipt, "_classify_host", lambda *_args: "test-host")
+    monkeypatch.setattr(receipt, "_nvidia_smi", lambda *_args: "inventory")
     monkeypatch.setattr(
         receipt,
         "_model_artifact",
@@ -320,10 +340,62 @@ def test_dense_mint_routes_sdpa_and_fa4_and_rejects_hash_drift(
         model_source_revision="revision-test",
     )
 
-    with pytest.raises(receipt.ReceiptError, match="output hashes differ"):
-        receipt.run_mint(args)
+    assert receipt.run_mint(args) == 0
 
     assert policies == ["sdpa", "flash4_sm120_dense"]
+    result = json.loads(args.output.read_text())
+    assert result["schema"] == "dinkster.minimax-h3-multigpu-receipt.v5"
+    assert (
+        result["execution"]["reference_output_hashes"]
+        != result["execution"]["candidate_output_hashes"]
+    )
+    metrics = result["execution"]["dense_quality_oracle"]["metrics_by_output"]
+    assert metrics["latents.video"]["max_abs"] == 1.0
+    assert metrics["decoded.video"]["mean_abs"] == 0.5
+
+
+def test_dense_quality_oracle_reports_bf16_rounding_metrics(tmp_path: Path) -> None:
+    reference_path = tmp_path / "reference.pt"
+    candidate_path = tmp_path / "candidate.pt"
+    reference = torch.tensor([0.0, 1.0, 2.0], dtype=torch.bfloat16)
+    candidate = torch.tensor([0.0, 1.0078125, 2.0], dtype=torch.bfloat16)
+    torch.save({"latents": {"video": reference}}, reference_path)
+    torch.save({"latents": {"video": candidate}}, candidate_path)
+
+    oracle = receipt._dense_quality_oracle(  # pyright: ignore[reportPrivateUsage]
+        reference_path, candidate_path
+    )
+
+    metrics = oracle["metrics_by_output"]["latents.video"]
+    assert metrics["dtype"] == "torch.bfloat16"
+    assert metrics["values"] == 3
+    assert metrics["unequal_values"] == 1
+    assert metrics["exact"] is False
+    assert metrics["max_abs"] == 0.0078125
+    assert metrics["mean_abs"] == pytest.approx(0.0078125 / 3.0)
+    assert metrics["rmse"] == pytest.approx(0.0078125 / 3.0**0.5)
+    assert metrics["reference_data_range"] == 2.0
+    assert metrics["psnr_db"] == pytest.approx(
+        20.0 * receipt.math.log10(2.0 / (0.0078125 / 3.0**0.5))
+    )
+
+
+def test_dense_determinism_rejects_drift_between_repeats() -> None:
+    result = {
+        "output_hashes": {
+            "cold": {"latents": {"video": "a"}},
+            "warmups": [{"latents": {"video": "a"}}],
+            "measured": [
+                {"latents": {"video": "a"}},
+                {"latents": {"video": "b"}},
+            ],
+        }
+    }
+
+    with pytest.raises(receipt.ReceiptError, match="FA4 output hashes differ"):
+        receipt._require_run_determinism(  # pyright: ignore[reportPrivateUsage]
+            result, "FA4"
+        )
 
 
 def test_sparse_quality_oracle_reports_dense_relative_error_by_role(tmp_path) -> None:
