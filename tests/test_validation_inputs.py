@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -49,3 +51,27 @@ def test_validation_rejects_a_different_evidence_revision(
 
     with pytest.raises(RuntimeError, match="uv run --no-sync python"):
         evidence_paths.validate_evidence_revision(tmp_path)
+
+
+def test_validation_does_not_require_evidence_for_independent_test_collection(
+    tmp_path: Path,
+) -> None:
+    environment = os.environ.copy()
+    environment["DINKSTER_EVIDENCE_ROOT"] = str(tmp_path / "missing")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "tests/test_p2p_artifact_smoke.py",
+        ],
+        cwd=evidence_paths.DINKSTER_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr

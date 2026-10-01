@@ -15,8 +15,9 @@ import yaml
 from packaging.requirements import Requirement
 from packaging.version import Version
 
-from tools.evidence_paths import EVIDENCE_ROOT
+from tools.evidence_paths import EVIDENCE_ROOT, validate_evidence_revision
 
+validate_evidence_revision()
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PINNED_COMFYUI_COMMIT = "b5cc8830279eae909a59de030af1e50761c36751"
 PINNED_COMFYUI_AV_REQUIREMENTS = {

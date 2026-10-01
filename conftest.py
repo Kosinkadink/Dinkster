@@ -5,7 +5,6 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from tools.evidence_paths import validate_evidence_revision
 from tools.pytest_file_shard import ALL_FILE_SHARDS_MARKER
 
 
@@ -14,13 +13,6 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         f"{ALL_FILE_SHARDS_MARKER}: run this test on every file shard",
     )
-
-
-def pytest_sessionstart(session: pytest.Session) -> None:
-    try:
-        validate_evidence_revision()
-    except RuntimeError as exc:
-        raise pytest.UsageError(str(exc)) from exc
 
 
 @pytest.fixture
