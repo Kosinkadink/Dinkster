@@ -63,10 +63,11 @@ The main protocol routes include:
   The optional `attention` object has exactly `requestedPolicy` and
   `requestedRolePolicies`; omission uses the server default. For example:
   `{"requestedPolicy":"auto","requestedRolePolicies":[["flux","dinkster_kitchen_int8"]]}`.
-  Policies are `auto`, `sdpa`, `flash`, `xformers`, `sage`, `sage3`, and
-  `dinkster_kitchen_int8`; role overrides may name `unet`, `flux`, `vae`, `clip`,
-  `t5`, or `qwen`. Each role may appear once, `auto` and no-op role overrides
-  are invalid, and at least one role must keep the global policy.
+  Policies are `auto`, `sdpa`, `flash`, `flash4_sm120_dense`, `xformers`,
+  `sage`, `sage3`, `sol`, and `dinkster_kitchen_int8`; role overrides may name
+  `unet`, `flux`, `vae`, `clip`, `t5`, or `qwen`. Each role may appear once,
+  `auto` and no-op role overrides are invalid, and at least one role must keep
+  the global policy.
 - `GET` or `DELETE /api/jobs/by-ref/{job_ref}` for status/cancel without
   client affinity, plus `GET /api/jobs/by-ref/{job_ref}/events?after=N` for
   ordered per-job replay (`after` defaults to 0; 410 requires a status

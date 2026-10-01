@@ -28,6 +28,7 @@ _ADAPTER_CONTRACT = "dinkster.attention-kernel.v1"
 _POLICY_FUNCTIONS = {
     "sdpa": "pytorch",
     "flash": "flash",
+    "flash4_sm120_dense": "flash4_sm120_dense",
     "xformers": "xformers",
     "sage": "sage",
     "sage3": "sage3",
@@ -36,6 +37,7 @@ _POLICY_FUNCTIONS = {
 _PROVIDER_DISTRIBUTIONS = {
     "dinkster_kitchen_int8": ("dinkster-kitchen", "comfy-kitchen"),
     "flash": ("flash-attn", "flash-attn"),
+    "flash4_sm120_dense": ("flash-attn-4", "flash-attn-4"),
     "sage": ("sageattention", "sageattention"),
     "sage3": ("sageattention", "sageattention"),
     "xformers": ("xformers", "xformers"),
@@ -69,11 +71,22 @@ class AttentionRuntime:
         self.registry = cast(
             "dict[str, Callable[..., Any]]", attention.create_attention_function_registry()
         )
+        if torch.version.hip is not None:
+            device_kind = "rocm"
+            device_sm = None
+        elif torch.cuda.is_available():
+            device_kind = "cuda"
+            major, minor = torch.cuda.get_device_capability()
+            device_sm = major * 10 + minor
+        else:
+            device_kind = "cpu"
+            device_sm = None
         available = tuple(
             policy
             for policy in ATTENTION_POLICIES
             if policy != "auto"
             and policy in _POLICY_FUNCTIONS
+            and (policy != "flash4_sm120_dense" or device_sm == 120)
             and attention.get_attention_function(
                 _POLICY_FUNCTIONS[policy], None, registry=self.registry
             )
@@ -85,16 +98,7 @@ class AttentionRuntime:
             if provider is not None:
                 providers[provider[0]] = _package_version(provider[1])
         if torch.version.hip is not None:
-            device_kind = "rocm"
-            device_sm = None
             providers["hip"] = torch.version.hip
-        elif torch.cuda.is_available():
-            device_kind = "cuda"
-            major, minor = torch.cuda.get_device_capability()
-            device_sm = major * 10 + minor
-        else:
-            device_kind = "cpu"
-            device_sm = None
         self.capabilities = AttentionCapabilityEvidence(
             version=1,
             device_kind=device_kind,

@@ -17,6 +17,9 @@
   Four-rank Ulysses is refused. H3 Sol-Attn and SLA sparse attention are routed
   through the worker-owned fork attention registry and remain incompatible with
   sequence mode.
+- CUDA SM120 workers with `flash-attn-4` installed expose the explicit
+  `flash4_sm120_dense` policy for dense BF16/FP16 attention. Unsupported calls
+  use the policy's authenticated SDPA fallback.
 - Unmodified legacy custom packs still require a ComfyUI installation and
   run in the compatibility quarantine.
 - Native 3D operations execute without a ComfyUI checkout: geometry estimation,

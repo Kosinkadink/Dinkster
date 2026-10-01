@@ -8,13 +8,22 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 AttentionPolicy = Literal[
-    "auto", "sdpa", "flash", "xformers", "sage", "sage3", "sol", "dinkster_kitchen_int8"
+    "auto",
+    "sdpa",
+    "flash",
+    "flash4_sm120_dense",
+    "xformers",
+    "sage",
+    "sage3",
+    "sol",
+    "dinkster_kitchen_int8",
 ]
 ATTENTION_ROLES = ("unet", "flux", "vae", "clip", "t5", "qwen")
 ATTENTION_POLICIES = (
     "auto",
     "sdpa",
     "flash",
+    "flash4_sm120_dense",
     "xformers",
     "sage",
     "sage3",
@@ -171,6 +180,12 @@ class AttentionCapabilityEvidence:
         sage_versioned = any(name == "sageattention" for name, _ in provider_pairs)
         if sage_available != sage_versioned:
             raise ValueError("sageattention provider evidence must match sage availability")
+        flash4_available = "flash4_sm120_dense" in validated
+        flash4_versioned = any(name == "flash-attn-4" for name, _ in provider_pairs)
+        if flash4_available != flash4_versioned:
+            raise ValueError("flash-attn-4 provider evidence must match SM120 dense availability")
+        if flash4_available and (self.device_kind != "cuda" or self.device_sm != 120):
+            raise ValueError("flash4_sm120_dense capability requires CUDA SM120")
         for name in ("adapter_contract_revision", "device_kind", "sdpa_torch_runtime"):
             if not isinstance(getattr(self, name), str) or not getattr(self, name):
                 raise ValueError(f"{name} must be non-empty")
@@ -247,7 +262,7 @@ class AttentionRouteToken:
                 expected_route = (selected.primary, selected.fallback)
             elif effective in ("auto", "sdpa"):
                 expected_route = ("sdpa", None)
-            elif effective in ("dinkster_kitchen_int8", "sage", "sol"):
+            elif effective in ("dinkster_kitchen_int8", "flash4_sm120_dense", "sage", "sol"):
                 expected_route = (effective, "sdpa")
             else:
                 expected_route = (effective, None)
@@ -260,6 +275,14 @@ class AttentionRouteToken:
                     or (
                         effective in ("sol", "dinkster_kitchen_int8")
                         and "dinkster-kitchen" not in dict(self.provider_versions)
+                    )
+                    or (
+                        effective == "flash4_sm120_dense"
+                        and (
+                            "flash-attn-4" not in dict(self.provider_versions)
+                            or self.device_kind != "cuda"
+                            or self.device_sm != 120
+                        )
                     )
                     or effective in ("flash", "xformers", "sage3")
                 )
@@ -385,7 +408,9 @@ def derive_attention_route_token(
             route = AttentionRoute(
                 role,
                 effective,
-                "sdpa" if effective in ("dinkster_kitchen_int8", "sage", "sol") else None,
+                "sdpa"
+                if effective in ("dinkster_kitchen_int8", "flash4_sm120_dense", "sage", "sol")
+                else None,
             )
             if effective not in evidence.available_policies:
                 route = AttentionRoute(role, "sdpa")
@@ -393,11 +418,13 @@ def derive_attention_route_token(
         routes.append(route)
 
     kitchen_requested = any(route.primary in ("sol", "dinkster_kitchen_int8") for route in routes)
+    flash4_requested = any(route.primary == "flash4_sm120_dense" for route in routes)
     sage_requested = any(route.primary == "sage" for route in routes)
     providers = tuple(
         pair
         for pair in evidence.provider_versions
         if (pair[0] != "dinkster-kitchen" or kitchen_requested)
+        and (pair[0] != "flash-attn-4" or flash4_requested)
         and (pair[0] != "sageattention" or sage_requested)
     )
     return AttentionRouteToken(

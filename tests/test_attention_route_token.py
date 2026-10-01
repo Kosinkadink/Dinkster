@@ -67,12 +67,16 @@ def route_token_v2(
 
 def capability_evidence(
     *,
+    flash4: bool = False,
     kitchen: bool = False,
     sage: bool = False,
     sol: bool = False,
     device_kind: str = "cpu",
+    device_sm: int | None = None,
 ) -> AttentionCapabilityEvidence:
     policies: tuple[AttentionPolicy, ...] = ("sdpa",)
+    if flash4:
+        policies = (*policies, "flash4_sm120_dense")
     if sage:
         policies = (*policies, "sage")
     if sol:
@@ -84,6 +88,8 @@ def capability_evidence(
         providers = (("hip", "7.0"), *providers)
     if sage:
         providers = (("sageattention", "2.2.0"), *providers)
+    if flash4:
+        providers = (("flash-attn-4", "4.0.0a1"), *providers)
     if kitchen or sol:
         providers = (("dinkster-kitchen", "0.2.31"), *providers)
     return AttentionCapabilityEvidence(
@@ -92,7 +98,7 @@ def capability_evidence(
         provider_versions=providers,
         adapter_contract_revision="dinkster.attention-kernel.v1",
         device_kind=device_kind,
-        device_sm=None,
+        device_sm=device_sm,
         sdpa_torch_runtime="2.13.0",
     )
 
@@ -460,6 +466,38 @@ def test_sage_evidence_routes_and_provider_filtering() -> None:
         if role not in ("flux", "vae")
     )
     assert dict(overridden.provider_versions) == {"sageattention": "2.2.0", "torch": "2.13.0"}
+
+
+def test_flash4_sm120_evidence_routes_with_explicit_sdpa_fallback() -> None:
+    evidence = capability_evidence(flash4=True, device_kind="cuda", device_sm=120)
+    token = derive_attention_route_token(
+        evidence, AttentionPolicyConfig(requested_policy="flash4_sm120_dense")
+    )
+
+    assert all(
+        (route.primary, route.fallback) == ("flash4_sm120_dense", "sdpa") for route in token.routes
+    )
+    assert dict(token.provider_versions) == {
+        "flash-attn-4": "4.0.0a1",
+        "torch": "2.13.0",
+    }
+    assert derive_attention_route_token(
+        evidence, AttentionPolicyConfig()
+    ) == derive_attention_route_token(
+        capability_evidence(device_kind="cuda", device_sm=120), AttentionPolicyConfig()
+    )
+
+    with pytest.raises(ValueError, match="flash-attn-4 provider evidence must match"):
+        replace(evidence, provider_versions=(("torch", "2.13.0"),))
+    with pytest.raises(ValueError, match="requires CUDA SM120"):
+        replace(evidence, device_sm=89)
+
+    unavailable = derive_attention_route_token(
+        capability_evidence(device_kind="cuda", device_sm=89),
+        AttentionPolicyConfig(requested_policy="flash4_sm120_dense"),
+    )
+    assert unavailable.version == 3
+    assert all((route.primary, route.fallback) == ("sdpa", None) for route in unavailable.routes)
 
 
 def test_sol_evidence_routes_and_shares_kitchen_provider_identity() -> None:
