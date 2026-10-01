@@ -52,6 +52,14 @@ jobs:
           cache-dependency-glob: uv.lock
       - if: steps.private-dependencies.outputs.available == 'true'
         run: uv sync --locked --all-packages
+      - name: Install the pinned inference package
+        if: steps.private-dependencies.outputs.available == 'true'
+        run: |
+          requirement=$(uv run --no-sync python tools/verify_pinned_inference.py --print-requirement)
+          uv pip install --python .venv/bin/python --no-deps "$requirement"
+      - name: Verify pinned inference APIs
+        if: steps.private-dependencies.outputs.available == 'true'
+        run: uv run --no-sync python tools/verify_pinned_inference.py
       - if: steps.private-dependencies.outputs.available == 'true'
         run: bash scripts/ci-fast.sh
       - name: Refuse green validation without private inputs
