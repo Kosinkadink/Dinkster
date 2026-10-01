@@ -21,6 +21,7 @@ from dinkster_nodes_generation.nodes import (
     LoadDiffusionModel,
     LoadModelPatch,
     LoadVAE,
+    MiniMaxH3CacheDIT,
     MiniMaxH3ImageToVideo,
     MiniMaxH3T2VAConditioning,
     RES4LYFRKBetaSampler,
@@ -742,6 +743,77 @@ class NativeBlockSparseAttention(BlockSparseAttention):
         return cls.outputs(MODEL=patched)
 
 
+_H3_CACHE_DIT_POLICIES = {
+    "quality": {
+        "Fn_compute_blocks": 1,
+        "max_warmup_steps": 4,
+        "residual_diff_threshold": 0.04,
+        "max_continuous_cached_steps": 1,
+    },
+    "speed": {
+        "Fn_compute_blocks": 1,
+        "max_warmup_steps": 4,
+        "residual_diff_threshold": 0.24,
+        "max_continuous_cached_steps": 3,
+    },
+}
+
+
+def _h3_cache_dit_sampler(executor: object, *args: object, **kwargs: object) -> object:
+    extra_args = cast("Mapping[str, Any]", args[2])
+    model_options = cast("Mapping[str, Any]", extra_args["model_options"])
+    transformer_options = cast("dict[str, Any]", model_options["transformer_options"])
+    config = cast("dict[str, Any]", transformer_options["dinkster_h3_cache_dit"])
+    runtime = {
+        "key": None,
+        "key_fields": None,
+        "state": None,
+        "hits": 0,
+        "misses": 0,
+        "invalidations": 0,
+        "events": [],
+    }
+    config["runtime"] = runtime
+    try:
+        return cast("Any", executor)(*args, **kwargs)
+    finally:
+        sink = config.get("receipt_sink")
+        if isinstance(sink, list):
+            sink.append(
+                {
+                    "key": runtime["key_fields"],
+                    "hits": runtime["hits"],
+                    "misses": runtime["misses"],
+                    "invalidations": runtime["invalidations"],
+                    "events": list(runtime["events"]),
+                }
+            )
+        runtime["state"] = None
+        config.pop("runtime", None)
+
+
+class NativeMiniMaxH3CacheDIT(MiniMaxH3CacheDIT):
+    @classmethod
+    def execute(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls, *, model: object, policy: str = "quality"
+    ) -> Mapping[str, object]:
+        try:
+            selected = _H3_CACHE_DIT_POLICIES[policy]
+        except KeyError as exc:
+            raise ValueError("MiniMax H3 Cache-DiT policy must be quality or speed") from exc
+        patched = cast("Any", model).clone()
+        config = {
+            "policy": policy,
+            "model_identity": f"{id(patched.model)}:{patched.patches_uuid}",
+            **selected,
+        }
+        patched.model_options["transformer_options"]["dinkster_h3_cache_dit"] = config
+        patched.add_wrapper_with_key(
+            "sampler_sample", "dinkster_h3_cache_dit", _h3_cache_dit_sampler
+        )
+        return cls.outputs(MODEL=patched)
+
+
 def _h3_shape(width: int, height: int, frame_count: int) -> object:
     from dinkster_inference_wire import MultiStreamLatent
 
@@ -863,6 +935,7 @@ FORK_NODES: tuple[type[Node], ...] = (
     GenerationKSampler,
     GenerationVAEDecode,
     NativeBlockSparseAttention,
+    NativeMiniMaxH3CacheDIT,
     NativeEmptyMiniMaxH3AV,
     NativeMiniMaxH3T2VAConditioning,
     NativeMiniMaxH3ImageToVideo,

@@ -2072,6 +2072,32 @@ class BlockSparseAttention(_SchemaOnlyNode):
         )
 
 
+class MiniMaxH3CacheDIT(_SchemaOnlyNode):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="dinkster.minimax_h3_cache_dit",
+            display_name="MiniMax H3 Cache-DiT",
+            category="model/patch",
+            description=(
+                "Opt-in lossy joint audio/video block caching. Quality computes more steps; "
+                "speed permits longer cache runs."
+            ),
+            inputs=(
+                InputSpec("model", MODEL),
+                InputSpec(
+                    "policy",
+                    COMBO,
+                    required=False,
+                    default="quality",
+                    widget=ComboWidget(options=("quality", "speed")),
+                ),
+            ),
+            outputs=(OutputSpec("MODEL", MODEL),),
+            search_terms=("minimax", "h3", "cache", "dit", "speed"),
+        )
+
+
 class MiniMaxH3SigmaShift(_SchemaOnlyNode):
     @classmethod
     def define_schema(cls) -> NodeSchema:
@@ -6199,6 +6225,7 @@ GENERATION_NODES: tuple[type[Node], ...] = (
     LoadDiffusionModel,
     LoadClip,
     LoadVAE,
+    MiniMaxH3CacheDIT,
     EmptyMiniMaxH3AV,
     MiniMaxH3T2VAConditioning,
     MiniMaxH3ImageToVideo,
@@ -6370,6 +6397,7 @@ GENERATION_COMPAT_CARRIER_NODE_IDS = tuple(
 _SUPPORTED_SCHEMA_NODE_IDS = frozenset(
     {
         "comfy.BlockSparseAttention",
+        "dinkster.minimax_h3_cache_dit",
         "dinkster.load_checkpoint",
         "dinkster.load_model_patch",
         "dinkster.apply_minimax_h3_fun_controlnet",

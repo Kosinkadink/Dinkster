@@ -174,6 +174,7 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
     }
     native_model_patches = {
         "comfy.BlockSparseAttention",
+        "dinkster.minimax_h3_cache_dit",
         "dinkster.load_model_patch",
         "dinkster.apply_minimax_h3_fun_controlnet",
     }
@@ -186,6 +187,7 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
     generation = load_manifest(Path("packages/dinkster-nodes-generation/dinkster-pack.toml"))
     assert generation.namespaces == ("comfy", "dinkster")
     assert "comfy.BlockSparseAttention" in generation.schema_only
+    assert "dinkster.minimax_h3_cache_dit" in generation.schema_only
 
 
 def test_manifest_loads_strict_adjacent_comfy_alias_registry_without_importing_code(

@@ -947,3 +947,78 @@ def test_block_sparse_attention_attaches_execution_config_to_a_model_clone() -> 
         "tau": 0.0,
         "keep_percent": 12.5,
     }
+
+
+def test_minimax_h3_cache_dit_attaches_explicit_policy_and_sampler_lifecycle() -> None:
+    class Model:
+        def __init__(self) -> None:
+            self.model = object()
+            self.patches_uuid = "patches"
+            self.model_options = {"transformer_options": {}}
+            self.wrappers: list[tuple[str, str, object]] = []
+
+        def clone(self) -> Model:
+            return clone
+
+        def add_wrapper_with_key(self, wrapper_type: str, key: str, wrapper: object) -> None:
+            self.wrappers.append((wrapper_type, key, wrapper))
+
+    model = Model()
+    clone = Model()
+
+    result = fork_nodes.NativeMiniMaxH3CacheDIT.execute(model=model, policy="speed")
+
+    assert result["MODEL"] is clone
+    config = clone.model_options["transformer_options"]["dinkster_h3_cache_dit"]
+    assert config == {
+        "policy": "speed",
+        "model_identity": f"{id(clone.model)}:patches",
+        "Fn_compute_blocks": 1,
+        "max_warmup_steps": 4,
+        "residual_diff_threshold": 0.24,
+        "max_continuous_cached_steps": 3,
+    }
+    assert clone.wrappers == [
+        ("sampler_sample", "dinkster_h3_cache_dit", fork_nodes._h3_cache_dit_sampler)
+    ]
+
+
+def test_minimax_h3_cache_dit_sampler_discards_tensor_state_without_eviction() -> None:
+    sink: list[object] = []
+    config: dict[str, object] = {"receipt_sink": sink}
+    transformer_options = {"dinkster_h3_cache_dit": config}
+    extra_args = {"model_options": {"transformer_options": transformer_options}}
+
+    def executor(*args: object, **kwargs: object) -> str:
+        del args, kwargs
+        runtime = cast("dict[str, object]", config["runtime"])
+        runtime.update(
+            {
+                "key_fields": {"model": "identity"},
+                "state": {"middle_residual": object()},
+                "hits": 2,
+                "misses": 3,
+                "invalidations": 1,
+                "events": [{"step": 4, "cache_hit": True}],
+            }
+        )
+        return "sampled"
+
+    result = fork_nodes._h3_cache_dit_sampler(executor, object(), object(), extra_args, object())
+
+    assert result == "sampled"
+    assert "runtime" not in config
+    assert sink == [
+        {
+            "key": {"model": "identity"},
+            "hits": 2,
+            "misses": 3,
+            "invalidations": 1,
+            "events": [{"step": 4, "cache_hit": True}],
+        }
+    ]
+
+
+def test_minimax_h3_cache_dit_rejects_an_unknown_policy() -> None:
+    with pytest.raises(ValueError, match="quality or speed"):
+        fork_nodes.NativeMiniMaxH3CacheDIT.execute(model=object(), policy="fastest")

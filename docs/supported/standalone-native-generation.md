@@ -16,7 +16,9 @@
   canonical window scattering, and two-rank H3 Ulysses sequence sharding.
   Four-rank Ulysses is refused. H3 Sol-Attn and SLA sparse attention are routed
   through the worker-owned fork attention registry and remain incompatible with
-  sequence mode.
+  sequence mode. MiniMax H3 also supports explicit lossy Cache-DiT quality and
+  speed policies that cache the joint audio/video block stream; dense execution
+  remains the default.
 - Unmodified legacy custom packs still require a ComfyUI installation and
   run in the compatibility quarantine.
 - Native 3D operations execute without a ComfyUI checkout: geometry estimation,

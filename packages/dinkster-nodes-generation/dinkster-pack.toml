@@ -3,6 +3,7 @@ name = "dinkster-nodes-generation"
 namespaces = ["comfy", "dinkster"]
 schema-only = [
     "comfy.BlockSparseAttention",
+    "dinkster.minimax_h3_cache_dit",
     "dinkster.load_checkpoint",
     "dinkster.load_model_patch",
     "dinkster.apply_minimax_h3_fun_controlnet",
