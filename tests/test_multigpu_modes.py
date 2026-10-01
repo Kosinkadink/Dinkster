@@ -224,7 +224,7 @@ def test_sequence_block_patch_shards_modulation_and_gathers_last_block(
         torch.testing.assert_close(row, torch.tensor([22, 23]))
         return {"img": args["img"] + 1}
 
-    def all_gather(outputs: list[Any], value: Any) -> None:
+    def all_gather(outputs: list[Any], value: Any, **_kwargs: object) -> None:
         for rank, output in enumerate(outputs):
             output.fill_(rank)
         outputs[2].copy_(value)

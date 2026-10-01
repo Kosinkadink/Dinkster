@@ -50,6 +50,8 @@ def test_ulysses_attention_exchanges_local_sequences_and_heads(
 ) -> None:
     config = attention._DistributedConfig(1, 2, "sequence", "file:///unused", "token")  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(attention, "_ensure_process_group", lambda: config)
+    sequence_group = object()
+    monkeypatch.setattr(attention, "_sequence_process_group", sequence_group)
     peer_q = torch.arange(1 * 4 * 3 * 2, dtype=torch.float32).reshape(1, 4, 3, 2)
     q = peer_q + 1000
     k = q + 100
@@ -68,15 +70,17 @@ def test_ulysses_attention_exchanges_local_sequences_and_heads(
         masks.append(kwargs["mask"])
         return local_v
 
-    def all_gather(outputs: list[Any], value: Any) -> None:
+    def all_gather(outputs: list[Any], value: Any, **kwargs: object) -> None:
+        assert kwargs["group"] is sequence_group
         if value.dtype == torch.int64:
             for output in outputs:
                 output.copy_(value)
 
     exchanges = 0
 
-    def all_to_all(outputs: list[Any], inputs: list[Any]) -> None:
+    def all_to_all(outputs: list[Any], inputs: list[Any], **kwargs: object) -> None:
         nonlocal exchanges
+        assert kwargs["group"] is sequence_group
         if exchanges < 3:
             peer = (peer_q, peer_q + 100, peer_q + 200)[exchanges]
             outputs[0].copy_(peer[:, 2:4])
@@ -133,14 +137,14 @@ def test_ulysses_attention_preserves_four_rank_head_and_sequence_order(
         calls.append((local_q, local_k, local_v, heads))
         return local_v
 
-    def all_gather(outputs: list[Any], value: Any) -> None:
+    def all_gather(outputs: list[Any], value: Any, **_kwargs: object) -> None:
         if value.dtype == torch.int64:
             for output in outputs:
                 output.copy_(value)
 
     exchanges = 0
 
-    def all_to_all(outputs: list[Any], inputs: list[Any]) -> None:
+    def all_to_all(outputs: list[Any], inputs: list[Any], **_kwargs: object) -> None:
         nonlocal exchanges
         if exchanges < 3:
             offset = exchanges * 100

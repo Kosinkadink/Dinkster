@@ -54,6 +54,7 @@ class _DistributedConfig:
 _attempt_lock = threading.Lock()
 _active_attempt: str | None = None
 _process_group_config: _DistributedConfig | None = None
+_sequence_process_group: Any | None = None
 _attention_call_index = 0
 
 
@@ -165,7 +166,7 @@ def activate_distributed_attention(group: str, attempt: int) -> None:
 
 
 def release_distributed_attention(group: str, attempt: int) -> None:
-    global _active_attempt, _process_group_config
+    global _active_attempt, _process_group_config, _sequence_process_group
     correlation = f"{group}:{attempt}"
     with _attempt_lock:
         if _active_attempt != correlation:
@@ -173,8 +174,11 @@ def release_distributed_attention(group: str, attempt: int) -> None:
         config = _process_group_config
         try:
             if config is not None and torch.distributed.is_initialized():
+                if _sequence_process_group is not None:
+                    torch.distributed.destroy_process_group(_sequence_process_group)
                 torch.distributed.destroy_process_group()
         finally:
+            _sequence_process_group = None
             _process_group_config = None
             _active_attempt = None
     if config is not None and config.rank == 0:
@@ -223,7 +227,7 @@ def _distributed_config() -> _DistributedConfig:
 
 
 def _ensure_process_group() -> _DistributedConfig:
-    global _process_group_config
+    global _process_group_config, _sequence_process_group
     config = _distributed_config()
     with _attempt_lock:
         if _process_group_config is not None:
@@ -243,8 +247,16 @@ def _ensure_process_group() -> _DistributedConfig:
             timeout=timedelta(minutes=5),
             group_name=config.token,
         )
+        if config.mode in ("auto", "sequence"):
+            _sequence_process_group = torch.distributed.new_group(
+                ranks=list(range(config.world_size)), timeout=timedelta(minutes=5)
+            )
         _process_group_config = config
     return config
+
+
+def _sequence_group(config: _DistributedConfig) -> Any | None:
+    return _sequence_process_group if config.mode in ("auto", "sequence") else None
 
 
 def _fence_call(config: _DistributedConfig, q: Any, heads: int) -> None:
@@ -255,7 +267,7 @@ def _fence_call(config: _DistributedConfig, q: Any, heads: int) -> None:
         device=q.device,
     )
     peers = [torch.empty_like(control) for _ in range(config.world_size)]
-    torch.distributed.all_gather(peers, control)
+    torch.distributed.all_gather(peers, control, group=_sequence_group(config))
     if any(not torch.equal(peer, control) for peer in peers):
         raise RuntimeError("distributed attention ranks reached different calls")
     _attention_call_index += 1
@@ -268,7 +280,7 @@ def _head_to_sequence(tensor: Any, config: _DistributedConfig) -> Any:
         for rank in range(config.world_size)
     ]
     incoming = [torch.empty_like(outgoing[0]) for _ in range(config.world_size)]
-    torch.distributed.all_to_all(incoming, outgoing)
+    torch.distributed.all_to_all(incoming, outgoing, group=_sequence_group(config))
     return torch.cat(incoming, dim=2)
 
 
@@ -277,7 +289,7 @@ def _sequence_to_head(tensor: Any, config: _DistributedConfig) -> Any:
         raise RuntimeError("attention sequence must divide evenly across single-job ranks")
     outgoing = [value.contiguous() for value in tensor.chunk(config.world_size, dim=2)]
     incoming = [torch.empty_like(outgoing[0]) for _ in range(config.world_size)]
-    torch.distributed.all_to_all(incoming, outgoing)
+    torch.distributed.all_to_all(incoming, outgoing, group=_sequence_group(config))
     return torch.cat(incoming, dim=1)
 
 
@@ -362,7 +374,11 @@ class _UlyssesAttention:
         except BaseException as exc:
             failure = exc
         failed = torch.tensor(int(failure is not None), dtype=torch.int32, device=q.device)
-        torch.distributed.all_reduce(failed, op=torch.distributed.ReduceOp.MAX)
+        torch.distributed.all_reduce(
+            failed,
+            op=torch.distributed.ReduceOp.MAX,
+            group=_sequence_group(config),
+        )
         if failure is not None:
             raise failure
         if bool(failed.item()):

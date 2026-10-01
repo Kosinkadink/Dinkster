@@ -243,7 +243,11 @@ class _SequenceBlockPatch:
             transformer_options.pop("dinkster_sequence_valid", None)
         if self.index + 1 == self.count:
             gathered = [torch.empty_like(output) for _ in range(config.world_size)]
-            torch.distributed.all_gather(gathered, output.contiguous())
+            torch.distributed.all_gather(
+                gathered,
+                output.contiguous(),
+                group=attention._sequence_group(config),  # pyright: ignore[reportPrivateUsage]
+            )
             output = torch.cat(gathered, dim=0)[:sequence]
         return {"img": output}
 
