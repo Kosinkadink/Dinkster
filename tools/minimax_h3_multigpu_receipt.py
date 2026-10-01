@@ -44,19 +44,53 @@ class ReceiptError(RuntimeError):
 class _CollectiveTimer:
     def __init__(self, torch: Any) -> None:
         self.torch = torch
-        self.events: list[tuple[Any, Any]] = []
+        self.events: list[tuple[str, Any, Any, int, int]] = []
+
+    @staticmethod
+    def _tensor_bytes(value: object) -> int:
+        if isinstance(value, (list, tuple)):
+            return sum(_CollectiveTimer._tensor_bytes(item) for item in value)
+        numel = getattr(value, "numel", None)
+        element_size = getattr(value, "element_size", None)
+        if not callable(numel) or not callable(element_size):
+            return 0
+        return int(cast("Any", numel)() * cast("Any", element_size)())
+
+    def _peer_bytes(
+        self, name: str, inputs: tuple[object, ...], kwargs: dict[str, object]
+    ) -> tuple[int, int]:
+        index = 1 if name in ("all_gather", "all_to_all") else 0
+        value = inputs[index] if len(inputs) > index else None
+        payload = self._tensor_bytes(value)
+        group = kwargs.get("group")
+        world_size = int(self.torch.distributed.get_world_size(group))
+        if name == "all_gather":
+            peer_bytes = payload * (world_size - 1)
+        elif name == "all_to_all":
+            rank = int(self.torch.distributed.get_rank(group))
+            local_bytes = self._tensor_bytes(value[rank]) if isinstance(value, list) else 0
+            peer_bytes = payload - local_bytes
+        else:
+            peer_bytes = payload * 2 * (world_size - 1) // world_size
+        return payload, peer_bytes
 
     def install(self) -> None:
         for name in ("all_gather", "all_reduce", "all_to_all"):
             operation = getattr(self.torch.distributed, name)
 
-            def timed(*args: object, _operation: Any = operation, **kwargs: object) -> Any:
+            def timed(
+                *args: object,
+                _name: str = name,
+                _operation: Any = operation,
+                **kwargs: object,
+            ) -> Any:
                 started = self.torch.cuda.Event(enable_timing=True)
                 finished = self.torch.cuda.Event(enable_timing=True)
                 started.record()
                 result = _operation(*args, **kwargs)
                 finished.record()
-                self.events.append((started, finished))
+                payload_bytes, peer_bytes = self._peer_bytes(_name, args, kwargs)
+                self.events.append((_name, started, finished, payload_bytes, peer_bytes))
                 return result
 
             setattr(self.torch.distributed, name, timed)
@@ -65,7 +99,19 @@ class _CollectiveTimer:
         self.events.clear()
 
     def elapsed_seconds(self) -> float:
-        return sum(start.elapsed_time(end) for start, end in self.events) / 1000.0
+        return sum(start.elapsed_time(end) for _, start, end, _, _ in self.events) / 1000.0
+
+    def evidence(self) -> dict[str, dict[str, float | int]]:
+        evidence: dict[str, dict[str, float | int]] = {}
+        for name in ("all_gather", "all_reduce", "all_to_all"):
+            events = [event for event in self.events if event[0] == name]
+            evidence[name] = {
+                "calls": len(events),
+                "seconds": sum(start.elapsed_time(end) for _, start, end, _, _ in events) / 1000.0,
+                "input_payload_bytes": sum(event[3] for event in events),
+                "logical_peer_bytes": sum(event[4] for event in events),
+            }
+        return evidence
 
 
 class _Resolver:
@@ -230,14 +276,23 @@ def _run_sample(
     seed: int,
     tensor_output: Path | None = None,
     collective_timer: _CollectiveTimer | None = None,
-) -> tuple[dict[str, str], float, float, dict[str, float]]:
-    from dinkster_native.fork_nodes import GenerationKSampler
+    video_vae: Any = None,
+    audio_vae: Any = None,
+) -> tuple[dict[str, Any], float, float, dict[str, Any]]:
+    from dinkster_native.fork_nodes import (
+        GenerationKSampler,
+        GenerationVAEDecode,
+        NativeVAEDecodeAudio,
+    )
 
     torch = cast("Any", importlib.import_module("torch"))
     if collective_timer is not None:
         collective_timer.reset()
     torch.cuda.synchronize()
+    cuda_started = torch.cuda.Event(enable_timing=True)
+    cuda_finished = torch.cuda.Event(enable_timing=True)
     started = time.perf_counter()
+    cuda_started.record()
     sampled = cast(
         "dict[str, Any]",
         GenerationKSampler.execute(
@@ -253,27 +308,66 @@ def _run_sample(
             denoise=1.0,
         )["latent"],
     )
+    cuda_finished.record()
+    fence_started = time.perf_counter()
     torch.cuda.synchronize()
+    fence_seconds = time.perf_counter() - fence_started
+    cuda_sample_seconds = cuda_started.elapsed_time(cuda_finished) / 1000.0
     samples = sampled["samples"]
-    hashes = _latent_hashes(samples)
     sample_seconds = time.perf_counter() - started
+    hashes: dict[str, Any] = {"latents": _latent_hashes(samples)}
+    tensor_evidence = None
+    if tensor_output is not None:
+        latent_evidence = {role: samples.by_role(role).detach().cpu() for role in samples.roles}
+        tensor_evidence = (
+            {"latents": latent_evidence}
+            if video_vae is not None or audio_vae is not None
+            else latent_evidence
+        )
+    decode_seconds = 0.0
+    if video_vae is not None and audio_vae is not None:
+        decode_started = time.perf_counter()
+        video = cast("Any", GenerationVAEDecode.execute(samples=sampled, vae=video_vae)["image"])
+        audio = cast(
+            "dict[str, Any]",
+            NativeVAEDecodeAudio.execute(samples=sampled, vae=audio_vae)["audio"],
+        )["waveform"]
+        torch.cuda.synchronize()
+        decode_seconds = time.perf_counter() - decode_started
+        hashes["decoded"] = {"video": _tensor_sha256(video), "audio": _tensor_sha256(audio)}
+        if tensor_evidence is not None:
+            tensor_evidence["decoded"] = {
+                "video": video.detach().cpu(),
+                "audio": audio.detach().cpu(),
+            }
+    elif video_vae is not None or audio_vae is not None:
+        raise ReceiptError("receipt decoding requires both video and audio VAEs")
     communication_sync_seconds = (
         collective_timer.elapsed_seconds() if collective_timer is not None else 0.0
     )
-    compute_seconds = sample_seconds - communication_sync_seconds
+    compute_seconds = cuda_sample_seconds - communication_sync_seconds
     timing_breakdown = {
         "compute_seconds": compute_seconds,
         "communication_sync_seconds": communication_sync_seconds,
-        "compute_share": compute_seconds / sample_seconds,
-        "communication_sync_share": communication_sync_seconds / sample_seconds,
+        "compute_share": compute_seconds / cuda_sample_seconds,
+        "communication_sync_share": communication_sync_seconds / cuda_sample_seconds,
+        "fence_seconds": fence_seconds,
+        "collectives": collective_timer.evidence() if collective_timer is not None else {},
+        "cuda_sample_seconds": cuda_sample_seconds,
+        "sample_seconds": sample_seconds,
+        "decode_seconds": decode_seconds,
+        "whole_job_seconds": sample_seconds + decode_seconds,
     }
     evidence_started = time.perf_counter()
     if tensor_output is not None:
-        torch.save(
-            {role: samples.by_role(role).detach().cpu() for role in samples.roles},
-            tensor_output,
-        )
-    return hashes, sample_seconds, time.perf_counter() - evidence_started, timing_breakdown
+        assert tensor_evidence is not None
+        torch.save(tensor_evidence, tensor_output)
+    return (
+        hashes,
+        sample_seconds + decode_seconds,
+        time.perf_counter() - evidence_started,
+        timing_breakdown,
+    )
 
 
 def run_worker(args: argparse.Namespace) -> int:
@@ -288,6 +382,7 @@ def run_worker(args: argparse.Namespace) -> int:
         GenerationLoadDiffusionModel,
         NativeBlockSparseAttention,
         NativeEmptyMiniMaxH3AV,
+        NativeLoadVae,
     )
     from dinkster_workers import ExecutionContext, use_execution_context
 
@@ -313,6 +408,16 @@ def run_worker(args: argparse.Namespace) -> int:
         )["model"],
     )
     model_load_seconds = time.perf_counter() - load_started
+    video_vae = (
+        NativeLoadVae.execute(vae=_asset(args.video_vae, args.video_vae_digest))["vae"]
+        if args.video_vae is not None
+        else None
+    )
+    audio_vae = (
+        NativeLoadVae.execute(vae=_asset(args.audio_vae, args.audio_vae_digest))["vae"]
+        if args.audio_vae is not None
+        else None
+    )
     model_size = int(model.model_size())
     loading_route = {
         "loader": "dinkster_native.fork_nodes.GenerationLoadDiffusionModel",
@@ -373,6 +478,8 @@ def run_worker(args: argparse.Namespace) -> int:
                 args.seed,
                 args.tensor_output,
                 collective_timer,
+                video_vae,
+                audio_vae,
             )
             cold_workflow_seconds = time.perf_counter() - worker_started - evidence_write_seconds
             warmup_runs = [
@@ -385,6 +492,8 @@ def run_worker(args: argparse.Namespace) -> int:
                     args.steps,
                     args.seed,
                     collective_timer=collective_timer,
+                    video_vae=video_vae,
+                    audio_vae=audio_vae,
                 )
                 for _ in range(args.warmups)
             ]
@@ -398,16 +507,21 @@ def run_worker(args: argparse.Namespace) -> int:
                     args.steps,
                     args.seed,
                     collective_timer=collective_timer,
+                    video_vae=video_vae,
+                    audio_vae=audio_vae,
                 )
                 for _ in range(args.repeats)
             ]
     finally:
         if distributed:
             release_distributed_attention(ATTEMPT_GROUP, ATTEMPT)
-    warmup_seconds = [run[1] for run in warmup_runs]
-    sample_seconds = [run[1] for run in measured_runs]
+    warmup_sample_seconds = [float(run[3]["sample_seconds"]) for run in warmup_runs]
+    warmup_whole_job_seconds = [float(run[3]["whole_job_seconds"]) for run in warmup_runs]
+    sample_seconds = [float(run[3]["sample_seconds"]) for run in measured_runs]
+    whole_job_seconds = [float(run[3]["whole_job_seconds"]) for run in measured_runs]
     measured_breakdowns = [run[3] for run in measured_runs]
     median_sample_seconds = statistics.median(sample_seconds)
+    median_whole_job_seconds = statistics.median(whole_job_seconds)
     if args.sparse_enabled and sparse_backend_calls == 0:
         raise ReceiptError("sparse candidate never executed its registry backend")
     properties = torch.cuda.get_device_properties(0)
@@ -430,10 +544,14 @@ def run_worker(args: argparse.Namespace) -> int:
             "setup_seconds": setup_seconds,
             "model_load_seconds": model_load_seconds,
             "cold_workflow_seconds": cold_workflow_seconds,
-            "cold_sample_seconds": cold_seconds,
+            "cold_sample_seconds": cold_timing_breakdown["sample_seconds"],
+            "cold_decode_seconds": cold_timing_breakdown["decode_seconds"],
+            "cold_whole_job_seconds": cold_seconds,
             "excluded_evidence_write_seconds": evidence_write_seconds,
-            "warmup_sample_seconds": warmup_seconds,
+            "warmup_sample_seconds": warmup_sample_seconds,
+            "warmup_whole_job_seconds": warmup_whole_job_seconds,
             "sample_seconds": sample_seconds,
+            "whole_job_seconds": whole_job_seconds,
             "cold_compute_communication": cold_timing_breakdown,
             "warmup_compute_communication": [run[3] for run in warmup_runs],
             "measured_compute_communication": measured_breakdowns,
@@ -449,9 +567,10 @@ def run_worker(args: argparse.Namespace) -> int:
             "median_communication_sync_share": statistics.median(
                 run["communication_sync_share"] for run in measured_breakdowns
             ),
-            "median_warm_workflow_seconds": median_sample_seconds,
+            "median_warm_workflow_seconds": median_whole_job_seconds,
             "median_sample_seconds": median_sample_seconds,
-            "jobs_per_hour": 3600.0 / median_sample_seconds,
+            "median_whole_job_seconds": median_whole_job_seconds,
+            "jobs_per_hour": 3600.0 / median_whole_job_seconds,
         },
         "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
         "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
@@ -528,6 +647,10 @@ def _spawn_worker(
         str(args.warmups),
         "--repeats",
         str(args.repeats),
+        *(("--video-vae", str(args.video_vae)) if args.video_vae else ()),
+        *(("--video-vae-digest", args.video_vae_digest) if args.video_vae else ()),
+        *(("--audio-vae", str(args.audio_vae)) if args.audio_vae else ()),
+        *(("--audio-vae-digest", args.audio_vae_digest) if args.audio_vae else ()),
         *(("--sparse-enabled",) if args.sparse_enabled else ()),
         *(("--tensor-output", str(args.tensor_output)) if args.tensor_output else ()),
     )
@@ -557,9 +680,16 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def _run_serial(
-    args: argparse.Namespace, scratch: Path, *, sparse_enabled: bool = False
+    args: argparse.Namespace,
+    scratch: Path,
+    *,
+    sparse_enabled: bool = False,
+    name: str | None = None,
+    gpu: str | None = None,
+    repeats: int | None = None,
+    warmups: int | None = None,
 ) -> dict[str, Any]:
-    name = "sparse" if sparse_enabled else "serial"
+    name = name or ("sparse" if sparse_enabled else "serial")
     result = scratch / f"{name}.json"
     log = scratch / f"{name}.log"
     environment = _source_environment(args.dinkster_root, args.fork_root)
@@ -568,32 +698,44 @@ def _run_serial(
         for key, value in environment.items()
         if not key.startswith("DINKSTER_SINGLE_JOB_")
     }
-    environment["CUDA_VISIBLE_DEVICES"] = args.gpu[0]
-    args.sparse_enabled = sparse_enabled
-    args.tensor_output = scratch / f"{name}-tensors.pt" if args.mode == "sparse" else None
-    worker = _spawn_worker(args, result, log, environment)
+    environment["CUDA_VISIBLE_DEVICES"] = gpu or args.gpu[0]
+    worker_args = argparse.Namespace(**vars(args))
+    worker_args.repeats = repeats if repeats is not None else args.repeats
+    worker_args.warmups = warmups if warmups is not None else args.warmups
+    worker_args.sparse_enabled = sparse_enabled
+    worker_args.tensor_output = scratch / f"{name}-tensors.pt" if args.mode == "sparse" else None
+    worker = _spawn_worker(worker_args, result, log, environment)
     _wait(((name, worker, log),))
     loaded = _load(result)
     loaded["worker_log"] = _log_receipt(log)
-    if args.tensor_output is not None:
-        loaded["_tensor_output"] = str(args.tensor_output)
+    if worker_args.tensor_output is not None:
+        loaded["_tensor_output"] = str(worker_args.tensor_output)
     return loaded
 
 
-def _run_distributed(args: argparse.Namespace, scratch: Path) -> list[dict[str, Any]]:
+def _run_distributed(
+    args: argparse.Namespace,
+    scratch: Path,
+    *,
+    name: str = "candidate",
+    gpus: Sequence[str] | None = None,
+    repeats: int | None = None,
+    warmups: int | None = None,
+) -> list[dict[str, Any]]:
     if args.mode == "sparse":
         raise ReceiptError("sparse attention is measured as a one-GPU registry route")
     token = secrets.token_hex(16)
-    rendezvous = scratch / "rendezvous"
+    selected_gpus = tuple(gpus or args.gpu)
+    rendezvous = scratch / f"{name}-rendezvous"
     workers = []
-    for rank, gpu in enumerate(args.gpu):
-        result = scratch / f"rank{rank}.json"
+    for rank, gpu in enumerate(selected_gpus):
+        result = scratch / f"{name}-rank{rank}.json"
         environment = _source_environment(args.dinkster_root, args.fork_root)
         environment.update(
             {
                 "CUDA_VISIBLE_DEVICES": gpu,
                 "DINKSTER_SINGLE_JOB_RANK": str(rank),
-                "DINKSTER_SINGLE_JOB_WORLD_SIZE": str(len(args.gpu)),
+                "DINKSTER_SINGLE_JOB_WORLD_SIZE": str(len(selected_gpus)),
                 "DINKSTER_SINGLE_JOB_MULTI_GPU_MODE": args.mode,
                 "DINKSTER_SINGLE_JOB_RENDEZVOUS": f"file://{rendezvous}",
                 "DINKSTER_SINGLE_JOB_TOKEN": token,
@@ -601,14 +743,19 @@ def _run_distributed(args: argparse.Namespace, scratch: Path) -> list[dict[str, 
                 "NCCL_DEBUG_SUBSYS": "INIT,GRAPH",
             }
         )
-        log = scratch / f"rank{rank}.log"
-        args.sparse_enabled = False
-        workers.append((f"rank{rank}", _spawn_worker(args, result, log, environment), log))
+        log = scratch / f"{name}-rank{rank}.log"
+        worker_args = argparse.Namespace(**vars(args))
+        worker_args.repeats = repeats if repeats is not None else args.repeats
+        worker_args.warmups = warmups if warmups is not None else args.warmups
+        worker_args.sparse_enabled = False
+        workers.append(
+            (f"{name}-rank{rank}", _spawn_worker(worker_args, result, log, environment), log)
+        )
     _wait(workers)
     results = []
-    for rank in range(len(args.gpu)):
-        loaded = _load(scratch / f"rank{rank}.json")
-        loaded["worker_log"] = _log_receipt(scratch / f"rank{rank}.log")
+    for rank in range(len(selected_gpus)):
+        loaded = _load(scratch / f"{name}-rank{rank}.json")
+        loaded["worker_log"] = _log_receipt(scratch / f"{name}-rank{rank}.log")
         results.append(loaded)
     return results
 
@@ -640,7 +787,8 @@ def _classify_host(gpus: Sequence[dict[str, Any]]) -> str:
 
 
 def _median_seconds(result: dict[str, Any]) -> float:
-    return float(result["timing"]["median_sample_seconds"])
+    timing = result["timing"]
+    return float(timing.get("median_whole_job_seconds", timing["median_sample_seconds"]))
 
 
 def _performance(
@@ -668,6 +816,133 @@ def _performance(
         "reference_gpu_seconds_per_job": reference_seconds,
         "candidate_gpu_seconds_per_job": candidate_seconds * world_size,
     }
+
+
+def _require_identical_matrix_hashes(segments: Sequence[dict[str, Any]]) -> None:
+    expected: str | None = None
+    expected_location = ""
+    for segment_index, segment in enumerate(segments):
+        for rank, result in enumerate(segment["ranks"]):
+            hashes = result["output_hashes"]
+            runs = (
+                ("cold", hashes["cold"]),
+                *((f"warmup-{index}", value) for index, value in enumerate(hashes["warmups"])),
+                *((f"measured-{index}", value) for index, value in enumerate(hashes["measured"])),
+            )
+            for run, value in runs:
+                location = f"segment {segment_index} {segment['arm']} rank {rank} {run}"
+                encoded = json.dumps(value, sort_keys=True)
+                if expected is None:
+                    expected = encoded
+                    expected_location = location
+                elif encoded != expected:
+                    raise ReceiptError(
+                        f"output hashes differ: {location} does not match {expected_location}; "
+                        f"expected {expected}, got {encoded}"
+                    )
+
+
+def _matrix_arm_summary(segments: Sequence[dict[str, Any]], arm: str) -> dict[str, Any]:
+    arm_segments = [segment for segment in segments if segment["arm"] == arm]
+    job_seconds: list[float] = []
+    load_balance: list[dict[str, float]] = []
+    for segment in arm_segments:
+        rank_times = [result["timing"]["whole_job_seconds"] for result in segment["ranks"]]
+        for run_times in zip(*rank_times, strict=True):
+            values = [float(value) for value in run_times]
+            slowest = max(values)
+            fastest = min(values)
+            job_seconds.append(slowest)
+            load_balance.append(
+                {
+                    "slowest_rank_seconds": slowest,
+                    "fastest_rank_seconds": fastest,
+                    "spread_seconds": slowest - fastest,
+                    "slowest_to_fastest_ratio": slowest / fastest,
+                }
+            )
+    world_size = len(arm_segments[0]["ranks"])
+    median_seconds = statistics.median(job_seconds)
+    return {
+        "world_size": world_size,
+        "measured_whole_job_seconds": job_seconds,
+        "median_whole_job_seconds": median_seconds,
+        "jobs_per_hour": 3600.0 / median_seconds,
+        "gpu_seconds_per_job": median_seconds * world_size,
+        "load_balance": load_balance,
+        "peak_allocated_bytes_by_rank": [
+            int(result["peak_allocated_bytes"])
+            for segment in arm_segments
+            for result in segment["ranks"]
+        ],
+        "peak_reserved_bytes_by_rank": [
+            int(result["peak_reserved_bytes"])
+            for segment in arm_segments
+            for result in segment["ranks"]
+        ],
+    }
+
+
+def _run_sequence_matrix(
+    args: argparse.Namespace, scratch: Path
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    order = ("serial", "u2", "u4", "u4", "u2", "serial")
+    first_repeats = (args.repeats + 1) // 2
+    second_repeats = args.repeats // 2
+    occurrences = Counter[str]()
+    segments: list[dict[str, Any]] = []
+    for block, arm in enumerate(order):
+        occurrence = occurrences[arm]
+        occurrences[arm] += 1
+        repeats = first_repeats if occurrence == 0 else second_repeats
+        warmups = args.warmups if occurrence == 0 else 0
+        name = f"block{block}-{arm}"
+        if arm == "serial":
+            ranks = [
+                _run_serial(
+                    args,
+                    scratch,
+                    name=name,
+                    gpu=args.gpu[0],
+                    repeats=repeats,
+                    warmups=warmups,
+                )
+            ]
+            gpus = [args.gpu[0]]
+        else:
+            gpus = args.u2_gpu if arm == "u2" else args.gpu
+            ranks = _run_distributed(
+                args,
+                scratch,
+                name=name,
+                gpus=gpus,
+                repeats=repeats,
+                warmups=warmups,
+            )
+        segments.append(
+            {
+                "block": block,
+                "arm": arm,
+                "gpu_uuids": list(gpus),
+                "warmups": warmups,
+                "repeats": repeats,
+                "ranks": ranks,
+            }
+        )
+    _require_identical_matrix_hashes(segments)
+    summaries = {arm: _matrix_arm_summary(segments, arm) for arm in ("serial", "u2", "u4")}
+    summaries["u2"]["speedup_vs_serial"] = (
+        summaries["serial"]["median_whole_job_seconds"]
+        / summaries["u2"]["median_whole_job_seconds"]
+    )
+    summaries["u4"]["speedup_vs_serial"] = (
+        summaries["serial"]["median_whole_job_seconds"]
+        / summaries["u4"]["median_whole_job_seconds"]
+    )
+    summaries["u4"]["speedup_vs_u2"] = (
+        summaries["u2"]["median_whole_job_seconds"] / summaries["u4"]["median_whole_job_seconds"]
+    )
+    return segments, summaries
 
 
 def _sparse_quality_oracle(reference_path: Path, candidate_path: Path) -> dict[str, Any]:
@@ -706,13 +981,159 @@ def _sparse_quality_oracle(reference_path: Path, candidate_path: Path) -> dict[s
     }
 
 
+def _mint_sequence_matrix(args: argparse.Namespace, artifact: dict[str, Any]) -> int:
+    with tempfile.TemporaryDirectory(prefix="minimax-h3-u4-matrix-") as directory:
+        segments, summaries = _run_sequence_matrix(args, Path(directory))
+    workload = (
+        "production"
+        if (args.width, args.height, args.frames, args.steps) == (1344, 768, 124, 20)
+        else "short"
+    )
+    u4_beats_u2 = (
+        summaries["u4"]["median_whole_job_seconds"] < summaries["u2"]["median_whole_job_seconds"]
+    )
+    receipt = {
+        "schema": "dinkster.minimax-h3-sequence-matrix.v1",
+        "status": "PASS",
+        "invocation": {
+            "command": shlex.join([sys.executable, *sys.argv]),
+            "working_directory": os.getcwd(),
+        },
+        "source": {
+            "dinkster_head": _git(args.dinkster_root, "rev-parse", "HEAD"),
+            "fork_head": _git(args.fork_root, "rev-parse", "HEAD"),
+        },
+        "artifacts": {
+            "model": {
+                "path": str(args.model),
+                "bytes": args.model.stat().st_size,
+                "blake3": args.model_digest.removeprefix("blake3:"),
+                **artifact,
+                "source_url": args.model_source_url,
+                "source_revision": args.model_source_revision,
+            },
+            "video_vae": {
+                "path": str(args.video_vae),
+                "blake3": args.video_vae_digest.removeprefix("blake3:"),
+            },
+            "audio_vae": {
+                "path": str(args.audio_vae),
+                "blake3": args.audio_vae_digest.removeprefix("blake3:"),
+            },
+        },
+        "workload": {
+            "name": workload,
+            "width": args.width,
+            "height": args.height,
+            "frames": args.frames,
+            "steps": args.steps,
+            "seed": args.seed,
+            "warmups_per_arm": args.warmups,
+            "measured_repeats_per_arm": args.repeats,
+            "sampler": "euler",
+            "scheduler": "simple",
+            "denoise": 1.0,
+            "guidance": 1.0,
+            "conditioning": "synthetic 32-token bfloat16 context with seed 220",
+        },
+        "execution": {
+            "mode": "sequence",
+            "attention_policy": args.policy,
+            "execution_provider": artifact["provider"],
+            "compute_dtype": "bfloat16",
+            "arm_order": [segment["arm"] for segment in segments],
+            "order_balance": "mirrored serial,U2,U4,U4,U2,serial blocks",
+            "requested_gpu_uuids": args.gpu,
+            "u2_gpu_uuids": args.u2_gpu,
+            "hash_contract": (
+                "byte-identical video/audio latents and decoded outputs across every arm, "
+                "rank, cold run, warmup, and measured repeat"
+            ),
+            "measurement_boundaries": {
+                "whole_job": "one KSampler invocation followed by video and audio VAE decode",
+                "sample": "synchronized KSampler wall time",
+                "decode": "synchronized video and audio VAE decode wall time",
+                "compute": "KSampler CUDA event time minus CUDA-event collective time",
+                "collectives": (
+                    "CUDA event time per operation; input payload bytes and logical peer bytes "
+                    "use collective semantics rather than a provider-specific wire algorithm"
+                ),
+                "fence": "host wait in the CUDA synchronization after KSampler returns",
+            },
+            "arms": summaries,
+            "provider_cells": {
+                "ulysses4": {"status": "measured"},
+                "ring4": {
+                    "status": "provider-unavailable",
+                    "reason": (
+                        "selected dense provider does not expose online max and exp-sum "
+                        "merge statistics"
+                    ),
+                },
+                "ulysses2_ring2": {
+                    "status": "provider-unavailable",
+                    "reason": (
+                        "selected dense provider does not expose online max and exp-sum "
+                        "merge statistics"
+                    ),
+                },
+            },
+            "production_route": (
+                "explicit-u4"
+                if workload == "production" and u4_beats_u2
+                else "u2-fallback"
+                if workload == "production"
+                else "not-decided-by-short-workload"
+            ),
+            "u4_beats_u2": u4_beats_u2,
+        },
+        "environment": {
+            "hostname": os.uname().nodename,
+            "nvidia_smi_topology": _nvidia_smi("topo", "-m"),
+            "nvidia_smi_p2p_read": _nvidia_smi("topo", "-p2p", "r"),
+            "nvidia_smi_p2p_write": _nvidia_smi("topo", "-p2p", "w"),
+            "nvidia_smi_inventory": _nvidia_smi(
+                "--query-gpu=index,name,uuid,pci.bus_id,memory.total",
+                "--format=csv,noheader",
+            ),
+        },
+        "segments": segments,
+    }
+    args.output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    print(f"PASS: {args.output}")
+    return 0
+
+
 def run_mint(args: argparse.Namespace) -> int:
     from dinkster_assets import digest_file
 
     args.dinkster_root = args.dinkster_root.resolve()
     args.fork_root = args.fork_root.resolve()
     args.model = args.model.resolve()
-    if len(args.gpu) != 2 and args.mode != "sparse":
+    args.matrix = getattr(args, "matrix", False)
+    args.u2_gpu = getattr(args, "u2_gpu", None)
+    args.video_vae = getattr(args, "video_vae", None)
+    args.audio_vae = getattr(args, "audio_vae", None)
+    if args.video_vae is not None:
+        args.video_vae = args.video_vae.resolve()
+    if args.audio_vae is not None:
+        args.audio_vae = args.audio_vae.resolve()
+    if args.matrix and args.mode != "sequence":
+        raise ReceiptError("the serial/U2/U4 matrix requires sequence mode")
+    if args.matrix and (len(args.gpu) != 4 or len(set(args.gpu)) != 4):
+        raise ReceiptError("the serial/U2/U4 matrix requires exactly four unique GPU UUIDs")
+    if args.matrix and (
+        args.u2_gpu is None
+        or len(args.u2_gpu) != 2
+        or len(set(args.u2_gpu)) != 2
+        or not set(args.u2_gpu).issubset(args.gpu)
+    ):
+        raise ReceiptError("the matrix requires two unique --u2-gpu UUIDs selected from --gpu")
+    if args.matrix and (args.repeats < 5 or args.warmups != 1):
+        raise ReceiptError("the matrix requires one warmup and at least five measured repeats")
+    if args.matrix and (args.video_vae is None or args.audio_vae is None):
+        raise ReceiptError("the matrix requires video and audio VAEs")
+    if not args.matrix and len(args.gpu) != 2 and args.mode != "sparse":
         raise ReceiptError("guidance and U2R1 receipt minting require exactly two GPU UUIDs")
     if args.mode == "sparse" and len(args.gpu) != 1:
         raise ReceiptError("sparse attention receipt minting requires exactly one GPU UUID")
@@ -720,12 +1141,20 @@ def run_mint(args: argparse.Namespace) -> int:
         raise ReceiptError("sparse attention uses SDPA as its dense reference policy")
     if not args.model.is_file():
         raise ReceiptError(f"model does not exist: {args.model}")
+    for name in ("video_vae", "audio_vae"):
+        path = getattr(args, name)
+        if path is not None and not path.is_file():
+            raise ReceiptError(f"{name.replace('_', ' ')} does not exist: {path}")
     for root in (args.dinkster_root, args.fork_root):
         if _git(root, "status", "--porcelain=v1", "--untracked-files=all"):
             raise ReceiptError(f"source checkout is dirty: {root}")
     args.model_digest = digest_file(args.model)
+    args.video_vae_digest = digest_file(args.video_vae) if args.video_vae is not None else None
+    args.audio_vae_digest = digest_file(args.audio_vae) if args.audio_vae is not None else None
     artifact = _model_artifact(args.model)
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    if args.matrix:
+        return _mint_sequence_matrix(args, artifact)
     with tempfile.TemporaryDirectory(prefix="minimax-h3-multigpu-") as directory:
         scratch = Path(directory)
         arm_order = (
@@ -874,6 +1303,8 @@ def run_mint(args: argparse.Namespace) -> int:
 
 def _workload_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--video-vae", type=Path)
+    parser.add_argument("--audio-vae", type=Path)
     parser.add_argument("--mode", choices=MODES, required=True)
     parser.add_argument("--policy", choices=POLICIES, required=True)
     parser.add_argument("--width", type=int, default=1344)
@@ -882,7 +1313,7 @@ def _workload_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--seed", type=int, default=20260813)
     parser.add_argument("--warmups", type=int, default=1)
-    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--sparse-enabled", action="store_true", help=argparse.SUPPRESS)
 
 
@@ -892,6 +1323,8 @@ def _parser() -> argparse.ArgumentParser:
     worker = commands.add_parser("worker")
     _workload_arguments(worker)
     worker.add_argument("--model-digest", required=True)
+    worker.add_argument("--video-vae-digest", help=argparse.SUPPRESS)
+    worker.add_argument("--audio-vae-digest", help=argparse.SUPPRESS)
     worker.add_argument("--result", type=Path, required=True)
     worker.add_argument("--tensor-output", type=Path, help=argparse.SUPPRESS)
     worker.set_defaults(function=run_worker)
@@ -902,8 +1335,10 @@ def _parser() -> argparse.ArgumentParser:
     mint.add_argument("--model-source-url", required=True)
     mint.add_argument("--model-source-revision", required=True)
     mint.add_argument("--gpu", action="append", required=True)
+    mint.add_argument("--u2-gpu", action="append")
     mint.add_argument("--output", type=Path, required=True)
     mint.add_argument("--candidate-first", action="store_true")
+    mint.add_argument("--matrix", action="store_true")
     mint.set_defaults(function=run_mint, tensor_output=None)
     return parser
 

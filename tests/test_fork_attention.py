@@ -50,6 +50,8 @@ def test_ulysses_attention_exchanges_local_sequences_and_heads(
 ) -> None:
     config = attention._DistributedConfig(1, 2, "sequence", "file:///unused", "token")  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(attention, "_ensure_process_group", lambda: config)
+    sequence_group = object()
+    monkeypatch.setattr(attention, "_sequence_process_group", sequence_group)
     peer_q = torch.arange(1 * 4 * 3 * 2, dtype=torch.float32).reshape(1, 4, 3, 2)
     q = peer_q + 1000
     k = q + 100
@@ -68,15 +70,17 @@ def test_ulysses_attention_exchanges_local_sequences_and_heads(
         masks.append(kwargs["mask"])
         return local_v
 
-    def all_gather(outputs: list[Any], value: Any) -> None:
+    def all_gather(outputs: list[Any], value: Any, **kwargs: object) -> None:
+        assert kwargs["group"] is sequence_group
         if value.dtype == torch.int64:
             for output in outputs:
                 output.copy_(value)
 
     exchanges = 0
 
-    def all_to_all(outputs: list[Any], inputs: list[Any]) -> None:
+    def all_to_all(outputs: list[Any], inputs: list[Any], **kwargs: object) -> None:
         nonlocal exchanges
+        assert kwargs["group"] is sequence_group
         if exchanges < 3:
             peer = (peer_q, peer_q + 100, peer_q + 200)[exchanges]
             outputs[0].copy_(peer[:, 2:4])
@@ -100,7 +104,7 @@ def test_ulysses_attention_exchanges_local_sequences_and_heads(
         skip_output_reshape=skip_output_reshape,
         transformer_options={
             "dinkster_sequence_sharded": True,
-            "dinkster_sequence_valid": 5,
+            "dinkster_sequence_widths": (3, 3),
         },
     )
 
@@ -111,7 +115,74 @@ def test_ulysses_attention_exchanges_local_sequences_and_heads(
     torch.testing.assert_close(actual_q, torch.cat((peer_q[:, 2:4], q[:, 2:4]), dim=2))
     torch.testing.assert_close(actual_k, torch.cat((peer_q[:, 2:4] + 100, k[:, 2:4]), dim=2))
     torch.testing.assert_close(actual_v, torch.cat((peer_q[:, 2:4] + 200, v[:, 2:4]), dim=2))
-    assert torch.equal(masks[0], torch.tensor([[[True, True, True, True, True, False]]]))
+    assert masks == [None]
+    assert exchanges == 4
+
+
+def test_ulysses_attention_preserves_four_rank_head_and_sequence_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = attention._DistributedConfig(2, 4, "sequence", "file:///unused", "token")  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(attention, "_ensure_process_group", lambda: config)
+    sequence_widths = (3, 2, 2, 2)
+    peers = [
+        torch.arange(1 * 8 * width * 2, dtype=torch.float32).reshape(1, 8, width, 2) + rank * 1000
+        for rank, width in enumerate(sequence_widths)
+    ]
+    q = peers[2]
+    k = q + 100
+    v = q + 200
+    calls: list[tuple[Any, Any, Any, int]] = []
+
+    def selected(local_q: Any, local_k: Any, local_v: Any, heads: int, **_kwargs: object) -> Any:
+        calls.append((local_q, local_k, local_v, heads))
+        return local_v
+
+    controls: list[Any] = []
+
+    def all_gather(outputs: list[Any], value: Any, **_kwargs: object) -> None:
+        if value.dtype == torch.int64:
+            controls.append(value.clone())
+            for output in outputs:
+                output.copy_(value)
+
+    exchanges = 0
+
+    def all_to_all(outputs: list[Any], inputs: list[Any], **_kwargs: object) -> None:
+        nonlocal exchanges
+        if exchanges < 3:
+            offset = exchanges * 100
+            for source, output in enumerate(outputs):
+                output.copy_(peers[source][:, 4:6] + offset)
+        else:
+            for source, output in enumerate(outputs):
+                output.copy_(v[:, source * 2 : (source + 1) * 2])
+        exchanges += 1
+
+    monkeypatch.setattr(torch.distributed, "all_gather", all_gather)
+    monkeypatch.setattr(torch.distributed, "all_to_all", all_to_all)
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda _value, **_kwargs: None)
+
+    output = attention._UlyssesAttention(selected)(  # pyright: ignore[reportPrivateUsage]
+        q,
+        k,
+        v,
+        8,
+        skip_reshape=True,
+        skip_output_reshape=True,
+        transformer_options={
+            "dinkster_sequence_sharded": True,
+            "dinkster_sequence_widths": sequence_widths,
+        },
+    )
+
+    torch.testing.assert_close(output, v)
+    local_q, local_k, local_v, local_heads = calls[0]
+    assert local_heads == 2
+    torch.testing.assert_close(local_q, torch.cat([peer[:, 4:6] for peer in peers], dim=2))
+    torch.testing.assert_close(local_k, local_q + 100)
+    torch.testing.assert_close(local_v, local_q + 200)
+    torch.testing.assert_close(controls[0][1:], torch.tensor([8, 1, 9, 2]))
     assert exchanges == 4
 
 

@@ -206,27 +206,28 @@ def test_window_gather_preserves_nested_stream_dtypes_shapes_and_order(
 def test_sequence_block_patch_shards_modulation_and_gathers_last_block(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = attention._DistributedConfig(1, 2, "sequence", "file:///unused", "token")  # pyright: ignore[reportPrivateUsage]
+    config = attention._DistributedConfig(2, 4, "sequence", "file:///unused", "token")  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(attention, "_ensure_process_group", lambda: config)
-    hidden = torch.arange(12.0).reshape(6, 2)
-    rope = torch.arange(6.0).reshape(1, 6, 1)
-    rows = torch.tensor([20, 21, 22, 23])
+    hidden = torch.arange(14.0).reshape(7, 2)
+    rope = torch.arange(7.0).reshape(1, 7, 1)
+    rows = torch.tensor([20, 21, 22, 23, 24])
     options: dict[str, object] = {}
 
     def original(args: dict[str, Any]) -> dict[str, Any]:
         assert options["dinkster_sequence_sharded"] is True
-        assert options["dinkster_sequence_valid"] == 6
-        torch.testing.assert_close(args["img"], hidden[3:6])
-        torch.testing.assert_close(args["rope_freqs"], rope[:, 3:6])
+        assert options["dinkster_sequence_widths"] == (2, 2, 2, 1)
+        torch.testing.assert_close(args["img"], hidden[4:6])
+        torch.testing.assert_close(args["rope_freqs"], rope[:, 4:6])
         assert len(args["mod_segments"]) == 1
         start, stop, row = args["mod_segments"][0]
-        assert (start, stop) == (0, 3)
-        torch.testing.assert_close(row, torch.tensor([21, 22, 23]))
+        assert (start, stop) == (0, 2)
+        torch.testing.assert_close(row, torch.tensor([22, 23]))
         return {"img": args["img"] + 1}
 
-    def all_gather(outputs: list[Any], value: Any) -> None:
-        outputs[0].fill_(-1)
-        outputs[1].copy_(value)
+    def all_gather(outputs: list[Any], value: Any, **_kwargs: object) -> None:
+        for rank, output in enumerate(outputs):
+            output.fill_(rank)
+        outputs[2].copy_(value)
 
     monkeypatch.setattr(torch.distributed, "all_gather", all_gather)
     patch = multigpu._SequenceBlockPatch(0, 1)  # pyright: ignore[reportPrivateUsage]
@@ -242,6 +243,8 @@ def test_sequence_block_patch_shards_modulation_and_gathers_last_block(
     )["img"]
 
     assert "dinkster_sequence_sharded" not in options
-    assert "dinkster_sequence_valid" not in options
-    torch.testing.assert_close(result[:3], torch.full((3, 2), -1.0))
-    torch.testing.assert_close(result[3:], hidden[3:6] + 1)
+    assert "dinkster_sequence_widths" not in options
+    torch.testing.assert_close(result[:2], torch.zeros((2, 2)))
+    torch.testing.assert_close(result[2:4], torch.ones((2, 2)))
+    torch.testing.assert_close(result[4:6], hidden[4:6] + 1)
+    torch.testing.assert_close(result[6:], torch.full((1, 2), 3.0))

@@ -54,6 +54,7 @@ class _DistributedConfig:
 _attempt_lock = threading.Lock()
 _active_attempt: str | None = None
 _process_group_config: _DistributedConfig | None = None
+_sequence_process_group: Any | None = None
 _attention_call_index = 0
 
 
@@ -165,7 +166,7 @@ def activate_distributed_attention(group: str, attempt: int) -> None:
 
 
 def release_distributed_attention(group: str, attempt: int) -> None:
-    global _active_attempt, _process_group_config
+    global _active_attempt, _process_group_config, _sequence_process_group
     correlation = f"{group}:{attempt}"
     with _attempt_lock:
         if _active_attempt != correlation:
@@ -173,8 +174,11 @@ def release_distributed_attention(group: str, attempt: int) -> None:
         config = _process_group_config
         try:
             if config is not None and torch.distributed.is_initialized():
+                if _sequence_process_group is not None:
+                    torch.distributed.destroy_process_group(_sequence_process_group)
                 torch.distributed.destroy_process_group()
         finally:
+            _sequence_process_group = None
             _process_group_config = None
             _active_attempt = None
     if config is not None and config.rank == 0:
@@ -223,7 +227,7 @@ def _distributed_config() -> _DistributedConfig:
 
 
 def _ensure_process_group() -> _DistributedConfig:
-    global _process_group_config
+    global _process_group_config, _sequence_process_group
     config = _distributed_config()
     with _attempt_lock:
         if _process_group_config is not None:
@@ -243,41 +247,61 @@ def _ensure_process_group() -> _DistributedConfig:
             timeout=timedelta(minutes=5),
             group_name=config.token,
         )
+        if config.mode in ("auto", "sequence"):
+            _sequence_process_group = torch.distributed.new_group(
+                ranks=list(range(config.world_size)), timeout=timedelta(minutes=5)
+            )
         _process_group_config = config
     return config
 
 
-def _fence_call(config: _DistributedConfig, q: Any, heads: int) -> None:
+def _sequence_group(config: _DistributedConfig) -> Any | None:
+    return _sequence_process_group if config.mode in ("auto", "sequence") else None
+
+
+def _fence_call(
+    config: _DistributedConfig, q: Any, heads: int, sequence_widths: tuple[int, ...]
+) -> None:
     global _attention_call_index
     control = torch.tensor(
-        (_attention_call_index, heads, q.ndim, *q.shape),
+        (_attention_call_index, heads, q.shape[0], sum(sequence_widths), q.shape[3]),
         dtype=torch.int64,
         device=q.device,
     )
     peers = [torch.empty_like(control) for _ in range(config.world_size)]
-    torch.distributed.all_gather(peers, control)
+    torch.distributed.all_gather(peers, control, group=_sequence_group(config))
     if any(not torch.equal(peer, control) for peer in peers):
         raise RuntimeError("distributed attention ranks reached different calls")
     _attention_call_index += 1
 
 
-def _head_to_sequence(tensor: Any, config: _DistributedConfig) -> Any:
+def _head_to_sequence(
+    tensor: Any, config: _DistributedConfig, sequence_widths: tuple[int, ...]
+) -> Any:
     local_heads = tensor.shape[1] // config.world_size
     outgoing = [
         tensor[:, rank * local_heads : (rank + 1) * local_heads].contiguous()
         for rank in range(config.world_size)
     ]
-    incoming = [torch.empty_like(outgoing[0]) for _ in range(config.world_size)]
-    torch.distributed.all_to_all(incoming, outgoing)
+    incoming = [
+        tensor.new_empty((tensor.shape[0], local_heads, width, tensor.shape[3]))
+        for width in sequence_widths
+    ]
+    torch.distributed.all_to_all(incoming, outgoing, group=_sequence_group(config))
     return torch.cat(incoming, dim=2)
 
 
-def _sequence_to_head(tensor: Any, config: _DistributedConfig) -> Any:
-    if tensor.shape[2] % config.world_size:
-        raise RuntimeError("attention sequence must divide evenly across single-job ranks")
-    outgoing = [value.contiguous() for value in tensor.chunk(config.world_size, dim=2)]
-    incoming = [torch.empty_like(outgoing[0]) for _ in range(config.world_size)]
-    torch.distributed.all_to_all(incoming, outgoing)
+def _sequence_to_head(
+    tensor: Any, config: _DistributedConfig, sequence_widths: tuple[int, ...]
+) -> Any:
+    outgoing = [value.contiguous() for value in tensor.split(sequence_widths, dim=2)]
+    incoming = [
+        tensor.new_empty(
+            (tensor.shape[0], tensor.shape[1], sequence_widths[config.rank], tensor.shape[3])
+        )
+        for _ in range(config.world_size)
+    ]
+    torch.distributed.all_to_all(incoming, outgoing, group=_sequence_group(config))
     return torch.cat(incoming, dim=1)
 
 
@@ -315,8 +339,6 @@ class _UlyssesAttention:
                 **kwargs,
             )
         config = _ensure_process_group()
-        if config.world_size != 2:
-            raise RuntimeError("Ulysses sequence mode supports exactly two ranks")
         if not skip_reshape or q.ndim != 4:
             raise RuntimeError("Ulysses sequence mode requires separated attention heads")
         if mask is not None:
@@ -325,30 +347,31 @@ class _UlyssesAttention:
             raise RuntimeError("Ulysses sequence mode does not support grouped-query attention")
         if heads % config.world_size:
             raise RuntimeError("attention heads must divide evenly across single-job ranks")
-        valid_sequence = transformer_options.get("dinkster_sequence_valid")
-        if (
-            type(valid_sequence) is not int
-            or not 0 < valid_sequence <= q.shape[2] * config.world_size
+        sequence_widths_value: object = transformer_options.get("dinkster_sequence_widths")
+        if not isinstance(sequence_widths_value, tuple):
+            raise RuntimeError("Ulysses sequence metadata is invalid")
+        untyped_widths = cast("tuple[object, ...]", sequence_widths_value)
+        if len(untyped_widths) != config.world_size or any(
+            type(width) is not int or width <= 0 for width in untyped_widths
         ):
             raise RuntimeError("Ulysses sequence metadata is invalid")
-        _fence_call(config, q, heads)
+        sequence_widths = cast("tuple[int, ...]", untyped_widths)
+        if q.shape[2] != sequence_widths[config.rank]:
+            raise RuntimeError("Ulysses sequence metadata is invalid")
+        _fence_call(config, q, heads, sequence_widths)
         local_heads = heads // config.world_size
         failure: BaseException | None = None
         local_output: Any | None = None
         try:
-            local_q = _head_to_sequence(q, config)
-            local_k = _head_to_sequence(k, config)
-            local_v = _head_to_sequence(v, config)
-            key_mask = None
-            if valid_sequence < local_k.shape[2]:
-                key_mask = torch.arange(local_k.shape[2], device=q.device) < valid_sequence
-                key_mask = key_mask.reshape(1, 1, -1)
+            local_q = _head_to_sequence(q, config, sequence_widths)
+            local_k = _head_to_sequence(k, config, sequence_widths)
+            local_v = _head_to_sequence(v, config, sequence_widths)
             output = self.selected(
                 local_q,
                 local_k,
                 local_v,
                 local_heads,
-                mask=key_mask,
+                mask=None,
                 attn_precision=attn_precision,
                 skip_reshape=True,
                 skip_output_reshape=True,
@@ -360,11 +383,15 @@ class _UlyssesAttention:
                 or output.shape[1] != local_heads
             ):
                 raise RuntimeError("attention provider returned malformed Ulysses output")
-            local_output = _sequence_to_head(output, config)
+            local_output = _sequence_to_head(output, config, sequence_widths)
         except BaseException as exc:
             failure = exc
         failed = torch.tensor(int(failure is not None), dtype=torch.int32, device=q.device)
-        torch.distributed.all_reduce(failed, op=torch.distributed.ReduceOp.MAX)
+        torch.distributed.all_reduce(
+            failed,
+            op=torch.distributed.ReduceOp.MAX,
+            group=_sequence_group(config),
+        )
         if failure is not None:
             raise failure
         if bool(failed.item()):

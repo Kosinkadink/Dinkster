@@ -13,10 +13,10 @@
   the available VRAM budget, or eagerly decode weights while retaining normal
   model offloading.
 - Same-host NVIDIA single-job execution supports guidance-lane splitting,
-  canonical window scattering, and two-rank H3 Ulysses sequence sharding.
-  Four-rank Ulysses is refused. H3 Sol-Attn and SLA sparse attention are routed
-  through the worker-owned fork attention registry and remain incompatible with
-  sequence mode.
+  canonical window scattering, and explicit two- or four-rank H3 Ulysses
+  sequence sharding. Automatic sequence selection remains two-rank. H3 Sol-Attn
+  and SLA sparse attention are routed through the worker-owned fork attention
+  registry and remain incompatible with sequence mode.
 - Unmodified legacy custom packs still require a ComfyUI installation and
   run in the compatibility quarantine.
 - Native 3D operations execute without a ComfyUI checkout: geometry estimation,

@@ -64,11 +64,11 @@ overlap by 50 percent: serial evaluates 96 latent columns and each rank
 evaluates 48, so 2x is the ideal same-plan compute speedup. Removing the
 overlap would define a different plan and output.
 
-Sequence mode supports the two-rank H3 U2R1 layout. Each DiT block retains one
-contiguous sequence shard. Ulysses all-to-all exchanges transform local
-sequence/full-head QKV into full-sequence/local-head attention and invert the
-exchange for the residual and MLP. The final block gathers sequence rows before
-the H3 output heads. Four-rank Ulysses is refused.
+Sequence mode supports explicit two- and four-rank H3 Ulysses layouts. Each DiT
+block retains one contiguous sequence shard. Ulysses all-to-all exchanges
+transform local-sequence/full-head QKV into full-sequence/local-head attention
+and invert the exchange for the residual and MLP. The final block gathers
+sequence rows before the H3 output heads.
 
 ## Mode and admission
 
@@ -79,9 +79,10 @@ Serve exposes:
 --single-job-multi-gpu-mode auto|guidance|sequence|window
 ```
 
-`auto` selects the two-rank sequence path. Guidance and window execution must
-be selected explicitly. Auto, sequence, and guidance modes require exactly two
-ranks. Window accepts two or more ranks.
+`auto` selects the two-rank sequence path. Guidance, sequence, and window
+execution can be selected explicitly. Auto and guidance require exactly two
+ranks. Explicit sequence supports two or four ranks, while window accepts two
+or more ranks.
 
 The startup list is an allowlist and capacity boundary. Native and
 Comfy-compatible job submission may include a run-scoped selection:
@@ -98,7 +99,8 @@ cache identity and rank-local resident-resource mappings.
 
 The selected rank count must be at least two, device indices must be unique and
 nonnegative, and the Ulysses attention head count must divide evenly across its
-two ranks. Sequence rows are padded evenly and cropped after the final gather.
+ranks. Sequence rows use balanced contiguous shards; uneven final rows stay on
+the lower ranks and the final gather restores canonical order.
 Single-job devices and whole-job replica devices are mutually exclusive so one
 serve process cannot create hidden overlapping residency.
 
