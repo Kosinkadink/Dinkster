@@ -985,7 +985,7 @@ def test_minimax_h3_cache_dit_attaches_explicit_policy_and_sampler_lifecycle() -
 
 def test_minimax_h3_cache_dit_sampler_discards_tensor_state_without_eviction() -> None:
     sink: list[object] = []
-    config: dict[str, object] = {"receipt_sink": sink}
+    config: dict[str, object] = {"receipt_sink": sink.append}
     transformer_options = {"dinkster_h3_cache_dit": config}
     extra_args = {"model_options": {"transformer_options": transformer_options}}
 

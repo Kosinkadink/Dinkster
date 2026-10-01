@@ -10,6 +10,17 @@ import pytest
 from tools import minimax_h3_cache_dit_receipt as receipt
 
 
+def test_receipt_sink_survives_model_options_clone() -> None:
+    model_patcher = pytest.importorskip("dinkster_inference.model_patcher")
+    receipts: list[object] = []
+    options = {"transformer_options": {"cache": {"receipt_sink": receipts.append}}}
+
+    cloned = model_patcher.create_model_options_clone(options)
+    cloned["transformer_options"]["cache"]["receipt_sink"]("event")
+
+    assert receipts == ["event"]
+
+
 def test_receipt_matrix_uses_eight_asymmetric_prompt_seed_cases() -> None:
     assert receipt.SHAPES == ((672, 384, 56), (1344, 768, 124))
     assert receipt.STEPS == 20

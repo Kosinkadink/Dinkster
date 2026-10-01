@@ -195,7 +195,7 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any, Any]:
     if args.arm == "cache":
         model = NativeMiniMaxH3CacheDIT.execute(model=model, policy=args.cache_policy)["MODEL"]
         model.model_options["transformer_options"]["dinkster_h3_cache_dit"]["receipt_sink"] = (
-            args.cache_receipts
+            args.cache_receipts.append
         )
     return model, clip, video_vae, audio_vae
 

@@ -778,8 +778,8 @@ def _h3_cache_dit_sampler(executor: object, *args: object, **kwargs: object) -> 
         return cast("Any", executor)(*args, **kwargs)
     finally:
         sink = config.get("receipt_sink")
-        if isinstance(sink, list):
-            cast("list[Any]", sink).append(
+        if callable(sink):
+            sink(
                 {
                     "key": runtime["key_fields"],
                     "hits": runtime["hits"],
