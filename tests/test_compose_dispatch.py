@@ -476,14 +476,34 @@ def test_single_job_pool_selects_requested_lanes_and_resolves_local_ranks(tmp_pa
             (1, 2, "sequence"),
         ]
 
-        for mode in ("auto", "guidance", "sequence"):
+        four_rank = replace(
+            _single_job_invocation(),
+            single_job_multi_gpu=SingleJobMultiGpuConfig((0, 1, 2, 3), "sequence"),
+        )
+        result = await pool.invoke(four_rank)
+        assert result.error is None
+        executions = [worker.calls[-1].single_job_multi_gpu_execution for worker in workers]
+        assert [(item.rank, item.world_size, item.mode) for item in executions if item] == [
+            (0, 4, "sequence"),
+            (1, 4, "sequence"),
+            (2, 4, "sequence"),
+            (3, 4, "sequence"),
+        ]
+
+        for mode in ("auto", "guidance"):
             invalid = replace(
                 _single_job_invocation(),
                 single_job_multi_gpu=SingleJobMultiGpuConfig((0, 1, 2, 3), mode),
             )
             with pytest.raises(RuntimeError, match="requires exactly two"):
                 await pool.invoke(invalid)
-        assert [len(worker.calls) for worker in workers] == [0, 1, 0, 1]
+        three_rank_sequence = replace(
+            _single_job_invocation(),
+            single_job_multi_gpu=SingleJobMultiGpuConfig((0, 1, 2), "sequence"),
+        )
+        with pytest.raises(RuntimeError, match="requires two or four"):
+            await pool.invoke(three_rank_sequence)
+        assert [len(worker.calls) for worker in workers] == [1, 2, 1, 2]
 
     asyncio.run(scenario())
 

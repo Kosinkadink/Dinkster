@@ -315,8 +315,6 @@ class _UlyssesAttention:
                 **kwargs,
             )
         config = _ensure_process_group()
-        if config.world_size != 2:
-            raise RuntimeError("Ulysses sequence mode supports exactly two ranks")
         if not skip_reshape or q.ndim != 4:
             raise RuntimeError("Ulysses sequence mode requires separated attention heads")
         if mask is not None:

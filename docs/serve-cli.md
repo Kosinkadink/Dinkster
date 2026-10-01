@@ -462,10 +462,10 @@ It is mutually exclusive with `--multi-gpu-devices`.
 
 The startup mode is `auto`, `guidance`, `sequence`, or `window` (default
 `auto`). Guidance splits model-evaluated conditioning lanes, sequence selects
-two-rank H3 U2R1, and window scatters a Flux joint-window plan. Sequence and
-guidance require exactly two participating ranks. Window accepts two or more
-ranks; four-rank window execution uses all four when the plan has enough work.
-Four-rank Ulysses is refused.
+H3 Ulysses, and window scatters a Flux joint-window plan. Auto and guidance
+require exactly two participating ranks. Explicit sequence supports two or four
+ranks. Window accepts two or more ranks; four-rank window execution uses all
+four when the plan has enough work.
 
 Every rank is a separate process with one selected GPU and its own model
 residency. Rank 0 owns progress and the final result. A rank failure or

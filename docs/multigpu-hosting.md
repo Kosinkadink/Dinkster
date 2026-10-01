@@ -113,7 +113,7 @@ acceptance.
 ## Performance measurements
 
 Correctness does not imply speedup. Guidance divides model-evaluated
-conditioning lanes, H3 U2R1 divides sequence rows and attention heads, and
+conditioning lanes, H3 Ulysses divides sequence rows and attention heads, and
 window mode divides a joint-window plan. Verify that the selected decomposition
 ran; process count alone is not evidence that work was sharded.
 

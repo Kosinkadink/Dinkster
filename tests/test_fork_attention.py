@@ -115,6 +115,68 @@ def test_ulysses_attention_exchanges_local_sequences_and_heads(
     assert exchanges == 4
 
 
+def test_ulysses_attention_preserves_four_rank_head_and_sequence_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = attention._DistributedConfig(2, 4, "sequence", "file:///unused", "token")  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(attention, "_ensure_process_group", lambda: config)
+    peers = [
+        torch.arange(1 * 8 * 2 * 2, dtype=torch.float32).reshape(1, 8, 2, 2) + rank * 1000
+        for rank in range(4)
+    ]
+    q = peers[2]
+    k = q + 100
+    v = q + 200
+    calls: list[tuple[Any, Any, Any, int]] = []
+
+    def selected(local_q: Any, local_k: Any, local_v: Any, heads: int, **_kwargs: object) -> Any:
+        calls.append((local_q, local_k, local_v, heads))
+        return local_v
+
+    def all_gather(outputs: list[Any], value: Any) -> None:
+        if value.dtype == torch.int64:
+            for output in outputs:
+                output.copy_(value)
+
+    exchanges = 0
+
+    def all_to_all(outputs: list[Any], inputs: list[Any]) -> None:
+        nonlocal exchanges
+        if exchanges < 3:
+            offset = exchanges * 100
+            for source, output in enumerate(outputs):
+                output.copy_(peers[source][:, 4:6] + offset)
+        else:
+            for source, output in enumerate(outputs):
+                output.copy_(v[:, source * 2 : (source + 1) * 2])
+        exchanges += 1
+
+    monkeypatch.setattr(torch.distributed, "all_gather", all_gather)
+    monkeypatch.setattr(torch.distributed, "all_to_all", all_to_all)
+    monkeypatch.setattr(torch.distributed, "all_reduce", lambda _value, **_kwargs: None)
+
+    output = attention._UlyssesAttention(selected)(  # pyright: ignore[reportPrivateUsage]
+        q,
+        k,
+        v,
+        8,
+        skip_reshape=True,
+        skip_output_reshape=True,
+        transformer_options={
+            "dinkster_sequence_sharded": True,
+            "dinkster_sequence_valid": 7,
+        },
+    )
+
+    torch.testing.assert_close(output, v)
+    local_q, local_k, local_v, local_heads = calls[0]
+    assert local_heads == 2
+    torch.testing.assert_close(local_q, torch.cat([peer[:, 4:6] for peer in peers], dim=2))
+    torch.testing.assert_close(local_k, local_q + 100)
+    torch.testing.assert_close(local_v, local_q + 200)
+    assert exchanges == 4
+
+
 def test_sparse_attention_routes_h3_blocks_with_declared_conditioning_sinks() -> None:
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     output = torch.zeros((257, 32))

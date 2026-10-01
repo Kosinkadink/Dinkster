@@ -206,8 +206,6 @@ class _SequenceBlockPatch:
 
     def __call__(self, args: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
         config = attention._ensure_process_group()  # pyright: ignore[reportPrivateUsage]
-        if config.world_size != 2:
-            raise RuntimeError("Ulysses sequence mode supports exactly two ranks")
         sequence = int(args["rope_freqs"].shape[1])
         width = (sequence + config.world_size - 1) // config.world_size
         padded_sequence = width * config.world_size
@@ -267,8 +265,6 @@ def configure_distributed_model(model: Any) -> None:
             _window_wrapper,
         )
         return
-    if config.world_size != 2:
-        raise RuntimeError("Ulysses sequence mode supports exactly two ranks")
     diffusion_model = model.model.diffusion_model
     blocks = diffusion_model.blocks
     if not isinstance(blocks, torch.nn.ModuleList) or not blocks:
