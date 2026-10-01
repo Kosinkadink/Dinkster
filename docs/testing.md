@@ -63,14 +63,16 @@ path-based unit subset:
 - `tests/test_release_install.py`: release wheel and install surface checks.
 - `tests/test_schema.py`: schema construction and type validation.
 - `tests/test_schema_current_contracts.py`: generated current schema contracts.
+- `tests/test_validation_inputs.py`: local and hosted validation-input layout contracts.
 - `tests/test_values.py`: codecs, fingerprints, inline values and renditions.
 - `tests/test_graph.py`: graph validation and execution planning.
 - `tests/test_graph_wire.py`: wire round trips and malformed-input rejection.
 
-These tests use synthetic in-process data. Selection does not depend on the
-changed files, network access, model availability or hardware. Full suites
-remain required locally before landing; this subset is fast PR feedback,
-not a replacement for full validation. Reproduce the job after
+These tests use synthetic data. The validation-input contract checks the prepared
+evidence location without reading model data. Selection does not depend on the
+changed files, network access, model availability or hardware. Full suites remain
+required locally before landing; this subset is fast PR feedback, not a
+replacement for full validation. Reproduce the job after
 `uv sync --locked --all-packages` with `bash scripts/ci-fast.sh`.
 
 The required `CI_RUNNERS` repository variable controls every job. Its
