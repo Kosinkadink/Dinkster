@@ -7,9 +7,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
-torch = pytest.importorskip("torch")
-
-from tools import minimax_h3_cache_dit_receipt as receipt  # noqa: E402
+from tools import minimax_h3_cache_dit_receipt as receipt
 
 
 def test_receipt_matrix_uses_eight_asymmetric_prompt_seed_cases() -> None:
@@ -23,6 +21,7 @@ def test_receipt_matrix_uses_eight_asymmetric_prompt_seed_cases() -> None:
 
 
 def test_tensor_metrics_report_cosine_and_relative_rmse_independently() -> None:
+    torch = pytest.importorskip("torch")
     reference = torch.tensor([3.0, 4.0])
     candidate = torch.tensor([0.0, 4.0])
 
@@ -163,6 +162,7 @@ def test_side_by_side_video_round_trips_all_frames(tmp_path: Path) -> None:
 
 
 def test_deliberate_invalidation_changes_conditioning_key() -> None:
+    pytest.importorskip("torch")
     result = receipt._deliberate_invalidation()  # pyright: ignore[reportPrivateUsage]
 
     assert result["status"] == "PASS"
