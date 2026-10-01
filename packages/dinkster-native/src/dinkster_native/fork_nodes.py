@@ -764,7 +764,7 @@ def _h3_cache_dit_sampler(executor: object, *args: object, **kwargs: object) -> 
     model_options = cast("Mapping[str, Any]", extra_args["model_options"])
     transformer_options = cast("dict[str, Any]", model_options["transformer_options"])
     config = cast("dict[str, Any]", transformer_options["dinkster_h3_cache_dit"])
-    runtime = {
+    runtime: dict[str, Any] = {
         "key": None,
         "key_fields": None,
         "state": None,
@@ -779,7 +779,7 @@ def _h3_cache_dit_sampler(executor: object, *args: object, **kwargs: object) -> 
     finally:
         sink = config.get("receipt_sink")
         if isinstance(sink, list):
-            sink.append(
+            cast("list[Any]", sink).append(
                 {
                     "key": runtime["key_fields"],
                     "hits": runtime["hits"],

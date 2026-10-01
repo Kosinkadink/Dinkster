@@ -107,6 +107,7 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
     manifest = load_manifest(Path("packages/dinkster-compat-comfy/dinkster-pack.toml"))
 
     fork_backed = (
+        "dinkster.minimax_h3_cache_dit",
         "dinkster.load_checkpoint",
         "dinkster.load_model_patch",
         "dinkster.apply_minimax_h3_fun_controlnet",
@@ -159,7 +160,7 @@ def test_compat_manifest_claims_only_retained_generation_schemas() -> None:
         "dinkster.explicit_window_plan",
         "dinkster.res4lyf_rk_beta_sampler",
     }
-    legacy_native = set(fork_backed) | legacy_extra
+    legacy_native = set(fork_backed) - {"dinkster.minimax_h3_cache_dit"} | legacy_extra
     assert set(legacy.executes) == legacy_native | set(mesh)
     assert set(dict(legacy.arms)["native"]) == legacy_native
     assert legacy.arm_nodes_entry == "dinkster_compat_comfy.legacy_entry:ARM_NODES"
