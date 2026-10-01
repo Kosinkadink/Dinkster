@@ -56,14 +56,20 @@ class _CollectiveTimer:
             return 0
         return int(cast("Any", numel)() * cast("Any", element_size)())
 
-    def _peer_bytes(self, name: str, inputs: tuple[object, ...]) -> tuple[int, int]:
+    def _peer_bytes(
+        self, name: str, inputs: tuple[object, ...], kwargs: dict[str, object]
+    ) -> tuple[int, int]:
         index = 1 if name in ("all_gather", "all_to_all") else 0
-        payload = self._tensor_bytes(inputs[index]) if len(inputs) > index else 0
-        world_size = int(self.torch.distributed.get_world_size())
+        value = inputs[index] if len(inputs) > index else None
+        payload = self._tensor_bytes(value)
+        group = kwargs.get("group")
+        world_size = int(self.torch.distributed.get_world_size(group))
         if name == "all_gather":
             peer_bytes = payload * (world_size - 1)
         elif name == "all_to_all":
-            peer_bytes = payload * (world_size - 1) // world_size
+            rank = int(self.torch.distributed.get_rank(group))
+            local_bytes = self._tensor_bytes(value[rank]) if isinstance(value, list) else 0
+            peer_bytes = payload - local_bytes
         else:
             peer_bytes = payload * 2 * (world_size - 1) // world_size
         return payload, peer_bytes
@@ -83,7 +89,7 @@ class _CollectiveTimer:
                 started.record()
                 result = _operation(*args, **kwargs)
                 finished.record()
-                payload_bytes, peer_bytes = self._peer_bytes(_name, args)
+                payload_bytes, peer_bytes = self._peer_bytes(_name, args, kwargs)
                 self.events.append((_name, started, finished, payload_bytes, peer_bytes))
                 return result
 
@@ -831,7 +837,8 @@ def _require_identical_matrix_hashes(segments: Sequence[dict[str, Any]]) -> None
                     expected_location = location
                 elif encoded != expected:
                     raise ReceiptError(
-                        f"output hashes differ: {location} does not match {expected_location}"
+                        f"output hashes differ: {location} does not match {expected_location}; "
+                        f"expected {expected}, got {encoded}"
                     )
 
 

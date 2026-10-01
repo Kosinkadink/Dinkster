@@ -99,7 +99,8 @@ cache identity and rank-local resident-resource mappings.
 
 The selected rank count must be at least two, device indices must be unique and
 nonnegative, and the Ulysses attention head count must divide evenly across its
-ranks. Sequence rows are padded evenly and cropped after the final gather.
+ranks. Sequence rows use balanced contiguous shards; uneven final rows stay on
+the lower ranks and the final gather restores canonical order.
 Single-job devices and whole-job replica devices are mutually exclusive so one
 serve process cannot create hidden overlapping residency.
 

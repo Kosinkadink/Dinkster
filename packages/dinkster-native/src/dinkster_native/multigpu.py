@@ -207,48 +207,38 @@ class _SequenceBlockPatch:
     def __call__(self, args: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
         config = attention._ensure_process_group()  # pyright: ignore[reportPrivateUsage]
         sequence = int(args["rope_freqs"].shape[1])
-        width = (sequence + config.world_size - 1) // config.world_size
-        padded_sequence = width * config.world_size
-        start = config.rank * width
+        base_width, wider_ranks = divmod(sequence, config.world_size)
+        sequence_widths = tuple(
+            base_width + int(rank < wider_ranks) for rank in range(config.world_size)
+        )
+        width = sequence_widths[config.rank]
+        start = sum(sequence_widths[: config.rank])
         stop = start + width
         local_args = dict(args)
         if self.index == 0:
-            hidden = args["img"]
-            if padded_sequence != sequence:
-                hidden = torch.cat(
-                    (hidden, hidden.new_zeros((padded_sequence - sequence, hidden.shape[1]))),
-                    dim=0,
-                )
-            local_args["img"] = hidden[start:stop]
+            local_args["img"] = args["img"][start:stop]
         elif int(args["img"].shape[0]) != width:
             raise RuntimeError("H3 sequence shard changed width between DiT blocks")
-        rope = args["rope_freqs"]
-        if padded_sequence != sequence:
-            rope = torch.cat(
-                (
-                    rope,
-                    rope.new_zeros((rope.shape[0], padded_sequence - sequence, *rope.shape[2:])),
-                ),
-                dim=1,
-            )
-        local_args["rope_freqs"] = rope[:, start:stop]
+        local_args["rope_freqs"] = args["rope_freqs"][:, start:stop]
         local_args["mod_segments"] = _local_modulation_segments(args["mod_segments"], start, stop)
         transformer_options = args["transformer_options"]
         transformer_options["dinkster_sequence_sharded"] = True
-        transformer_options["dinkster_sequence_valid"] = sequence
+        transformer_options["dinkster_sequence_widths"] = sequence_widths
         try:
             output = extra["original_block"](local_args)["img"]
         finally:
             transformer_options.pop("dinkster_sequence_sharded", None)
-            transformer_options.pop("dinkster_sequence_valid", None)
+            transformer_options.pop("dinkster_sequence_widths", None)
         if self.index + 1 == self.count:
-            gathered = [torch.empty_like(output) for _ in range(config.world_size)]
+            gathered = [
+                output.new_empty((rank_width, output.shape[1])) for rank_width in sequence_widths
+            ]
             torch.distributed.all_gather(
                 gathered,
                 output.contiguous(),
                 group=attention._sequence_group(config),  # pyright: ignore[reportPrivateUsage]
             )
-            output = torch.cat(gathered, dim=0)[:sequence]
+            output = torch.cat(gathered, dim=0)
         return {"img": output}
 
 

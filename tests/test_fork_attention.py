@@ -104,7 +104,7 @@ def test_ulysses_attention_exchanges_local_sequences_and_heads(
         skip_output_reshape=skip_output_reshape,
         transformer_options={
             "dinkster_sequence_sharded": True,
-            "dinkster_sequence_valid": 5,
+            "dinkster_sequence_widths": (3, 3),
         },
     )
 
@@ -115,7 +115,7 @@ def test_ulysses_attention_exchanges_local_sequences_and_heads(
     torch.testing.assert_close(actual_q, torch.cat((peer_q[:, 2:4], q[:, 2:4]), dim=2))
     torch.testing.assert_close(actual_k, torch.cat((peer_q[:, 2:4] + 100, k[:, 2:4]), dim=2))
     torch.testing.assert_close(actual_v, torch.cat((peer_q[:, 2:4] + 200, v[:, 2:4]), dim=2))
-    assert torch.equal(masks[0], torch.tensor([[[True, True, True, True, True, False]]]))
+    assert masks == [None]
     assert exchanges == 4
 
 
@@ -124,9 +124,10 @@ def test_ulysses_attention_preserves_four_rank_head_and_sequence_order(
 ) -> None:
     config = attention._DistributedConfig(2, 4, "sequence", "file:///unused", "token")  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(attention, "_ensure_process_group", lambda: config)
+    sequence_widths = (3, 2, 2, 2)
     peers = [
-        torch.arange(1 * 8 * 2 * 2, dtype=torch.float32).reshape(1, 8, 2, 2) + rank * 1000
-        for rank in range(4)
+        torch.arange(1 * 8 * width * 2, dtype=torch.float32).reshape(1, 8, width, 2) + rank * 1000
+        for rank, width in enumerate(sequence_widths)
     ]
     q = peers[2]
     k = q + 100
@@ -137,8 +138,11 @@ def test_ulysses_attention_preserves_four_rank_head_and_sequence_order(
         calls.append((local_q, local_k, local_v, heads))
         return local_v
 
+    controls: list[Any] = []
+
     def all_gather(outputs: list[Any], value: Any, **_kwargs: object) -> None:
         if value.dtype == torch.int64:
+            controls.append(value.clone())
             for output in outputs:
                 output.copy_(value)
 
@@ -168,7 +172,7 @@ def test_ulysses_attention_preserves_four_rank_head_and_sequence_order(
         skip_output_reshape=True,
         transformer_options={
             "dinkster_sequence_sharded": True,
-            "dinkster_sequence_valid": 7,
+            "dinkster_sequence_widths": sequence_widths,
         },
     )
 
@@ -178,6 +182,7 @@ def test_ulysses_attention_preserves_four_rank_head_and_sequence_order(
     torch.testing.assert_close(local_q, torch.cat([peer[:, 4:6] for peer in peers], dim=2))
     torch.testing.assert_close(local_k, local_q + 100)
     torch.testing.assert_close(local_v, local_q + 200)
+    torch.testing.assert_close(controls[0][1:], torch.tensor([8, 1, 9, 2]))
     assert exchanges == 4
 
 

@@ -29,8 +29,12 @@ def test_collective_timer_records_and_resets_cuda_event_durations() -> None:
 
     class Distributed:
         @staticmethod
-        def get_world_size() -> int:
+        def get_world_size(_group: object = None) -> int:
             return 4
+
+        @staticmethod
+        def get_rank(_group: object = None) -> int:
+            return 0
 
         @staticmethod
         def all_gather(*args: object, **kwargs: object) -> str:
@@ -62,9 +66,11 @@ def test_collective_timer_records_and_resets_cuda_event_durations() -> None:
     timer.install()
 
     class Tensor:
-        @staticmethod
-        def numel() -> int:
-            return 8
+        def __init__(self, elements: int = 8) -> None:
+            self.elements = elements
+
+        def numel(self) -> int:
+            return self.elements
 
         @staticmethod
         def element_size() -> int:
@@ -74,7 +80,10 @@ def test_collective_timer_records_and_resets_cuda_event_durations() -> None:
 
     assert fake_torch.distributed.all_gather("peer", tensor) == "gathered"
     assert fake_torch.distributed.all_reduce(tensor, op="max") == "reduced"
-    assert fake_torch.distributed.all_to_all("out", [tensor] * 4) == "exchanged"
+    assert (
+        fake_torch.distributed.all_to_all("out", [tensor, Tensor(4), Tensor(2), Tensor(1)])
+        == "exchanged"
+    )
     assert [call[0] for call in calls] == ["all_gather", "all_reduce", "all_to_all"]
     assert timer.elapsed_seconds() == pytest.approx(0.375)
     assert timer.evidence() == {
@@ -93,8 +102,8 @@ def test_collective_timer_records_and_resets_cuda_event_durations() -> None:
         "all_to_all": {
             "calls": 1,
             "seconds": 0.125,
-            "input_payload_bytes": 64,
-            "logical_peer_bytes": 48,
+            "input_payload_bytes": 30,
+            "logical_peer_bytes": 14,
         },
     }
 

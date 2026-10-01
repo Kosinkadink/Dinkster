@@ -215,7 +215,7 @@ def test_sequence_block_patch_shards_modulation_and_gathers_last_block(
 
     def original(args: dict[str, Any]) -> dict[str, Any]:
         assert options["dinkster_sequence_sharded"] is True
-        assert options["dinkster_sequence_valid"] == 7
+        assert options["dinkster_sequence_widths"] == (2, 2, 2, 1)
         torch.testing.assert_close(args["img"], hidden[4:6])
         torch.testing.assert_close(args["rope_freqs"], rope[:, 4:6])
         assert len(args["mod_segments"]) == 1
@@ -243,7 +243,7 @@ def test_sequence_block_patch_shards_modulation_and_gathers_last_block(
     )["img"]
 
     assert "dinkster_sequence_sharded" not in options
-    assert "dinkster_sequence_valid" not in options
+    assert "dinkster_sequence_widths" not in options
     torch.testing.assert_close(result[:2], torch.zeros((2, 2)))
     torch.testing.assert_close(result[2:4], torch.ones((2, 2)))
     torch.testing.assert_close(result[4:6], hidden[4:6] + 1)
