@@ -36,10 +36,7 @@ runs:
         persist-credentials: false
     - shell: bash
       run: |
-        # Materialize core-owned code even on hosts without Git symlink support.
-        rm .evidence-source/scripts/comfyui_benchmark_nodes
-        cp -R scripts/comfyui_benchmark_nodes .evidence-source/scripts/
-        cp tools/workflow_benchmark*.py .evidence-source/tools/
+        python scripts/prepare_validation_inputs.py --evidence-root .evidence-source
         echo "DINKSTER_EVIDENCE_ROOT=$GITHUB_WORKSPACE/.evidence-source" >> "$GITHUB_ENV"
         echo "DINKSTER_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
     - if: inputs.coverage == 'true'
