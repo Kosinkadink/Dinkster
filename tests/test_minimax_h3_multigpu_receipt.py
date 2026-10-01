@@ -67,6 +67,34 @@ def test_collective_timer_records_and_resets_cuda_event_durations() -> None:
     assert timer.elapsed_seconds() == 0.0
 
 
+def test_attention_timer_records_selected_backend_calls() -> None:
+    class Event:
+        def record(self) -> None:
+            pass
+
+        def elapsed_time(self, _other: object) -> float:
+            return 25.0
+
+    fake_torch = cast(
+        "Any",
+        type(
+            "FakeTorch",
+            (),
+            {"cuda": type("Cuda", (), {"Event": staticmethod(lambda **_kwargs: Event())})()},
+        )(),
+    )
+    timer = receipt._AttentionTimer(  # pyright: ignore[reportPrivateUsage]
+        fake_torch, lambda value: value + 1
+    )
+
+    assert timer(4) == 5
+    assert timer.evidence() == {"calls": 1, "seconds": 0.025}
+    assert timer.total_calls == 1
+    timer.reset()
+    assert timer.evidence() == {"calls": 0, "seconds": 0.0}
+    assert timer.total_calls == 1
+
+
 def test_performance_reports_compute_and_collective_shares_from_slowest_rank() -> None:
     reference = {"timing": {"median_sample_seconds": 12.0}}
     candidate = [
@@ -181,6 +209,121 @@ def test_mint_arguments_initialize_worker_only_tensor_output() -> None:
     )
 
     assert args.tensor_output is None
+
+
+def test_dense_receipt_requires_fa4_policy_and_both_decoders(tmp_path: Path) -> None:
+    model = tmp_path / "model.safetensors"
+    model.write_bytes(b"model")
+    dinkster = tmp_path / "dinkster"
+    fork = tmp_path / "fork"
+    dinkster.mkdir()
+    fork.mkdir()
+    base = [
+        "mint",
+        "--model",
+        str(model),
+        "--mode",
+        "dense",
+        "--dinkster-root",
+        str(dinkster),
+        "--fork-root",
+        str(fork),
+        "--model-source-url",
+        "https://models.example/model.safetensors",
+        "--model-source-revision",
+        "revision-test",
+        "--gpu",
+        "GPU-test",
+        "--output",
+        str(tmp_path / "receipt.json"),
+    ]
+
+    wrong_policy = receipt._parser().parse_args(  # pyright: ignore[reportPrivateUsage]
+        [*base, "--policy", "sdpa"]
+    )
+    with pytest.raises(receipt.ReceiptError, match="requires flash4_sm120_dense"):
+        receipt.run_mint(wrong_policy)
+
+    missing_decoders = receipt._parser().parse_args(  # pyright: ignore[reportPrivateUsage]
+        [*base, "--policy", "flash4_sm120_dense"]
+    )
+    with pytest.raises(receipt.ReceiptError, match="requires video and audio VAEs"):
+        receipt.run_mint(missing_decoders)
+
+
+def test_dense_mint_routes_sdpa_and_fa4_and_rejects_hash_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = tmp_path / "model.safetensors"
+    video_vae = tmp_path / "video-vae.safetensors"
+    audio_vae = tmp_path / "audio-vae.safetensors"
+    for path in (model, video_vae, audio_vae):
+        path.write_bytes(b"artifact")
+    dinkster = tmp_path / "dinkster"
+    fork = tmp_path / "fork"
+    dinkster.mkdir()
+    fork.mkdir()
+    policies: list[str] = []
+
+    def run_serial(
+        args: argparse.Namespace,
+        _scratch: Path,
+        *,
+        sparse_enabled: bool = False,
+        policy: str | None = None,
+        name: str | None = None,
+    ) -> dict[str, object]:
+        del sparse_enabled, name
+        selected = policy or args.policy
+        policies.append(selected)
+        output_hashes = {"latents": {"video": "same"}, "decoded": {"video": "same"}}
+        if selected == "flash4_sm120_dense":
+            output_hashes["decoded"]["video"] = "different"
+        return {"output_hashes": output_hashes}
+
+    monkeypatch.setattr(
+        receipt, "_git", lambda _root, *arguments: "" if arguments[0] == "status" else "head"
+    )
+    monkeypatch.setattr(receipt, "_run_serial", run_serial)
+    monkeypatch.setattr(
+        receipt,
+        "_model_artifact",
+        lambda *_args: {
+            "sha256": "model-sha256",
+            "provider": "bf16-linear",
+            "logical_weight_bytes": 8,
+            "tensor_dtype_counts": {"BF16": 1},
+            "quantized_linear_weights": 0,
+            "quantization_format": None,
+            "convrot_group_sizes": [],
+        },
+    )
+    args = argparse.Namespace(
+        dinkster_root=dinkster,
+        fork_root=fork,
+        model=model,
+        video_vae=video_vae,
+        audio_vae=audio_vae,
+        mode="dense",
+        policy="flash4_sm120_dense",
+        width=64,
+        height=64,
+        frames=5,
+        steps=1,
+        seed=1,
+        warmups=1,
+        repeats=3,
+        gpu=["GPU-test"],
+        output=tmp_path / "receipt.json",
+        candidate_first=False,
+        model_source_url="https://models.example/model.safetensors",
+        model_source_revision="revision-test",
+    )
+
+    with pytest.raises(receipt.ReceiptError, match="output hashes differ"):
+        receipt.run_mint(args)
+
+    assert policies == ["sdpa", "flash4_sm120_dense"]
 
 
 def test_sparse_quality_oracle_reports_dense_relative_error_by_role(tmp_path) -> None:

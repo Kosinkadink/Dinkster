@@ -31,8 +31,8 @@ BASELINES = {
 INT8_WEIGHT_BASELINES = {
     ("X570", "sequence", "sdpa", "production"): 1.327,
 }
-POLICIES = ("sdpa", "dinkster_kitchen_int8")
-MODES = ("guidance", "sequence", "sparse")
+POLICIES = ("sdpa", "flash4_sm120_dense", "dinkster_kitchen_int8")
+MODES = ("dense", "guidance", "sequence", "sparse")
 ATTEMPT_GROUP = "minimax-h3-multigpu-receipt"
 ATTEMPT = 1
 
@@ -66,6 +66,33 @@ class _CollectiveTimer:
 
     def elapsed_seconds(self) -> float:
         return sum(start.elapsed_time(end) for start, end in self.events) / 1000.0
+
+
+class _AttentionTimer:
+    def __init__(self, torch: Any, function: Any) -> None:
+        self.torch = torch
+        self.function = function
+        self.events: list[tuple[Any, Any]] = []
+        self.total_calls = 0
+
+    def __call__(self, *args: object, **kwargs: object) -> object:
+        started = self.torch.cuda.Event(enable_timing=True)
+        finished = self.torch.cuda.Event(enable_timing=True)
+        started.record()
+        result = self.function(*args, **kwargs)
+        finished.record()
+        self.events.append((started, finished))
+        self.total_calls += 1
+        return result
+
+    def reset(self) -> None:
+        self.events.clear()
+
+    def evidence(self) -> dict[str, float | int]:
+        return {
+            "calls": len(self.events),
+            "seconds": sum(start.elapsed_time(end) for start, end in self.events) / 1000.0,
+        }
 
 
 class _Resolver:
@@ -211,8 +238,12 @@ def _inventory() -> dict[str, Any]:
                 }
             )
     distributions = {}
-    for name in ("comfy-kitchen", "dinkster-inference"):
-        distributions[name] = importlib.metadata.version(name)
+    for name in ("comfy-kitchen", "dinkster-inference", "flash-attn-4"):
+        try:
+            distributions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            if name != "flash-attn-4":
+                raise
     return {
         "executable": sys.executable,
         "packs": packs,
@@ -230,12 +261,21 @@ def _run_sample(
     seed: int,
     tensor_output: Path | None = None,
     collective_timer: _CollectiveTimer | None = None,
-) -> tuple[dict[str, str], float, float, dict[str, float]]:
-    from dinkster_native.fork_nodes import GenerationKSampler
+    attention_timer: _AttentionTimer | None = None,
+    video_vae: Any = None,
+    audio_vae: Any = None,
+) -> tuple[dict[str, Any], float, float, dict[str, float | int]]:
+    from dinkster_native.fork_nodes import (
+        GenerationKSampler,
+        GenerationVAEDecode,
+        NativeVAEDecodeAudio,
+    )
 
     torch = cast("Any", importlib.import_module("torch"))
     if collective_timer is not None:
         collective_timer.reset()
+    if attention_timer is not None:
+        attention_timer.reset()
     torch.cuda.synchronize()
     started = time.perf_counter()
     sampled = cast(
@@ -255,25 +295,50 @@ def _run_sample(
     )
     torch.cuda.synchronize()
     samples = sampled["samples"]
-    hashes = _latent_hashes(samples)
     sample_seconds = time.perf_counter() - started
+    hashes: dict[str, Any] = {"latents": _latent_hashes(samples)}
+    decode_seconds = 0.0
+    if video_vae is not None and audio_vae is not None:
+        decode_started = time.perf_counter()
+        video = GenerationVAEDecode.execute(samples=sampled, vae=video_vae)["image"]
+        audio = cast(
+            "dict[str, Any]",
+            NativeVAEDecodeAudio.execute(samples=sampled, vae=audio_vae)["audio"],
+        )["waveform"]
+        torch.cuda.synchronize()
+        decode_seconds = time.perf_counter() - decode_started
+        hashes["decoded"] = {"video": _tensor_sha256(video), "audio": _tensor_sha256(audio)}
+    elif video_vae is not None or audio_vae is not None:
+        raise ReceiptError("dense receipt decoding requires both video and audio VAEs")
     communication_sync_seconds = (
         collective_timer.elapsed_seconds() if collective_timer is not None else 0.0
     )
     compute_seconds = sample_seconds - communication_sync_seconds
     timing_breakdown = {
+        "whole_job_seconds": sample_seconds + decode_seconds,
+        "sample_seconds": sample_seconds,
+        "decode_seconds": decode_seconds,
         "compute_seconds": compute_seconds,
         "communication_sync_seconds": communication_sync_seconds,
         "compute_share": compute_seconds / sample_seconds,
         "communication_sync_share": communication_sync_seconds / sample_seconds,
     }
+    if attention_timer is not None:
+        timing_breakdown.update(
+            {f"attention_{name}": value for name, value in attention_timer.evidence().items()}
+        )
     evidence_started = time.perf_counter()
     if tensor_output is not None:
         torch.save(
             {role: samples.by_role(role).detach().cpu() for role in samples.roles},
             tensor_output,
         )
-    return hashes, sample_seconds, time.perf_counter() - evidence_started, timing_breakdown
+    return (
+        hashes,
+        sample_seconds + decode_seconds,
+        time.perf_counter() - evidence_started,
+        timing_breakdown,
+    )
 
 
 def run_worker(args: argparse.Namespace) -> int:
@@ -288,6 +353,7 @@ def run_worker(args: argparse.Namespace) -> int:
         GenerationLoadDiffusionModel,
         NativeBlockSparseAttention,
         NativeEmptyMiniMaxH3AV,
+        NativeLoadVae,
     )
     from dinkster_workers import ExecutionContext, use_execution_context
 
@@ -295,6 +361,10 @@ def run_worker(args: argparse.Namespace) -> int:
         raise ReceiptError("MiniMax H3 receipt worker requires CUDA")
     setup_started = time.perf_counter()
     runtime, token = _route(args.policy)
+    attention_timer = None
+    if args.policy == "flash4_sm120_dense":
+        attention_timer = _AttentionTimer(torch, runtime.registry["flash4_sm120_dense"])
+        runtime.registry["flash4_sm120_dense"] = attention_timer
     sparse_backend_calls = 0
     if args.sparse_enabled:
         sparse_backend = runtime.registry["comfy_kitchen_sol_chunked"]
@@ -313,6 +383,16 @@ def run_worker(args: argparse.Namespace) -> int:
         )["model"],
     )
     model_load_seconds = time.perf_counter() - load_started
+    video_vae = (
+        NativeLoadVae.execute(vae=_asset(args.video_vae, args.video_vae_digest))["vae"]
+        if args.video_vae is not None
+        else None
+    )
+    audio_vae = (
+        NativeLoadVae.execute(vae=_asset(args.audio_vae, args.audio_vae_digest))["vae"]
+        if args.audio_vae is not None
+        else None
+    )
     model_size = int(model.model_size())
     loading_route = {
         "loader": "dinkster_native.fork_nodes.GenerationLoadDiffusionModel",
@@ -373,6 +453,9 @@ def run_worker(args: argparse.Namespace) -> int:
                 args.seed,
                 args.tensor_output,
                 collective_timer,
+                attention_timer,
+                video_vae,
+                audio_vae,
             )
             cold_workflow_seconds = time.perf_counter() - worker_started - evidence_write_seconds
             warmup_runs = [
@@ -385,6 +468,9 @@ def run_worker(args: argparse.Namespace) -> int:
                     args.steps,
                     args.seed,
                     collective_timer=collective_timer,
+                    attention_timer=attention_timer,
+                    video_vae=video_vae,
+                    audio_vae=audio_vae,
                 )
                 for _ in range(args.warmups)
             ]
@@ -398,18 +484,25 @@ def run_worker(args: argparse.Namespace) -> int:
                     args.steps,
                     args.seed,
                     collective_timer=collective_timer,
+                    attention_timer=attention_timer,
+                    video_vae=video_vae,
+                    audio_vae=audio_vae,
                 )
                 for _ in range(args.repeats)
             ]
     finally:
         if distributed:
             release_distributed_attention(ATTEMPT_GROUP, ATTEMPT)
-    warmup_seconds = [run[1] for run in warmup_runs]
-    sample_seconds = [run[1] for run in measured_runs]
+    warmup_seconds = [float(run[3]["sample_seconds"]) for run in warmup_runs]
+    sample_seconds = [float(run[3]["sample_seconds"]) for run in measured_runs]
+    whole_job_seconds = [run[1] for run in measured_runs]
     measured_breakdowns = [run[3] for run in measured_runs]
     median_sample_seconds = statistics.median(sample_seconds)
+    median_whole_job_seconds = statistics.median(whole_job_seconds)
     if args.sparse_enabled and sparse_backend_calls == 0:
         raise ReceiptError("sparse candidate never executed its registry backend")
+    if attention_timer is not None and attention_timer.total_calls == 0:
+        raise ReceiptError("dense SM120 candidate never executed its FA4 registry backend")
     properties = torch.cuda.get_device_properties(0)
     resources = cast("Any", importlib.import_module("resource"))
     loaded_size = int(model.loaded_size())
@@ -430,10 +523,13 @@ def run_worker(args: argparse.Namespace) -> int:
             "setup_seconds": setup_seconds,
             "model_load_seconds": model_load_seconds,
             "cold_workflow_seconds": cold_workflow_seconds,
-            "cold_sample_seconds": cold_seconds,
+            "cold_whole_job_seconds": cold_seconds,
+            "cold_sample_seconds": cold_timing_breakdown["sample_seconds"],
+            "cold_decode_seconds": cold_timing_breakdown["decode_seconds"],
             "excluded_evidence_write_seconds": evidence_write_seconds,
             "warmup_sample_seconds": warmup_seconds,
             "sample_seconds": sample_seconds,
+            "whole_job_seconds": whole_job_seconds,
             "cold_compute_communication": cold_timing_breakdown,
             "warmup_compute_communication": [run[3] for run in warmup_runs],
             "measured_compute_communication": measured_breakdowns,
@@ -449,9 +545,23 @@ def run_worker(args: argparse.Namespace) -> int:
             "median_communication_sync_share": statistics.median(
                 run["communication_sync_share"] for run in measured_breakdowns
             ),
-            "median_warm_workflow_seconds": median_sample_seconds,
+            "median_attention_kernel_seconds": (
+                statistics.median(float(run["attention_seconds"]) for run in measured_breakdowns)
+                if attention_timer is not None
+                else 0.0
+            ),
+            "median_attention_calls": (
+                statistics.median(int(run["attention_calls"]) for run in measured_breakdowns)
+                if attention_timer is not None
+                else 0
+            ),
+            "median_decode_seconds": statistics.median(
+                float(run["decode_seconds"]) for run in measured_breakdowns
+            ),
+            "median_warm_workflow_seconds": median_whole_job_seconds,
             "median_sample_seconds": median_sample_seconds,
-            "jobs_per_hour": 3600.0 / median_sample_seconds,
+            "median_whole_job_seconds": median_whole_job_seconds,
+            "jobs_per_hour": 3600.0 / median_whole_job_seconds,
         },
         "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
         "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
@@ -463,6 +573,9 @@ def run_worker(args: argparse.Namespace) -> int:
         },
         "loading_route": loading_route,
         "sparse_backend_calls": sparse_backend_calls,
+        "attention_backend_calls": (
+            attention_timer.total_calls if attention_timer is not None else 0
+        ),
         "environment": {
             "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
             "device_capability": ".".join(
@@ -528,6 +641,10 @@ def _spawn_worker(
         str(args.warmups),
         "--repeats",
         str(args.repeats),
+        *(("--video-vae", str(args.video_vae)) if args.video_vae else ()),
+        *(("--video-vae-digest", args.video_vae_digest) if args.video_vae else ()),
+        *(("--audio-vae", str(args.audio_vae)) if args.audio_vae else ()),
+        *(("--audio-vae-digest", args.audio_vae_digest) if args.audio_vae else ()),
         *(("--sparse-enabled",) if args.sparse_enabled else ()),
         *(("--tensor-output", str(args.tensor_output)) if args.tensor_output else ()),
     )
@@ -557,9 +674,14 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def _run_serial(
-    args: argparse.Namespace, scratch: Path, *, sparse_enabled: bool = False
+    args: argparse.Namespace,
+    scratch: Path,
+    *,
+    sparse_enabled: bool = False,
+    policy: str | None = None,
+    name: str | None = None,
 ) -> dict[str, Any]:
-    name = "sparse" if sparse_enabled else "serial"
+    name = name or ("sparse" if sparse_enabled else "serial")
     result = scratch / f"{name}.json"
     log = scratch / f"{name}.log"
     environment = _source_environment(args.dinkster_root, args.fork_root)
@@ -569,14 +691,16 @@ def _run_serial(
         if not key.startswith("DINKSTER_SINGLE_JOB_")
     }
     environment["CUDA_VISIBLE_DEVICES"] = args.gpu[0]
-    args.sparse_enabled = sparse_enabled
-    args.tensor_output = scratch / f"{name}-tensors.pt" if args.mode == "sparse" else None
-    worker = _spawn_worker(args, result, log, environment)
+    worker_args = argparse.Namespace(**vars(args))
+    worker_args.policy = policy or args.policy
+    worker_args.sparse_enabled = sparse_enabled
+    worker_args.tensor_output = scratch / f"{name}-tensors.pt" if args.mode == "sparse" else None
+    worker = _spawn_worker(worker_args, result, log, environment)
     _wait(((name, worker, log),))
     loaded = _load(result)
     loaded["worker_log"] = _log_receipt(log)
-    if args.tensor_output is not None:
-        loaded["_tensor_output"] = str(args.tensor_output)
+    if worker_args.tensor_output is not None:
+        loaded["_tensor_output"] = str(worker_args.tensor_output)
     return loaded
 
 
@@ -640,7 +764,8 @@ def _classify_host(gpus: Sequence[dict[str, Any]]) -> str:
 
 
 def _median_seconds(result: dict[str, Any]) -> float:
-    return float(result["timing"]["median_sample_seconds"])
+    timing = result["timing"]
+    return float(timing.get("median_whole_job_seconds", timing["median_sample_seconds"]))
 
 
 def _performance(
@@ -654,6 +779,8 @@ def _performance(
     return {
         "reference_median_seconds": reference_seconds,
         "candidate_median_seconds": candidate_seconds,
+        "reference_median_whole_job_seconds": reference_seconds,
+        "candidate_median_whole_job_seconds": candidate_seconds,
         "candidate_compute_seconds": float(candidate_timing["median_compute_seconds"]),
         "candidate_communication_sync_seconds": float(
             candidate_timing["median_communication_sync_seconds"]
@@ -712,18 +839,36 @@ def run_mint(args: argparse.Namespace) -> int:
     args.dinkster_root = args.dinkster_root.resolve()
     args.fork_root = args.fork_root.resolve()
     args.model = args.model.resolve()
-    if len(args.gpu) != 2 and args.mode != "sparse":
+    args.video_vae = getattr(args, "video_vae", None)
+    args.audio_vae = getattr(args, "audio_vae", None)
+    if args.video_vae is not None:
+        args.video_vae = args.video_vae.resolve()
+    if args.audio_vae is not None:
+        args.audio_vae = args.audio_vae.resolve()
+    if args.mode == "dense" and len(args.gpu) != 1:
+        raise ReceiptError("dense attention receipt minting requires exactly one GPU UUID")
+    if args.mode not in ("dense", "sparse") and len(args.gpu) != 2:
         raise ReceiptError("guidance and U2R1 receipt minting require exactly two GPU UUIDs")
     if args.mode == "sparse" and len(args.gpu) != 1:
         raise ReceiptError("sparse attention receipt minting requires exactly one GPU UUID")
     if args.mode == "sparse" and args.policy != "sdpa":
         raise ReceiptError("sparse attention uses SDPA as its dense reference policy")
+    if args.mode == "dense" and args.policy != "flash4_sm120_dense":
+        raise ReceiptError("dense attention receipt requires flash4_sm120_dense policy")
+    if args.mode == "dense" and (args.video_vae is None or args.audio_vae is None):
+        raise ReceiptError("dense attention receipt requires video and audio VAEs")
     if not args.model.is_file():
         raise ReceiptError(f"model does not exist: {args.model}")
+    for name in ("video_vae", "audio_vae"):
+        path = getattr(args, name)
+        if path is not None and not path.is_file():
+            raise ReceiptError(f"{name.replace('_', ' ')} does not exist: {path}")
     for root in (args.dinkster_root, args.fork_root):
         if _git(root, "status", "--porcelain=v1", "--untracked-files=all"):
             raise ReceiptError(f"source checkout is dirty: {root}")
     args.model_digest = digest_file(args.model)
+    args.video_vae_digest = digest_file(args.video_vae) if args.video_vae is not None else None
+    args.audio_vae_digest = digest_file(args.audio_vae) if args.audio_vae is not None else None
     artifact = _model_artifact(args.model)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="minimax-h3-multigpu-") as directory:
@@ -733,8 +878,17 @@ def run_mint(args: argparse.Namespace) -> int:
         )
         arms: dict[str, Any] = {}
         for arm in arm_order:
-            if arm == "reference":
+            if arm == "reference" and args.mode == "dense":
+                arms[arm] = _run_serial(
+                    args,
+                    scratch,
+                    policy="sdpa",
+                    name="sdpa",
+                )
+            elif arm == "reference":
                 arms[arm] = _run_serial(args, scratch)
+            elif args.mode == "dense":
+                arms[arm] = [_run_serial(args, scratch, policy=args.policy, name="candidate")]
             elif args.mode == "sparse":
                 arms[arm] = [_run_serial(args, scratch, sparse_enabled=True)]
             else:
@@ -769,7 +923,7 @@ def run_mint(args: argparse.Namespace) -> int:
         else BASELINES.get((host, args.mode, args.policy, workload))
     )
     receipt = {
-        "schema": "dinkster.minimax-h3-multigpu-receipt.v3",
+        "schema": "dinkster.minimax-h3-multigpu-receipt.v4",
         "status": "PASS",
         "invocation": {
             "command": shlex.join([sys.executable, *sys.argv]),
@@ -786,6 +940,22 @@ def run_mint(args: argparse.Namespace) -> int:
             **artifact,
             "source_url": args.model_source_url,
             "source_revision": args.model_source_revision,
+            "video_vae": (
+                {
+                    "path": str(args.video_vae),
+                    "blake3": cast("str", args.video_vae_digest).removeprefix("blake3:"),
+                }
+                if args.video_vae is not None
+                else None
+            ),
+            "audio_vae": (
+                {
+                    "path": str(args.audio_vae),
+                    "blake3": cast("str", args.audio_vae_digest).removeprefix("blake3:"),
+                }
+                if args.audio_vae is not None
+                else None
+            ),
         },
         "workload": {
             "name": workload,
@@ -823,6 +993,7 @@ def run_mint(args: argparse.Namespace) -> int:
             "attention_policy": args.policy,
             "attention_provider": {
                 "sdpa": "torch-sdpa-priority-v1",
+                "flash4_sm120_dense": "flash-attn-4-cute-sm120-dense-v1",
                 "dinkster_kitchen_int8": "comfy-kitchen-int8-attention-v1",
             }[args.policy],
             "sparse_backend": "comfy_kitchen_sol_chunked" if args.mode == "sparse" else None,
@@ -834,6 +1005,11 @@ def run_mint(args: argparse.Namespace) -> int:
                 ),
                 "warm_workflow": "one warm KSampler node invocation from resident inputs",
                 "sampling_only": "the same KSampler invocation; VAE decode is excluded",
+                "whole_job": (
+                    "one KSampler invocation followed by video and audio VAE decode"
+                    if args.mode == "dense"
+                    else "the sampling-only workflow used by this receipt mode"
+                ),
                 "wall_time": "synchronized host wall clock around each KSampler invocation",
                 "communication_sync": (
                     "CUDA event time around all_gather, all_reduce, and all_to_all collectives"
@@ -845,7 +1021,11 @@ def run_mint(args: argparse.Namespace) -> int:
             "hash_contract": (
                 "all run hashes retained; sparse output may differ from dense reference"
                 if args.mode == "sparse"
-                else "bit-identical between serial and every distributed rank"
+                else (
+                    "bit-identical latents and decoded video/audio between SDPA and FA4"
+                    if args.mode == "dense"
+                    else "bit-identical between serial and every distributed rank"
+                )
             ),
             "sparse_quality_oracle": sparse_quality_oracle,
             "performance": performance,
@@ -874,6 +1054,8 @@ def run_mint(args: argparse.Namespace) -> int:
 
 def _workload_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--video-vae", type=Path)
+    parser.add_argument("--audio-vae", type=Path)
     parser.add_argument("--mode", choices=MODES, required=True)
     parser.add_argument("--policy", choices=POLICIES, required=True)
     parser.add_argument("--width", type=int, default=1344)
@@ -892,6 +1074,8 @@ def _parser() -> argparse.ArgumentParser:
     worker = commands.add_parser("worker")
     _workload_arguments(worker)
     worker.add_argument("--model-digest", required=True)
+    worker.add_argument("--video-vae-digest")
+    worker.add_argument("--audio-vae-digest")
     worker.add_argument("--result", type=Path, required=True)
     worker.add_argument("--tensor-output", type=Path, help=argparse.SUPPRESS)
     worker.set_defaults(function=run_worker)
