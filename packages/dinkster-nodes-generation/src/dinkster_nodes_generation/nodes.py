@@ -720,6 +720,13 @@ class LoadDiffusionModel(_SchemaOnlyNode):
                         options=("default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2")
                     ),
                 ),
+                InputSpec(
+                    "gguf_residency",
+                    COMBO,
+                    required=False,
+                    default="memory",
+                    widget=ComboWidget(options=("memory", "balanced", "eager")),
+                ),
             ),
             outputs=(OutputSpec("model", MODEL),),
             aliases=("UNETLoader",),
@@ -743,16 +750,31 @@ class LoadClip(_SchemaOnlyNode):
                     ),
                 ),
                 InputSpec(
+                    "text_encoder_2",
+                    ASSET,
+                    required=False,
+                    widget=AssetWidget(
+                        accept=("application/octet-stream",), kind="model/text-encoder"
+                    ),
+                ),
+                InputSpec(
                     "type",
                     COMBO,
                     default="minimax",
-                    widget=ComboWidget(options=("stable_diffusion", "minimax")),
+                    widget=ComboWidget(options=("stable_diffusion", "flux", "minimax", "wan")),
                 ),
                 InputSpec(
                     "device",
                     COMBO,
                     default="default",
                     widget=ComboWidget(options=("default", "cpu")),
+                ),
+                InputSpec(
+                    "gguf_residency",
+                    COMBO,
+                    required=False,
+                    default="memory",
+                    widget=ComboWidget(options=("memory", "balanced", "eager")),
                 ),
             ),
             outputs=(OutputSpec("clip", CLIP),),
