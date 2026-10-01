@@ -139,7 +139,7 @@ pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
 include = ["packages", "src", "tests"]
-extraPaths = ["src", "../dinkster-evidence", ".evidence-source"]
+extraPaths = ["src", "../.dinkster-evidence-source", ".evidence-source"]
 # Torch execution modules are checked in their isolated worker environment.
 exclude = [
     "packages/dinkster-native/src/dinkster_native/model3d",

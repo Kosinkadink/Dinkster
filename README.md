@@ -72,6 +72,11 @@ Both setup scripts pin root synchronization to this checkout's torch-free
 Torch environments with project `uv sync`: exact sync can remove their
 platform-specific torch and kitchen wheels.
 
+Maintainers running the full root suite must first run
+`uv run --no-sync python scripts/prepare_validation_inputs.py`. This prepares
+the exact private evidence revision used by hosted full validation; ordinary
+installation and runtime use do not require that checkout.
+
 - `uv run pytest` - test suite (incl. the one-way dependency rule, hazard H6)
 - `uv run pyright` - static type checking (strict for `packages/`, standard
   for `src/` and `tests/`)

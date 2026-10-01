@@ -8,8 +8,9 @@ import pytest
 from dinkster_workers import boundary
 
 from dinkster import port
-from tools.evidence_paths import EVIDENCE_ROOT
+from tools.evidence_paths import EVIDENCE_ROOT, validate_evidence_revision
 
+validate_evidence_revision()
 ROOT = Path(__file__).resolve().parents[1]
 
 

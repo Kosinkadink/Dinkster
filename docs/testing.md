@@ -192,9 +192,17 @@ second real-artifact run. Sampling-runtime validation lives in
 integration:
 
 ```bash
+uv run --no-sync python scripts/prepare_validation_inputs.py
 ./scripts/setup_envs.sh
 .venv/bin/python -m pytest -q
 ```
+
+The preparation command checks out the revision in
+`tools/evidence-revision.txt` beside the Dinkster checkout under
+`.dinkster-evidence-source`. Pytest refuses a missing or different evidence
+revision, so local and hosted full validation execute the same benchmark and
+acceptance sources. Access to the private evidence repository is required only
+for the full maintainer suite, not to install or run Dinkster.
 
 On Windows, `scripts\setup_envs.ps1` creates the equivalent root, CPU Torch,
 and NVIDIA CUDA environments. Run the gates it prints with native Windows
