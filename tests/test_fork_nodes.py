@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -991,7 +991,8 @@ def test_minimax_h3_cache_dit_sampler_discards_tensor_state_without_eviction() -
 
     def executor(*args: object, **kwargs: object) -> str:
         del args, kwargs
-        runtime = cast("dict[str, object]", config["runtime"])
+        runtime_provider = cast("Callable[[], dict[str, object]]", config["runtime"])
+        runtime = runtime_provider()
         runtime.update(
             {
                 "key_fields": {"model": "identity"},

@@ -773,7 +773,7 @@ def _h3_cache_dit_sampler(executor: object, *args: object, **kwargs: object) -> 
         "invalidations": 0,
         "events": [],
     }
-    config["runtime"] = runtime
+    config["runtime"] = lambda: runtime
     try:
         return cast("Any", executor)(*args, **kwargs)
     finally:

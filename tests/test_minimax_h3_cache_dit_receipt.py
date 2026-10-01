@@ -13,12 +13,18 @@ from tools import minimax_h3_cache_dit_receipt as receipt
 def test_receipt_sink_survives_model_options_clone() -> None:
     model_patcher = pytest.importorskip("dinkster_inference.model_patcher")
     receipts: list[object] = []
-    options = {"transformer_options": {"cache": {"receipt_sink": receipts.append}}}
+    runtime: dict[str, object] = {}
+    options = {
+        "transformer_options": {
+            "cache": {"receipt_sink": receipts.append, "runtime": lambda: runtime}
+        }
+    }
 
     cloned = model_patcher.create_model_options_clone(options)
     cloned["transformer_options"]["cache"]["receipt_sink"]("event")
 
     assert receipts == ["event"]
+    assert cloned["transformer_options"]["cache"]["runtime"]() is runtime
 
 
 def test_receipt_matrix_uses_eight_asymmetric_prompt_seed_cases() -> None:
