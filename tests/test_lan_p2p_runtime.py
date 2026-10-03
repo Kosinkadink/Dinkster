@@ -414,8 +414,6 @@ def test_session_with_no_eligible_interface_opens_no_peer_listener(
         (False, 1, "none"),
         (True, 0, "none"),
         (False, 0, "durable_pieces"),
-        (False, 0, "pending_flush"),
-        (False, 0, "pending_reads"),
     ],
 )
 def test_download_rejects_wrong_metadata_and_hash_failed_piece(
@@ -456,6 +454,7 @@ def test_download_rejects_wrong_metadata_and_hash_failed_piece(
     if seeding:
         torrent.lease = seed
     if recorded != "none":
+        partial.write_piece(0, source.read_bytes())
         getattr(torrent, recorded).add(0)
 
     class IgnoredAlert:
@@ -495,6 +494,98 @@ def test_download_rejects_wrong_metadata_and_hash_failed_piece(
     assert torrent.error == "piece hash failed"
     assert torrent.stopped
     assert removed == [handle]
+
+
+@pytest.mark.parametrize("pending_state", ["flush", "read"])
+def test_delayed_sparse_hash_failure_does_not_fail_a_pending_piece(
+    tmp_path: Path, pending_state: str
+) -> None:
+    source = tmp_path / "model.safetensors"
+    source.write_bytes(_safetensors(256))
+    _seed, download = _leases(source, "delayed-sparse-hash")
+
+    class Handle:
+        def __init__(self) -> None:
+            self.flushes = 0
+            self.reads: list[int] = []
+
+        def status(self) -> Any:
+            return type("Status", (), {"total_failed_bytes": 0})()
+
+        def flush_cache(self) -> None:
+            self.flushes += 1
+
+        def read_piece(self, piece: int) -> None:
+            self.reads.append(piece)
+
+        def is_valid(self) -> bool:
+            return True
+
+    handle = Handle()
+    partial = AssetVault(tmp_path / "vault").open_p2p_partial(
+        download.descriptor, download.digest, download.size_bytes
+    )
+    torrent = p2p_runtime._TorrentRuntime(download, handle, partial, state="downloading")
+
+    class IgnoredAlert:
+        pass
+
+    class PieceFinishedAlert:
+        def __init__(self) -> None:
+            self.handle = handle
+            self.piece_index = 0
+
+    class HashFailedAlert:
+        def __init__(self) -> None:
+            self.handle = handle
+            self.piece_index = 0
+
+        def message(self) -> str:
+            return "hash for piece 0 failed"
+
+    class CacheFlushedAlert:
+        def __init__(self) -> None:
+            self.handle = handle
+
+    class FakeLibtorrent:
+        listen_succeeded_alert = IgnoredAlert
+        listen_failed_alert = IgnoredAlert
+        metadata_failed_alert = IgnoredAlert
+        torrent_error_alert = IgnoredAlert
+        file_error_alert = IgnoredAlert
+        hash_failed_alert = HashFailedAlert
+        metadata_received_alert = IgnoredAlert
+        torrent_checked_alert = IgnoredAlert
+        piece_finished_alert = PieceFinishedAlert
+        cache_flushed_alert = CacheFlushedAlert
+        read_piece_alert = IgnoredAlert
+
+    removed: list[object] = []
+    runtime = object.__new__(SidecarRuntime)
+    runtime._diagnostics = NativeDiagnostics()
+    runtime._lt = FakeLibtorrent()
+    runtime._session = type(
+        "Session",
+        (),
+        {"remove_torrent": lambda self, value: removed.append(value)},
+    )()
+    runtime._torrents = {download.lease_id: torrent}
+
+    runtime._handle_alert(PieceFinishedAlert())
+    assert torrent.pending_flush == {0}
+    assert handle.flushes == 1
+    if pending_state == "read":
+        runtime._handle_alert(CacheFlushedAlert())
+        assert torrent.pending_flush == set()
+        assert torrent.pending_reads == {0}
+        assert handle.reads == [0]
+
+    runtime._handle_alert(HashFailedAlert())
+
+    assert torrent.state == "downloading"
+    assert torrent.error is None
+    assert not torrent.stopped
+    assert removed == []
 
 
 def test_seed_lease_waits_for_native_tcp_listener_confirmation(
