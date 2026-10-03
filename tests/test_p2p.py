@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 import pytest
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetVault, P2PGrantSnapshot, SeedGrantV1, derive_p2p_descriptor
 from dinkster_p2p import (
@@ -1419,7 +1420,18 @@ def test_status_waits_for_latest_settings_update(tmp_path: Path, action: str) ->
         runtime_settings.update("p2p", initial)
         manager = P2PSidecarManager(vault_root=tmp_path / "vault")
         network = BlockingNetwork("unmetered")
+        status_started = asyncio.Event()
+
+        @web.middleware
+        async def observe_status_request(
+            request: web.Request, handler: Callable[[web.Request], Awaitable[web.StreamResponse]]
+        ) -> web.StreamResponse:
+            if request.path == "/api/p2p/status":
+                status_started.set()
+            return await handler(request)
+
         app = create_app(make_engine, SCHEMAS, settings=runtime_settings)
+        app.middlewares.append(observe_status_request)
         add_p2p_routes(
             app, manager, runtime_settings, network_cost=network, network_poll_interval=3600
         )
@@ -1432,6 +1444,7 @@ def test_status_waits_for_latest_settings_update(tmp_path: Path, action: str) ->
             return await response.json()
 
         pending: asyncio.Task[dict[str, Any]] | None = None
+        body: dict[str, Any] | None = None
         try:
             network.block_next()
             updated = {**initial, "networkCostOverride": "metered"}
@@ -1439,8 +1452,8 @@ def test_status_waits_for_latest_settings_update(tmp_path: Path, action: str) ->
             assert response.status == 200
             assert await asyncio.wait_for(asyncio.to_thread(network.entered.wait), timeout=1)
             pending = asyncio.create_task(read_status())
-            done, _ = await asyncio.wait({pending}, timeout=0.05)
-            assert not done, "status returned before the accepted settings update applied"
+            await status_started.wait()
+            assert not pending.done(), "status returned before the accepted settings update applied"
 
             if action == "cancel-read":
                 pending.cancel()
@@ -1449,16 +1462,17 @@ def test_status_waits_for_latest_settings_update(tmp_path: Path, action: str) ->
             elif action == "disable-newer":
                 response = await client.put("/api/settings/p2p", json=enabled_settings())
                 assert response.status == 200
-                disabled = await asyncio.wait_for(read_status(), timeout=1)
-                assert disabled["state"] == "disabled"
-                assert disabled["sidecar"] is None
+                body = await asyncio.wait_for(pending, timeout=1)
+                assert body["state"] == "disabled"
+                assert body["sidecar"] is None
                 assert not network.release.is_set()
 
             network.release.set()
-            if action != "cancel-read":
+            if action == "finish-update":
                 body = await pending
-            else:
+            elif action == "cancel-read":
                 body = await read_status()
+            assert body is not None
             if action == "disable-newer":
                 assert body["state"] == "disabled"
             else:
