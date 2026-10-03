@@ -419,6 +419,8 @@ def add_p2p_routes(
         else P2PSidecarActivityProvider(manager, network_cost, grant_snapshot)
     )
     latest_update: asyncio.Task[None] | None = None
+    update_revision = 0
+    update_changed = asyncio.Event()
 
     async def get_status(_request: web.Request) -> web.Response:
         nonlocal latest_update
@@ -431,16 +433,25 @@ def add_p2p_routes(
                 }
             )
         try:
-            pending_update = latest_update
-            if pending_update is not None:
-                # Only the newest write gates subsequent reads. A disconnected
-                # reader must not cancel the host's settings update.
+            while (pending_update := latest_update) is not None:
+                pending_revision = update_revision
+                changed = update_changed
+                changed_waiter = asyncio.create_task(changed.wait())
                 try:
-                    await asyncio.shield(pending_update)
+                    await asyncio.wait(
+                        {pending_update, changed_waiter},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    changed_waiter.cancel()
+                if update_revision != pending_revision:
+                    continue
+                try:
+                    pending_update.result()
                 except P2PManagerError as error:
                     raise P2PProviderUnavailable("P2P settings application failed") from error
                 finally:
-                    if pending_update.done() and latest_update is pending_update:
+                    if latest_update is pending_update:
                         latest_update = None
             return web.json_response(await provider.status())
         except P2PProviderUnavailable:
@@ -464,9 +475,12 @@ def add_p2p_routes(
     monitor: asyncio.Task[None] | None = None
 
     def update(value: dict[str, object]) -> None:
-        nonlocal latest_update
+        nonlocal latest_update, update_changed, update_revision
         task = asyncio.create_task(provider.update(value))
         latest_update = task
+        update_revision += 1
+        update_changed.set()
+        update_changed = asyncio.Event()
         updates.add(task)
         task.add_done_callback(updates.discard)
 
