@@ -1420,15 +1420,21 @@ def test_status_waits_for_latest_settings_update(tmp_path: Path, action: str) ->
         runtime_settings.update("p2p", initial)
         manager = P2PSidecarManager(vault_root=tmp_path / "vault")
         network = BlockingNetwork("unmetered")
-        status_started = asyncio.Event()
+        status_waiting = asyncio.Event()
 
         @web.middleware
         async def observe_status_request(
             request: web.Request, handler: Callable[[web.Request], Awaitable[web.StreamResponse]]
         ) -> web.StreamResponse:
-            if request.path == "/api/p2p/status":
-                status_started.set()
-            return await handler(request)
+            if request.path != "/api/p2p/status":
+                return await handler(request)
+            response = asyncio.create_task(handler(request))
+            await asyncio.sleep(0)
+            assert not response.done(), (
+                "status returned before the accepted settings update applied"
+            )
+            status_waiting.set()
+            return await response
 
         app = create_app(make_engine, SCHEMAS, settings=runtime_settings)
         app.middlewares.append(observe_status_request)
@@ -1452,8 +1458,7 @@ def test_status_waits_for_latest_settings_update(tmp_path: Path, action: str) ->
             assert response.status == 200
             assert await asyncio.wait_for(asyncio.to_thread(network.entered.wait), timeout=1)
             pending = asyncio.create_task(read_status())
-            await status_started.wait()
-            assert not pending.done(), "status returned before the accepted settings update applied"
+            await status_waiting.wait()
 
             if action == "cancel-read":
                 pending.cancel()
