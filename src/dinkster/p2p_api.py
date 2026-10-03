@@ -419,6 +419,7 @@ def add_p2p_routes(
         else P2PSidecarActivityProvider(manager, network_cost, grant_snapshot)
     )
     latest_update: asyncio.Task[None] | None = None
+    update_revision = 0
     update_changed = asyncio.Event()
 
     async def get_status(_request: web.Request) -> web.Response:
@@ -433,9 +434,8 @@ def add_p2p_routes(
             )
         try:
             while (pending_update := latest_update) is not None:
+                pending_revision = update_revision
                 changed = update_changed
-                if pending_update is not latest_update:
-                    continue
                 changed_waiter = asyncio.create_task(changed.wait())
                 try:
                     await asyncio.wait(
@@ -444,7 +444,7 @@ def add_p2p_routes(
                     )
                 finally:
                     changed_waiter.cancel()
-                if latest_update is not pending_update:
+                if update_revision != pending_revision:
                     continue
                 try:
                     pending_update.result()
@@ -475,9 +475,10 @@ def add_p2p_routes(
     monitor: asyncio.Task[None] | None = None
 
     def update(value: dict[str, object]) -> None:
-        nonlocal latest_update, update_changed
+        nonlocal latest_update, update_changed, update_revision
         task = asyncio.create_task(provider.update(value))
         latest_update = task
+        update_revision += 1
         update_changed.set()
         update_changed = asyncio.Event()
         updates.add(task)
