@@ -1428,7 +1428,7 @@ def test_status_waits_for_latest_settings_update(tmp_path: Path, action: str) ->
         ) -> web.StreamResponse:
             if request.path != "/api/p2p/status":
                 return await handler(request)
-            response = asyncio.create_task(handler(request))
+            response = asyncio.ensure_future(handler(request))
             await asyncio.sleep(0)
             assert not response.done(), (
                 "status returned before the accepted settings update applied"
