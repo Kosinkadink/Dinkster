@@ -5008,7 +5008,21 @@ def test_hub_broadcast_reaches_client_filtered_subscribers() -> None:
 
 def test_memory_status_events_broadcast_when_governed() -> None:
     async def scenario() -> None:
-        governor = MemoryGovernor({"ram": 100})
+        governor = MemoryGovernor(
+            {"ram": 100},
+            telemetry=lambda _: MeasuredMemory(
+                free_bytes=30,
+                total_bytes=100,
+                torch_allocated_bytes=17,
+                torch_reserved_bytes=23,
+                process_rss_bytes=250,
+                pinned_host_bytes=9,
+                gpu_name="Measured worker GPU",
+                gpu_utilization_percent=61,
+                gpu_temperature_celsius=54,
+                gpu_power_milliwatts=120000,
+            ),
+        )
         app = create_app(make_engine, SCHEMAS, governor=governor, memory_status_interval=0.02)
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -5021,6 +5035,9 @@ def test_memory_status_events_broadcast_when_governed() -> None:
                     if event["type"] == "memory_status":
                         break
             assert event["memoryGovernor"]["ram"]["budgetBytes"] == 100
+            assert event["memoryGovernor"]["ram"]["measured"]["torchAllocatedBytes"] == 17
+            assert event["memoryGovernor"]["ram"]["measured"]["gpuName"] == "Measured worker GPU"
+            assert event["memoryGovernor"]["ram"]["peakUsedBytes"] == 70
             assert "devices" in event and "queue" in event
             await ws.close()
         finally:
@@ -5082,6 +5099,7 @@ def test_memory_status_distinguishes_live_and_restart_bound_accelerator_budgets(
         gib = 1024**3
         device = "vram:cuda:0"
         applied = {"dinkster-compat-comfy": {device: 24 * gib}}
+        aimdo = {"dinkster-compat-comfy": "off"}
         governor = MemoryGovernor(
             {device: 24 * gib},
             telemetry=lambda _device: MeasuredMemory(12 * gib, 32 * gib),
@@ -5091,12 +5109,22 @@ def test_memory_status_distinguishes_live_and_restart_bound_accelerator_budgets(
             SCHEMAS,
             governor=governor,
             residency_memory_budgets=lambda: applied,
+            applied_aimdo_policies=lambda: aimdo,
         )
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
             data = await (await client.get("/memory/status")).json()
             policy = data["acceleratorPolicy"]
+            assert policy["aimdoConfiguredPolicy"] == "auto"
+            assert policy["aimdoPoliciesByWorker"] == {"dinkster-compat-comfy": "off"}
+            app[STATE_KEY].settings.update("aimdo-policy", "on")
+            policy = (await (await client.get("/memory/status")).json())["acceleratorPolicy"]
+            assert policy["aimdoConfiguredPolicy"] == "on"
+            assert policy["aimdoPoliciesByWorker"] == {"dinkster-compat-comfy": "off"}
+            aimdo["dinkster-compat-comfy"] = "on"
+            policy = (await (await client.get("/memory/status")).json())["acceleratorPolicy"]
+            assert policy["aimdoPoliciesByWorker"] == {"dinkster-compat-comfy": "on"}
             assert policy["physicalHeadroomBytes"] == 256 * 1024**2
             assert policy["inferenceReserveBytes"] == int(0.8 * gib)
             assert policy["minimumFreeBytes"] == 256 * 1024**2 + int(0.8 * gib)
@@ -5639,6 +5667,43 @@ def test_trim_items_validation() -> None:
             ]:
                 resp = await client.post("/cache/trim", json=body)
                 assert resp.status == 400, body
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def test_reset_peak_and_usage_metrics_over_http() -> None:
+    async def scenario() -> None:
+        measurement = MeasuredMemory(
+            200,
+            1000,
+            torch_allocated_bytes=310,
+            torch_reserved_bytes=500,
+            process_rss_bytes=2100,
+            pinned_host_bytes=80,
+        )
+        governor = MemoryGovernor({"vram:cuda:0": 900}, telemetry=lambda _: measurement)
+        client = await make_governed_client(governor)
+        try:
+            first = await (await client.get("/memory/status")).json()
+            report = first["memoryGovernor"]["vram:cuda:0"]
+            assert report["measured"]["torchReservedBytes"] == 500
+            assert report["measured"]["processRssBytes"] == 2100
+            assert report["measured"]["pinnedHostBytes"] == 80
+            assert report["peakUsedBytes"] == 800
+            measurement = MeasuredMemory(
+                700, 1000, torch_allocated_bytes=100, torch_reserved_bytes=200
+            )
+            reset = await client.post("/memory/reset-peak", json={"device": "vram:cuda:0"})
+            assert reset.status == 200
+            assert await reset.json() == {"device": "vram:cuda:0", "peakUsedBytes": 300}
+            after = await (await client.get("/memory/status")).json()
+            assert after["memoryGovernor"]["vram:cuda:0"]["peakUsedBytes"] == 300
+            assert (
+                await client.post("/memory/reset-peak", json={"device": "missing"})
+            ).status == 404
+            assert (await client.post("/memory/reset-peak", json={"device": 1})).status == 400
         finally:
             await client.close()
 
