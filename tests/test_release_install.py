@@ -171,7 +171,9 @@ def test_registry_install_keeps_state_and_uploads_it_even_on_failure() -> None:
     assert upload["with"]["path"] == "${{ runner.temp }}/registry-install-state"
 
 
-@pytest.mark.parametrize("workflow_name, job", [("ci", "fast"), ("full-validation", "registry-install")])
+@pytest.mark.parametrize(
+    "workflow_name, job", [("ci", "fast"), ("full-validation", "registry-install")]
+)
 def test_probe_jail_is_configured_before_python_validation(workflow_name: str, job: str) -> None:
     workflow = yaml.safe_load((ROOT / f".github/workflows/{workflow_name}.yml").read_text())
     steps = workflow["jobs"][job]["steps"]
