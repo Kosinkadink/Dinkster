@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tomllib
 import zipfile
 from pathlib import Path
@@ -161,12 +162,85 @@ def test_release_failure_prints_service_and_publication_log_tails(
 def test_registry_install_keeps_state_and_uploads_it_even_on_failure() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
     steps = workflow["jobs"]["registry-install"]["steps"]
-    command = next(step["run"] for step in steps if "run" in step)
+    command = next(
+        step["run"] for step in steps if "scripts/verify_release_install.py" in step.get("run", "")
+    )
     assert '--state "$RUNNER_TEMP/registry-install-state"' in command
     upload = steps[-1]
     assert upload["uses"] == "actions/upload-artifact@v4"
     assert upload["if"] == "always()"
     assert upload["with"]["path"] == "${{ runner.temp }}/registry-install-state"
+
+
+def test_probe_jail_is_configured_before_registry_validation_only() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
+    steps = workflow["jobs"]["registry-install"]["steps"]
+    setup_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("run") == "bash scripts/setup_probe_jail.sh"
+    )
+    validation_index = next(
+        index for index, step in enumerate(steps) if "uv sync" in step.get("run", "")
+    )
+    assert setup_index < validation_index
+    assert "if" not in steps[setup_index]
+    fast = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    assert all(
+        "setup_probe_jail.sh" not in step.get("run", "") for step in fast["jobs"]["fast"]["steps"]
+    )
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux CI probe-jail setup")
+@pytest.mark.parametrize(
+    "scenario, update_attempts, install_attempts, succeeds",
+    [("retry", 2, 2, True), ("update-fails", 2, 0, False), ("install-fails", 1, 2, False)],
+)
+def test_probe_jail_apt_is_bounded_and_retries_once(
+    scenario: str, update_attempts: int, install_attempts: int, succeeds: bool
+) -> None:
+    command = """
+update_attempts=0
+install_attempts=0
+sudo() {
+    printf 'sudo'; printf ' <%s>' "$@"; printf '\\n'
+    if [[ "$1" != timeout ]]; then return 0; fi
+    if [[ "$*" == *" update" ]]; then
+        update_attempts=$((update_attempts + 1))
+        if [[ "$scenario" == update-fails ]] ||
+           [[ "$scenario" == retry && "$update_attempts" == 1 ]]; then return 124; fi
+    else
+        install_attempts=$((install_attempts + 1))
+        if [[ "$scenario" == install-fails ]] ||
+           [[ "$scenario" == retry && "$install_attempts" == 1 ]]; then return 124; fi
+    fi
+}
+bwrap() { echo jail-preflight; }
+source "$1"
+"""
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'scenario="$2"\n' + command,
+            "setup-test",
+            str(ROOT / "scripts/setup_probe_jail.sh"),
+            scenario,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    apt_calls = [line for line in result.stdout.splitlines() if line.startswith("sudo <timeout>")]
+    assert sum(line.endswith("<update>") for line in apt_calls) == update_attempts
+    assert sum("<install>" in line for line in apt_calls) == install_attempts
+    for line in apt_calls:
+        assert "<timeout> <180> <apt-get>" in line
+        assert "<Acquire::Retries=3>" in line
+        assert "<Acquire::http::Timeout=30>" in line
+        assert "<Acquire::https::Timeout=30>" in line
+    assert (result.returncode == 0) is succeeds
+    assert ("jail-preflight" in result.stdout) is succeeds
+    assert "failed or exceeded 180 seconds" in result.stderr
 
 
 @pytest.mark.parametrize("tag", ["0.0.1", "v0.0", "v0.0.1-rc1", "backend-0.0.1"])
