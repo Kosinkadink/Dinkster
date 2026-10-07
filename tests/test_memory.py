@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from dinkster_caches import MemoryLRUCache
@@ -22,6 +25,7 @@ from dinkster_memory import (
     MemoryGovernor,
     PageMap,
     PressureSignal,
+    ReportedTelemetry,
     ReservationTimeout,
     Shedder,
     SystemMemorySnapshot,
@@ -588,6 +592,7 @@ def test_status_reports_one_shape_for_endpoints() -> None:
                 "consumerFootprintBytes": 25,
                 "availableBytes": 25,
                 "measured": None,  # no probe wired: honest absence
+                "peakUsedBytes": None,
                 # Names are discoverable so /cache/trim can target them.
                 "consumers": {"FakePool": 25},
             }
@@ -831,3 +836,187 @@ def test_status_reports_measured_beside_declared() -> None:
 def test_status_measured_is_null_without_a_probe() -> None:
     governor = MemoryGovernor({VRAM0: 100})
     assert governor.status()[VRAM0]["measured"] is None
+
+
+def test_usage_wire_roundtrip_and_rejects_malformed_optional_fields() -> None:
+    wire = {
+        "freeBytes": 700,
+        "totalBytes": 1000,
+        "driverFreeBytes": 600,
+        "torchAllocatedBytes": 210,
+        "torchReservedBytes": 350,
+        "processId": 41,
+        "processCount": 1,
+        "processRssBytes": 1400,
+        "pinnedHostBytes": 90,
+        "gpuName": "GPU name",
+        "gpuUtilizationPercent": 67,
+        "gpuTemperatureCelsius": 53,
+        "gpuPowerMilliwatts": 123000,
+        "gpuPowerLimitMilliwatts": 200000,
+    }
+    measured = MeasuredMemory.from_wire(wire)
+    assert measured is not None and measured.to_wire() == wire
+    assert MeasuredMemory.from_wire({**wire, "futureField": 12}) == measured
+    for field in (
+        "torchAllocatedBytes",
+        "processRssBytes",
+        "pinnedHostBytes",
+        "gpuUtilizationPercent",
+    ):
+        for value in (-1, True, "12"):
+            assert MeasuredMemory.from_wire({**wire, field: value}) is None
+    assert MeasuredMemory.from_wire({**wire, "gpuName": 7}) is None
+    assert MeasuredMemory.from_wire({**wire, "gpuName": " "}) is None
+
+
+def test_reported_usage_sums_distinct_processes_but_keeps_hardware_freshest() -> None:
+    first, duplicate, second = object(), object(), object()
+    reported = ReportedTelemetry()
+    reported.update(
+        first,
+        {
+            VRAM0: MeasuredMemory(
+                600,
+                1000,
+                process_id=1,
+                torch_allocated_bytes=50,
+                torch_reserved_bytes=100,
+                process_rss_bytes=700,
+                pinned_host_bytes=10,
+            )
+        },
+    )
+    reported.update(
+        duplicate,
+        {
+            VRAM0: MeasuredMemory(
+                500,
+                1000,
+                process_id=1,
+                torch_allocated_bytes=70,
+                torch_reserved_bytes=110,
+                process_rss_bytes=800,
+                pinned_host_bytes=20,
+            )
+        },
+    )
+    reported.update(
+        second,
+        {
+            VRAM0: MeasuredMemory(
+                400,
+                1000,
+                process_id=2,
+                torch_allocated_bytes=90,
+                torch_reserved_bytes=130,
+                process_rss_bytes=900,
+                pinned_host_bytes=30,
+            )
+        },
+    )
+    measured = reported.probe(VRAM0)
+    assert measured is not None
+    assert (measured.free_bytes, measured.total_bytes) == (400, 1000)
+    assert (measured.torch_allocated_bytes, measured.torch_reserved_bytes) == (160, 240)
+    assert (measured.process_rss_bytes, measured.pinned_host_bytes) == (1700, 50)
+    assert measured.process_id is None and measured.process_count == 2
+    reported.clear(second)
+    assert reported.probe(VRAM0) == MeasuredMemory(
+        500,
+        1000,
+        process_id=1,
+        torch_allocated_bytes=70,
+        torch_reserved_bytes=110,
+        process_rss_bytes=800,
+        pinned_host_bytes=20,
+    )
+
+
+def test_peak_tracks_raw_driver_usage_and_reset_keeps_current_value() -> None:
+    measured = MeasuredMemory(800, 1000, driver_free_bytes=600)
+    governor = MemoryGovernor({VRAM0: 1200}, telemetry=lambda _: measured)
+    assert governor.status()[VRAM0]["peakUsedBytes"] == 400
+    measured = MeasuredMemory(900, 1000, driver_free_bytes=750)
+    assert governor.status()[VRAM0]["peakUsedBytes"] == 400
+    assert governor.reset_peak(VRAM0) == 250
+    assert governor.status()[VRAM0]["peakUsedBytes"] == 250
+    measured = MeasuredMemory(500, 1000, driver_free_bytes=300)
+    assert governor.status()[VRAM0]["peakUsedBytes"] == 700
+
+
+def test_native_usage_probe_measures_worker_and_matches_nvml_by_uuid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dinkster_native.devices import _nvml_device, torch_vram_telemetry
+
+    _nvml_device.cache_clear()
+    handles: list[str] = []
+    namespace = SimpleNamespace(
+        is_available=lambda: True,
+        mem_get_info=lambda _: (7000, 10000),
+        memory_allocated=lambda _: 3000,
+        memory_reserved=lambda _: 5000,
+        get_device_properties=lambda _: SimpleNamespace(
+            name="Remapped GPU", uuid="physical-second"
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(
+            cuda=namespace, device=lambda value: value, version=SimpleNamespace(hip=None)
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "pynvml",
+        SimpleNamespace(
+            nvmlInit=lambda: None,
+            nvmlDeviceGetHandleByUUID=lambda uuid: handles.append(uuid) or "second",
+            nvmlDeviceGetMemoryInfo=lambda _: SimpleNamespace(free=6000),
+            nvmlDeviceGetUtilizationRates=lambda _: SimpleNamespace(gpu=73),
+            NVML_TEMPERATURE_GPU=0,
+            nvmlDeviceGetTemperature=lambda *_: 61,
+            nvmlDeviceGetPowerUsage=lambda _: 121000,
+            nvmlDeviceGetPowerManagementLimit=lambda _: 180000,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "psutil",
+        SimpleNamespace(
+            Process=lambda: SimpleNamespace(memory_info=lambda: SimpleNamespace(rss=12345))
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "dinkster_inference.model_management",
+        SimpleNamespace(get_model_manager=lambda: SimpleNamespace(total_pinned_memory=2000)),
+    )
+    measured = torch_vram_telemetry(VRAM0)
+    assert measured is not None
+    assert handles == ["GPU-physical-second"]
+    assert measured.to_wire() == {
+        "freeBytes": 7000,
+        "totalBytes": 10000,
+        "driverFreeBytes": 6000,
+        "torchAllocatedBytes": 3000,
+        "torchReservedBytes": 5000,
+        "processId": os.getpid(),
+        "processCount": 1,
+        "processRssBytes": 12345,
+        "pinnedHostBytes": 2000,
+        "gpuName": "Remapped GPU",
+        "gpuUtilizationPercent": 73,
+        "gpuTemperatureCelsius": 61,
+        "gpuPowerMilliwatts": 121000,
+        "gpuPowerLimitMilliwatts": 180000,
+    }
+    assert torch_vram_telemetry(VRAM0) == measured
+    assert handles == ["GPU-physical-second"]
+    _nvml_device.cache_clear()
+    monkeypatch.delitem(sys.modules, "pynvml")
+    without_vendor = torch_vram_telemetry(VRAM0)
+    assert without_vendor is not None and without_vendor.torch_allocated_bytes == 3000
+    assert without_vendor.gpu_utilization_percent is None

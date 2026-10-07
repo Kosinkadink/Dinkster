@@ -85,15 +85,36 @@ class MeasuredMemory:
     allocator_reclaimable_bytes: int | None = None
     dynamic_evictable_bytes: int | None = None
     dynamic_pinned_bytes: int | None = None
+    torch_allocated_bytes: int | None = None
+    torch_reserved_bytes: int | None = None
+    process_id: int | None = None
+    process_count: int | None = None
+    process_rss_bytes: int | None = None
+    pinned_host_bytes: int | None = None
+    gpu_utilization_percent: int | None = None
+    gpu_temperature_celsius: int | None = None
+    gpu_power_milliwatts: int | None = None
+    gpu_power_limit_milliwatts: int | None = None
+    gpu_name: str | None = None
 
     _COMPONENT_FIELDS = (
         ("driver_free_bytes", "driverFreeBytes"),
         ("allocator_reclaimable_bytes", "allocatorReclaimableBytes"),
         ("dynamic_evictable_bytes", "dynamicEvictableBytes"),
         ("dynamic_pinned_bytes", "dynamicPinnedBytes"),
+        ("torch_allocated_bytes", "torchAllocatedBytes"),
+        ("torch_reserved_bytes", "torchReservedBytes"),
+        ("process_id", "processId"),
+        ("process_count", "processCount"),
+        ("process_rss_bytes", "processRssBytes"),
+        ("pinned_host_bytes", "pinnedHostBytes"),
+        ("gpu_utilization_percent", "gpuUtilizationPercent"),
+        ("gpu_temperature_celsius", "gpuTemperatureCelsius"),
+        ("gpu_power_milliwatts", "gpuPowerMilliwatts"),
+        ("gpu_power_limit_milliwatts", "gpuPowerLimitMilliwatts"),
     )
 
-    def to_wire(self) -> dict[str, int] | None:
+    def to_wire(self) -> dict[str, int | str] | None:
         """Validate and encode one additive measured-memory wire value."""
         if (
             type(self.free_bytes) is not int
@@ -103,7 +124,7 @@ class MeasuredMemory:
             or self.free_bytes > self.total_bytes
         ):
             return None
-        wire = {"freeBytes": self.free_bytes, "totalBytes": self.total_bytes}
+        wire: dict[str, int | str] = {"freeBytes": self.free_bytes, "totalBytes": self.total_bytes}
         for attribute, name in self._COMPONENT_FIELDS:
             value = getattr(self, attribute)
             if value is None:
@@ -111,6 +132,10 @@ class MeasuredMemory:
             if type(value) is not int or value < 0:
                 return None
             wire[name] = value
+        if self.gpu_name is not None:
+            if type(self.gpu_name) is not str or not self.gpu_name.strip():
+                return None
+            wire["gpuName"] = self.gpu_name
         return wire
 
     @classmethod
@@ -137,7 +162,10 @@ class MeasuredMemory:
             if type(component) is not int or component < 0:
                 return None
             components[attribute] = component
-        return cls(free_bytes=free, total_bytes=total, **components)
+        name = fields.get("gpuName")
+        if name is not None and (not isinstance(name, str) or not name.strip()):
+            return None
+        return cls(free_bytes=free, total_bytes=total, gpu_name=name, **components)
 
 
 TelemetryProbe = Callable[[str], "MeasuredMemory | None"]
@@ -202,6 +230,7 @@ class MemoryGovernor:
         self._telemetry_devices = telemetry_devices
         self._system_memory = system_memory
         self._reserved: dict[str, int] = {}
+        self._peaks: dict[str, int] = {}
         self._reservations: dict[str, Reservation] = {}
         self._shedders: list[_RegisteredShedder] = []
         self._reserved_listeners: list[Callable[[str, int], None]] = []
@@ -282,17 +311,39 @@ class MemoryGovernor:
                 pass
         report: dict[str, dict[str, object]] = {}
         for device in sorted(devices):
+            measured = self._measure(device)
+            used = self._measured_used(measured)
+            if used is not None:
+                self._peaks[device] = max(self._peaks.get(device, 0), used)
             report[device] = {
                 "budgetBytes": self._budgets.get(device),
                 "reservedBytes": self.reserved(device),
                 "consumerFootprintBytes": self.footprint(device),
                 "availableBytes": self.available(device),
-                "measured": self._measure(device),
+                "measured": measured,
+                "peakUsedBytes": self._peaks.get(device) if used is not None else None,
                 "consumers": {r.name: r.shedder.footprint(device) for r in self._shedders},
             }
         return report
 
-    def _measure(self, device: str) -> dict[str, int] | None:
+    @staticmethod
+    def _measured_used(measured: Mapping[str, int | str] | None) -> int | None:
+        if measured is None:
+            return None
+        total = measured["totalBytes"]
+        free = measured.get("driverFreeBytes", measured["freeBytes"])
+        return max(0, total - free) if isinstance(total, int) and isinstance(free, int) else None
+
+    def reset_peak(self, device: str) -> int | None:
+        """Reset observed device usage to the current measurement, not a fake zero."""
+        used = self._measured_used(self._measure(device))
+        if used is None:
+            self._peaks.pop(device, None)
+        else:
+            self._peaks[device] = used
+        return used
+
+    def _measure(self, device: str) -> dict[str, int | str] | None:
         if self._telemetry is None:
             return None
         try:
