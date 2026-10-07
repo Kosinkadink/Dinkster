@@ -28,7 +28,8 @@ If uv is missing, the script installs it using the
 in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), without sudo,
 administrator rights, or shell-profile changes. Linux/macOS need curl or wget
 for this download. The installed uv is available immediately to the script.
-The script lets uv obtain Python 3.12, prepares the pinned inference and Torch
+The script uses uv-managed Python 3.12 with development headers included,
+prepares the pinned inference and Torch
 environments, builds the pinned frontend, creates local state, and opens the
 editor. It does not need the Desktop app or a separate frontend checkout.
 The first run downloads dependencies and can take several minutes. NVIDIA

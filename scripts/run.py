@@ -72,6 +72,7 @@ def main() -> int:
         run(*pnpm, "--filter", "@dinkster/app", "build", cwd=frontend)
         stamp.write_text(pin["commit"])
 
+    os.environ["UV_PYTHON_PREFERENCE"] = "only-managed"
     if windows:
         run(
             "powershell.exe",

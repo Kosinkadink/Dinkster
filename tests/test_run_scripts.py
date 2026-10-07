@@ -20,6 +20,7 @@ def checkout(tmp_path: Path, monkeypatch):
         launcher.shutil, "which", lambda name: None if name == "nvidia-smi" else name
     )
     monkeypatch.setenv("DINKSTER_EXECUTION_PYTHON", "wrong-inherited-python")
+    monkeypatch.setenv("UV_PYTHON_PREFERENCE", "only-system")
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     (tmp_path / "scripts").mkdir()
     (tmp_path / "scripts/release_sources.json").write_text(json.dumps({"commit": "1" * 40}))
@@ -50,6 +51,7 @@ def test_rerun_skips_frontend_build_and_selects_native_execution(checkout, monke
     assert launcher.main() == 0
     relative = "Scripts/python.exe" if system == "Windows" else "bin/python"
     assert launcher.os.environ["DINKSTER_EXECUTION_PYTHON"] == str(root / ".venv-torch" / relative)
+    assert launcher.os.environ["UV_PYTHON_PREFERENCE"] == "only-managed"
     assert len(calls) == 3
     assert calls[0][0] == ("powershell.exe" if system == "Windows" else "bash")
     assert calls[1] == (str(root / ".venv" / relative), "-m", "dinkster.cli", "setup")
