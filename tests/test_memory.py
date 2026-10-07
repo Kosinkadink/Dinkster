@@ -592,6 +592,7 @@ def test_status_reports_one_shape_for_endpoints() -> None:
                 "consumerFootprintBytes": 25,
                 "availableBytes": 25,
                 "measured": None,  # no probe wired: honest absence
+                "peakUsedBytes": None,
                 # Names are discoverable so /cache/trim can target them.
                 "consumers": {"FakePool": 25},
             }

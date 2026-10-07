@@ -1244,6 +1244,7 @@ class ServerState:
         settings: RuntimeSettings | None = None,
         memory_headroom_changed: Callable[[int], None] | None = None,
         residency_memory_budgets: Callable[[], Mapping[str, Mapping[str, int]]] | None = None,
+        applied_aimdo_policies: Callable[[], Mapping[str, str]] | None = None,
         workers: Callable[[], Sequence[WorkerInfo]] | None = None,
         place_execution: PlaceExecution | None = None,
         debug_errors: bool = False,
@@ -1268,6 +1269,7 @@ class ServerState:
         self._workers = workers
         self._place_execution = place_execution
         self.residency_memory_budgets = residency_memory_budgets
+        self.applied_aimdo_policies = applied_aimdo_policies
         # Combo choice lists (choice-list id -> values) behind
         # /api/choices/{id}: UI vocabulary for remote ComboWidget routes,
         # never identity - a value outside the served list is the
@@ -4215,6 +4217,10 @@ def _accelerator_policy_payload(
         }
     return {
         "physicalHeadroomBytes": policy.physical_headroom_bytes,
+        "aimdoConfiguredPolicy": state.settings.aimdo_policy,
+        "aimdoPoliciesByWorker": (
+            dict(state.applied_aimdo_policies()) if state.applied_aimdo_policies is not None else {}
+        ),
         "inferenceReserveBytes": policy.inference_reserve_bytes,
         "minimumFreeBytes": policy.minimum_free_bytes,
         "aimdoSimpleHeadroomBaseBytes": policy.physical_headroom_bytes,
@@ -4473,6 +4479,7 @@ def create_app(
     pack_settings_root: Path | None = None,
     memory_headroom_changed: Callable[[int], None] | None = None,
     residency_memory_budgets: Callable[[], Mapping[str, Mapping[str, int]]] | None = None,
+    applied_aimdo_policies: Callable[[], Mapping[str, str]] | None = None,
     workers: Callable[[], Sequence[WorkerInfo]] | None = None,
     place_execution: PlaceExecution | None = None,
     debug_errors: bool = False,
@@ -4518,6 +4525,7 @@ def create_app(
         settings=settings,
         memory_headroom_changed=memory_headroom_changed,
         residency_memory_budgets=residency_memory_budgets,
+        applied_aimdo_policies=applied_aimdo_policies,
         workers=workers,
         place_execution=place_execution,
         debug_errors=debug_errors,

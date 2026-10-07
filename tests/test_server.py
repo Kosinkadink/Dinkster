@@ -5099,6 +5099,7 @@ def test_memory_status_distinguishes_live_and_restart_bound_accelerator_budgets(
         gib = 1024**3
         device = "vram:cuda:0"
         applied = {"dinkster-compat-comfy": {device: 24 * gib}}
+        aimdo = {"dinkster-compat-comfy": "off"}
         governor = MemoryGovernor(
             {device: 24 * gib},
             telemetry=lambda _device: MeasuredMemory(12 * gib, 32 * gib),
@@ -5108,12 +5109,22 @@ def test_memory_status_distinguishes_live_and_restart_bound_accelerator_budgets(
             SCHEMAS,
             governor=governor,
             residency_memory_budgets=lambda: applied,
+            applied_aimdo_policies=lambda: aimdo,
         )
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
             data = await (await client.get("/memory/status")).json()
             policy = data["acceleratorPolicy"]
+            assert policy["aimdoConfiguredPolicy"] == "auto"
+            assert policy["aimdoPoliciesByWorker"] == {"dinkster-compat-comfy": "off"}
+            app[STATE_KEY].settings.update("aimdo-policy", "on")
+            policy = (await (await client.get("/memory/status")).json())["acceleratorPolicy"]
+            assert policy["aimdoConfiguredPolicy"] == "on"
+            assert policy["aimdoPoliciesByWorker"] == {"dinkster-compat-comfy": "off"}
+            aimdo["dinkster-compat-comfy"] = "on"
+            policy = (await (await client.get("/memory/status")).json())["acceleratorPolicy"]
+            assert policy["aimdoPoliciesByWorker"] == {"dinkster-compat-comfy": "on"}
             assert policy["physicalHeadroomBytes"] == 256 * 1024**2
             assert policy["inferenceReserveBytes"] == int(0.8 * gib)
             assert policy["minimumFreeBytes"] == 256 * 1024**2 + int(0.8 * gib)

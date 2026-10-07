@@ -66,6 +66,9 @@
   `POST /memory/reset-peak`. Missing probes remain unavailable, not zero.
   Distinct worker processes contribute their allocator and host counters once;
   device-wide free memory is never added across workers.
+  Accelerator policy distinguishes current settings from budgets and Aimdo
+  policies applied to each existing worker; changing a restart-bound setting
+  never relabels a worker that has not restarted.
 - Paused, idle queues support `POST /memory/free` to release volatile
   execution caches and live workers' declared memory consumers without
   starting dormant workers. Results report each worker and consumer;

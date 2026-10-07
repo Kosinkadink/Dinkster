@@ -3145,6 +3145,14 @@ class ServingComposer:
             if record.spec.runtime_settings
         }
 
+    def applied_aimdo_policies(self) -> dict[str, str]:
+        """Policy used to start each active worker, not the next-start setting."""
+        return {
+            name: record.spec.aimdo
+            for name, record in self._records.items()
+            if record.spec.runtime_settings
+        }
+
     @staticmethod
     def _vision_provider_models(
         records: Mapping[str, _PackRecord],
