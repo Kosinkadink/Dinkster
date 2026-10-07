@@ -6,8 +6,7 @@ source-checkout steps work on Windows x64, Linux x64, and macOS Apple Silicon.
 
 ## Install
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and
-[Node.js 22 or newer](https://nodejs.org/), including npm, and
+Install [Node.js 22 or newer](https://nodejs.org/), including npm, and
 [Git](https://git-scm.com/downloads). Clone Dinkster, then run one command:
 
 ```sh
@@ -24,6 +23,11 @@ On Windows, replace `./run.sh` with:
 
 If PowerShell blocks local scripts, use
 `powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1`.
+If uv is missing, the script installs it using the
+[official installer](https://docs.astral.sh/uv/getting-started/installation/)
+in `~/.local/bin` (`%USERPROFILE%\.local\bin` on Windows), without sudo,
+administrator rights, or shell-profile changes. Linux/macOS need curl or wget
+for this download. The installed uv is available immediately to the script.
 The script lets uv obtain Python 3.12, prepares the pinned inference and Torch
 environments, builds the pinned frontend, creates local state, and opens the
 editor. It does not need the Desktop app or a separate frontend checkout.
