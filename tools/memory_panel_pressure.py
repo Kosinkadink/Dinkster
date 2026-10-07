@@ -15,8 +15,6 @@ import time
 from pathlib import Path
 
 from aiohttp import web
-
-from dinkster.compose import default_pack_ids, default_pack_spec
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_memory import BudgetExceeded, ConsumerItem, MemoryGovernor, PressureSignal
@@ -24,6 +22,8 @@ from dinkster_native.devices import torch_vram_telemetry
 from dinkster_server import create_app
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
+
+from dinkster.compose import default_pack_ids, default_pack_spec
 
 DEVICE = "vram:cuda:0"
 GIB = 1024**3
