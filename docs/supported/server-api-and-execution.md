@@ -59,6 +59,13 @@
 - Memory governance: budgets, headroom, reservations with renewal,
   governed shedding, admission waiting, and item details with Aimdo model-weight
   page residency when the active Aimdo build exposes it
+- Memory status HTTP and live events include worker torch allocated/reserved,
+  process RSS and registered pinned-host bytes when available, plus GPU name
+  and optional UUID-matched NVML utilization, temperature and power. Device
+  peaks record observed driver usage and reset to current usage through
+  `POST /memory/reset-peak`. Missing probes remain unavailable, not zero.
+  Distinct worker processes contribute their allocator and host counters once;
+  device-wide free memory is never added across workers.
 - Paused, idle queues support `POST /memory/free` to release volatile
   execution caches and live workers' declared memory consumers without
   starting dormant workers. Results report each worker and consumer;

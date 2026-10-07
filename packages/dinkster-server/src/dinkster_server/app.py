@@ -4235,6 +4235,14 @@ async def handle_memory_status(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+async def handle_memory_reset_peak(request: web.Request) -> web.Response:
+    governor, _ = _governed(request.app[STATE_KEY])
+    device = _require_device(await _json_body(request))
+    if device not in governor.status():
+        raise web.HTTPNotFound(text="Device is not reported")
+    return web.json_response({"device": device, "peakUsedBytes": governor.reset_peak(device)})
+
+
 async def handle_memory_shed(request: web.Request) -> web.Response:
     state = request.app[STATE_KEY]
     governor, _ = _governed(state)
@@ -4597,6 +4605,7 @@ def create_app(
     app.router.add_get("/api/events", handle_events)
     add_settings_routes(app, state.settings)
     app.router.add_get("/memory/status", handle_memory_status)
+    app.router.add_post("/memory/reset-peak", handle_memory_reset_peak)
     app.router.add_post("/memory/shed", handle_memory_shed)
     app.router.add_post("/memory/free", handle_memory_free)
     app.router.add_post("/memory/reserve", handle_memory_reserve)
