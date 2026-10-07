@@ -142,6 +142,33 @@ def test_independent_release_launch_serves_composition_and_nodes(tmp_path: Path)
     assert (state / "composition.json").is_file()
 
 
+def test_release_failure_prints_service_and_publication_log_tails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from scripts.verify_release_install import print_log_tails
+
+    (tmp_path / "registry.log").write_text("\n".join(f"line {i}" for i in range(125)))
+    (tmp_path / "backend.log").write_text("backend failed\n")
+    (tmp_path / "publish.log").write_text("publication result\n")
+    (tmp_path / "registry.db").write_text("not a log")
+    print_log_tails(tmp_path)
+    output = capsys.readouterr().err
+    assert "backend failed" in output and "publication result" in output
+    assert "line 24\n" not in output and "line 25\n" in output and "line 124\n" in output
+    assert "not a log" not in output
+
+
+def test_registry_install_keeps_state_and_uploads_it_even_on_failure() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
+    steps = workflow["jobs"]["registry-install"]["steps"]
+    command = next(step["run"] for step in steps if "run" in step)
+    assert '--state "$RUNNER_TEMP/registry-install-state"' in command
+    upload = steps[-1]
+    assert upload["uses"] == "actions/upload-artifact@v4"
+    assert upload["if"] == "always()"
+    assert upload["with"]["path"] == "${{ runner.temp }}/registry-install-state"
+
+
 @pytest.mark.parametrize("tag", ["0.0.1", "v0.0", "v0.0.1-rc1", "backend-0.0.1"])
 def test_release_version_rejects_non_version_tags(tag: str) -> None:
     with pytest.raises(ValueError, match="vX.Y.Z"):
