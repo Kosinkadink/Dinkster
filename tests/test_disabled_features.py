@@ -33,9 +33,12 @@ def test_server_import_and_disabled_routes_without_optional_imports() -> None:
 import sys
 class RejectP2P:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'dinkster_p2p' or fullname.startswith('dinkster_p2p.'):
+        if fullname in {'libtorrent', 'dinkster_p2p'} or fullname.startswith('dinkster_p2p.'):
             raise AssertionError('disabled server imported P2P')
 sys.meta_path.insert(0, RejectP2P())
+from dinkster_assets.p2p_settings import default_p2p_settings, normalize_p2p_settings
+settings = default_p2p_settings()
+assert normalize_p2p_settings(settings) == settings
 import dinkster.serve
 from dinkster.p2p_plugin import load_p2p_plugin
 assert load_p2p_plugin() is None
