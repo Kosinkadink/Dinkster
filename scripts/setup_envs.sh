@@ -165,7 +165,8 @@ else
 fi
 
 # ------------------------------------------------------------ .venv-gpu
-if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
+if [ "${CUDA_VISIBLE_DEVICES-unset}" != "" ] && [ "${CUDA_VISIBLE_DEVICES-unset}" != "-1" ] \
+    && command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
     echo "==> .venv-gpu (CUDA torch test env)"
     [ -x .venv-gpu/bin/python ] || uv venv .venv-gpu --python 3.12
     uv pip install --python .venv-gpu/bin/python \
@@ -199,7 +200,7 @@ if command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
     fi
 
 else
-    echo "==> no NVIDIA GPU detected - skipping .venv-gpu (the GPU gate"
+    echo "==> no enabled NVIDIA GPU detected - skipping .venv-gpu (the GPU gate"
     echo "    applies only on GPU machines, AGENTS.md 'Validation gate')"
 fi
 
