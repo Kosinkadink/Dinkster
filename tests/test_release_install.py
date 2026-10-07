@@ -161,12 +161,30 @@ def test_release_failure_prints_service_and_publication_log_tails(
 def test_registry_install_keeps_state_and_uploads_it_even_on_failure() -> None:
     workflow = yaml.safe_load((ROOT / ".github/workflows/full-validation.yml").read_text())
     steps = workflow["jobs"]["registry-install"]["steps"]
-    command = next(step["run"] for step in steps if "run" in step)
+    command = next(
+        step["run"] for step in steps if "scripts/verify_release_install.py" in step.get("run", "")
+    )
     assert '--state "$RUNNER_TEMP/registry-install-state"' in command
     upload = steps[-1]
     assert upload["uses"] == "actions/upload-artifact@v4"
     assert upload["if"] == "always()"
     assert upload["with"]["path"] == "${{ runner.temp }}/registry-install-state"
+
+
+@pytest.mark.parametrize("workflow_name, job", [("ci", "fast"), ("full-validation", "registry-install")])
+def test_probe_jail_is_configured_before_python_validation(workflow_name: str, job: str) -> None:
+    workflow = yaml.safe_load((ROOT / f".github/workflows/{workflow_name}.yml").read_text())
+    steps = workflow["jobs"][job]["steps"]
+    setup_index = next(
+        index
+        for index, step in enumerate(steps)
+        if step.get("run") == "bash scripts/setup_probe_jail.sh"
+    )
+    validation_index = next(
+        index for index, step in enumerate(steps) if "uv sync" in step.get("run", "")
+    )
+    assert setup_index < validation_index
+    assert "if" not in steps[setup_index]
 
 
 @pytest.mark.parametrize("tag", ["0.0.1", "v0.0", "v0.0.1-rc1", "backend-0.0.1"])

@@ -415,6 +415,8 @@ jobs:
           ref: 5d844ae53616f88756a98eb6dc3aa73fefb92622
           path: registry
           persist-credentials: false
+      - name: Configure and verify the Linux probe jail
+        run: bash scripts/setup_probe_jail.sh
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
