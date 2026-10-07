@@ -263,6 +263,19 @@ def normalize_setting(category: str, value: object) -> object:
     raise SettingsError(f"unknown settings category: {category!r}")
 
 
+def normalize_features(value: object) -> dict[str, dict[str, bool]]:
+    body = _object(value, "features")
+    unknown = set(body) - {"p2p", "templates"}
+    if unknown:
+        raise SettingsError(f"unknown features: {sorted(unknown)}")
+    features: dict[str, dict[str, bool]] = {}
+    for name in ("p2p", "templates"):
+        feature = _object(body.get(name, {"enabled": False}), f"features.{name}")
+        _exact_keys(feature, {"enabled"}, f"features.{name}")
+        features[name] = {"enabled": _boolean(feature["enabled"], f"features.{name}.enabled")}
+    return features
+
+
 def load_settings(path: Path) -> dict[str, object]:
     """Load and validate settings.json; a missing file means no overrides."""
     if not path.exists():
@@ -272,11 +285,16 @@ def load_settings(path: Path) -> dict[str, object]:
     except (OSError, json.JSONDecodeError) as exc:
         raise SettingsError(f"{path}: invalid settings JSON: {exc}") from exc
     body = _object(raw, str(path))
-    unknown = set(body) - _CATEGORY_SET
+    unknown = set(body) - (_CATEGORY_SET | {"features"})
     if unknown:
         raise SettingsError(f"{path}: unknown settings categories {sorted(unknown)}")
     try:
-        return {category: normalize_setting(category, value) for category, value in body.items()}
+        return {
+            category: normalize_features(value)
+            if category == "features"
+            else normalize_setting(category, value)
+            for category, value in body.items()
+        }
     except SettingsError as exc:
         raise SettingsError(f"{path}: {exc}") from exc
 
@@ -292,6 +310,7 @@ class RuntimeSettings:
         granted: frozenset[str] = frozenset(),
         path: Path | None = None,
         persisted_values: Mapping[str, object] | None = None,
+        features: object = None,
     ) -> None:
         category_set = set(SETTINGS_CATEGORIES)
         if set(values) != category_set or set(sources) != category_set:
@@ -304,8 +323,11 @@ class RuntimeSettings:
         if not self._granted <= _CATEGORY_SET:
             raise ValueError("granted contains an unknown settings category")
         self._path = path
+        self.features = normalize_features({} if features is None else features)
         self._runtime_values = {
-            category: normalize_setting(category, value)
+            category: normalize_features(value)
+            if category == "features"
+            else normalize_setting(category, value)
             for category, value in (persisted_values or {}).items()
         }
         self._governor: MemoryGovernor | None = None
@@ -379,6 +401,7 @@ class RuntimeSettings:
 
     def payload(self) -> dict[str, object]:
         return {
+            "features": deepcopy(self.features),
             "categories": {
                 "granted": self.granted,
                 "available": list(SETTINGS_CATEGORIES),

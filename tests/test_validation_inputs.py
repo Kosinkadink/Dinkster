@@ -147,7 +147,7 @@ def test_validation_does_not_require_evidence_for_independent_test_collection(
             "pytest",
             "--collect-only",
             "-q",
-            "tests/test_p2p_artifact_smoke.py",
+            "tests/test_values.py",
         ],
         cwd=evidence_paths.DINKSTER_ROOT,
         env=environment,

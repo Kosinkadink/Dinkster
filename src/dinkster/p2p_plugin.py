@@ -10,14 +10,20 @@ from typing import Any
 from dinkster_assets import P2PPluginRegistration, register_p2p_plugin
 
 
+def disabled_main() -> None:
+    raise SystemExit("P2P is disabled")
+
+
 @dataclass(frozen=True)
 class P2PPlugin:
     controller: type[Any]
     add_routes: Callable[..., None]
 
 
-def load_p2p_plugin() -> P2PPlugin | None:
+def load_p2p_plugin(*, enabled: bool = False) -> P2PPlugin | None:
     """Register and return the installed P2P plugin, if present."""
+    if not enabled:
+        return None
     try:
         plugin = importlib.import_module("dinkster_p2p")
     except ModuleNotFoundError as error:

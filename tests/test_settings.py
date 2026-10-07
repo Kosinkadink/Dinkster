@@ -13,7 +13,6 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import P2PPluginRegistration
 from dinkster_memory import MemoryGovernor
-from dinkster_p2p import default_p2p_settings, normalize_p2p_settings
 from dinkster_schema import LOG_LEVEL_ENV, LOG_OVERRIDES_ENV
 from dinkster_server import (
     ComfyArgumentError,
@@ -33,6 +32,7 @@ from dinkster_server import (
 from dinkster_server import (
     normalize_p2p_settings as server_normalize_p2p_settings,
 )
+from dinkster_server.p2p_plugin import default_p2p_settings
 from test_server import SCHEMAS, StubAuthenticator, make_engine
 
 
@@ -41,6 +41,7 @@ def settings(
     granted: frozenset[str] = frozenset(),
     path: Path | None = None,
     persisted: Mapping[str, object] | None = None,
+    features: object = None,
 ) -> RuntimeSettings:
     return RuntimeSettings(
         {
@@ -72,12 +73,19 @@ def settings(
         granted=granted,
         path=path,
         persisted_values=persisted,
+        features=features,
     )
 
 
 def test_server_p2p_settings_match_the_plugin_with_and_without_registration(
     monkeypatch: pytest.MonkeyPatch,
+    pytestconfig: pytest.Config,
 ) -> None:
+    if not pytestconfig.getoption("--p2p"):
+        pytest.skip("plugin comparison requires --p2p")
+    plugin = pytest.importorskip("dinkster_p2p")
+    default_p2p_settings = plugin.default_p2p_settings
+    normalize_p2p_settings = plugin.normalize_p2p_settings
     registration_module = importlib.import_module("dinkster_assets.p2p_plugin")
     plugin_defaults = default_p2p_settings()
 

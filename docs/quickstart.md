@@ -116,14 +116,8 @@ DINKSTER_EXECUTION_PYTHON="$PWD/.venv-torch/bin/python" uv run dinkster
 Keep this interpreter setting when the launcher refreshes pack catalogs. No
 ComfyUI checkout or server is required.
 
-The starter gallery opens on an empty workflow. Select **Stable Diffusion
-1.5**, or open **Library > Templates** and select it there. In the template's
-`Load Checkpoint` node, open **Browse**, choose the mounted checkpoint, and
-select **Run**. The image appears in the preview and the output mount. If
-Browse says that no mounted models are available, check the `models` path in
-`mounts.toml` and restart Dinkster so it can scan the folder.
-
-To build the same workflow manually instead:
+Workflow templates and P2P are disabled by default. Build an SD 1.5 workflow
+on the empty canvas:
 
 1. Load the checkpoint with `Load Checkpoint`.
 2. Enter positive and negative text in the two `CLIP Text Encode` nodes.
@@ -131,6 +125,10 @@ To build the same workflow manually instead:
    `KSampler`.
 4. Decode the sampled latent with `VAE Decode` and connect it to `Save Image`.
 5. Select **Run** and wait for the image preview and saved output.
+
+In `Load Checkpoint`, use **Browse** to select the mounted checkpoint. If no
+models are available, check the `models` path in `mounts.toml` and restart
+Dinkster so it can scan the folder.
 
 This is the default SD 1.5 graph: checkpoint loader, two text encoders, empty
 latent image, sampler, VAE decoder, and image saver. No ComfyUI checkout or

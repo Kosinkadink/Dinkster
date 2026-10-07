@@ -3157,6 +3157,7 @@ def test_pack_template_endpoints() -> None:
     (mismatch -> 400), and lists asset requirements as pack-local ids for
     clients to join against the packs table."""
     from dinkster_server import PackIconAsset, PackTemplateAsset
+    from test_settings import settings
 
     data = b'{"graphs": {"main": {}}}'
     digest = "sha256:" + hashlib.sha256(data).hexdigest()
@@ -3167,6 +3168,7 @@ def test_pack_template_endpoints() -> None:
         app = create_app(
             make_engine,
             SCHEMAS,
+            settings=settings(features={"templates": {"enabled": True}}),
             packs={
                 "ade": PackInfo(
                     display_name="AnimateDiff-Evolved",

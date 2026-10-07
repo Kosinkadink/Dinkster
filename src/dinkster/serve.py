@@ -1409,11 +1409,15 @@ def main(argv: list[str] | None = None) -> None:
             "--execution-cache-mode layered requires --execution-cache-dir "
             "when --library-root is disabled"
         )
-    p2p_plugin = load_p2p_plugin()
     try:
         persisted_settings = load_settings(settings_path) if settings_path is not None else {}
     except SettingsError as exc:
         raise SystemExit(str(exc)) from exc
+    from dinkster_server.settings import normalize_features
+
+    features = normalize_features(persisted_settings.get("features", {}))
+    p2p_plugin = load_p2p_plugin(enabled=features["p2p"]["enabled"] and not args.disable_p2p)
+    features["p2p"]["enabled"] = p2p_plugin is not None
 
     if args.library_root:
         try:
@@ -1605,6 +1609,7 @@ def main(argv: list[str] | None = None) -> None:
         granted=granted_settings,
         path=settings_path,
         persisted_values=persisted_settings,
+        features=features,
     )
 
     if args.legacy_pack and not args.comfy_root:

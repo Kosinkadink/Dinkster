@@ -17,7 +17,6 @@ dependencies = [
     "dinkster-caches",
     "dinkster-assets",
     "dinkster-image-document",
-    "dinkster-p2p",
     "dinkster-memory",
     "dinkster-native",
     "dinkster-compat-comfy",
@@ -45,10 +44,11 @@ dinkster-serve = "dinkster.serve:main"
 dinkster-pack = "dinkster.manager:main"
 dinkster-isolated = "dinkster.isolated_demo:main"
 dinkster-port = "dinkster.port:main"
-dinkster-p2p-diagnostics = "dinkster.p2p_diagnostics:main"
-dinkster-seed = "dinkster.seed:main"
+dinkster-p2p-diagnostics = "dinkster.p2p_plugin:disabled_main"
+dinkster-seed = "dinkster.p2p_plugin:disabled_main"
 
 [project.optional-dependencies]
+p2p = ["dinkster-p2p", "libtorrent==2.1.1"]
 default = [
     "dinkster-supervisor",
     "dinkster-collab",
@@ -69,7 +69,6 @@ dev = [
     "ruff>=0.8",
     "pyright>=1.1.390",
     "scipy-stubs>=1.18.1.0",
-    "libtorrent==2.1.1",
     "opentimelineio==0.18.1",
     "threadpoolctl>=3.7",
 ]
