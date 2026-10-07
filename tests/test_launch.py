@@ -137,6 +137,19 @@ def test_browser_waits_for_health_before_opening(monkeypatch) -> None:
     assert events == ["sleep", "http://127.0.0.1:4640"]
 
 
+def test_explicit_frontend_root_overrides_discovery(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "state"))
+    setup.main([])
+    bundle = tmp_path / "managed frontend"
+    bundle.mkdir()
+    (bundle / "index.html").write_text("editor")
+    monkeypatch.setattr(launch, "discover_frontend_bundle", lambda: None)
+    calls = []
+    monkeypatch.setattr(serve, "main", lambda argv: calls.append(argv))
+    assert launch.main(["--no-browser", "--frontend-root", str(bundle)]) == 0
+    assert calls[0][calls[0].index("--frontend-root") + 1] == str(bundle)
+
+
 def test_no_browser_and_vite_proxy_are_the_only_alternate_launch_controls(
     tmp_path: Path, monkeypatch
 ) -> None:

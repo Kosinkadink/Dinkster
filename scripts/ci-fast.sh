@@ -9,8 +9,11 @@ uv run --locked ruff check .
 uv run --locked --extra p2p pyright
 uv run --locked python -m pytest -q \
   tests/test_disabled_features.py \
+  tests/test_settings.py \
   tests/test_extension_factory_guard.py \
   tests/test_pinned_inference.py \
+  tests/test_run_scripts.py \
+  tests/test_launch.py \
   tests/test_release_install.py \
   tests/test_schema.py \
   tests/test_schema_current_contracts.py \
