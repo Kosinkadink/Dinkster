@@ -6,6 +6,8 @@ import math
 from collections.abc import Mapping
 from typing import cast
 
+from dinkster_values import GIBIBYTE
+
 P2P_SETTINGS_FIELDS = frozenset(
     {
         "downloadsEnabled",
@@ -49,7 +51,7 @@ def default_p2p_settings() -> dict[str, object]:
         "seedMode": "budgeted",
         "internetSeedRatio": 1.0,
         "internetSeedTimeSeconds": 86_400,
-        "stagingBudgetBytes": 64 * 1024**3,
+        "stagingBudgetBytes": 64 * GIBIBYTE,
         "maxActiveSeeds": 64,
         "listenPort": 0,
     }
