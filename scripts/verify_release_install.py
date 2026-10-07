@@ -65,13 +65,48 @@ def stop(process: subprocess.Popen[str]) -> None:
         raise RuntimeError("owned release verification descendants survived teardown")
 
 
+def verify_launch(state: Path, python: Path) -> None:
+    state.mkdir(parents=True)
+    url = f"http://127.0.0.1:{available_port()}"
+    with (state / "backend.log").open("w") as log:
+        backend = subprocess.Popen(
+            [
+                str(python.absolute()),
+                "-m",
+                "dinkster.serve",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                url.rsplit(":", 1)[1],
+                "--library-root",
+                str(state / "library"),
+                "--install-root",
+                str(state / "packs"),
+                "--no-default-packs",
+            ],
+            cwd=state,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            composition = wait_for(url + "/api/composition", backend)
+            nodes = wait_for(url + "/api/nodes", backend)
+            assert nodes["schemaVersion"] == 1 and nodes["nodes"] == {}, nodes
+            (state / "composition.json").write_text(json.dumps(composition, indent=2) + "\n")
+            (state / "nodes.json").write_text(json.dumps(nodes, indent=2) + "\n")
+        finally:
+            stop(backend)
+    print(f"Independent backend launch passed: {state}")
+
+
 def verify(root: Path, state: Path, registry_command: Path, python: Path | None = None) -> None:
     root = root.resolve()
     registry_command = registry_command.resolve()
     state.mkdir(parents=True)
     if python is None:
         python = root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    python = python.resolve()
+    python = python.absolute()
     registry_database = "sqlite:///" + (state / "registry.db").as_posix()
     registry_objects = str(state / "registry-objects")
     packs = str(state / "packs")
@@ -291,11 +326,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("--state", type=Path)
-    parser.add_argument("--registry-command", type=Path, required=True)
+    parser.add_argument("--registry-command", type=Path)
     parser.add_argument("--python", type=Path)
     args = parser.parse_args()
-    if args.state is not None:
-        verify(args.root, args.state.resolve(), args.registry_command, args.python)
-    else:
-        with tempfile.TemporaryDirectory(prefix="dinkster-release-") as directory:
-            verify(args.root, Path(directory) / "state", args.registry_command, args.python)
+    with tempfile.TemporaryDirectory(prefix="dinkster-release-") as directory:
+        state = args.state.resolve() if args.state else Path(directory) / "state"
+        if args.registry_command:
+            verify(args.root, state, args.registry_command, args.python)
+        else:
+            python = args.python or args.root / ".venv" / (
+                "Scripts/python.exe" if os.name == "nt" else "bin/python"
+            )
+            verify_launch(state, python)

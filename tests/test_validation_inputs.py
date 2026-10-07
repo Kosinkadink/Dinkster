@@ -12,6 +12,19 @@ from scripts import prepare_validation_inputs
 from tools import evidence_paths
 
 
+def test_public_ci_runs_the_fast_checks_without_private_inputs() -> None:
+    import yaml
+
+    text = (evidence_paths.DINKSTER_ROOT / ".github/workflows/ci.yml").read_text()
+    workflow = yaml.safe_load(text)
+    fast = workflow["jobs"]["fast"]
+    assert fast["runs-on"] == "ubuntu-latest"
+    assert "secrets." not in text and "vars." not in text
+    assert all("if" not in step for step in fast["steps"])
+    assert fast["steps"][-1]["run"] == "bash scripts/ci-fast.sh"
+    assert all("prepare-validation-inputs" not in step.get("uses", "") for step in fast["steps"])
+
+
 def resolved_evidence_root(environment: dict[str, str]) -> Path:
     result = subprocess.run(
         [
