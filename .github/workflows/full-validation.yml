@@ -356,6 +356,7 @@ jobs:
       - model-tests-gate
       - coverage-gate
       - video-template-replay
+      - registry-install
     runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
     timeout-minutes: 2
     steps:
@@ -386,9 +387,39 @@ jobs:
           TORCH_RESULT: ${{ needs.torch-cpu.result }}
           MODEL_RESULT: ${{ needs.model-tests-gate.result }}
           COVERAGE_RESULT: ${{ needs.coverage-gate.result }}
+          REGISTRY_RESULT: ${{ needs.registry-install.result }}
         run: |
           if [ "$RUN_HEAVY" = false ]; then exit 0; fi
           test "$TEST_RESULT" = success
           test "$TORCH_RESULT" = success
           test "$MODEL_RESULT" = success
           test "$COVERAGE_RESULT" = success
+          test "$REGISTRY_RESULT" = success
+
+  registry-install:
+    needs: validation-plan
+    if: needs.validation-plan.outputs.run-heavy == 'true'
+    runs-on: ${{ fromJSON(vars.CI_RUNNERS).linux }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/configure-private-repository
+        with:
+          repository: Kosinkadink/dinkster-registry
+          deploy-key: ${{ secrets.DINKSTER_REGISTRY_READ_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          repository: Kosinkadink/dinkster-registry
+          ref: 5d844ae53616f88756a98eb6dc3aa73fefb92622
+          path: registry
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          uv sync --locked --all-packages
+          uv sync --project registry --frozen
+          uv run --no-sync python scripts/verify_release_install.py "$GITHUB_WORKSPACE" \
+            --registry-command "$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"
