@@ -79,8 +79,12 @@ def settings(
 
 def test_server_p2p_settings_match_the_plugin_with_and_without_registration(
     monkeypatch: pytest.MonkeyPatch,
+    pytestconfig: pytest.Config,
 ) -> None:
+    if not pytestconfig.getoption("--p2p"):
+        pytest.skip("plugin comparison requires --p2p")
     plugin = pytest.importorskip("dinkster_p2p")
+    default_p2p_settings = plugin.default_p2p_settings
     normalize_p2p_settings = plugin.normalize_p2p_settings
     registration_module = importlib.import_module("dinkster_assets.p2p_plugin")
     plugin_defaults = default_p2p_settings()
