@@ -422,4 +422,11 @@ jobs:
           uv sync --locked --all-packages
           uv sync --project registry --frozen
           uv run --no-sync python scripts/verify_release_install.py "$GITHUB_WORKSPACE" \
+            --state "$RUNNER_TEMP/registry-install-state" \
             --registry-command "$GITHUB_WORKSPACE/registry/.venv/bin/dinkster-registry"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: registry-install-state
+          path: ${{ runner.temp }}/registry-install-state
+          retention-days: 7
