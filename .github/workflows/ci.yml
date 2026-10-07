@@ -33,8 +33,6 @@ jobs:
           clean: true
           fetch-depth: 0
           persist-credentials: false
-      - name: Configure and verify the Linux probe jail
-        run: bash scripts/setup_probe_jail.sh
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
