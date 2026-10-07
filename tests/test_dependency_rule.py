@@ -359,10 +359,12 @@ def test_umbrella_optional_packages_are_locked() -> None:
         ],
         "collab": ["dinkster-collab"],
         "supervisor": ["dinkster-supervisor"],
+        "p2p": ["dinkster-p2p", "libtorrent==2.1.1"],
     }
     assert {"dinkster-collab", "dinkster-supervisor"} <= {
         dependency for dependency in root_project["dependencies"]
     }
+    assert "dinkster-p2p" not in root_project["dependencies"]
     assert all(not dependency.startswith("gguf") for dependency in root_project["dependencies"])
     assert all(
         not dependency.startswith("gguf") for dependency in inference_project["dependencies"]
@@ -381,6 +383,7 @@ def test_umbrella_optional_packages_are_locked() -> None:
         ],
         "collab": [{"name": "dinkster-collab"}],
         "supervisor": [{"name": "dinkster-supervisor"}],
+        "p2p": [{"name": "dinkster-p2p"}, {"name": "libtorrent"}],
     }
     assert "gguf" not in {dependency["name"] for dependency in inference_locked["dependencies"]}
     assert "optional-dependencies" not in inference_locked
